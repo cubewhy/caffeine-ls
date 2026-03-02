@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::completion::context::CursorLocation;
 use crate::completion::engine::ContextEnricher;
 use crate::completion::type_resolver::symbol_resolver::{ResolvedSymbol, SymbolResolver};
-use crate::index::ClassOrigin;
 use crate::index::source::find_symbol_range;
+use crate::index::{ClassOrigin, GlobalIndex};
 use crate::lsp::server::{Backend, language_id_from_uri};
 use tower_lsp::lsp_types::*;
 use tracing::instrument;
@@ -57,6 +57,20 @@ pub async fn handle_goto_definition(
         }));
     }
 
+    if let CursorLocation::Import { prefix } = &ctx.location {
+        let raw = prefix.trim().trim_end_matches(".*").trim();
+        let internal = raw.replace('.', "/");
+        if index_guard.get_class(&internal).is_some() {
+            return goto_resolved_symbol(
+                backend,
+                &index_guard,
+                ResolvedSymbol::Class(Arc::from(internal)),
+            )
+            .await;
+        }
+        return None;
+    }
+
     // Index 符号解析
     let resolver = SymbolResolver::new(&index_guard);
     let symbol = match resolver.resolve(&ctx) {
@@ -68,6 +82,14 @@ pub async fn handle_goto_definition(
     };
     tracing::debug!(symbol = ?symbol, "goto: resolved symbol");
 
+    return goto_resolved_symbol(backend, &index_guard, symbol).await;
+}
+
+async fn goto_resolved_symbol(
+    backend: &Backend,
+    index_guard: &GlobalIndex,
+    symbol: ResolvedSymbol,
+) -> Option<GotoDefinitionResponse> {
     let (target_internal, member_name, descriptor, decl_kind) = match &symbol {
         ResolvedSymbol::Class(name) => {
             let simple_name = name.rsplit('/').next().unwrap_or(name.as_ref());
@@ -126,7 +148,7 @@ pub async fn handle_goto_definition(
                     &target_internal,
                     Some(name),
                     descriptor.as_deref(),
-                    &index_guard,
+                    index_guard,
                 )
                 .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
@@ -182,7 +204,7 @@ pub async fn handle_goto_definition(
                     &target_internal,
                     Some(name),
                     descriptor.as_deref(),
-                    &index_guard,
+                    index_guard,
                 )
                 .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
@@ -227,7 +249,7 @@ pub async fn handle_goto_definition(
                     &target_internal,
                     Some(name),
                     descriptor.as_deref(),
-                    &index_guard,
+                    index_guard,
                 )
                 .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
