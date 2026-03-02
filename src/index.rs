@@ -419,6 +419,16 @@ impl NameTable {
                 .collect(),
         ))
     }
+
+    pub fn extend_with(&self, additional_names: Vec<Arc<str>>) -> Arc<Self> {
+        let mut set = self.0.clone();
+        set.extend(additional_names);
+        Arc::new(NameTable(set))
+    }
+
+    pub fn from_names(names: Vec<Arc<str>>) -> Arc<Self> {
+        Arc::new(NameTable(names.into_iter().collect()))
+    }
 }
 
 type MroCacheMap = dashmap::DashMap<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;

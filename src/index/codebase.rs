@@ -25,7 +25,7 @@ pub fn index_codebase<P: AsRef<Path>>(
 ) -> CodebaseIndex {
     // TODO: respect .gitignore
     let root = root.as_ref();
-    info!(root = %root.display(), "scanning codebase");
+    info!(root = %root.display(), "Two-pass indexing started");
 
     let source_files: Vec<PathBuf> = WalkDir::new(root)
         .follow_links(false)
@@ -41,19 +41,42 @@ pub fn index_codebase<P: AsRef<Path>>(
         .collect();
 
     let file_count = source_files.len();
-    info!(count = file_count, "found source files");
 
+    tracing::debug!("discovering stubs...");
+    let discovered_names: Vec<Arc<str>> = source_files
+        .par_iter()
+        .flat_map(|path| {
+            let content = std::fs::read_to_string(path).ok()?;
+            let lang = if path.extension().and_then(|s| s.to_str()) == Some("kt") {
+                "kotlin"
+            } else {
+                "java"
+            };
+            Some(super::source::discover_internal_names_str(&content, lang))
+        })
+        .flatten()
+        .collect();
+
+    let enriched_name_table = match name_table {
+        Some(existing) => existing.extend_with(discovered_names),
+        None => crate::index::NameTable::from_names(discovered_names),
+    };
+
+    debug!("full structural analysis...");
     let classes: Vec<ClassMetadata> = source_files
         .into_par_iter()
         .flat_map(|path| {
             let uri = path_to_uri_str(&path);
             let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
-            debug!(path = %path.display(), "parsing source file");
-            parse_source_file(&path, origin, name_table.clone())
+            parse_source_file(&path, origin, Some(enriched_name_table.clone()))
         })
         .collect();
 
-    info!(classes = classes.len(), "codebase indexed");
+    info!(
+        classes = classes.len(),
+        files = file_count,
+        "Codebase indexing complete"
+    );
 
     CodebaseIndex {
         classes,

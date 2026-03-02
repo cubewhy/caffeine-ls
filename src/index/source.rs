@@ -7,7 +7,7 @@ use super::{
     ClassMetadata, ClassOrigin, FieldSummary, MethodSummary, parse_return_type_from_descriptor,
 };
 use crate::{
-    completion::{context::CurrentClassMember, type_resolver::java_source_type_to_descriptor},
+    completion::context::CurrentClassMember,
     index::{GlobalIndex, intern_str},
     language::{
         java::{
@@ -55,8 +55,8 @@ impl SourceTypeCtx {
     pub fn to_descriptor(&self, ty: &str) -> String {
         let ty = ty.trim();
         // Vararg → treated as one extra array dimension
-        let (ty, extra_dim) = if ty.ends_with("...") {
-            (&ty[..ty.len() - 3], 1usize)
+        let (ty, extra_dim) = if let Some(stripped) = ty.strip_suffix("...") {
+            (stripped, 1usize)
         } else {
             (ty, 0)
         };
@@ -518,6 +518,118 @@ pub fn get_javadoc_on_the_fly(
     };
 
     extract_javadoc(target_node, ctx.bytes()).map(|s| clean_javadoc(&s))
+}
+
+pub fn discover_internal_names_str(source: &str, lang: &str) -> Vec<Arc<str>> {
+    match lang {
+        "java" => discover_java_names(source),
+        "kotlin" => discover_kotlin_names(source),
+        _ => vec![],
+    }
+}
+
+fn discover_java_names(source: &str) -> Vec<Arc<str>> {
+    let ctx = JavaContextExtractor::for_indexing(source);
+    let mut parser = make_java_parser();
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    let root = tree.root_node();
+    let package = extract_package(&ctx, root);
+
+    let mut results = Vec::new();
+    let mut stack: Vec<(Node, Option<Arc<str>>)> = vec![(root, None)]; // (Node, Option<OuterName>)
+
+    while let Some((node, outer)) = stack.pop() {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+                | "annotation_type_declaration"
+                | "record_declaration" => {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        let class_name = ctx.node_text(name_node);
+                        if !class_name.is_empty() {
+                            // 构建内部名称
+                            let internal_name = match (&package, &outer) {
+                                (Some(pkg), Some(out)) => format!("{}/{}${}", pkg, out, class_name),
+                                (Some(pkg), None) => format!("{}/{}", pkg, class_name),
+                                (None, Some(out)) => format!("{}${}", out, class_name),
+                                (None, None) => class_name.to_string(),
+                            };
+                            let internal_name_arc: Arc<str> = Arc::from(internal_name.as_str());
+                            results.push(internal_name_arc.clone());
+
+                            // 处理嵌套类：递归入 body
+                            if let Some(body) = child.child_by_field_name("body") {
+                                // 嵌套类的 outer 名字是 "Outer$Inner" 这种形式中的当前级
+                                let next_outer = match outer {
+                                    Some(ref o) => format!("{}${}", o, class_name),
+                                    None => class_name.to_string(),
+                                };
+                                stack.push((body, Some(Arc::from(next_outer.as_str()))));
+                            }
+                        }
+                    }
+                }
+                "package_declaration" | "import_declaration" => continue,
+                _ => {
+                    // 对于层级较深的情况（如块定义里的类，虽然Java少见但合法）继续向下找
+                    stack.push((child, outer.clone()));
+                }
+            }
+        }
+    }
+    results
+}
+
+fn discover_kotlin_names(source: &str) -> Vec<Arc<str>> {
+    // Kotlin 实现逻辑类似，鉴于 Kotlin 一个文件可以有多个顶层类，逻辑是一致的
+    let mut parser = make_kotlin_parser();
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    let bytes = source.as_bytes();
+    let package = extract_kotlin_package(tree.root_node(), bytes);
+
+    let mut results = Vec::new();
+    let mut stack = vec![tree.root_node()];
+
+    while let Some(node) = stack.pop() {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "class_declaration" | "object_declaration" | "companion_object" => {
+                    if let Some(id_node) = child
+                        .children(&mut child.walk())
+                        .find(|n| n.kind() == "type_identifier")
+                    {
+                        let class_name = node_text(id_node, bytes);
+                        let internal = match &package {
+                            Some(pkg) => format!("{}/{}", pkg, class_name),
+                            None => class_name.to_string(),
+                        };
+                        results.push(Arc::from(internal.as_str()));
+
+                        if let Some(body) = child
+                            .named_children(&mut child.walk())
+                            .find(|n| n.kind() == "class_body")
+                        {
+                            stack.push(body);
+                        }
+                    }
+                }
+                _ => {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+    results
 }
 
 fn find_class_node<'a>(node: Node<'a>, target_name: &str, bytes: &[u8]) -> Option<Node<'a>> {

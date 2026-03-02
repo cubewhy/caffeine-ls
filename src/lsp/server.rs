@@ -308,10 +308,7 @@ impl LanguageServer for Backend {
         let uri = &params.text_document.uri;
         info!(uri = %uri, "did_close");
         self.workspace.documents.close(uri);
-        // 注意：关闭文件不从索引里删除，索引保留（用户可能只是关闭了编辑器 tab）
     }
-
-    // ── 补全 ──────────────────────────────────────────────────────────────────
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
         let response = handle_completion(
