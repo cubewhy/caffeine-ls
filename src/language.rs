@@ -6,7 +6,9 @@ use crate::{
 };
 use ropey::Rope;
 use smallvec::SmallVec;
-use tower_lsp::lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType};
+use tower_lsp::lsp_types::{
+    DocumentSymbol, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+};
 use tree_sitter::{Node, Parser};
 
 pub(crate) mod rope_utils;
@@ -71,6 +73,18 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         _node: tree_sitter::Node<'a>,
         _bytes: &'a [u8],
     ) -> Option<ClassifiedToken> {
+        None
+    }
+
+    fn supports_collecting_symbols(&self) -> bool {
+        false
+    }
+
+    fn collect_symbols<'a>(
+        &self,
+        _node: tree_sitter::Node<'a>,
+        _bytes: &'a [u8],
+    ) -> Option<Vec<DocumentSymbol>> {
         None
     }
 }

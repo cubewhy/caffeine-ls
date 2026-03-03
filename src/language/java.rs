@@ -1,6 +1,7 @@
 use super::Language;
 use crate::completion::{CompletionContext, context::CursorLocation};
 use crate::language::ClassifiedToken;
+use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::ts_utils::find_method_by_offset;
@@ -15,6 +16,7 @@ pub mod locals;
 pub mod location;
 pub mod members;
 pub mod scope;
+pub mod symbols;
 pub mod type_ctx;
 pub mod utils;
 
@@ -197,6 +199,18 @@ impl Language for JavaLanguage {
 
             _ => None,
         }
+    }
+
+    fn supports_collecting_symbols(&self) -> bool {
+        true
+    }
+
+    fn collect_symbols<'a>(
+        &self,
+        node: tree_sitter::Node<'a>,
+        bytes: &'a [u8],
+    ) -> Option<Vec<tower_lsp::lsp_types::DocumentSymbol>> {
+        Some(collect_java_symbols(node, bytes))
     }
 }
 

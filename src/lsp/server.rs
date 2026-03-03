@@ -360,9 +360,12 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> LspResult<Option<DocumentSymbolResponse>> {
-        let response =
-            super::handlers::symbols::handle_document_symbol(Arc::clone(&self.workspace), params)
-                .await;
+        let response = super::handlers::symbols::handle_document_symbol(
+            self.registry.clone(),
+            self.workspace.clone(),
+            params,
+        )
+        .await;
         Ok(response)
     }
 }
