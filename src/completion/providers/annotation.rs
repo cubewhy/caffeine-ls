@@ -1,3 +1,5 @@
+use rust_asm::constants::ACC_ANNOTATION;
+
 use super::super::{
     candidate::{CandidateKind, CompletionCandidate},
     context::{CompletionContext, CursorLocation},
@@ -144,7 +146,6 @@ fn matches_target(meta: &ClassMetadata, element_type: Option<&str>) -> bool {
 }
 
 fn is_annotation_class(meta: &crate::index::ClassMetadata) -> bool {
-    use rust_asm::constants::ACC_ANNOTATION;
     meta.access_flags & ACC_ANNOTATION != 0
 }
 

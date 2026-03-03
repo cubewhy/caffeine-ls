@@ -1,4 +1,4 @@
-use rust_asm::constants::ACC_PUBLIC;
+use rust_asm::constants::{ACC_ANNOTATION, ACC_ENUM, ACC_INTERFACE, ACC_PUBLIC};
 use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
@@ -225,7 +225,7 @@ fn collect_java_classes(
 }
 
 fn extract_java_access_flags(ctx: &JavaContextExtractor, node: Node) -> u16 {
-    let mut flags: u16 = ACC_PUBLIC;
+    let mut flags: u16 = 0;
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
         if child.kind() == "modifiers" {
@@ -233,6 +233,23 @@ fn extract_java_access_flags(ctx: &JavaContextExtractor, node: Node) -> u16 {
             break;
         }
     }
+    if flags == 0 {
+        flags = ACC_PUBLIC;
+    }
+
+    match node.kind() {
+        "interface_declaration" => {
+            flags |= ACC_INTERFACE;
+        }
+        "annotation_type_declaration" => {
+            flags |= ACC_INTERFACE | ACC_ANNOTATION;
+        }
+        "enum_declaration" => {
+            flags |= ACC_ENUM;
+        }
+        _ => {}
+    }
+
     flags
 }
 
@@ -626,5 +643,30 @@ public class Foo {
                 .any(|a| a.internal_name.as_ref().contains("Override")),
             "method should have @Override annotation"
         );
+    }
+
+    #[test]
+    fn test_access_flags_interface() {
+        let src = "public interface I { void f(); }";
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let i = classes.iter().find(|c| c.name.as_ref() == "I").unwrap();
+        assert!(i.access_flags & rust_asm::constants::ACC_INTERFACE != 0);
+    }
+
+    #[test]
+    fn test_access_flags_enum() {
+        let src = "public enum E { A, B }";
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let e = classes.iter().find(|c| c.name.as_ref() == "E").unwrap();
+        assert!(e.access_flags & rust_asm::constants::ACC_ENUM != 0);
+    }
+
+    #[test]
+    fn test_access_flags_annotation_type() {
+        let src = "public @interface Ann { }";
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let a = classes.iter().find(|c| c.name.as_ref() == "Ann").unwrap();
+        assert!(a.access_flags & rust_asm::constants::ACC_ANNOTATION != 0);
+        assert!(a.access_flags & rust_asm::constants::ACC_INTERFACE != 0);
     }
 }
