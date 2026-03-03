@@ -231,7 +231,8 @@ pub fn method_detail(
         .enumerate()
         .map(|(i, type_name)| {
             let param_name = method
-                .param_names
+                .params
+                .param_names()
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| Arc::from(format!("arg{}", i).as_str()));
@@ -383,7 +384,8 @@ pub fn source_member_detail(
             .enumerate()
             .map(|(i, type_name)| {
                 let param_name = md // method not found
-                    .param_names
+                    .params
+                    .param_names()
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| Arc::from(format!("arg{}", i).as_str()));

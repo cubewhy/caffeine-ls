@@ -253,7 +253,7 @@ fn build_candidate(
 mod tests {
     use super::*;
     use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
-    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodSummary};
+    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
     use rust_asm::constants::{ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
@@ -261,7 +261,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic: false,
             generic_signature: None,
@@ -273,7 +274,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: ACC_PUBLIC,
             is_synthetic: true,
             generic_signature: None,
@@ -293,6 +295,7 @@ mod tests {
             internal_name: Arc::from(format!("{}/{}", pkg, name).as_str()),
             super_name: super_name.map(Arc::from),
             interfaces: vec![],
+            annotations: vec![],
             methods,
             fields: vec![],
             access_flags: ACC_PUBLIC,
@@ -471,7 +474,8 @@ mod tests {
         let source_member = CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from("doWork"),
             descriptor: Arc::from("()V"),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: ACC_PUBLIC,
             is_synthetic: false,
             generic_signature: None,
@@ -813,6 +817,7 @@ mod tests {
                 package: Some(Arc::from("java/lang")),
                 name: Arc::from("Object"),
                 internal_name: Arc::from("java/lang/Object"),
+                annotations: vec![],
                 super_name: None,
                 interfaces: vec![],
                 methods: vec![
@@ -861,6 +866,7 @@ mod tests {
                 package: Some(Arc::from("java/lang")),
                 name: Arc::from("Object"),
                 internal_name: Arc::from("java/lang/Object"),
+                annotations: vec![],
                 super_name: None,
                 interfaces: vec![],
                 methods: vec![method("toString", "()Ljava/lang/String;", ACC_PUBLIC)],
@@ -894,6 +900,7 @@ mod tests {
             package: Some(Arc::from(pkg)),
             name: Arc::from(name),
             internal_name: Arc::from(format!("{}/{}", pkg, name).as_str()),
+            annotations: vec![],
             super_name: None,
             interfaces: vec![],
             methods,
@@ -911,7 +918,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            annotations: vec![],
+            params: MethodParams::empty(),
             access_flags: ACC_PUBLIC | ACC_ABSTRACT,
             is_synthetic: false,
             generic_signature: None,
@@ -923,7 +931,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: ACC_PUBLIC, // default method: public, non-abstract, non-static
             is_synthetic: false,
             generic_signature: None,

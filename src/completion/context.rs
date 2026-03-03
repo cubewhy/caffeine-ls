@@ -99,6 +99,10 @@ pub enum CursorLocation {
     /// Annotations, e.g @Override
     Annotation {
         prefix: String,
+        /// ElementType constant name: "TYPE", "METHOD", "FIELD", "PARAMETER",
+        /// "CONSTRUCTOR", "LOCAL_VARIABLE", "RECORD_COMPONENT", "MODULE", etc.
+        /// None = position unknown, show everything.
+        target_element_type: Option<Arc<str>>,
     },
     /// Variable name position: `String |name|` — suggest variable names based on type
     VariableName {

@@ -224,7 +224,7 @@ mod tests {
     use super::*;
     use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
     use crate::completion::type_resolver::parse_return_type_from_descriptor;
-    use crate::index::{GlobalIndex, MethodSummary};
+    use crate::index::{GlobalIndex, MethodParams, MethodSummary};
     use std::sync::Arc;
 
     fn ctx_full(
@@ -267,7 +267,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic,
             generic_signature: None,

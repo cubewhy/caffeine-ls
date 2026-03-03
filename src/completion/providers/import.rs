@@ -52,6 +52,7 @@ mod tests {
             internal_name: Arc::from(format!("{}/{}", pkg, name).as_str()),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![],
             fields: vec![],
             access_flags: ACC_PUBLIC,

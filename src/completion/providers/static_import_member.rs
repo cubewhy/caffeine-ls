@@ -207,7 +207,9 @@ fn specific_static_member(
 mod tests {
     use super::*;
     use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::index::{ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodSummary};
+    use crate::index::{
+        ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
+    };
     use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
@@ -219,11 +221,13 @@ mod tests {
             internal_name: Arc::from("java/lang/Math"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![
                 MethodSummary {
                     name: Arc::from("abs"),
                     descriptor: Arc::from("(I)I"),
-                    param_names: vec![],
+                    params: MethodParams::empty(),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC | ACC_STATIC,
                     is_synthetic: false,
                     generic_signature: None,
@@ -232,7 +236,8 @@ mod tests {
                 MethodSummary {
                     name: Arc::from("pow"),
                     descriptor: Arc::from("(DD)D"),
-                    param_names: vec![],
+                    params: MethodParams::empty(),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC | ACC_STATIC,
                     is_synthetic: false,
                     generic_signature: None,
@@ -242,6 +247,7 @@ mod tests {
             fields: vec![FieldSummary {
                 name: Arc::from("PI"),
                 descriptor: Arc::from("D"),
+                annotations: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 is_synthetic: false,
                 generic_signature: None,

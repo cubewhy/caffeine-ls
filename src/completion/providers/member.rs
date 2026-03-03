@@ -712,13 +712,16 @@ mod tests {
         providers::{CompletionProvider, member::MemberProvider},
         type_resolver::parse_return_type_from_descriptor,
     };
-    use crate::index::{ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodSummary};
+    use crate::index::{
+        ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
+    };
 
     fn make_method(name: &str, descriptor: &str, flags: u16, is_synthetic: bool) -> MethodSummary {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic,
             generic_signature: None,
@@ -730,6 +733,7 @@ mod tests {
         FieldSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic,
             generic_signature: None,
@@ -762,6 +766,7 @@ mod tests {
             internal_name: Arc::from("com/example/Foo"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods,
             fields,
             access_flags: ACC_PUBLIC,
@@ -851,6 +856,7 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/a/Main"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![
                 make_method("pri", "()V", ACC_PRIVATE | ACC_STATIC, false),
                 make_method("func", "()V", ACC_PUBLIC, false),
@@ -894,6 +900,7 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/a/Main"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![
                 make_method("main", "()V", ACC_PUBLIC | ACC_STATIC, false),
                 make_method("notStartsWithma", "()V", ACC_PUBLIC | ACC_STATIC, false),
@@ -960,6 +967,7 @@ mod tests {
                 internal_name: Arc::from("Main"),
                 super_name: None,
                 interfaces: vec![],
+                annotations: vec![],
                 methods: vec![make_method("getMain2", "()LMain2;", ACC_PUBLIC, false)],
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
@@ -973,6 +981,7 @@ mod tests {
                 internal_name: Arc::from("Main2"),
                 super_name: None,
                 interfaces: vec![],
+                annotations: vec![],
                 methods: vec![make_method("func", "()V", ACC_PUBLIC, false)],
                 fields: vec![],
                 access_flags: ACC_PUBLIC,

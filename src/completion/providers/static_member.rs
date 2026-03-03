@@ -254,7 +254,9 @@ mod tests {
     use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
     use crate::completion::providers::CompletionProvider;
     use crate::completion::type_resolver::parse_return_type_from_descriptor;
-    use crate::index::{ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodSummary};
+    use crate::index::{
+        ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
+    };
     use crate::language::{JavaLanguage, Language};
     use std::sync::Arc;
 
@@ -268,7 +270,8 @@ mod tests {
         MethodSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic,
             generic_signature: None,
@@ -280,6 +283,7 @@ mod tests {
         FieldSummary {
             name: Arc::from(name),
             descriptor: Arc::from(descriptor),
+            annotations: vec![],
             access_flags: flags,
             is_synthetic,
             generic_signature: None,
@@ -294,10 +298,12 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/Main"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![MethodSummary {
                 name: Arc::from("func"),
                 descriptor: Arc::from("()V"),
-                param_names: vec![],
+                annotations: vec![],
+                params: MethodParams::empty(),
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 is_synthetic: false,
                 generic_signature: None,
@@ -370,10 +376,12 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/a/Main"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![MethodSummary {
                 name: Arc::from("main"),
                 descriptor: Arc::from("()V"),
-                param_names: vec![],
+                params: MethodParams::empty(),
+                annotations: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 is_synthetic: false,
                 generic_signature: None,
@@ -383,6 +391,7 @@ mod tests {
                 FieldSummary {
                     name: Arc::from("randomField"),
                     descriptor: Arc::from("Lorg/cubewhy/Inst;"),
+                    annotations: vec![],
                     access_flags: ACC_PRIVATE | ACC_STATIC,
                     is_synthetic: false,
                     generic_signature: None,
@@ -391,6 +400,7 @@ mod tests {
                     name: Arc::from("publicField"),
                     descriptor: Arc::from("I"),
                     access_flags: ACC_PUBLIC | ACC_STATIC,
+                    annotations: vec![],
                     is_synthetic: false,
                     generic_signature: None,
                 },
@@ -450,18 +460,21 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/a/Main"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![],
             fields: vec![
                 FieldSummary {
                     name: Arc::from("staticF"),
                     descriptor: Arc::from("I"),
                     access_flags: ACC_PUBLIC | ACC_STATIC,
+                    annotations: vec![],
                     is_synthetic: false,
                     generic_signature: None,
                 },
                 FieldSummary {
                     name: Arc::from("instanceF"),
                     descriptor: Arc::from("I"),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC, // NOT static
                     is_synthetic: false,
                     generic_signature: None,
@@ -573,10 +586,12 @@ mod tests {
             internal_name: Arc::from("org/cubewhy/a/Other"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![],
             fields: vec![FieldSummary {
                 name: Arc::from("secret"),
                 descriptor: Arc::from("I"),
+                annotations: vec![],
                 access_flags: ACC_PRIVATE | ACC_STATIC,
                 is_synthetic: false,
                 generic_signature: None,
@@ -727,10 +742,12 @@ mod tests {
             internal_name: Arc::from("myClass"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![],
             fields: vec![FieldSummary {
                 name: Arc::from("FIELD"),
                 descriptor: Arc::from("I"),
+                annotations: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 is_synthetic: false,
                 generic_signature: None,

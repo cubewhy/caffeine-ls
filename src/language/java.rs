@@ -1,6 +1,7 @@
 use super::Language;
 use crate::completion::{CompletionContext, context::CursorLocation};
 use crate::language::ClassifiedToken;
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::ts_utils::find_method_by_offset;
 use ropey::Rope;
@@ -8,11 +9,13 @@ use smallvec::smallvec;
 use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
 use tree_sitter::{Node, Parser};
 
+pub mod class_parser;
 pub mod injection;
 pub mod locals;
 pub mod location;
 pub mod members;
 pub mod scope;
+pub mod type_ctx;
 pub mod utils;
 
 const SENTINEL: &str = "__KIRO__";
@@ -283,7 +286,7 @@ impl JavaContextExtractor {
         let enclosing_internal_name =
             utils::build_internal_name(&enclosing_package, &enclosing_class);
         let existing_imports = scope::extract_imports(&self, root);
-        let type_ctx = crate::index::source::SourceTypeCtx::new(
+        let type_ctx = SourceTypeCtx::new(
             enclosing_package.clone(),
             existing_imports.clone(),
             None, // completion path 没有 index 快照，None 触发 hardcode java.lang fallback
@@ -1507,7 +1510,7 @@ mod tests {
             .collect();
         insta::assert_snapshot!("error_children", children_info.join("\n"));
 
-        let type_ctx = crate::index::source::SourceTypeCtx::new(None, vec![], None);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
 
         // Snapshot what parse_partial_methods_from_error returns
         let snapshot: Vec<CurrentClassMember> = vec![];

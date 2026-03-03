@@ -2,8 +2,8 @@ use dashmap::{DashMap, DashSet};
 use nucleo::Nucleo;
 use nucleo::pattern::{CaseMatching, Normalization};
 use rayon::prelude::*;
-use rust_asm::class_reader::AttributeInfo;
 use rust_asm::class_reader::ClassReader;
+use rust_asm::class_reader::{AttributeInfo, ElementValue};
 use rust_asm::constant_pool::CpInfo;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::io::Read;
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::completion::type_resolver::{SymbolProvider, parse_return_type_from_descriptor};
+use crate::jvm::descriptor::consume_one_descriptor_type;
 
 pub mod cache;
 pub mod codebase;
@@ -27,6 +28,8 @@ pub struct ClassMetadata {
     pub internal_name: Arc<str>,
     pub super_name: Option<Arc<str>>,
     pub interfaces: Vec<Arc<str>>,
+    /// Class-level annotations
+    pub annotations: Vec<AnnotationSummary>,
     pub methods: Vec<MethodSummary>,
     pub fields: Vec<FieldSummary>,
     pub access_flags: u16,
@@ -36,6 +39,9 @@ pub struct ClassMetadata {
 }
 
 impl ClassMetadata {
+    const TARGET_INTERNAL: &'static str = "java/lang/annotation/Target";
+    const RETENTION_INTERNAL: &'static str = "java/lang/annotation/Retention";
+
     /// Get the fully qualified name of the source code that conforms to Java syntax
     pub fn source_name(&self) -> String {
         let mut out = String::new();
@@ -51,6 +57,79 @@ impl ClassMetadata {
         }
         out
     }
+
+    /// Returns None if no @Target (applicable everywhere).
+    /// Returns Some([]) if @Target(value={}) which is practically unusable.
+    pub fn annotation_targets(&self) -> Option<Vec<Arc<str>>> {
+        let target_ann = self
+            .annotations
+            .iter()
+            .find(|a| a.internal_name.as_ref() == Self::TARGET_INTERNAL)?;
+
+        let value = target_ann.elements.get("value")?;
+
+        let names = match value {
+            AnnotationValue::Enum { const_name, .. } => {
+                vec![Arc::clone(const_name)]
+            }
+            AnnotationValue::Array(items) => items
+                .iter()
+                .filter_map(|item| {
+                    if let AnnotationValue::Enum { const_name, .. } = item {
+                        Some(Arc::clone(const_name))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => return None,
+        };
+
+        Some(names)
+    }
+
+    /// "SOURCE", "CLASS", or "RUNTIME". None if no @Retention (defaults to CLASS per JLS).
+    pub fn annotation_retention(&self) -> Option<&str> {
+        let ann = self
+            .annotations
+            .iter()
+            .find(|a| a.internal_name.as_ref() == Self::RETENTION_INTERNAL)?;
+
+        match ann.elements.get("value")? {
+            AnnotationValue::Enum { const_name, .. } => Some(const_name.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AnnotationSummary {
+    /// JVM internal name, e.g. "java/lang/Deprecated"
+    pub internal_name: Arc<str>,
+    /// true = RuntimeVisible*, false = RuntimeInvisible*
+    pub runtime_visible: bool,
+    pub elements: FxHashMap<Arc<str>, AnnotationValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AnnotationValue {
+    Byte(i8),
+    Char(u16),
+    Double(f64),
+    Float(f32),
+    Int(i32),
+    Long(i64),
+    Short(i16),
+    Boolean(bool),
+    String(Arc<str>),
+    Enum {
+        type_name: Arc<str>,
+        const_name: Arc<str>,
+    },
+    Class(Arc<str>),
+    Nested(Box<AnnotationSummary>),
+    Array(Vec<AnnotationValue>),
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -64,11 +143,99 @@ pub enum ClassOrigin {
     Unknown,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct MethodParams {
+    pub items: Vec<MethodParam>,
+}
+
+impl MethodParams {
+    pub fn empty() -> Self {
+        Self { items: vec![] }
+    }
+
+    /// 仅由 method descriptor 构建参数列表（name 默认空）
+    pub fn from_method_descriptor(method_desc: &str) -> Self {
+        let inner = match method_desc.find('(').zip(method_desc.find(')')) {
+            Some((l, r)) => &method_desc[l + 1..r],
+            None => return Self::empty(),
+        };
+
+        let mut items = Vec::new();
+        let mut s = inner;
+        while !s.is_empty() {
+            let (ty, rest) = consume_one_descriptor_type(s);
+            if ty.is_empty() {
+                break;
+            }
+            items.push(MethodParam {
+                descriptor: Arc::from(ty),
+                name: Arc::from(""),
+                annotations: Vec::new(),
+            });
+            s = rest;
+        }
+
+        MethodParams { items }
+    }
+
+    /// 由 method descriptor + 参数名构建（名字不够会补空）
+    pub fn from_descriptor_and_names(method_desc: &str, names: &[Arc<str>]) -> Self {
+        let mut out = Self::from_method_descriptor(method_desc);
+        for (i, p) in out.items.iter_mut().enumerate() {
+            if let Some(n) = names.get(i) {
+                p.name = n.clone();
+            }
+        }
+        out
+    }
+
+    pub fn param_names(&self) -> Vec<Arc<str>> {
+        self.items.iter().map(|i| i.name.clone()).collect()
+    }
+
+    pub fn expand(&mut self, other: &MethodParams) {
+        if self.items.len() != other.items.len() {
+            return;
+        }
+        for (a, b) in self.items.iter_mut().zip(other.items.iter()) {
+            if a.descriptor == b.descriptor && !b.name.is_empty() {
+                a.name = b.name.clone();
+                a.annotations = b.annotations.clone();
+            }
+        }
+    }
+}
+
+impl<const N: usize> From<[(&str, &str); N]> for MethodParams {
+    fn from(items: [(&str, &str); N]) -> Self {
+        MethodParams {
+            items: items
+                .into_iter()
+                .map(|(desc, name)| MethodParam {
+                    descriptor: Arc::from(desc),
+                    name: Arc::from(name),
+                    annotations: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MethodParam {
+    pub descriptor: Arc<str>,
+    pub name: Arc<str>,
+    pub annotations: Vec<AnnotationSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MethodSummary {
     pub name: Arc<str>,
+    #[deprecated]
     pub descriptor: Arc<str>,
-    pub param_names: Vec<Arc<str>>,
+    pub params: MethodParams,
+    /// Method-level annotations
+    pub annotations: Vec<AnnotationSummary>,
     pub access_flags: u16,
     pub is_synthetic: bool,
     pub generic_signature: Option<Arc<str>>,
@@ -80,8 +247,234 @@ pub struct FieldSummary {
     pub name: Arc<str>,
     pub descriptor: Arc<str>,
     pub access_flags: u16,
+    /// Field-level annotations
+    pub annotations: Vec<AnnotationSummary>,
     pub is_synthetic: bool,
     pub generic_signature: Option<Arc<str>>,
+}
+
+fn collect_decl_annotations(attrs: &[AttributeInfo], cp: &[CpInfo]) -> Vec<AnnotationSummary> {
+    let mut out = Vec::new();
+    for a in attrs {
+        match a {
+            AttributeInfo::RuntimeVisibleAnnotations { annotations } => {
+                for ann in annotations {
+                    if let Some(s) = parse_annotation(ann, cp, true) {
+                        out.push(s);
+                    }
+                }
+            }
+            AttributeInfo::RuntimeInvisibleAnnotations { annotations } => {
+                for ann in annotations {
+                    if let Some(s) = parse_annotation(ann, cp, false) {
+                        out.push(s);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn parse_annotation(
+    ann: &rust_asm::class_reader::Annotation,
+    cp: &[CpInfo],
+    visible: bool,
+) -> Option<AnnotationSummary> {
+    let internal_name =
+        cp_utf8_desc_to_internal(cp, ann.type_descriptor_index).map(|s| intern_str(&s))?;
+
+    let mut elements: FxHashMap<Arc<str>, AnnotationValue> = FxHashMap::default();
+    for pair in &ann.element_value_pairs {
+        let key = match cp.get(pair.element_name_index as usize) {
+            Some(CpInfo::Utf8(s)) => Arc::from(s.as_str()),
+            _ => continue,
+        };
+        let value = parse_element_value(&pair.value, cp);
+        elements.insert(key, value);
+    }
+
+    Some(AnnotationSummary {
+        internal_name,
+        runtime_visible: visible,
+        elements,
+    })
+}
+
+fn parse_element_value(
+    ev: &rust_asm::class_reader::ElementValue,
+    cp: &[CpInfo],
+) -> AnnotationValue {
+    match ev {
+        ElementValue::ConstValueIndex {
+            tag,
+            const_value_index,
+        } => parse_const_value(*tag, *const_value_index, cp),
+        ElementValue::EnumConstValue {
+            type_name_index,
+            const_name_index,
+        } => {
+            let type_name = cp_utf8(cp, *type_name_index).unwrap_or("?");
+            let const_name = cp_utf8(cp, *const_name_index).unwrap_or("?");
+            AnnotationValue::Enum {
+                type_name: Arc::from(type_name),
+                const_name: Arc::from(const_name),
+            }
+        }
+        ElementValue::ClassInfoIndex { class_info_index } => {
+            let s = cp_utf8(cp, *class_info_index).unwrap_or("?");
+            AnnotationValue::Class(Arc::from(s))
+        }
+        ElementValue::AnnotationValue(inner) => match parse_annotation(inner, cp, true) {
+            Some(s) => AnnotationValue::Nested(Box::new(s)),
+            None => AnnotationValue::Unknown,
+        },
+        ElementValue::ArrayValue(items) => {
+            AnnotationValue::Array(items.iter().map(|i| parse_element_value(i, cp)).collect())
+        }
+    }
+}
+
+fn parse_const_value(tag: u8, idx: u16, cp: &[CpInfo]) -> AnnotationValue {
+    match tag {
+        b'B' => cp_int(cp, idx)
+            .map(|v| AnnotationValue::Byte(v as i8))
+            .unwrap_or(AnnotationValue::Unknown),
+        b'C' => cp_int(cp, idx)
+            .map(|v| AnnotationValue::Char(v as u16))
+            .unwrap_or(AnnotationValue::Unknown),
+        b'D' => cp_double(cp, idx)
+            .map(AnnotationValue::Double)
+            .unwrap_or(AnnotationValue::Unknown),
+        b'F' => cp_float(cp, idx)
+            .map(AnnotationValue::Float)
+            .unwrap_or(AnnotationValue::Unknown),
+        b'I' => cp_int(cp, idx)
+            .map(AnnotationValue::Int)
+            .unwrap_or(AnnotationValue::Unknown),
+        b'J' => cp_long(cp, idx)
+            .map(AnnotationValue::Long)
+            .unwrap_or(AnnotationValue::Unknown),
+        b'S' => cp_int(cp, idx)
+            .map(|v| AnnotationValue::Short(v as i16))
+            .unwrap_or(AnnotationValue::Unknown),
+        b'Z' => cp_int(cp, idx)
+            .map(|v| AnnotationValue::Boolean(v != 0))
+            .unwrap_or(AnnotationValue::Unknown),
+        b's' => cp_utf8(cp, idx)
+            .map(|s| AnnotationValue::String(Arc::from(s)))
+            .unwrap_or(AnnotationValue::Unknown),
+        _ => AnnotationValue::Unknown,
+    }
+}
+
+fn cp_utf8(cp: &[CpInfo], idx: u16) -> Option<&str> {
+    match cp.get(idx as usize)? {
+        CpInfo::Utf8(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn cp_int(cp: &[CpInfo], idx: u16) -> Option<i32> {
+    match cp.get(idx as usize)? {
+        CpInfo::Integer(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn cp_long(cp: &[CpInfo], idx: u16) -> Option<i64> {
+    match cp.get(idx as usize)? {
+        CpInfo::Long(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn cp_float(cp: &[CpInfo], idx: u16) -> Option<f32> {
+    match cp.get(idx as usize)? {
+        CpInfo::Float(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn cp_double(cp: &[CpInfo], idx: u16) -> Option<f64> {
+    match cp.get(idx as usize)? {
+        CpInfo::Double(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn cp_utf8_desc_to_internal(cp: &[CpInfo], idx: u16) -> Option<String> {
+    let s = match cp.get(idx as usize)? {
+        CpInfo::Utf8(u) => u.as_str(),
+        _ => return None,
+    };
+    // Expect "Lpkg/Name;" or "[L..;"
+    let s = s.trim();
+    let s = s.strip_prefix('L')?.strip_suffix(';')?;
+    Some(s.to_string())
+}
+
+fn build_method_params_from_attrs(
+    descriptor: &str,
+    attrs: &[AttributeInfo],
+    cp: &[CpInfo],
+) -> MethodParams {
+    let mut params = MethodParams::from_method_descriptor(descriptor);
+    let param_count = params.items.len();
+    let mut names: Vec<Arc<str>> = vec![Arc::from(""); param_count];
+
+    // MethodParameters names
+    if let Some(AttributeInfo::MethodParameters { parameters }) = attrs
+        .iter()
+        .find(|a| matches!(a, AttributeInfo::MethodParameters { .. }))
+    {
+        for (i, p) in parameters.iter().enumerate().take(param_count) {
+            if p.name_index != 0
+                && let Some(CpInfo::Utf8(s)) = cp.get(p.name_index as usize)
+            {
+                names[i] = Arc::from(s.as_str());
+            }
+        }
+    }
+
+    // Parameter annotations
+    let mut annos: Vec<Vec<AnnotationSummary>> = vec![Vec::new(); param_count];
+    for a in attrs {
+        match a {
+            AttributeInfo::RuntimeVisibleParameterAnnotations { parameters } => {
+                merge_param_annos(&mut annos, parameters, cp, true);
+            }
+            AttributeInfo::RuntimeInvisibleParameterAnnotations { parameters } => {
+                merge_param_annos(&mut annos, parameters, cp, false);
+            }
+            _ => {}
+        }
+    }
+
+    for (i, p) in params.items.iter_mut().enumerate() {
+        p.annotations = annos.get(i).cloned().unwrap_or_default();
+    }
+
+    params
+}
+
+fn merge_param_annos(
+    out: &mut [Vec<AnnotationSummary>],
+    parameters: &rust_asm::class_reader::ParameterAnnotations,
+    cp: &[CpInfo],
+    visible: bool,
+) {
+    for (i, anns) in parameters.parameters.iter().enumerate() {
+        if i >= out.len() {
+            break;
+        }
+        for ann in anns {
+            if let Some(s) = parse_annotation(ann, cp, visible) {
+                out[i].push(s);
+            }
+        }
+    }
 }
 
 pub fn index_jar<P: AsRef<Path>>(path: P) -> anyhow::Result<Vec<ClassMetadata>> {
@@ -196,41 +589,15 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
                     None
                 }
             });
-            let param_names: Vec<Arc<str>> = md
-                .attributes
-                .iter()
-                .find_map(|a| {
-                    if let AttributeInfo::MethodParameters { parameters } = a {
-                        let names: Vec<Arc<str>> = parameters
-                            .iter()
-                            .map(|p| {
-                                if p.name_index == 0 {
-                                    return Arc::from("");
-                                }
-                                cn.constant_pool
-                                    .get(p.name_index as usize)
-                                    .and_then(|cp| {
-                                        if let CpInfo::Utf8(s) = cp {
-                                            Some(Arc::from(s.as_str()))
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .unwrap_or_else(|| Arc::from(""))
-                            })
-                            .collect();
-                        Some(names)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
             let return_type = parse_return_type_from_descriptor(&md.descriptor);
+            let params =
+                build_method_params_from_attrs(&md.descriptor, &md.attributes, &cn.constant_pool);
             MethodSummary {
                 name: Arc::from(md.name.as_str()),
                 descriptor: Arc::from(md.descriptor.as_str()),
                 access_flags: md.access_flags,
-                param_names,
+                params,
+                annotations: collect_decl_annotations(&md.attributes, &cn.constant_pool),
                 is_synthetic,
                 generic_signature,
                 return_type,
@@ -266,6 +633,7 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
                 name: Arc::from(fd.name.as_str()),
                 descriptor: Arc::from(fd.descriptor.as_str()),
                 access_flags: fd.access_flags,
+                annotations: collect_decl_annotations(&fd.attributes, &cn.constant_pool),
                 is_synthetic,
                 generic_signature,
             }
@@ -291,6 +659,7 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
             .iter()
             .map(|name| intern_str(name.as_str()))
             .collect(),
+        annotations: collect_decl_annotations(&cn.attributes, &cn.constant_pool),
         methods,
         fields,
         access_flags: cn.access_flags,
@@ -313,8 +682,9 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
             b_class.origin = s_class.origin; // 提升来源标识为源码(方便跳转)
 
             for b_method in b_class.methods.iter_mut() {
-                let b_param_count =
-                    crate::completion::type_resolver::count_params(&b_method.descriptor);
+                let b_param_count = MethodParams::from_method_descriptor(&b_method.descriptor)
+                    .items
+                    .len();
 
                 // 找同名、同参数数量的候选
                 let candidates: Vec<&MethodSummary> = s_class
@@ -322,13 +692,15 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
                     .iter()
                     .filter(|m| {
                         m.name == b_method.name
-                            && crate::completion::type_resolver::count_params(&m.descriptor)
+                            && MethodParams::from_method_descriptor(&m.descriptor)
+                                .items
+                                .len()
                                 == b_param_count
                     })
                     .collect();
 
                 if candidates.len() == 1 {
-                    b_method.param_names = candidates[0].param_names.clone();
+                    b_method.params.expand(&candidates[0].params);
                 } else if candidates.len() > 1 {
                     // 发生重载冲突时，使用参数的简单名称进行模糊匹配对齐 (例如 String 匹配 java/lang/String)
                     let b_simple = extract_simple_types(&b_method.descriptor);
@@ -336,9 +708,9 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
                         .iter()
                         .find(|m| extract_simple_types(&m.descriptor) == b_simple)
                     {
-                        b_method.param_names = best.param_names.clone();
+                        b_method.params.expand(&best.params);
                     } else {
-                        b_method.param_names = candidates[0].param_names.clone(); // 保底
+                        b_method.params.expand(&candidates[0].params); // 保底
                     }
                 }
             }
@@ -354,7 +726,7 @@ fn extract_simple_types(desc: &str) -> Vec<String> {
     let mut types = vec![];
     let mut s = inner;
     while !s.is_empty() {
-        let (ty, rest) = crate::completion::type_resolver::consume_one_descriptor_type(s);
+        let (ty, rest) = consume_one_descriptor_type(s);
         if ty.is_empty() {
             break;
         }
@@ -379,7 +751,7 @@ fn extract_simple_types(desc: &str) -> Vec<String> {
     types
 }
 
-fn intern_str(s: &str) -> Arc<str> {
+pub(crate) fn intern_str(s: &str) -> Arc<str> {
     static POOL: OnceLock<DashSet<Arc<str>>> = OnceLock::new();
     let pool = POOL.get_or_init(DashSet::new);
 
@@ -876,6 +1248,7 @@ mod tests {
             internal_name: Arc::from(internal.as_str()),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![],
             fields: vec![],
             access_flags: ACC_PUBLIC,
@@ -891,7 +1264,8 @@ mod tests {
             descriptor: Arc::from(descriptor),
             access_flags: ACC_PUBLIC,
             is_synthetic: false,
-            param_names: vec![],
+            params: MethodParams::empty(),
+            annotations: vec![],
             generic_signature: None,
             return_type: parse_return_type_from_descriptor(descriptor),
         }
@@ -1441,7 +1815,8 @@ public class Calc {
             .iter()
             .find(|m| m.name.as_ref() == "add")
             .unwrap();
-        assert_eq!(method.param_names, vec![Arc::from("a"), Arc::from("b")]);
+        assert_eq!(method.params.items[0].name.as_ref(), "a");
+        assert_eq!(method.params.items[1].name.as_ref(), "b");
     }
 
     #[test]

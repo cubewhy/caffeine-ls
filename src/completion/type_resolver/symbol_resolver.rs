@@ -335,7 +335,7 @@ fn split_args(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodSummary};
+    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
     use rust_asm::constants::ACC_PUBLIC;
 
     #[test]
@@ -347,11 +347,13 @@ mod tests {
             internal_name: Arc::from("java/io/PrintStream"),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods: vec![
                 MethodSummary {
                     name: Arc::from("println"),
                     descriptor: Arc::from("()V"),
-                    param_names: vec![],
+                    params: MethodParams::empty(),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC,
                     is_synthetic: false,
                     generic_signature: None,
@@ -360,7 +362,8 @@ mod tests {
                 MethodSummary {
                     name: Arc::from("println"),
                     descriptor: Arc::from("(I)V"), // int overload
-                    param_names: vec![Arc::from("x")],
+                    params: MethodParams::from([("I", "x")]),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC,
                     is_synthetic: false,
                     generic_signature: None,
@@ -369,7 +372,8 @@ mod tests {
                 MethodSummary {
                     name: Arc::from("println"),
                     descriptor: Arc::from("(Ljava/lang/String;)V"), // String overload
-                    param_names: vec![Arc::from("x")],
+                    params: MethodParams::from([("Ljava/lang/String;", "x")]),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC,
                     is_synthetic: false,
                     generic_signature: None,

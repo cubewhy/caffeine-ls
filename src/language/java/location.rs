@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::language::java::utils::{
     find_ancestor, find_string_ancestor, is_comment_kind, is_in_name_position, is_in_type_position,
 };
@@ -49,6 +51,7 @@ fn determine_location_impl(
                 return (
                     CursorLocation::Annotation {
                         prefix: prefix.clone(),
+                        target_element_type: infer_annotation_target(current),
                     },
                     prefix,
                 );
@@ -69,6 +72,34 @@ fn determine_location_impl(
         }
     }
     (CursorLocation::Unknown, String::new())
+}
+
+fn infer_annotation_target(node: Node) -> Option<Arc<str>> {
+    let mut cur = node.parent();
+    while let Some(n) = cur {
+        let et = match n.kind() {
+            "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "annotation_type_declaration" => "TYPE",
+            "record_declaration" => "TYPE",
+            // record_component = record header 里的参数
+            "formal_parameter" if n.parent().map(|p| p.kind()) == Some("record_declaration") => {
+                "RECORD_COMPONENT"
+            }
+            "method_declaration" => "METHOD",
+            "field_declaration" => "FIELD",
+            "formal_parameter" => "PARAMETER",
+            "constructor_declaration" => "CONSTRUCTOR",
+            "local_variable_declaration" => "LOCAL_VARIABLE",
+            _ => {
+                cur = n.parent();
+                continue;
+            }
+        };
+        return Some(Arc::from(et));
+    }
+    None
 }
 
 fn extract_string_prefix(ctx: &JavaContextExtractor, str_node: Node) -> String {
@@ -324,6 +355,19 @@ fn handle_identifier(
             None => break,
         };
         match ancestor.kind() {
+            "marker_annotation" | "annotation" => {
+                let name_node = ancestor.child_by_field_name("name");
+                let prefix = name_node
+                    .map(|n| cursor_truncated_text(ctx, n))
+                    .unwrap_or_default();
+                return (
+                    CursorLocation::Annotation {
+                        prefix: prefix.clone(),
+                        target_element_type: infer_annotation_target(ancestor),
+                    },
+                    prefix,
+                );
+            }
             "field_access" | "method_invocation" => {
                 return handle_member_access(ctx, ancestor);
             }
@@ -496,7 +540,7 @@ fn location_has_newline(loc: &CursorLocation) -> bool {
         CursorLocation::Expression { prefix } => prefix.contains('\n'),
         CursorLocation::MethodArgument { prefix } => prefix.contains('\n'),
         CursorLocation::TypeAnnotation { prefix } => prefix.contains('\n'),
-        CursorLocation::Annotation { prefix } => prefix.contains('\n'),
+        CursorLocation::Annotation { prefix, .. } => prefix.contains('\n'),
         CursorLocation::Import { prefix } => prefix.contains('\n'),
         CursorLocation::StringLiteral { prefix } => prefix.contains('\n'),
         _ => false,
@@ -819,5 +863,48 @@ class A {
             loc
         );
         assert_eq!(query, "not parsed");
+    }
+
+    #[test]
+    fn test_annotation_partial_name_is_annotation_not_expression() {
+        let src = indoc::indoc! {r#"
+class A {
+    @SuppressW
+    void f() {}
+}
+"#};
+        let offset = src.find("SuppressW").unwrap() + "SuppressW".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::Annotation { .. }),
+            "Expected Annotation, got {:?}",
+            loc
+        );
+        assert_eq!(query, "SuppressW");
+    }
+
+    #[test]
+    fn test_annotation_partial_name_target_method() {
+        let src = indoc::indoc! {r#"
+class A {
+    @Overri
+    void f() {}
+}
+"#};
+        let offset = src.find("Overri").unwrap() + "Overri".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::Annotation { ref target_element_type, .. }
+                if target_element_type.as_deref() == Some("METHOD")
+            ),
+            "Expected Annotation with METHOD target, got {:?}",
+            loc
+        );
     }
 }

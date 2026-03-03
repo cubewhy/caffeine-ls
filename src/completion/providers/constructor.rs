@@ -210,7 +210,7 @@ mod tests {
     use super::*;
     use crate::completion::context::{CompletionContext, CursorLocation};
     use crate::completion::providers::CompletionProvider;
-    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodSummary};
+    use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
 
@@ -220,7 +220,8 @@ mod tests {
             vec![MethodSummary {
                 name: Arc::from("<init>"),
                 descriptor: Arc::from("()V"),
-                param_names: vec![],
+                params: MethodParams::empty(),
+                annotations: vec![],
                 access_flags: ACC_PUBLIC,
                 is_synthetic: false,
                 generic_signature: None,
@@ -239,6 +240,7 @@ mod tests {
             internal_name: Arc::from(format!("{}/{}", pkg, name).trim_start_matches('/')),
             super_name: None,
             interfaces: vec![],
+            annotations: vec![],
             methods,
             fields: vec![],
             access_flags: ACC_PUBLIC,
@@ -367,10 +369,12 @@ mod tests {
                 internal_name: Arc::from(format!("{}/{}", pkg, name)),
                 super_name: None,
                 interfaces: vec![],
+                annotations: vec![],
                 methods: vec![MethodSummary {
                     name: Arc::from("<init>"),
                     descriptor: Arc::from("()V"),
-                    param_names: vec![],
+                    params: MethodParams::empty(),
+                    annotations: vec![],
                     access_flags: ACC_PUBLIC,
                     is_synthetic: false,
                     generic_signature: None,
