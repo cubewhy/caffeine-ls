@@ -22,7 +22,8 @@ pub fn collect_java_symbols<'a>(root: Node<'a>, bytes: &'a [u8]) -> Vec<Document
                         "class_declaration"
                         | "interface_declaration"
                         | "enum_declaration"
-                        | "record_declaration" => {
+                        | "record_declaration"
+                        | "annotation_type_declaration" => {
                             if let Some((sym, body)) = start_type_symbol(child, bytes) {
                                 scopes.push(Vec::new());
 
@@ -36,6 +37,12 @@ pub fn collect_java_symbols<'a>(root: Node<'a>, bytes: &'a [u8]) -> Vec<Document
 
                         "method_declaration" | "constructor_declaration" => {
                             if let Some(sym) = parse_method_symbol(child, bytes) {
+                                scopes.last_mut().unwrap().push(sym);
+                            }
+                        }
+
+                        "enum_constant" | "enum_constant_declaration" => {
+                            if let Some(sym) = parse_enum_constant_symbol(child, bytes) {
                                 scopes.last_mut().unwrap().push(sym);
                             }
                         }
@@ -167,4 +174,28 @@ fn parse_field_symbols<'a>(node: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbo
     }
 
     results
+}
+
+fn parse_enum_constant_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSymbol> {
+    let name_node = node
+        .child_by_field_name("name")
+        .or_else(|| node.child_by_field_name("identifier"))
+        .or_else(|| {
+            let mut c = node.walk();
+            node.children(&mut c).find(|n| n.kind() == "identifier")
+        })?;
+
+    let name = name_node.utf8_text(bytes).ok()?.to_string();
+
+    #[allow(deprecated)]
+    Some(DocumentSymbol {
+        name,
+        detail: None,
+        kind: SymbolKind::ENUM_MEMBER,
+        tags: None,
+        deprecated: None,
+        range: ts_node_to_range(&node),
+        selection_range: ts_node_to_range(&name_node),
+        children: None,
+    })
 }
