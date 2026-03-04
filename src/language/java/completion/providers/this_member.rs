@@ -1,14 +1,16 @@
 use rust_asm::constants::ACC_STATIC;
 
-use crate::completion::{
-    candidate::{CandidateKind, CompletionCandidate},
-    fuzzy,
-    provider::CompletionProvider,
-    scorer,
-};
 use crate::index::GlobalIndex;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::semantic::types::ContextualResolver;
+use crate::{
+    completion::{
+        candidate::{CandidateKind, CompletionCandidate},
+        fuzzy,
+        provider::CompletionProvider,
+    },
+    language::java::render,
+};
 use std::sync::Arc;
 
 pub struct ThisMemberProvider;
@@ -83,7 +85,7 @@ impl CompletionProvider for ThisMemberProvider {
                 } else {
                     m.name().to_string()
                 };
-                let detail = scorer::source_member_detail(enclosing, m, &resolver);
+                let detail = render::source_member_detail(enclosing, m, &resolver);
 
                 CompletionCandidate::new(Arc::clone(&m.name()), insert_text, kind, self.name())
                     .with_detail(detail)
@@ -161,7 +163,7 @@ impl CompletionProvider for ThisMemberProvider {
                             kind,
                             self.name(),
                         )
-                        .with_detail(scorer::method_detail(
+                        .with_detail(render::method_detail(
                             class_meta.internal_name.as_ref(),
                             class_meta,
                             method,
@@ -209,7 +211,7 @@ impl CompletionProvider for ThisMemberProvider {
                             kind,
                             self.name(),
                         )
-                        .with_detail(scorer::field_detail(
+                        .with_detail(render::field_detail(
                             class_meta.internal_name.as_ref(),
                             class_meta,
                             field,

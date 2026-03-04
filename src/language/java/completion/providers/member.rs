@@ -1,8 +1,9 @@
 use rust_asm::constants::ACC_STATIC;
 
 use crate::completion::provider::CompletionProvider;
-use crate::completion::scorer::{self, AccessFilter};
+use crate::completion::scorer::AccessFilter;
 use crate::completion::{CandidateKind, CompletionCandidate};
+use crate::language::java::render;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{
     completion::fuzzy,
@@ -108,7 +109,7 @@ impl CompletionProvider for MemberProvider {
                             format!("{}(", method.name)
                         };
                         let detail = if i == 0 {
-                            scorer::method_detail(
+                            render::method_detail(
                                 ctx.enclosing_internal_name.as_deref().unwrap_or(""),
                                 class_meta,
                                 method,
@@ -164,7 +165,7 @@ impl CompletionProvider for MemberProvider {
                             }
                         };
                         let detail = if i == 0 {
-                            scorer::field_detail(
+                            render::field_detail(
                                 ctx.enclosing_internal_name.as_deref().unwrap_or(""),
                                 class_meta,
                                 field,
@@ -280,7 +281,7 @@ impl CompletionProvider for MemberProvider {
                         kind,
                         self.name(),
                     )
-                    .with_detail(scorer::method_detail(
+                    .with_detail(render::method_detail(
                         class_internal,
                         class_meta,
                         method,
@@ -318,7 +319,7 @@ impl CompletionProvider for MemberProvider {
                         kind,
                         self.name(),
                     )
-                    .with_detail(scorer::field_detail(
+                    .with_detail(render::field_detail(
                         class_internal,
                         class_meta,
                         field,

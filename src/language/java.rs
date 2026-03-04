@@ -28,6 +28,7 @@ pub mod injection;
 pub mod locals;
 pub mod location;
 pub mod members;
+pub mod render;
 pub mod scope;
 pub mod symbols;
 pub mod type_ctx;

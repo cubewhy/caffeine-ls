@@ -1,10 +1,9 @@
 use crate::{
     completion::{
-        CandidateKind, CompletionCandidate,
-        provider::CompletionProvider,
-        scorer::{self, AccessFilter},
+        CandidateKind, CompletionCandidate, provider::CompletionProvider, scorer::AccessFilter,
     },
     index::GlobalIndex,
+    language::java::render,
     semantic::{
         context::{CursorLocation, SemanticContext},
         types::ContextualResolver,
@@ -116,7 +115,7 @@ impl CompletionProvider for StaticMemberProvider {
                     },
                     self.name(),
                 )
-                .with_detail(scorer::method_detail(
+                .with_detail(render::method_detail(
                     class_name,
                     &class_meta,
                     method,
@@ -147,7 +146,7 @@ impl CompletionProvider for StaticMemberProvider {
                     },
                     self.name(),
                 )
-                .with_detail(scorer::field_detail(
+                .with_detail(render::field_detail(
                     class_name,
                     &class_meta,
                     field,

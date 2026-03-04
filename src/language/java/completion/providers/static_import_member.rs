@@ -2,8 +2,9 @@ use rust_asm::constants::ACC_STATIC;
 use std::sync::Arc;
 
 use crate::{
-    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider, scorer},
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
     index::{ClassMetadata, GlobalIndex},
+    language::java::render,
     semantic::{
         context::{CursorLocation, SemanticContext},
         types::ContextualResolver,
@@ -109,7 +110,7 @@ fn all_static_members(
                 },
                 source,
             )
-            .with_detail(scorer::method_detail(class_path, meta, method, &resolver))
+            .with_detail(render::method_detail(class_path, meta, method, &resolver))
             .with_score(75.0),
         );
     }
@@ -130,7 +131,7 @@ fn all_static_members(
                 },
                 source,
             )
-            .with_detail(scorer::field_detail(class_path, meta, field, &resolver))
+            .with_detail(render::field_detail(class_path, meta, field, &resolver))
             .with_score(75.0),
         );
     }
@@ -169,7 +170,7 @@ fn specific_static_member(
                 },
                 source,
             )
-            .with_detail(scorer::method_detail(class_path, meta, method, &resolver))
+            .with_detail(render::method_detail(class_path, meta, method, &resolver))
             .with_score(80.0),
         );
     }
@@ -191,7 +192,7 @@ fn specific_static_member(
                 },
                 source,
             )
-            .with_detail(scorer::field_detail(class_path, meta, field, &resolver))
+            .with_detail(render::field_detail(class_path, meta, field, &resolver))
             .with_score(80.0),
         );
     }

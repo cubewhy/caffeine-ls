@@ -44,11 +44,6 @@ impl Backend {
         }
     }
 
-    /// Language ID determination
-    fn is_supported(lang_id: &str) -> bool {
-        matches!(lang_id, "java" | "kotlin")
-    }
-
     /// Trigger background indexing (without blocking the response)
     fn spawn_index_workspace(&self, root: std::path::PathBuf) {
         let workspace = Arc::clone(&self.workspace);
@@ -158,14 +153,6 @@ fn find_jar_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
         .map(|rel| root.join(rel))
         .filter(|p| p.exists())
         .collect()
-}
-
-/// Infer Language ID from LSP URI
-pub(crate) fn language_id_from_uri(uri: &Url) -> &'static str {
-    match uri.path().rsplit('.').next() {
-        Some("kt") | Some("kts") => "kotlin",
-        _ => "java",
-    }
 }
 
 #[tower_lsp::async_trait]
