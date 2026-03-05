@@ -54,9 +54,14 @@ impl<'idx> TypeResolver<'idx> {
                 }
                 _ => {
                     if raw_ty.contains('.') {
-                        TypeName::new(raw_ty.replace('.', "/"))
+                        let internal = raw_ty.replace('.', "/");
+                        if self.view.get_class(&internal).is_some() {
+                            TypeName::new(internal)
+                        } else {
+                            return None;
+                        }
                     } else {
-                        TypeName::new(raw_ty) // will be expended later
+                        TypeName::new(raw_ty) // will be expanded later
                     }
                 }
             };

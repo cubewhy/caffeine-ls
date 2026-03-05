@@ -1,4 +1,4 @@
-use crate::index::{ClassMetadata, IndexView};
+use crate::index::ClassMetadata;
 use std::sync::Arc;
 
 /// Check if an FQN has been overridden by existing imports (exact match + wildcard + same package)
@@ -88,32 +88,6 @@ fn wildcard_covers(wildcard_import: &str, fqn: &str) -> bool {
     }
 }
 
-/// Resolve simple class names to internal names (FQN)
-/// Search order: imported -> same package -> globally unique
-pub fn resolve_simple_to_internal(
-    simple: &str,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
-    index: &IndexView,
-) -> Option<Arc<str>> {
-    // resolve from imported classes
-    let imported = index.resolve_imports(existing_imports);
-    if let Some(m) = imported.iter().find(|m| m.name.as_ref() == simple) {
-        return Some(Arc::clone(&m.internal_name));
-    }
-
-    // same package
-    if let Some(pkg) = enclosing_package {
-        let classes = index.classes_in_package(pkg);
-        if let Some(m) = classes.iter().find(|m| m.name.as_ref() == simple) {
-            return Some(Arc::clone(&m.internal_name));
-        }
-    }
-
-    // try java/lang
-    let candidates = index.get_class(&format!("java/lang/{simple}"));
-    candidates.map(|meta| meta.internal_name.clone())
-}
 
 /// Given a ClassMetadata, compute its point score FQN
 pub fn fqn_of_meta(meta: &ClassMetadata) -> String {

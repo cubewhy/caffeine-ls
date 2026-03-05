@@ -74,68 +74,260 @@ impl SourceTypeCtx {
     }
 
     /// Resolve a bare simple name to its JVM internal name.
-    /// Returns `simple` unchanged if unresolvable — never guesses.
+    /// Returns `simple` unchanged if unresolvable.
     pub fn resolve_simple(&self, simple: &str) -> String {
-        let result = self.resolve_simple_inner(simple);
-        if result.contains('/') && result != simple {
-            tracing::trace!(simple, resolved = %result, "type resolved");
-        } else if result == simple && !simple.contains('/') {
-            tracing::warn!(
-                simple,
-                has_table = self.name_table.is_some(),
-                "type UNRESOLVED — descriptor will be bare simple name"
-            );
+        match self.resolve_simple_strict(simple) {
+            Some(result) => {
+                tracing::trace!(simple, resolved = %result, "type resolved");
+                result
+            }
+            None => {
+                tracing::trace!(
+                    simple,
+                    has_table = self.name_table.is_some(),
+                    "type unresolved"
+                );
+                simple.to_string()
+            }
         }
-        result
     }
 
-    fn resolve_simple_inner(&self, simple: &str) -> String {
+    /// Resolve a bare simple name to its JVM internal name.
+    /// Returns None if resolution cannot be proven (no guessing).
+    pub fn resolve_simple_strict(&self, simple: &str) -> Option<String> {
+        self.resolve_simple_inner_strict(simple)
+    }
+
+    fn resolve_simple_inner_strict(&self, simple: &str) -> Option<String> {
         if simple.contains('/') {
-            return simple.to_string(); // already internal
+            return self
+                .name_table
+                .as_ref()
+                .filter(|nt| nt.exists(simple))
+                .map(|_| simple.to_string());
         }
+        let nt = self.name_table.as_ref()?;
         // Rule 1: Single-type-import — JLS §7.5.1
-        // The import text itself IS the full qualified name; no index lookup needed.
+        // The import text itself IS the full qualified name; must exist in NameTable.
+        let mut exact_candidates = Vec::new();
         for imp in &self.imports {
             let s = imp.as_ref();
             if !s.ends_with(".*") && (s == simple || s.ends_with(&format!(".{}", simple))) {
-                return s.replace('.', "/");
-            }
-        }
-        // Rule 2: java.lang.* — JLS §7.5.3 (always implicit)
-        let java_lang = format!("java/lang/{}", simple);
-        if let Some(nt) = &self.name_table
-            && nt.exists(&java_lang)
-        {
-            return java_lang;
-        }
-
-        // Rule 3: Same package — JLS §6.4.1; verify via index, never assume
-        if let Some(pkg) = &self.package {
-            let candidate = format!("{}/{}", pkg, simple);
-            if self
-                .name_table
-                .as_ref()
-                .is_some_and(|nt| nt.exists(&candidate))
-            {
-                return candidate;
-            }
-        }
-        // Rule 4: Type-import-on-demand (wildcard) — JLS §7.5.2; requires index
-        if let Some(nt) = &self.name_table {
-            for imp in &self.imports {
-                let s = imp.as_ref();
-                if s.ends_with(".*") {
-                    let pkg = s.trim_end_matches(".*").replace('.', "/");
-                    let candidate = format!("{}/{}", pkg, simple);
-                    if nt.exists(&candidate) {
-                        return candidate;
-                    }
+                let internal = s.replace('.', "/");
+                if nt.exists(&internal) {
+                    exact_candidates.push(internal);
                 }
             }
         }
-        // Unresolvable
-        simple.to_string()
+        if exact_candidates.len() > 1 {
+            tracing::debug!(
+                simple,
+                candidates = ?exact_candidates,
+                "resolve_simple_strict: ambiguous single-type imports"
+            );
+            return None;
+        }
+        if let Some(hit) = exact_candidates.pop() {
+            return Some(hit);
+        }
+
+        // Rule 2: Same package — JLS §6.4.1; verify via index, never assume
+        if let Some(pkg) = &self.package {
+            let candidate = format!("{}/{}", pkg, simple);
+            if nt.exists(&candidate) {
+                return Some(candidate);
+            }
+        } else if nt.exists(simple) {
+            return Some(simple.to_string());
+        }
+
+        // Rule 3: java.lang.* — JLS §7.5.3 (always implicit)
+        let java_lang = format!("java/lang/{}", simple);
+        if nt.exists(&java_lang) {
+            return Some(java_lang);
+        }
+
+        // Rule 4: Type-import-on-demand (wildcard) — JLS §7.5.2; requires index
+        let mut wildcard_candidates = Vec::new();
+        for imp in &self.imports {
+            let s = imp.as_ref();
+            if s.ends_with(".*") {
+                let pkg = s.trim_end_matches(".*").replace('.', "/");
+                let candidate = format!("{}/{}", pkg, simple);
+                if nt.exists(&candidate) {
+                    wildcard_candidates.push(candidate);
+                }
+            }
+        }
+        if wildcard_candidates.len() > 1 {
+            tracing::debug!(
+                simple,
+                candidates = ?wildcard_candidates,
+                "resolve_simple_strict: ambiguous wildcard imports"
+            );
+            return None;
+        }
+        wildcard_candidates.pop()
     }
+
+    /// Resolve a source-level type name (with optional generics/arrays) to an internal TypeName.
+    /// Returns None if any part cannot be proven.
+    pub fn resolve_type_name_strict(
+        &self,
+        ty: &str,
+    ) -> Option<crate::semantic::types::type_name::TypeName> {
+        resolve_type_name_strict_inner(self, ty)
+    }
+}
+
+fn resolve_type_name_strict_inner(
+    ctx: &SourceTypeCtx,
+    ty: &str,
+) -> Option<crate::semantic::types::type_name::TypeName> {
+    let ty = ty.trim();
+    if ty.is_empty() {
+        return None;
+    }
+
+    let mut base = ty;
+    let mut dims = 0usize;
+    while let Some(stripped) = base.strip_suffix("[]") {
+        dims += 1;
+        base = stripped.trim();
+    }
+
+    while base.starts_with('@') {
+        if let Some(idx) = base.find(' ') {
+            base = base[idx..].trim_start();
+        } else {
+            return None;
+        }
+    }
+
+    let (base_name, args_str) = split_generic_base(base)?;
+
+    let base_internal = if base_name.contains('/') {
+        ctx.name_table
+            .as_ref()
+            .filter(|nt| nt.exists(base_name))
+            .map(|_| base_name.to_string())
+    } else if base_name.contains('.') {
+        let internal = base_name.replace('.', "/");
+        ctx.name_table
+            .as_ref()
+            .filter(|nt| nt.exists(&internal))
+            .map(|_| internal)
+    } else {
+        ctx.resolve_simple_strict(base_name)
+    }?;
+
+    let mut full = if let Some(args) = args_str {
+        let arg_sigs = split_generic_args(args)
+            .into_iter()
+            .map(|arg| resolve_type_arg_signature(ctx, arg))
+            .collect::<Option<Vec<String>>>()?;
+        if arg_sigs.is_empty() {
+            base_internal
+        } else {
+            format!("{}<{}>", base_internal, arg_sigs.join(""))
+        }
+    } else {
+        base_internal
+    };
+
+    if dims > 0 {
+        for _ in 0..dims {
+            full.push_str("[]");
+        }
+    }
+
+    Some(crate::semantic::types::type_name::TypeName::new(full))
+}
+
+fn split_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(start) = ty.find('<') {
+        let mut depth = 0i32;
+        for (i, c) in ty.char_indices().skip(start) {
+            match c {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let base = ty[..start].trim();
+                        let args = ty[start + 1..i].trim();
+                        return Some((base, Some(args)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    } else {
+        Some((ty.trim(), None))
+    }
+}
+
+fn split_generic_args(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        result.push(s[start..].trim());
+    }
+    result.into_iter().filter(|s| !s.is_empty()).collect()
+}
+
+fn resolve_type_arg_signature(ctx: &SourceTypeCtx, arg: &str) -> Option<String> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    if arg == "?" {
+        return Some("*".to_string());
+    }
+    if let Some(bound) = arg.strip_prefix("? extends ") {
+        let inner = resolve_type_arg_signature(ctx, bound)?;
+        return Some(format!("+{}", inner));
+    }
+    if let Some(bound) = arg.strip_prefix("? super ") {
+        let inner = resolve_type_arg_signature(ctx, bound)?;
+        return Some(format!("-{}", inner));
+    }
+
+    let resolved = resolve_type_name_strict_inner(ctx, arg)?;
+    if resolved.is_array() {
+        return None;
+    }
+    let base = resolved.base();
+    if matches!(
+        base,
+        "void"
+            | "boolean"
+            | "byte"
+            | "char"
+            | "short"
+            | "int"
+            | "long"
+            | "float"
+            | "double"
+    ) {
+        return None;
+    }
+    if base.contains('/') {
+        return Some(format!("L{};", base));
+    }
+    None
 }
 
 pub fn build_java_descriptor(
@@ -204,5 +396,77 @@ pub(crate) fn extract_param_type(param: &str) -> &str {
     match last_sep {
         Some(pos) => param[..pos].trim(),
         None => param,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::NameTable;
+    use std::sync::Arc;
+
+    fn name_table(names: &[&str]) -> Arc<NameTable> {
+        NameTable::from_names(names.iter().map(|s| Arc::from(*s)).collect())
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_exact_import() {
+        let nt = name_table(&["org/example/Foo"]);
+        let ctx = SourceTypeCtx::new(None, vec!["org.example.Foo".into()], Some(nt));
+        assert_eq!(
+            ctx.resolve_simple_strict("Foo"),
+            Some("org/example/Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_wildcard_import() {
+        let nt = name_table(&["org/example/Foo"]);
+        let ctx = SourceTypeCtx::new(None, vec!["org.example.*".into()], Some(nt));
+        assert_eq!(
+            ctx.resolve_simple_strict("Foo"),
+            Some("org/example/Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_java_lang() {
+        let nt = name_table(&["java/lang/String"]);
+        let ctx = SourceTypeCtx::new(None, vec![], Some(nt));
+        assert_eq!(
+            ctx.resolve_simple_strict("String"),
+            Some("java/lang/String".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_same_package_wins() {
+        let nt = name_table(&["org/example/Foo", "java/lang/Foo"]);
+        let ctx = SourceTypeCtx::new(Some(Arc::from("org/example")), vec![], Some(nt));
+        assert_eq!(
+            ctx.resolve_simple_strict("Foo"),
+            Some("org/example/Foo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_default_package() {
+        let nt = name_table(&["Foo", "java/lang/Foo"]);
+        let ctx = SourceTypeCtx::new(None, vec![], Some(nt));
+        assert_eq!(ctx.resolve_simple_strict("Foo"), Some("Foo".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_ambiguous_wildcard() {
+        let nt = name_table(&["a/Foo", "b/Foo"]);
+        let ctx = SourceTypeCtx::new(None, vec!["a.*".into(), "b.*".into()], Some(nt));
+        assert_eq!(ctx.resolve_simple_strict("Foo"), None);
+    }
+
+    #[test]
+    fn test_resolve_simple_strict_ambiguous_exact_imports() {
+        let nt = name_table(&["a/Foo", "b/Foo"]);
+        let ctx = SourceTypeCtx::new(None, vec!["a.Foo".into(), "b.Foo".into()], Some(nt));
+        assert_eq!(ctx.resolve_simple_strict("Foo"), None);
     }
 }

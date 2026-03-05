@@ -362,11 +362,11 @@ impl JavaContextExtractor {
         let enclosing_internal_name =
             utils::build_internal_name(&enclosing_package, &enclosing_class);
         let existing_imports = scope::extract_imports(&self, root);
-        let type_ctx = SourceTypeCtx::new(
+        let type_ctx = Arc::new(SourceTypeCtx::new(
             enclosing_package.clone(),
             existing_imports.clone(),
             self.name_table.clone(),
-        );
+        ));
         let existing_static_imports = scope::extract_static_imports(&self, root);
         let current_class_members = cursor_node
             .and_then(|n| utils::find_ancestor(n, "class_declaration"))
@@ -406,6 +406,7 @@ impl JavaContextExtractor {
         .with_class_members(current_class_members)
         .with_enclosing_member(enclosing_class_member)
         .with_char_after_cursor(char_after_cursor)
+        .with_extension(type_ctx)
     }
 
     fn find_cursor_node<'tree>(&self, root: Node<'tree>) -> Option<Node<'tree>> {

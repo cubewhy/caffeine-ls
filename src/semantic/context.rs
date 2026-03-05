@@ -197,6 +197,15 @@ impl SemanticContext {
         self
     }
 
+    pub fn extension<T: Any>(&self) -> Option<&T> {
+        self.ext.as_ref()?.downcast_ref::<T>()
+    }
+
+    pub fn extension_arc<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        let ext = self.ext.as_ref()?.clone();
+        Arc::downcast::<T>(ext).ok()
+    }
+
     pub fn with_inferred_package(mut self, pkg: Arc<str>) -> Self {
         self.inferred_package = Some(pkg);
         self

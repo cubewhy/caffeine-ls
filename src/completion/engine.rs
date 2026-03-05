@@ -55,9 +55,10 @@ mod tests {
     use crate::{
         completion::parser::parse_chain_from_expr,
         index::{
-            ClassMetadata, ClassOrigin, MethodParams, MethodSummary, ModuleId, WorkspaceIndex,
+            ClassMetadata, ClassOrigin, IndexView, MethodParams, MethodSummary, ModuleId,
+            WorkspaceIndex,
         },
-        language::{JavaLanguage, java::completion_context::ContextEnricher},
+        language::{JavaLanguage, java::completion_context::ContextEnricher, java::type_ctx::SourceTypeCtx},
         semantic::types::{TypeResolver, type_name::TypeName},
         semantic::{CursorLocation, LocalVar, SemanticContext},
     };
@@ -68,6 +69,15 @@ mod tests {
         IndexScope {
             module: ModuleId::ROOT,
         }
+    }
+
+    fn with_type_ctx(ctx: SemanticContext, view: &IndexView) -> SemanticContext {
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            ctx.enclosing_package.clone(),
+            ctx.existing_imports.clone(),
+            Some(view.build_name_table()),
+        ));
+        ctx.with_extension(type_ctx)
     }
 
     fn seg_names(expr: &str) -> Vec<(String, Option<i32>)> {
@@ -157,7 +167,7 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -177,6 +187,7 @@ mod tests {
             vec!["org.cubewhy.RandomClass".into()],
         );
         let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
         ContextEnricher::new(&view).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -190,7 +201,7 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_wildcard_import() {
         let idx = make_index_with_random_class();
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -208,7 +219,9 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.*".into()],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(receiver_type.as_deref(), Some("org/cubewhy/RandomClass"),);
         }
@@ -235,8 +248,10 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
         );
+        let view = idx.view(root_scope());
+        let ctx = with_type_ctx(ctx, &view);
         let engine = CompletionEngine::new();
-        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &idx.view(root_scope()));
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(
             results.iter().any(|c| c.label.as_ref() == "f"),
             "should find method f(): {:?}",
@@ -288,7 +303,7 @@ mod tests {
         ]);
 
         // 模拟用户输入了 System.out.|
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -303,7 +318,9 @@ mod tests {
             vec!["java.lang.System".into()], // 确保 System 能够被解析
         );
 
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -362,7 +379,9 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
         );
-        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &idx.view(root_scope()));
+        let view = idx.view(root_scope());
+        let ctx = with_type_ctx(ctx, &view);
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(!results.is_empty(), "should have candidates");
         assert_eq!(
             results[0].label.as_ref(),
@@ -399,7 +418,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -424,7 +443,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -473,7 +494,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -498,7 +519,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -534,7 +557,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -552,7 +575,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -674,7 +699,9 @@ mod tests {
             None,
             vec![],
         );
-        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &idx.view(root_scope()));
+        let view = idx.view(root_scope());
+        let ctx = with_type_ctx(ctx, &view);
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(results.iter().any(|c| c.label.as_ref() == "func"));
     }
 
@@ -695,7 +722,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -720,7 +747,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let a_var = ctx
             .local_variables
             .iter()
@@ -732,7 +761,7 @@ mod tests {
     #[test]
     fn test_var_primitive_array_element_not_resolved() {
         let idx = WorkspaceIndex::new();
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -757,7 +786,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let x_var = ctx
             .local_variables
             .iter()
@@ -791,7 +822,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -809,7 +840,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(receiver_type.as_deref(), Some("java/lang/String"));
         }
@@ -834,7 +867,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "ArrayL".to_string(),
@@ -848,7 +881,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         assert!(matches!(
             &ctx.location,
             CursorLocation::Import { prefix } if prefix == "java.util.ArrayL"
@@ -858,7 +893,7 @@ mod tests {
     #[test]
     fn test_unknown_receiver_stays_member_access() {
         let idx = WorkspaceIndex::new();
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "foo".to_string(),
@@ -872,7 +907,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         assert!(matches!(&ctx.location, CursorLocation::MemberAccess { .. }));
     }
 
@@ -897,7 +934,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -934,13 +971,11 @@ mod tests {
             None,
             None,
             None,
-            vec![], // 没传 import，String 可以被兜底或者需要完整包名？
+            vec![],
         );
-
-        // 注入默认 java.lang.* import 来确保 String 能正常被 resolve_simple_to_internal 解析
-        ctx.existing_imports.push(Arc::from("java.lang.*"));
-
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
 
         // 校验 c (arr[0]) 被推断为 char
         let c_var = ctx
@@ -996,7 +1031,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1014,7 +1049,9 @@ mod tests {
             None,
             vec![],
         );
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
         let item = ctx
             .local_variables
             .iter()
@@ -1044,7 +1081,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1063,7 +1100,9 @@ mod tests {
             vec![],
         );
 
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
 
         // 如果 var 优先被解析，这里就能推导出 receiver_expr 是 org/cubewhy/Main
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
@@ -1094,7 +1133,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1113,7 +1152,9 @@ mod tests {
             vec![],
         );
 
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -1171,7 +1212,7 @@ mod tests {
             },
         ]);
 
-        let mut ctx = SemanticContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1190,7 +1231,9 @@ mod tests {
             vec![],
         );
 
-        ContextEnricher::new(&idx.view(root_scope())).enrich(&mut ctx);
+        let view = idx.view(root_scope());
+        let mut ctx = with_type_ctx(ctx, &view);
+        ContextEnricher::new(&view).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(

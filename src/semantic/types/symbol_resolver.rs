@@ -1,5 +1,6 @@
 use crate::semantic::context::{SemanticContext, CursorLocation};
 use crate::semantic::types::TypeResolver;
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::types::type_name::TypeName;
 use crate::index::{FieldSummary, IndexView, MethodSummary};
 use std::sync::Arc;
@@ -254,50 +255,27 @@ impl<'a> SymbolResolver<'a> {
     }
 
     pub fn resolve_type_name(&self, ctx: &SemanticContext, name: &str) -> Option<Arc<str>> {
-        // already internal name
         if name.contains('/') {
-            return Some(Arc::from(name));
+            return self
+                .view
+                .get_class(name)
+                .map(|c| c.internal_name.clone());
         }
 
-        let as_internal = name.replace('.', "/");
-        if let Some(c) = self.view.get_class(&as_internal) {
-            return Some(c.internal_name.clone());
+        if name.contains('.') {
+            let as_internal = name.replace('.', "/");
+            return self
+                .view
+                .get_class(&as_internal)
+                .map(|c| c.internal_name.clone());
         }
 
-        // imports
-        for import in &ctx.existing_imports {
-            let s = import.as_ref();
-            // 精确 import: ends with .ClassName
-            if s.ends_with(&format!(".{}", name)) {
-                let internal = s.replace('.', "/");
-                if let Some(c) = self.view.get_class(&internal) {
-                    return Some(c.internal_name.clone());
-                }
-            }
-            // wildcard import: com.example.*
-            if s.ends_with(".*") {
-                let pkg = s.trim_end_matches(".*").replace('.', "/");
-                let candidate = format!("{}/{}", pkg, name);
-                if let Some(c) = self.view.get_class(&candidate) {
-                    return Some(c.internal_name.clone());
-                }
-            }
-        }
-        let java_lang = format!("java/lang/{}", name);
-        if let Some(c) = self.view.get_class(&java_lang) {
-            return Some(c.internal_name.clone());
-        }
-
-        // same package
-        if let Some(enc) = &ctx.enclosing_internal_name
-            && let Some(slash) = enc.rfind('/')
+        if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>()
+            && let Some(resolved) = type_ctx.resolve_simple_strict(name)
         {
-            let pkg = &enc[..slash];
-            let candidate = format!("{}/{}", pkg, name);
-            if let Some(c) = self.view.get_class(&candidate) {
-                return Some(c.internal_name.clone());
-            }
+            return Some(Arc::from(resolved));
         }
+
         tracing::debug!(name = %name, "resolve: type not found in index");
         None
     }

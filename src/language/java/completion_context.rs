@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use crate::completion::import_utils::resolve_simple_to_internal;
 use crate::completion::parser::parse_chain_from_expr;
 use crate::index::IndexView;
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::types::symbol_resolver::SymbolResolver;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
@@ -20,6 +20,13 @@ impl<'a> ContextEnricher<'a> {
     }
 
     pub fn enrich(&self, ctx: &mut SemanticContext) {
+        let type_ctx = match ctx.extension_arc::<SourceTypeCtx>() {
+            Some(ctx) => ctx,
+            None => {
+                tracing::debug!("enrich_context: missing SourceTypeCtx");
+                return;
+            }
+        };
         {
             let resolver = TypeResolver::new(self.view);
             let to_resolve: Vec<(usize, String)> = ctx
@@ -41,8 +48,7 @@ impl<'a> ContextEnricher<'a> {
                     &ctx.local_variables,
                     ctx.enclosing_internal_name.as_ref(),
                     &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
+                    &type_ctx,
                     self.view,
                 ) {
                     ctx.local_variables[idx_in_vec].type_internal = resolved;
@@ -50,107 +56,97 @@ impl<'a> ContextEnricher<'a> {
             }
         }
 
-        if let CursorLocation::MemberAccess {
-            receiver_type,
-            receiver_expr,
-            ..
-        } = &mut ctx.location
-            && receiver_type.is_none()
-            && !receiver_expr.is_empty()
-        {
-            let resolver = TypeResolver::new(self.view);
-            let resolved = if looks_like_array_access(receiver_expr) {
-                resolve_array_access_type(
-                    receiver_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    self.view,
-                )
-            } else {
-                let chain = parse_chain_from_expr(receiver_expr);
-                tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
-
-                if chain.is_empty() {
-                    let r = resolver.resolve(
+        if let CursorLocation::MemberAccess { .. } = &ctx.location
+            && let CursorLocation::MemberAccess {
+                receiver_type,
+                receiver_expr,
+                ..
+            } = &mut ctx.location
+                && receiver_type.is_none()
+                && !receiver_expr.is_empty()
+            {
+                let resolver = TypeResolver::new(self.view);
+                let resolved = if looks_like_array_access(receiver_expr) {
+                    resolve_array_access_type(
                         receiver_expr,
-                        &ctx.local_variables,
-                        ctx.enclosing_internal_name.as_ref(),
-                    );
-                    tracing::debug!(
-                        ?r,
-                        receiver_expr,
-                        "enrich_context: chain is empty, resolver.resolve returned"
-                    );
-                    r
-                } else {
-                    let r = evaluate_chain(
-                        &chain,
                         &ctx.local_variables,
                         ctx.enclosing_internal_name.as_ref(),
                         &resolver,
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
+                        &type_ctx,
                         self.view,
-                    );
-                    tracing::debug!(?r, "enrich_context: evaluate_chain returned");
-                    r
-                }
-            };
-
-            tracing::debug!(?resolved, "enrich_context: resolved before final match");
-
-            // If the result is a simple name (without '/'), it needs to be further parsed into an internal name.
-            *receiver_type = match resolved {
-                None => {
-                    tracing::debug!("enrich_context: final match -> None");
-                    None
-                }
-                Some(ref ty) if ty.contains_slash() => Some(ty.to_arc()),
-                Some(ty) => {
-                    let r = resolve_simple_to_internal(
-                        ty.as_str(),
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
-                        self.view,
-                    );
-                    tracing::debug!(
-                        ?r,
-                        ?ty,
-                        "enrich_context: final match -> resolve_simple_to_internal returned"
-                    );
-                    r
-                }
-            };
-
-            // receiver_expr 是已知包名 -> 转成 Import
-            let import_location: Option<(CursorLocation, String)> =
-                if let CursorLocation::MemberAccess {
-                    receiver_type,
-                    receiver_expr,
-                    member_prefix,
-                    ..
-                } = &ctx.location
-                    && receiver_type.is_none()
-                {
-                    let pkg_normalized = receiver_expr.replace('.', "/");
-                    if self.view.has_package(&pkg_normalized) {
-                        let prefix = format!("{}.{}", receiver_expr, member_prefix);
-                        let query = member_prefix.clone();
-                        Some((CursorLocation::Import { prefix }, query))
-                    } else {
-                        None
-                    }
+                    )
                 } else {
-                    None
+                    let chain = parse_chain_from_expr(receiver_expr);
+                    tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
+
+                    if chain.is_empty() {
+                        let r = resolver.resolve(
+                            receiver_expr,
+                            &ctx.local_variables,
+                            ctx.enclosing_internal_name.as_ref(),
+                        );
+                        tracing::debug!(
+                            ?r,
+                            receiver_expr,
+                            "enrich_context: chain is empty, resolver.resolve returned"
+                        );
+                        r
+                    } else {
+                        let r = evaluate_chain(
+                            &chain,
+                            &ctx.local_variables,
+                            ctx.enclosing_internal_name.as_ref(),
+                            &resolver,
+                            &type_ctx,
+                            self.view,
+                        );
+                        tracing::debug!(?r, "enrich_context: evaluate_chain returned");
+                        r
+                    }
                 };
 
-            if let Some((loc, query)) = import_location {
-                ctx.location = loc;
-                ctx.query = query;
+                tracing::debug!(?resolved, "enrich_context: resolved before final match");
+
+                // If the result is a simple name (without '/'), it needs to be further parsed into an internal name.
+                *receiver_type = match resolved {
+                    None => {
+                        tracing::debug!("enrich_context: final match -> None");
+                        None
+                    }
+                    Some(ref ty) if ty.contains_slash() => Some(Arc::from(ty.base())),
+                    Some(ty) => {
+                        let r = type_ctx.resolve_type_name_strict(ty.as_str());
+                        tracing::debug!(?r, ?ty, "enrich_context: final match -> resolve strict");
+                        r.map(|t| Arc::from(t.base()))
+                    }
+                };
             }
+
+        // receiver_expr 是已知包名 -> 转成 Import
+        let import_location: Option<(CursorLocation, String)> =
+            if let CursorLocation::MemberAccess {
+                receiver_type,
+                receiver_expr,
+                member_prefix,
+                ..
+            } = &ctx.location
+                && receiver_type.is_none()
+            {
+                let pkg_normalized = receiver_expr.replace('.', "/");
+                if self.view.has_package(&pkg_normalized) {
+                    let prefix = format!("{}.{}", receiver_expr, member_prefix);
+                    let query = member_prefix.clone();
+                    Some((CursorLocation::Import { prefix }, query))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        if let Some((loc, query)) = import_location {
+            ctx.location = loc;
+            ctx.query = query;
         }
 
         // Resolve `var` local variables
@@ -176,8 +172,7 @@ impl<'a> ContextEnricher<'a> {
                     &ctx.local_variables,
                     ctx.enclosing_internal_name.as_ref(),
                     &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
+                    &type_ctx,
                     self.view,
                 ) {
                     ctx.local_variables[idx_in_vec].type_internal = resolved;
@@ -188,7 +183,7 @@ impl<'a> ContextEnricher<'a> {
             let new_types: Vec<TypeName> = ctx
                 .local_variables
                 .iter()
-                .map(|lv| expand_local_type_strict(&sym, ctx, &lv.type_internal))
+                .map(|lv| expand_local_type_strict(&sym, ctx, &type_ctx, &lv.type_internal))
                 .collect();
 
             for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
@@ -202,9 +197,27 @@ fn looks_like_array_access(expr: &str) -> bool {
     expr.contains('[') && expr.trim_end().ends_with(']')
 }
 
+fn find_matching_angle(s: &str, start: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices().skip(start) {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn expand_local_type_strict(
     sym: &SymbolResolver,
     ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
     ty: &TypeName,
 ) -> TypeName {
     let s = ty.as_str();
@@ -235,15 +248,16 @@ fn expand_local_type_strict(
         base = stripped.trim();
     }
 
-    // strip generics: List<String> -> List
+    if let Some(resolved) = type_ctx.resolve_type_name_strict(s) {
+        return resolved;
+    }
     let base = base.split('<').next().unwrap_or(base).trim();
 
-    // 已经 internal 或 index 可命中：不展开
+    // already internal or index match
     if base.contains('/') || sym.view.get_class(base).is_some() {
         return ty.clone();
     }
 
-    // strict 展开 simple name -> internal
     let mut out = if let Some(internal) = sym.resolve_type_name(ctx, base) {
         TypeName::from(internal)
     } else {
@@ -261,8 +275,7 @@ fn resolve_array_access_type(
     locals: &[LocalVar],
     enclosing_internal: Option<&Arc<str>>,
     resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
+    type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
     let bracket = expr.rfind('[')?;
@@ -279,15 +292,7 @@ fn resolve_array_access_type(
     let array_type = if chain.is_empty() {
         resolver.resolve(array_expr, locals, enclosing_internal)
     } else {
-        evaluate_chain(
-            &chain,
-            locals,
-            enclosing_internal,
-            resolver,
-            existing_imports,
-            enclosing_package,
-            view,
-        )
+        evaluate_chain(&chain, locals, enclosing_internal, resolver, type_ctx, view)
     }?;
 
     array_type.element_type()
@@ -298,14 +303,21 @@ fn resolve_var_init_expr(
     locals: &[LocalVar],
     enclosing_internal: Option<&Arc<str>>,
     resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
+    type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
     let expr = expr.trim();
     if let Some(rest) = expr.strip_prefix("new ") {
         // 寻找类型声明的边界：可能是普通构造函数 '('、泛型 '<'，或者是数组的 '['、'{'
-        let boundary_idx = rest.find(['(', '<', '[', '{']).unwrap_or(rest.len());
+        let mut boundary_idx = rest.find(['(', '[', '{']).unwrap_or(rest.len());
+        if let Some(gen_start) = rest.find('<')
+            && gen_start < boundary_idx {
+                if let Some(gen_end) = find_matching_angle(rest, gen_start) {
+                    boundary_idx = gen_end + 1;
+                } else {
+                    return None;
+                }
+            }
         let type_name = rest[..boundary_idx].trim();
 
         // 解析基础类型，同时为 primitive 类型做白名单兜底
@@ -313,12 +325,7 @@ fn resolve_var_init_expr(
             "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" => {
                 TypeName::new(type_name)
             }
-            _ => TypeName::from(resolve_simple_to_internal(
-                type_name,
-                existing_imports,
-                enclosing_package,
-                view,
-            )?),
+            _ => type_ctx.resolve_type_name_strict(type_name)?,
         };
 
         let after_type = rest[boundary_idx..].trim_start();
@@ -338,15 +345,7 @@ fn resolve_var_init_expr(
 
     let chain = parse_chain_from_expr(expr);
     if !chain.is_empty() {
-        return evaluate_chain(
-            &chain,
-            locals,
-            enclosing_internal,
-            resolver,
-            existing_imports,
-            enclosing_package,
-            view,
-        );
+        return evaluate_chain(&chain, locals, enclosing_internal, resolver, type_ctx, view);
     }
 
     resolve_array_access_type(
@@ -354,8 +353,7 @@ fn resolve_var_init_expr(
         locals,
         enclosing_internal,
         resolver,
-        existing_imports,
-        enclosing_package,
+        type_ctx,
         view,
     )
 }
@@ -366,8 +364,7 @@ fn evaluate_chain(
     locals: &[LocalVar],
     enclosing_internal: Option<&Arc<str>>,
     resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
+    type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
     let mut current: Option<TypeName> = None;
@@ -418,13 +415,7 @@ fn evaluate_chain(
                     }
 
                     if current.is_none() {
-                        current = resolve_simple_to_internal(
-                            base_name,
-                            existing_imports,
-                            enclosing_package,
-                            view,
-                        )
-                        .map(TypeName::from);
+                        current = type_ctx.resolve_type_name_strict(base_name);
                     }
                 }
             }
@@ -436,13 +427,10 @@ fn evaluate_chain(
                 current = Some(recv.clone());
             } else {
                 let recv_str = recv.as_str();
-                let recv_full: TypeName = if recv_str.contains('/')
-                    || view.get_class(recv_str).is_some()
-                {
+                let recv_full: TypeName = if recv_str.contains('/') {
                     recv.clone()
                 } else {
-                    resolve_simple_to_internal(recv_str, existing_imports, enclosing_package, view)?
-                        .into()
+                    type_ctx.resolve_type_name_strict(recv_str)?
                 };
 
                 if seg.arg_count.is_some() {
@@ -463,7 +451,7 @@ fn evaluate_chain(
                         arg_types_ref,
                     );
                 } else {
-                    let (methods, fields) = view.collect_inherited_members(recv_full.as_str());
+                    let (methods, fields) = view.collect_inherited_members(recv_full.base());
 
                     if let Some(f) = fields.iter().find(|f| f.name.as_ref() == base_name) {
                         if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
@@ -611,6 +599,12 @@ mod tests {
             module: ModuleId::ROOT,
         };
         let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["org.cubewhy.RandomClass".into()],
+            Some(name_table),
+        ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -629,7 +623,8 @@ mod tests {
             Some(Arc::from("org/cubewhy/a/Main")),
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
-        );
+        )
+        .with_extension(type_ctx);
         ContextEnricher::new(&view).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -647,6 +642,12 @@ mod tests {
             module: ModuleId::ROOT,
         };
         let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["org.cubewhy.*".into()],
+            Some(name_table),
+        ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -664,7 +665,8 @@ mod tests {
             Some(Arc::from("org/cubewhy/a/Main")),
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.*".into()],
-        );
+        )
+        .with_extension(type_ctx);
         ContextEnricher::new(&view).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(receiver_type.as_deref(), Some("org/cubewhy/RandomClass"),);
