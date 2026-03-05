@@ -5,6 +5,7 @@ use crate::{
     index::{IndexView, MethodSummary},
     jvm::descriptor::{consume_one_descriptor_type, split_param_descriptors},
 };
+use std::collections::HashSet;
 use std::sync::Arc;
 
 pub mod generics;
@@ -677,8 +678,13 @@ pub fn parse_return_type_from_descriptor(descriptor: &str) -> Option<Arc<str>> {
 pub fn java_source_type_to_jvm_generic(
     source_ty: &str,
     resolve_simple_name: &impl Fn(&str) -> String,
+    type_params: &HashSet<&str>,
 ) -> String {
     let mut ty = source_ty.trim();
+
+    if type_params.contains(ty) {
+        return format!("T{};", ty);
+    }
 
     // 1. 处理数组后缀 (String[] -> array_depth = 1)
     let mut array_depth = 0;
@@ -720,7 +726,8 @@ pub fn java_source_type_to_jvm_generic(
                     if arg_ty == "?" {
                         return "*".to_string(); // 通配符
                     }
-                    let inner = java_source_type_to_jvm_generic(arg_ty, resolve_simple_name);
+                    let inner =
+                        java_source_type_to_jvm_generic(arg_ty, resolve_simple_name, type_params);
 
                     // 如果 inner 已经是数组（以 '[' 开头），就不要再套 'L' 了
                     if inner.starts_with('[') {
@@ -1342,5 +1349,16 @@ mod tests {
             best_wrapper.unwrap().desc().as_ref(),
             "(Ljava/lang/Integer;)V"
         );
+    }
+
+    #[test]
+    fn test_java_source_type_to_jvm_generic_typevar() {
+        use std::collections::HashSet;
+        let mut params = HashSet::new();
+        params.insert("E");
+
+        let resolve = |s: &str| s.to_string();
+        let got = java_source_type_to_jvm_generic("E", &resolve, &params);
+        assert_eq!(got, "TE;");
     }
 }
