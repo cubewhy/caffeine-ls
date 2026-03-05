@@ -54,7 +54,9 @@ mod tests {
     use super::*;
     use crate::{
         completion::parser::parse_chain_from_expr,
-        index::{ClassMetadata, ClassOrigin, MethodParams, MethodSummary, ModuleId, WorkspaceIndex},
+        index::{
+            ClassMetadata, ClassOrigin, MethodParams, MethodSummary, ModuleId, WorkspaceIndex,
+        },
         language::{JavaLanguage, java::completion_context::ContextEnricher},
         semantic::types::{TypeResolver, type_name::TypeName},
         semantic::{CursorLocation, LocalVar, SemanticContext},
@@ -63,7 +65,9 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn seg_names(expr: &str) -> Vec<(String, Option<i32>)> {
@@ -124,7 +128,7 @@ mod tests {
     }
 
     fn make_index_with_random_class() -> WorkspaceIndex {
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("org/cubewhy")),
             name: Arc::from("RandomClass"),
@@ -212,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_complete_returns_f_method() {
-        let mut idx = make_index_with_random_class();
+        let idx = make_index_with_random_class();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -244,7 +248,7 @@ mod tests {
     fn test_chain_field_access_resolved() {
         use crate::index::{ClassMetadata, ClassOrigin, FieldSummary};
         use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
             ClassMetadata {
                 package: Some(Arc::from("java/lang")),
@@ -316,7 +320,7 @@ mod tests {
     fn test_expected_type_ranks_first_in_constructor_completion() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         for (pkg, name) in [
             ("org/cubewhy/a", "Main"),
             ("org/cubewhy/a", "Main2"),
@@ -372,7 +376,7 @@ mod tests {
     fn test_var_method_return_type_resolved() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: None,
             name: Arc::from("NestedClass"),
@@ -433,7 +437,7 @@ mod tests {
     fn test_var_overload_resolved_by_long_arg() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: None,
             name: Arc::from("NestedClass"),
@@ -507,7 +511,7 @@ mod tests {
     fn test_var_bare_method_call_resolved() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: None,
             name: Arc::from("Main"),
@@ -561,7 +565,7 @@ mod tests {
     fn test_resolve_method_return_walks_mro() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
             ClassMetadata {
                 package: None,
@@ -608,7 +612,7 @@ mod tests {
 
     #[test]
     fn test_complete_member_after_bare_method_call() {
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
             ClassMetadata {
                 package: None,
@@ -676,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_var_array_element_type_resolved() {
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("java/lang")),
             name: Arc::from("String"),
@@ -764,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_enrich_context_array_access_receiver() {
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("java/lang")),
             name: Arc::from("String"),
@@ -815,7 +819,7 @@ mod tests {
     fn test_package_path_becomes_import_location() {
         use crate::index::{ClassMetadata, ClassOrigin, WorkspaceIndex};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("java/util")),
             name: Arc::from("ArrayList"),
@@ -877,7 +881,7 @@ mod tests {
         use crate::index::{ClassMetadata, ClassOrigin};
         use rust_asm::constants::ACC_PUBLIC;
 
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("java/lang")),
             name: Arc::from("String"),
@@ -968,7 +972,7 @@ mod tests {
         // 验证 getArr()[0] 这种通过方法调用拿到数组再取下标的情况
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: None,
             name: Arc::from("Main"),
@@ -1024,7 +1028,7 @@ mod tests {
         use crate::index::{ClassMetadata, ClassOrigin};
         use rust_asm::constants::ACC_PUBLIC;
 
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("org/cubewhy")),
             name: Arc::from("Main"),
@@ -1074,7 +1078,7 @@ mod tests {
         use crate::index::{ClassMetadata, ClassOrigin};
         use rust_asm::constants::ACC_PUBLIC;
 
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("java/lang")),
             name: Arc::from("String"),
@@ -1127,7 +1131,7 @@ mod tests {
         use crate::index::{ClassMetadata, ClassOrigin, FieldSummary};
         use rust_asm::constants::ACC_PUBLIC;
 
-        let mut idx = WorkspaceIndex::new();
+        let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
             ClassMetadata {
                 package: Some(Arc::from("org/cubewhy")),
