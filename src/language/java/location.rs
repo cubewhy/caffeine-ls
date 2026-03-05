@@ -6,8 +6,8 @@ use crate::language::java::utils::{
 use tree_sitter::Node;
 
 use crate::{
-    semantic::CursorLocation,
     language::java::{JavaContextExtractor, utils::strip_sentinel},
+    semantic::CursorLocation,
 };
 
 pub(crate) fn determine_location(
@@ -484,6 +484,16 @@ fn handle_argument_list(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
         );
     }
 
+    // func(a, |)
+    if is_fresh_argument_position(ctx, node) {
+        return (
+            CursorLocation::MethodArgument {
+                prefix: String::new(),
+            },
+            String::new(),
+        );
+    }
+
     // Find the nearest identifier node before the cursor in the argument_list as the prefix
     let prefix = find_prefix_in_argument_list(ctx, node);
     (
@@ -492,6 +502,18 @@ fn handle_argument_list(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
         },
         prefix,
     )
+}
+
+fn is_fresh_argument_position(ctx: &JavaContextExtractor, arg_list: Node) -> bool {
+    let start = arg_list.start_byte();
+    if ctx.offset <= start {
+        return false;
+    }
+    let raw = &ctx.source[start..ctx.offset];
+    let clean = strip_sentinel(raw);
+
+    let last_non_ws = clean.chars().rev().find(|c| !c.is_whitespace());
+    matches!(last_non_ws, Some(',') | Some('('))
 }
 
 fn detect_member_access_in_arg_list(
@@ -521,12 +543,23 @@ fn detect_member_access_in_arg_list(
 }
 
 fn find_prefix_in_argument_list(ctx: &JavaContextExtractor, arg_list: Node) -> String {
-    // Traverse the child nodes of argument_list and find the one containing the cursor
     let mut cursor = arg_list.walk();
     for child in arg_list.named_children(&mut cursor) {
         if child.start_byte() <= ctx.offset && child.end_byte() >= ctx.offset.saturating_sub(1) {
             let text = cursor_truncated_text(ctx, child);
             let clean = strip_sentinel(&text);
+
+            if child.kind() == "ERROR" {
+                let last_non_ws = clean.chars().rev().find(|c| !c.is_whitespace());
+                if matches!(last_non_ws, Some(',') | Some('(')) {
+                    return String::new();
+                }
+            }
+
+            if clean.trim() == "," {
+                return String::new();
+            }
+
             return clean;
         }
     }
@@ -613,8 +646,8 @@ mod tests {
     use tree_sitter::Parser;
 
     use crate::{
-        semantic::CursorLocation,
         language::java::{JavaContextExtractor, location::determine_location},
+        semantic::CursorLocation,
     };
 
     fn setup_with(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
@@ -906,5 +939,29 @@ class A {
             "Expected Annotation with METHOD target, got {:?}",
             loc
         );
+    }
+
+    #[test]
+    fn test_empty_arg_after_comma_should_not_return_comma_prefix() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f(String s, int a) {
+        s.charAt(a, );
+    }
+}
+"#};
+        let marker = "charAt(a, ";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::MethodArgument { ref prefix } if prefix.is_empty()),
+            "Expected MethodArgument with empty prefix, got {:?}",
+            loc
+        );
+        assert_eq!(query, "");
     }
 }
