@@ -1,13 +1,26 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+use crate::decompiler::backend::{cfr::CfrDecompiler, vineflower::VineflowerDecompiler};
 
 pub mod backend;
 pub mod cache;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecompilerBackend {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecompilerType {
     Vineflower,
     Cfr,
+}
+
+impl DecompilerType {
+    pub fn get_decompiler(&self) -> Box<dyn Decompiler + 'static> {
+        match self {
+            Self::Cfr => Box::new(CfrDecompiler),
+            Self::Vineflower => Box::new(VineflowerDecompiler),
+        }
+    }
 }
 
 #[async_trait::async_trait]

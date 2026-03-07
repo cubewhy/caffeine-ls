@@ -158,6 +158,8 @@ impl Backend {
         match serde_json::from_value::<JavaAnalyzerConfig>(params) {
             Ok(new_config) => {
                 tracing::info!(config = ?new_config, "Config updated");
+                self.decompiler_cache
+                    .set_decompiler(&new_config.decompiler_backend);
                 *config_guard = new_config;
             }
             Err(e) => {

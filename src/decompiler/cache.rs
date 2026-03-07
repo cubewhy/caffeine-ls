@@ -2,8 +2,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use parking_lot::RwLock;
+
+use crate::decompiler::DecompilerType;
+
 pub struct DecompilerCache {
-    pub root: PathBuf,
+    root: PathBuf,
+    pub decompiler: RwLock<Option<DecompilerType>>,
 }
 
 impl DecompilerCache {
@@ -11,7 +16,24 @@ impl DecompilerCache {
         if !root.exists() {
             std::fs::create_dir_all(&root).ok();
         }
-        Self { root }
+        Self {
+            root,
+            decompiler: RwLock::new(None),
+        }
+    }
+
+    pub fn set_decompiler(&self, decompiler: &DecompilerType) {
+        let mut w_lock = self.decompiler.write();
+        *w_lock = Some(*decompiler);
+    }
+
+    fn cache_root(&self) -> PathBuf {
+        let decompiler_name = self
+            .decompiler
+            .read()
+            .map(|d| format!("{d:?}"))
+            .unwrap_or_else(|| String::from("unknown"));
+        self.root.join(decompiler_name)
     }
 
     /// Generate a unique hash path based on bytecode
@@ -23,7 +45,7 @@ impl DecompilerCache {
         let hash = hasher.finish();
 
         // {root}/{internal_name}/{simple_name}__{hash}.java
-        let folder = self.root.join(internal_name);
+        let folder = self.cache_root().join(internal_name);
         let simple_name = internal_name
             .rsplit_once("/")
             .unwrap_or(("", internal_name))
@@ -37,7 +59,7 @@ impl DecompilerCache {
     }
 
     pub fn cleanup_stale(&self, internal_name: &str, current_file: &Path) {
-        let folder = self.root.join(internal_name);
+        let folder = self.cache_root().join(internal_name);
         if let Ok(entries) = std::fs::read_dir(folder) {
             for entry in entries.flatten() {
                 let path = entry.path();

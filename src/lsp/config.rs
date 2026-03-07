@@ -1,26 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::decompiler::{
-    Decompiler,
-    backend::{cfr::CfrDecompiler, vineflower::VineflowerDecompiler},
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DecompilerType {
-    Vineflower,
-    Cfr,
-}
-
-impl DecompilerType {
-    pub fn get_decompiler(&self) -> Box<dyn Decompiler + 'static> {
-        match self {
-            Self::Cfr => Box::new(CfrDecompiler),
-            Self::Vineflower => Box::new(VineflowerDecompiler),
-        }
-    }
-}
+use crate::decompiler::DecompilerType;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
