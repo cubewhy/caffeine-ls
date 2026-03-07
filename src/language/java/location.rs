@@ -59,6 +59,7 @@ fn determine_location_impl(
             "import_declaration" => return handle_import(ctx, current),
             "method_invocation" => return handle_member_access(ctx, current),
             "field_access" => return handle_member_access(ctx, current),
+            "method_reference" => return handle_method_reference(ctx, current),
             "object_creation_expression" => return handle_constructor(ctx, current),
             "argument_list" => return handle_argument_list(ctx, current),
             "identifier" | "type_identifier" => {
@@ -312,6 +313,67 @@ fn handle_member_access(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
     )
 }
 
+fn handle_method_reference(ctx: &JavaContextExtractor, node: Node) -> (CursorLocation, String) {
+    let start = node.start_byte();
+    let end = node.end_byte().min(ctx.offset);
+    if end <= start {
+        return (CursorLocation::Unknown, String::new());
+    }
+
+    let raw = &ctx.source[start..end];
+    let Some(sep_idx) = raw.find("::") else {
+        let prefix = strip_sentinel(raw.trim());
+        return (
+            CursorLocation::Expression {
+                prefix: prefix.clone(),
+            },
+            prefix,
+        );
+    };
+
+    let qualifier_expr = strip_sentinel(raw[..sep_idx].trim());
+    let rhs_raw = raw[sep_idx + 2..].trim_start();
+    let rhs_no_type_args = strip_leading_type_arguments(rhs_raw);
+    let member_prefix = strip_sentinel(rhs_no_type_args.trim());
+    let is_constructor = member_prefix == "new" || member_prefix.starts_with("new");
+
+    let query = if is_constructor {
+        qualifier_expr.clone()
+    } else {
+        member_prefix.clone()
+    };
+
+    (
+        CursorLocation::MethodReference {
+            qualifier_expr,
+            member_prefix,
+            is_constructor,
+        },
+        query,
+    )
+}
+
+fn strip_leading_type_arguments(s: &str) -> &str {
+    let trimmed = s.trim_start();
+    if !trimmed.starts_with('<') {
+        return trimmed;
+    }
+    let mut depth = 0i32;
+    for (i, c) in trimmed.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return trimmed[i + 1..].trim_start();
+                }
+            }
+            _ => {}
+        }
+    }
+    trimmed
+}
+
 fn handle_constructor(ctx: &JavaContextExtractor, node: Node) -> (CursorLocation, String) {
     let type_node = node.child_by_field_name("type");
 
@@ -391,6 +453,9 @@ fn handle_identifier(
             }
             "field_access" | "method_invocation" => {
                 return handle_member_access(ctx, ancestor);
+            }
+            "method_reference" => {
+                return handle_method_reference(ctx, ancestor);
             }
             "import_declaration" => return handle_import(ctx, ancestor),
             "object_creation_expression" => return handle_constructor(ctx, ancestor),
@@ -595,6 +660,11 @@ fn location_has_newline(loc: &CursorLocation) -> bool {
         CursorLocation::Expression { prefix } => prefix.contains('\n'),
         CursorLocation::MethodArgument { prefix } => prefix.contains('\n'),
         CursorLocation::TypeAnnotation { prefix } => prefix.contains('\n'),
+        CursorLocation::MethodReference {
+            qualifier_expr,
+            member_prefix,
+            ..
+        } => qualifier_expr.contains('\n') || member_prefix.contains('\n'),
         CursorLocation::Annotation { prefix, .. } => prefix.contains('\n'),
         CursorLocation::Import { prefix } => prefix.contains('\n'),
         CursorLocation::StringLiteral { prefix } => prefix.contains('\n'),
@@ -1036,6 +1106,99 @@ class A {
                 CursorLocation::ConstructorCall { ref class_prefix, .. } if class_prefix == "ArrayList"
             ),
             "Expected unchanged constructor class_prefix=ArrayList, got {:?}",
+            loc
+        );
+        assert_eq!(query, "ArrayList");
+    }
+
+    #[test]
+    fn test_method_reference_type_method_classification() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        List::size
+    }
+}
+"#};
+        let marker = "List::size";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MethodReference {
+                    ref qualifier_expr,
+                    ref member_prefix,
+                    is_constructor: false
+                } if qualifier_expr == "List" && member_prefix == "size"
+            ),
+            "Expected MethodReference for List::size, got {:?}",
+            loc
+        );
+        assert_eq!(query, "size");
+    }
+
+    #[test]
+    fn test_method_reference_expr_method_classification() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        this::toString
+    }
+}
+"#};
+        let marker = "this::toString";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MethodReference {
+                    ref qualifier_expr,
+                    ref member_prefix,
+                    is_constructor: false
+                } if qualifier_expr == "this" && member_prefix == "toString"
+            ),
+            "Expected MethodReference for this::toString, got {:?}",
+            loc
+        );
+        assert_eq!(query, "toString");
+    }
+
+    #[test]
+    fn test_method_reference_constructor_classification() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        ArrayList::new
+    }
+}
+"#};
+        let marker = "ArrayList::new";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MethodReference {
+                    ref qualifier_expr,
+                    ref member_prefix,
+                    is_constructor: true
+                } if qualifier_expr == "ArrayList" && member_prefix == "new"
+            ),
+            "Expected constructor MethodReference for ArrayList::new, got {:?}",
             loc
         );
         assert_eq!(query, "ArrayList");

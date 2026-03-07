@@ -92,6 +92,12 @@ pub enum CursorLocation {
     TypeAnnotation {
         prefix: String,
     },
+    /// Java method reference location: `Type::method`, `expr::method`, `Type::new`.
+    MethodReference {
+        qualifier_expr: String,
+        member_prefix: String,
+        is_constructor: bool,
+    },
     /// Method call parameter location: `foo(aV|)` → Complete local variable
     MethodArgument {
         prefix: String,

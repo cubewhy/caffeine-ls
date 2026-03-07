@@ -27,6 +27,32 @@ impl<'a> ContextEnricher<'a> {
                 return;
             }
         };
+        let method_ref = match &ctx.location {
+            CursorLocation::MethodReference {
+                qualifier_expr,
+                member_prefix,
+                is_constructor,
+            } => Some((qualifier_expr.clone(), member_prefix.clone(), *is_constructor)),
+            _ => None,
+        };
+        if let Some((qualifier_expr, member_prefix, is_constructor)) = method_ref {
+            if is_constructor {
+                ctx.location = CursorLocation::ConstructorCall {
+                    class_prefix: qualifier_expr.clone(),
+                    expected_type: None,
+                };
+                ctx.query = qualifier_expr;
+            } else {
+                ctx.location = CursorLocation::MemberAccess {
+                    receiver_semantic_type: None,
+                    receiver_type: None,
+                    member_prefix: member_prefix.clone(),
+                    receiver_expr: qualifier_expr,
+                    arguments: None,
+                };
+                ctx.query = member_prefix;
+            }
+        }
         {
             let resolver = TypeResolver::new(self.view);
             let to_resolve: Vec<(usize, String)> = ctx
@@ -768,5 +794,94 @@ mod tests {
             );
             assert_eq!(receiver_type.as_deref(), Some("org/cubewhy/RandomClass"));
         }
+    }
+
+    #[test]
+    fn test_enrich_context_routes_method_reference_to_member_access() {
+        let idx = make_index_with_random_class();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["org.cubewhy.*".into()],
+            Some(name_table),
+        ));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MethodReference {
+                qualifier_expr: "this".to_string(),
+                member_prefix: "toString".to_string(),
+                is_constructor: false,
+            },
+            "toString",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["org.cubewhy.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert!(
+            matches!(
+                ctx.location,
+                CursorLocation::MemberAccess {
+                    receiver_expr: ref r,
+                    member_prefix: ref p,
+                    ..
+                } if r == "this" && p == "toString"
+            ),
+            "Expected method reference to normalize to MemberAccess, got {:?}",
+            ctx.location
+        );
+        assert_eq!(ctx.query, "toString");
+    }
+
+    #[test]
+    fn test_enrich_context_routes_constructor_reference_to_constructor_call() {
+        let idx = make_index_with_random_class();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MethodReference {
+                qualifier_expr: "ArrayList".to_string(),
+                member_prefix: "new".to_string(),
+                is_constructor: true,
+            },
+            "ArrayList",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert!(
+            matches!(
+                ctx.location,
+                CursorLocation::ConstructorCall {
+                    class_prefix: ref c,
+                    expected_type: None
+                } if c == "ArrayList"
+            ),
+            "Expected constructor reference to normalize to ConstructorCall, got {:?}",
+            ctx.location
+        );
+        assert_eq!(ctx.query, "ArrayList");
     }
 }

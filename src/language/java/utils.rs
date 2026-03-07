@@ -149,6 +149,15 @@ pub(crate) fn strip_sentinel_from_location(loc: CursorLocation) -> CursorLocatio
         CursorLocation::TypeAnnotation { prefix } => CursorLocation::TypeAnnotation {
             prefix: strip_sentinel(&prefix),
         },
+        CursorLocation::MethodReference {
+            qualifier_expr,
+            member_prefix,
+            is_constructor,
+        } => CursorLocation::MethodReference {
+            qualifier_expr: strip_sentinel(&qualifier_expr),
+            member_prefix: strip_sentinel(&member_prefix),
+            is_constructor,
+        },
         CursorLocation::StringLiteral { prefix } => CursorLocation::StringLiteral {
             prefix: strip_sentinel(&prefix),
         },
