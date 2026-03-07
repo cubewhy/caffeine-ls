@@ -6,6 +6,7 @@ use crate::{
         scorer::AccessFilter,
     },
     index::{IndexScope, IndexView},
+    language::java::location::normalize_top_level_generic_base,
     semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;
@@ -30,6 +31,7 @@ impl CompletionProvider for ConstructorProvider {
             } => (class_prefix.as_str(), expected_type.as_deref()),
             _ => return vec![],
         };
+        let class_prefix = normalize_top_level_generic_base(class_prefix);
 
         // When prefix is empty but expected_type exists, search for expected_type first
         let search_prefix = if class_prefix.is_empty() {
@@ -340,6 +342,30 @@ mod tests {
                 .iter()
                 .map(|c| &c.required_import)
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_generic_constructor_prefix_is_normalized_for_search() {
+        let idx = make_index_with("org/cubewhy", "ArrayList", true);
+        let ctx = make_ctx("ArrayList<String>", None, vec![]);
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "ArrayList"),
+            "generic prefix should still match ArrayList: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_non_generic_constructor_prefix_unchanged() {
+        let idx = make_index_with("org/cubewhy", "ArrayList", true);
+        let ctx = make_ctx("ArrayList", None, vec![]);
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "ArrayList"),
+            "non-generic prefix should keep existing behavior: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
         );
     }
 

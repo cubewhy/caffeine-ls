@@ -331,7 +331,8 @@ fn handle_constructor(ctx: &JavaContextExtractor, node: Node) -> (CursorLocation
         .map(|n| {
             // Use cursor_truncated_text so we don't capture text *after* the cursor
             let raw = cursor_truncated_text(ctx, n);
-            strip_sentinel(&raw)
+            let clean = strip_sentinel(&raw);
+            normalize_top_level_generic_base(&clean).to_string()
         })
         .unwrap_or_default();
 
@@ -343,6 +344,24 @@ fn handle_constructor(ctx: &JavaContextExtractor, node: Node) -> (CursorLocation
         },
         class_prefix,
     )
+}
+
+pub(crate) fn normalize_top_level_generic_base(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    let mut angle_depth = 0i32;
+    for (i, c) in trimmed.char_indices() {
+        match c {
+            '<' if angle_depth == 0 => return trimmed[..i].trim_end(),
+            '<' => angle_depth += 1,
+            '>' => {
+                if angle_depth > 0 {
+                    angle_depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    trimmed
 }
 
 fn handle_identifier(
@@ -966,5 +985,59 @@ class A {
             loc
         );
         assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_constructor_prefix_normalizes_top_level_generic_suffix() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new ArrayList<String>()
+    }
+}
+"#};
+        let marker = "ArrayList<String>";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::ConstructorCall { ref class_prefix, .. } if class_prefix == "ArrayList"
+            ),
+            "Expected normalized constructor class_prefix=ArrayList, got {:?}",
+            loc
+        );
+        assert_eq!(query, "ArrayList");
+    }
+
+    #[test]
+    fn test_constructor_prefix_non_generic_unchanged() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new ArrayList()
+    }
+}
+"#};
+        let marker = "ArrayList";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::ConstructorCall { ref class_prefix, .. } if class_prefix == "ArrayList"
+            ),
+            "Expected unchanged constructor class_prefix=ArrayList, got {:?}",
+            loc
+        );
+        assert_eq!(query, "ArrayList");
     }
 }
