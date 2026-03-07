@@ -79,7 +79,11 @@ pub(crate) fn parse_chain_from_expr(expr: &str) -> Vec<ChainSegment> {
                 }
                 current = "[".to_string();
             }
-            ']' if paren_depth == 0 && angle_depth == 0 && !in_method && current.starts_with('[') => {
+            ']' if paren_depth == 0
+                && angle_depth == 0
+                && !in_method
+                && current.starts_with('[') =>
+            {
                 current.push(']');
                 segments.push(ChainSegment::variable(current.clone()));
                 current = String::new();

@@ -1,5 +1,5 @@
-use crate::semantic::context::CursorLocation;
 use crate::language::java::SENTINEL;
+use crate::semantic::context::CursorLocation;
 use ropey::Rope;
 use rust_asm::constants::{
     ACC_ABSTRACT, ACC_FINAL, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC,

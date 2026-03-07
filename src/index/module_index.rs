@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use crate::index::{BucketIndex, ClassMetadata, ClassOrigin};
 use crate::index::scope::{ClasspathId, ModuleId};
+use crate::index::{BucketIndex, ClassMetadata, ClassOrigin};
 
 pub struct ClasspathIndex {
     pub jars: Vec<Arc<str>>,
@@ -80,7 +80,9 @@ impl ModuleIndex {
         buckets: Vec<Arc<BucketIndex>>,
     ) {
         let mut state = self.state.write();
-        state.classpaths.insert(id, ClasspathIndex::new(jars, buckets));
+        state
+            .classpaths
+            .insert(id, ClasspathIndex::new(jars, buckets));
     }
 
     pub fn add_classpath_bucket(&self, id: ClasspathId, bucket: Arc<BucketIndex>) {

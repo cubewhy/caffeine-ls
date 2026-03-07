@@ -238,14 +238,14 @@ mod tests {
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC};
 
     use super::*;
-    use crate::index::{
-        FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId,
-    };
+    use crate::index::{FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId};
     use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn make_member(
@@ -392,7 +392,11 @@ mod tests {
     fn test_no_members_returns_nothing() {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("fu", vec![]);
-        assert!(ThisMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope())).is_empty());
+        assert!(
+            ThisMemberProvider
+                .provide(root_scope(), &ctx, &idx.view(root_scope()))
+                .is_empty()
+        );
     }
 
     #[test]

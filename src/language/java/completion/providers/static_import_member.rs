@@ -210,8 +210,8 @@ fn specific_static_member(
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
@@ -220,51 +220,56 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn math_index() -> WorkspaceIndex {
         let idx = WorkspaceIndex::new();
-        idx.add_jar_classes(root_scope(), vec![ClassMetadata {
-            package: Some(Arc::from("java/lang")),
-            name: Arc::from("Math"),
-            internal_name: Arc::from("java/lang/Math"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![
-                MethodSummary {
-                    name: Arc::from("abs"),
-                    params: MethodParams::from([("I", "i")]),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC | ACC_STATIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: Some(Arc::from("I")),
-                },
-                MethodSummary {
-                    name: Arc::from("pow"),
-                    params: MethodParams::from([("D", "d0"), ("D", "d1")]),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC | ACC_STATIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: Some(Arc::from("D")),
-                },
-            ],
-            fields: vec![FieldSummary {
-                name: Arc::from("PI"),
-                descriptor: Arc::from("D"),
+        idx.add_jar_classes(
+            root_scope(),
+            vec![ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Math"),
+                internal_name: Arc::from("java/lang/Math"),
+                super_name: None,
+                interfaces: vec![],
                 annotations: vec![],
-                access_flags: ACC_PUBLIC | ACC_STATIC,
-                is_synthetic: false,
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("abs"),
+                        params: MethodParams::from([("I", "i")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC | ACC_STATIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("pow"),
+                        params: MethodParams::from([("D", "d0"), ("D", "d1")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC | ACC_STATIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("D")),
+                    },
+                ],
+                fields: vec![FieldSummary {
+                    name: Arc::from("PI"),
+                    descriptor: Arc::from("D"),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC | ACC_STATIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                }],
+                access_flags: ACC_PUBLIC,
                 generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
             }],
-            access_flags: ACC_PUBLIC,
-            generic_signature: None,
-            inner_class_of: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+        );
 
         idx
     }
@@ -288,7 +293,8 @@ mod tests {
     fn test_wildcard_static_import_provides_all_static_members() {
         let idx = math_index();
         let ctx = expr_ctx("", vec![Arc::from("java.lang.Math.*")]);
-        let results = StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let results =
+            StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(labels.contains(&"abs"), "abs should appear: {:?}", labels);
         assert!(labels.contains(&"pow"), "pow should appear: {:?}", labels);
@@ -299,7 +305,8 @@ mod tests {
     fn test_wildcard_static_import_filters_by_prefix() {
         let idx = math_index();
         let ctx = expr_ctx("ab", vec![Arc::from("java.lang.Math.*")]);
-        let results = StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let results =
+            StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(labels.contains(&"abs"), "abs should match prefix 'ab'");
         assert!(!labels.contains(&"pow"), "pow should not match 'ab'");
@@ -309,7 +316,8 @@ mod tests {
     fn test_specific_static_import_provides_named_member() {
         let idx = math_index();
         let ctx = expr_ctx("", vec![Arc::from("java.lang.Math.abs")]);
-        let results = StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let results =
+            StaticImportMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(
             labels.contains(&"abs"),

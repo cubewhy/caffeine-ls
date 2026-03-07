@@ -10,10 +10,8 @@ pub struct IndexScope {
     pub module: ModuleId,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ClasspathId {
     #[default]
     Main,
 }
-

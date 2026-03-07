@@ -320,17 +320,16 @@ mod tests {
         let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
 
         // 验证提取结果
+        assert!(vars.iter().any(
+            |v| v.name.as_ref() == "a" && v.type_internal.to_internal_with_generics() == "int"
+        ));
         assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "a" && v.type_internal.to_internal_with_generics() == "int")
+            vars.iter().any(|v| v.name.as_ref() == "b"
+                && v.type_internal.to_internal_with_generics() == "String")
         );
         assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "b" && v.type_internal.to_internal_with_generics() == "String")
-        );
-        assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "c" && v.type_internal.to_internal_with_generics() == "List<String>"),
+            vars.iter().any(|v| v.name.as_ref() == "c"
+                && v.type_internal.to_internal_with_generics() == "List<String>"),
             "Should preserve generics. Found types: {:?}",
             vars.iter()
                 .map(|v| v.type_internal.to_internal_with_generics())
@@ -353,13 +352,12 @@ mod tests {
 
         let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
 
+        assert!(vars.iter().any(
+            |v| v.name.as_ref() == "p1" && v.type_internal.to_internal_with_generics() == "int"
+        ));
         assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "p1" && v.type_internal.to_internal_with_generics() == "int")
-        );
-        assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "p2" && v.type_internal.to_internal_with_generics() == "String")
+            vars.iter().any(|v| v.name.as_ref() == "p2"
+                && v.type_internal.to_internal_with_generics() == "String")
         );
     }
 
@@ -453,8 +451,8 @@ mod tests {
 
         // 期望能从容错逻辑中提取出 s
         assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "s" && v.type_internal.to_internal_with_generics() == "String"),
+            vars.iter().any(|v| v.name.as_ref() == "s"
+                && v.type_internal.to_internal_with_generics() == "String"),
             "Should parse variable 's' even without semicolon. Found: {:?}",
             vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
         );
@@ -638,8 +636,8 @@ mod tests {
         let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
 
         assert!(
-            vars.iter()
-                .any(|v| v.name.as_ref() == "c" && v.type_internal.to_internal_with_generics() == "List<String>"),
+            vars.iter().any(|v| v.name.as_ref() == "c"
+                && v.type_internal.to_internal_with_generics() == "List<String>"),
             "Should preserve generics exactly as in source. Found types: {:?}",
             vars.iter()
                 .map(|v| v.type_internal.to_internal_with_generics())

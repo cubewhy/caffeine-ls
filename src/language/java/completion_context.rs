@@ -1,14 +1,22 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::completion::parser::parse_chain_from_expr;
 use crate::index::IndexView;
+use crate::index::MethodSummary;
+use crate::language::java::location::normalize_top_level_generic_base;
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::semantic::context::{
+    ExpectedType, ExpectedTypeConfidence, ExpectedTypeSource, FunctionalMethodCallHint,
+    SamSignature, TypedExpressionContext,
+};
 use crate::semantic::types::symbol_resolver::SymbolResolver;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     ChainSegment, TypeResolver, parse_single_type_to_internal, singleton_descriptor_to_type,
 };
 use crate::semantic::{CursorLocation, LocalVar, SemanticContext};
+use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC};
 
 pub struct ContextEnricher<'a> {
     view: &'a IndexView,
@@ -32,7 +40,11 @@ impl<'a> ContextEnricher<'a> {
                 qualifier_expr,
                 member_prefix,
                 is_constructor,
-            } => Some((qualifier_expr.clone(), member_prefix.clone(), *is_constructor)),
+            } => Some((
+                qualifier_expr.clone(),
+                member_prefix.clone(),
+                *is_constructor,
+            )),
             _ => None,
         };
         if let Some((qualifier_expr, member_prefix, is_constructor)) = method_ref {
@@ -89,62 +101,62 @@ impl<'a> ContextEnricher<'a> {
                 receiver_expr,
                 ..
             } = &mut ctx.location
-                && receiver_type.is_none()
-                && !receiver_expr.is_empty()
-            {
-                let resolver = TypeResolver::new(self.view);
-                let resolved = if looks_like_array_access(receiver_expr) {
-                    resolve_array_access_type(
+            && receiver_type.is_none()
+            && !receiver_expr.is_empty()
+        {
+            let resolver = TypeResolver::new(self.view);
+            let resolved = if looks_like_array_access(receiver_expr) {
+                resolve_array_access_type(
+                    receiver_expr,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    &type_ctx,
+                    self.view,
+                )
+            } else {
+                let chain = parse_chain_from_expr(receiver_expr);
+                tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
+
+                if chain.is_empty() {
+                    let r = resolver.resolve(
                         receiver_expr,
+                        &ctx.local_variables,
+                        ctx.enclosing_internal_name.as_ref(),
+                    );
+                    tracing::debug!(
+                        ?r,
+                        receiver_expr,
+                        "enrich_context: chain is empty, resolver.resolve returned"
+                    );
+                    r
+                } else {
+                    let r = evaluate_chain(
+                        &chain,
                         &ctx.local_variables,
                         ctx.enclosing_internal_name.as_ref(),
                         &resolver,
                         &type_ctx,
                         self.view,
-                    )
-                } else {
-                    let chain = parse_chain_from_expr(receiver_expr);
-                    tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
-
-                    if chain.is_empty() {
-                        let r = resolver.resolve(
-                            receiver_expr,
-                            &ctx.local_variables,
-                            ctx.enclosing_internal_name.as_ref(),
-                        );
-                        tracing::debug!(
-                            ?r,
-                            receiver_expr,
-                            "enrich_context: chain is empty, resolver.resolve returned"
-                        );
-                        r
-                    } else {
-                        let r = evaluate_chain(
-                            &chain,
-                            &ctx.local_variables,
-                            ctx.enclosing_internal_name.as_ref(),
-                            &resolver,
-                            &type_ctx,
-                            self.view,
-                        );
-                        tracing::debug!(?r, "enrich_context: evaluate_chain returned");
-                        r
-                    }
-                };
-
-                tracing::debug!(?resolved, "enrich_context: resolved before final match");
-
-                // Normalize to a canonical semantic receiver type before writing either field.
-                let resolved_semantic = canonicalize_receiver_semantic(resolved, &type_ctx);
-
-                if receiver_semantic_type.is_none() {
-                    *receiver_semantic_type = resolved_semantic.clone();
+                    );
+                    tracing::debug!(?r, "enrich_context: evaluate_chain returned");
+                    r
                 }
+            };
 
-                *receiver_type = resolved_semantic
-                    .as_ref()
-                    .map(|t| Arc::from(t.erased_internal()));
+            tracing::debug!(?resolved, "enrich_context: resolved before final match");
+
+            // Normalize to a canonical semantic receiver type before writing either field.
+            let resolved_semantic = canonicalize_receiver_semantic(resolved, &type_ctx);
+
+            if receiver_semantic_type.is_none() {
+                *receiver_semantic_type = resolved_semantic.clone();
             }
+
+            *receiver_type = resolved_semantic
+                .as_ref()
+                .map(|t| Arc::from(t.erased_internal()));
+        }
 
         // receiver_expr 是已知包名 -> 转成 Import
         let import_location: Option<(CursorLocation, String)> =
@@ -214,6 +226,8 @@ impl<'a> ContextEnricher<'a> {
                 lv.type_internal = new_ty;
             }
         }
+
+        enrich_expected_type_context(ctx, self.view, &type_ctx);
     }
 }
 
@@ -362,13 +376,14 @@ fn resolve_var_init_expr(
         // 寻找类型声明的边界：可能是普通构造函数 '('、泛型 '<'，或者是数组的 '['、'{'
         let mut boundary_idx = rest.find(['(', '[', '{']).unwrap_or(rest.len());
         if let Some(gen_start) = rest.find('<')
-            && gen_start < boundary_idx {
-                if let Some(gen_end) = find_matching_angle(rest, gen_start) {
-                    boundary_idx = gen_end + 1;
-                } else {
-                    return None;
-                }
+            && gen_start < boundary_idx
+        {
+            if let Some(gen_end) = find_matching_angle(rest, gen_start) {
+                boundary_idx = gen_end + 1;
+            } else {
+                return None;
             }
+        }
         let type_name = rest[..boundary_idx].trim();
 
         // 解析基础类型，同时为 primitive 类型做白名单兜底
@@ -399,14 +414,7 @@ fn resolve_var_init_expr(
         return evaluate_chain(&chain, locals, enclosing_internal, resolver, type_ctx, view);
     }
 
-    resolve_array_access_type(
-        expr,
-        locals,
-        enclosing_internal,
-        resolver,
-        type_ctx,
-        view,
-    )
+    resolve_array_access_type(expr, locals, enclosing_internal, resolver, type_ctx, view)
 }
 
 /// 统一且健壮的调用链类型推导逻辑 (支持连缀方法调用和字段读取)
@@ -544,6 +552,227 @@ fn evaluate_chain(
     current
 }
 
+fn enrich_expected_type_context(
+    ctx: &mut SemanticContext,
+    view: &IndexView,
+    type_ctx: &SourceTypeCtx,
+) {
+    let Some(hint) = ctx.functional_target_hint.clone() else {
+        ctx.typed_expr_ctx = None;
+        ctx.expected_functional_interface = None;
+        ctx.expected_sam = None;
+        return;
+    };
+
+    let mut expected = hint
+        .expected_type_source
+        .as_deref()
+        .and_then(|src| resolve_source_type_hint(type_ctx, src))
+        .map(|(ty, confidence)| ExpectedType {
+            ty,
+            source: ExpectedTypeSource::AssignmentRhs,
+            confidence,
+        });
+    let mut receiver_type: Option<TypeName> = None;
+
+    if expected.is_none()
+        && let Some(call_hint) = hint.method_call.as_ref()
+    {
+        let (expected_from_arg, receiver) =
+            resolve_expected_type_from_method_argument(ctx, view, type_ctx, call_hint);
+        expected = expected_from_arg.map(|(ty, confidence)| ExpectedType {
+            ty,
+            source: ExpectedTypeSource::MethodArgument {
+                arg_index: call_hint.arg_index,
+            },
+            confidence,
+        });
+        receiver_type = receiver;
+    }
+
+    ctx.typed_expr_ctx = Some(TypedExpressionContext {
+        expected_type: expected.clone(),
+        receiver_type,
+    });
+
+    let expected_ty = expected.as_ref().map(|e| e.ty.clone());
+    ctx.expected_functional_interface = expected_ty.clone();
+    ctx.expected_sam = expected_ty
+        .as_ref()
+        .and_then(|ty| extract_sam_signature(view, ty));
+}
+
+fn resolve_source_type_hint(
+    type_ctx: &SourceTypeCtx,
+    src: &str,
+) -> Option<(TypeName, ExpectedTypeConfidence)> {
+    type_ctx
+        .resolve_type_name_relaxed(src)
+        .map(|r| {
+            let confidence = match r.quality {
+                crate::language::java::type_ctx::TypeResolveQuality::Exact => {
+                    ExpectedTypeConfidence::Exact
+                }
+                crate::language::java::type_ctx::TypeResolveQuality::Partial => {
+                    ExpectedTypeConfidence::Partial
+                }
+            };
+            (r.ty, confidence)
+        })
+        .or_else(|| {
+            let base = normalize_top_level_generic_base(src);
+            type_ctx
+                .resolve_simple_strict(base)
+                .map(TypeName::new)
+                .map(|ty| (ty, ExpectedTypeConfidence::Partial))
+        })
+}
+
+fn resolve_expected_type_from_method_argument(
+    ctx: &SemanticContext,
+    view: &IndexView,
+    type_ctx: &SourceTypeCtx,
+    hint: &FunctionalMethodCallHint,
+) -> (Option<(TypeName, ExpectedTypeConfidence)>, Option<TypeName>) {
+    let resolver = TypeResolver::new(view);
+    let receiver =
+        match resolve_hint_receiver_type(ctx, type_ctx, view, &resolver, &hint.receiver_expr) {
+            Some(r) => r,
+            None => return (None, None),
+        };
+    let receiver_owner = receiver.erased_internal();
+
+    let (methods, _) = view.collect_inherited_members(receiver_owner);
+    let candidates: Vec<&MethodSummary> = methods
+        .iter()
+        .filter(|m| m.name.as_ref() == hint.method_name)
+        .map(|m| m.as_ref())
+        .collect();
+    if candidates.is_empty() {
+        return (None, Some(receiver));
+    }
+
+    let arg_types: Vec<TypeName> = hint
+        .arg_texts
+        .iter()
+        .map(|arg| {
+            resolver
+                .resolve(
+                    arg,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                )
+                .unwrap_or_else(|| TypeName::new("unknown"))
+        })
+        .collect();
+    let arg_count = hint.arg_texts.len() as i32;
+    let selected = match resolver.select_overload(&candidates, arg_count, &arg_types) {
+        Some(s) => s,
+        None => return (None, Some(receiver)),
+    };
+    let Some(param) = selected.params.items.get(hint.arg_index) else {
+        return (None, Some(receiver));
+    };
+    let expected =
+        descriptor_to_type_name(&param.descriptor).map(|ty| (ty, ExpectedTypeConfidence::Exact));
+    (expected, Some(receiver))
+}
+
+fn resolve_hint_receiver_type(
+    ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+    resolver: &TypeResolver,
+    expr: &str,
+) -> Option<TypeName> {
+    let resolved = if looks_like_array_access(expr) {
+        resolve_array_access_type(
+            expr,
+            &ctx.local_variables,
+            ctx.enclosing_internal_name.as_ref(),
+            resolver,
+            type_ctx,
+            view,
+        )
+    } else {
+        let chain = parse_chain_from_expr(expr);
+        if chain.is_empty() {
+            resolver.resolve(
+                expr,
+                &ctx.local_variables,
+                ctx.enclosing_internal_name.as_ref(),
+            )
+        } else {
+            evaluate_chain(
+                &chain,
+                &ctx.local_variables,
+                ctx.enclosing_internal_name.as_ref(),
+                resolver,
+                type_ctx,
+                view,
+            )
+        }
+    };
+
+    canonicalize_receiver_semantic(resolved, type_ctx)
+}
+
+fn extract_sam_signature(view: &IndexView, interface_ty: &TypeName) -> Option<SamSignature> {
+    let owner = interface_ty.erased_internal();
+    let (methods, _) = view.collect_inherited_members(owner);
+    let mut seen = HashSet::new();
+    let mut abstract_methods: Vec<Arc<MethodSummary>> = Vec::new();
+
+    for method in methods {
+        if (method.access_flags & ACC_ABSTRACT) == 0 {
+            continue;
+        }
+        if (method.access_flags & ACC_STATIC) != 0 {
+            continue;
+        }
+        if is_object_method(method.name.as_ref(), method.desc().as_ref()) {
+            continue;
+        }
+        let key = format!("{}#{}", method.name, method.desc());
+        if seen.insert(key) {
+            abstract_methods.push(method);
+        }
+    }
+
+    if abstract_methods.len() != 1 {
+        return None;
+    }
+
+    let sam = abstract_methods.pop()?;
+    let param_types = sam
+        .params
+        .items
+        .iter()
+        .map(|p| descriptor_to_type_name(&p.descriptor).unwrap_or_else(|| TypeName::new("unknown")))
+        .collect::<Vec<_>>();
+    let return_type = sam.return_type.as_deref().and_then(descriptor_to_type_name);
+
+    Some(SamSignature {
+        method_name: sam.name.clone(),
+        param_types,
+        return_type,
+    })
+}
+
+fn descriptor_to_type_name(desc: &str) -> Option<TypeName> {
+    parse_single_type_to_internal(desc)
+        .or_else(|| singleton_descriptor_to_type(desc).map(TypeName::new))
+}
+
+fn is_object_method(name: &str, desc: &str) -> bool {
+    matches!(
+        (name, desc),
+        ("equals", "(Ljava/lang/Object;)Z")
+            | ("hashCode", "()I")
+            | ("toString", "()Ljava/lang/String;")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,7 +781,7 @@ mod tests {
     use crate::index::{
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, WorkspaceIndex,
     };
-    use rust_asm::constants::ACC_PUBLIC;
+    use rust_asm::constants::{ACC_ABSTRACT, ACC_PUBLIC};
 
     fn seg_names(expr: &str) -> Vec<(String, Option<i32>)> {
         parse_chain_from_expr(expr)
@@ -640,6 +869,132 @@ mod tests {
                 generic_signature: None,
                 origin: ClassOrigin::Unknown,
             }],
+        );
+        idx
+    }
+
+    fn make_index_with_functional_types() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Object"),
+                    internal_name: Arc::from("java/lang/Object"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("toString"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Ljava/lang/String;")),
+                        },
+                        MethodSummary {
+                            name: Arc::from("hashCode"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("I")),
+                        },
+                        MethodSummary {
+                            name: Arc::from("equals"),
+                            params: MethodParams::from([("Ljava/lang/Object;", "obj")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Z")),
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("String"),
+                    internal_name: Arc::from("java/lang/String"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util/function")),
+                    name: Arc::from("Function"),
+                    internal_name: Arc::from("java/util/function/Function"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("apply"),
+                            params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Ljava/lang/Object;")),
+                        },
+                        MethodSummary {
+                            name: Arc::from("andThen"),
+                            params: MethodParams::from([(
+                                "Ljava/util/function/Function;",
+                                "after",
+                            )]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Ljava/util/function/Function;")),
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util/stream")),
+                    name: Arc::from("Stream"),
+                    internal_name: Arc::from("java/util/stream/Stream"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("map"),
+                        params: MethodParams::from([("Ljava/util/function/Function;", "mapper")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/util/stream/Stream;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
         );
         idx
     }
@@ -883,5 +1238,226 @@ mod tests {
             ctx.location
         );
         assert_eq!(ctx.query, "ArrayList");
+    }
+
+    #[test]
+    fn test_enrich_context_populates_expected_functional_type_from_assignment_rhs() {
+        let idx = make_index_with_functional_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.function.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MethodReference {
+                qualifier_expr: "String".to_string(),
+                member_prefix: "length".to_string(),
+                is_constructor: false,
+            },
+            "length",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.function.*".into()],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: Some("Function<String, Integer>".to_string()),
+            method_call: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert!(matches!(
+            ctx.typed_expr_ctx
+                .as_ref()
+                .and_then(|t| t.expected_type.as_ref()),
+            Some(crate::semantic::context::ExpectedType {
+                source: crate::semantic::context::ExpectedTypeSource::AssignmentRhs,
+                confidence: crate::semantic::context::ExpectedTypeConfidence::Partial,
+                ..
+            })
+        ));
+        assert_eq!(
+            ctx.expected_functional_interface
+                .as_ref()
+                .map(|t| t.erased_internal()),
+            Some("java/util/function/Function")
+        );
+        assert_eq!(
+            ctx.expected_sam.as_ref().map(|s| s.method_name.as_ref()),
+            Some("apply")
+        );
+    }
+
+    #[test]
+    fn test_enrich_context_populates_expected_functional_type_from_method_argument() {
+        let idx = make_index_with_functional_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.stream.*".into(), "java.util.function.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MethodReference {
+                qualifier_expr: "String".to_string(),
+                member_prefix: "trim".to_string(),
+                is_constructor: false,
+            },
+            "trim",
+            vec![LocalVar {
+                name: Arc::from("stream"),
+                type_internal: TypeName::new("java/util/stream/Stream"),
+                init_expr: None,
+            }],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.stream.*".into(), "java.util.function.*".into()],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: None,
+            method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
+                receiver_expr: "stream".to_string(),
+                method_name: "map".to_string(),
+                arg_index: 0,
+                arg_texts: vec!["String::trim".to_string()],
+            }),
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert!(matches!(
+            ctx.typed_expr_ctx
+                .as_ref()
+                .and_then(|t| t.expected_type.as_ref()),
+            Some(crate::semantic::context::ExpectedType {
+                source: crate::semantic::context::ExpectedTypeSource::MethodArgument {
+                    arg_index: 0
+                },
+                confidence: crate::semantic::context::ExpectedTypeConfidence::Exact,
+                ..
+            })
+        ));
+        assert_eq!(
+            ctx.typed_expr_ctx
+                .as_ref()
+                .and_then(|t| t.receiver_type.as_ref())
+                .map(|t| t.erased_internal()),
+            Some("java/util/stream/Stream")
+        );
+        assert_eq!(
+            ctx.expected_functional_interface
+                .as_ref()
+                .map(|t| t.erased_internal()),
+            Some("java/util/function/Function")
+        );
+        assert_eq!(
+            ctx.expected_sam.as_ref().map(|s| s.method_name.as_ref()),
+            Some("apply")
+        );
+    }
+
+    #[test]
+    fn test_enrich_context_leaves_expected_sam_none_for_non_functional_type() {
+        let idx = make_index_with_functional_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "x".to_string(),
+            },
+            "x",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into()],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: Some("String".to_string()),
+            method_call: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        assert_eq!(
+            ctx.expected_functional_interface
+                .as_ref()
+                .map(|t| t.erased_internal()),
+            Some("java/lang/String")
+        );
+        assert!(
+            ctx.expected_sam.is_none(),
+            "non-functional type should not produce SAM"
+        );
+    }
+
+    #[test]
+    fn test_enrich_context_assignment_partial_expected_type_preserved() {
+        let idx = make_index_with_functional_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.function.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "x".to_string(),
+            },
+            "x",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.util.function.*".into()],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: Some("Function<? super T, ? extends K>".to_string()),
+            method_call: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        let expected = ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.expected_type.as_ref())
+            .expect("expected type should be present as partial");
+        assert_eq!(expected.ty.erased_internal(), "java/util/function/Function");
+        assert_eq!(
+            expected.confidence,
+            crate::semantic::context::ExpectedTypeConfidence::Partial
+        );
     }
 }

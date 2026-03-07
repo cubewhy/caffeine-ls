@@ -9,6 +9,18 @@ pub struct SourceTypeCtx {
     name_table: Option<Arc<crate::index::NameTable>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeResolveQuality {
+    Exact,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelaxedTypeResolution {
+    pub ty: crate::semantic::types::type_name::TypeName,
+    pub quality: TypeResolveQuality,
+}
+
 impl SourceTypeCtx {
     pub fn new(
         package: Option<Arc<str>>,
@@ -178,6 +190,14 @@ impl SourceTypeCtx {
     ) -> Option<crate::semantic::types::type_name::TypeName> {
         resolve_type_name_strict_inner(self, ty)
     }
+
+    /// Resolve a source-level type name in a best-effort mode.
+    /// Preserves the outer/base type whenever possible, and marks the
+    /// result as Partial when generic arguments cannot be fully resolved.
+    pub fn resolve_type_name_relaxed(&self, ty: &str) -> Option<RelaxedTypeResolution> {
+        let (ty, quality) = resolve_type_name_relaxed_inner(self, ty)?;
+        Some(RelaxedTypeResolution { ty, quality })
+    }
 }
 
 fn resolve_type_name_strict_inner(
@@ -242,6 +262,88 @@ fn resolve_type_name_strict_inner(
     Some(ty)
 }
 
+fn resolve_type_name_relaxed_inner(
+    ctx: &SourceTypeCtx,
+    ty: &str,
+) -> Option<(
+    crate::semantic::types::type_name::TypeName,
+    TypeResolveQuality,
+)> {
+    let ty = ty.trim();
+    if ty.is_empty() {
+        return None;
+    }
+
+    let mut base = ty;
+    let mut dims = 0usize;
+    while let Some(stripped) = base.strip_suffix("[]") {
+        dims += 1;
+        base = stripped.trim();
+    }
+
+    while base.starts_with('@') {
+        if let Some(idx) = base.find(' ') {
+            base = base[idx..].trim_start();
+        } else {
+            return None;
+        }
+    }
+
+    let (base_name, args_str) = split_generic_base(base)?;
+    let base_internal = resolve_base_internal(ctx, base_name)?;
+
+    let mut quality = TypeResolveQuality::Exact;
+    let mut out = if let Some(args) = args_str {
+        let mut resolved_args = Vec::new();
+        for arg in split_generic_args(args) {
+            match resolve_type_arg_type_relaxed(ctx, arg) {
+                Some((arg_ty, arg_quality)) => {
+                    if arg_quality == TypeResolveQuality::Partial {
+                        quality = TypeResolveQuality::Partial;
+                    }
+                    resolved_args.push(arg_ty);
+                }
+                None => {
+                    // Preserve outer/base even if this inner argument fails.
+                    quality = TypeResolveQuality::Partial;
+                }
+            }
+        }
+        if resolved_args.is_empty() {
+            crate::semantic::types::type_name::TypeName::new(base_internal)
+        } else {
+            crate::semantic::types::type_name::TypeName::with_args(base_internal, resolved_args)
+        }
+    } else {
+        crate::semantic::types::type_name::TypeName::new(base_internal)
+    };
+
+    if dims > 0 {
+        out = out.with_array_dims(dims);
+    }
+
+    Some((out, quality))
+}
+
+fn resolve_base_internal(ctx: &SourceTypeCtx, base_name: &str) -> Option<String> {
+    if base_name.contains('/') {
+        return ctx
+            .name_table
+            .as_ref()
+            .filter(|nt| nt.exists(base_name))
+            .map(|_| base_name.to_string());
+    }
+    if base_name.contains('.') {
+        let internal = base_name.replace('.', "/");
+        return ctx
+            .name_table
+            .as_ref()
+            .filter(|nt| nt.exists(&internal))
+            .map(|_| internal);
+    }
+    ctx.resolve_simple_strict(base_name)
+}
+
 fn split_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
     if let Some(start) = ty.find('<') {
         let mut depth = 0i32;
@@ -299,11 +401,17 @@ fn resolve_type_arg_type(
     }
     if let Some(bound) = arg.strip_prefix("? extends ") {
         let inner = resolve_type_arg_type(ctx, bound)?;
-        return Some(crate::semantic::types::type_name::TypeName::with_args("+", vec![inner]));
+        return Some(crate::semantic::types::type_name::TypeName::with_args(
+            "+",
+            vec![inner],
+        ));
     }
     if let Some(bound) = arg.strip_prefix("? super ") {
         let inner = resolve_type_arg_type(ctx, bound)?;
-        return Some(crate::semantic::types::type_name::TypeName::with_args("-", vec![inner]));
+        return Some(crate::semantic::types::type_name::TypeName::with_args(
+            "-",
+            vec![inner],
+        ));
     }
 
     let resolved = resolve_type_name_strict_inner(ctx, arg)?;
@@ -313,15 +421,7 @@ fn resolve_type_arg_type(
     let base = resolved.erased_internal();
     if matches!(
         base,
-        "void"
-            | "boolean"
-            | "byte"
-            | "char"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
+        "void" | "boolean" | "byte" | "char" | "short" | "int" | "long" | "float" | "double"
     ) {
         return None;
     }
@@ -329,6 +429,45 @@ fn resolve_type_arg_type(
         return Some(resolved);
     }
     None
+}
+
+fn resolve_type_arg_type_relaxed(
+    ctx: &SourceTypeCtx,
+    arg: &str,
+) -> Option<(
+    crate::semantic::types::type_name::TypeName,
+    TypeResolveQuality,
+)> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    if arg == "?" {
+        return Some((
+            crate::semantic::types::type_name::TypeName::new("*"),
+            TypeResolveQuality::Exact,
+        ));
+    }
+    if let Some(bound) = arg.strip_prefix("? extends ") {
+        let inner = resolve_type_arg_type_relaxed(ctx, bound)
+            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))
+            .map(|(t, q)| (t, q))?;
+        return Some((
+            crate::semantic::types::type_name::TypeName::with_args("+", vec![inner.0]),
+            inner.1,
+        ));
+    }
+    if let Some(bound) = arg.strip_prefix("? super ") {
+        let inner = resolve_type_arg_type_relaxed(ctx, bound)
+            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))
+            .map(|(t, q)| (t, q))?;
+        return Some((
+            crate::semantic::types::type_name::TypeName::with_args("-", vec![inner.0]),
+            inner.1,
+        ));
+    }
+
+    resolve_type_name_relaxed_inner(ctx, arg)
 }
 
 pub fn build_java_descriptor(
@@ -469,5 +608,35 @@ mod tests {
         let nt = name_table(&["a/Foo", "b/Foo"]);
         let ctx = SourceTypeCtx::new(None, vec!["a.Foo".into(), "b.Foo".into()], Some(nt));
         assert_eq!(ctx.resolve_simple_strict("Foo"), None);
+    }
+
+    #[test]
+    fn test_resolve_type_name_relaxed_preserves_wildcard_bounds() {
+        let nt = name_table(&["java/util/List", "java/lang/Number"]);
+        let ctx = SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(nt));
+
+        let resolved = ctx
+            .resolve_type_name_relaxed("List<? extends Number>")
+            .expect("should resolve");
+        assert_eq!(resolved.ty.erased_internal(), "java/util/List");
+        assert_eq!(resolved.quality, TypeResolveQuality::Exact);
+        assert_eq!(resolved.ty.args.len(), 1);
+        assert_eq!(resolved.ty.args[0].erased_internal(), "+");
+        assert_eq!(
+            resolved.ty.args[0].args[0].erased_internal(),
+            "java/lang/Number"
+        );
+    }
+
+    #[test]
+    fn test_resolve_type_name_relaxed_preserves_base_on_partial_args() {
+        let nt = name_table(&["java/util/function/Function"]);
+        let ctx = SourceTypeCtx::new(None, vec!["java.util.function.*".into()], Some(nt));
+
+        let resolved = ctx
+            .resolve_type_name_relaxed("Function<? super T, ? extends K>")
+            .expect("base should be preserved");
+        assert_eq!(resolved.ty.erased_internal(), "java/util/function/Function");
+        assert_eq!(resolved.quality, TypeResolveQuality::Partial);
     }
 }

@@ -110,13 +110,15 @@ fn is_valid_identifier(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{IndexScope, ModuleId};
     use crate::semantic::context::{CursorLocation, SemanticContext};
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn ctx(type_name: &str) -> SemanticContext {
@@ -136,7 +138,11 @@ mod tests {
     #[test]
     fn test_string_builder_suggestions() {
         let idx = WorkspaceIndex::new();
-        let results = NameSuggestionProvider.provide(root_scope(), &ctx("StringBuilder"), &idx.view(root_scope()));
+        let results = NameSuggestionProvider.provide(
+            root_scope(),
+            &ctx("StringBuilder"),
+            &idx.view(root_scope()),
+        );
         let names: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(
             names.contains(&"sb"),
@@ -223,7 +229,8 @@ mod tests {
     #[test]
     fn test_empty_type_returns_empty() {
         let idx = WorkspaceIndex::new();
-        let results = NameSuggestionProvider.provide(root_scope(), &ctx(""), &idx.view(root_scope()));
+        let results =
+            NameSuggestionProvider.provide(root_scope(), &ctx(""), &idx.view(root_scope()));
         assert!(results.is_empty());
     }
 

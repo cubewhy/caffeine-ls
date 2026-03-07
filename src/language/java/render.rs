@@ -13,7 +13,11 @@ use crate::{
     },
 };
 
-fn should_trace_method(receiver_internal: &str, class_meta: &ClassMetadata, method: &MethodSummary) -> bool {
+fn should_trace_method(
+    receiver_internal: &str,
+    class_meta: &ClassMetadata,
+    method: &MethodSummary,
+) -> bool {
     method.name.as_ref() == "add"
         && (receiver_internal.contains("ArrayList")
             || class_meta.internal_name.contains("ArrayList"))
@@ -53,11 +57,7 @@ pub fn method_detail(
         .unwrap_or(base_return);
 
     if trace_add {
-        tracing::debug!(
-            base_return,
-            ret_jvm,
-            "method_detail: return type selection"
-        );
+        tracing::debug!(base_return, ret_jvm, "method_detail: return type selection");
     }
 
     let mut display_return: Arc<str> = substitute_type(

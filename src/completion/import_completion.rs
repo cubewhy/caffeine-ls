@@ -196,23 +196,30 @@ pub fn make_import_text_edit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{ClassMetadata, ClassOrigin, IndexScope, IndexView, ModuleId, WorkspaceIndex};
+    use crate::index::{
+        ClassMetadata, ClassOrigin, IndexScope, IndexView, ModuleId, WorkspaceIndex,
+    };
     use rust_asm::constants::ACC_PUBLIC;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn make_index() -> WorkspaceIndex {
         let idx = WorkspaceIndex::new();
-        idx.add_jar_classes(root_scope(), vec![
-            make_cls("org/cubewhy", "Main"),
-            make_cls("org/cubewhy", "RealMain"),
-            make_cls("org/cubewhy/utils", "StringUtil"),
-            make_cls("java/util", "ArrayList"),
-            make_cls("java/util", "HashMap"),
-            make_cls("java/lang", "String"),
-        ]);
+        idx.add_jar_classes(
+            root_scope(),
+            vec![
+                make_cls("org/cubewhy", "Main"),
+                make_cls("org/cubewhy", "RealMain"),
+                make_cls("org/cubewhy/utils", "StringUtil"),
+                make_cls("java/util", "ArrayList"),
+                make_cls("java/util", "HashMap"),
+                make_cls("java/lang", "String"),
+            ],
+        );
         idx
     }
 

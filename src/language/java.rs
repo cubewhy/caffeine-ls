@@ -354,6 +354,7 @@ impl JavaContextExtractor {
         } else {
             (location, query)
         };
+        let functional_target_hint = location::infer_functional_target_hint(&self, cursor_node);
 
         let local_variables = locals::extract_locals(&self, root, cursor_node);
         let enclosing_class = scope::extract_enclosing_class(&self, cursor_node)
@@ -402,6 +403,7 @@ impl JavaContextExtractor {
             enclosing_package,
             existing_imports,
         )
+        .with_functional_target_hint(functional_target_hint)
         .with_static_imports(existing_static_imports)
         .with_class_members(current_class_members)
         .with_enclosing_member(enclosing_class_member)

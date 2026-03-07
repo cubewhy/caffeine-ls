@@ -141,10 +141,7 @@ fn collect_members_from_node_impl(
             {
                 collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
             }
-            "class_body"
-            | "interface_body"
-            | "enum_body"
-            | "program" => {
+            "class_body" | "interface_body" | "enum_body" | "program" => {
                 collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
             }
             "ERROR" => {

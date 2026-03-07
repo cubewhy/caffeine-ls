@@ -54,15 +54,17 @@ impl CompletionProvider for LocalVarProvider {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{IndexScope, ModuleId};
     use crate::semantic::context::{CursorLocation, LocalVar, SemanticContext};
     use crate::semantic::types::type_name::TypeName;
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn make_ctx(prefix: &str, vars: Vec<(&str, &str)>) -> SemanticContext {

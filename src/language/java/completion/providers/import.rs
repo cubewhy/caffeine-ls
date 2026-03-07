@@ -27,8 +27,8 @@ impl CompletionProvider for ImportProvider {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{ClassMetadata, ClassOrigin, IndexScope, IndexView, ModuleId};
     use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
@@ -36,14 +36,21 @@ mod tests {
 
     fn make_view() -> IndexView {
         let idx = WorkspaceIndex::new();
-        idx.add_jar_classes(IndexScope { module: ModuleId::ROOT }, vec![
-            make_cls("org/cubewhy", "Main"),
-            make_cls("org/cubewhy", "RealMain"),
-            make_cls("org/cubewhy/utils", "StringUtil"),
-            make_cls("java/util", "ArrayList"),
-            make_cls("java/util", "HashMap"),
-        ]);
-        idx.view(IndexScope { module: ModuleId::ROOT })
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                make_cls("org/cubewhy", "Main"),
+                make_cls("org/cubewhy", "RealMain"),
+                make_cls("org/cubewhy/utils", "StringUtil"),
+                make_cls("java/util", "ArrayList"),
+                make_cls("java/util", "HashMap"),
+            ],
+        );
+        idx.view(IndexScope {
+            module: ModuleId::ROOT,
+        })
     }
 
     fn make_cls(pkg: &str, name: &str) -> ClassMetadata {
@@ -80,7 +87,9 @@ mod tests {
     #[test]
     fn test_non_import_location_returns_empty() {
         let view = make_view();
-        let scope = IndexScope { module: ModuleId::ROOT };
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
         let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "Ma".to_string(),
@@ -98,7 +107,9 @@ mod tests {
     #[test]
     fn test_delegates_to_import_completion() {
         let view = make_view();
-        let scope = IndexScope { module: ModuleId::ROOT };
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
         let results = ImportProvider.provide(scope, &import_ctx("org.cubewhy.Ma"), &view);
         assert!(
             results

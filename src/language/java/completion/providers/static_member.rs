@@ -256,8 +256,7 @@ mod tests {
 
     use super::*;
     use crate::index::{
-        ClassMetadata, ClassOrigin, FieldSummary, IndexScope, MethodParams,
-        MethodSummary, ModuleId,
+        ClassMetadata, ClassOrigin, FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
     use crate::language::java::make_java_parser;
     use crate::language::{JavaLanguage, Language, ParseEnv};

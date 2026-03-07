@@ -6,7 +6,9 @@ use nucleo::pattern::{CaseMatching, Normalization};
 use parking_lot::RwLock;
 use rustc_hash::FxHashSet;
 
-use crate::index::{ClassMetadata, ClassOrigin, FieldSummary, MethodSummary, NameTable, intern_str};
+use crate::index::{
+    ClassMetadata, ClassOrigin, FieldSummary, MethodSummary, NameTable, intern_str,
+};
 
 type MroCacheMap = HashMap<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
 

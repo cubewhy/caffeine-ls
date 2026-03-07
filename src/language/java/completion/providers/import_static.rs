@@ -114,8 +114,8 @@ fn static_members_for_import(
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
@@ -124,70 +124,77 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn math_index() -> WorkspaceIndex {
         let idx = WorkspaceIndex::new();
-        idx.add_jar_classes(IndexScope { module: ModuleId::ROOT }, vec![ClassMetadata {
-            package: Some(Arc::from("java/lang")),
-            name: Arc::from("Math"),
-            internal_name: Arc::from("java/lang/Math"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![
-                MethodSummary {
-                    name: Arc::from("abs"),
-                    params: MethodParams::empty(),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC | ACC_STATIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: Some(Arc::from("I")),
-                },
-                MethodSummary {
-                    name: Arc::from("pow"),
-                    params: MethodParams::empty(),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC | ACC_STATIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: Some(Arc::from("D")),
-                },
-                MethodSummary {
-                    name: Arc::from("instanceMethod"),
-                    params: MethodParams::empty(),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: None,
-                },
-            ],
-            fields: vec![
-                FieldSummary {
-                    name: Arc::from("PI"),
-                    descriptor: Arc::from("D"),
-                    access_flags: ACC_PUBLIC | ACC_STATIC,
-                    annotations: vec![],
-                    is_synthetic: false,
-                    generic_signature: None,
-                },
-                FieldSummary {
-                    name: Arc::from("instanceField"),
-                    descriptor: Arc::from("I"),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                },
-            ],
-            access_flags: ACC_PUBLIC,
-            generic_signature: None,
-            inner_class_of: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Math"),
+                internal_name: Arc::from("java/lang/Math"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("abs"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC | ACC_STATIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("pow"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC | ACC_STATIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("D")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("instanceMethod"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    },
+                ],
+                fields: vec![
+                    FieldSummary {
+                        name: Arc::from("PI"),
+                        descriptor: Arc::from("D"),
+                        access_flags: ACC_PUBLIC | ACC_STATIC,
+                        annotations: vec![],
+                        is_synthetic: false,
+                        generic_signature: None,
+                    },
+                    FieldSummary {
+                        name: Arc::from("instanceField"),
+                        descriptor: Arc::from("I"),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                    },
+                ],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            }],
+        );
 
         idx
     }
@@ -220,7 +227,11 @@ mod tests {
             None,
             vec![],
         );
-        assert!(ImportStaticProvider.provide(root_scope(), &ctx, &idx.view(root_scope())).is_empty());
+        assert!(
+            ImportStaticProvider
+                .provide(root_scope(), &ctx, &idx.view(root_scope()))
+                .is_empty()
+        );
     }
 
     #[test]

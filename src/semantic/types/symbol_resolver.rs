@@ -1,8 +1,8 @@
-use crate::semantic::context::{SemanticContext, CursorLocation};
-use crate::semantic::types::TypeResolver;
-use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::semantic::types::type_name::TypeName;
 use crate::index::{FieldSummary, IndexView, MethodSummary};
+use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::semantic::context::{CursorLocation, SemanticContext};
+use crate::semantic::types::TypeResolver;
+use crate::semantic::types::type_name::TypeName;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -255,10 +255,7 @@ impl<'a> SymbolResolver<'a> {
 
     pub fn resolve_type_name(&self, ctx: &SemanticContext, name: &str) -> Option<Arc<str>> {
         if name.contains('/') {
-            return self
-                .view
-                .get_class(name)
-                .map(|c| c.internal_name.clone());
+            return self.view.get_class(name).map(|c| c.internal_name.clone());
         }
 
         if name.contains('.') {
@@ -318,59 +315,64 @@ fn split_args(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::context::{SemanticContext, CursorLocation};
     use crate::index::{
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
         WorkspaceIndex,
     };
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
 
     #[test]
     fn test_overload_resolution_in_symbol_resolver() {
         let idx = WorkspaceIndex::new();
-        let scope = IndexScope { module: ModuleId::ROOT };
-        idx.add_jar_classes(scope, vec![ClassMetadata {
-            package: Some(Arc::from("java/io")),
-            name: Arc::from("PrintStream"),
-            internal_name: Arc::from("java/io/PrintStream"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![
-                MethodSummary {
-                    name: Arc::from("println"),
-                    params: MethodParams::empty(),
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: None,
-                },
-                MethodSummary {
-                    name: Arc::from("println"),
-                    params: MethodParams::from([("I", "x")]), // int overload
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: None,
-                },
-                MethodSummary {
-                    name: Arc::from("println"),
-                    params: MethodParams::from([("Ljava/lang/String;", "x")]), // string overload
-                    annotations: vec![],
-                    access_flags: ACC_PUBLIC,
-                    is_synthetic: false,
-                    generic_signature: None,
-                    return_type: None,
-                },
-            ],
-            fields: vec![],
-            access_flags: ACC_PUBLIC,
-            inner_class_of: None,
-            generic_signature: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![ClassMetadata {
+                package: Some(Arc::from("java/io")),
+                name: Arc::from("PrintStream"),
+                internal_name: Arc::from("java/io/PrintStream"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("println"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    },
+                    MethodSummary {
+                        name: Arc::from("println"),
+                        params: MethodParams::from([("I", "x")]), // int overload
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    },
+                    MethodSummary {
+                        name: Arc::from("println"),
+                        params: MethodParams::from([("Ljava/lang/String;", "x")]), // string overload
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            }],
+        );
 
         // 测试 1: 解析 System.out.println(1) 应该落在 (I)V
         let ctx_int = SemanticContext::new(
@@ -434,29 +436,34 @@ mod tests {
     #[test]
     fn test_member_access_resolve_prefers_semantic_owner_over_legacy_receiver_type() {
         let idx = WorkspaceIndex::new();
-        let scope = IndexScope { module: ModuleId::ROOT };
-        idx.add_jar_classes(scope, vec![ClassMetadata {
-            package: Some(Arc::from("java/util")),
-            name: Arc::from("List"),
-            internal_name: Arc::from("java/util/List"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![MethodSummary {
-                name: Arc::from("size"),
-                params: MethodParams::empty(),
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: None,
+                interfaces: vec![],
                 annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("size"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
                 access_flags: ACC_PUBLIC,
-                is_synthetic: false,
+                inner_class_of: None,
                 generic_signature: None,
-                return_type: None,
+                origin: ClassOrigin::Unknown,
             }],
-            fields: vec![],
-            access_flags: ACC_PUBLIC,
-            inner_class_of: None,
-            generic_signature: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+        );
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
@@ -492,29 +499,34 @@ mod tests {
     #[test]
     fn test_member_access_resolve_falls_back_to_legacy_receiver_type() {
         let idx = WorkspaceIndex::new();
-        let scope = IndexScope { module: ModuleId::ROOT };
-        idx.add_jar_classes(scope, vec![ClassMetadata {
-            package: Some(Arc::from("java/util")),
-            name: Arc::from("List"),
-            internal_name: Arc::from("java/util/List"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![MethodSummary {
-                name: Arc::from("size"),
-                params: MethodParams::empty(),
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: None,
+                interfaces: vec![],
                 annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("size"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
                 access_flags: ACC_PUBLIC,
-                is_synthetic: false,
+                inner_class_of: None,
                 generic_signature: None,
-                return_type: None,
+                origin: ClassOrigin::Unknown,
             }],
-            fields: vec![],
-            access_flags: ACC_PUBLIC,
-            inner_class_of: None,
-            generic_signature: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+        );
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {

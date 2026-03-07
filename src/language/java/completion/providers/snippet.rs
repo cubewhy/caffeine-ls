@@ -229,7 +229,9 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn ctx_full(
@@ -434,7 +436,11 @@ mod tests {
             receiver_expr: "obj".to_string(),
             arguments: None,
         };
-        assert!(SnippetProvider.provide(root_scope(), &c, &idx.view(root_scope())).is_empty());
+        assert!(
+            SnippetProvider
+                .provide(root_scope(), &c, &idx.view(root_scope()))
+                .is_empty()
+        );
     }
 
     #[test]

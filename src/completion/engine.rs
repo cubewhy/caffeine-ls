@@ -58,7 +58,9 @@ mod tests {
             ClassMetadata, ClassOrigin, IndexView, MethodParams, MethodSummary, ModuleId,
             WorkspaceIndex,
         },
-        language::{JavaLanguage, java::completion_context::ContextEnricher, java::type_ctx::SourceTypeCtx},
+        language::{
+            JavaLanguage, java::completion_context::ContextEnricher, java::type_ctx::SourceTypeCtx,
+        },
         semantic::types::{TypeResolver, type_name::TypeName},
         semantic::{CursorLocation, LocalVar, SemanticContext},
     };
@@ -1019,7 +1021,10 @@ mod tests {
             .iter()
             .find(|v| v.name.as_ref() == "strItem")
             .unwrap();
-        assert_eq!(str_item_var.type_internal.erased_internal(), "java/lang/String");
+        assert_eq!(
+            str_item_var.type_internal.erased_internal(),
+            "java/lang/String"
+        );
     }
 
     #[test]

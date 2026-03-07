@@ -4,6 +4,7 @@ use crate::completion::provider::CompletionProvider;
 use crate::completion::scorer::AccessFilter;
 use crate::completion::{CandidateKind, CompletionCandidate};
 use crate::language::java::render;
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{
     completion::fuzzy,
@@ -197,7 +198,7 @@ impl CompletionProvider for MemberProvider {
         let resolved_semantic = receiver_semantic_type
             .cloned()
             .or_else(|| receiver_owner_internal.map(TypeName::new))
-            .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope).map(TypeName::from));
+            .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope));
 
         let resolved = match resolved_semantic {
             Some(t) => t,
@@ -299,12 +300,8 @@ impl CompletionProvider for MemberProvider {
                         self.name(),
                     )
                     .with_detail({
-                        let detail = render::method_detail(
-                            &class_internal,
-                            class_meta,
-                            method,
-                            &resolver,
-                        );
+                        let detail =
+                            render::method_detail(&class_internal, class_meta, method, &resolver);
                         if trace_add {
                             tracing::debug!(
                                 method_name = %method.name,
@@ -423,7 +420,7 @@ fn resolve_receiver_type(
     ctx: &SemanticContext,
     index: &IndexView,
     scope: IndexScope,
-) -> Option<Arc<str>> {
+) -> Option<TypeName> {
     tracing::debug!(
         expr,
         locals_count = ctx.local_variables.len(),
@@ -433,12 +430,12 @@ fn resolve_receiver_type(
     if expr == "this" {
         let r = ctx.enclosing_internal_name.clone();
         tracing::debug!(?r, "this -> enclosing");
-        return r;
+        return r.map(TypeName::from);
     }
 
     // new Foo() / new Foo(args) -> return Foo's internal name
     if let Some(class_name) = extract_constructor_class(expr) {
-        return resolve_simple_name_to_internal(class_name, ctx, index, scope);
+        return resolve_simple_name_to_internal(class_name, ctx, index, scope).map(TypeName::from);
     }
 
     // function call: "getMain2()" / "getMain2(arg1, arg2)"
@@ -458,22 +455,34 @@ fn resolve_receiver_type(
             "found in locals"
         );
 
+        if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>() {
+            let ty_source = lv.type_internal.erased_internal_with_arrays();
+            if let Some(relaxed) = type_ctx.resolve_type_name_relaxed(&ty_source) {
+                let internal = relaxed.ty.to_internal_with_generics();
+                tracing::debug!(
+                    ty_source,
+                    internal,
+                    quality = ?relaxed.quality,
+                    "resolved local receiver type via SourceTypeCtx relaxed parser"
+                );
+                return Some(relaxed.ty);
+            }
+        }
         if lv.type_internal.contains_slash() {
             let internal = lv.type_internal.to_internal_with_generics();
             tracing::debug!(internal, "type contains '/', returning directly");
-            return Some(Arc::from(internal));
+            return Some(lv.type_internal.clone());
         }
-
         let ty = lv.type_internal.erased_internal_with_arrays();
-        let result = resolve_complex_type_to_internal(&ty, ctx, index, scope);
-        tracing::debug!(?result, ty, "resolve_complex_name_to_internal result");
-        return result.map(|t| Arc::from(t.to_internal_with_generics()));
+        if let Some(internal) = resolve_simple_name_to_internal(&ty, ctx, index, scope) {
+            return Some(TypeName::from(internal));
+        }
     }
 
     tracing::debug!(expr, "local var not found");
 
     if let Some(internal_class) = resolve_strict_class_name(expr, ctx, index, scope) {
-        return Some(internal_class);
+        return Some(TypeName::from(internal_class));
     }
 
     None
@@ -538,87 +547,6 @@ fn resolve_strict_class_name(
     None
 }
 
-/// Dynamically recursively resolves types, using the current context (ctx/index) to convert source code types into JVM signatures.
-fn resolve_complex_type_to_internal(
-    ty: &str,
-    ctx: &SemanticContext,
-    index: &IndexView,
-    scope: IndexScope,
-) -> Option<TypeName> {
-    let ty = ty.trim();
-
-    // 1. Array
-    if let Some(stripped) = ty.strip_suffix("[]") {
-        let inner = resolve_complex_type_to_internal(stripped, ctx, index, scope)?;
-        return Some(inner.wrap_array());
-    }
-
-    // 2. Generics
-    if let Some(pos) = ty.find('<')
-        && ty.ends_with('>')
-    {
-        let base = &ty[..pos];
-        let args_str = &ty[pos + 1..ty.len() - 1];
-
-        // 动态解析 Base 类 (例如 "List" -> "java/util/List")
-        let base_internal = resolve_complex_type_to_internal(base, ctx, index, scope)?;
-
-        // 应对 diamond operator: new ArrayList<>()
-        if args_str.trim().is_empty() {
-            return Some(base_internal);
-        }
-
-        let mut args = Vec::new();
-        let mut depth = 0;
-        let mut start = 0;
-        for (i, c) in args_str.char_indices() {
-            match c {
-                '<' => depth += 1,
-                '>' => depth -= 1,
-                ',' if depth == 0 => {
-                    args.push(&args_str[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        args.push(&args_str[start..]);
-
-        let mut resolved_args = Vec::new();
-        for a in args {
-            let arg = a.trim();
-            if arg == "?" {
-                resolved_args.push(TypeName::new("*"));
-                continue;
-            }
-
-            // 动态解析泛型实参 (例如 "String" -> "java/lang/String")
-            let inner = resolve_complex_type_to_internal(arg, ctx, index, scope)?;
-            resolved_args.push(inner);
-        }
-        let mut base_ty = base_internal;
-        base_ty.args = resolved_args;
-        return Some(base_ty);
-    }
-
-    // 3. Primitive & Special
-    match ty {
-        "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" | "void"
-        | "var" => {
-            return Some(TypeName::new(ty));
-        }
-        _ => {}
-    }
-
-    // 4. Base class name
-    if ty.contains('/') {
-        Some(TypeName::new(ty))
-    } else {
-        // 交给原有的 import / global index 推导机制去查
-        resolve_simple_name_to_internal(ty, ctx, index, scope).map(TypeName::from)
-    }
-}
-
 /// Extract "Foo" from "new Foo()" / "new Foo(a, b)".
 fn extract_constructor_class(expr: &str) -> Option<&str> {
     let rest = expr.trim().strip_prefix("new ")?;
@@ -638,7 +566,7 @@ fn resolve_method_call_receiver(
     ctx: &SemanticContext,
     index: &IndexView,
     _scope: IndexScope,
-) -> Option<Arc<str>> {
+) -> Option<TypeName> {
     // Must contain '(' and end with ')'
     let paren = expr.find('(')?;
     if !expr.ends_with(')') {
@@ -658,9 +586,7 @@ fn resolve_method_call_receiver(
 
     let enclosing = ctx.enclosing_internal_name.as_deref()?;
     let resolver = TypeResolver::new(index);
-    resolver
-        .resolve_method_return(enclosing, method_name, arg_count, &[])
-        .map(|i| Arc::from(i.to_internal_with_generics()))
+    resolver.resolve_method_return(enclosing, method_name, arg_count, &[])
 }
 
 /// Resolves simple class names to internal names
@@ -719,14 +645,17 @@ mod tests {
         ClassMetadata, ClassOrigin, FieldSummary, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
     use crate::language::java::completion::providers::member::MemberProvider;
-    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::semantic::LocalVar;
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
     use crate::semantic::types::{parse_return_type_from_descriptor, type_name::TypeName};
 
     fn init_test_tracing() {
         let _ = fmt()
             .with_test_writer()
-            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")),
+            )
             .try_init();
     }
 
@@ -888,6 +817,144 @@ mod tests {
         let ctx = ctx_with_type("com/example/Foo", "");
         let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_local_receiver_with_complex_wildcard_generics_preserves_outer_base() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("List"),
+            internal_name: Arc::from("java/util/List"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![make_method("size", "()I", ACC_PUBLIC, false)],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let view = idx.view(root_scope());
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "si".to_string(),
+                receiver_expr: "nums".to_string(),
+                arguments: None,
+            },
+            "si",
+            vec![LocalVar {
+                name: Arc::from("nums"),
+                type_internal: TypeName::new("java/util/List<Box<? extends Number>>"),
+                init_expr: None,
+            }],
+            None,
+            None,
+            None,
+            vec!["java.util.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "size"),
+            "member completion should keep outer List base even when nested generic args are partial"
+        );
+    }
+
+    #[test]
+    fn test_source_style_box_extends_number_resolves_member_owner() {
+        init_test_tracing();
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("size", "()I", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: None,
+                name: Arc::from("Box"),
+                internal_name: Arc::from("Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Number"),
+                internal_name: Arc::from("java/lang/Number"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(root_scope());
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "nums".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![LocalVar {
+                name: Arc::from("nums"),
+                type_internal: TypeName::new("List<Box<? extends Number>>"),
+                init_expr: None,
+            }],
+            None,
+            None,
+            None,
+            vec!["java.util.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "size"),
+            "source-style generic receiver should still resolve outer List owner for member lookup"
+        );
     }
 
     #[test]
@@ -1145,11 +1212,7 @@ mod tests {
 
         let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         assert!(
-            results
-                .iter()
-                .filter(|c| c.label.as_ref() == "add")
-                .count()
-                >= 2,
+            results.iter().filter(|c| c.label.as_ref() == "add").count() >= 2,
             "expected at least 2 add overloads, got {:?}",
             results
                 .iter()

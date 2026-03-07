@@ -159,9 +159,9 @@ fn fqn_of(meta: &crate::index::ClassMetadata) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
     use crate::completion::CandidateKind;
+    use crate::index::WorkspaceIndex;
     use crate::index::{
         AnnotationSummary, AnnotationValue, ClassMetadata, ClassOrigin, IndexScope, ModuleId,
     };
@@ -171,7 +171,9 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn make_annotation(pkg: &str, name: &str) -> ClassMetadata {

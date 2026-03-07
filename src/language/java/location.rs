@@ -8,6 +8,7 @@ use tree_sitter::Node;
 use crate::{
     language::java::{JavaContextExtractor, utils::strip_sentinel},
     semantic::CursorLocation,
+    semantic::context::{FunctionalMethodCallHint, FunctionalTargetHint},
 };
 
 pub(crate) fn determine_location(
@@ -20,6 +21,25 @@ pub(crate) fn determine_location(
         return (CursorLocation::Unknown, String::new());
     }
     (loc, query)
+}
+
+pub(crate) fn infer_functional_target_hint(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+) -> Option<FunctionalTargetHint> {
+    let node = cursor_node?;
+
+    let expected_type_source = infer_assignment_rhs_expected_type(ctx, node);
+    let method_call = infer_method_argument_target_hint(ctx, node);
+
+    if expected_type_source.is_none() && method_call.is_none() {
+        return None;
+    }
+
+    Some(FunctionalTargetHint {
+        expected_type_source,
+        method_call,
+    })
 }
 
 fn determine_location_impl(
@@ -733,6 +753,110 @@ fn infer_expected_type_from_lhs(ctx: &JavaContextExtractor, node: Node) -> Optio
     None
 }
 
+fn infer_assignment_rhs_expected_type(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
+    let declarator = find_ancestor(node, "variable_declarator")?;
+    let value_node = declarator.child_by_field_name("value")?;
+    if !is_descendant_of(node, value_node) {
+        return None;
+    }
+    let decl = declarator.parent()?;
+    if decl.kind() != "local_variable_declaration" && decl.kind() != "field_declaration" {
+        return None;
+    }
+    Some(extract_type_from_decl(ctx, decl))
+}
+
+fn infer_method_argument_target_hint(
+    ctx: &JavaContextExtractor,
+    node: Node,
+) -> Option<FunctionalMethodCallHint> {
+    let arg_list = find_ancestor(node, "argument_list")?;
+    let invocation = arg_list.parent()?;
+    if invocation.kind() != "method_invocation" {
+        return None;
+    }
+
+    let receiver_expr = invocation
+        .child_by_field_name("object")
+        .map(|n| ctx.node_text(n).to_string())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "this".to_string());
+    let method_name = invocation
+        .child_by_field_name("name")
+        .map(|n| ctx.node_text(n).to_string())
+        .unwrap_or_default();
+    if method_name.is_empty() {
+        return None;
+    }
+
+    let arg_index = argument_index_at_cursor(ctx, arg_list);
+    let arg_texts = split_argument_texts(ctx, arg_list);
+
+    Some(FunctionalMethodCallHint {
+        receiver_expr,
+        method_name,
+        arg_index,
+        arg_texts,
+    })
+}
+
+fn argument_index_at_cursor(ctx: &JavaContextExtractor, arg_list: Node) -> usize {
+    let start = arg_list.start_byte().saturating_add(1);
+    let end = arg_list.end_byte().saturating_sub(1).min(ctx.offset);
+    if end <= start {
+        return 0;
+    }
+    count_top_level_commas(&ctx.source[start..end])
+}
+
+fn split_argument_texts(ctx: &JavaContextExtractor, arg_list: Node) -> Vec<String> {
+    let start = arg_list.start_byte().saturating_add(1);
+    let end = arg_list.end_byte().saturating_sub(1);
+    if end <= start {
+        return vec![];
+    }
+    split_top_level_args(&ctx.source[start..end])
+}
+
+fn count_top_level_commas(s: &str) -> usize {
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    for c in s.chars() {
+        match c {
+            '(' | '<' | '[' | '{' => depth += 1,
+            ')' | '>' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => commas += 1,
+            _ => {}
+        }
+    }
+    commas
+}
+
+fn split_top_level_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '<' | '[' | '{' => depth += 1,
+            ')' | '>' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                let part = s[start..i].trim();
+                if !part.is_empty() {
+                    out.push(part.to_string());
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = s[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail.to_string());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use tree_sitter::Parser;
@@ -740,6 +864,7 @@ mod tests {
     use crate::{
         language::java::{JavaContextExtractor, location::determine_location},
         semantic::CursorLocation,
+        semantic::context::FunctionalTargetHint,
     };
 
     fn setup_with(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
@@ -1202,5 +1327,61 @@ class A {
             loc
         );
         assert_eq!(query, "ArrayList");
+    }
+
+    #[test]
+    fn test_functional_target_hint_assignment_rhs() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        Function<String, Integer> fn = String::length;
+    }
+}
+"#};
+        let marker = "String::length";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+
+        assert!(
+            matches!(
+                hint,
+                Some(FunctionalTargetHint {
+                    expected_type_source: Some(ref ty),
+                    ..
+                }) if ty == "Function<String, Integer>"
+            ),
+            "Expected assignment RHS target type hint, got {:?}",
+            hint
+        );
+    }
+
+    #[test]
+    fn test_functional_target_hint_method_argument() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f(Stream<String> stream) {
+        stream.map(String::trim);
+    }
+}
+"#};
+        let marker = "String::trim";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+
+        assert!(
+            matches!(
+                hint,
+                Some(FunctionalTargetHint {
+                    method_call: Some(ref m),
+                    ..
+                }) if m.method_name == "map" && m.arg_index == 0 && m.receiver_expr == "stream"
+            ),
+            "Expected method-argument functional target hint, got {:?}",
+            hint
+        );
     }
 }

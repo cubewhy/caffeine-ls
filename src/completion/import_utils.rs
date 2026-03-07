@@ -88,7 +88,6 @@ fn wildcard_covers(wildcard_import: &str, fqn: &str) -> bool {
     }
 }
 
-
 /// Given a ClassMetadata, compute its point score FQN
 pub fn fqn_of_meta(meta: &ClassMetadata) -> String {
     match &meta.package {

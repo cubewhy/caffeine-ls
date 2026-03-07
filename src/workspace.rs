@@ -3,8 +3,8 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
 use tower_lsp::lsp_types::Url;
+use tracing::{error, info, warn};
 
 use crate::index::{ClassMetadata, WorkspaceIndex, index_jar};
 use crate::index::{IndexScope, ModuleId};

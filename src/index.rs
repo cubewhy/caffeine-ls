@@ -11,26 +11,26 @@ use std::sync::{Arc, OnceLock};
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
-use crate::semantic::types::{SymbolProvider, parse_return_type_from_descriptor};
 use crate::jvm::descriptor::consume_one_descriptor_type;
+use crate::semantic::types::{SymbolProvider, parse_return_type_from_descriptor};
 
-pub mod cache;
 pub mod bucket;
+pub mod cache;
 pub mod codebase;
 pub mod jdk;
 pub mod module_graph;
 pub mod module_index;
-pub mod source;
 pub mod scope;
+pub mod source;
 pub mod view;
 pub mod workspace_index;
 
-pub use scope::{ClasspathId, IndexScope, ModuleId};
-pub use workspace_index::WorkspaceIndex;
 pub use bucket::BucketIndex;
 pub use module_graph::ModuleGraph;
 pub use module_index::{ClasspathIndex, ModuleIndex, ModuleQueryCache};
+pub use scope::{ClasspathId, IndexScope, ModuleId};
 pub use view::IndexView;
+pub use workspace_index::WorkspaceIndex;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClassMetadata {
@@ -1743,7 +1743,8 @@ public class Calc {
 
     #[test]
     fn test_merge_source_param_names_for_erased_generic_params() {
-        let mut bytecode_class = make_class("com/example", "Box", ClassOrigin::Jar(Arc::from("x.jar")));
+        let mut bytecode_class =
+            make_class("com/example", "Box", ClassOrigin::Jar(Arc::from("x.jar")));
         bytecode_class.methods.push(MethodSummary {
             name: Arc::from("add"),
             access_flags: ACC_PUBLIC,

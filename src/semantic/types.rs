@@ -878,7 +878,8 @@ mod tests {
         // "cl" ends with 'l', but it's a local variable and shouldn't be evaluated as long.
         assert_eq!(
             r.resolve("cl", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("RandomClass"),
             "'cl' should resolve to RandomClass, not long"
         );
@@ -891,7 +892,8 @@ mod tests {
         // "sf" ends with 'f', but it's a local variable
         assert_eq!(
             r.resolve("sf", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("float"), // float is the variable's type, not a literal value.
             "'sf' should resolve to its declared type"
         );
@@ -903,17 +905,20 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("123L", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("long")
         );
         assert_eq!(
             r.resolve("0l", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("long")
         );
         assert_eq!(
             r.resolve("999L", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("long")
         );
     }
@@ -924,12 +929,14 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("1.5f", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("float")
         );
         assert_eq!(
             r.resolve("3F", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("float")
         );
     }
@@ -940,12 +947,14 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("1.5d", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("double")
         );
         assert_eq!(
             r.resolve("3.14", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("double")
         );
     }
@@ -956,12 +965,14 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("42", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("int")
         );
         assert_eq!(
             r.resolve("0", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("int")
         );
     }
@@ -972,7 +983,8 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("\"hello\"", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("java/lang/String")
         );
     }
@@ -984,7 +996,8 @@ mod tests {
         let enclosing = Arc::from("org/cubewhy/Main");
         assert_eq!(
             r.resolve("this", &locals, Some(&enclosing))
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("org/cubewhy/Main")
         );
     }
@@ -1013,7 +1026,8 @@ mod tests {
         // "myL" ends with 'L' but is not a numeric prefix, and should not be recognized as long.
         assert_eq!(
             r.resolve("myL", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("SomeClass")
         );
     }
@@ -1221,10 +1235,7 @@ mod tests {
 
         let resolver = TypeResolver::new(&view);
         let result = resolver.resolve("arr[0]", &locals, None);
-        assert_eq!(
-            result.as_ref().map(|t| t.erased_internal()),
-            Some("char")
-        );
+        assert_eq!(result.as_ref().map(|t| t.erased_internal()), Some("char"));
     }
 
     #[test]
@@ -1324,12 +1335,14 @@ mod tests {
         let r = TypeResolver::new(&view);
         assert_eq!(
             r.resolve("true", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("boolean")
         );
         assert_eq!(
             r.resolve("false", &locals, None)
-                .as_ref().map(|t| t.erased_internal()),
+                .as_ref()
+                .map(|t| t.erased_internal()),
             Some("boolean")
         );
     }

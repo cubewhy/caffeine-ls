@@ -5,7 +5,7 @@ use rust_asm::constants::{ACC_FINAL, ACC_PRIVATE, ACC_STATIC};
 
 use crate::{
     completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
-    index::{IndexScope, MethodSummary, IndexView},
+    index::{IndexScope, IndexView, MethodSummary},
     semantic::{
         context::{CursorLocation, SemanticContext},
         types::ContextualResolver,
@@ -252,8 +252,8 @@ fn build_candidate(
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
@@ -263,7 +263,9 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn method(name: &str, descriptor: &str, flags: u16) -> MethodSummary {
@@ -694,7 +696,11 @@ mod tests {
             None,
             vec![],
         );
-        assert!(OverrideProvider.provide(root_scope(), &ctx, &idx.view(root_scope())).is_empty());
+        assert!(
+            OverrideProvider
+                .provide(root_scope(), &ctx, &idx.view(root_scope()))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -810,7 +816,11 @@ mod tests {
             None,
             vec![],
         );
-        assert!(OverrideProvider.provide(root_scope(), &ctx, &idx.view(root_scope())).is_empty());
+        assert!(
+            OverrideProvider
+                .provide(root_scope(), &ctx, &idx.view(root_scope()))
+                .is_empty()
+        );
     }
 
     #[test]

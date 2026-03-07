@@ -122,7 +122,8 @@ fn parse_java_class(
         }
     }
 
-    let class_generic_signature = extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
+    let class_generic_signature =
+        extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
     if let Some(sig) = class_generic_signature.as_deref() {
         let class_type_params = parse_class_type_parameters(sig);
         if !class_type_params.is_empty() {
@@ -590,7 +591,9 @@ mod tests {
     fn init_test_tracing() {
         let _ = fmt()
             .with_test_writer()
-            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")),
+            )
             .try_init();
     }
 
@@ -673,7 +676,10 @@ public class Main {
 
         let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let outer = classes.iter().find(|c| c.name.as_ref() == "Outer").unwrap();
-        let nested = classes.iter().find(|c| c.name.as_ref() == "Nested").unwrap();
+        let nested = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Nested")
+            .unwrap();
 
         let outer_add_descs: Vec<_> = outer
             .methods
@@ -768,7 +774,10 @@ public class Main {
             }
         "#};
         let classes = parse_java_source(src, ClassOrigin::Unknown, None);
-        let cls = classes.iter().find(|c| c.name.as_ref() == "MyList").unwrap();
+        let cls = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "MyList")
+            .unwrap();
         let adds: Vec<_> = cls
             .methods
             .iter()
@@ -804,7 +813,11 @@ public class Main {
             .iter()
             .find(|c| c.internal_name.as_ref() == "org/example/MyList")
             .unwrap();
-        let add = cls.methods.iter().find(|m| m.name.as_ref() == "add").unwrap();
+        let add = cls
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "add")
+            .unwrap();
 
         let detail = render::method_detail(
             "org/example/MyList<Ljava/lang/String;>",

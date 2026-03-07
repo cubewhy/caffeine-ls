@@ -7,11 +7,11 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
-use crate::index::{
-    index_jar, BucketIndex, ClassMetadata, ClassOrigin, ClasspathId, IndexScope, ModuleGraph,
-    ModuleId, ModuleIndex, NameTable,
-};
 use crate::index::view::IndexView;
+use crate::index::{
+    BucketIndex, ClassMetadata, ClassOrigin, ClasspathId, IndexScope, ModuleGraph, ModuleId,
+    ModuleIndex, NameTable, index_jar,
+};
 
 pub struct WorkspaceIndex {
     modules: DashMap<ModuleId, Arc<ModuleIndex>>,
@@ -83,7 +83,8 @@ impl WorkspaceIndex {
             }
         }
 
-        self.jar_cache.insert(Arc::clone(&path), Arc::clone(&bucket));
+        self.jar_cache
+            .insert(Arc::clone(&path), Arc::clone(&bucket));
         bucket
     }
 
@@ -137,7 +138,12 @@ impl WorkspaceIndex {
     }
 
     pub fn add_classes(&self, classes: Vec<ClassMetadata>) {
-        self.add_jar_classes(IndexScope { module: ModuleId::ROOT }, classes);
+        self.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            classes,
+        );
     }
 
     #[allow(dead_code)]
@@ -211,7 +217,9 @@ mod tests {
             ClassOrigin::Jar(Arc::from("jdk://builtin")),
         );
         jdk_array.interfaces.push(Arc::from("java/util/List"));
-        jdk_array.methods.push(make_method("add", "(Ljava/lang/Object;)Z"));
+        jdk_array
+            .methods
+            .push(make_method("add", "(Ljava/lang/Object;)Z"));
         jdk_array
             .methods
             .push(make_method("add", "(ILjava/lang/Object;)V"));
@@ -223,8 +231,13 @@ mod tests {
             }
         }
 
-        let mut jdk_list = make_class("java/util/List", ClassOrigin::Jar(Arc::from("jdk://builtin")));
-        jdk_list.methods.push(make_method("add", "(Ljava/lang/Object;)Z"));
+        let mut jdk_list = make_class(
+            "java/util/List",
+            ClassOrigin::Jar(Arc::from("jdk://builtin")),
+        );
+        jdk_list
+            .methods
+            .push(make_method("add", "(Ljava/lang/Object;)Z"));
         jdk_list
             .methods
             .push(make_method("add", "(ILjava/lang/Object;)V"));

@@ -208,8 +208,8 @@ pub fn jvm_type_to_readable(ty: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::WorkspaceIndex;
     use super::*;
+    use crate::index::WorkspaceIndex;
     use crate::index::{
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
@@ -218,7 +218,9 @@ mod tests {
     use std::sync::Arc;
 
     fn root_scope() -> IndexScope {
-        IndexScope { module: ModuleId::ROOT }
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     fn make_index_with(pkg: &str, name: &str, has_init: bool) -> WorkspaceIndex {

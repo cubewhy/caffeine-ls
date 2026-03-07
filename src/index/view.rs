@@ -57,7 +57,8 @@ impl IndexView {
     }
 
     pub fn get_classes_by_simple_name(&self, simple_name: &str) -> Vec<Arc<ClassMetadata>> {
-        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> = Default::default();
+        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
+            Default::default();
         for layer in &self.layers {
             for class in layer.get_classes_by_simple_name(simple_name) {
                 let key = Arc::clone(&class.internal_name);
@@ -74,7 +75,8 @@ impl IndexView {
     }
 
     pub fn classes_in_package(&self, pkg: &str) -> Vec<Arc<ClassMetadata>> {
-        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> = Default::default();
+        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
+            Default::default();
         for layer in &self.layers {
             for class in layer.classes_in_package(pkg) {
                 let key = Arc::clone(&class.internal_name);
@@ -114,9 +116,10 @@ impl IndexView {
             } else {
                 let internal = import.replace('.', "/");
                 if let Some(cls) = self.get_class(&internal)
-                    && seen.insert(Arc::clone(&cls.internal_name)) {
-                        result.push(cls);
-                    }
+                    && seen.insert(Arc::clone(&cls.internal_name))
+                {
+                    result.push(cls);
+                }
             }
         }
         result
@@ -223,7 +226,8 @@ impl IndexView {
     }
 
     pub fn fuzzy_search_classes(&self, query: &str, limit: usize) -> Vec<Arc<ClassMetadata>> {
-        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> = Default::default();
+        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
+            Default::default();
         for layer in &self.layers {
             for class in layer.fuzzy_search_classes(query, limit) {
                 let key = Arc::clone(&class.internal_name);
@@ -253,7 +257,8 @@ impl IndexView {
     }
 
     pub fn iter_all_classes(&self) -> Vec<Arc<ClassMetadata>> {
-        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> = Default::default();
+        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
+            Default::default();
         for layer in &self.layers {
             for class in layer.iter_all_classes() {
                 let key = Arc::clone(&class.internal_name);
@@ -281,7 +286,11 @@ mod tests {
     use crate::index::{ClassOrigin, MethodParams};
     use rust_asm::constants::ACC_PUBLIC;
 
-    fn make_class(internal: &str, origin: ClassOrigin, method_descs: &[&str]) -> Arc<ClassMetadata> {
+    fn make_class(
+        internal: &str,
+        origin: ClassOrigin,
+        method_descs: &[&str],
+    ) -> Arc<ClassMetadata> {
         let (pkg, name) = internal
             .rsplit_once('/')
             .map(|(p, n)| (Some(Arc::from(p)), Arc::from(n)))
@@ -316,21 +325,25 @@ mod tests {
     #[test]
     fn test_source_class_shadows_base_for_same_internal() {
         let base_bucket = Arc::new(BucketIndex::new());
-        base_bucket.add_classes(vec![(*make_class(
-            "java/util/ArrayList",
-            ClassOrigin::Jar(Arc::from("jdk://builtin")),
-            &["(Ljava/lang/Object;)Z", "(ILjava/lang/Object;)V"],
-        ))
-        .clone()]);
+        base_bucket.add_classes(vec![
+            (*make_class(
+                "java/util/ArrayList",
+                ClassOrigin::Jar(Arc::from("jdk://builtin")),
+                &["(Ljava/lang/Object;)Z", "(ILjava/lang/Object;)V"],
+            ))
+            .clone(),
+        ]);
 
         let source_bucket = Arc::new(BucketIndex::new());
         let source_origin = ClassOrigin::SourceFile(Arc::from("file:///X.java"));
-        source_bucket.add_classes(vec![(*make_class(
-            "java/util/ArrayList",
-            source_origin.clone(),
-            &["(LE;)Z", "(ILE;)V"],
-        ))
-        .clone()]);
+        source_bucket.add_classes(vec![
+            (*make_class(
+                "java/util/ArrayList",
+                source_origin.clone(),
+                &["(LE;)Z", "(ILE;)V"],
+            ))
+            .clone(),
+        ]);
 
         // Intentionally place base before source to verify precedence is origin-based, not order-based.
         let mut layers: SmallVec<Arc<BucketIndex>, 8> = SmallVec::new();
@@ -384,12 +397,8 @@ mod tests {
 
         let source_bucket = Arc::new(BucketIndex::new());
         let source_origin = ClassOrigin::SourceFile(Arc::from("file:///X.java"));
-        let mut source_array = (*make_class(
-            "java/util/ArrayList",
-            source_origin,
-            &["(LE;)Z", "(ILE;)V"],
-        ))
-        .clone();
+        let mut source_array =
+            (*make_class("java/util/ArrayList", source_origin, &["(LE;)Z", "(ILE;)V"])).clone();
         source_array.interfaces.push(Arc::from("java/util/List"));
         for method in &mut source_array.methods {
             if method.desc().as_ref() == "(LE;)Z" {

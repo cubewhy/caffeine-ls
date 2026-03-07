@@ -172,6 +172,52 @@ impl CursorLocation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionalTargetHint {
+    pub expected_type_source: Option<String>,
+    pub method_call: Option<FunctionalMethodCallHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionalMethodCallHint {
+    pub receiver_expr: String,
+    pub method_name: String,
+    pub arg_index: usize,
+    pub arg_texts: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SamSignature {
+    pub method_name: Arc<str>,
+    pub param_types: Vec<TypeName>,
+    pub return_type: Option<TypeName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpectedTypeSource {
+    AssignmentRhs,
+    MethodArgument { arg_index: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedTypeConfidence {
+    Exact,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpectedType {
+    pub ty: TypeName,
+    pub source: ExpectedTypeSource,
+    pub confidence: ExpectedTypeConfidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypedExpressionContext {
+    pub expected_type: Option<ExpectedType>,
+    pub receiver_type: Option<TypeName>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SemanticContext {
     pub location: CursorLocation,
@@ -191,6 +237,10 @@ pub struct SemanticContext {
     pub file_uri: Option<Arc<str>>,
     pub inferred_package: Option<Arc<str>>,
     pub language_id: LanguageId,
+    pub functional_target_hint: Option<FunctionalTargetHint>,
+    pub typed_expr_ctx: Option<TypedExpressionContext>,
+    pub expected_functional_interface: Option<TypeName>,
+    pub expected_sam: Option<SamSignature>,
     pub ext: Option<Arc<dyn Any + Send + Sync>>,
 }
 
@@ -229,6 +279,10 @@ impl SemanticContext {
             file_uri: None,
             inferred_package: None,
             language_id: LanguageId::new("unknown"),
+            functional_target_hint: None,
+            typed_expr_ctx: None,
+            expected_functional_interface: None,
+            expected_sam: None,
             ext: None,
         }
     }
@@ -245,6 +299,16 @@ impl SemanticContext {
 
     pub fn with_language_id(mut self, language_id: LanguageId) -> Self {
         self.language_id = language_id;
+        self
+    }
+
+    pub fn with_functional_target_hint(mut self, hint: Option<FunctionalTargetHint>) -> Self {
+        self.functional_target_hint = hint;
+        self
+    }
+
+    pub fn with_typed_expression_context(mut self, typed: Option<TypedExpressionContext>) -> Self {
+        self.typed_expr_ctx = typed;
         self
     }
 
