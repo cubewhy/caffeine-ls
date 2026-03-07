@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
 use crate::index::{ClassMetadata, ClassOrigin};
+use crate::jvm::descriptor::consume_one_descriptor_type;
 use crate::language::java::type_ctx::{SourceTypeCtx, build_java_descriptor};
 use crate::language::java::utils::extract_generic_signature;
 use crate::{
@@ -18,7 +19,7 @@ use crate::{
         },
         ts_utils::{capture_text, run_query},
     },
-    semantic::context::CurrentClassMember,
+    semantic::{context::CurrentClassMember, types::generics::parse_class_type_parameters},
 };
 
 pub fn parse_java_source(
@@ -122,6 +123,21 @@ fn parse_java_class(
     }
 
     let class_generic_signature = extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
+    if let Some(sig) = class_generic_signature.as_deref() {
+        let class_type_params = parse_class_type_parameters(sig);
+        if !class_type_params.is_empty() {
+            for method in &mut methods {
+                if method.generic_signature.is_none() {
+                    let desc = method.desc();
+                    if let Some(synth) =
+                        synthesize_class_typevar_method_signature(&desc, &class_type_params)
+                    {
+                        method.generic_signature = Some(synth);
+                    }
+                }
+            }
+        }
+    }
 
     if methods.iter().any(|m| m.name.as_ref() == "add") {
         tracing::debug!(
@@ -159,6 +175,69 @@ fn parse_java_class(
         generic_signature: class_generic_signature,
         origin: origin.clone(),
     })
+}
+
+fn synthesize_class_typevar_method_signature(
+    method_desc: &str,
+    class_type_params: &[String],
+) -> Option<Arc<str>> {
+    let (l, r) = method_desc.find('(').zip(method_desc.find(')'))?;
+    let params = &method_desc[l + 1..r];
+    let ret = &method_desc[r + 1..];
+
+    let mut changed = false;
+    let params_out = map_desc_part_type_vars(params, class_type_params, &mut changed);
+    let ret_out = map_desc_part_type_vars(ret, class_type_params, &mut changed);
+    if !changed {
+        return None;
+    }
+    Some(Arc::from(format!("({}){}", params_out, ret_out).as_str()))
+}
+
+fn map_desc_part_type_vars(s: &str, class_type_params: &[String], changed: &mut bool) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while !rest.is_empty() {
+        let (one, next) = consume_one_descriptor_type(rest);
+        if one.is_empty() {
+            out.push_str(rest);
+            break;
+        }
+        out.push_str(&map_single_type_var_descriptor(
+            one,
+            class_type_params,
+            changed,
+        ));
+        rest = next;
+    }
+    out
+}
+
+fn map_single_type_var_descriptor(
+    desc: &str,
+    class_type_params: &[String],
+    changed: &mut bool,
+) -> String {
+    let mut dims = 0usize;
+    let mut base = desc;
+    while let Some(rest) = base.strip_prefix('[') {
+        dims += 1;
+        base = rest;
+    }
+
+    let mapped_base = if base.starts_with('L') && base.ends_with(';') {
+        let inner = &base[1..base.len() - 1];
+        if class_type_params.iter().any(|p| p == inner) {
+            *changed = true;
+            format!("T{};", inner)
+        } else {
+            base.to_string()
+        }
+    } else {
+        base.to_string()
+    };
+
+    format!("{}{}", "[".repeat(dims), mapped_base)
 }
 
 /// AST-based precise symbol range lookup
@@ -501,7 +580,11 @@ fn clean_javadoc(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::{index::ClassOrigin, language::java::class_parser::parse_java_source};
+    use crate::{
+        index::ClassOrigin,
+        language::java::{class_parser::parse_java_source, render},
+        semantic::types::SymbolProvider,
+    };
     use tracing_subscriber::{EnvFilter, fmt};
 
     fn init_test_tracing() {
@@ -692,6 +775,46 @@ public class Main {
             .filter(|m| m.name.as_ref() == "add")
             .collect();
         assert_eq!(adds.len(), 2);
+        let add_bool = adds.iter().find(|m| m.desc().as_ref() == "(LE;)Z").unwrap();
+        let add_void = adds
+            .iter()
+            .find(|m| m.desc().as_ref() == "(ILE;)V")
+            .unwrap();
+        assert_eq!(add_bool.generic_signature.as_deref(), Some("(TE;)Z"));
+        assert_eq!(add_void.generic_signature.as_deref(), Some("(ITE;)V"));
+    }
+
+    struct TestProvider;
+    impl SymbolProvider for TestProvider {
+        fn resolve_source_name(&self, internal_name: &str) -> Option<String> {
+            Some(internal_name.replace('/', "."))
+        }
+    }
+
+    #[test]
+    fn test_source_generic_method_detail_concretizes_receiver_type_args() {
+        let src = indoc::indoc! {r#"
+            package org.example;
+            public class MyList<E> {
+                public boolean add(E e) { return true; }
+            }
+        "#};
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let cls = classes
+            .iter()
+            .find(|c| c.internal_name.as_ref() == "org/example/MyList")
+            .unwrap();
+        let add = cls.methods.iter().find(|m| m.name.as_ref() == "add").unwrap();
+
+        let detail = render::method_detail(
+            "org/example/MyList<Ljava/lang/String;>",
+            cls,
+            add,
+            &TestProvider,
+        );
+        assert!(detail.contains("java.lang.String e"), "detail={}", detail);
+        assert!(!detail.contains("TE;"), "detail={}", detail);
+        assert!(!detail.contains("LE;"), "detail={}", detail);
     }
 
     #[test]
