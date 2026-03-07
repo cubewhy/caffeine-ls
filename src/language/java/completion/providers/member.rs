@@ -688,7 +688,7 @@ mod tests {
         }
     }
 
-    /// 快速包装方法枚举
+    /// Small helper to build method members in tests.
     fn m(name: &str, flags: u16, is_private: bool) -> CurrentClassMember {
         let mut f = flags;
         if is_private {
@@ -697,7 +697,7 @@ mod tests {
         CurrentClassMember::Method(Arc::new(make_method(name, "()V", f, false)))
     }
 
-    /// 快速包装字段枚举
+    /// Small helper to build field members in tests.
     fn f(name: &str, flags: u16, is_private: bool) -> CurrentClassMember {
         let mut f = flags;
         if is_private {

@@ -176,6 +176,7 @@ impl CursorLocation {
 pub struct FunctionalTargetHint {
     pub expected_type_source: Option<String>,
     pub method_call: Option<FunctionalMethodCallHint>,
+    pub expr_shape: Option<FunctionalExprShape>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,6 +192,41 @@ pub struct SamSignature {
     pub method_name: Arc<str>,
     pub param_types: Vec<TypeName>,
     pub return_type: Option<TypeName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MethodRefQualifierKind {
+    Type,
+    Expr,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FunctionalExprShape {
+    MethodReference {
+        qualifier_expr: String,
+        member_name: String,
+        is_constructor: bool,
+        qualifier_kind: MethodRefQualifierKind,
+    },
+    Lambda {
+        param_count: usize,
+        expression_body: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionalCompatStatus {
+    Exact,
+    Partial,
+    Incompatible,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionalCompat {
+    pub status: FunctionalCompatStatus,
+    pub resolved_owner: Option<TypeName>,
+    pub resolved_return: Option<TypeName>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +252,7 @@ pub struct ExpectedType {
 pub struct TypedExpressionContext {
     pub expected_type: Option<ExpectedType>,
     pub receiver_type: Option<TypeName>,
+    pub functional_compat: Option<FunctionalCompat>,
 }
 
 #[derive(Debug, Clone)]

@@ -278,8 +278,7 @@ impl<'idx> TypeResolver<'idx> {
                 Some(m)
             }
             _ => {
-                // 如果所有 1 参数方法都匹配失败了，至少返回 by_count 的第一个
-                // 这样能保证它跳到一个 1 参数的方法，而不是 0 参数的
+                // If all count-matched candidates fail scoring, still prefer a count-matched fallback.
                 tracing::warn!(
                     "all overloads failed type scoring, falling back to first count-matched method"
                 );
@@ -312,24 +311,23 @@ impl<'idx> TypeResolver<'idx> {
             } else {
                 let receiver = current_type.as_ref()?;
 
-                // 处理连缀的数组下标，例如 `getCharArr()[0]` 解析出的独立 segment `[0]`
+                // Handle chained index-only segments like `[0]`.
                 if seg.arg_count.is_none() && seg.name.starts_with('[') && seg.name.ends_with(']') {
                     let dimensions = seg.name.matches('[').count();
                     let mut arr_ty = receiver.clone();
                     for _ in 0..dimensions {
-                        arr_ty = arr_ty.element_type()?; // 直接用 TypeName::element_type()
+                        arr_ty = arr_ty.element_type()?;
                     }
                     current_type = Some(arr_ty);
                     continue;
                 }
 
-                // 常规方法或字段访问，尝试剥离可能附着的数组下标 e.g., `field[0]`
+                // Regular method/field access, possibly with trailing index suffix like `field[0]`.
                 let bracket_idx = seg.name.find('[').unwrap_or(seg.name.len());
                 let actual_name = &seg.name[..bracket_idx];
                 let dimensions = seg.name[bracket_idx..].matches('[').count();
 
                 if seg.arg_count.is_some() {
-                    // 方法返回
                     let receiver_internal = receiver.to_internal_with_generics();
                     current_type = self.resolve_method_return(
                         &receiver_internal,
@@ -338,7 +336,6 @@ impl<'idx> TypeResolver<'idx> {
                         &seg.arg_types,
                     );
                 } else {
-                    // 字段读取
                     let mut found_field: Option<TypeName> = None;
                     for class in self.view.mro(receiver.erased_internal()) {
                         if let Some(f) =
@@ -355,7 +352,7 @@ impl<'idx> TypeResolver<'idx> {
                     current_type = found_field;
                 }
 
-                // 如果带有下标附着，则降维
+                // Apply index suffix dimensional reduction.
                 if dimensions > 0
                     && let Some(ty) = current_type
                 {
@@ -413,7 +410,7 @@ impl<'idx> TypeResolver<'idx> {
             }
         }
 
-        // 2. 标准化描述符 (Ljava/lang/Object; -> java/lang/Object)
+        // Normalize descriptor form, e.g. `Ljava/lang/Object;` -> `java/lang/Object`.
         let resolved_desc = match desc {
             "B" => "byte",
             "C" => "char",
@@ -523,7 +520,7 @@ pub fn descriptor_to_source_type(desc: &str, provider: &impl SymbolProvider) -> 
             let internal = &s[1..s.len() - 1];
             provider.resolve_source_name(internal)?
         }
-        _ => return None, // 格式异常的描述符
+        _ => return None, // Invalid descriptor shape.
     };
 
     let mut result = String::with_capacity(base_type.len() + array_depth * 2);
@@ -552,13 +549,13 @@ pub fn parse_strict_method_signature(
         if one_desc.is_empty() {
             break;
         }
-        // 如果任何一个参数类型查不到，整个方法解析宣告失败
+        // Fail fast if any parameter cannot be resolved.
         let resolved_param = descriptor_to_source_type(one_desc, provider)?;
         params.push(resolved_param);
         s = rest;
     }
 
-    // 如果返回值类型查不到，宣告失败
+    // Fail fast if return type cannot be resolved.
     let resolved_return = descriptor_to_source_type(return_str, provider)?;
 
     Some((params, resolved_return))
@@ -671,7 +668,7 @@ pub fn parse_return_type_from_descriptor(descriptor: &str) -> Option<Arc<str>> {
     extract_return_internal_name(descriptor).map(|t| t.to_signature_string().into())
 }
 
-/// 将 Java 源码类型转换为携带泛型的 JVM internal name
+/// Convert Java source type text to JVM internal form, preserving generic structure.
 ///
 /// # Examples
 /// - `List<String>` -> `java/util/List<Ljava/lang/String;>`
@@ -688,22 +685,22 @@ pub fn java_source_type_to_jvm_generic(
         return format!("T{};", ty);
     }
 
-    // 1. 处理数组后缀 (String[] -> array_depth = 1)
+    // 1. Parse array suffixes (String[] -> array_depth = 1).
     let mut array_depth = 0;
     while let Some(stripped) = ty.strip_suffix("[]") {
         array_depth += 1;
         ty = stripped.trim();
     }
 
-    // 2. 处理泛型
+    // 2. Parse generic arguments.
     let mut result = if let Some(pos) = ty.find('<') {
         if ty.ends_with('>') {
             let base = &ty[..pos];
             let args_str = &ty[pos + 1..ty.len() - 1];
-            // 解析基类：List -> java/util/List
+            // Resolve base class name, e.g. List -> java/util/List.
             let base_internal = resolve_simple_name(base.trim());
 
-            // 按逗号分割泛型参数，这里必须忽略嵌套的 <> (例如 Map<String, List<User>>)
+            // Split generic args by top-level commas only.
             let mut args = Vec::new();
             let mut depth = 0;
             let mut start = 0;
@@ -720,18 +717,18 @@ pub fn java_source_type_to_jvm_generic(
             }
             args.push(&args_str[start..]);
 
-            // 递归转换内部参数，并包装成 L...;
+            // Convert nested args recursively and wrap object args as `L...;`.
             let resolved_args: Vec<_> = args
                 .into_iter()
                 .map(|a| {
                     let arg_ty = a.trim();
                     if arg_ty == "?" {
-                        return "*".to_string(); // 通配符
+                        return "*".to_string(); // Wildcard.
                     }
                     let inner =
                         java_source_type_to_jvm_generic(arg_ty, resolve_simple_name, type_params);
 
-                    // 如果 inner 已经是数组（以 '[' 开头），就不要再套 'L' 了
+                    // Do not wrap arrays with `L...;`.
                     if inner.starts_with('[') {
                         inner
                     } else {
@@ -748,7 +745,7 @@ pub fn java_source_type_to_jvm_generic(
         resolve_simple_name(ty)
     };
 
-    // 3. 数组包装恢复
+    // 3. Re-apply array wrappers.
     for _ in 0..array_depth {
         if !result.starts_with('[') {
             result = format!("L{};", result);
@@ -759,8 +756,8 @@ pub fn java_source_type_to_jvm_generic(
     result
 }
 
-/// 结合了全局索引和当前文件上下文的解析器。
-/// 严格遵守 Java 语言规范 (JLS) 的类型可见性规则，拒绝任何启发式猜测。
+/// Resolver that combines global index data with file-local context.
+/// Follows strict JLS visibility rules and avoids heuristic guessing.
 pub struct ContextualResolver<'a> {
     pub view: &'a IndexView,
     pub ctx: &'a SemanticContext,
@@ -774,19 +771,17 @@ impl<'a> ContextualResolver<'a> {
 
 impl<'a> SymbolProvider for ContextualResolver<'a> {
     fn resolve_source_name(&self, type_name: &str) -> Option<String> {
-        // 1. 如果包含 '/'，说明它已经是来自字节码的内部名 (如 "java/util/List")
-        // 直接向 index 查真理
+        // 1) Internal names from bytecode (contains `/`) go directly to index lookup.
         if type_name.contains('/') {
             return self.view.get_source_type_name(type_name);
         }
 
-        // 2. 如果没有 '/'，说明它是来自当前文件 AST 的简单名 (如 "String", "List")
+        // 2) Otherwise treat as a simple source name from AST.
         let simple_name = type_name;
 
-        // 规则 A: 精确导入 (Exact Imports)
-        // 例如: import java.util.List;
+        // Rule A: exact imports, e.g. `import java.util.List;`.
         for imp in &self.ctx.existing_imports {
-            // 确保不是通配符，且精确匹配类名 (防止 MyList 匹配到 List)
+            // Must not be wildcard import; match class name exactly.
             if !imp.ends_with(".*")
                 && (imp.as_ref() == simple_name || imp.ends_with(&format!(".{}", simple_name)))
             {
@@ -797,8 +792,7 @@ impl<'a> SymbolProvider for ContextualResolver<'a> {
             }
         }
 
-        // 规则 B: 同包可见 (Same Package)
-        // 优先使用 effective_package (AST 解析 > 路径推断)
+        // Rule B: same-package visibility.
         if let Some(pkg) = self.ctx.effective_package() {
             let internal = format!("{}/{}", pkg.replace('.', "/"), simple_name);
             if let Some(source_name) = self.view.get_source_type_name(&internal) {
@@ -806,15 +800,13 @@ impl<'a> SymbolProvider for ContextualResolver<'a> {
             }
         }
 
-        // 规则 C: Java 隐式导入 (java.lang.*)
-        // 这是解决 String, Object 等核心类的关键
+        // Rule C: implicit `java.lang.*`.
         let lang_internal = format!("java/lang/{}", simple_name);
         if let Some(source_name) = self.view.get_source_type_name(&lang_internal) {
             return Some(source_name);
         }
 
-        // 规则 D: 通配符导入 (Wildcard Imports)
-        // 例如: import java.util.*; 尝试补全 java/util/List
+        // Rule D: wildcard imports, e.g. `import java.util.*`.
         for imp in &self.ctx.existing_imports {
             if imp.ends_with(".*") {
                 let pkg = imp.trim_end_matches(".*").replace('.', "/");
@@ -825,7 +817,7 @@ impl<'a> SymbolProvider for ContextualResolver<'a> {
             }
         }
 
-        // 走完所有严格的规则都没有？坚决返回 None！
+        // No strict rule matched.
         None
     }
 }
@@ -1192,7 +1184,7 @@ mod tests {
                 access_flags: ACC_PUBLIC,
                 is_synthetic: false,
                 annotations: vec![],
-                // 这里代表泛型方法返回类型是 E
+                // Generic method return type is `E`.
                 generic_signature: Some(Arc::from("(I)TE;")),
                 return_type: Some(Arc::from("Ljava/lang/Object;")),
             }],
@@ -1206,8 +1198,7 @@ mod tests {
         let view = idx.view(root_scope());
         let resolver = TypeResolver::new(&view);
 
-        // 模拟推导 `myList.get()`
-        // receiver 是我们带有泛型尾巴的完整形式
+        // Simulate resolving `myList.get()` with a generic receiver type.
         let result = resolver.resolve_method_return(
             "java/util/List<Ljava/lang/String;>",
             "get",
@@ -1224,7 +1215,7 @@ mod tests {
 
     #[test]
     fn test_resolve_variable_array_access() {
-        // 模拟 `var c = arr[0];` 场景
+        // Simulate `var c = arr[0];`.
         let (view, locals) = make_resolver();
         let mut locals = locals;
         locals.push(LocalVar {
@@ -1271,11 +1262,11 @@ mod tests {
         let resolver = TypeResolver::new(&view);
         let enclosing = Arc::from("Main");
 
-        // 模拟解析连缀调用 `getCharArr()[0]`
+        // Simulate chained access `getCharArr()[0]`.
         let chain = parse_chain_from_expr("getCharArr()[0]");
         let result = resolver.resolve_chain(&chain, &[], Some(&enclosing));
 
-        // char[][] 提取出一层下标后应为 char[]，底层 JVM internal_name 表示为 `[C`
+        // One index on char[][] yields char[].
         assert_eq!(
             result.as_ref().map(|t| t.erased_internal_with_arrays()),
             Some("char[]".to_string())
@@ -1321,8 +1312,7 @@ mod tests {
         let resolver = TypeResolver::new(&view);
         let candidates = vec![&method_object, &method_string];
 
-        // 当传入 java/lang/String 时，println(String) 应该得到 10 分，println(Object) 得到 5 分。
-        // 因此，应该胜出的是 String 重载。
+        // String-specific overload should beat Object overload.
         let args = vec![TypeName::new("java/lang/String")];
         let best = resolver.select_overload(&candidates, 1, &args);
 
@@ -1404,12 +1394,12 @@ mod tests {
         let resolver = TypeResolver::new(&view);
         let candidates = vec![&method_wrapper, &method_primitive];
 
-        // 传入 int，应该优先匹配 process(int) 而不是 process(Integer)
+        // Primitive input should prefer primitive overload.
         let args_prim = vec![TypeName::new("int")];
         let best_prim = resolver.select_overload(&candidates, 1, &args_prim);
         assert_eq!(best_prim.unwrap().desc().as_ref(), "(I)V");
 
-        // 传入 java/lang/Integer，应该优先匹配 process(Integer)
+        // Wrapper input should prefer wrapper overload.
         let args_wrapper = vec![TypeName::new("java/lang/Integer")];
         let best_wrapper = resolver.select_overload(&candidates, 1, &args_wrapper);
         assert_eq!(

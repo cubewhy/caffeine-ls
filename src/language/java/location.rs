@@ -8,7 +8,9 @@ use tree_sitter::Node;
 use crate::{
     language::java::{JavaContextExtractor, utils::strip_sentinel},
     semantic::CursorLocation,
-    semantic::context::{FunctionalMethodCallHint, FunctionalTargetHint},
+    semantic::context::{
+        FunctionalExprShape, FunctionalMethodCallHint, FunctionalTargetHint, MethodRefQualifierKind,
+    },
 };
 
 pub(crate) fn determine_location(
@@ -31,6 +33,7 @@ pub(crate) fn infer_functional_target_hint(
 
     let expected_type_source = infer_assignment_rhs_expected_type(ctx, node);
     let method_call = infer_method_argument_target_hint(ctx, node);
+    let expr_shape = infer_functional_expr_shape(ctx, node);
 
     if expected_type_source.is_none() && method_call.is_none() {
         return None;
@@ -39,7 +42,99 @@ pub(crate) fn infer_functional_target_hint(
     Some(FunctionalTargetHint {
         expected_type_source,
         method_call,
+        expr_shape,
     })
+}
+
+fn infer_functional_expr_shape(
+    ctx: &JavaContextExtractor,
+    node: Node,
+) -> Option<FunctionalExprShape> {
+    if let Some(method_ref) = find_ancestor(node, "method_reference") {
+        return infer_method_reference_shape(ctx, method_ref);
+    }
+    if let Some(lambda) = find_ancestor(node, "lambda_expression") {
+        return infer_lambda_shape(ctx, lambda);
+    }
+    None
+}
+
+fn infer_method_reference_shape(
+    ctx: &JavaContextExtractor,
+    method_ref: Node,
+) -> Option<FunctionalExprShape> {
+    let raw = strip_sentinel(ctx.node_text(method_ref).trim());
+    let sep_idx = raw.find("::")?;
+    let qualifier_expr = raw[..sep_idx].trim().to_string();
+    if qualifier_expr.is_empty() {
+        return None;
+    }
+
+    let rhs_raw = raw[sep_idx + 2..].trim_start();
+    let rhs_no_type_args = strip_leading_type_arguments(rhs_raw);
+    let member_name = strip_sentinel(rhs_no_type_args.trim()).to_string();
+    if member_name.is_empty() {
+        return None;
+    }
+    let is_constructor = member_name == "new" || member_name.starts_with("new");
+    let qualifier_kind = infer_method_ref_qualifier_kind(&qualifier_expr);
+
+    Some(FunctionalExprShape::MethodReference {
+        qualifier_expr,
+        member_name,
+        is_constructor,
+        qualifier_kind,
+    })
+}
+
+fn infer_method_ref_qualifier_kind(qualifier_expr: &str) -> MethodRefQualifierKind {
+    let trimmed = qualifier_expr.trim();
+    if trimmed == "this" || trimmed == "super" {
+        return MethodRefQualifierKind::Expr;
+    }
+    if trimmed
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase())
+    {
+        return MethodRefQualifierKind::Type;
+    }
+    MethodRefQualifierKind::Unknown
+}
+
+fn infer_lambda_shape(ctx: &JavaContextExtractor, lambda: Node) -> Option<FunctionalExprShape> {
+    let raw = strip_sentinel(ctx.node_text(lambda).trim());
+    let arrow = raw.find("->")?;
+    let params_raw = raw[..arrow].trim();
+    let body_raw = raw[arrow + 2..].trim();
+    let param_count = parse_lambda_param_count(params_raw)?;
+    let expression_body = if body_raw.starts_with('{') || body_raw.is_empty() {
+        None
+    } else {
+        Some(body_raw.to_string())
+    };
+    Some(FunctionalExprShape::Lambda {
+        param_count,
+        expression_body,
+    })
+}
+
+fn parse_lambda_param_count(params_raw: &str) -> Option<usize> {
+    let p = params_raw.trim();
+    if p.is_empty() {
+        return None;
+    }
+    if let Some(inner) = p.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        let inner = inner.trim();
+        if inner.is_empty() {
+            return Some(0);
+        }
+        return Some(split_top_level_args(inner).len());
+    }
+    if p.contains(',') {
+        return None;
+    }
+    Some(1)
 }
 
 fn determine_location_impl(
@@ -104,7 +199,7 @@ fn infer_annotation_target(node: Node) -> Option<Arc<str>> {
             | "enum_declaration"
             | "annotation_type_declaration" => "TYPE",
             "record_declaration" => "TYPE",
-            // record_component = record header 里的参数
+            // In records, constructor-header parameters map to RECORD_COMPONENT.
             "formal_parameter" if n.parent().map(|p| p.kind()) == Some("record_declaration") => {
                 "RECORD_COMPONENT"
             }
@@ -141,18 +236,18 @@ fn extract_string_prefix(ctx: &JavaContextExtractor, str_node: Node) -> String {
             // find first quote in raw, then take after it
             if let Some(pos) = raw.find('"') {
                 let after = &raw[pos + 1..];
-                // 如果 cursor 已经过了 closing quote（少见但可能，比如点到末尾），剥掉末尾 quote
+                // If the cursor is past the closing quote, trim it.
                 return after.strip_suffix('"').unwrap_or(after).to_string();
             }
             String::new()
         }
         "text_block" => {
             // raw looks like: "\"\"\" ...", want content without the leading """
-            // 这里先做简单处理：去掉开头的 """（以及可能的首个换行）
+            // Trim opening triple quotes and optional leading newline.
             let s = raw.to_string();
             if let Some(rest) = s.strip_prefix("\"\"\"") {
                 let mut rest = rest;
-                // Java text block 通常允许紧跟一个换行
+                // Java text blocks commonly start with a newline right after `"""`.
                 if rest.starts_with('\n') {
                     rest = &rest[1..];
                 }
@@ -245,7 +340,7 @@ fn handle_member_access(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
                         receiver_semantic_type: None,
                         receiver_type: None,
                         member_prefix: clean.clone(),
-                        receiver_expr: String::new(), // 空字符串代表隐式 this
+                        receiver_expr: String::new(), // Empty receiver means implicit `this`.
                         arguments,
                     },
                     clean,
@@ -513,10 +608,7 @@ fn handle_identifier(
                 }
 
                 if is_in_type_subtree(node, ancestor) {
-                    // 取光标前的文本作为 prefix，但只取最后一段（点后面的部分）
-                    // let text = cursor_truncated_text(ctx, node);
-                    // let clean = strip_sentinel(&text);
-                    // 触发注入路径来正确识别
+                    // Force injection fallback for better recovery in this subtree.
                     return (CursorLocation::Unknown, String::new());
                 }
                 let text = cursor_truncated_text(ctx, node);
@@ -879,9 +971,8 @@ mod tests {
 
     #[test]
     fn test_misread_type_as_expression() {
-        // str 缺分号，TS 把 `str\nfunc(...)` 误读为
-        // local_variable_declaration(type=str, declarator=func)
-        // cursor 在 str 末尾时应该得到 Expression 而非 TypeAnnotation
+        // Missing semicolon can make tree-sitter misread `str\nfunc(...)` as a declaration.
+        // Cursor at `str` must still be treated as Expression, not TypeAnnotation.
         let src = indoc::indoc! {r#"
     class A {
         public static String str = "1234";
@@ -891,7 +982,7 @@ mod tests {
         }
     }
     "#};
-        // offset 紧贴 str 末尾（方法体内那个 str，不是字段声明里的）
+        // Cursor sits at the end of method-body `str`.
         let marker = "func() {\n        str";
         let offset = src.find(marker).unwrap() + marker.len();
         let (ctx, tree) = setup_with(src, offset);
@@ -909,8 +1000,7 @@ mod tests {
 
     #[test]
     fn test_genuine_type_annotation_in_local_decl() {
-        // 正常的 local_variable_declaration，cursor 在 type 上，不能被误读检测误伤
-        // 用 `HashM` 作为类型前缀，后面跟 `map =` 确保 TS 解析为 local_variable_declaration
+        // Genuine local declaration: type-position completion must stay TypeAnnotation.
         let src = indoc::indoc! {r#"
     class A {
         void f() {
@@ -918,7 +1008,7 @@ mod tests {
         }
     }
     "#};
-        let offset = src.find("HashM").unwrap() + 5; // 紧贴 HashM 末尾
+        let offset = src.find("HashM").unwrap() + 5; // Cursor right after `HashM`.
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
@@ -934,8 +1024,7 @@ mod tests {
 
     #[test]
     fn test_misread_not_triggered_when_next_sibling_is_normal_statement() {
-        // next sibling 不以 `(` 开头时，误读检测不应触发
-        // 保证普通 local_variable_declaration 里 type 位置的补全正常
+        // Misread guard should not trigger for a normal following statement.
         let src = indoc::indoc! {r#"
     class A {
         void f() {
@@ -959,8 +1048,7 @@ mod tests {
 
     #[test]
     fn test_cursor_inside_receiver_identifier() {
-        // 当光标在 receiver 的内部时（例如 stri|ngs.addAll();）
-        // 解析器不应该返回 MemberAccess，而应将其视为普通的 Expression
+        // Cursor inside receiver identifier should remain Expression, not MemberAccess.
         let src = indoc::indoc! {r#"
     class A {
         void f() {
@@ -969,9 +1057,8 @@ mod tests {
         }
     }
     "#};
-        // 计算光标在 "stri|ngs" 中间的位置
         let marker = "strings.addAll";
-        let offset = src.find(marker).unwrap() + 4; // 长度正好到 "stri"
+        let offset = src.find(marker).unwrap() + 4; // `stri|ngs`
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
@@ -987,8 +1074,7 @@ mod tests {
 
     #[test]
     fn test_cursor_exactly_before_dot_in_member_access() {
-        // 当光标紧贴在点之前（例如 strings|.addAll();）
-        // 用户依然是在完成 receiver，应该视作 Expression
+        // Cursor right before dot is still receiver completion (Expression).
         let src = indoc::indoc! {r#"
     class A {
         void f() {
@@ -998,7 +1084,7 @@ mod tests {
     }
     "#};
         let marker = "strings.addAll";
-        let offset = src.find(marker).unwrap() + 7; // 光标在 "strings" 后，'.' 的前面
+        let offset = src.find(marker).unwrap() + 7; // `strings|.addAll`
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
@@ -1021,7 +1107,7 @@ class A {
     }
 }
 "#};
-        // 光标在 '.' 之后，')' 之前
+        // Cursor is after `.` and before `)`.
         let marker = "matrix[0][1].";
         let offset = src.find(marker).unwrap() + marker.len();
         let (ctx, tree) = setup_with(src, offset);
@@ -1043,9 +1129,7 @@ class A {
 
     #[test]
     fn test_member_access_with_partial_member_in_arg_list() {
-        // println(matrix[0][1].toS|) — 已打了部分 member 名称
-        // 此时 tree-sitter 大概率能生成 field_access，走已有路径；
-        // 此测试确保结果仍然正确，不被新逻辑干扰
+        // Partial member already typed; ensure existing field_access path still wins.
         let src = indoc::indoc! {r#"
 class A {
     void f(String[][] matrix) {
@@ -1070,7 +1154,7 @@ class A {
 
     #[test]
     fn test_normal_method_argument_not_affected() {
-        // 普通方法参数补全不应被新逻辑误伤
+        // New logic must not regress ordinary method-argument completion.
         let src = indoc::indoc! {r#"
 class A {
     void f(String[][] matrix) {
@@ -1100,7 +1184,7 @@ class A {
         void f() {}
     }"#;
 
-        // cursor 放在 string 中间，比如 "not parsed| ..."
+        // Cursor inside a string literal should stay StringLiteral location.
         let offset = src.find("not parsed").unwrap() + "not parsed".len();
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
@@ -1346,15 +1430,24 @@ class A {
 
         assert!(
             matches!(
-                hint,
+                hint.as_ref(),
                 Some(FunctionalTargetHint {
-                    expected_type_source: Some(ref ty),
+                    expected_type_source: Some(ty),
                     ..
                 }) if ty == "Function<String, Integer>"
             ),
             "Expected assignment RHS target type hint, got {:?}",
             hint
         );
+        assert!(matches!(
+            hint.as_ref().and_then(|h| h.expr_shape.clone()),
+            Some(crate::semantic::context::FunctionalExprShape::MethodReference {
+                qualifier_expr,
+                member_name,
+                is_constructor: false,
+                qualifier_kind: crate::semantic::context::MethodRefQualifierKind::Type,
+            }) if qualifier_expr == "String" && member_name == "length"
+        ));
     }
 
     #[test]
@@ -1374,14 +1467,47 @@ class A {
 
         assert!(
             matches!(
-                hint,
+                hint.as_ref(),
                 Some(FunctionalTargetHint {
-                    method_call: Some(ref m),
+                    method_call: Some(m),
                     ..
                 }) if m.method_name == "map" && m.arg_index == 0 && m.receiver_expr == "stream"
             ),
             "Expected method-argument functional target hint, got {:?}",
             hint
         );
+        assert!(matches!(
+            hint.as_ref().and_then(|h| h.expr_shape.clone()),
+            Some(crate::semantic::context::FunctionalExprShape::MethodReference {
+                qualifier_expr,
+                member_name,
+                is_constructor: false,
+                qualifier_kind: crate::semantic::context::MethodRefQualifierKind::Type,
+            }) if qualifier_expr == "String" && member_name == "trim"
+        ));
+    }
+
+    #[test]
+    fn test_functional_target_hint_lambda_shape() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        Function<Integer, Integer> fn = x -> x + 1;
+    }
+}
+"#};
+        let marker = "x + 1";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+
+        assert!(matches!(
+            hint.and_then(|h| h.expr_shape),
+            Some(crate::semantic::context::FunctionalExprShape::Lambda {
+                param_count: 1,
+                expression_body: Some(ref body),
+            }) if body == "x + 1"
+        ));
     }
 }
