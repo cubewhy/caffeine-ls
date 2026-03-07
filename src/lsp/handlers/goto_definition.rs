@@ -189,7 +189,7 @@ async fn goto_resolved_symbol(
                 let config = backend.config.read().await;
                 let decompiler_jar = config.decompiler_path.clone()?;
                 let java_bin = config.get_java_bin();
-                let decompiler = config.decompiler_type.get_decompiler();
+                let decompiler = config.decompiler_backend.get_decompiler();
                 drop(config);
 
                 if let Err(e) = decompiler

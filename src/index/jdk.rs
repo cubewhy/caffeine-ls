@@ -9,20 +9,31 @@ use super::{ClassMetadata, index_jar};
 
 const JDK_ORIGIN: &str = "jdk://builtin";
 
-pub struct JdkIndexer;
+pub struct JdkIndexer {
+    java_home: PathBuf,
+}
 
 impl JdkIndexer {
-    /// Try to find and index JDK classes.
-    /// Returns empty vec if JAVA_HOME is not set or JDK cannot be parsed.
-    pub fn index() -> Vec<ClassMetadata> {
-        // TODO: use the jdk path from lsp config
+    pub fn new(java_home: PathBuf) -> Self {
+        Self { java_home }
+    }
+
+    pub fn from_env() -> anyhow::Result<Self> {
         let java_home = match std::env::var("JAVA_HOME") {
             Ok(h) => PathBuf::from(h),
             Err(_) => {
                 warn!("JAVA_HOME not set, JDK classes will not be indexed");
-                return vec![];
+                return Err(anyhow::anyhow!("No JAVA_HOME environment variable defined"));
             }
         };
+
+        Ok(Self { java_home })
+    }
+
+    /// Try to find and index JDK classes.
+    /// Returns empty vec if JAVA_HOME is not set or JDK cannot be parsed.
+    pub fn index(&self) -> Vec<ClassMetadata> {
+        let java_home = &self.java_home;
 
         info!(java_home = %java_home.display(), "indexing JDK");
 
@@ -227,7 +238,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_jdk_index_finds_string() {
-        let classes = JdkIndexer::index();
+        let classes = JdkIndexer::from_env()
+            .expect("Failed to create JDKIndexer")
+            .index();
         if classes.is_empty() {
             eprintln!("JAVA_HOME not set or JDK not found, skipping");
             return;
@@ -266,7 +279,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_jdk_index_object_methods() {
-        let classes = JdkIndexer::index();
+        let classes = JdkIndexer::from_env()
+            .expect("Failed to create JDKIndexer")
+            .index();
         if classes.is_empty() {
             return;
         }
@@ -287,7 +302,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_jdk_skips_module_info() {
-        let classes = JdkIndexer::index();
+        let classes = JdkIndexer::from_env()
+            .expect("Failed to create JDKIndexer")
+            .index();
         assert!(
             classes.iter().all(|c| c.name.as_ref() != "module-info"),
             "module-info should be filtered out"
@@ -297,7 +314,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_jdk_classes_have_valid_internal_names() {
-        let classes = JdkIndexer::index();
+        let classes = JdkIndexer::from_env()
+            .expect("Failed to create JDKIndexer")
+            .index();
         for cls in classes.iter().take(100) {
             assert!(
                 !cls.internal_name.contains('.'),

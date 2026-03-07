@@ -13,8 +13,62 @@
   ],
   "activationEvents": [
     "onLanguage:java",
-    "onLanguage:kotlin"
+    "onLanguage:kotlin",
+    "onCommand:java-analyzer.setJdkPath",
+    "onCommand:java-analyzer.setDecompilerPath",
+    "onCommand:java-analyzer.selectDecompilerBackend",
+    "onCommand:java-analyzer.setServerPath"
   ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "java-analyzer.setJdkPath",
+        "title": "Java Analyzer: Set JDK Path"
+      },
+      {
+        "command": "java-analyzer.setDecompilerPath",
+        "title": "Java Analyzer: Set Decompiler Path"
+      },
+      {
+        "command": "java-analyzer.selectDecompilerBackend",
+        "title": "Java Analyzer: Select Decompiler Backend"
+      },
+      {
+        "command": "java-analyzer.setServerPath",
+        "title": "Java Analyzer: Set Server Path"
+      }
+    ],
+    "configuration": {
+      "title": "Java Analyzer",
+      "properties": {
+        "java-analyzer.jdkPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the JDK home directory used by the Java analyzer. If empty, the backend falls back to `java` on PATH."
+        },
+        "java-analyzer.decompilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to the decompiler executable or jar used by the analyzer."
+        },
+        "java-analyzer.decompilerBackend": {
+          "type": "string",
+          "default": "vineflower",
+          "enum": ["vineflower", "cfr"],
+          "enumDescriptions": [
+            "Use the Vineflower decompiler backend.",
+            "Use the CFR decompiler backend."
+          ],
+          "description": "Select the decompiler backend."
+        },
+        "java-analyzer.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom path to the LSP backend executable. If set, use this backend. If empty, use bundled backend, or `cargo run` in development."
+        }
+      }
+    }
+  },
   "main": "./dist/extension.js",
   "scripts": {
     "vscode:prepublish": "pnpm run package",

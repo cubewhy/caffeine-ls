@@ -14,7 +14,7 @@ pub enum DecompilerType {
 }
 
 impl DecompilerType {
-    pub fn get_decompiler(&self) -> Box<dyn Decompiler> {
+    pub fn get_decompiler(&self) -> Box<dyn Decompiler + 'static> {
         match self {
             Self::Cfr => Box::new(CfrDecompiler),
             Self::Vineflower => Box::new(VineflowerDecompiler),
@@ -27,7 +27,7 @@ impl DecompilerType {
 pub struct JavaAnalyzerConfig {
     pub jdk_path: Option<std::path::PathBuf>,
     pub decompiler_path: Option<std::path::PathBuf>,
-    pub decompiler_type: DecompilerType,
+    pub decompiler_backend: DecompilerType,
 }
 
 impl Default for JavaAnalyzerConfig {
@@ -35,7 +35,7 @@ impl Default for JavaAnalyzerConfig {
         Self {
             jdk_path: None,
             decompiler_path: None,
-            decompiler_type: DecompilerType::Vineflower,
+            decompiler_backend: DecompilerType::Vineflower,
         }
     }
 }

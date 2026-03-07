@@ -1,68 +1,47 @@
 import * as vscode from "vscode";
-import { ExtensionContext } from "vscode";
 
+import { LanguageClientManager } from "./client";
+import { registerCommands } from "./commands";
 import {
-  LanguageClient,
-  LanguageClientOptions,
-  ServerOptions,
-} from "vscode-languageclient/node";
+  didRelevantConfigChange,
+  getExtensionSettings,
+  updateConfigurationValue,
+} from "./config";
 
-let client: LanguageClient;
+let clientManager: LanguageClientManager | undefined;
 
-export function activate(context: ExtensionContext) {
-  const serverPath = getServerPath(context);
+export async function activate(context: vscode.ExtensionContext) {
+  clientManager = new LanguageClientManager(context);
 
-  const serverOptions: ServerOptions = {
-    run: { command: serverPath },
-    debug: { command: serverPath, args: [] },
-  };
+  context.subscriptions.push(
+    ...registerCommands({
+      getSettings: getExtensionSettings,
+      updateConfigurationValue,
+    }),
+    vscode.workspace.onDidChangeConfiguration(async (event) => {
+      if (!didRelevantConfigChange(event)) {
+        return;
+      }
 
-  const clientOptions: LanguageClientOptions = {
-    documentSelector: [
-      { scheme: "file", language: "java" },
-      { scheme: "file", language: "kotlin" },
-    ],
-    synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher('**/.clientrc')
-    }
-  };
+      const restartChoice = "Restart";
+      const choice = await vscode.window.showInformationMessage(
+        "Java Analyzer configuration changed. Restart the language server to apply the new settings.",
+        restartChoice,
+        "Later",
+      );
 
-  client = new LanguageClient(
-    "java-analyzer",
-    "java-analyzer",
-    serverOptions,
-    clientOptions,
+      if (choice === restartChoice) {
+        await clientManager?.restart(getExtensionSettings());
+      }
+    }),
   );
 
-  client.start();
-}
-
-function getServerPath(context: vscode.ExtensionContext): string {
-  const devServerPath = process.env.SERVER_PATH;
-  if (devServerPath) {
-    return devServerPath;
-  }
-
-  const configPath = vscode.workspace
-    .getConfiguration("myLsp")
-    .get<string>("serverPath");
-  if (configPath) {
-    return configPath;
-  }
-
-  const extName = process.platform === "win32" ? ".exe" : "";
-  const bundledPath = vscode.Uri.joinPath(
-    context.extensionUri,
-    "bin",
-    `server${extName}`,
-  ).fsPath;
-
-  return bundledPath;
+  await clientManager.start(getExtensionSettings());
 }
 
 export function deactivate(): Thenable<void> | undefined {
-  if (!client) {
+  if (!clientManager) {
     return undefined;
   }
-  return client.stop();
+  return clientManager.stop();
 }

@@ -10,6 +10,7 @@ use super::handlers::completion::handle_completion;
 use crate::completion::engine::CompletionEngine;
 use crate::decompiler::cache::DecompilerCache;
 use crate::index::codebase::{index_codebase, index_source_text};
+use crate::index::jdk::JdkIndexer;
 use crate::index::{ClassOrigin, IndexScope, ModuleId};
 use crate::language::LanguageRegistry;
 use crate::language::rope_utils::rope_line_col_to_offset;
@@ -45,18 +46,25 @@ impl Backend {
     }
 
     /// Trigger background indexing (without blocking the response)
-    fn spawn_index_workspace(&self, root: std::path::PathBuf) {
+    async fn spawn_index_workspace(&self, root: std::path::PathBuf) {
         let workspace = Arc::clone(&self.workspace);
         let client = self.client.clone();
-        tokio::spawn(async move {
+
+        let config = self.config.read().await;
+
+        if let Some(jdk_path) = config.jdk_path.clone() {
             // JDK
             with_progress(
                 &client,
                 "java-analyzer/index/jdk",
                 "Indexing JDK",
                 || async {
-                    let jdk_classes =
-                        tokio::task::spawn_blocking(crate::index::jdk::JdkIndexer::index).await;
+                    let jdk_classes = tokio::task::spawn_blocking(|| {
+                        let indexer = JdkIndexer::new(jdk_path);
+
+                        indexer.index()
+                    })
+                    .await;
                     match jdk_classes {
                         Ok(classes) if !classes.is_empty() => {
                             let msg = format!("✓ JDK: {} classes", classes.len());
@@ -77,80 +85,84 @@ impl Backend {
                 },
             )
             .await;
+        }
 
-            // JARs
-            with_progress(
-                &client,
-                "java-analyzer/index/jars",
-                "Indexing JARs",
-                || async {
-                    for jar_dir in find_jar_dirs(&root) {
-                        workspace.load_jars_from_dir(jar_dir).await;
-                    }
-                },
-            )
-            .await;
+        // JARs
+        // TODO: receive classpath from build tools
+        with_progress(
+            &client,
+            "java-analyzer/index/jars",
+            "Indexing JARs",
+            || async {
+                for jar_dir in find_jar_dirs(&root) {
+                    workspace.load_jars_from_dir(jar_dir).await;
+                }
+            },
+        )
+        .await;
 
-            let root_scope = IndexScope {
-                module: ModuleId::ROOT,
-            };
-            let name_table = workspace.index.read().await.build_name_table(root_scope);
+        let root_scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let name_table = workspace.index.read().await.build_name_table(root_scope);
 
-            // Codebase
-            with_progress(
-                &client,
-                "java-analyzer/index/codebase",
-                "Indexing workspace",
-                || async {
-                    let codebase = tokio::task::spawn_blocking({
-                        let root = root.clone();
-                        move || index_codebase(&root, Some(name_table))
-                    })
-                    .await;
-                    match codebase {
-                        Ok(result) => {
-                            let msg = format!(
-                                "✓ Codebase: {} files, {} classes",
-                                result.file_count,
-                                result.classes.len()
-                            );
-                            let scope = IndexScope {
-                                module: ModuleId::ROOT,
-                            };
-                            let index_guard = workspace.index.write().await;
-                            let mut by_origin: std::collections::HashMap<ClassOrigin, Vec<_>> =
-                                std::collections::HashMap::new();
-                            for class in result.classes {
-                                by_origin
-                                    .entry(class.origin.clone())
-                                    .or_default()
-                                    .push(class);
-                            }
-                            for (origin, classes) in by_origin {
-                                index_guard.update_source(scope, origin, classes);
-                            }
-                            client.log_message(MessageType::INFO, msg).await;
-                            client.semantic_tokens_refresh().await.ok();
-                        }
-                        Err(e) => error!(error = %e, "codebase indexing panicked"),
-                    }
-                },
-            )
-            .await;
-
-            client
-                .log_message(MessageType::INFO, "✓ Indexing complete")
+        // Codebase
+        with_progress(
+            &client,
+            "java-analyzer/index/codebase",
+            "Indexing workspace",
+            || async {
+                let codebase = tokio::task::spawn_blocking({
+                    let root = root.clone();
+                    move || index_codebase(&root, Some(name_table))
+                })
                 .await;
-        });
+                match codebase {
+                    Ok(result) => {
+                        let msg = format!(
+                            "✓ Codebase: {} files, {} classes",
+                            result.file_count,
+                            result.classes.len()
+                        );
+                        let scope = IndexScope {
+                            module: ModuleId::ROOT,
+                        };
+                        let index_guard = workspace.index.write().await;
+                        let mut by_origin: std::collections::HashMap<ClassOrigin, Vec<_>> =
+                            std::collections::HashMap::new();
+                        for class in result.classes {
+                            by_origin
+                                .entry(class.origin.clone())
+                                .or_default()
+                                .push(class);
+                        }
+                        for (origin, classes) in by_origin {
+                            index_guard.update_source(scope, origin, classes);
+                        }
+                        client.log_message(MessageType::INFO, msg).await;
+                        client.semantic_tokens_refresh().await.ok();
+                    }
+                    Err(e) => error!(error = %e, "codebase indexing panicked"),
+                }
+            },
+        )
+        .await;
+
+        client
+            .log_message(MessageType::INFO, "✓ Indexing complete")
+            .await;
     }
 
     pub async fn update_config(&self, params: serde_json::Value) {
         let mut config_guard = self.config.write().await;
-        if let Ok(new_config) = serde_json::from_value::<JavaAnalyzerConfig>(params) {
-            info!(config = ?new_config, "Config updated");
-            *config_guard = new_config;
-        } else {
-            error!("Failed to parse incoming config");
+        match serde_json::from_value::<JavaAnalyzerConfig>(params) {
+            Ok(new_config) => {
+                tracing::info!(config = ?new_config, "Config updated");
+                *config_guard = new_config;
+            }
+            Err(e) => {
+                tracing::error!("Failed to parse incoming config: {e:#}");
+            }
         }
     }
 }
@@ -183,11 +195,11 @@ impl LanguageServer for Backend {
 
         // Trigger workspace index
         if let Some(root) = params.root_uri.as_ref().and_then(|u| u.to_file_path().ok()) {
-            self.spawn_index_workspace(root);
+            self.spawn_index_workspace(root).await;
         } else if let Some(folders) = params.workspace_folders {
             for folder in folders {
                 if let Ok(root) = folder.uri.to_file_path() {
-                    self.spawn_index_workspace(root);
+                    self.spawn_index_workspace(root).await;
                 }
             }
         }
