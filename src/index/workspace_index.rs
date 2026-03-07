@@ -54,6 +54,11 @@ impl WorkspaceIndex {
         module.update_source(origin, classes);
     }
 
+    pub fn remove_source_origin(&self, scope: IndexScope, origin: &ClassOrigin) {
+        let module = self.ensure_module(scope.module, default_module_name(scope.module));
+        module.source.remove_by_origin(origin);
+    }
+
     pub fn add_jdk_classes(&self, classes: Vec<ClassMetadata>) {
         self.jdk.add_classes(classes);
     }
@@ -152,5 +157,141 @@ fn default_module_name(id: ModuleId) -> Arc<str> {
         Arc::from("root")
     } else {
         Arc::from(format!("module-{}", id.0))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{FieldSummary, MethodParams, MethodSummary};
+    use rust_asm::constants::ACC_PUBLIC;
+
+    fn make_class(internal: &str, origin: ClassOrigin) -> ClassMetadata {
+        let (pkg, name) = internal
+            .rsplit_once('/')
+            .map(|(p, n)| (Some(Arc::from(p)), Arc::from(n)))
+            .unwrap_or((None, Arc::from(internal)));
+        ClassMetadata {
+            package: pkg,
+            name,
+            internal_name: Arc::from(internal),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin,
+        }
+    }
+
+    fn make_method(name: &str, desc: &str) -> MethodSummary {
+        MethodSummary {
+            name: Arc::from(name),
+            params: MethodParams::from_method_descriptor(desc),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: crate::semantic::types::parse_return_type_from_descriptor(desc),
+        }
+    }
+
+    #[test]
+    fn test_close_cleanup_removes_temp_source_overlay_and_falls_back() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+
+        let mut jdk_array = make_class(
+            "java/util/ArrayList",
+            ClassOrigin::Jar(Arc::from("jdk://builtin")),
+        );
+        jdk_array.interfaces.push(Arc::from("java/util/List"));
+        jdk_array.methods.push(make_method("add", "(Ljava/lang/Object;)Z"));
+        jdk_array
+            .methods
+            .push(make_method("add", "(ILjava/lang/Object;)V"));
+        for method in &mut jdk_array.methods {
+            if method.desc().as_ref() == "(Ljava/lang/Object;)Z" {
+                method.generic_signature = Some(Arc::from("(TE;)Z"));
+            } else if method.desc().as_ref() == "(ILjava/lang/Object;)V" {
+                method.generic_signature = Some(Arc::from("(ITE;)V"));
+            }
+        }
+
+        let mut jdk_list = make_class("java/util/List", ClassOrigin::Jar(Arc::from("jdk://builtin")));
+        jdk_list.methods.push(make_method("add", "(Ljava/lang/Object;)Z"));
+        jdk_list
+            .methods
+            .push(make_method("add", "(ILjava/lang/Object;)V"));
+        for method in &mut jdk_list.methods {
+            if method.desc().as_ref() == "(Ljava/lang/Object;)Z" {
+                method.generic_signature = Some(Arc::from("(TE;)Z"));
+            } else if method.desc().as_ref() == "(ILjava/lang/Object;)V" {
+                method.generic_signature = Some(Arc::from("(ITE;)V"));
+            }
+        }
+
+        idx.add_jdk_classes(vec![jdk_array, jdk_list]);
+
+        let source_origin = ClassOrigin::SourceFile(Arc::from(
+            "file:///tmp/java_analyzer_sources/java.base/java/util/ArrayList.java",
+        ));
+        let mut src_array = make_class("java/util/ArrayList", source_origin.clone());
+        src_array.interfaces.push(Arc::from("java/util/List"));
+        src_array.methods.push(make_method("add", "(LE;)Z"));
+        src_array.methods.push(make_method("add", "(ILE;)V"));
+        for method in &mut src_array.methods {
+            if method.desc().as_ref() == "(LE;)Z" {
+                method.generic_signature = Some(Arc::from("(TE;)Z"));
+            } else if method.desc().as_ref() == "(ILE;)V" {
+                method.generic_signature = Some(Arc::from("(ITE;)V"));
+            }
+        }
+        idx.update_source(scope, source_origin.clone(), vec![src_array]);
+
+        let view_before = idx.view(scope);
+        let (methods_before, _): (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>) =
+            view_before.collect_inherited_members("java/util/ArrayList");
+        let add_descs_before: Vec<_> = methods_before
+            .iter()
+            .filter(|m| m.name.as_ref() == "add")
+            .map(|m| m.desc().to_string())
+            .collect();
+        assert!(
+            add_descs_before.contains(&"(LE;)Z".to_string()),
+            "expected source-shaped add family before cleanup: {:?}",
+            add_descs_before
+        );
+        assert!(
+            !add_descs_before.contains(&"(Ljava/lang/Object;)Z".to_string()),
+            "view should not expose mixed add families simultaneously: {:?}",
+            add_descs_before
+        );
+
+        idx.remove_source_origin(scope, &source_origin);
+
+        let view_after = idx.view(scope);
+        let (methods_after, _): (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>) =
+            view_after.collect_inherited_members("java/util/ArrayList");
+        let add_descs_after: Vec<_> = methods_after
+            .iter()
+            .filter(|m| m.name.as_ref() == "add")
+            .map(|m| m.desc().to_string())
+            .collect();
+        assert!(
+            !add_descs_after.iter().any(|d| d.contains("LE;")),
+            "source overlay should be removed on close, got {:?}",
+            add_descs_after
+        );
+        assert!(
+            add_descs_after.contains(&"(Ljava/lang/Object;)Z".to_string()),
+            "bytecode fallback should remain after cleanup: {:?}",
+            add_descs_after
+        );
     }
 }
