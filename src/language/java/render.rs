@@ -13,6 +13,12 @@ use crate::{
     },
 };
 
+fn should_trace_method(receiver_internal: &str, class_meta: &ClassMetadata, method: &MethodSummary) -> bool {
+    method.name.as_ref() == "add"
+        && (receiver_internal.contains("ArrayList")
+            || class_meta.internal_name.contains("ArrayList"))
+}
+
 #[instrument(skip(class_meta, method, provider))]
 pub fn method_detail(
     receiver_internal: &str,
@@ -20,6 +26,24 @@ pub fn method_detail(
     method: &MethodSummary,
     provider: &impl SymbolProvider,
 ) -> String {
+    let trace_add = should_trace_method(receiver_internal, class_meta, method);
+    if trace_add {
+        tracing::debug!(
+            receiver_internal,
+            base_receiver = receiver_internal.split('<').next().unwrap_or(receiver_internal),
+            class_internal = %class_meta.internal_name,
+            class_origin = ?class_meta.origin,
+            class_generic_signature = ?class_meta.generic_signature,
+            method_name = %method.name,
+            method_desc = %method.desc(),
+            method_generic_signature = ?method.generic_signature,
+            method_return_type = ?method.return_type,
+            param_descriptors = ?method.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+            param_names = ?method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+            "method_detail: input metadata"
+        );
+    }
+
     let base_return = method.return_type.as_deref().unwrap_or("V");
 
     let ret_jvm: &str = method
@@ -27,6 +51,14 @@ pub fn method_detail(
         .as_deref()
         .and_then(|sig| sig.find(')').map(|i| &sig[i + 1..]))
         .unwrap_or(base_return);
+
+    if trace_add {
+        tracing::debug!(
+            base_return,
+            ret_jvm,
+            "method_detail: return type selection"
+        );
+    }
 
     let mut display_return: Arc<str> = substitute_type(
         receiver_internal,
@@ -49,6 +81,15 @@ pub fn method_detail(
         .clone()
         .unwrap_or_else(|| method.desc());
 
+    if trace_add {
+        tracing::debug!(
+            sig_to_use = %sig_to_use,
+            display_return = %display_return,
+            source_style_return,
+            "method_detail: signature chosen"
+        );
+    }
+
     let mut param_types = Vec::new();
 
     if let Some(start) = sig_to_use.find('(')
@@ -70,10 +111,17 @@ pub fn method_detail(
                         .unwrap_or_else(|| Arc::from(param_jvm_str))
                 });
 
-                param_types.push(
-                    descriptor_to_source_type(&subbed, provider)
-                        .unwrap_or_else(|| subbed.to_string()),
-                );
+                let rendered = descriptor_to_source_type(&subbed, provider)
+                    .unwrap_or_else(|| subbed.to_string());
+                if trace_add {
+                    tracing::debug!(
+                        param_raw = param_jvm_str,
+                        param_substituted = %subbed,
+                        param_rendered = rendered,
+                        "method_detail: parameter substitution"
+                    );
+                }
+                param_types.push(rendered);
                 params_str = rest;
             } else {
                 break;
@@ -104,13 +152,19 @@ pub fn method_detail(
         .next()
         .unwrap_or(base_class_name);
 
-    format!(
+    let detail = format!(
         "{} — {} {}({})",
         short_class_name,
         source_style_return,
         method.name,
         full_params.join(", ")
-    )
+    );
+
+    if trace_add {
+        tracing::debug!(detail, "method_detail: final detail");
+    }
+
+    detail
 }
 
 #[instrument(skip(class_meta, field, provider))]
@@ -195,6 +249,17 @@ pub fn source_member_detail(
     if let CurrentClassMember::Method(md) = member {
         let md = md.clone();
         let sig = member.descriptor();
+        let trace_add = member.name().as_ref() == "add" && receiver_internal.contains("ArrayList");
+        if trace_add {
+            tracing::debug!(
+                receiver_internal,
+                method_name = %member.name(),
+                method_desc = %sig,
+                param_descriptors = ?md.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                param_names = ?md.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                "source_member_detail: input metadata"
+            );
+        }
 
         let ret_jvm = if let Some(ret_idx) = sig.find(')') {
             &sig[ret_idx + 1..]
@@ -220,10 +285,17 @@ pub fn source_member_detail(
 
                     let subbed: Arc<str> = Arc::from(t.to_signature_string());
 
-                    param_types.push(
-                        descriptor_to_source_type(&subbed, provider)
-                            .unwrap_or_else(|| clean_fallback(param_jvm_str)),
-                    );
+                    let rendered = descriptor_to_source_type(&subbed, provider)
+                        .unwrap_or_else(|| clean_fallback(param_jvm_str));
+                    if trace_add {
+                        tracing::debug!(
+                            param_raw = param_jvm_str,
+                            param_substituted = %subbed,
+                            param_rendered = rendered,
+                            "source_member_detail: parameter rendering"
+                        );
+                    }
+                    param_types.push(rendered);
 
                     params_str = rest;
                 } else {
@@ -246,13 +318,17 @@ pub fn source_member_detail(
             })
             .collect();
 
-        format!(
+        let detail = format!(
             "{} — {} {}({})",
             short_class_name,
             source_style_return,
             member.name(),
             full_params.join(", ")
-        )
+        );
+        if trace_add {
+            tracing::debug!(detail, "source_member_detail: final detail");
+        }
+        detail
     } else {
         let sig_to_use = member.descriptor();
         let display_type: Arc<str> = JvmType::parse(&sig_to_use)

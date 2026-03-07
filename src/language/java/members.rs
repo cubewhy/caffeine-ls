@@ -37,7 +37,7 @@ pub fn extract_class_members_from_body(
     type_ctx: &SourceTypeCtx,
 ) -> Vec<CurrentClassMember> {
     let mut members = Vec::new();
-    collect_members_from_node(ctx, body, type_ctx, &mut members);
+    collect_members_from_node_impl(ctx, body, type_ctx, &mut members, false);
 
     members
 }
@@ -47,6 +47,16 @@ pub fn collect_members_from_node(
     node: Node,
     type_ctx: &SourceTypeCtx,
     members: &mut Vec<CurrentClassMember>,
+) {
+    collect_members_from_node_impl(ctx, node, type_ctx, members, true);
+}
+
+fn collect_members_from_node_impl(
+    ctx: &JavaContextExtractor,
+    node: Node,
+    type_ctx: &SourceTypeCtx,
+    members: &mut Vec<CurrentClassMember>,
+    allow_nested_types: bool,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -66,7 +76,13 @@ pub fn collect_members_from_node(
                                 members.push(m);
                             }
                             members.extend(parse_field_node(ctx, type_ctx, bc));
-                            collect_members_from_node(ctx, bc, type_ctx, members);
+                            collect_members_from_node_impl(
+                                ctx,
+                                bc,
+                                type_ctx,
+                                members,
+                                allow_nested_types,
+                            );
                             let snapshot = members.clone();
                             members.extend(parse_partial_methods_from_error(
                                 ctx, type_ctx, bc, &snapshot,
@@ -119,14 +135,20 @@ pub fn collect_members_from_node(
             "class_declaration"
             | "interface_declaration"
             | "enum_declaration"
-            | "class_body"
+            | "annotation_type_declaration"
+            | "record_declaration"
+                if allow_nested_types =>
+            {
+                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
+            }
+            "class_body"
             | "interface_body"
             | "enum_body"
             | "program" => {
-                collect_members_from_node(ctx, child, type_ctx, members);
+                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
             }
             "ERROR" => {
-                collect_members_from_node(ctx, child, type_ctx, members);
+                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
                 let snapshot = members.clone();
                 members.extend(parse_partial_methods_from_error(
                     ctx, type_ctx, child, &snapshot,
@@ -216,6 +238,17 @@ pub fn parse_partial_methods_from_error(
             .unwrap_or("void");
 
         let descriptor = build_java_descriptor(ctx.node_text(params_node), ret_type, type_ctx);
+
+        if name == "add" {
+            tracing::debug!(
+                source = "error-formal-parameters",
+                method_name = name,
+                descriptor,
+                ret_type,
+                error_node_range = ?(error_node.start_byte(), error_node.end_byte()),
+                "members::parse_partial_methods_from_error: synthesized add"
+            );
+        }
 
         result.push(CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from(name),
@@ -307,6 +340,18 @@ pub fn parse_partial_methods_from_error(
             .unwrap_or("()");
         let descriptor = build_java_descriptor(args, ret_type, type_ctx);
 
+        if name == "add" {
+            tracing::debug!(
+                source = "error-method-invocation",
+                method_name = name,
+                descriptor,
+                args,
+                ret_type,
+                error_node_range = ?(error_node.start_byte(), error_node.end_byte()),
+                "members::parse_partial_methods_from_error: synthesized add"
+            );
+        }
+
         result.push(CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from(name),
             params: MethodParams::empty(),
@@ -366,6 +411,18 @@ pub fn parse_method_node(
     let params = params_node
         .map(|n| parse_params(ctx, &descriptor, n, type_ctx))
         .unwrap_or(MethodParams::empty());
+
+    if name == "add" {
+        tracing::debug!(
+            method_name = name,
+            descriptor,
+            generic_signature = ?generic_signature,
+            return_type = ?parse_return_type_from_descriptor(&descriptor),
+            param_descriptors = ?params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+            param_names = ?params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+            "members::parse_method_node: source method extracted"
+        );
+    }
 
     Some(CurrentClassMember::Method(Arc::new(MethodSummary {
         name: Arc::from(name),

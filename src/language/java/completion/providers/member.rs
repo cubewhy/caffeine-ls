@@ -254,6 +254,27 @@ impl CompletionProvider for MemberProvider {
                 if !prefix_lower.is_empty() && !method.name.to_lowercase().contains(&prefix_lower) {
                     continue;
                 }
+                let trace_add = method.name.as_ref() == "add"
+                    && (class_internal.contains("ArrayList")
+                        || base_class_internal.contains("ArrayList"));
+                if trace_add {
+                    tracing::debug!(
+                        receiver_expr,
+                        member_prefix,
+                        class_internal,
+                        base_class_internal,
+                        class_meta_internal = %class_meta.internal_name,
+                        class_meta_origin = ?class_meta.origin,
+                        class_meta_generic_signature = ?class_meta.generic_signature,
+                        method_name = %method.name,
+                        method_desc = %method.desc(),
+                        method_generic_signature = ?method.generic_signature,
+                        method_return_type = ?method.return_type,
+                        param_descriptors = ?method.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                        param_names = ?method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                        "member_provider: add overload candidate before detail rendering"
+                    );
+                }
                 let is_static = method.access_flags & ACC_STATIC != 0;
                 let kind = if is_static {
                     CandidateKind::StaticMethod {
@@ -277,12 +298,23 @@ impl CompletionProvider for MemberProvider {
                         kind,
                         self.name(),
                     )
-                    .with_detail(render::method_detail(
-                        &class_internal,
-                        class_meta,
-                        method,
-                        &resolver,
-                    )),
+                    .with_detail({
+                        let detail = render::method_detail(
+                            &class_internal,
+                            class_meta,
+                            method,
+                            &resolver,
+                        );
+                        if trace_add {
+                            tracing::debug!(
+                                method_name = %method.name,
+                                method_desc = %method.desc(),
+                                detail,
+                                "member_provider: add overload candidate after detail rendering"
+                            );
+                        }
+                        detail
+                    }),
                 );
             }
 
@@ -680,6 +712,7 @@ mod tests {
     use crate::index::WorkspaceIndex;
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
+    use tracing_subscriber::{EnvFilter, fmt};
 
     use crate::completion::provider::CompletionProvider;
     use crate::index::{
@@ -687,7 +720,15 @@ mod tests {
     };
     use crate::language::java::completion::providers::member::MemberProvider;
     use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::semantic::LocalVar;
     use crate::semantic::types::{parse_return_type_from_descriptor, type_name::TypeName};
+
+    fn init_test_tracing() {
+        let _ = fmt()
+            .with_test_writer()
+            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
+            .try_init();
+    }
 
     fn root_scope() -> IndexScope {
         IndexScope {
@@ -1035,5 +1076,86 @@ mod tests {
         let ctx = ctx_with_type("com/example/Legacy", "");
         let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         assert!(results.iter().any(|c| c.label.as_ref() == "legacyOnly"));
+    }
+
+    #[test]
+    fn test_member_provider_arraylist_add_overloads_for_trace() {
+        init_test_tracing();
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("ArrayList"),
+            internal_name: Arc::from("java/util/ArrayList"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("add"),
+                    params: MethodParams::from([("TE;", "e")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TE;)Z")),
+                    return_type: parse_return_type_from_descriptor("(TE;)Z"),
+                },
+                MethodSummary {
+                    name: Arc::from("add"),
+                    params: MethodParams::from([("I", "index"), ("TE;", "element")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(ITE;)V")),
+                    return_type: parse_return_type_from_descriptor("(ITE;)V"),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::with_args(
+                    "java/util/ArrayList",
+                    vec![TypeName::new("java/lang/String")],
+                )),
+                receiver_type: Some(Arc::from("java/util/ArrayList")),
+                member_prefix: "add".to_string(),
+                receiver_expr: "list".to_string(),
+                arguments: None,
+            },
+            "add",
+            vec![LocalVar {
+                name: Arc::from("list"),
+                type_internal: TypeName::with_args(
+                    "java/util/ArrayList",
+                    vec![TypeName::new("java/lang/String")],
+                ),
+                init_expr: None,
+            }],
+            Some(Arc::from("Main")),
+            Some(Arc::from("Main")),
+            None,
+            vec![],
+        );
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results
+                .iter()
+                .filter(|c| c.label.as_ref() == "add")
+                .count()
+                >= 2,
+            "expected at least 2 add overloads, got {:?}",
+            results
+                .iter()
+                .filter(|c| c.label.as_ref() == "add")
+                .map(|c| c.detail.clone())
+                .collect::<Vec<_>>()
+        );
     }
 }

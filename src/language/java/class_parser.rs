@@ -121,6 +121,30 @@ fn parse_java_class(
         }
     }
 
+    let class_generic_signature = extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
+
+    if methods.iter().any(|m| m.name.as_ref() == "add") {
+        tracing::debug!(
+            class_name = %name,
+            internal_name = %internal_name,
+            origin = ?origin,
+            class_generic_signature = ?class_generic_signature,
+            add_overloads = ?methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "add")
+                .map(|m| format!(
+                    "desc={} gs={:?} ret={:?} params={:?} names={:?}",
+                    m.desc(),
+                    m.generic_signature,
+                    m.return_type,
+                    m.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                    m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                ))
+                .collect::<Vec<_>>(),
+            "class_parser::parse_java_class: class metadata extracted"
+        );
+    }
+
     Some(ClassMetadata {
         package: package.clone(),
         name,
@@ -132,7 +156,7 @@ fn parse_java_class(
         fields,
         access_flags,
         inner_class_of: outer_class,
-        generic_signature: extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;"),
+        generic_signature: class_generic_signature,
         origin: origin.clone(),
     })
 }
@@ -478,6 +502,14 @@ fn clean_javadoc(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::{index::ClassOrigin, language::java::class_parser::parse_java_source};
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    fn init_test_tracing() {
+        let _ = fmt()
+            .with_test_writer()
+            .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")))
+            .try_init();
+    }
 
     #[test]
     fn test_nested_class_internal_name_with_package() {
@@ -544,6 +576,48 @@ public class Main {
     }
 
     #[test]
+    fn test_outer_methods_exclude_nested_type_members() {
+        let src = indoc::indoc! {r#"
+            package org.cubewhy.a;
+            public class Outer<E> {
+                public boolean add(E e) { return true; }
+
+                static class Nested<E> {
+                    public void add(E e) {}
+                }
+            }
+        "#};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let outer = classes.iter().find(|c| c.name.as_ref() == "Outer").unwrap();
+        let nested = classes.iter().find(|c| c.name.as_ref() == "Nested").unwrap();
+
+        let outer_add_descs: Vec<_> = outer
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "add")
+            .map(|m| m.desc().to_string())
+            .collect();
+        assert_eq!(
+            outer_add_descs,
+            vec!["(LE;)Z"],
+            "outer class should not contain nested add(E) -> void"
+        );
+
+        let nested_add_descs: Vec<_> = nested
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "add")
+            .map(|m| m.desc().to_string())
+            .collect();
+        assert_eq!(
+            nested_add_descs,
+            vec!["(LE;)V"],
+            "nested class should still index its own add(E) -> void"
+        );
+    }
+
+    #[test]
     fn test_super_name_no_extends_keyword() {
         let src = "public class Child extends Parent implements Runnable, Serializable {}";
         let classes = parse_java_source(src, ClassOrigin::Unknown, None);
@@ -598,6 +672,26 @@ public class Main {
         // 验证方法上的泛型 T 被正确抓取，并且携带了后续的 descriptor
         let sig = method.generic_signature.as_deref().unwrap();
         assert!(sig.starts_with("<T:Ljava/lang/Object;>"));
+    }
+
+    #[test]
+    fn test_trace_source_add_overloads_metadata() {
+        init_test_tracing();
+
+        let src = indoc::indoc! {r#"
+            public class MyList<E> {
+                public boolean add(E e) { return true; }
+                public void add(int index, E element) {}
+            }
+        "#};
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let cls = classes.iter().find(|c| c.name.as_ref() == "MyList").unwrap();
+        let adds: Vec<_> = cls
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "add")
+            .collect();
+        assert_eq!(adds.len(), 2);
     }
 
     #[test]

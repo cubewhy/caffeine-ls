@@ -218,12 +218,47 @@ impl MethodParams {
             return;
         }
         for (a, b) in self.items.iter_mut().zip(other.items.iter()) {
-            if a.descriptor == b.descriptor && !b.name.is_empty() {
+            if param_descriptor_compatible_for_name_carryover(&a.descriptor, &b.descriptor)
+                && !b.name.is_empty()
+            {
                 a.name = b.name.clone();
                 a.annotations = b.annotations.clone();
             }
         }
     }
+}
+
+fn param_descriptor_compatible_for_name_carryover(bytecode_desc: &str, source_desc: &str) -> bool {
+    if bytecode_desc == source_desc {
+        return true;
+    }
+    if bytecode_desc.starts_with('[') && source_desc.starts_with('[') {
+        return param_descriptor_compatible_for_name_carryover(
+            &bytecode_desc[1..],
+            &source_desc[1..],
+        );
+    }
+    is_erased_object_descriptor(bytecode_desc) && is_type_variable_descriptor(source_desc)
+}
+
+fn is_erased_object_descriptor(desc: &str) -> bool {
+    desc == "Ljava/lang/Object;"
+}
+
+fn is_type_variable_descriptor(desc: &str) -> bool {
+    // JVM generic signatures use Tname;, while our source parser may emit Lname; for type vars.
+    if desc.starts_with('T') && desc.ends_with(';') {
+        return true;
+    }
+    if !(desc.starts_with('L') && desc.ends_with(';')) {
+        return false;
+    }
+    let inner = &desc[1..desc.len() - 1];
+    if inner.contains('/') || inner.contains('.') || inner.contains('$') || inner.is_empty() {
+        return false;
+    }
+    // Keep rule narrow: treat short all-uppercase identifiers (E, T, K, V, etc.) as type vars.
+    inner.len() <= 3 && inner.chars().all(|c| c.is_ascii_uppercase())
 }
 
 impl<const N: usize> From<[(&str, &str); N]> for MethodParams {
@@ -609,7 +644,7 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
         }
     });
 
-    let methods = cn
+    let methods: Vec<MethodSummary> = cn
         .methods
         .iter()
         .map(|md| {
@@ -646,6 +681,38 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
             }
         })
         .collect();
+
+    let traced_add: Vec<String> = methods
+        .iter()
+        .filter(|m| m.name.as_ref() == "add")
+        .map(|m| {
+            format!(
+                "desc={} gs={:?} ret={:?} params={:?} names={:?}",
+                m.desc(),
+                m.generic_signature,
+                m.return_type,
+                m.params
+                    .items
+                    .iter()
+                    .map(|p| p.descriptor.as_ref())
+                    .collect::<Vec<_>>(),
+                m.params
+                    .items
+                    .iter()
+                    .map(|p| p.name.as_ref())
+                    .collect::<Vec<_>>()
+            )
+        })
+        .collect();
+    if !traced_add.is_empty() && internal_name.contains("ArrayList") {
+        tracing::debug!(
+            class_internal = %internal_name,
+            class_generic_signature = ?generic_signature,
+            origin = ?origin,
+            add_overloads = ?traced_add,
+            "index::parse_class_data_with_origin: bytecode class parsed"
+        );
+    }
 
     let fields = cn
         .fields
@@ -722,9 +789,44 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
         // 如果在源码中找到了对应的类
         if let Some(s_class) = source_map.remove(&b_class.internal_name) {
             b_class.origin = s_class.origin; // 提升来源标识为源码(方便跳转)
+            if b_class.internal_name.contains("ArrayList") {
+                tracing::debug!(
+                    class_internal = %b_class.internal_name,
+                    new_origin = ?b_class.origin,
+                    source_add = ?s_class
+                        .methods
+                        .iter()
+                        .filter(|m| m.name.as_ref() == "add")
+                        .map(|m| format!(
+                            "desc={} gs={:?} ret={:?} params={:?} names={:?}",
+                            m.desc(),
+                            m.generic_signature,
+                            m.return_type,
+                            m.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                            m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                        ))
+                        .collect::<Vec<_>>(),
+                    bytecode_add_before_merge = ?b_class
+                        .methods
+                        .iter()
+                        .filter(|m| m.name.as_ref() == "add")
+                        .map(|m| format!(
+                            "desc={} gs={:?} ret={:?} params={:?} names={:?}",
+                            m.desc(),
+                            m.generic_signature,
+                            m.return_type,
+                            m.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                            m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                        ))
+                        .collect::<Vec<_>>(),
+                    "index::merge_source_into_bytecode: before param-name merge"
+                );
+            }
 
             for b_method in b_class.methods.iter_mut() {
                 let b_param_count = b_method.params.len();
+                let b_is_add = b_method.name.as_ref() == "add";
+                let b_desc_now = b_method.desc();
 
                 // 找同名、同参数数量的候选
                 let candidates: Vec<&MethodSummary> = s_class
@@ -733,8 +835,41 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
                     .filter(|m| m.name == b_method.name && m.params.len() == b_param_count)
                     .collect();
 
+                if b_is_add {
+                    tracing::debug!(
+                        class_internal = %b_class.internal_name,
+                        new_origin = ?b_class.origin,
+                        method_name = %b_method.name,
+                        bytecode_desc = %b_desc_now,
+                        bytecode_generic_signature = ?b_method.generic_signature,
+                        bytecode_param_names_before = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                        bytecode_simple_types = ?extract_simple_types(&b_desc_now),
+                        source_candidates = ?candidates
+                            .iter()
+                            .map(|m| format!(
+                                "desc={} gs={:?} names={:?} simple={:?}",
+                                m.desc(),
+                                m.generic_signature,
+                                m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                                extract_simple_types(&m.desc())
+                            ))
+                            .collect::<Vec<_>>(),
+                        "index::merge_source_into_bytecode: add matching candidates"
+                    );
+                }
+
                 if candidates.len() == 1 {
                     b_method.params.expand(&candidates[0].params);
+                    if b_is_add {
+                        tracing::debug!(
+                            class_internal = %b_class.internal_name,
+                            method_name = %b_method.name,
+                            match_strategy = "single-candidate",
+                            matched_source_desc = %candidates[0].desc(),
+                            merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                            "index::merge_source_into_bytecode: add merge result"
+                        );
+                    }
                 } else if candidates.len() > 1 {
                     // 发生重载冲突时，使用参数的简单名称进行模糊匹配对齐 (例如 String 匹配 java/lang/String)
                     let b_simple = extract_simple_types(&b_method.desc());
@@ -743,9 +878,54 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
                         .find(|m| extract_simple_types(&m.desc()) == b_simple)
                     {
                         b_method.params.expand(&best.params);
+                        if b_is_add {
+                            tracing::debug!(
+                                class_internal = %b_class.internal_name,
+                                method_name = %b_method.name,
+                                match_strategy = "simple-types-exact",
+                                matched_source_desc = %best.desc(),
+                                matched_source_simple = ?extract_simple_types(&best.desc()),
+                                bytecode_simple = ?b_simple,
+                                merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                                "index::merge_source_into_bytecode: add merge result"
+                            );
+                        }
                     } else {
                         b_method.params.expand(&candidates[0].params); // 保底
+                        if b_is_add {
+                            tracing::debug!(
+                                class_internal = %b_class.internal_name,
+                                method_name = %b_method.name,
+                                match_strategy = "fallback-first-candidate",
+                                matched_source_desc = %candidates[0].desc(),
+                                merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                                "index::merge_source_into_bytecode: add merge result"
+                            );
+                        }
                     }
+                }
+
+                if b_class.internal_name.contains("ArrayList") && b_method.name.as_ref() == "add" {
+                    tracing::debug!(
+                        class_internal = %b_class.internal_name,
+                        method_name = %b_method.name,
+                        method_desc = %b_method.desc(),
+                        method_generic_signature = ?b_method.generic_signature,
+                        method_return_type = ?b_method.return_type,
+                        merged_param_descriptors = ?b_method
+                            .params
+                            .items
+                            .iter()
+                            .map(|p| p.descriptor.as_ref())
+                            .collect::<Vec<_>>(),
+                        merged_param_names = ?b_method
+                            .params
+                            .items
+                            .iter()
+                            .map(|p| p.name.as_ref())
+                            .collect::<Vec<_>>(),
+                        "index::merge_source_into_bytecode: add overload after param merge"
+                    );
                 }
             }
         }
@@ -1559,6 +1739,72 @@ public class Calc {
             .unwrap();
         assert_eq!(method.params.items[0].name.as_ref(), "a");
         assert_eq!(method.params.items[1].name.as_ref(), "b");
+    }
+
+    #[test]
+    fn test_merge_source_param_names_for_erased_generic_params() {
+        let mut bytecode_class = make_class("com/example", "Box", ClassOrigin::Jar(Arc::from("x.jar")));
+        bytecode_class.methods.push(MethodSummary {
+            name: Arc::from("add"),
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            params: MethodParams::from_method_descriptor("(Ljava/lang/Object;)Z"),
+            annotations: vec![],
+            generic_signature: Some(Arc::from("(TE;)Z")),
+            return_type: parse_return_type_from_descriptor("(Ljava/lang/Object;)Z"),
+        });
+        bytecode_class.methods.push(MethodSummary {
+            name: Arc::from("add"),
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            params: MethodParams::from_method_descriptor("(ILjava/lang/Object;)V"),
+            annotations: vec![],
+            generic_signature: Some(Arc::from("(ITE;)V")),
+            return_type: parse_return_type_from_descriptor("(ILjava/lang/Object;)V"),
+        });
+
+        let mut source_class = make_class(
+            "com/example",
+            "Box",
+            ClassOrigin::SourceFile(Arc::from("file:///Box.java")),
+        );
+        source_class.methods.push(MethodSummary {
+            name: Arc::from("add"),
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            params: MethodParams::from([("LE;", "e")]),
+            annotations: vec![],
+            generic_signature: None,
+            return_type: parse_return_type_from_descriptor("(LE;)Z"),
+        });
+        source_class.methods.push(MethodSummary {
+            name: Arc::from("add"),
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            params: MethodParams::from([("I", "index"), ("LE;", "element")]),
+            annotations: vec![],
+            generic_signature: None,
+            return_type: parse_return_type_from_descriptor("(ILE;)V"),
+        });
+
+        let mut bytecode = vec![bytecode_class];
+        merge_source_into_bytecode(&mut bytecode, vec![source_class]);
+
+        let merged = &bytecode[0];
+        let add_one = merged
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "add" && m.desc().as_ref() == "(Ljava/lang/Object;)Z")
+            .unwrap();
+        assert_eq!(add_one.params.items[0].name.as_ref(), "e");
+
+        let add_two = merged
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "add" && m.desc().as_ref() == "(ILjava/lang/Object;)V")
+            .unwrap();
+        assert_eq!(add_two.params.items[0].name.as_ref(), "index");
+        assert_eq!(add_two.params.items[1].name.as_ref(), "element");
     }
 
     #[test]
