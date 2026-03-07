@@ -47,7 +47,6 @@ pub fn method_detail(
     let sig_to_use = method
         .generic_signature
         .clone()
-        .or(class_meta.generic_signature.clone())
         .unwrap_or_else(|| method.desc());
 
     let mut param_types = Vec::new();
