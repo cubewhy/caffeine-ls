@@ -2,6 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
+
 pub struct DecompilerCache {
     pub root: PathBuf,
 }
@@ -22,13 +24,18 @@ impl DecompilerCache {
         bytes.hash(&mut hasher);
         let hash = hasher.finish();
 
-        // {root}/{internal_name}/{hash}.java
+        // {root}/{internal_name}/{simple_name}__{hash}.java
         let folder = self.root.join(internal_name);
+        let simple_name = internal_name
+            .rsplit_once("/")
+            .unwrap_or(("", internal_name))
+            .1;
+
         if !folder.exists() {
             std::fs::create_dir_all(&folder).ok();
         }
 
-        folder.join(format!("{:x}.java", hash))
+        folder.join(format!("{simple_name}__{:08x}.java", hash))
     }
 
     pub fn cleanup_stale(&self, internal_name: &str, current_file: &Path) {
