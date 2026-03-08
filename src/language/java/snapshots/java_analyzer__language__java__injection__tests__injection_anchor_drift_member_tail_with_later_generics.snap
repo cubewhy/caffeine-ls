@@ -1,0 +1,22 @@
+---
+source: src/language/java/injection.rs
+expression: out
+---
+offset=86
+cursor_node=Some("type_identifier:[85..86]:'p'")
+error_node=None
+error_has_new=false
+chosen_anchor=None
+injected_source=
+class Demo {
+    void f() {
+        var a = new HashMap<String, String>();
+        a.p__KIRO__();
+        List<Box<? extends Number>> nums = List.of(
+            new Box<>(1),
+            new Box<>(2.5)
+        );
+        nums.add();
+    }
+}
+;

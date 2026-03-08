@@ -307,11 +307,12 @@ fn expand_local_type_strict(
 
     let base = ty.erased_internal();
 
-    if ty.args.is_empty() && base.contains('<') {
-        if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
-            resolved.array_dims = ty.array_dims;
-            return resolved;
-        }
+    if ty.args.is_empty()
+        && base.contains('<')
+        && let Some(mut resolved) = type_ctx.resolve_type_name_strict(base)
+    {
+        resolved.array_dims = ty.array_dims;
+        return resolved;
     }
 
     let expanded_args: Vec<TypeName> = ty
@@ -3009,7 +3010,7 @@ mod tests {
                     .map(|e| (
                         e.ty.to_internal_with_generics(),
                         e.source.clone(),
-                        e.confidence.clone()
+                        e.confidence
                     )),
                 ctx.expected_sam.as_ref().map(|s| (
                     s.method_name.clone(),
@@ -3098,7 +3099,7 @@ mod tests {
                     .map(|e| (
                         e.ty.to_internal_with_generics(),
                         e.source.clone(),
-                        e.confidence.clone()
+                        e.confidence
                     )),
                 ctx.expected_sam.as_ref().map(|s| (
                     s.method_name.clone(),
@@ -3173,7 +3174,7 @@ mod tests {
                     .map(|e| (
                         e.ty.to_internal_with_generics(),
                         e.source.clone(),
-                        e.confidence.clone()
+                        e.confidence
                     )),
                 ctx.typed_expr_ctx
                     .as_ref()

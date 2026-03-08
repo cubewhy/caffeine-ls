@@ -450,8 +450,7 @@ fn resolve_type_arg_type_relaxed(
     }
     if let Some(bound) = arg.strip_prefix("? extends ") {
         let inner = resolve_type_arg_type_relaxed(ctx, bound)
-            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))
-            .map(|(t, q)| (t, q))?;
+            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))?;
         return Some((
             crate::semantic::types::type_name::TypeName::with_args("+", vec![inner.0]),
             inner.1,
@@ -459,8 +458,7 @@ fn resolve_type_arg_type_relaxed(
     }
     if let Some(bound) = arg.strip_prefix("? super ") {
         let inner = resolve_type_arg_type_relaxed(ctx, bound)
-            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))
-            .map(|(t, q)| (t, q))?;
+            .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))?;
         return Some((
             crate::semantic::types::type_name::TypeName::with_args("-", vec![inner.0]),
             inner.1,

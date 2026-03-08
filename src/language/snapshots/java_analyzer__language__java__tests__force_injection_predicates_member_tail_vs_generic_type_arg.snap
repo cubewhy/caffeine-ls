@@ -1,0 +1,31 @@
+---
+source: src/language/java.rs
+expression: out
+---
+member_case:
+offset=86
+cursor=Some("type_identifier:[85..86]:'p'")
+location=TypeAnnotation { prefix: "p" }
+predicates=ForceInjectionPredicates { location_is_type_like: true, has_cursor_node: true, in_error_context: false, in_statement_context: true, in_genuine_type_arguments: false, dotted_member_tail: true }
+force=true
+
+member_alt_case:
+offset=86
+cursor=Some("type_identifier:[85..86]:'a'")
+location=TypeAnnotation { prefix: "a" }
+predicates=ForceInjectionPredicates { location_is_type_like: true, has_cursor_node: true, in_error_context: false, in_statement_context: true, in_genuine_type_arguments: false, dotted_member_tail: true }
+force=true
+
+generic_case:
+offset=40
+cursor=Some("type_identifier:[38..40]:'Bo'")
+location=TypeAnnotation { prefix: "Bo" }
+predicates=ForceInjectionPredicates { location_is_type_like: true, has_cursor_node: true, in_error_context: false, in_statement_context: true, in_genuine_type_arguments: true, dotted_member_tail: false }
+force=false
+
+ctor_generic_case:
+offset=43
+cursor=Some("type_identifier:[41..43]:'In'")
+location=TypeAnnotation { prefix: "In" }
+predicates=ForceInjectionPredicates { location_is_type_like: true, has_cursor_node: true, in_error_context: false, in_statement_context: true, in_genuine_type_arguments: true, dotted_member_tail: false }
+force=false

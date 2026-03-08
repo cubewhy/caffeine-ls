@@ -6,12 +6,156 @@ use crate::{
         location::determine_location,
         utils::{
             close_open_brackets, error_has_new_keyword, error_has_trailing_dot,
-            find_error_ancestor, find_identifier_in_error, strip_sentinel,
-            strip_sentinel_from_location,
+            find_error_ancestor, strip_sentinel, strip_sentinel_from_location,
         },
     },
     semantic::CursorLocation,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ForceInjectionPredicates {
+    pub location_is_type_like: bool,
+    pub has_cursor_node: bool,
+    pub in_error_context: bool,
+    pub in_statement_context: bool,
+    pub in_genuine_type_arguments: bool,
+    pub dotted_member_tail: bool,
+}
+
+pub(crate) fn force_injection_predicates(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+    location: &CursorLocation,
+) -> ForceInjectionPredicates {
+    let location_is_type_like = matches!(
+        location,
+        CursorLocation::TypeAnnotation { .. } | CursorLocation::VariableName { .. }
+    );
+    let has_cursor_node = cursor_node.is_some();
+    let in_error_context = cursor_node
+        .map(|n| n.kind() == "ERROR" || find_error_ancestor(n).is_some())
+        .unwrap_or(false);
+    let in_statement_context = cursor_node
+        .map(is_in_statement_or_expression_context)
+        .unwrap_or(false);
+    let in_genuine_type_arguments = cursor_node
+        .map(is_in_genuine_type_argument_context)
+        .unwrap_or(false);
+    let dotted_member_tail = has_dotted_member_like_tail(ctx);
+
+    ForceInjectionPredicates {
+        location_is_type_like,
+        has_cursor_node,
+        in_error_context,
+        in_statement_context,
+        in_genuine_type_arguments,
+        dotted_member_tail,
+    }
+}
+
+pub(crate) fn should_force_injection(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+    location: &CursorLocation,
+) -> bool {
+    let p = force_injection_predicates(ctx, cursor_node, location);
+    if !p.location_is_type_like {
+        return false;
+    }
+
+    if !p.has_cursor_node {
+        return false;
+    }
+    if !p.in_error_context && !p.in_statement_context {
+        return false;
+    }
+    if p.in_genuine_type_arguments {
+        return false;
+    }
+    p.dotted_member_tail
+}
+
+fn is_in_statement_or_expression_context(node: Node) -> bool {
+    let mut cur = Some(node);
+    while let Some(n) = cur {
+        if matches!(
+            n.kind(),
+            "expression_statement"
+                | "local_variable_declaration"
+                | "method_invocation"
+                | "field_access"
+                | "assignment_expression"
+                | "return_statement"
+                | "block"
+        ) {
+            return true;
+        }
+        if matches!(
+            n.kind(),
+            "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+                | "annotation_type_declaration"
+                | "program"
+        ) {
+            return false;
+        }
+        cur = n.parent();
+    }
+    false
+}
+
+fn is_in_genuine_type_argument_context(node: Node) -> bool {
+    let mut cur = Some(node);
+    while let Some(n) = cur {
+        if n.kind() == "type_arguments" {
+            return true;
+        }
+        if matches!(
+            n.kind(),
+            "method_declaration" | "class_declaration" | "program"
+        ) {
+            break;
+        }
+        cur = n.parent();
+    }
+    false
+}
+
+fn has_dotted_member_like_tail(ctx: &JavaContextExtractor) -> bool {
+    if ctx.offset == 0 {
+        return false;
+    }
+    let before = ctx.byte_slice(0, ctx.offset);
+    let trimmed = strip_sentinel(before).trim_end().to_string();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let tail = trimmed
+        .rsplit(['\n', ';', '{', '}'])
+        .next()
+        .unwrap_or(trimmed.as_str())
+        .trim();
+    let dot = match tail.rfind('.') {
+        Some(i) => i,
+        None => return false,
+    };
+    let recv = tail[..dot].trim();
+    let member = tail[dot + 1..].trim();
+    if recv.is_empty() || member.is_empty() {
+        return false;
+    }
+    if !member
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    recv.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ')' || c == ']' || c == '('
+    })
+}
 
 /// Construct the injected source: Replace the token at the cursor with SENTINEL (or insert it directly)
 pub fn build_injected_source(
@@ -56,10 +200,38 @@ pub fn build_injected_source(
     });
 
     if let Some(err) = error_node {
-        // Case 2: ERROR contains `new` keyword
-        if error_has_new_keyword(err) {
-            if let Some(id_node) = find_identifier_in_error(err) {
+        let cursor_local_anchor = cursor_node.and_then(|n| {
+            if !(n.kind() == "identifier" || n.kind() == "type_identifier") {
+                return None;
+            }
+            if n.start_byte() >= extractor.offset {
+                return None;
+            }
+            if !is_descendant_of(n, err) {
+                return None;
+            }
+            Some(n)
+        });
+
+        // Case 2: constructor recovery in ERROR context.
+        // Accept either an explicit constructor AST context, or a cursor-local `new ...`
+        // token before the cursor inside this ERROR span.
+        if error_has_new_keyword(err)
+            && (is_cursor_in_constructor_context(cursor_node)
+                || error_has_new_before_cursor(extractor, err))
+        {
+            if let Some(id_node) = cursor_local_anchor
+                .or_else(|| find_identifier_in_error_before_offset(err, extractor.offset))
+            {
                 let start = id_node.start_byte();
+                if start > extractor.offset {
+                    return inject_at(
+                        extractor,
+                        extractor.offset,
+                        extractor.offset,
+                        &format!(" {SENTINEL}()"),
+                    );
+                }
                 let end = extractor.offset.min(id_node.end_byte());
                 if end > start {
                     let prefix = &extractor.source[start..end];
@@ -148,7 +320,11 @@ pub fn build_injected_source(
             false
         });
 
-        let suffix = if is_constructor_ctx { "()" } else { "" };
+        let suffix = if is_constructor_ctx || token_before_offset_is_new(extractor, replace_start) {
+            "()"
+        } else {
+            ""
+        };
 
         inject_at(
             extractor,
@@ -156,6 +332,85 @@ pub fn build_injected_source(
             replace_end,
             &format!("{prefix}{SENTINEL}{suffix}{terminator}"),
         )
+    }
+}
+
+fn is_cursor_in_constructor_context(cursor_node: Option<Node>) -> bool {
+    let Some(n) = cursor_node else {
+        return false;
+    };
+    let mut cur = Some(n);
+    while let Some(node) = cur {
+        if node.kind() == "object_creation_expression" {
+            return true;
+        }
+        if matches!(
+            node.kind(),
+            "method_declaration" | "class_declaration" | "program"
+        ) {
+            break;
+        }
+        cur = node.parent();
+    }
+    false
+}
+
+fn error_has_new_before_cursor(extractor: &JavaContextExtractor, err: Node) -> bool {
+    let start = err.start_byte();
+    let end = err.end_byte().min(extractor.offset);
+    if end <= start {
+        return false;
+    }
+    contains_new_token(&extractor.source_str()[start..end])
+}
+
+fn token_before_offset_is_new(extractor: &JavaContextExtractor, offset: usize) -> bool {
+    if offset == 0 {
+        return false;
+    }
+    let prefix = extractor.byte_slice(0, offset);
+    contains_new_token(prefix)
+}
+
+fn contains_new_token(s: &str) -> bool {
+    s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|tok| tok == "new")
+}
+
+fn find_identifier_in_error_before_offset<'a>(err: Node<'a>, offset: usize) -> Option<Node<'a>> {
+    fn visit<'a>(node: Node<'a>, offset: usize, best: &mut Option<Node<'a>>) {
+        if (node.kind() == "identifier" || node.kind() == "type_identifier")
+            && node.start_byte() <= offset
+        {
+            if let Some(prev) = best {
+                if node.start_byte() > prev.start_byte() {
+                    *best = Some(node);
+                }
+            } else {
+                *best = Some(node);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            visit(child, offset, best);
+        }
+    }
+
+    let mut best = None;
+    visit(err, offset, &mut best);
+    best
+}
+
+fn is_descendant_of(node: Node, ancestor: Node) -> bool {
+    let mut cur = node;
+    loop {
+        if cur.id() == ancestor.id() {
+            return true;
+        }
+        match cur.parent() {
+            Some(p) => cur = p,
+            None => return false,
+        }
     }
 }
 
@@ -515,5 +770,79 @@ mod tests {
             location
         );
         assert_eq!(query, "Str");
+    }
+
+    #[test]
+    fn test_snapshot_injection_anchor_drift_for_member_tail_with_later_generics() {
+        let src = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.p
+                List<Box<? extends Number>> nums = List.of(
+                    new Box<>(1),
+                    new Box<>(2.5)
+                );
+                nums.add();
+            }
+        }
+        "#};
+        let marker = "a.p";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_ctx(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let cursor_info = cursor_node.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                ctx.node_text(n)
+            )
+        });
+
+        let err = cursor_node.and_then(|n| {
+            if n.kind() == "ERROR" {
+                Some(n)
+            } else {
+                find_error_ancestor(n)
+            }
+        });
+        let err_info = err.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                ctx.node_text(n)
+            )
+        });
+        let err_has_new = err.map(error_has_new_keyword).unwrap_or(false);
+        let chosen_anchor = err.and_then(|n| find_identifier_in_error_before_offset(n, offset));
+        assert!(
+            chosen_anchor
+                .map(|n| n.start_byte() <= offset)
+                .unwrap_or(true),
+            "chosen anchor must not start after cursor offset"
+        );
+        let anchor_info = chosen_anchor.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                ctx.node_text(n)
+            )
+        });
+
+        let injected = build_injected_source(&ctx, cursor_node);
+        let out = format!(
+            "offset={offset}\ncursor_node={cursor_info:?}\nerror_node={err_info:?}\nerror_has_new={err_has_new}\nchosen_anchor={anchor_info:?}\ninjected_source=\n{injected}\n"
+        );
+        insta::assert_snapshot!(
+            "injection_anchor_drift_member_tail_with_later_generics",
+            out
+        );
     }
 }

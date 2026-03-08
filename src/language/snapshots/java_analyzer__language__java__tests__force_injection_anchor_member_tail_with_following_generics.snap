@@ -1,0 +1,24 @@
+---
+source: src/language/java.rs
+expression: out
+---
+offset=86
+cursor_node=Some("type_identifier:[85..86]:'p'")
+raw_location=TypeAnnotation { prefix: "p" }
+raw_query="p"
+predicates=ForceInjectionPredicates { location_is_type_like: true, has_cursor_node: true, in_error_context: false, in_statement_context: true, in_genuine_type_arguments: false, dotted_member_tail: true }
+force_injection=true
+injected_source=
+class Demo {
+    void f() {
+        var a = new HashMap<String, String>();
+        a.p__KIRO__();
+        List<Box<? extends Number>> nums = List.of(
+            new Box<>(1),
+            new Box<>(2.5)
+        );
+        nums.add();
+    }
+}
+;
+inject_result=Some((MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "p", receiver_expr: "a", arguments: Some("()") }, "p"))

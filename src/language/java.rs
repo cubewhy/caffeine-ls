@@ -348,7 +348,9 @@ impl JavaContextExtractor {
         let (location, query) = location::determine_location(&self, cursor_node, trigger_char);
 
         // If AST parsing fails, proceed with the injection path.
-        let (location, query) = if matches!(location, CursorLocation::Unknown) {
+        let (location, query) = if matches!(location, CursorLocation::Unknown)
+            || injection::should_force_injection(&self, cursor_node, &location)
+        {
             injection::inject_and_determine(&self, cursor_node, trigger_char)
                 .unwrap_or((location, query))
         } else {
@@ -454,7 +456,10 @@ mod tests {
     use super::*;
     use crate::{
         completion::engine::CompletionEngine,
-        index::{ClassMetadata, ClassOrigin, IndexScope, ModuleId, WorkspaceIndex},
+        index::{
+            ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
+            WorkspaceIndex,
+        },
         language::{java::injection::build_injected_source, rope_utils::line_col_to_offset},
         semantic::context::{CurrentClassMember, CursorLocation},
     };
@@ -555,9 +560,464 @@ mod tests {
         let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
 
         assert!(
-            !labels.is_empty() && labels.iter().any(|l| *l == "Box"),
+            !labels.is_empty() && labels.contains(&"Box"),
             "type candidates should be available in generic arg position, got {:?}",
             labels
+        );
+    }
+
+    #[test]
+    fn test_var_member_tail_not_type_annotation() {
+        let src = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.put
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.put")
+                    .map(|c| (i as u32, c as u32 + "a.put".len() as u32))
+            })
+            .expect("expected a.put marker");
+        let ctx = at(src, line, col);
+        assert!(
+            !matches!(ctx.location, CursorLocation::TypeAnnotation { .. }),
+            "a.put should not route to TypeAnnotation, got {:?}",
+            ctx.location
+        );
+        assert!(
+            matches!(ctx.location, CursorLocation::MemberAccess { .. }),
+            "a.put should route to MemberAccess, got {:?}",
+            ctx.location
+        );
+    }
+
+    #[test]
+    fn test_var_member_tail_recovery_a_put_without_semicolon_routes_member_access() {
+        let src = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.put
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.put")
+                    .map(|c| (i as u32, c as u32 + "a.put".len() as u32))
+            })
+            .expect("expected a.put marker");
+        let ctx = at(src, line, col);
+        assert!(
+            matches!(ctx.location, CursorLocation::MemberAccess { .. }),
+            "a.put in recovery context should route to MemberAccess, got {:?}",
+            ctx.location
+        );
+    }
+
+    #[test]
+    fn test_var_member_tail_recovery_a_a_without_semicolon_routes_member_access() {
+        let src = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.a
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.a")
+                    .map(|c| (i as u32, c as u32 + "a.a".len() as u32))
+            })
+            .expect("expected a.a marker");
+        let ctx = at(src, line, col);
+        assert!(
+            matches!(ctx.location, CursorLocation::MemberAccess { .. }),
+            "a.a in recovery context should route to MemberAccess, got {:?}",
+            ctx.location
+        );
+    }
+
+    #[test]
+    fn test_var_member_tail_completion_offers_hashmap_put() {
+        let src = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.put;
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.put")
+                    .map(|c| (i as u32, c as u32 + "a.put".len() as u32))
+            })
+            .expect("expected a.put marker");
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("HashMap"),
+                internal_name: Arc::from("java/util/HashMap"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("put"),
+                    params: MethodParams::from([
+                        ("Ljava/lang/Object;", "key"),
+                        ("Ljava/lang/Object;", "value"),
+                    ]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TK;TV;)TV;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(root_scope());
+        let name_table = view.build_name_table();
+        let rope = ropey::Rope::from_str(src);
+        let mut parser = super::make_java_parser();
+        let tree = parser.parse(src, None).expect("failed to parse java");
+        let ctx = super::JavaLanguage
+            .parse_completion_context_with_tree(
+                src,
+                &rope,
+                tree.root_node(),
+                line,
+                col,
+                None,
+                &ParseEnv {
+                    name_table: Some(name_table),
+                },
+            )
+            .expect("parse_completion_context_with_tree returned None");
+        let engine = CompletionEngine::new();
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
+        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        assert!(
+            labels.contains(&"put"),
+            "member completion should include put for a.put, got {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn test_snapshot_location_precedence_member_vs_type_positions() {
+        let src_member = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.put
+            }
+        }
+        "#};
+        let (member_line, member_col) = src_member
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.put")
+                    .map(|c| (i as u32, c as u32 + "a.put".len() as u32))
+            })
+            .expect("expected a.put marker");
+        let member_ctx = at(src_member, member_line, member_col);
+
+        let src_member_alt = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.a
+            }
+        }
+        "#};
+        let (member_alt_line, member_alt_col) = src_member_alt
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.a")
+                    .map(|c| (i as u32, c as u32 + "a.a".len() as u32))
+            })
+            .expect("expected a.a marker");
+        let member_alt_ctx = at(src_member_alt, member_alt_line, member_alt_col);
+
+        let src_generic = indoc::indoc! {r#"
+        class A {
+            void f() {
+                List<Bo> nums = new ArrayList<>();
+            }
+        }
+        "#};
+        let (generic_line, generic_col) = src_generic
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("Bo").map(|c| (i as u32, c as u32 + 2)))
+            .expect("expected Bo marker");
+        let generic_ctx = at(src_generic, generic_line, generic_col);
+
+        let src_ctor_generic = indoc::indoc! {r#"
+        class A {
+            void f() {
+                new Box<In>(1);
+            }
+        }
+        "#};
+        let (ctor_line, ctor_col) = src_ctor_generic
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("In").map(|c| (i as u32, c as u32 + 2)))
+            .expect("expected In marker");
+        let ctor_ctx = at(src_ctor_generic, ctor_line, ctor_col);
+
+        let out = format!(
+            "member={:?}\nmember_alt={:?}\ngeneric={:?}\nctor_generic={:?}\n",
+            member_ctx.location, member_alt_ctx.location, generic_ctx.location, ctor_ctx.location
+        );
+        insta::assert_snapshot!("location_precedence_member_vs_type_positions", out);
+    }
+
+    #[test]
+    fn test_snapshot_force_injection_anchor_for_member_tail_with_following_generics() {
+        let src = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.p
+                List<Box<? extends Number>> nums = List.of(
+                    new Box<>(1),
+                    new Box<>(2.5)
+                );
+                nums.add();
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.p")
+                    .map(|c| (i as u32, c as u32 + "a.p".len() as u32))
+            })
+            .expect("expected a.p marker");
+        let offset = line_col_to_offset(src, line, col).expect("offset");
+        let mut parser = super::make_java_parser();
+        let tree = parser.parse(src, None).expect("failed to parse java");
+        let extractor = JavaContextExtractor::new(src, offset, None);
+        let cursor_node = extractor.find_cursor_node(tree.root_node());
+        let cursor_info = cursor_node.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                extractor.node_text(n)
+            )
+        });
+
+        let (raw_loc, raw_query) = location::determine_location(&extractor, cursor_node, None);
+        let predicates = injection::force_injection_predicates(&extractor, cursor_node, &raw_loc);
+        let force = injection::should_force_injection(&extractor, cursor_node, &raw_loc);
+        let injected = build_injected_source(&extractor, cursor_node);
+        let inject_result = injection::inject_and_determine(&extractor, cursor_node, None);
+
+        let out = format!(
+            "offset={offset}\ncursor_node={cursor_info:?}\nraw_location={raw_loc:?}\nraw_query={raw_query:?}\npredicates={predicates:?}\nforce_injection={force}\ninjected_source=\n{injected}\ninject_result={inject_result:?}\n"
+        );
+        insta::assert_snapshot!(
+            "force_injection_anchor_member_tail_with_following_generics",
+            out
+        );
+    }
+
+    #[test]
+    fn test_snapshot_force_injection_predicates_member_tail_vs_generic_type_arg() {
+        let src_member = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.p
+                List<Box<? extends Number>> nums = List.of(
+                    new Box<>(1),
+                    new Box<>(2.5)
+                );
+                nums.add();
+            }
+        }
+        "#};
+        let (m_line, m_col) = src_member
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.p")
+                    .map(|c| (i as u32, c as u32 + "a.p".len() as u32))
+            })
+            .expect("member marker");
+        let m_off = line_col_to_offset(src_member, m_line, m_col).expect("member offset");
+        let mut parser = super::make_java_parser();
+        let m_tree = parser.parse(src_member, None).expect("member parse");
+        let m_extractor = JavaContextExtractor::new(src_member, m_off, None);
+        let m_cursor = m_extractor.find_cursor_node(m_tree.root_node());
+        let (m_loc, _) = location::determine_location(&m_extractor, m_cursor, None);
+        let m_pred = injection::force_injection_predicates(&m_extractor, m_cursor, &m_loc);
+        let m_force = injection::should_force_injection(&m_extractor, m_cursor, &m_loc);
+
+        let src_member_alt = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                var a = new HashMap<String, String>();
+                a.a
+                List<Box<? extends Number>> nums = List.of(
+                    new Box<>(1),
+                    new Box<>(2.5)
+                );
+                nums.add();
+            }
+        }
+        "#};
+        let (ma_line, ma_col) = src_member_alt
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| {
+                l.find("a.a")
+                    .map(|c| (i as u32, c as u32 + "a.a".len() as u32))
+            })
+            .expect("member-alt marker");
+        let ma_off =
+            line_col_to_offset(src_member_alt, ma_line, ma_col).expect("member-alt offset");
+        let ma_tree = parser
+            .parse(src_member_alt, None)
+            .expect("member-alt parse");
+        let ma_extractor = JavaContextExtractor::new(src_member_alt, ma_off, None);
+        let ma_cursor = ma_extractor.find_cursor_node(ma_tree.root_node());
+        let (ma_loc, _) = location::determine_location(&ma_extractor, ma_cursor, None);
+        let ma_pred = injection::force_injection_predicates(&ma_extractor, ma_cursor, &ma_loc);
+        let ma_force = injection::should_force_injection(&ma_extractor, ma_cursor, &ma_loc);
+
+        let src_generic = indoc::indoc! {r#"
+        class A {
+            void f() {
+                List<Bo> nums = new ArrayList<>();
+            }
+        }
+        "#};
+        let (g_line, g_col) = src_generic
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("Bo").map(|c| (i as u32, c as u32 + 2)))
+            .expect("generic marker");
+        let g_off = line_col_to_offset(src_generic, g_line, g_col).expect("generic offset");
+        let g_tree = parser.parse(src_generic, None).expect("generic parse");
+        let g_extractor = JavaContextExtractor::new(src_generic, g_off, None);
+        let g_cursor = g_extractor.find_cursor_node(g_tree.root_node());
+        let (g_loc, _) = location::determine_location(&g_extractor, g_cursor, None);
+        let g_pred = injection::force_injection_predicates(&g_extractor, g_cursor, &g_loc);
+        let g_force = injection::should_force_injection(&g_extractor, g_cursor, &g_loc);
+
+        let src_ctor_generic = indoc::indoc! {r#"
+        class A {
+            void f() {
+                new Box<In>(1);
+            }
+        }
+        "#};
+        let (c_line, c_col) = src_ctor_generic
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("In").map(|c| (i as u32, c as u32 + 2)))
+            .expect("ctor-generic marker");
+        let c_off = line_col_to_offset(src_ctor_generic, c_line, c_col).expect("ctor offset");
+        let c_tree = parser.parse(src_ctor_generic, None).expect("ctor parse");
+        let c_extractor = JavaContextExtractor::new(src_ctor_generic, c_off, None);
+        let c_cursor = c_extractor.find_cursor_node(c_tree.root_node());
+        let (c_loc, _) = location::determine_location(&c_extractor, c_cursor, None);
+        let c_pred = injection::force_injection_predicates(&c_extractor, c_cursor, &c_loc);
+        let c_force = injection::should_force_injection(&c_extractor, c_cursor, &c_loc);
+
+        let m_cursor_info = m_cursor.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                m_extractor.node_text(n)
+            )
+        });
+        let g_cursor_info = g_cursor.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                g_extractor.node_text(n)
+            )
+        });
+        let ma_cursor_info = ma_cursor.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                ma_extractor.node_text(n)
+            )
+        });
+        let c_cursor_info = c_cursor.map(|n| {
+            format!(
+                "{}:[{}..{}]:'{}'",
+                n.kind(),
+                n.start_byte(),
+                n.end_byte(),
+                c_extractor.node_text(n)
+            )
+        });
+
+        assert!(
+            m_force,
+            "a.p should force injection in misread member-tail case"
+        );
+        assert!(
+            ma_force,
+            "a.a should force injection in misread member-tail case"
+        );
+        assert!(!g_force, "List<Bo> should not force injection");
+        assert!(!c_force, "new Box<In>(1) should not force injection");
+
+        let out = format!(
+            "member_case:\noffset={m_off}\ncursor={m_cursor_info:?}\nlocation={m_loc:?}\npredicates={m_pred:?}\nforce={m_force}\n\nmember_alt_case:\noffset={ma_off}\ncursor={ma_cursor_info:?}\nlocation={ma_loc:?}\npredicates={ma_pred:?}\nforce={ma_force}\n\ngeneric_case:\noffset={g_off}\ncursor={g_cursor_info:?}\nlocation={g_loc:?}\npredicates={g_pred:?}\nforce={g_force}\n\nctor_generic_case:\noffset={c_off}\ncursor={c_cursor_info:?}\nlocation={c_loc:?}\npredicates={c_pred:?}\nforce={c_force}\n"
+        );
+        insta::assert_snapshot!(
+            "force_injection_predicates_member_tail_vs_generic_type_arg",
+            out
         );
     }
 

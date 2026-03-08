@@ -492,7 +492,7 @@ impl<'idx> TypeResolver<'idx> {
                 if let JvmType::Primitive('V') = ret {
                     continue;
                 }
-                if method.params.len() == 0 {
+                if method.params.is_empty() {
                     return Some(ret);
                 }
                 if fallback.is_none() {

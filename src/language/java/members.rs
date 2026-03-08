@@ -515,11 +515,11 @@ fn source_type_to_signature(type_ctx: &SourceTypeCtx, ty: &str) -> String {
                 s = rest;
                 continue;
             }
-            if s.starts_with('@') {
-                if let Some(space) = s.find(' ') {
-                    s = &s[space + 1..];
-                    continue;
-                }
+            if s.starts_with('@')
+                && let Some(space) = s.find(' ')
+            {
+                s = &s[space + 1..];
+                continue;
             }
             break;
         }

@@ -145,7 +145,7 @@ impl CursorLocation {
             } => receiver_semantic_type
                 .as_ref()
                 .map(TypeName::erased_internal)
-                .or_else(|| receiver_type.as_deref()),
+                .or(receiver_type.as_deref()),
             _ => None,
         }
     }

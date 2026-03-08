@@ -616,6 +616,21 @@ fn handle_identifier(
                     }
                 }
 
+                if let Some((receiver_expr, member_prefix)) =
+                    detect_member_tail_in_misread_local_decl(ctx, node, ancestor)
+                {
+                    return (
+                        CursorLocation::MemberAccess {
+                            receiver_semantic_type: None,
+                            receiver_type: None,
+                            member_prefix: member_prefix.clone(),
+                            receiver_expr,
+                            arguments: None,
+                        },
+                        member_prefix,
+                    );
+                }
+
                 if is_in_type_position(node, ancestor) {
                     let text = cursor_truncated_text(ctx, node);
                     return (
@@ -980,6 +995,31 @@ fn infer_method_argument_target_hint(
     })
 }
 
+fn detect_member_tail_in_misread_local_decl(
+    ctx: &JavaContextExtractor,
+    node: Node,
+    decl_node: Node,
+) -> Option<(String, String)> {
+    let err = find_ancestor(node, "ERROR")?;
+    if !is_descendant_of(err, decl_node) {
+        return None;
+    }
+
+    let start = decl_node.start_byte();
+    if ctx.offset <= start {
+        return None;
+    }
+    let raw = &ctx.source[start..ctx.offset];
+    let clean = strip_sentinel(raw).trim_end().to_string();
+    let dot = clean.rfind('.')?;
+    let receiver_expr = clean[..dot].trim().to_string();
+    let member_prefix = clean[dot + 1..].trim().to_string();
+    if receiver_expr.is_empty() || member_prefix.is_empty() {
+        return None;
+    }
+    Some((receiver_expr, member_prefix))
+}
+
 fn argument_index_at_cursor(ctx: &JavaContextExtractor, arg_list: Node) -> usize {
     let start = arg_list.start_byte().saturating_add(1);
     let end = arg_list.end_byte().saturating_sub(1).min(ctx.offset);
@@ -1279,6 +1319,34 @@ class A {
             loc
         );
         assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_misread_local_decl_dotted_tail_routes_to_member_access() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        var a = new HashMap<String, String>();
+        a.put;
+    }
+}
+"#};
+        let marker = "a.put";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MemberAccess { ref receiver_expr, ref member_prefix, .. }
+                if receiver_expr == "a" && member_prefix == "put"
+            ),
+            "Expected MemberAccess for dotted tail misread, got {:?}",
+            loc
+        );
+        assert_eq!(query, "put");
     }
 
     #[test]
