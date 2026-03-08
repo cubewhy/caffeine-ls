@@ -27,14 +27,6 @@ impl SourceTypeCtx {
         imports: Vec<Arc<str>>,
         name_table: Option<Arc<crate::index::NameTable>>,
     ) -> Self {
-        tracing::debug!(
-            package = ?package,
-            imports = imports.len(),
-            has_table = name_table.is_some(),
-            table_size = name_table.as_ref().map(|t| t.len()).unwrap_or(0),
-            "SourceTypeCtx created"
-        );
-
         Self {
             package,
             imports,
