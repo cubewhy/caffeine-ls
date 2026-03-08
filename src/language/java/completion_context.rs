@@ -1432,7 +1432,7 @@ mod tests {
                     fields: vec![],
                     access_flags: ACC_PUBLIC,
                     inner_class_of: None,
-                    generic_signature: None,
+                    generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
                     origin: ClassOrigin::Unknown,
                 },
             ],

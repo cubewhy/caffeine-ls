@@ -1,6 +1,6 @@
 use self::generics::{
-    JvmType, parse_method_signature_types, parse_method_type_parameters, split_internal_name,
-    substitute_type, substitute_type_vars,
+    JvmType, parse_class_type_parameters, parse_method_signature_types,
+    parse_method_type_parameters, split_internal_name, substitute_type, substitute_type_vars,
 };
 use self::type_name::TypeName;
 use super::context::{LocalVar, SemanticContext};
@@ -253,6 +253,8 @@ impl<'idx> TypeResolver<'idx> {
                 &sig,
                 &param_jvm_types,
                 &ret_jvm_type,
+                receiver_internal,
+                class.generic_signature.as_deref(),
                 arg_types,
                 arg_texts,
                 locals,
@@ -290,6 +292,8 @@ impl<'idx> TypeResolver<'idx> {
         method_signature: &str,
         param_jvm_types: &[JvmType],
         ret_jvm_type: &JvmType,
+        receiver_internal: &str,
+        class_generic_signature: Option<&str>,
         arg_types: &[TypeName],
         arg_texts: &[String],
         locals: &[LocalVar],
@@ -309,10 +313,21 @@ impl<'idx> TypeResolver<'idx> {
 
         let mut bindings: HashMap<String, JvmType> = HashMap::new();
         let mut conflicted = HashSet::new();
+        let class_type_params = class_generic_signature
+            .map(parse_class_type_parameters)
+            .unwrap_or_default();
+        let (_, receiver_type_args) = split_internal_name(receiver_internal);
 
         for (idx, param_ty) in param_jvm_types.iter().enumerate() {
+            let param_ty_substituted = if !class_type_params.is_empty()
+                && !receiver_type_args.is_empty()
+            {
+                param_ty.substitute(&class_type_params, &receiver_type_args)
+            } else {
+                param_ty.clone()
+            };
             let arg_ty = arg_types.get(idx);
-            if let JvmType::TypeVar(name) = param_ty
+            if let JvmType::TypeVar(name) = &param_ty_substituted
                 && return_type_vars.contains(name)
             {
                 if let Some(arg_ty) = arg_ty
@@ -326,7 +341,7 @@ impl<'idx> TypeResolver<'idx> {
             self.bind_return_type_var_from_functional_param(
                 method_name,
                 idx,
-                param_ty,
+                &param_ty_substituted,
                 arg_texts.get(idx).map(|s| s.as_str()),
                 arg_ty,
                 locals,
@@ -385,6 +400,7 @@ impl<'idx> TypeResolver<'idx> {
                         locals,
                         enclosing,
                         qualifier_resolver,
+                        Some(param_ty),
                     )
                 })
             });
@@ -399,6 +415,7 @@ impl<'idx> TypeResolver<'idx> {
         locals: &[LocalVar],
         enclosing: Option<&Arc<str>>,
         qualifier_resolver: Option<&dyn Fn(&str) -> Option<TypeName>>,
+        target_param_ty: Option<&JvmType>,
     ) -> Option<JvmType> {
         let text = arg_text.trim();
         if text.is_empty() {
@@ -408,7 +425,11 @@ impl<'idx> TypeResolver<'idx> {
         if let Some((qualifier, member, is_constructor)) = parse_method_reference_text(text) {
             if is_constructor {
                 let owner = self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
-                return Some(JvmType::Object(owner, vec![]));
+                let specialized = target_param_ty
+                    .and_then(extract_functional_input_type)
+                    .filter(is_concrete_jvm_type)
+                    .and_then(|input| self.specialize_constructor_owner_return(&owner, input));
+                return Some(specialized.unwrap_or_else(|| JvmType::Object(owner, vec![])));
             }
 
             if is_likely_type_qualifier(qualifier) {
@@ -433,6 +454,23 @@ impl<'idx> TypeResolver<'idx> {
         }
 
         None
+    }
+
+    fn specialize_constructor_owner_return(
+        &self,
+        owner_internal: &str,
+        input_ty: JvmType,
+    ) -> Option<JvmType> {
+        let class = self.view.get_class(owner_internal)?;
+        let type_params = class
+            .generic_signature
+            .as_deref()
+            .map(parse_class_type_parameters)
+            .unwrap_or_default();
+        if type_params.len() != 1 {
+            return None;
+        }
+        Some(JvmType::Object(owner_internal.to_string(), vec![input_ty]))
     }
 
     fn resolve_method_reference_return_on_owner(
@@ -1149,6 +1187,27 @@ fn bind_type_var(
     bindings.insert(name.to_string(), candidate);
 }
 
+fn extract_functional_input_type(param_ty: &JvmType) -> Option<JvmType> {
+    let JvmType::Object(_, type_args) = param_ty else {
+        return None;
+    };
+    let first = type_args.first()?;
+    match first {
+        JvmType::WildcardBound('-', inner) => Some(inner.as_ref().clone()),
+        JvmType::WildcardBound('+', inner) => Some(inner.as_ref().clone()),
+        other => Some(other.clone()),
+    }
+}
+
+fn is_concrete_jvm_type(ty: &JvmType) -> bool {
+    match ty {
+        JvmType::TypeVar(_) | JvmType::Wildcard | JvmType::WildcardBound(_, _) => false,
+        JvmType::Primitive(_) => true,
+        JvmType::Array(inner) => is_concrete_jvm_type(inner),
+        JvmType::Object(_, args) => args.iter().all(is_concrete_jvm_type),
+    }
+}
+
 fn type_name_to_jvm_type(ty: &TypeName) -> Option<JvmType> {
     let sig = ty.to_jvm_signature();
     let (parsed, rest) = JvmType::parse(&sig)?;
@@ -1338,9 +1397,9 @@ mod tests {
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
-                package: None,
+                package: Some(Arc::from("java/util")),
                 name: Arc::from("List"),
-                internal_name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
                 super_name: None,
                 interfaces: vec![],
                 annotations: vec![],
@@ -1360,9 +1419,9 @@ mod tests {
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
-                package: None,
+                package: Some(Arc::from("java/util")),
                 name: Arc::from("ArrayList"),
-                internal_name: Arc::from("ArrayList"),
+                internal_name: Arc::from("java/util/ArrayList"),
                 super_name: None,
                 interfaces: vec![],
                 annotations: vec![],
@@ -1370,7 +1429,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 inner_class_of: None,
-                generic_signature: None,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1378,7 +1437,7 @@ mod tests {
         let box_t = TypeName::with_args(
             "Box",
             vec![TypeName::with_args(
-                "List",
+                "java/util/List",
                 vec![TypeName::new("java/lang/String")],
             )],
         );
@@ -1578,7 +1637,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 inner_class_of: None,
-                generic_signature: None,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1867,8 +1926,107 @@ mod tests {
         let result = resolver.resolve_chain(&chain, &locals, None);
         assert_eq!(
             result.as_ref().map(|t| t.erased_internal()),
-            Some("ArrayList"),
+            Some("java/util/ArrayList"),
             "Type::new should bind map<R> to constructed owner type"
+        );
+        assert_eq!(
+            result.as_ref().map(|t| t.args.len()),
+            Some(1),
+            "constructor reference should specialize generic owner when target input is concrete"
+        );
+        assert_eq!(
+            result
+                .as_ref()
+                .and_then(|t| t.args.first())
+                .map(|a| a.to_internal_with_generics()),
+            Some("java/util/List<Ljava/lang/String;>".to_string()),
+            "ArrayList::new should specialize to ArrayList<List<String>> in this fixture"
+        );
+    }
+
+    #[test]
+    fn test_functional_constructor_reference_falls_back_for_ambiguous_owner_generic_shape() {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: None,
+                name: Arc::from("Box"),
+                internal_name: Arc::from("Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("map"),
+                        params: MethodParams::from_method_descriptor(
+                            "(Ljava/util/function/Function;)LBox;",
+                        ),
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        annotations: vec![],
+                        generic_signature: Some(Arc::from(
+                            "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)LBox<TR;>;",
+                        )),
+                        return_type: Some(Arc::from("LBox;")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("get"),
+                        params: MethodParams::empty(),
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        annotations: vec![],
+                        generic_signature: Some(Arc::from("()TT;")),
+                        return_type: Some(Arc::from("Ljava/lang/Object;")),
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: None,
+                name: Arc::from("Pair"),
+                internal_name: Arc::from("Pair"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<A:Ljava/lang/Object;B:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let locals = vec![LocalVar {
+            name: Arc::from("s"),
+            type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
+            init_expr: None,
+        }];
+        let chain = parse_chain_from_expr("s.map(Pair::new).get()");
+        let result = resolver.resolve_chain(&chain, &locals, None).expect("resolved chain");
+
+        assert_eq!(result.erased_internal(), "Pair");
+        assert!(
+            result.args.is_empty(),
+            "ambiguous owner generic arity should conservatively fall back to raw owner type"
         );
     }
 
@@ -1980,12 +2138,16 @@ mod tests {
         return_type_vars_sorted.sort();
 
         let inferred_direct =
-            resolver.infer_functional_arg_return_shallow("List::size", &locals, None, None);
+            resolver.infer_functional_arg_return_shallow("List::size", &locals, None, None, None);
         let inferred_bindings = resolver.infer_method_type_bindings_shallow(
             "map",
             &selected_sig,
             &param_jvm,
             &ret_jvm,
+            &receiver_internal,
+            view.get_class(receiver.erased_internal())
+                .and_then(|c| c.generic_signature.clone())
+                .as_deref(),
             &[],
             &map_seg.arg_texts,
             &locals,
@@ -2103,12 +2265,22 @@ mod tests {
             return_type_vars_sorted.sort();
 
             let inferred_functional_ret =
-                resolver.infer_functional_arg_return_shallow(functional_arg, &locals, None, None);
+                resolver.infer_functional_arg_return_shallow(
+                    functional_arg,
+                    &locals,
+                    None,
+                    None,
+                    None,
+                );
             let bindings = resolver.infer_method_type_bindings_shallow(
                 "map",
                 &map_sig,
                 &map_params,
                 &map_ret,
+                &receiver_internal,
+                view.get_class(receiver.erased_internal())
+                    .and_then(|c| c.generic_signature.clone())
+                    .as_deref(),
                 &[],
                 &map_seg.arg_texts,
                 &locals,

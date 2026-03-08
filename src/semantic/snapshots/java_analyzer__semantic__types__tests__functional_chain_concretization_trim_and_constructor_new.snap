@@ -14,6 +14,6 @@ case_constructor:
 expr=s.map(ArrayList::new).get()
 selected_map: desc=(Ljava/util/function/Function;)LBox; generic_signature=Some("<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)LBox<TR;>;") return_type=Some("LBox;")
 parsed_map: params=["Ljava/util/function/Function<-TT;+TR;>;"] return=LBox<TR;>; return_type_vars=["R"]
-functional_inference: inferred_return=Some("Ljava/util/ArrayList;") inferred_bindings=[("R", "Ljava/util/ArrayList;")]
-chain_types: receiver_before_map=Box<Ljava/lang/String;> map_result=Some("Box<Ljava/util/ArrayList;>") get_receiver=Box<Ljava/util/ArrayList;> get_result=Some("java/util/ArrayList") final_chain=Some("java/util/ArrayList")
-rendered_get_detail=Box — java.util.ArrayList get()
+functional_inference: inferred_return=Some("Ljava/util/ArrayList;") inferred_bindings=[("R", "Ljava/util/ArrayList<Ljava/lang/String;>;")]
+chain_types: receiver_before_map=Box<Ljava/lang/String;> map_result=Some("Box<Ljava/util/ArrayList<Ljava/lang/String;>;>") get_receiver=Box<Ljava/util/ArrayList<Ljava/lang/String;>;> get_result=Some("java/util/ArrayList<Ljava/lang/String;>") final_chain=Some("java/util/ArrayList<Ljava/lang/String;>")
+rendered_get_detail=Box — java.util.ArrayList<java.lang.String> get()
