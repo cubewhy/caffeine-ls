@@ -309,10 +309,16 @@ fn expand_local_type_strict(
 
     if ty.args.is_empty()
         && base.contains('<')
-        && let Some(mut resolved) = type_ctx.resolve_type_name_strict(base)
     {
-        resolved.array_dims = ty.array_dims;
-        return resolved;
+        if let Some(mut resolved) = resolve_source_like_type_with_scope(ctx, type_ctx, sym, base) {
+            resolved.array_dims = ty.array_dims;
+            return resolved;
+        }
+
+        if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
+            resolved.array_dims = ty.array_dims;
+            return resolved;
+        }
     }
 
     let expanded_args: Vec<TypeName> = ty
@@ -776,7 +782,167 @@ fn resolve_hint_receiver_type(
         }
     };
 
-    canonicalize_receiver_semantic(resolved, type_ctx)
+    if let Some(canonical) = canonicalize_receiver_semantic(resolved.clone(), type_ctx) {
+        return Some(canonical);
+    }
+
+    let ty = resolved?;
+    if ty.contains_slash() || !ty.args.is_empty() {
+        return Some(ty);
+    }
+
+    let mut scoped = resolve_type_name_with_scoped_inner_fallback(ctx, type_ctx, view, &ty)?;
+    scoped.array_dims = ty.array_dims;
+    Some(scoped)
+}
+
+fn resolve_type_name_with_scoped_inner_fallback(
+    ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+    ty: &TypeName,
+) -> Option<TypeName> {
+    let src = ty.erased_internal();
+    if src.is_empty() {
+        return None;
+    }
+
+    let sym = SymbolResolver::new(view);
+    resolve_source_like_type_with_scope(ctx, type_ctx, &sym, src)
+}
+
+fn resolve_source_like_type_with_scope(
+    ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
+    sym: &SymbolResolver<'_>,
+    ty: &str,
+) -> Option<TypeName> {
+    let ty = ty.trim();
+    if ty.is_empty() {
+        return None;
+    }
+
+    let mut base = ty;
+    let mut dims = 0usize;
+    while let Some(stripped) = base.strip_suffix("[]") {
+        dims += 1;
+        base = stripped.trim();
+    }
+
+    let (base_name, args_str) = split_source_generic_base(base)?;
+    let base_internal = resolve_source_base_with_scope(ctx, type_ctx, sym, base_name)?.to_string();
+
+    let mut out = if let Some(args) = args_str {
+        let arg_types = split_source_generic_args(args)
+            .into_iter()
+            .map(|arg| resolve_source_type_arg_with_scope(ctx, type_ctx, sym, arg))
+            .collect::<Option<Vec<TypeName>>>()?;
+        if arg_types.is_empty() {
+            TypeName::new(base_internal)
+        } else {
+            TypeName::with_args(base_internal, arg_types)
+        }
+    } else {
+        TypeName::new(base_internal)
+    };
+
+    if dims > 0 {
+        out = out.with_array_dims(dims);
+    }
+    Some(out)
+}
+
+fn resolve_source_type_arg_with_scope(
+    ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
+    sym: &SymbolResolver<'_>,
+    arg: &str,
+) -> Option<TypeName> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    if arg == "?" {
+        return Some(TypeName::new("*"));
+    }
+    if let Some(bound) = arg.strip_prefix("? extends ") {
+        let inner = resolve_source_type_arg_with_scope(ctx, type_ctx, sym, bound)
+            .or_else(|| resolve_source_like_type_with_scope(ctx, type_ctx, sym, bound))?;
+        return Some(TypeName::with_args("+", vec![inner]));
+    }
+    if let Some(bound) = arg.strip_prefix("? super ") {
+        let inner = resolve_source_type_arg_with_scope(ctx, type_ctx, sym, bound)
+            .or_else(|| resolve_source_like_type_with_scope(ctx, type_ctx, sym, bound))?;
+        return Some(TypeName::with_args("-", vec![inner]));
+    }
+
+    resolve_source_like_type_with_scope(ctx, type_ctx, sym, arg)
+}
+
+fn resolve_source_base_with_scope(
+    ctx: &SemanticContext,
+    type_ctx: &SourceTypeCtx,
+    sym: &SymbolResolver<'_>,
+    base_name: &str,
+) -> Option<Arc<str>> {
+    let base_name = base_name.trim();
+    if base_name.is_empty() {
+        return None;
+    }
+    if base_name.contains('/') {
+        return Some(Arc::from(base_name));
+    }
+    if base_name.contains('.') {
+        return Some(Arc::from(base_name.replace('.', "/")));
+    }
+    if let Some(strict) = type_ctx.resolve_simple_strict(base_name) {
+        return Some(Arc::from(strict));
+    }
+    sym.resolve_type_name(ctx, base_name)
+}
+
+fn split_source_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(start) = ty.find('<') {
+        let mut depth = 0i32;
+        for (i, c) in ty.char_indices().skip(start) {
+            match c {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let base = ty[..start].trim();
+                        let args = ty[start + 1..i].trim();
+                        return Some((base, Some(args)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    } else {
+        Some((ty.trim(), None))
+    }
+}
+
+fn split_source_generic_args(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        result.push(s[start..].trim());
+    }
+    result.into_iter().filter(|x| !x.is_empty()).collect()
 }
 
 fn evaluate_functional_compatibility(
@@ -1741,6 +1907,68 @@ mod tests {
                     fields: vec![],
                     access_flags: ACC_PUBLIC,
                     inner_class_of: Some(Arc::from("ClassWithGenerics")),
+                    generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Number"),
+                    internal_name: Arc::from("java/lang/Number"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        idx
+    }
+
+    fn make_index_with_list_add_generic_and_top_level_box() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("List"),
+                    internal_name: Arc::from("java/util/List"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("add"),
+                        params: MethodParams::from([("Ljava/lang/Object;", "item")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: Some(Arc::from("(TE;)Z")),
+                        return_type: Some(Arc::from("Z")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Box"),
+                    internal_name: Arc::from("org/cubewhy/Box"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
                     generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
                     origin: ClassOrigin::Unknown,
                 },
@@ -2747,6 +2975,68 @@ mod tests {
     }
 
     #[test]
+    fn test_local_declared_generic_type_is_structured_for_scoped_inner_box() {
+        use crate::completion::provider::CompletionProvider;
+        use crate::language::java::completion::providers::member::MemberProvider;
+
+        let idx = make_index_with_list_add_generic_and_scoped_inner_box();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "add".to_string(),
+                receiver_expr: "nums".to_string(),
+                arguments: Some("(".to_string()),
+            },
+            "add",
+            vec![LocalVar {
+                name: Arc::from("nums"),
+                type_internal: TypeName::new("List<Box<? extends Number>>"),
+                init_expr: None,
+            }],
+            Some(Arc::from("ClassWithGenerics")),
+            Some(Arc::from("org/cubewhy/ClassWithGenerics")),
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.util.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let nums = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "nums")
+            .expect("nums local should exist");
+        assert_eq!(
+            nums.type_internal.to_internal_with_generics(),
+            "java/util/List<Lorg/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>;>"
+        );
+
+        let add = MemberProvider
+            .provide(scope, &ctx, &view)
+            .into_iter()
+            .find(|c| c.label.as_ref() == "add")
+            .expect("add candidate should exist");
+        let detail = add.detail.unwrap_or_default();
+        assert!(
+            detail.contains("Box<? extends"),
+            "add detail should preserve wildcard bound after local normalization, got: {}",
+            detail
+        );
+    }
+
+    #[test]
     fn test_nums_add_expected_type_and_detail_preserve_wildcard_structure() {
         use crate::completion::provider::CompletionProvider;
         use crate::language::java::completion::providers::member::MemberProvider;
@@ -2932,6 +3222,179 @@ mod tests {
                 unresolved_new_resolved
             )
         );
+    }
+
+    #[test]
+    fn test_snapshot_inner_vs_top_level_box_nums_add_provenance() {
+        use crate::completion::provider::CompletionProvider;
+        use crate::language::java::completion::providers::member::MemberProvider;
+        use crate::language::java::render;
+        use crate::semantic::types::ContextualResolver;
+        use crate::semantic::types::generics::{parse_method_signature_types, substitute_type};
+
+        let run_case = |idx: WorkspaceIndex, title: &str| -> String {
+            let scope = IndexScope {
+                module: ModuleId::ROOT,
+            };
+            let view = idx.view(scope);
+            let name_table = view.build_name_table();
+            let type_ctx = Arc::new(SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec!["java.util.*".into()],
+                Some(name_table),
+            ));
+
+            let mut ctx = SemanticContext::new(
+                CursorLocation::Expression {
+                    prefix: "".to_string(),
+                },
+                "",
+                vec![LocalVar {
+                    name: Arc::from("nums"),
+                    type_internal: TypeName::new("List<Box<? extends Number>>"),
+                    init_expr: None,
+                }],
+                Some(Arc::from("ClassWithGenerics")),
+                Some(Arc::from("org/cubewhy/ClassWithGenerics")),
+                Some(Arc::from("org/cubewhy")),
+                vec!["java.util.*".into()],
+            )
+            .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+                expected_type_source: None,
+                method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
+                    receiver_expr: "nums".to_string(),
+                    method_name: "add".to_string(),
+                    arg_index: 0,
+                    arg_texts: vec!["new Box()".to_string()],
+                }),
+                expr_shape: None,
+            }))
+            .with_extension(type_ctx.clone());
+
+            let resolver = TypeResolver::new(&view);
+            let recv_before = resolve_hint_receiver_type(
+                &ctx,
+                &type_ctx,
+                &view,
+                &resolver,
+                "nums",
+            );
+            let local_nums_before = ctx
+                .local_variables
+                .iter()
+                .find(|lv| lv.name.as_ref() == "nums")
+                .map(|lv| lv.type_internal.to_internal_with_generics())
+                .unwrap_or_else(|| "<missing>".to_string());
+
+            ContextEnricher::new(&view).enrich(&mut ctx);
+
+            let local_nums_after = ctx
+                .local_variables
+                .iter()
+                .find(|lv| lv.name.as_ref() == "nums")
+                .map(|lv| lv.type_internal.to_internal_with_generics())
+                .unwrap_or_else(|| "<missing>".to_string());
+
+            let expected = ctx
+                .typed_expr_ctx
+                .as_ref()
+                .and_then(|t| t.expected_type.as_ref())
+                .map(|e| (e.ty.to_internal_with_generics(), e.confidence));
+
+            let list_meta = view.get_class("java/util/List").expect("List class");
+            let add_meta = list_meta
+                .methods
+                .iter()
+                .find(|m| m.name.as_ref() == "add")
+                .expect("add method");
+            let add_desc = add_meta.desc();
+            let sig = add_meta
+                .generic_signature
+                .as_deref()
+                .unwrap_or(add_desc.as_ref());
+            let (params, _) = parse_method_signature_types(sig).expect("parse add sig");
+            let param_token = params
+                .first()
+                .map(|p| p.to_signature_string())
+                .unwrap_or_else(|| "<none>".to_string());
+
+            let recv_for_subst = recv_before
+                .as_ref()
+                .map(TypeName::to_internal_with_generics_for_substitution)
+                .unwrap_or_else(|| "<none>".to_string());
+            let subst = if recv_for_subst == "<none>" {
+                None
+            } else {
+                substitute_type(
+                    &recv_for_subst,
+                    list_meta.generic_signature.as_deref(),
+                    &param_token,
+                )
+                .map(|t| t.to_internal_with_generics())
+            };
+
+            let detail = if recv_for_subst == "<none>" {
+                "<none>".to_string()
+            } else {
+                let resolver = ContextualResolver::new(&view, &ctx);
+                render::method_detail(&recv_for_subst, &list_meta, add_meta, &resolver)
+            };
+
+            let mut member_ctx = SemanticContext::new(
+                CursorLocation::MemberAccess {
+                    receiver_semantic_type: None,
+                    receiver_type: None,
+                    member_prefix: "add".to_string(),
+                    receiver_expr: "nums".to_string(),
+                    arguments: None,
+                },
+                "add",
+                vec![LocalVar {
+                    name: Arc::from("nums"),
+                    type_internal: TypeName::new("List<Box<? extends Number>>"),
+                    init_expr: None,
+                }],
+                Some(Arc::from("ClassWithGenerics")),
+                Some(Arc::from("org/cubewhy/ClassWithGenerics")),
+                Some(Arc::from("org/cubewhy")),
+                vec!["java.util.*".into()],
+            )
+            .with_extension(type_ctx);
+            ContextEnricher::new(&view).enrich(&mut member_ctx);
+            let add_detail_from_provider = MemberProvider
+                .provide(scope, &member_ctx, &view)
+                .into_iter()
+                .find(|c| c.label.as_ref() == "add")
+                .and_then(|c| c.detail)
+                .unwrap_or_else(|| "<none>".to_string());
+
+            format!(
+                "{title}:\nlocal_nums_before={}\nreceiver_before={:?}\nselected_add_desc={}\nselected_add_generic_signature={:?}\nparam_token={}\nreceiver_for_substitution={}\nsubstitution_result={:?}\nlocal_nums_after={}\nfinal_expected={:?}\nrender_detail_direct={}\nprovider_add_detail={}\n\n",
+                local_nums_before,
+                recv_before.as_ref().map(TypeName::to_internal_with_generics),
+                add_meta.desc(),
+                add_meta.generic_signature,
+                param_token,
+                recv_for_subst,
+                subst,
+                local_nums_after,
+                expected,
+                detail,
+                add_detail_from_provider
+            )
+        };
+
+        let mut out = String::new();
+        out.push_str(&run_case(
+            make_index_with_list_add_generic_and_scoped_inner_box(),
+            "inner_box_case",
+        ));
+        out.push_str(&run_case(
+            make_index_with_list_add_generic_and_top_level_box(),
+            "top_level_box_case",
+        ));
+
+        insta::assert_snapshot!("inner_vs_top_level_box_nums_add_provenance", out);
     }
 
     #[test]

@@ -53,7 +53,47 @@ impl IndexView {
     }
 
     pub fn get_source_type_name(&self, internal: &str) -> Option<String> {
-        self.get_class(internal).map(|meta| meta.source_name())
+        let class = self.get_class(internal)?;
+
+        let mut package_prefix = String::new();
+        if let Some(ref pkg) = class.package {
+            package_prefix.push_str(&pkg.replace('/', "."));
+            package_prefix.push('.');
+        }
+
+        // Primary path: reconstruct nested source name from explicit inner-class metadata.
+        if class.inner_class_of.is_some() {
+            let mut chain = vec![class.name.to_string()];
+            let pkg = class.package.clone();
+            let mut current = Arc::clone(&class);
+            while let Some(parent_name) = current.inner_class_of.clone() {
+                chain.push(parent_name.to_string());
+                let parent = self
+                    .iter_all_classes()
+                    .into_iter()
+                    .find(|c| c.name.as_ref() == parent_name.as_ref() && c.package == pkg);
+                match parent {
+                    Some(p) => current = p,
+                    None => {
+                        chain.clear();
+                        break;
+                    }
+                }
+            }
+            if !chain.is_empty() {
+                chain.reverse();
+                return Some(format!("{package_prefix}{}", chain.join(".")));
+            }
+        }
+
+        // Compatibility fallback when metadata chain is missing/incomplete.
+        if internal.contains('$') {
+            let mut base = internal.replace('/', ".");
+            base = base.replace('$', ".");
+            return Some(base);
+        }
+
+        Some(class.source_name())
     }
 
     /// Resolve a simple inner-class name within the current enclosing-class scope.
@@ -346,6 +386,7 @@ impl IndexView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
     use crate::index::{ClassOrigin, MethodParams};
     use rust_asm::constants::ACC_PUBLIC;
 
@@ -486,5 +527,69 @@ mod tests {
             .collect();
         assert!(add_descs.contains(&"(LE;)Z".to_string()));
         assert!(!add_descs.contains(&"(Ljava/lang/Object;)Z".to_string()));
+    }
+
+    #[test]
+    fn test_get_source_type_name_reconstructs_nested_owner_chain() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ClassWithGenerics"),
+                internal_name: Arc::from("org/cubewhy/ClassWithGenerics"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<B:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ClassWithGenerics$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: Some(Arc::from("ClassWithGenerics")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("TopLevel"),
+                internal_name: Arc::from("org/cubewhy/TopLevel"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(scope);
+        assert_eq!(
+            view.get_source_type_name("org/cubewhy/ClassWithGenerics$Box")
+                .as_deref(),
+            Some("org.cubewhy.ClassWithGenerics.Box")
+        );
+        assert_eq!(
+            view.get_source_type_name("org/cubewhy/TopLevel").as_deref(),
+            Some("org.cubewhy.TopLevel")
+        );
     }
 }

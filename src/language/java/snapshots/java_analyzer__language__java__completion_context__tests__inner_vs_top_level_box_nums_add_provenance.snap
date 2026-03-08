@@ -1,0 +1,29 @@
+---
+source: src/language/java/completion_context.rs
+expression: out
+---
+inner_box_case:
+local_nums_before=List<Box<? extends Number>>
+receiver_before=Some("java/util/List<Lorg/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>;>")
+selected_add_desc=(Ljava/lang/Object;)Z
+selected_add_generic_signature=Some("(TE;)Z")
+param_token=TE;
+receiver_for_substitution=java/util/List<Lorg/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>;>
+substitution_result=Some("org/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>")
+local_nums_after=java/util/List<Lorg/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>;>
+final_expected=Some(("org/cubewhy/ClassWithGenerics$Box<+Ljava/lang/Number;>", Partial))
+render_detail_direct=List — boolean add(org.cubewhy.ClassWithGenerics.Box<? extends java.lang.Number> item)
+provider_add_detail=List — boolean add(org.cubewhy.ClassWithGenerics.Box<? extends java.lang.Number> item)
+
+top_level_box_case:
+local_nums_before=List<Box<? extends Number>>
+receiver_before=Some("java/util/List<Lorg/cubewhy/Box<+Ljava/lang/Number;>;>")
+selected_add_desc=(Ljava/lang/Object;)Z
+selected_add_generic_signature=Some("(TE;)Z")
+param_token=TE;
+receiver_for_substitution=java/util/List<Lorg/cubewhy/Box<+Ljava/lang/Number;>;>
+substitution_result=Some("org/cubewhy/Box<+Ljava/lang/Number;>")
+local_nums_after=java/util/List<Lorg/cubewhy/Box<+Ljava/lang/Number;>;>
+final_expected=Some(("org/cubewhy/Box<+Ljava/lang/Number;>", Partial))
+render_detail_direct=List — boolean add(org.cubewhy.Box<? extends java.lang.Number> item)
+provider_add_detail=List — boolean add(org.cubewhy.Box<? extends java.lang.Number> item)
