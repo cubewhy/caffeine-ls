@@ -1,4 +1,5 @@
 use rust_asm::constants::ACC_STATIC;
+use std::time::Instant;
 
 use crate::completion::provider::CompletionProvider;
 use crate::completion::scorer::AccessFilter;
@@ -50,12 +51,13 @@ impl CompletionProvider for MemberProvider {
             "MemberProvider.provide"
         );
 
-        let resolver = ContextualResolver::new(index, ctx);
-
         if receiver_expr == "this" {
+            let trace_timing = tracing::enabled!(tracing::Level::DEBUG);
+            let t_total = trace_timing.then(Instant::now);
             if ctx.is_in_static_context() {
                 return vec![];
             }
+            let has_paren_after_cursor = ctx.has_paren_after_cursor();
 
             // source members (including private members, directly parsed from the AST)
             let mut results = if !ctx.current_class_members.is_empty() {
@@ -63,11 +65,16 @@ impl CompletionProvider for MemberProvider {
             } else {
                 vec![]
             };
+            let resolver = ContextualResolver::new(index, ctx);
 
             if let Some(enclosing) = ctx.enclosing_internal_name.as_deref() {
                 let source_names: std::collections::HashSet<Arc<str>> =
                     ctx.current_class_members.keys().map(Arc::clone).collect();
-                let prefix_lower = member_prefix.to_lowercase();
+                let prefix_lower = if member_prefix.is_empty() {
+                    None
+                } else {
+                    Some(member_prefix.to_lowercase())
+                };
 
                 // index MRO: skip(0) means starting from the current class, using the same_class filter
                 //
@@ -93,9 +100,10 @@ impl CompletionProvider for MemberProvider {
                         if i == 0 && source_names.contains(&method.name) {
                             continue;
                         }
-                        if !prefix_lower.is_empty()
-                            && !method.name.to_lowercase().contains(&prefix_lower)
-                        {
+                        if !name_matches_member_prefix(
+                            method.name.as_ref(),
+                            prefix_lower.as_deref(),
+                        ) {
                             continue;
                         }
                         use rust_asm::constants::ACC_STATIC;
@@ -111,7 +119,7 @@ impl CompletionProvider for MemberProvider {
                                 defining_class: Arc::clone(&class_meta.internal_name),
                             }
                         };
-                        let insert_text = if ctx.has_paren_after_cursor() {
+                        let insert_text = if has_paren_after_cursor {
                             method.name.to_string()
                         } else {
                             format!("{}(", method.name)
@@ -154,8 +162,7 @@ impl CompletionProvider for MemberProvider {
                         if i == 0 && source_names.contains(&field.name) {
                             continue;
                         }
-                        if !prefix_lower.is_empty()
-                            && !field.name.to_lowercase().contains(&prefix_lower)
+                        if !name_matches_member_prefix(field.name.as_ref(), prefix_lower.as_deref())
                         {
                             continue;
                         }
@@ -199,9 +206,19 @@ impl CompletionProvider for MemberProvider {
                     }
                 }
             }
+            if let Some(t_total) = t_total {
+                tracing::debug!(
+                    elapsed_ms = t_total.elapsed().as_secs_f64() * 1000.0,
+                    candidates = results.len(),
+                    "MemberProvider.this_branch_timing"
+                );
+            }
             return results;
         }
 
+        let trace_timing = tracing::enabled!(tracing::Level::DEBUG);
+        let t_total = trace_timing.then(Instant::now);
+        let t_resolve = trace_timing.then(Instant::now);
         let resolved_semantic = receiver_semantic_type
             .cloned()
             .or_else(|| receiver_owner_internal.map(TypeName::new))
@@ -222,6 +239,9 @@ impl CompletionProvider for MemberProvider {
                 return vec![];
             }
         };
+        let resolve_elapsed_ms = t_resolve
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or_default();
 
         let resolved_effective = ctx
             .typed_chain_receiver
@@ -251,14 +271,26 @@ impl CompletionProvider for MemberProvider {
             AccessFilter::member_completion()
         };
 
-        let prefix_lower = member_prefix.to_lowercase();
+        let prefix_lower = if member_prefix.is_empty() {
+            None
+        } else {
+            Some(member_prefix.to_lowercase())
+        };
+        let has_paren_after_cursor = ctx.has_paren_after_cursor();
         let mut results = Vec::new();
 
+        let t_mro = trace_timing.then(Instant::now);
         let mro = index.mro(base_class_internal);
+        let mro_elapsed_ms = t_mro
+            .map(|t| t.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or_default();
         let mut seen_methods = std::collections::HashSet::new();
         let mut seen_fields = std::collections::HashSet::new();
 
         let resolver = ContextualResolver::new(index, ctx);
+        let trace_arraylist =
+            class_internal.contains("ArrayList") || base_class_internal.contains("ArrayList");
+        let t_collect = trace_timing.then(Instant::now);
 
         for class_meta in &mro {
             for method in &class_meta.methods {
@@ -274,12 +306,12 @@ impl CompletionProvider for MemberProvider {
                 if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
                     continue;
                 }
-                if !prefix_lower.is_empty() && !method.name.to_lowercase().contains(&prefix_lower) {
+                if !name_matches_member_prefix(method.name.as_ref(), prefix_lower.as_deref()) {
                     continue;
                 }
-                let trace_add = method.name.as_ref() == "add"
-                    && (class_internal.contains("ArrayList")
-                        || base_class_internal.contains("ArrayList"));
+                let trace_add = trace_arraylist
+                    && method.name.as_ref() == "add"
+                    && tracing::enabled!(tracing::Level::DEBUG);
                 if trace_add {
                     tracing::debug!(
                         receiver_expr,
@@ -313,7 +345,7 @@ impl CompletionProvider for MemberProvider {
                 results.push(
                     CompletionCandidate::new(
                         Arc::clone(&method.name),
-                        if ctx.has_paren_after_cursor() {
+                        if has_paren_after_cursor {
                             method.name.to_string()
                         } else {
                             format!("{}(", method.name)
@@ -348,7 +380,7 @@ impl CompletionProvider for MemberProvider {
                 if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
                     continue;
                 }
-                if !prefix_lower.is_empty() && !field.name.to_lowercase().contains(&prefix_lower) {
+                if !name_matches_member_prefix(field.name.as_ref(), prefix_lower.as_deref()) {
                     continue;
                 }
                 let is_static = field.access_flags & ACC_STATIC != 0;
@@ -379,8 +411,35 @@ impl CompletionProvider for MemberProvider {
                 );
             }
         }
+        if let (Some(t_collect), Some(t_total)) = (t_collect, t_total) {
+            let collect_elapsed_ms = t_collect.elapsed().as_secs_f64() * 1000.0;
+            tracing::debug!(
+                resolve_ms = resolve_elapsed_ms,
+                mro_ms = mro_elapsed_ms,
+                collect_ms = collect_elapsed_ms,
+                total_ms = t_total.elapsed().as_secs_f64() * 1000.0,
+                mro_len = mro.len(),
+                candidates = results.len(),
+                "MemberProvider.phase_timing"
+            );
+        }
         results
     }
+}
+
+fn name_matches_member_prefix(name: &str, prefix_lower: Option<&str>) -> bool {
+    let Some(prefix_lower) = prefix_lower else {
+        return true;
+    };
+    if name.is_ascii() && prefix_lower.is_ascii() {
+        let n = name.as_bytes();
+        let p = prefix_lower.as_bytes();
+        if p.len() > n.len() {
+            return false;
+        }
+        return n.windows(p.len()).any(|w| w.eq_ignore_ascii_case(p));
+    }
+    name.to_lowercase().contains(prefix_lower)
 }
 
 impl MemberProvider {
@@ -683,6 +742,7 @@ mod tests {
     use crate::index::WorkspaceIndex;
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
+    use std::time::Instant;
     use tracing_subscriber::{EnvFilter, fmt};
 
     use crate::completion::provider::CompletionProvider;
@@ -1357,6 +1417,145 @@ mod tests {
                 .map(|c| c.detail.clone())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_member_provider_hot_path_timing_baseline() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("Collection"),
+                internal_name: Arc::from("java/util/Collection"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    make_method("size", "()I", ACC_PUBLIC, false),
+                    make_method("isEmpty", "()Z", ACC_PUBLIC, false),
+                    make_method("add", "(Ljava/lang/Object;)Z", ACC_PUBLIC, false),
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: Some(Arc::from("java/util/Collection")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    make_method("get", "(I)Ljava/lang/Object;", ACC_PUBLIC, false),
+                    make_method("add", "(ILjava/lang/Object;)V", ACC_PUBLIC, false),
+                    make_method("add", "(Ljava/lang/Object;)Z", ACC_PUBLIC, false),
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("ArrayList"),
+                internal_name: Arc::from("java/util/ArrayList"),
+                super_name: Some(Arc::from("java/util/List")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    make_method("<init>", "()V", ACC_PUBLIC, false),
+                    make_method("add", "(Ljava/lang/Object;)Z", ACC_PUBLIC, false),
+                    make_method("add", "(ILjava/lang/Object;)V", ACC_PUBLIC, false),
+                    make_method("get", "(I)Ljava/lang/Object;", ACC_PUBLIC, false),
+                    make_method("size", "()I", ACC_PUBLIC, false),
+                    make_method("trimToSize", "()V", ACC_PUBLIC, false),
+                    make_method("ensureCapacity", "(I)V", ACC_PUBLIC, false),
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method(
+                    "toString",
+                    "()Ljava/lang/String;",
+                    ACC_PUBLIC,
+                    false,
+                )],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::with_args(
+                    "java/util/ArrayList",
+                    vec![TypeName::new("java/lang/String")],
+                )),
+                receiver_type: Some(Arc::from("java/util/ArrayList")),
+                member_prefix: "a".to_string(),
+                receiver_expr: "list".to_string(),
+                arguments: None,
+            },
+            "a",
+            vec![LocalVar {
+                name: Arc::from("list"),
+                type_internal: TypeName::with_args(
+                    "java/util/ArrayList",
+                    vec![TypeName::new("java/lang/String")],
+                ),
+                init_expr: None,
+            }],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/Main")),
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.util.*".into()],
+        );
+        let view = idx.view(root_scope());
+
+        let warmup = MemberProvider.provide(root_scope(), &ctx, &view);
+        assert!(!warmup.is_empty(), "warmup should return candidates");
+
+        let iters = 1500usize;
+        let t0 = Instant::now();
+        let mut total_candidates = 0usize;
+        for _ in 0..iters {
+            total_candidates += MemberProvider.provide(root_scope(), &ctx, &view).len();
+        }
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        let avg_us = elapsed_ms * 1000.0 / iters as f64;
+        eprintln!(
+            "member_hot_path_baseline: total_ms={elapsed_ms:.3} avg_us={avg_us:.3} total_candidates={total_candidates}"
+        );
+    }
+
+    #[test]
+    fn test_member_prefix_match_ascii_case_insensitive() {
+        assert!(super::name_matches_member_prefix("getValue", Some("GET")));
+        assert!(super::name_matches_member_prefix("getValue", Some("val")));
+        assert!(!super::name_matches_member_prefix("getValue", Some("xyz")));
+    }
+
+    #[test]
+    fn test_member_prefix_match_unicode_fallback() {
+        assert!(super::name_matches_member_prefix("测试Value", Some("测试")));
+        assert!(!super::name_matches_member_prefix("测试Value", Some("abc")));
     }
 
     #[test]
