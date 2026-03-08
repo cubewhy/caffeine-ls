@@ -573,7 +573,18 @@ fn handle_identifier(
                 return handle_method_reference(ctx, ancestor);
             }
             "import_declaration" => return handle_import(ctx, ancestor),
-            "object_creation_expression" => return handle_constructor(ctx, ancestor),
+            "object_creation_expression" => {
+                if is_in_constructor_type_arguments(node, ancestor) {
+                    let text = cursor_truncated_text(ctx, node);
+                    return (
+                        CursorLocation::TypeAnnotation {
+                            prefix: text.clone(),
+                        },
+                        text,
+                    );
+                }
+                return handle_constructor(ctx, ancestor);
+            }
             "local_variable_declaration" => {
                 // Detect misreading: If the next sibling begins with `(`,
                 // this indicates that `str\nfunc(...)` was misread as local_variable_declaration,
@@ -820,6 +831,16 @@ fn is_in_type_subtree(id_node: Node, decl_node: Node) -> bool {
         return is_descendant_of(id_node, child);
     }
     false
+}
+
+fn is_in_constructor_type_arguments(id_node: Node, ctor_node: Node) -> bool {
+    let Some(ty) = ctor_node.child_by_field_name("type") else {
+        return false;
+    };
+    let Some(type_args) = find_ancestor(id_node, "type_arguments") else {
+        return false;
+    };
+    is_descendant_of(type_args, ty) && is_descendant_of(id_node, type_args)
 }
 
 fn is_descendant_of(node: Node, ancestor: Node) -> bool {
@@ -1389,6 +1410,52 @@ class A {
             loc
         );
         assert_eq!(query, "ArrayList");
+    }
+
+    #[test]
+    fn test_constructor_type_argument_identifier_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new Box<In>(1);
+    }
+}
+"#};
+        let marker = "In";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation inside constructor generic arg, got {:?}",
+            loc
+        );
+        assert_eq!(query, "In");
+    }
+
+    #[test]
+    fn test_constructor_nested_type_argument_identifier_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new Box<Map<String, In>>(1);
+    }
+}
+"#};
+        let marker = "In";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation in nested constructor generic arg, got {:?}",
+            loc
+        );
+        assert_eq!(query, "In");
     }
 
     #[test]

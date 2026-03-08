@@ -562,6 +562,28 @@ mod tests {
     }
 
     #[test]
+    fn test_constructor_generic_type_argument_routes_to_type_annotation() {
+        let src = indoc::indoc! {r#"
+        class A {
+            void f() {
+                new Box<In>(1);
+            }
+        }
+        "#};
+        let (line, col) = src
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find("In").map(|c| (i as u32, c as u32 + 2)))
+            .expect("expected In marker");
+        let ctx = at(src, line, col);
+        assert!(
+            matches!(ctx.location, CursorLocation::TypeAnnotation { .. }),
+            "constructor generic arg should route to TypeAnnotation, got {:?}",
+            ctx.location
+        );
+    }
+
+    #[test]
     fn test_member_access() {
         // "class A { void f() { someList.get; } }\n"
         //  "someList.get" starts at byte 21, "get" at byte 30..33
