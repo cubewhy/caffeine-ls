@@ -175,7 +175,19 @@ fn determine_location_impl(
             "method_invocation" => return handle_member_access(ctx, current),
             "field_access" => return handle_member_access(ctx, current),
             "method_reference" => return handle_method_reference(ctx, current),
-            "object_creation_expression" => return handle_constructor(ctx, current),
+            "object_creation_expression" => {
+                if let Some(type_args) = find_innermost_constructor_type_arguments(current, ctx.offset)
+                {
+                    let prefix = find_prefix_in_type_arguments_hole(ctx, type_args);
+                    return (
+                        CursorLocation::TypeAnnotation {
+                            prefix: prefix.clone(),
+                        },
+                        prefix,
+                    );
+                }
+                return handle_constructor(ctx, current);
+            }
             "argument_list" => return handle_argument_list(ctx, current),
             "identifier" | "type_identifier" => {
                 return handle_identifier(ctx, current, trigger_char);
@@ -843,6 +855,58 @@ fn is_in_constructor_type_arguments(id_node: Node, ctor_node: Node) -> bool {
     is_descendant_of(type_args, ty) && is_descendant_of(id_node, type_args)
 }
 
+fn find_innermost_constructor_type_arguments(
+    ctor_node: Node,
+    offset: usize,
+) -> Option<Node> {
+    let ty = ctor_node.child_by_field_name("type")?;
+    let mut best: Option<Node> = None;
+
+    fn visit<'a>(node: Node<'a>, offset: usize, best: &mut Option<Node<'a>>) {
+        if node.kind() == "type_arguments"
+            && node.start_byte() < offset
+            && offset <= node.end_byte().saturating_sub(1)
+        {
+            if let Some(prev) = best {
+                let prev_len = prev.end_byte().saturating_sub(prev.start_byte());
+                let cur_len = node.end_byte().saturating_sub(node.start_byte());
+                if cur_len < prev_len {
+                    *best = Some(node);
+                }
+            } else {
+                *best = Some(node);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            visit(child, offset, best);
+        }
+    }
+
+    visit(ty, offset, &mut best);
+    best
+}
+
+fn find_prefix_in_type_arguments_hole(ctx: &JavaContextExtractor, type_args: Node) -> String {
+    let start = type_args.start_byte().saturating_add(1);
+    let end = type_args.end_byte().saturating_sub(1).min(ctx.offset);
+    if end <= start {
+        return String::new();
+    }
+    let s = &ctx.source[start..end];
+    let mut depth = 0i32;
+    let mut last_sep = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => last_sep = i + 1,
+            _ => {}
+        }
+    }
+    s[last_sep..].trim().to_string()
+}
+
 fn is_descendant_of(node: Node, ancestor: Node) -> bool {
     let mut cur = node;
     loop {
@@ -1456,6 +1520,52 @@ class A {
             loc
         );
         assert_eq!(query, "In");
+    }
+
+    #[test]
+    fn test_constructor_empty_type_argument_hole_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new Box<>(1);
+    }
+}
+"#};
+        let marker = "<>";
+        let offset = src.find(marker).unwrap() + 1; // cursor in <|>
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation inside empty constructor generic hole, got {:?}",
+            loc
+        );
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_constructor_second_type_argument_hole_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new HashMap<String, >(1);
+    }
+}
+"#};
+        let marker = "String, >";
+        let offset = src.find(marker).unwrap() + "String, ".len(); // cursor in second arg hole
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation in second constructor generic hole, got {:?}",
+            loc
+        );
+        assert_eq!(query, "");
     }
 
     #[test]
