@@ -1,4 +1,4 @@
-use crate::index::ClassMetadata;
+use crate::index::{ClassMetadata, IndexView};
 use std::sync::Arc;
 
 /// Check if an FQN has been overridden by existing imports (exact match + wildcard + same package)
@@ -96,6 +96,15 @@ pub fn fqn_of_meta(meta: &ClassMetadata) -> String {
     }
 }
 
+/// Build source-level fully-qualified type name from authoritative type identity.
+/// For nested classes, this keeps the owner chain (e.g. `a.b.Outer.Inner`).
+pub fn source_fqn_of_meta(meta: &ClassMetadata, index: &IndexView) -> String {
+    if let Some(source) = index.get_source_type_name(&meta.internal_name) {
+        return source;
+    }
+    meta.internal_name.replace('/', ".").replace('$', ".")
+}
+
 /// Extract the list of existing imports from the source text
 pub fn extract_imports_from_source(source: &str) -> Vec<Arc<str>> {
     source
@@ -123,6 +132,10 @@ pub fn extract_package_from_source(source: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{
+        ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId, WorkspaceIndex,
+    };
+    use rust_asm::constants::ACC_PUBLIC;
 
     #[test]
     fn test_java_lang_string_not_needed() {
@@ -354,5 +367,80 @@ mod tests {
         // "package ;" 这种畸形情况返回 None
         let src = "class A {}";
         assert!(extract_package_from_source(src).is_none());
+    }
+
+    #[test]
+    fn test_source_fqn_of_meta_preserves_nested_owner_chain() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let meta = view
+            .get_class("org/cubewhy/ChainCheck$Box$BoxV")
+            .expect("nested class");
+        assert_eq!(
+            source_fqn_of_meta(&meta, &view),
+            "org.cubewhy.ChainCheck.Box.BoxV"
+        );
     }
 }

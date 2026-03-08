@@ -177,7 +177,7 @@ impl CompletionProvider for ExpressionProvider {
                     None => continue,
                 }
             };
-            let fqn = fqn_of(meta);
+            let fqn = source_fqn_of(meta, index);
             results.push(
                 CompletionCandidate::new(
                     Arc::clone(&meta.name),
@@ -234,7 +234,7 @@ impl CompletionProvider for ExpressionProvider {
                         None => continue,
                     }
                 };
-                let fqn = fqn_of(&meta);
+                let fqn = source_fqn_of(&meta, index);
                 results.push(
                     CompletionCandidate::new(
                         Arc::clone(&meta.name),
@@ -269,7 +269,7 @@ impl CompletionProvider for ExpressionProvider {
                     Some(s) => s,
                     None => continue,
                 };
-                let fqn = fqn_of(&meta);
+                let fqn = source_fqn_of(&meta, index);
 
                 let boost = calculate_boost(meta.package.as_deref());
                 let base_score = 40.0;
@@ -377,11 +377,8 @@ fn calculate_boost(pkg: Option<&str>) -> f32 {
     0.0
 }
 
-fn fqn_of(meta: &crate::index::ClassMetadata) -> String {
-    match &meta.package {
-        Some(pkg) => format!("{}.{}", pkg.replace('/', "."), meta.name),
-        None => meta.name.to_string(),
-    }
+fn source_fqn_of(meta: &crate::index::ClassMetadata, index: &IndexView) -> String {
+    crate::completion::import_utils::source_fqn_of_meta(meta, index)
 }
 
 fn is_type_visible_in_context(

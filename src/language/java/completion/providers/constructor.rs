@@ -1,7 +1,7 @@
 use crate::{
     completion::{
         CandidateKind, CompletionCandidate,
-        import_utils::{fqn_of_meta, is_import_needed},
+        import_utils::{is_import_needed, source_fqn_of_meta},
         provider::CompletionProvider,
         scorer::AccessFilter,
     },
@@ -52,7 +52,7 @@ impl CompletionProvider for ConstructorProvider {
 
         let mut results = Vec::new();
         for meta in metas {
-            let fqn = fqn_of_meta(&meta);
+            let fqn = source_fqn_of_meta(&meta, index);
             let needs_import = is_import_needed(
                 &fqn,
                 &ctx.existing_imports,
@@ -650,6 +650,18 @@ mod tests {
             results.iter().any(|c| c.label.as_ref() == "BoxV"),
             "{:?}",
             results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+        let boxv = results
+            .iter()
+            .find(|c| c.label.as_ref() == "BoxV")
+            .expect("BoxV candidate");
+        assert_eq!(
+            boxv.detail.as_deref(),
+            Some("new org.cubewhy.ChainCheck.Box.BoxV()")
+        );
+        assert_eq!(
+            boxv.required_import.as_deref(),
+            Some("org.cubewhy.ChainCheck.Box.BoxV")
         );
     }
 
