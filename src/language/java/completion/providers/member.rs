@@ -526,7 +526,7 @@ fn needs_cast_for_field(
 }
 
 fn render_cast_type(ty: &TypeName) -> String {
-    let mut base = ty.erased_internal().replace('/', ".").replace('$', ".");
+    let mut base = ty.erased_internal().replace(['/', '$'], ".");
     if ty.array_dims > 0 {
         base.push_str(&"[]".repeat(ty.array_dims));
     }

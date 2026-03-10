@@ -817,6 +817,102 @@ mod tests {
         idx
     }
 
+    fn make_lambda_scope_index() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+            make_class("java/lang", "Integer"),
+            make_class("java/lang", "System"),
+            make_class("java/util/function", "Function"),
+            make_class("java/util/function", "BiFunction"),
+            make_class("java/util/function", "Runnable"),
+        ]);
+        idx
+    }
+
+    #[test]
+    fn test_lambda_single_param_is_visible_in_local_completion() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+            class Demo {
+                void f() {
+                    Function<String, Integer> fn = s -> s|;
+                }
+            }
+        "#};
+
+        let (ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+
+        assert!(
+            ctx.local_variables.iter().any(|lv| lv.name.as_ref() == "s"),
+            "lambda param should be injected into local scope: {:?}",
+            ctx.local_variables
+                .iter()
+                .map(|lv| lv.name.as_ref())
+                .collect::<Vec<_>>()
+        );
+        assert!(labels.iter().any(|l| l == "s"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_multi_param_names_are_visible_in_scope() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.BiFunction;
+            class Demo {
+                void f() {
+                    BiFunction<String, String, Integer> fn = (left, right) -> /*caret*/left;
+                }
+            }
+        "#};
+
+        let (ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+
+        assert!(
+            ctx.local_variables.iter().any(|lv| lv.name.as_ref() == "left"),
+            "expected left in local scope: {:?}",
+            ctx.local_variables
+                .iter()
+                .map(|lv| lv.name.as_ref())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            ctx.local_variables
+                .iter()
+                .any(|lv| lv.name.as_ref() == "right"),
+            "expected right in local scope: {:?}",
+            ctx.local_variables
+                .iter()
+                .map(|lv| lv.name.as_ref())
+                .collect::<Vec<_>>()
+        );
+        assert!(labels.iter().any(|l| l == "left"), "{labels:?}");
+        assert!(labels.iter().any(|l| l == "right"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_zero_arg_lambda_keeps_generic_completion_working() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Runnable;
+            class Demo {
+                void f() {
+                    Runnable r = () -> {
+                        Sys|
+                    };
+                }
+            }
+        "#};
+
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(labels.iter().any(|l| l == "System"), "{labels:?}");
+    }
+
     #[test]
     fn test_import() {
         let src = "import com.example.Foo;";

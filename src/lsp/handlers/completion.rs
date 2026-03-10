@@ -648,10 +648,10 @@ mod tests {
             character: "if (sb instanceof StringBuilder) { sb.appe".len() as u32,
         };
         let item = map_candidate_item(&c, src, pos);
-        if let Some(edit) = item.text_edit {
-            if let CompletionTextEdit::InsertAndReplace(ir) = edit {
-                assert_eq!(ir.insert.start, ir.replace.start);
-            }
+        if let Some(edit) = item.text_edit
+            && let CompletionTextEdit::InsertAndReplace(ir) = edit
+        {
+            assert_eq!(ir.insert.start, ir.replace.start);
         }
     }
 

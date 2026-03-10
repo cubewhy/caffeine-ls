@@ -112,6 +112,7 @@ pub fn extract_locals_with_type_ctx(
     vars.extend(extract_misread_var_decls(ctx, search_root, type_ctx));
     vars.extend(extract_locals_from_error_nodes(ctx, search_root, type_ctx));
     vars.extend(extract_params(ctx, root, cursor_node, type_ctx));
+    vars.extend(extract_lambda_params(ctx, cursor_node));
 
     vars
 }
@@ -276,6 +277,78 @@ fn extract_params(
         });
     }
     vars
+}
+
+fn extract_lambda_params(ctx: &JavaContextExtractor, cursor_node: Option<Node>) -> Vec<LocalVar> {
+    let mut lambdas = Vec::new();
+    let mut current = cursor_node;
+    while let Some(node) = current {
+        if node.kind() == "lambda_expression" {
+            lambdas.push(node);
+        }
+        current = node.parent();
+    }
+    lambdas.reverse();
+
+    let mut vars = Vec::new();
+    for lambda in lambdas {
+        let Some(body) = lambda.child_by_field_name("body") else {
+            continue;
+        };
+        if ctx.offset < body.start_byte() || ctx.offset > body.end_byte() {
+            continue;
+        }
+
+        let Some(params) = lambda.child_by_field_name("parameters") else {
+            continue;
+        };
+        vars.extend(extract_lambda_params_from_node(ctx, params));
+    }
+    vars
+}
+
+fn extract_lambda_params_from_node(ctx: &JavaContextExtractor, params: Node) -> Vec<LocalVar> {
+    match params.kind() {
+        "identifier" => vec![LocalVar {
+            name: Arc::from(ctx.node_text(params)),
+            type_internal: TypeName::new("unknown"),
+            init_expr: None,
+        }],
+        "inferred_parameters" => {
+            let mut vars = Vec::new();
+            let mut cursor = params.walk();
+            for child in params.named_children(&mut cursor) {
+                if child.kind() != "identifier" {
+                    continue;
+                }
+                vars.push(LocalVar {
+                    name: Arc::from(ctx.node_text(child)),
+                    type_internal: TypeName::new("unknown"),
+                    init_expr: None,
+                });
+            }
+            vars
+        }
+        "formal_parameters" => {
+            let mut vars = Vec::new();
+            let mut cursor = params.walk();
+            for child in params.named_children(&mut cursor) {
+                if !matches!(child.kind(), "formal_parameter" | "spread_parameter") {
+                    continue;
+                }
+                let Some(name_node) = child.child_by_field_name("name") else {
+                    continue;
+                };
+                vars.push(LocalVar {
+                    name: Arc::from(ctx.node_text(name_node)),
+                    type_internal: TypeName::new("unknown"),
+                    init_expr: None,
+                });
+            }
+            vars
+        }
+        _ => vec![],
+    }
 }
 
 fn extract_locals_from_error_nodes(
@@ -781,6 +854,84 @@ mod tests {
             vars.iter()
                 .map(|v| v.type_internal.to_internal_with_generics())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_extract_single_lambda_param_as_local() {
+        let src = indoc::indoc! {r#"
+        class A {
+            void f() {
+                java.util.function.Function<String, Integer> fn = s -> s/*caret*/;
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        assert!(
+            vars.iter().any(|v| {
+                v.name.as_ref() == "s" && v.type_internal.to_internal_with_generics() == "unknown"
+            }),
+            "lambda param should be visible as a placeholder local: {:?}",
+            vars.iter()
+                .map(|v| format!("{}:{}", v.name, v.type_internal.to_internal_with_generics()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_extract_parenthesized_lambda_params_as_locals() {
+        let src = indoc::indoc! {r#"
+        class A {
+            void f() {
+                java.util.function.BiFunction<String, String, Integer> fn = (left, right) -> left/*caret*/;
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        assert!(
+            vars.iter().any(|v| v.name.as_ref() == "left"),
+            "left should be visible: {:?}",
+            vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
+        );
+        assert!(
+            vars.iter().any(|v| v.name.as_ref() == "right"),
+            "right should be visible: {:?}",
+            vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_zero_arg_lambda_does_not_add_fake_locals() {
+        let src = indoc::indoc! {r#"
+        class A {
+            void f() {
+                Runnable r = () -> { System.out.println(); /*caret*/ };
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        assert!(
+            vars.iter().all(|v| v.name.as_ref() != "()"),
+            "zero-arg lambdas must not synthesize fake parameter locals: {:?}",
+            vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
         );
     }
 }
