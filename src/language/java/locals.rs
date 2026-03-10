@@ -308,12 +308,42 @@ fn extract_lambda_params(ctx: &JavaContextExtractor, cursor_node: Option<Node>) 
 }
 
 fn extract_lambda_params_from_node(ctx: &JavaContextExtractor, params: Node) -> Vec<LocalVar> {
-    match params.kind() {
-        "identifier" => vec![LocalVar {
-            name: Arc::from(ctx.node_text(params)),
+    extract_lambda_param_names(ctx, params)
+        .into_iter()
+        .map(|name| LocalVar {
+            name,
             type_internal: TypeName::new("unknown"),
             init_expr: None,
-        }],
+        })
+        .collect()
+}
+
+pub(crate) fn extract_active_lambda_param_names(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+) -> Vec<Arc<str>> {
+    let mut current = cursor_node;
+    while let Some(node) = current {
+        if node.kind() == "lambda_expression" {
+            let Some(body) = node.child_by_field_name("body") else {
+                return vec![];
+            };
+            if ctx.offset < body.start_byte() || ctx.offset > body.end_byte() {
+                return vec![];
+            }
+            let Some(params) = node.child_by_field_name("parameters") else {
+                return vec![];
+            };
+            return extract_lambda_param_names(ctx, params);
+        }
+        current = node.parent();
+    }
+    vec![]
+}
+
+fn extract_lambda_param_names(ctx: &JavaContextExtractor, params: Node) -> Vec<Arc<str>> {
+    match params.kind() {
+        "identifier" => vec![Arc::from(ctx.node_text(params))],
         "inferred_parameters" => {
             let mut vars = Vec::new();
             let mut cursor = params.walk();
@@ -321,11 +351,7 @@ fn extract_lambda_params_from_node(ctx: &JavaContextExtractor, params: Node) -> 
                 if child.kind() != "identifier" {
                     continue;
                 }
-                vars.push(LocalVar {
-                    name: Arc::from(ctx.node_text(child)),
-                    type_internal: TypeName::new("unknown"),
-                    init_expr: None,
-                });
+                vars.push(Arc::from(ctx.node_text(child)));
             }
             vars
         }
@@ -339,11 +365,7 @@ fn extract_lambda_params_from_node(ctx: &JavaContextExtractor, params: Node) -> 
                 let Some(name_node) = child.child_by_field_name("name") else {
                     continue;
                 };
-                vars.push(LocalVar {
-                    name: Arc::from(ctx.node_text(name_node)),
-                    type_internal: TypeName::new("unknown"),
-                    init_expr: None,
-                });
+                vars.push(Arc::from(ctx.node_text(name_node)));
             }
             vars
         }

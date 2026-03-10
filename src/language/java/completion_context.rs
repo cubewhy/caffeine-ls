@@ -19,6 +19,7 @@ use crate::semantic::types::{
     singleton_descriptor_to_type,
 };
 use crate::semantic::{CursorLocation, SemanticContext};
+use crate::semantic::types::generics::{JvmType, parse_class_type_parameters, parse_method_signature_types};
 use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC, ACC_VARARGS};
 
 pub struct ContextEnricher<'a> {
@@ -121,6 +122,9 @@ impl<'a> ContextEnricher<'a> {
                 lv.type_internal = new_ty;
             }
         }
+
+        enrich_expected_type_context(ctx, self.view, &type_ctx);
+        bind_active_lambda_param_types(ctx);
 
         let resolved_member_receiver = if let CursorLocation::MemberAccess {
             receiver_type,
@@ -256,8 +260,6 @@ impl<'a> ContextEnricher<'a> {
             ctx.location = loc;
             ctx.query = query;
         }
-
-        enrich_expected_type_context(ctx, self.view, &type_ctx);
     }
 }
 
@@ -504,6 +506,28 @@ fn enrich_expected_type_context(
 
     ctx.expected_functional_interface = expected_ty;
     ctx.expected_sam = expected_sam;
+}
+
+fn bind_active_lambda_param_types(ctx: &mut SemanticContext) {
+    let Some(sam) = ctx.expected_sam.as_ref() else {
+        return;
+    };
+    if ctx.active_lambda_param_names.is_empty()
+        || ctx.active_lambda_param_names.len() != sam.param_types.len()
+    {
+        return;
+    }
+
+    for (name, ty) in ctx.active_lambda_param_names.iter().zip(sam.param_types.iter()) {
+        if let Some(local) = ctx
+            .local_variables
+            .iter_mut()
+            .rev()
+            .find(|lv| lv.name == *name && lv.type_internal.erased_internal() == "unknown")
+        {
+            local.type_internal = ty.clone();
+        }
+    }
 }
 
 fn resolve_source_type_hint(
@@ -1208,6 +1232,7 @@ fn method_return_type_from_descriptor(desc: &str) -> Option<TypeName> {
 
 fn extract_sam_signature(view: &IndexView, interface_ty: &TypeName) -> Option<SamSignature> {
     let owner = interface_ty.erased_internal();
+    let class_meta = view.get_class(owner)?;
     let (methods, _) = view.collect_inherited_members(owner);
     let mut seen = HashSet::new();
     let mut abstract_methods: Vec<Arc<MethodSummary>> = Vec::new();
@@ -1233,13 +1258,57 @@ fn extract_sam_signature(view: &IndexView, interface_ty: &TypeName) -> Option<Sa
     }
 
     let sam = abstract_methods.pop()?;
-    let param_types = sam
-        .params
-        .items
+    let class_type_params = class_meta
+        .generic_signature
+        .as_deref()
+        .map(parse_class_type_parameters)
+        .unwrap_or_default();
+    let interface_type_args = interface_ty
+        .args
         .iter()
-        .map(|p| descriptor_to_type_name(&p.descriptor).unwrap_or_else(|| TypeName::new("unknown")))
+        .filter_map(type_name_to_jvm_type)
         .collect::<Vec<_>>();
-    let return_type = sam.return_type.as_deref().and_then(descriptor_to_type_name);
+
+    let (param_jvm, ret_jvm) = sam
+        .generic_signature
+        .as_deref()
+        .and_then(parse_method_signature_types)
+        .or_else(|| {
+            let desc = sam.desc();
+            let params = sam
+                .params
+                .items
+                .iter()
+                .map(|p| JvmType::parse(&p.descriptor).map(|(j, _)| j))
+                .collect::<Option<Vec<_>>>()?;
+            let ret_token = desc.split(')').nth(1)?;
+            let (ret, _) = JvmType::parse(ret_token)?;
+            Some((params, ret))
+        })?;
+
+    let substituted_params = if class_type_params.len() == interface_type_args.len() {
+        param_jvm
+            .iter()
+            .map(|p| p.substitute(&class_type_params, &interface_type_args))
+            .collect::<Vec<_>>()
+    } else {
+        param_jvm
+    };
+    let substituted_ret = if class_type_params.len() == interface_type_args.len() {
+        ret_jvm.substitute(&class_type_params, &interface_type_args)
+    } else {
+        ret_jvm
+    };
+
+    let param_types = substituted_params
+        .iter()
+        .map(jvm_type_to_type_name)
+        .collect::<Option<Vec<_>>>()?;
+    let return_type = if substituted_ret == JvmType::Primitive('V') {
+        None
+    } else {
+        jvm_type_to_type_name(&substituted_ret)
+    };
 
     Some(SamSignature {
         method_name: sam.name.clone(),
@@ -1251,6 +1320,21 @@ fn extract_sam_signature(view: &IndexView, interface_ty: &TypeName) -> Option<Sa
 fn descriptor_to_type_name(desc: &str) -> Option<TypeName> {
     parse_single_type_to_internal(desc)
         .or_else(|| singleton_descriptor_to_type(desc).map(TypeName::new))
+}
+
+fn jvm_type_to_type_name(ty: &JvmType) -> Option<TypeName> {
+    let sig = ty.to_signature_string();
+    parse_single_type_to_internal(&sig).or_else(|| singleton_descriptor_to_type(&sig).map(TypeName::new))
+}
+
+fn type_name_to_jvm_type(ty: &TypeName) -> Option<JvmType> {
+    let sig = ty.to_jvm_signature();
+    let (parsed, rest) = JvmType::parse(&sig)?;
+    if rest.is_empty() {
+        Some(parsed)
+    } else {
+        None
+    }
 }
 
 fn is_object_method(name: &str, desc: &str) -> bool {

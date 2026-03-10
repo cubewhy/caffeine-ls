@@ -282,6 +282,7 @@ pub struct TypedChainReceiver {
 pub struct SemanticContext {
     pub location: CursorLocation,
     pub local_variables: Vec<LocalVar>,
+    pub active_lambda_param_names: Vec<Arc<str>>,
     pub enclosing_class: Option<Arc<str>>,
     pub enclosing_internal_name: Option<Arc<str>>,
     pub enclosing_package: Option<Arc<str>>,
@@ -334,6 +335,7 @@ impl SemanticContext {
         Self {
             location,
             local_variables,
+            active_lambda_param_names: vec![],
             enclosing_class,
             enclosing_internal_name,
             enclosing_package,
@@ -359,6 +361,11 @@ impl SemanticContext {
 
     pub fn with_static_imports(mut self, imports: Vec<Arc<str>>) -> Self {
         self.static_imports = imports;
+        self
+    }
+
+    pub fn with_active_lambda_param_names(mut self, names: Vec<Arc<str>>) -> Self {
+        self.active_lambda_param_names = names;
         self
     }
 

@@ -21,7 +21,7 @@ use crate::semantic::{CursorLocation, SemanticContext};
 use ropey::Rope;
 use smallvec::smallvec;
 use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Node, Parser, Tree};
 
 pub mod class_parser;
 pub mod completion;
@@ -358,51 +358,85 @@ impl JavaContextExtractor {
         } else {
             (location, query)
         };
-        let functional_target_hint = location::infer_functional_target_hint(&self, cursor_node);
+        let recovered_semantics = self.try_recover_semantic_tree(root, cursor_node);
+        let (semantic_extractor, semantic_root, semantic_cursor_node) =
+            if let Some((extractor, tree)) = recovered_semantics.as_ref() {
+                let semantic_root = tree.root_node();
+                let semantic_cursor_node = extractor.find_cursor_node(semantic_root);
+                (extractor, semantic_root, semantic_cursor_node)
+            } else {
+                (&self, root, cursor_node)
+            };
 
-        let enclosing_class = scope::extract_enclosing_class(&self, cursor_node)
-            .or_else(|| scope::extract_enclosing_class_by_offset(&self, root));
-        let enclosing_package = scope::extract_package(&self, root);
-        let enclosing_internal_name =
-            scope::extract_enclosing_internal_name(&self, cursor_node, enclosing_package.as_ref())
-                .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
-        let existing_imports = scope::extract_imports(&self, root);
+        let functional_target_hint =
+            location::infer_functional_target_hint(semantic_extractor, semantic_cursor_node);
+
+        let enclosing_class = scope::extract_enclosing_class(semantic_extractor, semantic_cursor_node)
+            .or_else(|| {
+                scope::extract_enclosing_class_by_offset(semantic_extractor, semantic_root)
+            });
+        let enclosing_package = scope::extract_package(semantic_extractor, semantic_root);
+        let enclosing_internal_name = scope::extract_enclosing_internal_name(
+            semantic_extractor,
+            semantic_cursor_node,
+            enclosing_package.as_ref(),
+        )
+        .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
+        let existing_imports = scope::extract_imports(semantic_extractor, semantic_root);
         let type_ctx = Arc::new(SourceTypeCtx::new(
             enclosing_package.clone(),
             existing_imports.clone(),
             self.name_table.clone(),
         ));
-        let local_variables =
-            locals::extract_locals_with_type_ctx(&self, root, cursor_node, Some(&type_ctx));
+        let local_variables = locals::extract_locals_with_type_ctx(
+            semantic_extractor,
+            semantic_root,
+            semantic_cursor_node,
+            Some(&type_ctx),
+        );
+        let active_lambda_param_names =
+            locals::extract_active_lambda_param_names(semantic_extractor, semantic_cursor_node);
         let flow_type_overrides = flow::extract_instanceof_true_branch_overrides(
-            &self,
-            cursor_node,
+            semantic_extractor,
+            semantic_cursor_node,
             &type_ctx,
             &local_variables,
         );
-        let existing_static_imports = scope::extract_static_imports(&self, root);
-        let is_class_member_position = scope::is_cursor_in_class_member_position(cursor_node);
-        let current_class_members = cursor_node
+        let existing_static_imports =
+            scope::extract_static_imports(semantic_extractor, semantic_root);
+        let is_class_member_position =
+            scope::is_cursor_in_class_member_position(semantic_cursor_node);
+        let current_class_members = semantic_cursor_node
             .and_then(|n| utils::find_ancestor(n, "class_declaration"))
             .and_then(|cls| cls.child_by_field_name("body"))
-            .map(|body| members::extract_class_members_from_body(&self, body, &type_ctx))
+            .map(|body| {
+                members::extract_class_members_from_body(semantic_extractor, body, &type_ctx)
+            })
             .or_else(|| {
                 // Fallback: find top-level ERROR node anywhere under program
-                let error_node = utils::find_top_error_node(root)?;
+                let error_node = utils::find_top_error_node(semantic_root)?;
                 let mut members = Vec::new();
-                members::collect_members_from_node(&self, error_node, &type_ctx, &mut members);
+                members::collect_members_from_node(
+                    semantic_extractor,
+                    error_node,
+                    &type_ctx,
+                    &mut members,
+                );
                 let snapshot = members.clone();
                 members.extend(members::parse_partial_methods_from_error(
-                    &self, &type_ctx, error_node, &snapshot,
+                    semantic_extractor,
+                    &type_ctx,
+                    error_node,
+                    &snapshot,
                 ));
                 Some(members)
             })
             .unwrap_or_default();
-        let enclosing_class_member = cursor_node
+        let enclosing_class_member = semantic_cursor_node
             .and_then(|n| utils::find_ancestor(n, "method_declaration"))
-            .or_else(|| find_method_by_offset(root, self.offset))
-            .or_else(|| utils::find_enclosing_method_in_error(root, self.offset))
-            .and_then(|m| members::parse_method_node(&self, &type_ctx, m));
+            .or_else(|| find_method_by_offset(semantic_root, self.offset))
+            .or_else(|| utils::find_enclosing_method_in_error(semantic_root, self.offset))
+            .and_then(|m| members::parse_method_node(semantic_extractor, &type_ctx, m));
         let char_after_cursor = self.source[self.offset..]
             .chars()
             .find(|c| !(c.is_alphanumeric() || *c == '_'));
@@ -416,6 +450,7 @@ impl JavaContextExtractor {
             enclosing_package,
             existing_imports,
         )
+        .with_active_lambda_param_names(active_lambda_param_names)
         .with_functional_target_hint(functional_target_hint)
         .with_flow_type_overrides(flow_type_overrides)
         .with_class_member_position(is_class_member_position)
@@ -441,6 +476,44 @@ impl JavaContextExtractor {
             return Some(n);
         }
         None
+    }
+
+    fn try_recover_semantic_tree<'tree>(
+        &self,
+        root: Node<'tree>,
+        cursor_node: Option<Node<'tree>>,
+    ) -> Option<(JavaContextExtractor, Tree)> {
+        let in_error_context = cursor_node
+            .map(|n| n.kind() == "ERROR" || utils::find_ancestor(n, "ERROR").is_some())
+            .unwrap_or(false);
+        if !in_error_context && utils::find_top_error_node(root).is_none() {
+            return None;
+        }
+
+        let injected_source = injection::build_injected_source(self, cursor_node);
+        let sentinel_offset = injected_source.find(SENTINEL)?;
+        let sentinel_end = sentinel_offset + SENTINEL.len();
+        let rope = Rope::from_str(&injected_source);
+        let mut parser = self.make_parser();
+        let tree = parser.parse(&injected_source, None)?;
+        let extractor = JavaContextExtractor::with_rope(
+            injected_source,
+            sentinel_end,
+            rope,
+            self.name_table.clone(),
+        );
+        let recovered_cursor = extractor.find_cursor_node(tree.root_node());
+        let recovered_has_structure = recovered_cursor.is_some_and(|node| {
+            utils::find_ancestor(node, "method_declaration").is_some()
+                || utils::find_ancestor(node, "lambda_expression").is_some()
+                || utils::find_ancestor(node, "variable_declarator").is_some()
+        });
+
+        if !recovered_has_structure {
+            return None;
+        }
+
+        Some((extractor, tree))
     }
 
     fn empty_context(&self) -> SemanticContext {
@@ -482,7 +555,7 @@ mod tests {
         semantic::context::{CurrentClassMember, CursorLocation},
         semantic::types::type_name::TypeName,
     };
-    use rust_asm::constants::ACC_PUBLIC;
+    use rust_asm::constants::{ACC_ABSTRACT, ACC_PUBLIC};
     use std::sync::Arc;
 
     fn at(src: &str, line: u32, col: u32) -> SemanticContext {
@@ -821,12 +894,159 @@ mod tests {
         let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
             make_class("java/lang", "Object"),
-            make_class("java/lang", "String"),
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("String"),
+                internal_name: Arc::from("java/lang/String"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("substring"),
+                        params: MethodParams::from([("I", "beginIndex")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/String;")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("subSequence"),
+                        params: MethodParams::from([("I", "beginIndex"), ("I", "endIndex")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/CharSequence;")),
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
             make_class("java/lang", "Integer"),
+            make_class("java/lang", "CharSequence"),
             make_class("java/lang", "System"),
-            make_class("java/util/function", "Function"),
-            make_class("java/util/function", "BiFunction"),
-            make_class("java/util/function", "Runnable"),
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("StringBuilder"),
+                internal_name: Arc::from("java/lang/StringBuilder"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("append"),
+                    params: MethodParams::from([("Ljava/lang/String;", "str")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("Ljava/lang/StringBuilder;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("Function"),
+                internal_name: Arc::from("java/util/function/Function"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("apply"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TT;)TR;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("BiFunction"),
+                internal_name: Arc::from("java/util/function/BiFunction"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("apply"),
+                    params: MethodParams::from([
+                        ("Ljava/lang/Object;", "t"),
+                        ("Ljava/lang/Object;", "u"),
+                    ]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TT;TU;)TR;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<T:Ljava/lang/Object;U:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("Consumer"),
+                internal_name: Arc::from("java/util/function/Consumer"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("accept"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TT;)V")),
+                    return_type: Some(Arc::from("V")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("Runnable"),
+                internal_name: Arc::from("java/util/function/Runnable"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("run"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("()V")),
+                    return_type: Some(Arc::from("V")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
         ]);
         idx
     }
@@ -911,6 +1131,213 @@ mod tests {
 
         let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
         assert!(labels.iter().any(|l| l == "System"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_single_param_typed_member_completion_from_function_sam() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+            class T {
+                void m() {
+                    Function<String, Integer> f = s -> s.subs|;
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected lambda param s");
+        assert_eq!(s.type_internal.erased_internal(), "java/lang/String");
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_multi_param_typed_member_completion_from_bifunction_sam() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.BiFunction;
+            class T {
+                void m() {
+                    BiFunction<String, String, Integer> f = (left, right) -> left.subs|;
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let left = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "left")
+            .expect("expected lambda param left");
+        let right = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "right")
+            .expect("expected lambda param right");
+        assert_eq!(left.type_internal.erased_internal(), "java/lang/String");
+        assert_eq!(right.type_internal.erased_internal(), "java/lang/String");
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_single_param_typed_member_completion_from_consumer_sam() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Consumer;
+            class T {
+                void m() {
+                    Consumer<StringBuilder> c = sb -> sb.appe|;
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let sb = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "sb")
+            .expect("expected lambda param sb");
+        assert_eq!(sb.type_internal.erased_internal(), "java/lang/StringBuilder");
+        assert!(labels.iter().any(|l| l == "append"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_block_body_typed_member_completion_from_consumer_sam() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Consumer;
+            class T {
+                void m() {
+                    Consumer<String> c = value -> {
+                        value.subs|
+                    };
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let value = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "value")
+            .expect("expected lambda param value");
+        assert_eq!(value.type_internal.erased_internal(), "java/lang/String");
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_single_param_typed_member_completion_from_function_sam_incomplete_initializer() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+            class T {
+                void m() {
+                    Function<String, Integer> f = s -> s.subs/*caret*/
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected lambda param s");
+        assert_eq!(ctx.active_lambda_param_names, vec![Arc::from("s")]);
+        assert_eq!(s.type_internal.erased_internal(), "java/lang/String");
+        assert_eq!(
+            ctx.typed_expr_ctx
+                .as_ref()
+                .and_then(|t| t.expected_type.as_ref())
+                .map(|e| e.ty.erased_internal()),
+            Some("java/util/function/Function")
+        );
+        assert_eq!(
+            ctx.expected_sam
+                .as_ref()
+                .map(|sam| sam.param_types.iter().map(|t| t.erased_internal()).collect::<Vec<_>>()),
+            Some(vec!["java/lang/String"])
+        );
+        assert_eq!(
+            ctx.location
+                .member_access_receiver_semantic_type()
+                .map(|t| t.erased_internal()),
+            Some("java/lang/String")
+        );
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_block_body_typed_member_completion_from_consumer_sam_incomplete_statement() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Consumer;
+            class T {
+                void m() {
+                    Consumer<String> c = value -> {
+                        value.subs/*caret*/
+                    };
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let value = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "value")
+            .expect("expected lambda param value");
+        assert_eq!(ctx.active_lambda_param_names, vec![Arc::from("value")]);
+        assert_eq!(value.type_internal.erased_internal(), "java/lang/String");
+        assert_eq!(
+            ctx.location
+                .member_access_receiver_semantic_type()
+                .map(|t| t.erased_internal()),
+            Some("java/lang/String")
+        );
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_lambda_falls_back_to_name_only_when_expected_type_is_not_functional() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+                void m() {
+                    Object o = s -> s.subs|;
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected lambda param s");
+        assert_eq!(s.type_internal.erased_internal(), "unknown");
+        assert!(
+            !labels.iter().any(|l| l == "substring"),
+            "non-functional target must not fabricate String members: {labels:?}"
+        );
     }
 
     #[test]
