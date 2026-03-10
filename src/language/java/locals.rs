@@ -71,7 +71,8 @@ pub fn extract_locals_with_type_ctx(
 
             let declarator = name_node.parent()?; // variable_declarator
             let decl = declarator.parent()?; // local_variable_declaration
-            let visibility_scope = local_visibility_scope(decl)?;
+            let visibility_scope =
+                local_visibility_scope(decl).unwrap_or_else(|| fallback_visibility_scope(ctx.offset));
             if !is_visible_local_declaration_before_cursor(ctx.offset, name_node, declarator, decl)
                 || !scope_contains_offset(visibility_scope, ctx.offset)
             {
@@ -483,7 +484,8 @@ fn collect_locals_in_errors(
                         }
                         let declarator = name_node.parent()?;
                         let decl = declarator.parent()?;
-                        let visibility_scope = local_visibility_scope(decl)?;
+                        let visibility_scope = local_visibility_scope(decl)
+                            .unwrap_or_else(|| fallback_visibility_scope(ctx.offset));
                         if !is_visible_local_declaration_before_cursor(
                             ctx.offset, name_node, declarator, decl,
                         ) || !scope_contains_offset(visibility_scope, ctx.offset)
@@ -935,16 +937,13 @@ mod tests {
 
     #[test]
     fn test_locals_inside_error_nodes() {
-        // 针对 extract_locals_from_error_nodes 的测试
-        // 这种情况通常发生在极其破碎的代码结构中，例如 try-catch 写了一半
-        // 这个函数目前在 extract_locals 中没有被直接调用（原代码可能有，或者被移除了）
-        // 但我们仍然应该测试它的逻辑正确性，以便将来集成
+        // Recovery should keep locals from an open malformed block visible.
         let src = indoc::indoc! {r#"
         class A {
             void f() {
                 try {
                     String insideError = "ok";
-                } catch (
+                    call(
                 // cursor
             }
         }
@@ -952,13 +951,11 @@ mod tests {
         let offset = src.find("// cursor").unwrap();
         let (ctx, tree) = setup(src, offset);
 
-        // 我们直接调用 extract_locals_from_error_nodes 来测试私有/crate私有逻辑
-        // 因为 tree-sitter 可能会把整个 try-catch 块标记为 ERROR
         let vars = extract_locals_from_error_nodes(&ctx, tree.root_node(), None);
 
         assert!(
             vars.iter().any(|v| v.local.name.as_ref() == "insideError"),
-            "Should extract locals deeply nested inside ERROR nodes"
+            "Should recover locals from an open malformed block"
         );
     }
 
@@ -1029,14 +1026,13 @@ mod tests {
 
     #[test]
     fn test_locals_from_error_nodes_are_included() {
-        // 验证 extract_locals_from_error_nodes 确实被 extract_locals 调用了
-        // 使用一个严重损坏的方法体，其中局部变量会落入 ERROR 节点
+        // The unified extractor should include recoverable locals from an open malformed block.
         let src = indoc::indoc! {r#"
     class A {
         void f() {
             try {
                 String trapped = "value";
-            } catch (
+                call(
             // cursor
         }
     }
@@ -1045,12 +1041,11 @@ mod tests {
         let (ctx, tree) = setup(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
-        // 通过 extract_locals 的统一入口调用，而非直接调用私有函数
         let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
 
         assert!(
             vars.iter().any(|v| v.name.as_ref() == "trapped"),
-            "extract_locals should include vars from ERROR nodes via extract_locals_from_error_nodes. \
+            "extract_locals should include recoverable vars from ERROR nodes. \
          Found: {:?}",
             vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
         );

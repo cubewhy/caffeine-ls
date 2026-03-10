@@ -4,6 +4,7 @@ use tree_sitter::{Node, Query};
 
 use crate::language::{
     java::JavaContextExtractor,
+    java::utils::is_in_name_position,
     ts_utils::{capture_text, run_query},
 };
 
@@ -184,7 +185,9 @@ pub(crate) fn is_cursor_in_class_member_position(cursor_node: Option<Node>) -> b
             break;
         }
         if is_executable_or_nested_body_context(node.kind()) {
-            return false;
+            if !is_member_declaration_name_context(cursor, node, type_body) {
+                return false;
+            }
         }
         current = node.parent();
     }
@@ -206,6 +209,37 @@ pub(crate) fn is_cursor_in_class_member_position(cursor_node: Option<Node>) -> b
     }
 
     true
+}
+
+fn is_member_declaration_name_context(cursor: Node, decl: Node, type_body: Node) -> bool {
+    if decl.parent().map(|p| p.id()) != Some(type_body.id()) {
+        return false;
+    }
+
+    match decl.kind() {
+        "method_declaration"
+        | "constructor_declaration"
+        | "class_declaration"
+        | "interface_declaration"
+        | "enum_declaration"
+        | "record_declaration"
+        | "annotation_type_declaration" => decl
+            .child_by_field_name("name")
+            .is_some_and(|name| node_contains(name, cursor)),
+        "field_declaration" => is_in_name_position(cursor, decl),
+        _ => false,
+    }
+}
+
+fn node_contains(container: Node, target: Node) -> bool {
+    let mut current = Some(target);
+    while let Some(node) = current {
+        if node.id() == container.id() {
+            return true;
+        }
+        current = node.parent();
+    }
+    false
 }
 
 fn find_nearest_type_body(start: Node) -> Option<Node> {
