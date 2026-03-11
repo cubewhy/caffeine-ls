@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::completion::parser::parse_chain_from_expr;
 use crate::index::IndexView;
+use crate::language::java::intrinsics::access::class_literal_result_type;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::LocalVar;
 use crate::semantic::context::SamSignature;
@@ -184,6 +185,9 @@ fn resolve_ast_node_type(
         "cast_expression" => {
             resolve_cast_expression_type(node, bytes, enclosing_internal, type_ctx, view)
         }
+        "class_literal" => {
+            resolve_class_literal_expression_type(node, bytes, enclosing_internal, type_ctx, view)
+        }
         "assignment_expression" => resolve_assignment_expression_type(
             node,
             bytes,
@@ -259,6 +263,74 @@ fn resolve_ast_node_type(
         ),
         _ => None,
     }
+}
+
+fn resolve_class_literal_expression_type(
+    node: Node,
+    bytes: &[u8],
+    enclosing_internal: Option<&Arc<str>>,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let operand_node = class_literal_operand_node(node)?;
+    if !is_legal_class_literal_operand_node(operand_node) {
+        return None;
+    }
+
+    let operand_text = operand_node.utf8_text(bytes).ok()?.trim();
+    let operand = resolve_source_type_name(operand_text, enclosing_internal, type_ctx, view)?;
+    if operand.has_generics() {
+        return None;
+    }
+
+    Some(class_literal_result_type(view, operand))
+}
+
+fn class_literal_operand_node(node: Node) -> Option<Node> {
+    node.child_by_field_name("type").or_else(|| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor)
+            .find(|child| child.kind() != "identifier")
+    })
+}
+
+fn is_legal_class_literal_operand_node(node: Node) -> bool {
+    match node.kind() {
+        "type_identifier"
+        | "scoped_type_identifier"
+        | "integral_type"
+        | "floating_point_type"
+        | "boolean_type"
+        | "void_type" => true,
+        "array_type" => array_type_is_legal_class_literal_operand(node),
+        "generic_type" => false,
+        _ => false,
+    }
+}
+
+fn array_type_is_legal_class_literal_operand(node: Node) -> bool {
+    if contains_parameterized_type_arguments(node) {
+        return false;
+    }
+
+    let Some(element) = node
+        .child_by_field_name("element")
+        .or_else(|| node.child_by_field_name("type"))
+        .or_else(|| first_named_child(node))
+    else {
+        return false;
+    };
+
+    is_legal_class_literal_operand_node(element)
+}
+
+fn contains_parameterized_type_arguments(node: Node) -> bool {
+    if node.kind() == "generic_type" {
+        return true;
+    }
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .any(contains_parameterized_type_arguments)
 }
 
 fn resolve_lambda_expression_type(
@@ -989,7 +1061,10 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, IndexView, MethodParams, MethodSummary, ModuleId,
         WorkspaceIndex,
     };
+    use crate::language::java::completion_context::ContextEnricher;
+    use crate::semantic::context::JavaIntrinsicAccessKind;
     use crate::semantic::context::SamSignature;
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
 
     fn root_scope() -> IndexScope {
@@ -1000,28 +1075,130 @@ mod tests {
 
     fn make_index() -> WorkspaceIndex {
         let idx = WorkspaceIndex::new();
-        idx.add_classes(vec![ClassMetadata {
-            package: Some(Arc::from("org/cubewhy")),
-            name: Arc::from("Main"),
-            internal_name: Arc::from("org/cubewhy/Main"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![MethodSummary {
-                name: Arc::from("getInt"),
-                params: MethodParams::empty(),
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Main"),
+                internal_name: Arc::from("org/cubewhy/Main"),
+                super_name: None,
+                interfaces: vec![],
                 annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("getInt"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                }],
+                fields: vec![],
                 access_flags: ACC_PUBLIC,
-                is_synthetic: false,
                 generic_signature: None,
-                return_type: Some(Arc::from("I")),
-            }],
-            fields: vec![],
-            access_flags: ACC_PUBLIC,
-            generic_signature: None,
-            inner_class_of: None,
-            origin: ClassOrigin::Unknown,
-        }]);
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Class"),
+                internal_name: Arc::from("java/lang/Class"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("String"),
+                internal_name: Arc::from("java/lang/String"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("Map"),
+                internal_name: Arc::from("java/util/Map"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from(
+                    "<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Outer"),
+                internal_name: Arc::from("org/cubewhy/Outer"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Inner"),
+                internal_name: Arc::from("org/cubewhy/Outer$Inner"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Outer")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
         idx
     }
 
@@ -1231,5 +1408,193 @@ mod tests {
         let ty = resolve_expression_type("s -> s.length()", &[], None, &resolver, &type_ctx, &view);
 
         assert!(ty.is_none(), "lambda without target should stay unresolved");
+    }
+
+    #[test]
+    fn test_class_literal_string_type() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let ty = resolve_expression_type(
+            "String.class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("class literal type");
+
+        assert_eq!(
+            ty,
+            TypeName::with_args("java/lang/Class", vec![TypeName::new("java/lang/String")])
+        );
+    }
+
+    #[test]
+    fn test_class_literal_nested_type() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let ty = resolve_expression_type(
+            "Outer.Inner.class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("nested class literal type");
+
+        assert_eq!(
+            ty,
+            TypeName::with_args(
+                "java/lang/Class",
+                vec![TypeName::new("org/cubewhy/Outer$Inner")]
+            )
+        );
+    }
+
+    #[test]
+    fn test_class_literal_array_type() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let ty = resolve_expression_type(
+            "String[].class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("array class literal type");
+
+        assert_eq!(
+            ty,
+            TypeName::with_args(
+                "java/lang/Class",
+                vec![TypeName::new("java/lang/String").with_array_dims(1)]
+            )
+        );
+    }
+
+    #[test]
+    fn test_class_literal_primitive_and_void_types() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let int_ty = resolve_expression_type(
+            "int.class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("primitive class literal type");
+        let void_ty = resolve_expression_type(
+            "void.class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("void class literal type");
+
+        assert_eq!(
+            int_ty,
+            TypeName::with_args("java/lang/Class", vec![TypeName::new("int")])
+        );
+        assert_eq!(
+            void_ty,
+            TypeName::with_args("java/lang/Class", vec![TypeName::new("void")])
+        );
+    }
+
+    #[test]
+    fn test_class_literal_rejects_parameterized_operands() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        assert_eq!(
+            resolve_expression_type(
+                "List<String>.class",
+                &[],
+                Some(&Arc::from("org/cubewhy/Main")),
+                &resolver,
+                &type_ctx,
+                &view,
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_expression_type(
+                "Map<String, Integer>.class",
+                &[],
+                Some(&Arc::from("org/cubewhy/Main")),
+                &resolver,
+                &type_ctx,
+                &view,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_class_literal_classification_feeds_typed_expression_result() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "class".to_string(),
+                receiver_expr: "String".to_string(),
+                arguments: None,
+            },
+            "class",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/Main")),
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.lang.*".into()],
+        )
+        .with_extension(Arc::new(type_ctx.clone()));
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert_eq!(
+            ctx.java_intrinsic_access.as_ref().map(|a| a.kind),
+            Some(JavaIntrinsicAccessKind::ClassLiteral)
+        );
+
+        let ty = resolve_expression_type(
+            "String.class",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("typed class literal");
+
+        assert_eq!(
+            ty,
+            TypeName::with_args("java/lang/Class", vec![TypeName::new("java/lang/String")])
+        );
     }
 }

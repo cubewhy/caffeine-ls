@@ -5,10 +5,12 @@ use crate::semantic::context::{
     SemanticContext,
 };
 use crate::semantic::types::symbol_resolver::SymbolResolver;
+use crate::semantic::types::type_name::TypeName;
 
 const CLASS_LITERAL_KEYWORD: &str = "class";
 const ARRAY_LENGTH_NAME: &str = "length";
 const OBJECT_GET_CLASS_NAME: &str = "getClass";
+const JAVA_LANG_CLASS_INTERNAL: &str = "java/lang/Class";
 
 pub fn classify_intrinsic_access(
     ctx: &SemanticContext,
@@ -68,6 +70,18 @@ pub fn classify_intrinsic_access(
 
 pub fn is_class_literal_prefix(prefix: &str) -> bool {
     CLASS_LITERAL_KEYWORD.starts_with(prefix)
+}
+
+pub fn class_literal_result_type(view: &IndexView, operand: TypeName) -> TypeName {
+    // Source-level typing keeps the class-literal operand precise, including arrays,
+    // primitives, and `void`. If `java.lang.Class` is unavailable in the index, keep
+    // the stable JDK internal name instead of degrading to raw `Class`.
+    let class_internal = if view.get_class(JAVA_LANG_CLASS_INTERNAL).is_some() {
+        JAVA_LANG_CLASS_INTERNAL
+    } else {
+        JAVA_LANG_CLASS_INTERNAL
+    };
+    TypeName::with_args(class_internal, vec![operand])
 }
 
 fn class_literal_access_for_prefix(member_prefix: &str) -> Option<JavaIntrinsicAccess> {
