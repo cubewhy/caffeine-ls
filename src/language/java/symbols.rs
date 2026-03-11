@@ -66,6 +66,7 @@ fn collect_type_members<'a>(body: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymb
                     out.push(sym);
                 }
             }
+            "enum_body_declarations" => out.extend(collect_type_members(child, bytes)),
             "field_declaration" => out.extend(parse_field_symbols(child, bytes)),
             "ERROR" => out.extend(collect_type_members(child, bytes)),
             _ => {}

@@ -199,7 +199,9 @@ impl StaticMemberProvider {
         // Only static members for Cls.xxx access
         let scored = fuzzy::fuzzy_filter_sort(
             member_prefix,
-            ctx.current_class_members.values().filter(|m| m.is_static()),
+            ctx.current_class_members
+                .values()
+                .filter(|m| !m.is_constructor_like() && m.is_static()),
             |m| m.name(),
         );
 
@@ -1033,5 +1035,37 @@ mod tests {
         let results = StaticMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
         let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(labels.contains(&"BoxV"), "{:?}", labels);
+    }
+
+    #[test]
+    fn test_enum_constants_appear_in_static_member_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(crate::language::java::class_parser::parse_java_source(
+            "enum Color { RED, GREEN, BLUE }",
+            ClassOrigin::Unknown,
+            None,
+        ));
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("Color"),
+                member_prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let results = StaticMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let labels: Vec<&str> = results
+            .iter()
+            .map(|candidate| candidate.label.as_ref())
+            .collect();
+        assert!(labels.contains(&"RED"), "labels={labels:?}");
+        assert!(labels.contains(&"GREEN"), "labels={labels:?}");
+        assert!(labels.contains(&"BLUE"), "labels={labels:?}");
     }
 }

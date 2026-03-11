@@ -51,6 +51,10 @@ impl CurrentClassMember {
     pub fn is_field(&self) -> bool {
         matches!(self, Self::Field(_))
     }
+
+    pub fn is_constructor_like(&self) -> bool {
+        matches!(self.name().as_ref(), "<init>" | "<clinit>")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -479,7 +483,11 @@ impl SemanticContext {
         mut self,
         members: impl IntoIterator<Item = CurrentClassMember>,
     ) -> Self {
-        self.current_class_members = members.into_iter().map(|m| (m.name(), m)).collect();
+        self.current_class_members = members
+            .into_iter()
+            .filter(|member| !member.is_constructor_like())
+            .map(|member| (member.name(), member))
+            .collect();
         self
     }
 

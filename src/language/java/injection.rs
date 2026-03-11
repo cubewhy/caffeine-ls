@@ -144,12 +144,13 @@ fn has_dotted_member_like_tail(ctx: &JavaContextExtractor) -> bool {
     };
     let recv = tail[..dot].trim();
     let member = tail[dot + 1..].trim();
-    if recv.is_empty() || member.is_empty() {
+    if recv.is_empty() {
         return false;
     }
-    if !member
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    if !member.is_empty()
+        && !member
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
     {
         return false;
     }

@@ -15,6 +15,7 @@ use crate::{
                 extract_class_members_from_body, extract_javadoc, parse_annotations_in_node,
             },
             scope::extract_package,
+            synthetic::{self, SyntheticDefinitionKind},
             utils::parse_java_modifiers,
         },
         ts_utils::{capture_text, run_query},
@@ -121,6 +122,16 @@ fn parse_java_class(
             }
         }
     }
+    let synthetic = synthetic::synthesize_for_type(
+        &ctx,
+        node,
+        Some(internal_name.as_ref()),
+        type_ctx,
+        &methods,
+        &fields,
+    );
+    methods.extend(synthetic.methods);
+    fields.extend(synthetic.fields);
     let access_flags = extract_java_access_flags(&ctx, node);
 
     let mut annos = vec![];
@@ -275,7 +286,21 @@ pub fn find_symbol_range(
 
     let target_node = if let Some(m_name) = member_name {
         let body = class_node.child_by_field_name("body")?;
-        find_member_node(&ctx, body, m_name, descriptor, &type_ctx)?
+        find_member_node(&ctx, body, m_name, descriptor, &type_ctx).or_else(|| {
+            synthetic::resolve_synthetic_definition(
+                &ctx,
+                class_node,
+                &type_ctx,
+                Some(target_internal),
+                if descriptor.is_some() {
+                    SyntheticDefinitionKind::Method
+                } else {
+                    SyntheticDefinitionKind::Field
+                },
+                m_name,
+                descriptor,
+            )
+        })?
     } else {
         class_node
     };
@@ -524,6 +549,10 @@ fn find_member_node<'a>(
             if text.contains(name) {
                 return Some(child);
             }
+        } else if matches!(child.kind(), "enum_body_declarations" | "ERROR")
+            && let Some(found) = find_member_node(ctx, child, name, descriptor, type_ctx)
+        {
+            return Some(found);
         }
     }
     None
@@ -1326,5 +1355,67 @@ public @interface Ann {}
 
         let ann = classes.iter().find(|x| x.name.as_ref() == "Ann").unwrap();
         assert!(ann.access_flags & rust_asm::constants::ACC_SUPER == 0);
+    }
+
+    #[test]
+    fn test_record_synthetic_members_are_indexed() {
+        let src = "record Point(int x, int y) {}";
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let point = classes.iter().find(|c| c.name.as_ref() == "Point").unwrap();
+        assert!(
+            point
+                .methods
+                .iter()
+                .any(|method| method.name.as_ref() == "x" && method.desc().as_ref() == "()I")
+        );
+        assert!(
+            point
+                .methods
+                .iter()
+                .any(|method| method.name.as_ref() == "y" && method.desc().as_ref() == "()I")
+        );
+        assert!(point
+            .methods
+            .iter()
+            .any(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V"));
+    }
+
+    #[test]
+    fn test_enum_constants_are_indexed_as_fields() {
+        let src = "enum Color { RED, GREEN, BLUE }";
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let color = classes.iter().find(|c| c.name.as_ref() == "Color").unwrap();
+        let names: Vec<&str> = color
+            .fields
+            .iter()
+            .map(|field| field.name.as_ref())
+            .collect();
+        assert_eq!(names, vec!["RED", "GREEN", "BLUE"]);
+    }
+
+    #[test]
+    fn test_find_symbol_range_resolves_record_accessor_to_component() {
+        let src = "record Point(int x, int y) {}";
+        let idx = crate::index::WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        let view = idx.view(crate::index::IndexScope {
+            module: crate::index::ModuleId::ROOT,
+        });
+        let range = super::find_symbol_range(src, "Point", Some("x"), Some("()I"), &view).unwrap();
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 17);
+    }
+
+    #[test]
+    fn test_find_symbol_range_resolves_enum_constant_to_constant_declaration() {
+        let src = "enum Color { RED, GREEN, BLUE }";
+        let idx = crate::index::WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        let view = idx.view(crate::index::IndexScope {
+            module: crate::index::ModuleId::ROOT,
+        });
+        let range = super::find_symbol_range(src, "Color", Some("GREEN"), None, &view).unwrap();
+        assert_eq!(range.start.line, 0);
+        assert_eq!(range.start.character, 18);
     }
 }

@@ -107,7 +107,7 @@ pub fn extract_locals_with_type_ctx(
                 offset = ctx.offset,
                 "extracted local var"
             );
-            let raw_ty = ty.trim();
+            let raw_ty = recovered_declared_type_text(ctx, decl, ty_node)?.to_string();
 
             if raw_ty == "var" {
                 return Some(RankedLocal {
@@ -124,7 +124,7 @@ pub fn extract_locals_with_type_ctx(
             Some(RankedLocal {
                 local: LocalVar {
                     name: Arc::from(name),
-                    type_internal: resolve_declared_source_type(raw_ty, type_ctx),
+                    type_internal: resolve_declared_source_type(&raw_ty, type_ctx),
                     init_expr: None,
                 },
                 declaration_start: name_node.start_byte(),
@@ -492,9 +492,8 @@ fn collect_locals_in_errors(
                         {
                             return None;
                         }
-                        let ty = ty_node.utf8_text(ctx.bytes()).ok()?;
                         let name = name_node.utf8_text(ctx.bytes()).ok()?;
-                        let raw_ty = ty.trim();
+                        let raw_ty = recovered_declared_type_text(ctx, decl, ty_node)?.to_string();
 
                         if raw_ty == "var" {
                             return Some(RankedLocal {
@@ -511,7 +510,7 @@ fn collect_locals_in_errors(
                         Some(RankedLocal {
                             local: LocalVar {
                                 name: Arc::from(name),
-                                type_internal: resolve_declared_source_type(raw_ty, type_ctx),
+                                type_internal: resolve_declared_source_type(&raw_ty, type_ctx),
                                 init_expr: None,
                             },
                             declaration_start: name_node.start_byte(),
@@ -541,6 +540,81 @@ fn is_visible_local_declaration_before_cursor(
     name_node.start_byte() < offset
         && declarator.start_byte() < offset
         && decl.start_byte() < offset
+}
+
+fn is_plausible_local_type_text(raw_ty: &str) -> bool {
+    let trimmed = raw_ty.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed.contains(';')
+        || trimmed.contains("//")
+        || trimmed.contains("/*")
+        || trimmed.contains('=')
+        || trimmed.contains('{')
+        || trimmed.contains('}')
+    {
+        return false;
+    }
+    true
+}
+
+fn recovered_declared_type_text<'a>(
+    ctx: &'a JavaContextExtractor,
+    decl: Node<'a>,
+    ty_node: Node<'a>,
+) -> Option<&'a str> {
+    let raw_ty = ty_node.utf8_text(ctx.bytes()).ok()?.trim();
+    if is_plausible_local_type_text(raw_ty) {
+        return Some(raw_ty);
+    }
+    recover_type_text_from_decl(ctx, decl)
+}
+
+fn recover_type_text_from_decl<'a>(
+    ctx: &'a JavaContextExtractor,
+    decl: Node<'a>,
+) -> Option<&'a str> {
+    let declarator = decl.child_by_field_name("declarator")?;
+    let boundary = declarator.start_byte();
+    let mut best: Option<Node<'a>> = None;
+    collect_last_type_like_before(decl, boundary, &mut best);
+    best.and_then(|node| node.utf8_text(ctx.bytes()).ok().map(str::trim))
+        .filter(|text| is_plausible_local_type_text(text))
+}
+
+fn collect_last_type_like_before<'a>(node: Node<'a>, boundary: usize, best: &mut Option<Node<'a>>) {
+    if node.end_byte() > boundary {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            collect_last_type_like_before(child, boundary, best);
+        }
+        return;
+    }
+
+    if is_type_like_node(node.kind()) {
+        *best = Some(node);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_last_type_like_before(child, boundary, best);
+    }
+}
+
+fn is_type_like_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "type_identifier"
+            | "scoped_type_identifier"
+            | "integral_type"
+            | "floating_point_type"
+            | "boolean_type"
+            | "void_type"
+            | "array_type"
+            | "generic_type"
+            | "annotated_type"
+    )
 }
 
 fn local_visibility_scope(decl: Node) -> Option<ScopeRange> {
@@ -1189,6 +1263,40 @@ mod tests {
             vars.iter().all(|v| v.name.as_ref() != "()"),
             "zero-arg lambdas must not synthesize fake parameter locals: {:?}",
             vars.iter().map(|v| v.name.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_broken_member_access_does_not_pollute_following_local_type() {
+        let src = indoc::indoc! {r#"
+        class T {
+            void m() {
+                RandomEnum.B.;
+
+                RandomRecord rc;
+                rc.
+            }
+        }
+        "#};
+        let offset = src.find("rc.\n").unwrap() + 2;
+        let (ctx, tree) = setup(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+        let rc = vars
+            .iter()
+            .find(|var| var.name.as_ref() == "rc")
+            .expect("rc local should be recovered");
+        assert_eq!(
+            rc.type_internal.to_internal_with_generics(),
+            "RandomRecord",
+            "vars={:?}",
+            vars.iter()
+                .map(|var| format!(
+                    "{}:{}",
+                    var.name,
+                    var.type_internal.to_internal_with_generics()
+                ))
+                .collect::<Vec<_>>()
         );
     }
 }

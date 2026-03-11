@@ -35,6 +35,7 @@ pub mod members;
 pub mod render;
 pub mod scope;
 pub mod symbols;
+pub mod synthetic;
 pub mod type_ctx;
 pub mod utils;
 
@@ -410,10 +411,14 @@ impl JavaContextExtractor {
         let is_class_member_position =
             scope::is_cursor_in_class_member_position(semantic_cursor_node);
         let current_class_members = semantic_cursor_node
-            .and_then(|n| utils::find_ancestor(n, "class_declaration"))
-            .and_then(|cls| cls.child_by_field_name("body"))
-            .map(|body| {
-                members::extract_class_members_from_body(semantic_extractor, body, &type_ctx)
+            .and_then(scope::nearest_type_declaration)
+            .map(|decl| {
+                synthetic::extract_type_members_with_synthetics(
+                    semantic_extractor,
+                    decl,
+                    &type_ctx,
+                    enclosing_internal_name.as_deref(),
+                )
             })
             .or_else(|| {
                 // Fallback: find top-level ERROR node anywhere under program
@@ -7320,6 +7325,136 @@ mod tests {
             &view,
         );
         assert!(labels.iter().any(|l| l == "getV"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_record_this_completion_hides_init() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                record R(int a, int b) {
+                    void m() {
+                        this./*caret*/
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(!labels.iter().any(|label| label == "<init>"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_incomplete_enum_constant_trailing_dot_completion_recovers_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(
+            indoc::indoc! {r#"
+                enum RandomEnum {
+                    B;
+
+                    public void test() {}
+                }
+            "#},
+            ClassOrigin::Unknown,
+            None,
+        ));
+        let view = idx.view(root_scope());
+        let (ctx, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                class T {
+                    void m() {
+                        RandomEnum.B./*caret*/
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            matches!(
+                ctx.location,
+                CursorLocation::MemberAccess { ref receiver_expr, ref member_prefix, .. }
+                if receiver_expr == "RandomEnum.B" && member_prefix.is_empty()
+            ),
+            "location={:?}",
+            ctx.location
+        );
+        assert!(labels.iter().any(|label| label == "test"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_incomplete_record_local_trailing_dot_completion_recovers_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(
+            "record RandomRecord(int value) { void test() {} }",
+            ClassOrigin::Unknown,
+            None,
+        ));
+        let view = idx.view(root_scope());
+        let (ctx, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                class T {
+                    void m() {
+                        RandomRecord rc;
+                        rc./*caret*/
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            matches!(
+                ctx.location,
+                CursorLocation::MemberAccess { ref receiver_expr, ref member_prefix, .. }
+                if receiver_expr == "rc" && member_prefix.is_empty()
+            ),
+            "location={:?}",
+            ctx.location
+        );
+        assert!(labels.iter().any(|label| label == "test"), "{labels:?}");
+        assert!(labels.iter().any(|label| label == "value"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_broken_enum_member_access_does_not_corrupt_following_record_local() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(
+            indoc::indoc! {r#"
+                enum RandomEnum {
+                    B;
+
+                    public void test() {}
+                }
+            "#},
+            ClassOrigin::Unknown,
+            None,
+        ));
+        idx.add_classes(parse_java_source(
+            "record RandomRecord(int value) { void test() {} }",
+            ClassOrigin::Unknown,
+            None,
+        ));
+        let view = idx.view(root_scope());
+        let (ctx, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                class T {
+                    void m() {
+                        RandomEnum.B.;
+
+                        RandomRecord rc;
+                        rc./*caret*/
+                    }
+                }
+            "#},
+            &view,
+        );
+        let rc = ctx
+            .local_variables
+            .iter()
+            .find(|local| local.name.as_ref() == "rc")
+            .expect("rc local");
+        assert_eq!(rc.type_internal.to_internal_with_generics(), "RandomRecord");
+        assert!(labels.iter().any(|label| label == "test"), "{labels:?}");
+        assert!(labels.iter().any(|label| label == "value"), "{labels:?}");
     }
 
     #[test]

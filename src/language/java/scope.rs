@@ -96,7 +96,7 @@ pub fn extract_enclosing_class(
     ctx: &JavaContextExtractor,
     cursor_node: Option<Node>,
 ) -> Option<Arc<str>> {
-    let class_node = cursor_node.and_then(find_nearest_type_declaration)?;
+    let class_node = cursor_node.and_then(nearest_type_declaration)?;
     let name_node = class_node.child_by_field_name("name")?;
     Some(Arc::from(ctx.node_text(name_node)))
 }
@@ -143,7 +143,7 @@ pub(crate) fn extract_enclosing_internal_name(
     cursor_node: Option<Node>,
     enclosing_package: Option<&Arc<str>>,
 ) -> Option<Arc<str>> {
-    let decl = cursor_node.and_then(find_nearest_type_declaration)?;
+    let decl = cursor_node.and_then(nearest_type_declaration)?;
 
     let mut names: Vec<String> = Vec::new();
     let mut current = Some(decl);
@@ -302,7 +302,7 @@ fn find_nearest_type_body(start: Node) -> Option<Node> {
     None
 }
 
-fn find_nearest_type_declaration(start: Node) -> Option<Node> {
+pub(crate) fn nearest_type_declaration(start: Node) -> Option<Node> {
     let mut current = Some(start);
     while let Some(node) = current {
         if is_type_declaration_kind(node.kind()) {

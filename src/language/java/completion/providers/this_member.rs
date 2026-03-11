@@ -54,6 +54,7 @@ impl CompletionProvider for ThisMemberProvider {
             prefix,
             ctx.current_class_members
                 .values()
+                .filter(|m| !m.is_constructor_like())
                 .filter(|m| !in_static || m.is_static()),
             |m| m.name(),
         );

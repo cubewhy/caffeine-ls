@@ -417,9 +417,24 @@ pub fn find_identifier_in_error(error_node: Node) -> Option<Node> {
 pub fn error_has_trailing_dot(error_node: Node, offset: usize) -> bool {
     let mut cursor = error_node.walk();
     let children: Vec<Node> = error_node.children(&mut cursor).collect();
-    children
-        .last()
-        .is_some_and(|n| n.kind() == "." && n.end_byte() <= offset)
+    let visible: Vec<Node> = children
+        .into_iter()
+        .filter(|child| child.start_byte() < offset)
+        .collect();
+    let Some(last) = visible.last() else {
+        return false;
+    };
+    if last.kind() == "." {
+        return last.end_byte() <= offset;
+    }
+    if last.kind() == ";" {
+        return visible
+            .iter()
+            .rev()
+            .nth(1)
+            .is_some_and(|child| child.kind() == "." && child.end_byte() <= offset);
+    }
+    false
 }
 
 pub fn is_in_type_position(id_node: Node, decl_node: Node) -> bool {

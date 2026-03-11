@@ -567,10 +567,13 @@ impl MemberProvider {
     ) -> Vec<CompletionCandidate> {
         let enclosing = ctx.enclosing_internal_name.as_deref().unwrap_or("");
 
-        let scored =
-            fuzzy::fuzzy_filter_sort(member_prefix, ctx.current_class_members.values(), |m| {
-                m.name()
-            });
+        let scored = fuzzy::fuzzy_filter_sort(
+            member_prefix,
+            ctx.current_class_members
+                .values()
+                .filter(|member| !member.is_constructor_like()),
+            |m| m.name(),
+        );
 
         scored
             .into_iter()
@@ -1949,5 +1952,24 @@ mod tests {
                 detail
             )
         );
+    }
+
+    #[test]
+    fn test_record_accessors_appear_in_member_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(crate::language::java::class_parser::parse_java_source(
+            "record Point(int x, int y) {}",
+            ClassOrigin::Unknown,
+            None,
+        ));
+
+        let ctx = ctx_with_type("Point", "");
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let labels: Vec<&str> = results
+            .iter()
+            .map(|candidate| candidate.label.as_ref())
+            .collect();
+        assert!(labels.contains(&"x"), "labels={labels:?}");
+        assert!(labels.contains(&"y"), "labels={labels:?}");
     }
 }

@@ -866,8 +866,23 @@ fn handle_identifier(
                 }
                 return handle_argument_list(ctx, ancestor);
             }
-            // If inside ERROR node, return Unknown to trigger injection path
-            "ERROR" => return (CursorLocation::Unknown, String::new()),
+            // If inside ERROR node, try trailing-dot recovery before falling back to injection.
+            "ERROR" => {
+                if let Some((receiver_expr, member_prefix)) = detect_trailing_dot_member_access(ctx)
+                {
+                    return (
+                        CursorLocation::MemberAccess {
+                            receiver_semantic_type: None,
+                            receiver_type: None,
+                            member_prefix: member_prefix.clone(),
+                            receiver_expr,
+                            arguments: None,
+                        },
+                        member_prefix,
+                    );
+                }
+                return (CursorLocation::Unknown, String::new());
+            }
             "block" | "class_body" | "program" => break,
             _ => {}
         }
@@ -1310,10 +1325,32 @@ fn detect_member_tail_in_misread_local_decl(
     let dot = clean.rfind('.')?;
     let receiver_expr = clean[..dot].trim().to_string();
     let member_prefix = clean[dot + 1..].trim().to_string();
-    if receiver_expr.is_empty() || member_prefix.is_empty() {
+    if receiver_expr.is_empty() {
         return None;
     }
     Some((receiver_expr, member_prefix))
+}
+
+fn detect_trailing_dot_member_access(ctx: &JavaContextExtractor) -> Option<(String, String)> {
+    if ctx.offset == 0 {
+        return None;
+    }
+    let before = strip_sentinel(ctx.byte_slice(0, ctx.offset));
+    let trimmed = before.trim_end();
+    if !trimmed.ends_with('.') {
+        return None;
+    }
+    let tail = trimmed
+        .rsplit(['\n', ';', '{', '}'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    let dot = tail.rfind('.')?;
+    let receiver_expr = tail[..dot].trim().to_string();
+    if receiver_expr.is_empty() {
+        return None;
+    }
+    Some((receiver_expr, String::new()))
 }
 
 fn argument_index_at_cursor(ctx: &JavaContextExtractor, arg_list: Node) -> usize {
