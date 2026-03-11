@@ -1694,6 +1694,42 @@ mod tests {
             ),
             None
         );
+        assert_eq!(
+            resolve_expression_type(
+                "Map.Entry<String, String>.class",
+                &[],
+                Some(&Arc::from("org/cubewhy/Main")),
+                &resolver,
+                &type_ctx,
+                &view,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_array_length_call_expression_is_rejected() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let locals = vec![LocalVar {
+            name: Arc::from("s"),
+            type_internal: TypeName::new("java/lang/String").with_array_dims(1),
+            init_expr: None,
+        }];
+
+        assert_eq!(
+            resolve_expression_type(
+                "s.length()",
+                &locals,
+                Some(&Arc::from("org/cubewhy/Main")),
+                &resolver,
+                &type_ctx,
+                &view,
+            ),
+            None
+        );
     }
 
     #[test]

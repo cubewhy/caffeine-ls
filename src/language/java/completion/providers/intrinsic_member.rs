@@ -187,4 +187,14 @@ mod tests {
             out.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
         );
     }
+
+    #[test]
+    fn suggests_class_for_incomplete_class_literal_prefix_on_type_operands() {
+        let (_, out) = complete("class T { void m() { String.cl| } }");
+        assert!(
+            out.iter().any(|c| c.label.as_ref() == "class"),
+            "expected class completion, got {:?}",
+            out.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
 }

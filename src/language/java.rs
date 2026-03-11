@@ -707,7 +707,39 @@ mod tests {
                 origin: ClassOrigin::Unknown,
             },
             make_class("java/lang", "Class"),
-            make_class("java/lang", "Integer"),
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Integer"),
+                internal_name: Arc::from("java/lang/Integer"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("compareTo"),
+                        params: MethodParams::from([("Ljava/lang/Integer;", "other")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("intValue"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
             ClassMetadata {
                 package: Some(Arc::from("java/lang")),
                 name: Arc::from("String"),
@@ -802,6 +834,23 @@ mod tests {
         let engine = CompletionEngine::new();
         let candidates = engine.complete(root_scope(), ctx.clone(), &JavaLanguage, view);
         (ctx, candidates)
+    }
+
+    fn local_candidate_descriptor<'a>(
+        candidates: &'a [CompletionCandidate],
+        label: &str,
+    ) -> Option<&'a str> {
+        candidates.iter().find_map(|candidate| {
+            if candidate.label.as_ref() != label {
+                return None;
+            }
+            match &candidate.kind {
+                crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                    Some(type_descriptor.as_ref())
+                }
+                _ => None,
+            }
+        })
     }
 
     fn statement_labels(ctx: &SemanticContext) -> Vec<(String, StatementLabelTargetKind)> {
@@ -4517,11 +4566,13 @@ mod tests {
         assert!(labels.iter().any(|label| label == "length"), "{labels:?}");
         assert!(labels.iter().any(|label| label == "getClass"), "{labels:?}");
         assert!(
-            !labels.iter().any(|label| label == "substring"),
+            !labels.iter().any(|label| label == "compareTo"),
             "{labels:?}"
         );
-        assert!(!labels.iter().any(|label| label == "size"), "{labels:?}");
-        assert!(!labels.iter().any(|label| label == "isEmpty"), "{labels:?}");
+        assert!(
+            !labels.iter().any(|label| label == "intValue"),
+            "{labels:?}"
+        );
         assert!(!labels.iter().any(|label| label == "stream"), "{labels:?}");
     }
 
@@ -4546,6 +4597,126 @@ mod tests {
             "{labels:?}"
         );
         assert!(!labels.iter().any(|label| label == "stream"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_string_receiver_does_not_expose_array_length_field() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+              void f(String s) {
+                s.|
+              }
+            }
+        "#};
+
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(labels.iter().any(|label| label == "getClass"), "{labels:?}");
+        assert!(!labels.iter().any(|label| label == "length"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_array_member_completion_does_not_offer_class_literal_keyword() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+              void f(String[] s) {
+                s.|
+              }
+            }
+        "#};
+
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(labels.iter().any(|label| label == "length"), "{labels:?}");
+        assert!(labels.iter().any(|label| label == "getClass"), "{labels:?}");
+        assert!(!labels.iter().any(|label| label == "class"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_type_operand_completion_offers_class_but_not_get_class() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+              void f() {
+                String.|
+              }
+            }
+        "#};
+
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(labels.iter().any(|label| label == "class"), "{labels:?}");
+        assert!(
+            !labels.iter().any(|label| label == "getClass"),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_array_length_completion_candidate_is_field_not_method() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+              void f(String[] s) {
+                s.|
+              }
+            }
+        "#};
+
+        let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+        assert!(candidates.iter().any(|candidate| {
+            candidate.label.as_ref() == "length"
+                && matches!(
+                    candidate.kind,
+                    crate::completion::CandidateKind::Field { .. }
+                )
+        }));
+        assert!(!candidates.iter().any(|candidate| {
+            candidate.label.as_ref() == "length"
+                && matches!(
+                    candidate.kind,
+                    crate::completion::CandidateKind::Method { .. }
+                )
+        }));
+    }
+
+    #[test]
+    fn test_array_length_var_inference_materializes_int_for_direct_and_multidimensional_arrays() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+
+        let src_direct = indoc::indoc! {r#"
+            class T {
+              void f(String[] s) {
+                var n = s.length;
+                n|
+              }
+            }
+        "#};
+        let (_ctx_direct, candidates_direct) =
+            ctx_and_candidates_from_marked_source(src_direct, &view);
+        assert_eq!(
+            local_candidate_descriptor(&candidates_direct, "n"),
+            Some("int")
+        );
+
+        let src_multi = indoc::indoc! {r#"
+            class T {
+              void f(String[][] s) {
+                var n = s.length;
+                n|
+              }
+            }
+        "#};
+        let (_ctx_multi, candidates_multi) =
+            ctx_and_candidates_from_marked_source(src_multi, &view);
+        assert_eq!(
+            local_candidate_descriptor(&candidates_multi, "n"),
+            Some("int")
+        );
     }
 
     #[test]
@@ -4580,6 +4751,107 @@ mod tests {
             }
             other => panic!("expected local variable candidate, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_array_get_class_var_inference_materializes_array_returning_call_chains() {
+        let src = indoc::indoc! {r#"
+            class T {
+              Integer[] g() { return null; }
+              void f() {
+                var c = g().getClass();
+                c|
+              }
+            }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![
+            make_class("java/lang", "Class"),
+            make_class("java/lang", "Integer"),
+        ]);
+        let view = idx.view(root_scope());
+        let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+        assert_eq!(
+            local_candidate_descriptor(&candidates, "c"),
+            Some(
+                TypeName::with_args(
+                    "java/lang/Class",
+                    vec![TypeName::new("java/lang/Integer").with_array_dims(1)],
+                )
+                .to_internal_with_generics()
+                .as_str()
+            )
+        );
+    }
+
+    #[test]
+    fn test_array_length_var_inference_materializes_int_for_array_returning_call() {
+        let src = indoc::indoc! {r#"
+            class T {
+              String[] g() { return null; }
+              void f() {
+                var n = g().length;
+                n|
+              }
+            }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+        ]);
+        let view = idx.view(root_scope());
+        let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+        assert_eq!(local_candidate_descriptor(&candidates, "n"), Some("int"));
+    }
+
+    #[test]
+    fn test_class_literal_var_inference_materializes_nested_operands() {
+        let src_nested = indoc::indoc! {r#"
+            class Outer {
+              static class Inner {}
+              void f() {
+                var c = Inner.class;
+                c|
+              }
+            }
+        "#};
+        let idx_nested = WorkspaceIndex::new();
+        idx_nested.add_classes(parse_java_source(src_nested, ClassOrigin::Unknown, None));
+        idx_nested.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "Class"),
+        ]);
+        let view_nested = idx_nested.view(root_scope());
+        let (_ctx_nested, candidates_nested) =
+            ctx_and_candidates_from_marked_source(src_nested, &view_nested);
+        assert_eq!(
+            local_candidate_descriptor(&candidates_nested, "c"),
+            Some(
+                TypeName::with_args("java/lang/Class", vec![TypeName::new("Outer$Inner")],)
+                    .to_internal_with_generics()
+                    .as_str()
+            )
+        );
+    }
+
+    #[test]
+    fn test_completion_recovery_array_prefix_get_class() {
+        let idx = make_array_completion_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            class T {
+              void f() {
+                String[] s = null;
+                s.getC|
+              }
+            }
+        "#};
+
+        let (_ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(labels.iter().any(|label| label == "getClass"), "{labels:?}");
     }
 
     #[test]
