@@ -456,6 +456,7 @@ impl<'idx> TypeResolver<'idx> {
         ty
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn infer_method_type_bindings_shallow(
         &self,
         selected: &MethodSummary,
@@ -535,9 +536,7 @@ impl<'idx> TypeResolver<'idx> {
                 &param_ty_substituted,
                 arg_texts.get(idx).map(|s| s.as_str()),
                 arg_ty,
-                locals,
-                enclosing,
-                qualifier_resolver,
+                EvalContext::new(locals, enclosing).with_qualifier(qualifier_resolver),
                 &return_type_vars,
                 &mut bindings,
                 &mut conflicted,
@@ -550,6 +549,7 @@ impl<'idx> TypeResolver<'idx> {
         bindings
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn bind_return_type_var_from_functional_param(
         &self,
         _method_name: &str,
@@ -557,9 +557,7 @@ impl<'idx> TypeResolver<'idx> {
         param_ty: &JvmType,
         arg_text: Option<&str>,
         arg_ty: Option<&TypeName>,
-        locals: &[LocalVar],
-        enclosing: Option<&Arc<str>>,
-        qualifier_resolver: Option<QualifierResolver>,
+        ctx: EvalContext,
         return_type_vars: &HashSet<String>,
         bindings: &mut HashMap<String, JvmType>,
         conflicted: &mut HashSet<String>,
@@ -586,11 +584,7 @@ impl<'idx> TypeResolver<'idx> {
             .and_then(type_name_to_jvm_type)
             .or_else(|| {
                 arg_text.and_then(|txt| {
-                    self.infer_functional_arg_return_shallow(
-                        txt,
-                        EvalContext::new(locals, enclosing).with_qualifier(qualifier_resolver),
-                        Some(param_ty),
-                    )
+                    self.infer_functional_arg_return_shallow(txt, ctx, Some(param_ty))
                 })
             });
         if let Some(jvm) = inferred {
@@ -1099,6 +1093,7 @@ impl<'idx> TypeResolver<'idx> {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn infer_method_type_bindings_from_non_lambda_args(
         &self,
         method_signature: &str,

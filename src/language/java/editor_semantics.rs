@@ -271,6 +271,7 @@ pub(crate) fn render_type_for_ui(ty: &TypeName, view: &IndexView, ctx: &Semantic
     render::type_name_to_source_style(ty, &ContextualResolver::new(view, ctx))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_method_invocation(
     ctx: &SemanticContext,
     view: &IndexView,
@@ -327,6 +328,7 @@ fn resolve_constructor_invocation(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_selected_call(
     ctx: &SemanticContext,
     view: &IndexView,

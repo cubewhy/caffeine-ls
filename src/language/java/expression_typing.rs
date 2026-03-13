@@ -35,6 +35,7 @@ pub(crate) fn resolve_expression_type(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_expression_type_with_target(
     expr: &str,
     locals: &[LocalVar],
@@ -81,6 +82,7 @@ pub(crate) fn resolve_expression_type_with_target(
     evaluate_chain(&chain, locals, enclosing_internal, resolver, type_ctx, view)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_expression_type_ast(
     expr: &str,
     locals: &[LocalVar],
@@ -1033,7 +1035,7 @@ pub(crate) fn evaluate_chain(
                     if recv_full.is_array() && base_name == "length" {
                         current = Some(TypeName::new("int"));
                     } else {
-                        let (methods, fields) =
+                        let (_methods, fields) =
                             view.collect_inherited_members(recv_full.erased_internal());
 
                         if let Some(f) = fields.iter().find(|f| f.name.as_ref() == base_name) {
@@ -1042,8 +1044,8 @@ pub(crate) fn evaluate_chain(
                             } else {
                                 current = parse_single_type_to_internal(&f.descriptor);
                             }
-                        } else if methods.iter().any(|m| m.name.as_ref() == base_name) {
-                            current = None;
+                        // } else if methods.iter().any(|m| m.name.as_ref() == base_name) {
+                        //     current = None;
                         } else {
                             current = None;
                         }
