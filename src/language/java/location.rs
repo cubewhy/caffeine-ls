@@ -906,13 +906,25 @@ fn handle_identifier(
                 break;
             }
 
-            // ERROR: surface Unknown; injection will handle recovery.
             "ERROR" => {
-                if let Some(p) = ancestor.parent()
-                    && p.kind() == "argument_list"
-                {
-                    return handle_argument_list(ctx, p);
+                if let Some(p) = ancestor.parent() {
+                    if p.kind() == "argument_list" {
+                        return handle_argument_list(ctx, p);
+                    }
                 }
+                // Check if this ERROR looks like an incomplete generic type expression.
+                // e.g., `Function<String, S` → ERROR containing `<` and `,`
+                if error_looks_like_generic_type(ancestor) {
+                    let text = cursor_truncated_text(ctx, node);
+                    let clean = strip_sentinel(&text);
+                    return (
+                        CursorLocation::TypeAnnotation {
+                            prefix: clean.clone(),
+                        },
+                        clean,
+                    );
+                }
+                // ERROR: surface Unknown; injection will handle recovery.
                 return (CursorLocation::Unknown, String::new());
             }
 
@@ -929,6 +941,13 @@ fn handle_identifier(
         },
         clean,
     )
+}
+
+/// Returns true if an ERROR node looks like an incomplete generic type expression,
+/// i.e., it contains a `<` child (opening of type arguments).
+fn error_looks_like_generic_type(error_node: Node) -> bool {
+    let mut wc = error_node.walk();
+    error_node.children(&mut wc).any(|c| c.kind() == "<")
 }
 
 fn handle_identifier_in_local_decl(
