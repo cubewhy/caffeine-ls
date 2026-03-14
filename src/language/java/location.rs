@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use crate::language::java::utils::{
-    find_ancestor, find_string_ancestor, is_comment_kind, is_in_name_position, is_in_type_position,
+use crate::language::java::{
+    completion_context::normalize_top_level_generic_base,
+    utils::{
+        find_ancestor, find_string_ancestor, is_comment_kind, is_in_name_position,
+        is_in_type_position,
+    },
 };
 use tree_sitter::Node;
 
@@ -722,24 +726,6 @@ fn handle_constructor(ctx: &JavaContextExtractor, node: Node) -> (CursorLocation
         },
         class_prefix,
     )
-}
-
-pub(crate) fn normalize_top_level_generic_base(raw: &str) -> &str {
-    let trimmed = raw.trim();
-    let mut angle_depth = 0i32;
-    for (i, c) in trimmed.char_indices() {
-        match c {
-            '<' if angle_depth == 0 => return trimmed[..i].trim_end(),
-            '<' => angle_depth += 1,
-            '>' => {
-                if angle_depth > 0 {
-                    angle_depth -= 1;
-                }
-            }
-            _ => {}
-        }
-    }
-    trimmed
 }
 
 fn handle_identifier(

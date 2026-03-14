@@ -6,8 +6,10 @@ use crate::{
         scorer::AccessFilter,
     },
     index::{IndexScope, IndexView},
-    language::java::completion::providers::type_lookup::qualified_nested_type_matches,
-    language::java::location::normalize_top_level_generic_base,
+    language::java::{
+        completion::providers::type_lookup::qualified_nested_type_matches,
+        completion_context::normalize_top_level_generic_base,
+    },
     semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;

@@ -8,7 +8,6 @@ use crate::language::java::editor_semantics::{
 };
 use crate::language::java::expression_typing;
 use crate::language::java::intrinsics::access::classify_intrinsic_access;
-use crate::language::java::location::normalize_top_level_generic_base;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{
     ExpectedType, ExpectedTypeConfidence, ExpectedTypeSource, FunctionalCompat,
@@ -485,6 +484,24 @@ fn resolve_source_type_hint(
                 .map(TypeName::new)
                 .map(|ty| (ty, ExpectedTypeConfidence::Partial))
         })
+}
+
+pub(crate) fn normalize_top_level_generic_base(raw: &str) -> &str {
+    let trimmed = raw.trim();
+    let mut angle_depth = 0i32;
+    for (i, c) in trimmed.char_indices() {
+        match c {
+            '<' if angle_depth == 0 => return trimmed[..i].trim_end(),
+            '<' => angle_depth += 1,
+            '>' => {
+                if angle_depth > 0 {
+                    angle_depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    trimmed
 }
 
 pub(crate) fn resolve_expected_type_from_method_argument(
