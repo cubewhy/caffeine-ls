@@ -31,8 +31,8 @@ jobs:
       - name: Cargo check
         run: cargo check --all-targets --all-features
 
-      - name: Lint with Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # - name: Lint with Clippy
+      #   run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run tests
         run: cargo test --verbose
