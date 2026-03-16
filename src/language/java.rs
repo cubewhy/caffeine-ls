@@ -16,7 +16,6 @@ use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_h
 use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
-use crate::language::ts_utils::find_method_by_offset;
 use crate::language::{ClassifiedToken, ParseEnv};
 use crate::semantic::{CursorLocation, SemanticContext};
 use ropey::Rope;
@@ -26,6 +25,7 @@ use tower_lsp::lsp_types::{
     SemanticTokenType,
 };
 use tree_sitter::{Node, Parser};
+use tree_sitter_utils::traversal::find_node_by_offset;
 
 pub mod class_parser;
 pub mod completion;
@@ -511,7 +511,7 @@ impl JavaContextExtractor {
             .unwrap_or_default();
         let enclosing_class_member = semantic_cursor_node
             .and_then(|n| utils::find_ancestor(n, "method_declaration"))
-            .or_else(|| find_method_by_offset(semantic_root, self.offset))
+            .or_else(|| find_node_by_offset(semantic_root, "method_declaration", self.offset))
             .or_else(|| utils::find_enclosing_method_in_error(semantic_root, self.offset))
             .and_then(|m| members::parse_method_node(semantic_extractor, &type_ctx, m));
         let char_after_cursor = self.source[self.offset..]

@@ -1,6 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use tree_sitter::{Node, Query};
+use tree_sitter_utils::traversal::find_node_by_offset;
 
 use crate::{
     language::{
@@ -9,7 +10,7 @@ use crate::{
             type_ctx::{SourceTypeCtx, extract_param_type},
             utils::{find_ancestor, get_initializer_text, java_type_to_internal},
         },
-        ts_utils::{find_method_by_offset, run_query},
+        ts_utils::run_query,
     },
     semantic::{LocalVar, types::type_name::TypeName},
 };
@@ -43,7 +44,7 @@ pub fn extract_locals_with_type_ctx(
 ) -> Vec<LocalVar> {
     let search_root = cursor_node
         .and_then(|n| find_ancestor(n, "method_declaration"))
-        .or_else(|| find_method_by_offset(root, ctx.offset))
+        .or_else(|| find_node_by_offset(root, "method_declaration", ctx.offset))
         .unwrap_or(root);
     let query_src = r#"
             (local_variable_declaration
@@ -255,7 +256,7 @@ fn extract_params(
 ) -> Vec<RankedLocal> {
     let method = match cursor_node
         .and_then(|n| find_ancestor(n, "method_declaration"))
-        .or_else(|| find_method_by_offset(root, ctx.offset))
+        .or_else(|| find_node_by_offset(root, "method_declaration", ctx.offset))
     {
         Some(m) => m,
         None => return vec![],

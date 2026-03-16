@@ -1,65 +1,14 @@
-use tree_sitter::StreamingIterator;
-use tree_sitter::{Node, Query, QueryCursor};
+use tree_sitter::Node;
 
-/// Execute the query and return all matching capture groups
-/// Each element is `Vec<(capture_name_index, Node)>`
-pub fn run_query<'tree>(
-    query: &Query,
-    node: Node<'tree>,
-    source: &[u8],
-    byte_range: Option<std::ops::Range<usize>>,
-) -> Vec<Vec<(u32, Node<'tree>)>> {
-    let mut cursor = QueryCursor::new();
-    if let Some(range) = byte_range {
-        cursor.set_byte_range(range);
-    }
+pub use tree_sitter_utils::query::{capture_text, run_query};
 
-    let mut results = Vec::new();
-    let mut matches = cursor.matches(query, node, source);
-
-    while let Some(m) = matches.next() {
-        let captures: Vec<(u32, Node<'tree>)> =
-            m.captures.iter().map(|c| (c.index, c.node)).collect();
-        results.push(captures);
-    }
-
-    results
-}
-
-/// Find node text in a set of captures by capture index
-pub fn capture_text<'s>(
-    captures: &[(u32, tree_sitter::Node<'_>)],
-    index: u32,
-    source: &'s [u8],
-) -> Option<&'s str> {
-    captures
-        .iter()
-        .find(|(idx, _)| *idx == index)
-        .and_then(|(_, node)| node.utf8_text(source).ok())
-}
-
-/// Find the innermost method_declaration containing `offset`.
-/// Uses inclusive start / exclusive end semantics matching tree-sitter.
+/// Find the innermost `method_declaration` containing `offset`.
+///
+/// Thin wrapper around [`tree_sitter_utils::traversal::find_node_by_offset`]
+/// that fixes the target kind to `"method_declaration"`.
+#[inline]
 pub fn find_method_by_offset(root: Node, offset: usize) -> Option<Node> {
-    let mut result: Option<Node> = None;
-    fn dfs<'a>(node: Node<'a>, offset: usize, result: &mut Option<Node<'a>>) {
-        let start = node.start_byte();
-        let end = node.end_byte(); // exclusive
-        // Prune: offset not in [start, end)
-        if offset < start || offset >= end {
-            return;
-        }
-        if node.kind() == "method_declaration" {
-            // Keep the deepest (last) match
-            *result = Some(node);
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            dfs(child, offset, result);
-        }
-    }
-    dfs(root, offset, &mut result);
-    result
+    tree_sitter_utils::traversal::find_node_by_offset(root, "method_declaration", offset)
 }
 
 #[cfg(test)]
