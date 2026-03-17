@@ -1,5 +1,6 @@
 pub mod detection;
 pub mod gradle;
+pub mod maven;
 pub mod model;
 pub mod progress;
 pub mod reload;
@@ -8,6 +9,7 @@ pub mod tool;
 
 pub use detection::{BuildWatchInterest, DetectedBuildTool, DetectedBuildToolKind};
 pub use gradle::{GradleIntegration, GradleVersion};
+pub use maven::{MavenIntegration, MavenVersion};
 pub use model::{
     JavaPackageInference, JavaToolchainInfo, ModelFidelity, ModelFreshness, SourceRootId,
     WorkspaceModelProvenance, WorkspaceModelSnapshot, WorkspaceModule, WorkspaceRoot,

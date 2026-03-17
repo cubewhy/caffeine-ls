@@ -43,7 +43,8 @@ The server speaks standard LSP over stdio and integrates with any compliant edit
 |---|---|
 | Gradle (legacy: 4.x–6.x) | Supported via init-script export |
 | Gradle (modern: 7.x–9.x) | Supported via init-script export |
-| Maven | Not yet supported |
+| Maven (3.0–3.5) | Supported via legacy groovy script |
+| Maven (3.6+) | Supported via modern groovy script |
 | Bare classpath / JDK only | Supported |
 
 ## Key Dependencies

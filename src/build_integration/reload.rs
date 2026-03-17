@@ -13,6 +13,7 @@ use crate::workspace::Workspace;
 
 use super::detection::{BuildWatchInterest, DetectedBuildTool};
 use super::gradle::GradleIntegration;
+use super::maven::MavenIntegration;
 use super::status::{BuildCapability, BuildIntegrationStatus, BuildReloadState};
 use super::tool::{BuildToolImportRequest, BuildToolRegistry};
 
@@ -45,7 +46,10 @@ impl BuildIntegrationService {
         client: Client,
         java_home: Option<PathBuf>,
     ) -> Self {
-        let registry = BuildToolRegistry::new(vec![Arc::new(GradleIntegration::default())]);
+        let registry = BuildToolRegistry::new(vec![
+            Arc::new(GradleIntegration::default()),
+            Arc::new(MavenIntegration::default()),
+        ]);
         let (tx, rx) = mpsc::unbounded_channel();
         let status = Arc::new(RwLock::new(BuildIntegrationStatus::default()));
         let watch_interest = Arc::new(RwLock::new(None));
