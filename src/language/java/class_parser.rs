@@ -485,34 +485,58 @@ fn find_member_node<'a>(
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
         let kind = child.kind();
-        if kind == "method_declaration" || kind == "constructor_declaration" {
+        if kind == "method_declaration"
+            || kind == "constructor_declaration"
+            || kind == "compact_constructor_declaration"
+        {
             let m_name = child
                 .child_by_field_name("name")
                 .map(|n| ctx.node_text(n))
                 .unwrap_or("");
-            if m_name == name || (child.kind() == "constructor_declaration" && name == "<init>") {
+            let is_constructor_match = (child.kind() == "constructor_declaration"
+                || child.kind() == "compact_constructor_declaration")
+                && name == "<init>";
+            if m_name == name || is_constructor_match {
                 tracing::debug!(kind = %kind, method_name = %m_name, "potential name match found");
 
                 if let Some(target_desc) = descriptor {
                     // 重载判定：利用 AST 即时构造当前遍历方法的 Descriptor 进行等值对比
                     let mut ret_type = "void";
                     let mut params_node = None;
-                    let mut wc = child.walk();
-                    for c in child.children(&mut wc) {
-                        match c.kind() {
-                            "void_type"
-                            | "integral_type"
-                            | "floating_point_type"
-                            | "boolean_type"
-                            | "type_identifier"
-                            | "array_type"
-                            | "generic_type" => {
-                                ret_type = ctx.node_text(c);
+
+                    // For compact constructors, get parameters from parent record_declaration
+                    if child.kind() == "compact_constructor_declaration" {
+                        let mut parent = child.parent();
+                        while let Some(p) = parent {
+                            if p.kind() == "record_declaration" {
+                                params_node = p.child_by_field_name("parameters").or_else(|| {
+                                    let mut cursor = p.walk();
+                                    p.children(&mut cursor)
+                                        .find(|c| c.kind() == "formal_parameters")
+                                });
+                                break;
                             }
-                            "formal_parameters" => params_node = Some(c),
-                            _ => {}
+                            parent = p.parent();
+                        }
+                    } else {
+                        let mut wc = child.walk();
+                        for c in child.children(&mut wc) {
+                            match c.kind() {
+                                "void_type"
+                                | "integral_type"
+                                | "floating_point_type"
+                                | "boolean_type"
+                                | "type_identifier"
+                                | "array_type"
+                                | "generic_type" => {
+                                    ret_type = ctx.node_text(c);
+                                }
+                                "formal_parameters" => params_node = Some(c),
+                                _ => {}
+                            }
                         }
                     }
+
                     let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
                     let actual_desc = build_java_descriptor(params_text, ret_type, type_ctx);
 
@@ -1366,6 +1390,153 @@ public @interface Ann {}
             .methods
             .iter()
             .any(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V"));
+    }
+
+    #[test]
+    fn test_record_compact_constructor_is_indexed() {
+        let src = r#"
+record Point(int x, int y) {
+    public Point {
+        if (x < 0) throw new IllegalArgumentException();
+    }
+}
+"#;
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let point = classes.iter().find(|c| c.name.as_ref() == "Point").unwrap();
+
+        // Should have the canonical constructor with correct signature
+        let canonical_ctor = point
+            .methods
+            .iter()
+            .find(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V");
+
+        assert!(
+            canonical_ctor.is_some(),
+            "Compact constructor should be indexed as <init>(II)V, found: {:?}",
+            point
+                .methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "<init>")
+                .map(|m| m.desc())
+                .collect::<Vec<_>>()
+        );
+
+        // Should still have accessor methods
+        assert!(point.methods.iter().any(|m| m.name.as_ref() == "x"));
+        assert!(point.methods.iter().any(|m| m.name.as_ref() == "y"));
+    }
+
+    #[test]
+    fn test_record_explicit_constructor_is_indexed() {
+        let src = r#"
+record Point(int x, int y) {
+    public Point(int x) {
+        this(x, 0);
+    }
+}
+"#;
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let point = classes.iter().find(|c| c.name.as_ref() == "Point").unwrap();
+
+        // Should have both the canonical constructor (synthetic) and the custom one
+        let canonical_ctor = point
+            .methods
+            .iter()
+            .find(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V");
+
+        let custom_ctor = point
+            .methods
+            .iter()
+            .find(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(I)V");
+
+        assert!(
+            canonical_ctor.is_some(),
+            "Canonical constructor should be synthesized, found: {:?}",
+            point
+                .methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "<init>")
+                .map(|m| m.desc())
+                .collect::<Vec<_>>()
+        );
+
+        assert!(
+            custom_ctor.is_some(),
+            "Custom constructor should be indexed, found: {:?}",
+            point
+                .methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "<init>")
+                .map(|m| m.desc())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_record_compact_constructor_overrides_synthetic() {
+        let src = r#"
+record Point(int x, int y) {
+    public Point {
+        if (x < 0) x = 0;
+    }
+}
+"#;
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let point = classes.iter().find(|c| c.name.as_ref() == "Point").unwrap();
+
+        // Should have exactly one canonical constructor (compact overrides synthetic)
+        let canonical_ctors: Vec<_> = point
+            .methods
+            .iter()
+            .filter(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V")
+            .collect();
+
+        assert_eq!(
+            canonical_ctors.len(),
+            1,
+            "Should have exactly one canonical constructor, found: {}",
+            canonical_ctors.len()
+        );
+    }
+
+    #[test]
+    fn test_record_multiple_constructors() {
+        let src = r#"
+record Point(int x, int y) {
+    public Point {
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+    }
+    
+    public Point(int x) {
+        this(x, 0);
+    }
+    
+    public Point() {
+        this(0, 0);
+    }
+}
+"#;
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let point = classes.iter().find(|c| c.name.as_ref() == "Point").unwrap();
+
+        let constructors: Vec<_> = point
+            .methods
+            .iter()
+            .filter(|method| method.name.as_ref() == "<init>")
+            .collect();
+
+        // Should have 3 constructors: (II)V, (I)V, ()V
+        assert_eq!(
+            constructors.len(),
+            3,
+            "Should have 3 constructors, found: {:?}",
+            constructors.iter().map(|m| m.desc()).collect::<Vec<_>>()
+        );
+
+        assert!(constructors.iter().any(|m| m.desc().as_ref() == "(II)V"));
+        assert!(constructors.iter().any(|m| m.desc().as_ref() == "(I)V"));
+        assert!(constructors.iter().any(|m| m.desc().as_ref() == "()V"));
     }
 
     #[test]

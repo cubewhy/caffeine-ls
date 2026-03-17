@@ -243,13 +243,43 @@ fn extract_params(
     type_ctx: Option<&SourceTypeCtx>,
 ) -> Vec<RankedLocal> {
     let method = match cursor_node
-        .and_then(|n| ancestor_of_kinds(n, &["method_declaration", "constructor_declaration"]))
+        .and_then(|n| {
+            ancestor_of_kinds(
+                n,
+                &[
+                    "method_declaration",
+                    "constructor_declaration",
+                    "compact_constructor_declaration",
+                ],
+            )
+        })
         .or_else(|| find_node_by_offset(root, "method_declaration", ctx.offset))
     {
         Some(m) => m,
         None => return vec![],
     };
-    let Some(params_node) = method.child_by_field_name("parameters") else {
+
+    // For compact constructors, get parameters from parent record_declaration
+    let params_node = if method.kind() == "compact_constructor_declaration" {
+        let mut parent = method.parent();
+        let mut result = None;
+        while let Some(p) = parent {
+            if p.kind() == "record_declaration" {
+                result = p.child_by_field_name("parameters").or_else(|| {
+                    let mut cursor = p.walk();
+                    p.children(&mut cursor)
+                        .find(|child| child.kind() == "formal_parameters")
+                });
+                break;
+            }
+            parent = p.parent();
+        }
+        result
+    } else {
+        method.child_by_field_name("parameters")
+    };
+
+    let Some(params_node) = params_node else {
         return vec![];
     };
 
@@ -837,6 +867,7 @@ fn nearest_local_scope_owner(node: Node) -> Option<Node> {
             "switch_rule",
             "method_declaration",
             "constructor_declaration",
+            "compact_constructor_declaration",
             "lambda_expression",
             "static_initializer",
             "instance_initializer",
@@ -846,9 +877,10 @@ fn nearest_local_scope_owner(node: Node) -> Option<Node> {
 
 fn scope_range_for_owner(owner: Node) -> Option<ScopeRange> {
     let scope_node = match owner.kind() {
-        "method_declaration" | "constructor_declaration" | "lambda_expression" => {
-            owner.child_by_field_name("body")?
-        }
+        "method_declaration"
+        | "constructor_declaration"
+        | "compact_constructor_declaration"
+        | "lambda_expression" => owner.child_by_field_name("body")?,
         _ => owner,
     };
     Some(node_scope_range(scope_node))
@@ -1532,6 +1564,118 @@ mod tests {
             x.type_internal.erased_internal(),
             "unknown",
             "var lambda param should remain unknown for SAM binding"
+        );
+    }
+
+    #[test]
+    fn test_compact_constructor_parameters_are_accessible() {
+        let src = indoc::indoc! {r#"
+        record Point(int x, int y) {
+            public Point {
+                if (x < 0) x = 0;
+                /*caret*/
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        let x = vars
+            .iter()
+            .find(|v| v.name.as_ref() == "x")
+            .expect("x parameter should be accessible in compact constructor");
+
+        let y = vars
+            .iter()
+            .find(|v| v.name.as_ref() == "y")
+            .expect("y parameter should be accessible in compact constructor");
+
+        assert_eq!(
+            x.type_internal.to_internal_with_generics(),
+            "int",
+            "x should have type int"
+        );
+
+        assert_eq!(
+            y.type_internal.to_internal_with_generics(),
+            "int",
+            "y should have type int"
+        );
+    }
+
+    #[test]
+    fn test_explicit_constructor_parameters_are_accessible() {
+        let src = indoc::indoc! {r#"
+        record Point(int x, int y) {
+            public Point(int x) {
+                this(x, 0);
+                /*caret*/
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        let x = vars
+            .iter()
+            .find(|v| v.name.as_ref() == "x")
+            .expect("x parameter should be accessible in explicit constructor");
+
+        assert_eq!(
+            x.type_internal.to_internal_with_generics(),
+            "int",
+            "x should have type int"
+        );
+
+        // y should NOT be accessible in this constructor
+        assert!(
+            !vars.iter().any(|v| v.name.as_ref() == "y"),
+            "y should not be accessible in single-parameter constructor"
+        );
+    }
+
+    #[test]
+    fn test_compact_constructor_with_complex_types() {
+        let src = indoc::indoc! {r#"
+        record Person(String name, int age) {
+            public Person {
+                if (name == null) throw new IllegalArgumentException();
+                /*caret*/
+            }
+        }
+        "#};
+        let offset = src.find("/*caret*/").unwrap();
+        let src = src.replacen("/*caret*/", "", 1);
+        let (ctx, tree) = setup(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        let name = vars
+            .iter()
+            .find(|v| v.name.as_ref() == "name")
+            .expect("name parameter should be accessible");
+
+        let age = vars
+            .iter()
+            .find(|v| v.name.as_ref() == "age")
+            .expect("age parameter should be accessible");
+
+        assert_eq!(
+            name.type_internal.to_internal_with_generics(),
+            "String",
+            "name should have type String"
+        );
+
+        assert_eq!(
+            age.type_internal.to_internal_with_generics(),
+            "int",
+            "age should have type int"
         );
     }
 }

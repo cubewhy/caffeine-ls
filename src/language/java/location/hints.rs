@@ -530,6 +530,7 @@ fn detect_partial_jump_label_location(
             "program",
             "method_declaration",
             "constructor_declaration",
+            "compact_constructor_declaration",
             "lambda_expression",
             "class_body",
         ])

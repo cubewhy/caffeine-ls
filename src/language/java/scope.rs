@@ -268,6 +268,7 @@ fn is_member_declaration_name_context(cursor: Node, decl: Node, type_body: Node)
     match decl.kind() {
         "method_declaration"
         | "constructor_declaration"
+        | "compact_constructor_declaration"
         | "class_declaration"
         | "interface_declaration"
         | "enum_declaration"
@@ -340,6 +341,7 @@ fn is_executable_or_nested_body_context(kind: &str) -> bool {
         kind,
         "method_declaration"
             | "constructor_declaration"
+            | "compact_constructor_declaration"
             | "lambda_expression"
             | "static_initializer"
             | "instance_initializer"

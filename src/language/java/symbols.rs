@@ -73,7 +73,11 @@ fn collect_type_members<'a>(body: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymb
     .or(handler_fn(|inp: Input<&[u8]>| -> Vec<DocumentSymbol> {
         parse_method_symbol(inp.node, inp.ctx).into_iter().collect()
     })
-    .for_kinds(&["method_declaration", "constructor_declaration"]))
+    .for_kinds(&[
+        "method_declaration",
+        "constructor_declaration",
+        "compact_constructor_declaration",
+    ]))
     .or(handler_fn(|inp: Input<&[u8]>| -> Vec<DocumentSymbol> {
         parse_enum_constant_symbol(inp.node, inp.ctx)
             .into_iter()
@@ -137,7 +141,9 @@ fn parse_method_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSy
         .or_else(|| node.child_by_field_name("identifier"))?; // constructor 用 identifier
     let name = name_node.utf8_text(bytes).ok()?.to_string();
 
-    let kind = if node.kind() == "constructor_declaration" {
+    let kind = if node.kind() == "constructor_declaration"
+        || node.kind() == "compact_constructor_declaration"
+    {
         SymbolKind::CONSTRUCTOR
     } else {
         SymbolKind::METHOD

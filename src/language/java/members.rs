@@ -77,6 +77,13 @@ fn collect_members_from_node_impl(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
+            "constructor_declaration" | "compact_constructor_declaration"
+                if !allow_nested_types =>
+            {
+                if let Some(m) = parse_constructor_node(ctx, type_ctx, child) {
+                    members.push(m);
+                }
+            }
             "method_declaration" => {
                 if let Some(m) = parse_method_node(ctx, type_ctx, child) {
                     members.push(m);
@@ -452,6 +459,80 @@ pub fn parse_method_node(
         is_synthetic: false,
         generic_signature,
         return_type: parse_return_type_from_descriptor(&descriptor),
+    })))
+}
+
+/// Parse constructor_declaration or compact_constructor_declaration nodes.
+/// For compact constructors, we need to extract parameters from the parent record_declaration.
+pub fn parse_constructor_node(
+    ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
+    node: Node,
+) -> Option<CurrentClassMember> {
+    let mut flags = 0;
+    let mut params_node: Option<Node> = None;
+    let mut method_annos: Vec<AnnotationSummary> = Vec::new();
+
+    let mut wc = node.walk();
+    for c in node.children(&mut wc) {
+        match c.kind() {
+            "modifiers" => {
+                flags = parse_java_modifiers(ctx.node_text(c));
+                method_annos = parse_annotations_in_node(ctx, c, type_ctx);
+            }
+            "formal_parameters" => params_node = Some(c),
+            "block" if node.kind() == "compact_constructor_declaration" => {
+                // For compact constructors, parameters come from the record declaration
+                // We'll handle this below
+            }
+            _ => {}
+        }
+    }
+
+    // For compact constructors, find the parent record_declaration to get parameters
+    if node.kind() == "compact_constructor_declaration" {
+        let mut parent = node.parent();
+        while let Some(p) = parent {
+            if p.kind() == "record_declaration" {
+                params_node = p.child_by_field_name("parameters").or_else(|| {
+                    let mut cursor = p.walk();
+                    p.children(&mut cursor)
+                        .find(|child| child.kind() == "formal_parameters")
+                });
+                break;
+            }
+            parent = p.parent();
+        }
+    }
+
+    if flags == 0 {
+        flags = ACC_PUBLIC;
+    }
+
+    let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
+    if let Some(params_node) = params_node
+        && has_spread_parameter(params_node)
+    {
+        flags |= ACC_VARARGS;
+    }
+
+    // Constructors always have void return type
+    let descriptor = build_java_descriptor(params_text, "void", type_ctx);
+
+    let generic_signature = extract_generic_signature(node, ctx.bytes(), &descriptor);
+
+    let params = params_node
+        .map(|n| parse_params(ctx, &descriptor, n, type_ctx))
+        .unwrap_or(MethodParams::empty());
+
+    Some(CurrentClassMember::Method(Arc::new(MethodSummary {
+        name: Arc::from("<init>"),
+        params,
+        annotations: method_annos,
+        access_flags: flags,
+        is_synthetic: false,
+        generic_signature,
+        return_type: None,
     })))
 }
 

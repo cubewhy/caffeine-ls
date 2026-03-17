@@ -138,7 +138,7 @@ fn infer_annotation_target(node: Node) -> Option<Arc<str>> {
         .or(handler_fn(|_: Input<()>| Arc::from("PARAMETER"))
             .for_kinds(&["formal_parameter", "spread_parameter"]))
         .or(handler_fn(|_: Input<()>| Arc::from("CONSTRUCTOR"))
-            .for_kinds(&["constructor_declaration"]))
+            .for_kinds(&["constructor_declaration", "compact_constructor_declaration"]))
         .or(handler_fn(|_: Input<()>| Arc::from("LOCAL_VARIABLE"))
             .for_kinds(&["local_variable_declaration"]))
         // Climb past unrecognised kinds; stop at scope boundaries.
