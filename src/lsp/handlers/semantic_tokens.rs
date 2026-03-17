@@ -260,8 +260,8 @@ mod tests {
         let b_old = tok(1, 0, 3, 1, 0);
         let b_new = tok(1, 0, 3, 2, 0);
         let c = tok(2, 0, 4, 0, 0);
-        let old = vec![a.clone(), b_old, c.clone()];
-        let new = vec![a.clone(), b_new.clone(), c.clone()];
+        let old = vec![a, b_old, c];
+        let new = vec![a, b_new, c];
         let edits = diff_semantic_tokens(&old, &new);
         assert_eq!(edits.len(), 1);
         let e = &edits[0];

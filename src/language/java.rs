@@ -678,7 +678,7 @@ mod tests {
     }
 
     fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> SemanticContext {
-        let rope = ropey::Rope::from_str(src);
+        let _rope = ropey::Rope::from_str(src);
 
         let mut parser = super::make_java_parser();
         let tree = parser.parse(src, None).expect("failed to parse java");
@@ -3853,7 +3853,7 @@ mod tests {
         ]);
         let view = idx.view(root_scope());
         let name_table = view.build_name_table();
-        let rope = ropey::Rope::from_str(src);
+        let _rope = ropey::Rope::from_str(src);
         let mut parser = super::make_java_parser();
         let tree = parser.parse(src, None).expect("failed to parse java");
         let ctx = super::JavaLanguage
@@ -5604,7 +5604,7 @@ mod tests {
             .find_map(|(i, l)| l.find("Bo>").map(|c| (i as u32, c as u32 + 2)))
             .expect("List<Bo> marker");
         let type_ctx = {
-            let rope = ropey::Rope::from_str(src_type);
+            let _rope = ropey::Rope::from_str(src_type);
             let mut parser = super::make_java_parser();
             let tree = parser.parse(src_type, None).expect("parse");
             super::JavaLanguage
@@ -5653,7 +5653,7 @@ mod tests {
             })
             .expect("new Bo marker");
         let ctor_ctx = {
-            let rope = ropey::Rope::from_str(src_ctor);
+            let _rope = ropey::Rope::from_str(src_ctor);
             let mut parser = super::make_java_parser();
             let tree = parser.parse(src_ctor, None).expect("parse");
             super::JavaLanguage
@@ -5699,7 +5699,7 @@ mod tests {
             .find_map(|(i, l)| l.find("Box<String>").map(|c| (i as u32, c as u32 + 2)))
             .expect("Box<String> marker");
         let decl_ctx = {
-            let rope = ropey::Rope::from_str(src_decl);
+            let _rope = ropey::Rope::from_str(src_decl);
             let mut parser = super::make_java_parser();
             let tree = parser.parse(src_decl, None).expect("parse");
             super::JavaLanguage

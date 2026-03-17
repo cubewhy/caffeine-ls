@@ -14,11 +14,12 @@
 //!   lives here.
 
 use crate::language::java::JavaContextExtractor;
-use crate::language::java::location::utils::{cursor_truncated_text, is_descendant_of};
+use crate::language::java::location::utils::cursor_truncated_text;
 use crate::language::java::members::is_java_keyword;
 use crate::language::java::utils::strip_sentinel;
 use crate::semantic::CursorLocation;
 use tree_sitter::Node;
+use tree_sitter_utils::traversal::is_descendant_of;
 
 // === Text-only heuristics =====================================================
 

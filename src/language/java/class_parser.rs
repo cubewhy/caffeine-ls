@@ -458,12 +458,11 @@ fn find_class_node<'a>(node: Node<'a>, target_name: &str, _bytes: &[u8]) -> Opti
     let is_class_decl = kind_is(CLASS_DECL_KINDS);
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
-        if is_class_decl.test(Input::new(n, (), None)) {
-            if first_child_of_kind(n, "identifier")
+        if is_class_decl.test(Input::new(n, (), None))
+            && first_child_of_kind(n, "identifier")
                 .is_some_and(|name_node| name_node.utf8_text(_bytes).unwrap_or("") == target_name)
-            {
-                return Some(n);
-            }
+        {
+            return Some(n);
         }
         let mut cursor = n.walk();
         for child in n.children(&mut cursor) {

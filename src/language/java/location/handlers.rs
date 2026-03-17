@@ -13,11 +13,12 @@ use crate::language::java::{
 use crate::semantic::CursorLocation;
 use std::sync::Arc;
 use tree_sitter::Node;
+use tree_sitter_utils::traversal::is_descendant_of;
 use tree_sitter_utils::{
     Handler, HandlerExt, Input, handler_fn, has_parent_kind, traversal::ancestor_of_kind,
 };
 
-use super::utils::{cursor_truncated_text, is_descendant_of};
+use super::utils::cursor_truncated_text;
 
 pub(super) fn extract_string_prefix(ctx: &JavaContextExtractor, str_node: Node) -> String {
     let start = str_node.start_byte();

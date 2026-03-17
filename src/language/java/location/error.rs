@@ -2,6 +2,7 @@ use crate::language::java::JavaContextExtractor;
 use crate::language::java::utils::strip_sentinel;
 use crate::semantic::CursorLocation;
 use tree_sitter::Node;
+use tree_sitter_utils::traversal;
 
 use super::handlers;
 use super::heuristics::{
@@ -9,7 +10,7 @@ use super::heuristics::{
     detect_trailing_dot_in_text, detect_variable_name_position_in_error, handle_import_from_text,
     is_import_context,
 };
-use super::utils::{cursor_truncated_text, find_preceding_named_sibling};
+use super::utils::cursor_truncated_text;
 
 /// cursor_node is ERROR (cases 1, 2, 3, 5, 6, 8, 12)
 pub(super) fn handle_error(
@@ -28,7 +29,7 @@ pub(super) fn handle_error(
             let ch: Vec<_> = error_node.children(&mut wc).collect();
             ch.len() == 1 && ch[0].kind() == "."
         };
-        if is_trailing_dot && let Some(recv) = find_preceding_named_sibling(error_node, p) {
+        if is_trailing_dot && let Some(recv) = traversal::preceding_named_sibling(error_node, p) {
             let receiver_expr = ctx.node_text(recv).to_string();
             return (
                 CursorLocation::MemberAccess {

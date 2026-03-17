@@ -1,13 +1,15 @@
 use crate::language::java::JavaContextExtractor;
-use crate::language::java::utils::{find_ancestor, strip_sentinel};
+use crate::language::java::utils::strip_sentinel;
 use crate::semantic::CursorLocation;
 use crate::semantic::context::{
     ExpectedTypeSource, FunctionalExprShape, FunctionalMethodCallHint, FunctionalTargetHint,
     MethodRefQualifierKind, StatementLabelCompletionKind,
 };
 use tree_sitter::Node;
+use tree_sitter_utils::traversal::{ancestor_of_kind, first_child_of_kind, is_descendant_of};
+use tree_sitter_utils::{Handler, HandlerExt, Input, handler_fn};
 
-use super::utils::{cursor_truncated_text, is_descendant_of};
+use super::utils::cursor_truncated_text;
 
 pub(crate) fn infer_functional_target_hint(
     ctx: &JavaContextExtractor,
@@ -183,7 +185,7 @@ fn infer_expected_type_source(
 }
 
 fn infer_assignment_rhs_expected_type(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
-    let declarator = find_ancestor(node, "variable_declarator")?;
+    let declarator = ancestor_of_kind(node, "variable_declarator")?;
     let value_node = declarator.child_by_field_name("value")?;
     if !is_descendant_of(node, value_node) {
         return None;
@@ -196,9 +198,9 @@ fn infer_assignment_rhs_expected_type(ctx: &JavaContextExtractor, node: Node) ->
 }
 
 fn infer_return_expected_type(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
-    let return_stmt = find_ancestor(node, "return_statement")?;
+    let return_stmt = ancestor_of_kind(node, "return_statement")?;
     return_stmt.child_by_field_name("value")?;
-    let method_decl = find_ancestor(return_stmt, "method_declaration")?;
+    let method_decl = ancestor_of_kind(return_stmt, "method_declaration")?;
     let mut walker = method_decl.walk();
     for child in method_decl.named_children(&mut walker) {
         if matches!(child.kind(), "modifiers" | "type_parameters") {
@@ -216,7 +218,7 @@ fn infer_return_expected_type(ctx: &JavaContextExtractor, node: Node) -> Option<
 }
 
 fn infer_assignment_rhs_lhs_expr(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
-    let assign = find_ancestor(node, "assignment_expression")?;
+    let assign = ancestor_of_kind(node, "assignment_expression")?;
     let right = assign.child_by_field_name("right")?;
     if !is_descendant_of(node, right) {
         return None;
@@ -233,7 +235,7 @@ fn infer_method_argument_target_hint(
     ctx: &JavaContextExtractor,
     node: Node,
 ) -> Option<FunctionalMethodCallHint> {
-    let arg_list = find_ancestor(node, "argument_list")?;
+    let arg_list = ancestor_of_kind(node, "argument_list")?;
     let invocation = arg_list.parent()?;
     if invocation.kind() != "method_invocation" {
         return None;
@@ -327,10 +329,10 @@ fn infer_functional_expr_shape(
     ctx: &JavaContextExtractor,
     node: Node,
 ) -> Option<FunctionalExprShape> {
-    if let Some(method_ref) = find_ancestor(node, "method_reference") {
+    if let Some(method_ref) = ancestor_of_kind(node, "method_reference") {
         return infer_method_reference_shape(ctx, method_ref);
     }
-    if let Some(lambda) = find_ancestor(node, "lambda_expression") {
+    if let Some(lambda) = ancestor_of_kind(node, "lambda_expression") {
         return infer_lambda_shape(ctx, lambda);
     }
     None
@@ -450,21 +452,19 @@ pub(super) fn detect_statement_label_location(
     ctx: &JavaContextExtractor,
     node: Node,
 ) -> Option<(CursorLocation, String)> {
-    if let Some(statement) = find_jump_statement_ancestor(node) {
+    // Check the node itself first (inclusive), then walk ancestors
+    let statement = if matches!(node.kind(), "break_statement" | "continue_statement") {
+        Some(node)
+    } else {
+        tree_sitter_utils::traversal::ancestor_of_kinds(
+            node,
+            &["break_statement", "continue_statement"],
+        )
+    };
+    if let Some(statement) = statement {
         return jump_statement_location(ctx, statement);
     }
     detect_partial_jump_label_location(ctx, node)
-}
-
-fn find_jump_statement_ancestor(node: Node) -> Option<Node> {
-    let mut current = Some(node);
-    while let Some(candidate) = current {
-        if matches!(candidate.kind(), "break_statement" | "continue_statement") {
-            return Some(candidate);
-        }
-        current = candidate.parent();
-    }
-    None
 }
 
 fn jump_statement_location(
@@ -479,9 +479,7 @@ fn jump_statement_location(
     if !is_active_jump_label_slot(ctx, stmt) {
         return None;
     }
-    let prefix = stmt
-        .named_children(&mut stmt.walk())
-        .find(|child| child.kind() == "identifier")
+    let prefix = first_child_of_kind(stmt, "identifier")
         .map(|ident| cursor_truncated_text(ctx, ident))
         .unwrap_or_else(|| extract_jump_label_prefix_from_text(ctx, stmt.start_byte()));
     let prefix = strip_sentinel(&prefix);
@@ -507,9 +505,7 @@ fn extract_jump_label_prefix_from_text(ctx: &JavaContextExtractor, stmt_start: u
 }
 
 fn is_active_jump_label_slot(ctx: &JavaContextExtractor, stmt: Node) -> bool {
-    let identifier = stmt
-        .named_children(&mut stmt.walk())
-        .find(|child| child.kind() == "identifier");
+    let identifier = first_child_of_kind(stmt, "identifier");
     if let Some(ident) = identifier {
         return ctx.offset >= ident.start_byte() && ctx.offset <= ident.end_byte();
     }
@@ -526,7 +522,20 @@ fn detect_partial_jump_label_location(
     ctx: &JavaContextExtractor,
     node: Node,
 ) -> Option<(CursorLocation, String)> {
-    let lower_bound = partial_jump_scan_lower_bound(node);
+    let lower_bound = handler_fn(|inp: Input<&JavaContextExtractor>| inp.node.start_byte())
+        .for_kinds(&[
+            "block",
+            "switch_block_statement_group",
+            "switch_rule",
+            "program",
+            "method_declaration",
+            "constructor_declaration",
+            "lambda_expression",
+            "class_body",
+        ])
+        .climb(&[])
+        .handle(Input::new(node, ctx, None))
+        .unwrap_or(0);
     let before = strip_sentinel(ctx.byte_slice(lower_bound, ctx.offset));
     let trimmed = before.trim_end();
 
@@ -587,25 +596,6 @@ fn detect_partial_jump_label_location(
         prefix,
     ))
 }
-
-fn partial_jump_scan_lower_bound(node: Node) -> usize {
-    let mut current = Some(node);
-    while let Some(candidate) = current {
-        match candidate.kind() {
-            "block"
-            | "switch_block_statement_group"
-            | "switch_rule"
-            | "program"
-            | "method_declaration"
-            | "constructor_declaration"
-            | "lambda_expression"
-            | "class_body" => return candidate.start_byte(),
-            _ => current = candidate.parent(),
-        }
-    }
-    0
-}
-
 fn extract_identifier_prefix_near_cursor(ctx: &JavaContextExtractor, lower_bound: usize) -> String {
     let mut i = ctx.offset.min(ctx.source.len());
     while i > lower_bound {

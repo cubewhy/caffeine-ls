@@ -11,34 +11,6 @@ pub(super) fn cursor_truncated_text(ctx: &JavaContextExtractor, node: Node) -> S
     ctx.byte_slice(start, end).to_string()
 }
 
-pub(super) fn is_descendant_of(node: Node, ancestor: Node) -> bool {
-    let mut cur = node;
-    loop {
-        if cur.id() == ancestor.id() {
-            return true;
-        }
-        match cur.parent() {
-            Some(p) => cur = p,
-            None => return false,
-        }
-    }
-}
-
-pub(super) fn find_preceding_named_sibling<'a>(
-    node: Node<'a>,
-    parent: Node<'a>,
-) -> Option<Node<'a>> {
-    let mut wc = parent.walk();
-    let mut prev: Option<Node<'a>> = None;
-    for child in parent.named_children(&mut wc) {
-        if child.id() == node.id() {
-            return prev;
-        }
-        prev = Some(child);
-    }
-    None
-}
-
 pub(super) fn find_innermost_constructor_type_arguments(
     ctor_node: Node,
     offset: usize,

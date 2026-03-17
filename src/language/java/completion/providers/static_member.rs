@@ -302,7 +302,7 @@ mod tests {
     }
 
     fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> SemanticContext {
-        let rope = ropey::Rope::from_str(src);
+        let _rope = ropey::Rope::from_str(src);
 
         let mut parser = make_java_parser();
         let tree = parser.parse(src, None).expect("failed to parse java");
