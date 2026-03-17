@@ -140,14 +140,10 @@ fn parse_java_class(
     fields.extend(synthetic.fields);
     let access_flags = extract_java_access_flags(&ctx, node);
 
-    let mut annos = vec![];
-    let mut wc = node.walk();
-    for child in node.children(&mut wc) {
-        if child.kind() == "modifiers" {
-            annos = parse_annotations_in_node(&ctx, child, type_ctx);
-            break;
-        }
-    }
+    // Use traversal utility to find modifiers
+    let annos = first_child_of_kind(node, "modifiers")
+        .map(|modifiers| parse_annotations_in_node(&ctx, modifiers, type_ctx))
+        .unwrap_or_default();
 
     let class_generic_signature =
         extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");

@@ -174,14 +174,12 @@ fn collect_misread_decls(
         if node.kind() == "variable_declarator"
             && let Some(assignment) = first_child_of_kind(node, "assignment_expression")
         {
-            let lhs = assignment.child_by_field_name("left").or_else(|| {
-                let mut wc = assignment.walk();
-                assignment.named_children(&mut wc).next()
-            });
-            let rhs = assignment.child_by_field_name("right").or_else(|| {
-                let mut wc = assignment.walk();
-                assignment.named_children(&mut wc).nth(1)
-            });
+            let lhs = assignment
+                .child_by_field_name("left")
+                .or_else(|| assignment.named_child(0));
+            let rhs = assignment
+                .child_by_field_name("right")
+                .or_else(|| assignment.named_child(1));
             if let (Some(name_node), Some(init_node)) = (lhs, rhs) {
                 if name_node.kind() != "identifier" {
                     continue;
@@ -215,8 +213,10 @@ fn collect_misread_decls(
             }
         }
         // Push children in reverse order so we visit them left-to-right
-        let mut cursor = node.walk();
-        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let children: Vec<Node> = {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).collect()
+        };
         for child in children.into_iter().rev() {
             stack.push(child);
         }
@@ -261,20 +261,11 @@ fn extract_params(
 
     // For compact constructors, get parameters from parent record_declaration
     let params_node = if method.kind() == "compact_constructor_declaration" {
-        let mut parent = method.parent();
-        let mut result = None;
-        while let Some(p) = parent {
-            if p.kind() == "record_declaration" {
-                result = p.child_by_field_name("parameters").or_else(|| {
-                    let mut cursor = p.walk();
-                    p.children(&mut cursor)
-                        .find(|child| child.kind() == "formal_parameters")
-                });
-                break;
-            }
-            parent = p.parent();
-        }
-        result
+        ancestor_of_kind(method, "record_declaration").and_then(|record| {
+            record
+                .child_by_field_name("parameters")
+                .or_else(|| first_child_of_kind(record, "formal_parameters"))
+        })
     } else {
         method.child_by_field_name("parameters")
     };
@@ -283,39 +274,33 @@ fn extract_params(
         return vec![];
     };
 
-    let mut vars = Vec::new();
-    let mut cursor = params_node.walk();
+    // Use combinator to process parameters
+    use tree_sitter_utils::{Handler, HandlerExt, Input};
 
-    for child in params_node.children(&mut cursor) {
-        if !matches!(child.kind(), "formal_parameter" | "spread_parameter") {
-            continue;
-        }
+    let param_handler = (|inp: Input<(&JavaContextExtractor, Option<&SourceTypeCtx>, Node)>| -> Option<RankedLocal> {
+        let (ctx, type_ctx, method) = inp.ctx;
 
         // Extract parameter name using traversal utilities
-        let name_node = child
+        let name_node = inp.node
             .child_by_field_name("name")
-            .or_else(|| first_child_of_kind(child, "identifier"))
+            .or_else(|| first_child_of_kind(inp.node, "identifier"))
             .or_else(|| {
-                first_child_of_kind(child, "variable_declarator").and_then(|n| {
+                first_child_of_kind(inp.node, "variable_declarator").and_then(|n| {
                     n.child_by_field_name("name")
                         .or_else(|| first_child_of_kind(n, "identifier"))
                 })
-            });
-
-        let Some(name_node) = name_node else {
-            continue;
-        };
+            })?;
 
         let name = ctx.node_text(name_node).to_string();
-        let mut raw_ty = extract_param_type(ctx.node_text(child)).trim().to_string();
-        if child.kind() == "spread_parameter" || raw_ty.ends_with("...") {
+        let mut raw_ty = extract_param_type(ctx.node_text(inp.node)).trim().to_string();
+        if inp.node.kind() == "spread_parameter" || raw_ty.ends_with("...") {
             raw_ty = if let Some(stripped) = raw_ty.strip_suffix("...") {
                 format!("{}[]", stripped.trim())
             } else {
                 format!("{}[]", raw_ty.trim())
             };
         }
-        vars.push(RankedLocal {
+        Some(RankedLocal {
             local: LocalVar {
                 name: Arc::from(name),
                 type_internal: resolve_declared_source_type(raw_ty.as_str(), type_ctx),
@@ -324,9 +309,15 @@ fn extract_params(
             declaration_start: name_node.start_byte(),
             visibility_scope: method_like_body_scope(method)
                 .unwrap_or_else(|| fallback_visibility_scope(ctx.offset)),
-        });
-    }
-    vars
+        })
+    })
+    .for_kinds(&["formal_parameter", "spread_parameter"])
+    .for_children();
+
+    let ctx_tuple = (ctx, type_ctx, method);
+    param_handler
+        .handle(Input::new(params_node, ctx_tuple, None))
+        .unwrap_or_default()
 }
 
 fn extract_lambda_params(
@@ -334,20 +325,25 @@ fn extract_lambda_params(
     cursor_node: Option<Node>,
     type_ctx: Option<&SourceTypeCtx>,
 ) -> Vec<RankedLocal> {
-    let mut lambdas = Vec::new();
-    let mut current = cursor_node;
-    while let Some(node) = current {
-        if node.kind() == "lambda_expression" {
-            lambdas.push(node);
+    // Collect all lambda ancestors
+    let lambdas: Vec<Node> = {
+        let mut result = Vec::new();
+        let mut current = cursor_node;
+        while let Some(node) = current {
+            if node.kind() == "lambda_expression" {
+                result.push(node);
+            }
+            current = node.parent();
         }
-        current = node.parent();
-    }
+        result
+    };
+
     if lambdas.is_empty() {
         return extract_lambda_params_from_error_nodes_in_ancestry(ctx, cursor_node, type_ctx);
     }
-    lambdas.reverse();
+
     let mut vars = Vec::new();
-    for lambda in lambdas {
+    for lambda in lambdas.into_iter().rev() {
         let Some(body) = lambda.child_by_field_name("body") else {
             continue;
         };
@@ -384,8 +380,10 @@ fn extract_lambda_params_from_error_arrow_node(
     container: Node,
     type_ctx: Option<&SourceTypeCtx>,
 ) -> Option<Vec<RankedLocal>> {
-    let mut wc = container.walk();
-    let children: Vec<Node> = container.children(&mut wc).collect();
+    let children: Vec<Node> = {
+        let mut wc = container.walk();
+        container.children(&mut wc).collect()
+    };
     let arrow_idx = children
         .iter()
         .rposition(|n| n.kind() == "->" && n.end_byte() <= ctx.offset)?;
@@ -466,6 +464,8 @@ fn extract_lambda_params_from_node(
     params: Node,
     type_ctx: Option<&SourceTypeCtx>,
 ) -> Vec<RankedLocal> {
+    use tree_sitter_utils::{Handler, HandlerExt, Input};
+
     let visibility_scope = lambda_param_visibility_scope(params)
         .unwrap_or_else(|| fallback_visibility_scope(ctx.offset));
 
@@ -480,42 +480,52 @@ fn extract_lambda_params_from_node(
             visibility_scope,
         }],
         "inferred_parameters" => {
-            let mut wc = params.walk();
-            params
-                .named_children(&mut wc)
-                .filter(|n| n.kind() == "identifier")
-                .map(|n| RankedLocal {
-                    local: LocalVar {
-                        name: Arc::from(ctx.node_text(n)),
-                        type_internal: TypeName::new("unknown"),
-                        init_expr: None,
-                    },
-                    declaration_start: n.start_byte(),
-                    visibility_scope,
-                })
-                .collect()
-        }
-        "formal_parameters" => {
-            let mut wc = params.walk();
-            params
-                .named_children(&mut wc)
-                .filter_map(|n| {
-                    if !matches!(n.kind(), "formal_parameter" | "spread_parameter") {
-                        return None;
-                    }
-                    let name_node = n.child_by_field_name("name")?;
-                    let ty = extract_lambda_formal_param_type(ctx, n, type_ctx);
+            let handler =
+                (|inp: Input<(&JavaContextExtractor, ScopeRange)>| -> Option<RankedLocal> {
+                    let (ctx, visibility_scope) = inp.ctx;
                     Some(RankedLocal {
                         local: LocalVar {
-                            name: Arc::from(ctx.node_text(name_node)),
-                            type_internal: ty,
+                            name: Arc::from(ctx.node_text(inp.node)),
+                            type_internal: TypeName::new("unknown"),
                             init_expr: None,
                         },
-                        declaration_start: name_node.start_byte(),
+                        declaration_start: inp.node.start_byte(),
                         visibility_scope,
                     })
                 })
-                .collect()
+                .for_kinds(&["identifier"])
+                .for_children();
+
+            handler
+                .handle(Input::new(params, (ctx, visibility_scope), None))
+                .unwrap_or_default()
+        }
+        "formal_parameters" => {
+            let handler = (|inp: Input<(
+                &JavaContextExtractor,
+                Option<&SourceTypeCtx>,
+                ScopeRange,
+            )>|
+             -> Option<RankedLocal> {
+                let (ctx, type_ctx, visibility_scope) = inp.ctx;
+                let name_node = inp.node.child_by_field_name("name")?;
+                let ty = extract_lambda_formal_param_type(ctx, inp.node, type_ctx);
+                Some(RankedLocal {
+                    local: LocalVar {
+                        name: Arc::from(ctx.node_text(name_node)),
+                        type_internal: ty,
+                        init_expr: None,
+                    },
+                    declaration_start: name_node.start_byte(),
+                    visibility_scope,
+                })
+            })
+            .for_kinds(&["formal_parameter", "spread_parameter"])
+            .for_children();
+
+            handler
+                .handle(Input::new(params, (ctx, type_ctx, visibility_scope), None))
+                .unwrap_or_default()
         }
         _ => vec![],
     }
@@ -554,8 +564,10 @@ fn extract_active_lambda_names_from_error_arrow(
     ctx: &JavaContextExtractor,
     container: Node,
 ) -> Option<Vec<Arc<str>>> {
-    let mut wc = container.walk();
-    let children: Vec<Node> = container.children(&mut wc).collect();
+    let children: Vec<Node> = {
+        let mut wc = container.walk();
+        container.children(&mut wc).collect()
+    };
 
     let arrow_idx = children
         .iter()
@@ -605,32 +617,34 @@ fn extract_lambda_param_names_with_starts(
     ctx: &JavaContextExtractor,
     params: Node,
 ) -> Vec<(Arc<str>, usize)> {
+    use tree_sitter_utils::{Handler, HandlerExt, Input};
+
     match params.kind() {
         "identifier" => vec![(Arc::from(ctx.node_text(params)), params.start_byte())],
         "inferred_parameters" => {
-            let mut vars = Vec::new();
-            let mut cursor = params.walk();
-            for child in params.named_children(&mut cursor) {
-                if child.kind() != "identifier" {
-                    continue;
-                }
-                vars.push((Arc::from(ctx.node_text(child)), child.start_byte()));
-            }
-            vars
+            let handler = (|inp: Input<&JavaContextExtractor>| -> Option<(Arc<str>, usize)> {
+                let ctx = inp.ctx;
+                Some((Arc::from(ctx.node_text(inp.node)), inp.node.start_byte()))
+            })
+            .for_kinds(&["identifier"])
+            .for_children();
+
+            handler
+                .handle(Input::new(params, ctx, None))
+                .unwrap_or_default()
         }
         "formal_parameters" => {
-            let mut vars = Vec::new();
-            let mut cursor = params.walk();
-            for child in params.named_children(&mut cursor) {
-                if !matches!(child.kind(), "formal_parameter" | "spread_parameter") {
-                    continue;
-                }
-                let Some(name_node) = child.child_by_field_name("name") else {
-                    continue;
-                };
-                vars.push((Arc::from(ctx.node_text(name_node)), name_node.start_byte()));
-            }
-            vars
+            let handler = (|inp: Input<&JavaContextExtractor>| -> Option<(Arc<str>, usize)> {
+                let ctx = inp.ctx;
+                let name_node = inp.node.child_by_field_name("name")?;
+                Some((Arc::from(ctx.node_text(name_node)), name_node.start_byte()))
+            })
+            .for_kinds(&["formal_parameter", "spread_parameter"])
+            .for_children();
+
+            handler
+                .handle(Input::new(params, ctx, None))
+                .unwrap_or_default()
         }
         _ => vec![],
     }
@@ -804,8 +818,10 @@ fn collect_last_type_like_before<'a>(root: Node<'a>, boundary: usize, best: &mut
         }
         // Push children in reverse order for left-to-right DFS,
         // ensuring later (rightmost) matches overwrite earlier ones in `best`
-        let mut cursor = node.walk();
-        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let children: Vec<Node> = {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).collect()
+        };
         for child in children.into_iter().rev() {
             stack.push(child);
         }
@@ -840,8 +856,10 @@ fn lambda_param_visibility_scope(params: Node) -> Option<ScopeRange> {
     }
     // Fallback for ERROR nodes: find `->` sibling after params,
     // scope extends from `->` end to the parent's end.
-    let mut wc = parent.walk();
-    let children: Vec<Node> = parent.children(&mut wc).collect();
+    let children: Vec<Node> = {
+        let mut wc = parent.walk();
+        parent.children(&mut wc).collect()
+    };
     let params_idx = children.iter().position(|n| n.id() == params.id())?;
     // Next sibling should be `->`
     let arrow = children.get(params_idx + 1).filter(|n| n.kind() == "->")?;

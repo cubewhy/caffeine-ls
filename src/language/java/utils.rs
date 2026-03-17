@@ -9,9 +9,7 @@ use tree_sitter::Node;
 use tree_sitter_utils::traversal;
 
 pub(crate) fn find_top_error_node(root: Node) -> Option<Node> {
-    let mut cursor = root.walk();
-    root.children(&mut cursor)
-        .find(|&child| child.kind() == "ERROR")
+    traversal::first_child_of_kind(root, "ERROR")
 }
 
 /// parse access flags from modifiers text
@@ -53,10 +51,9 @@ pub fn extract_generic_signature(node: Node, bytes: &[u8], suffix: &str) -> Opti
 /// Extract only the `<...>` type-parameter prefix from class/method declarations.
 pub fn extract_type_parameters_prefix(node: Node, bytes: &[u8]) -> Option<String> {
     // Compatible with Java (child_by_field_name) and Kotlin (directly search for kind)
-    let tp_node = node.child_by_field_name("type_parameters").or_else(|| {
-        node.children(&mut node.walk())
-            .find(|n| n.kind() == "type_parameters")
-    })?;
+    let tp_node = node
+        .child_by_field_name("type_parameters")
+        .or_else(|| traversal::first_child_of_kind(node, "type_parameters"))?;
 
     let mut sig = String::from("<");
     let mut has_params = false;
@@ -65,9 +62,8 @@ pub fn extract_type_parameters_prefix(node: Node, bytes: &[u8]) -> Option<String
     for child in tp_node.named_children(&mut walker) {
         if child.kind() == "type_parameter" {
             // Java 是 identifier，Kotlin 是 type_identifier
-            if let Some(id_node) = child
-                .children(&mut child.walk())
-                .find(|c| c.kind() == "identifier" || c.kind() == "type_identifier")
+            if let Some(id_node) =
+                traversal::first_child_of_kinds(child, &["identifier", "type_identifier"])
             {
                 let name = node_text(id_node, bytes).trim();
                 if !name.is_empty() {
@@ -117,37 +113,14 @@ pub(crate) fn get_initializer_text(type_node: Node, bytes: &[u8]) -> Option<Stri
     if decl.kind() != "local_variable_declaration" {
         return None;
     }
-    let mut cursor = decl.walk();
-    for child in decl.named_children(&mut cursor) {
-        if child.kind() != "variable_declarator" {
-            continue;
-        }
-        let init = child.named_child(1)?;
-        return init.utf8_text(bytes).ok().map(|s| s.to_string());
-    }
-    None
+    let declarator = traversal::first_child_of_kind(decl, "variable_declarator")?;
+    let init = declarator.named_child(1)?;
+    init.utf8_text(bytes).ok().map(|s| s.to_string())
 }
 
 pub(crate) fn find_enclosing_method_in_error(root: Node, offset: usize) -> Option<Node> {
-    let mut stack = vec![root];
-    let mut result = None;
-    while let Some(node) = stack.pop() {
-        if node.start_byte() > offset {
-            continue;
-        }
-        if node.kind() == "method_declaration"
-            && node.start_byte() <= offset
-            && node.end_byte() >= offset
-        {
-            result = Some(node);
-        }
-        let mut cursor = node.walk();
-        let children: Vec<Node> = node.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-            stack.push(child);
-        }
-    }
-    result
+    use tree_sitter_utils::traversal::find_node_by_offset;
+    find_node_by_offset(root, "method_declaration", offset)
 }
 
 pub(crate) fn statement_label_target_kind(node: Node) -> StatementLabelTargetKind {
@@ -165,10 +138,8 @@ pub(crate) fn statement_label_target_kind(node: Node) -> StatementLabelTargetKin
 
 pub(crate) fn unwrap_labeled_statement_target(mut node: Node) -> Node {
     while node.kind() == "labeled_statement" {
-        let mut cursor = node.walk();
-        let Some(child) = node
-            .named_children(&mut cursor)
-            .find(|child| child.kind() != "identifier")
+        let Some(child) = traversal::first_child_of_kind(node, "identifier")
+            .and_then(|id| id.next_named_sibling())
         else {
             break;
         };
@@ -182,28 +153,23 @@ pub fn infer_type_from_initializer(type_node: Node, bytes: &[u8]) -> Option<Stri
     if decl.kind() != "local_variable_declaration" {
         return None;
     }
-    let mut cursor = decl.walk();
-    for child in decl.named_children(&mut cursor) {
-        if child.kind() != "variable_declarator" {
-            continue;
-        }
-        let init = child.named_child(1)?;
-        match init.kind() {
-            "object_creation_expression" => {
-                let ty_node = init.child_by_field_name("type")?;
-                let text = ty_node.utf8_text(bytes).ok()?;
-                let simple = text.split('<').next()?.trim();
-                if !simple.is_empty() {
-                    return Some(simple.to_string());
-                }
+    let declarator = traversal::first_child_of_kind(decl, "variable_declarator")?;
+    let init = declarator.named_child(1)?;
+    match init.kind() {
+        "object_creation_expression" => {
+            let ty_node = init.child_by_field_name("type")?;
+            let text = ty_node.utf8_text(bytes).ok()?;
+            let simple = text.split('<').next()?.trim();
+            if !simple.is_empty() {
+                return Some(simple.to_string());
             }
-            _ => {
-                let text = init.utf8_text(bytes).ok()?;
-                if let Some(rest) = text.trim().strip_prefix("new ") {
-                    let class_name = rest.split('(').next()?.split('<').next()?.trim();
-                    if !class_name.is_empty() {
-                        return Some(class_name.to_string());
-                    }
+        }
+        _ => {
+            let text = init.utf8_text(bytes).ok()?;
+            if let Some(rest) = text.trim().strip_prefix("new ") {
+                let class_name = rest.split('(').next()?.split('<').next()?.trim();
+                if !class_name.is_empty() {
+                    return Some(class_name.to_string());
                 }
             }
         }
@@ -271,20 +237,18 @@ pub fn find_error_ancestor(node: Node) -> Option<Node> {
 }
 
 pub fn error_has_new_keyword(error_node: Node) -> bool {
-    let mut cursor = error_node.walk();
-    error_node.children(&mut cursor).any(|c| c.kind() == "new")
+    traversal::any_child_of_kind(error_node, "new").is_some()
 }
 
 pub fn find_identifier_in_error(error_node: Node) -> Option<Node> {
-    let mut cursor = error_node.walk();
-    error_node
-        .children(&mut cursor)
-        .find(|c| c.kind() == "identifier" || c.kind() == "type_identifier")
+    traversal::first_child_of_kinds(error_node, &["identifier", "type_identifier"])
 }
 
 pub fn error_has_trailing_dot(error_node: Node, offset: usize) -> bool {
-    let mut cursor = error_node.walk();
-    let children: Vec<Node> = error_node.children(&mut cursor).collect();
+    let children: Vec<Node> = {
+        let mut cursor = error_node.walk();
+        error_node.children(&mut cursor).collect()
+    };
     let visible: Vec<Node> = children
         .into_iter()
         .filter(|child| child.start_byte() < offset)

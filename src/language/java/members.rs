@@ -1,6 +1,8 @@
 use rust_asm::constants::{ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC, ACC_VARARGS};
 use std::sync::Arc;
 use tree_sitter::{Node, Query};
+use tree_sitter_utils::traversal::{first_child_of_kind, first_child_of_kinds};
+use tree_sitter_utils::{Handler, HandlerExt, Input};
 
 use crate::{
     index::{AnnotationSummary, FieldSummary, MethodParams, MethodSummary, intern_str},
@@ -74,114 +76,183 @@ fn collect_members_from_node_impl(
     members: &mut Vec<CurrentClassMember>,
     allow_nested_types: bool,
 ) {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        match child.kind() {
-            "constructor_declaration" | "compact_constructor_declaration"
-                if !allow_nested_types =>
-            {
-                if let Some(m) = parse_constructor_node(ctx, type_ctx, child) {
-                    members.push(m);
-                }
+    type MemberCtx<'a> = (&'a JavaContextExtractor, &'a SourceTypeCtx, bool);
+
+    // Build a handler chain that returns Vec<CurrentClassMember> for each child
+    let member_handler = (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+        let (ctx, type_ctx, allow_nested_types) = inp.ctx;
+        if !allow_nested_types && let Some(m) = parse_constructor_node(ctx, type_ctx, inp.node) {
+            return Some(vec![m]);
+        }
+        Some(vec![])
+    })
+    .for_kinds(&["constructor_declaration", "compact_constructor_declaration"])
+    .or(
+        // Method declarations
+        (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+            let (ctx, type_ctx, allow_nested_types) = inp.ctx;
+            let mut result = Vec::new();
+
+            if let Some(m) = parse_method_node(ctx, type_ctx, inp.node) {
+                result.push(m);
             }
-            "method_declaration" => {
-                if let Some(m) = parse_method_node(ctx, type_ctx, child) {
-                    members.push(m);
-                }
-                if let Some(block) = child.child_by_field_name("body") {
+
+            // Process method body for nested members
+            if let Some(block) = inp.node.child_by_field_name("body") {
+                let block_children: Vec<Node> = {
                     let mut bc = block.walk();
-                    let block_children: Vec<Node> = block.children(&mut bc).collect();
-                    let mut i = 0;
-                    while i < block_children.len() {
-                        let bc = block_children[i];
-                        if bc.kind() == "ERROR" {
-                            if let Some(m) = parse_method_node(ctx, type_ctx, bc) {
-                                members.push(m);
-                            }
-                            members.extend(parse_field_node(ctx, type_ctx, bc));
-                            collect_members_from_node_impl(
-                                ctx,
-                                bc,
-                                type_ctx,
-                                members,
-                                allow_nested_types,
-                            );
-                            let snapshot = members.clone();
-                            members.extend(parse_partial_methods_from_error(
-                                ctx, type_ctx, bc, &snapshot,
-                            ));
-                        } else if bc.kind() == "local_variable_declaration" {
-                            let next = block_children.get(i + 1);
-                            if let Some(next_node) = next
-                                && next_node.kind() == "ERROR"
-                                && ctx.source[next_node.start_byte()..next_node.end_byte()]
-                                    .trim_start()
-                                    .starts_with('(')
-                                && let Some(m) = parse_misread_method(ctx, type_ctx, bc, *next_node)
-                            {
-                                members.push(m);
-                                i += 1;
-                            }
-                        } else if bc.kind() == "method_declaration" {
-                            if let Some(mut m) = parse_method_node(ctx, type_ctx, bc) {
-                                // Collect any annotation siblings that preceded this declaration
-                                let pre_annos: Vec<_> = block_children[..i]
-                                    .iter()
-                                    .rev()
-                                    .take_while(|n| {
-                                        matches!(n.kind(), "marker_annotation" | "annotation")
-                                    })
-                                    .flat_map(|n| parse_annotations_in_node(ctx, *n, type_ctx))
-                                    .collect();
-                                if !pre_annos.is_empty()
-                                    && let CurrentClassMember::Method(ref arc) = m
-                                {
-                                    let mut ms = (**arc).clone();
-                                    // prepend so ordering is natural
-                                    let mut merged = pre_annos;
-                                    merged.append(&mut ms.annotations);
-                                    ms.annotations = merged;
-                                    m = CurrentClassMember::Method(Arc::new(ms));
-                                }
-                                members.push(m);
-                            }
-                        } else if bc.kind() == "field_declaration" {
-                            members.extend(parse_field_node(ctx, type_ctx, bc));
+                    block.children(&mut bc).collect()
+                };
+                let mut i = 0;
+                while i < block_children.len() {
+                    let bc = block_children[i];
+                    if bc.kind() == "ERROR" {
+                        if let Some(m) = parse_method_node(ctx, type_ctx, bc) {
+                            result.push(m);
                         }
-                        i += 1;
+                        result.extend(parse_field_node(ctx, type_ctx, bc));
+                        collect_members_from_node_impl(
+                            ctx,
+                            bc,
+                            type_ctx,
+                            &mut result,
+                            allow_nested_types,
+                        );
+                        let snapshot = result.clone();
+                        result.extend(parse_partial_methods_from_error(
+                            ctx, type_ctx, bc, &snapshot,
+                        ));
+                    } else if bc.kind() == "local_variable_declaration" {
+                        let next = block_children.get(i + 1);
+                        if let Some(next_node) = next
+                            && next_node.kind() == "ERROR"
+                            && ctx.source[next_node.start_byte()..next_node.end_byte()]
+                                .trim_start()
+                                .starts_with('(')
+                            && let Some(m) = parse_misread_method(ctx, type_ctx, bc, *next_node)
+                        {
+                            result.push(m);
+                            i += 1;
+                        }
+                    } else if bc.kind() == "method_declaration" {
+                        if let Some(mut m) = parse_method_node(ctx, type_ctx, bc) {
+                            let pre_annos: Vec<_> = block_children[..i]
+                                .iter()
+                                .rev()
+                                .take_while(|n| {
+                                    matches!(n.kind(), "marker_annotation" | "annotation")
+                                })
+                                .flat_map(|n| parse_annotations_in_node(ctx, *n, type_ctx))
+                                .collect();
+                            if !pre_annos.is_empty()
+                                && let CurrentClassMember::Method(ref arc) = m
+                            {
+                                let mut ms = (**arc).clone();
+                                let mut merged = pre_annos;
+                                merged.append(&mut ms.annotations);
+                                ms.annotations = merged;
+                                m = CurrentClassMember::Method(Arc::new(ms));
+                            }
+                            result.push(m);
+                        }
+                    } else if bc.kind() == "field_declaration" {
+                        result.extend(parse_field_node(ctx, type_ctx, bc));
                     }
+                    i += 1;
                 }
             }
-            "field_declaration" => {
-                members.extend(parse_field_node(ctx, type_ctx, child));
+            Some(result)
+        })
+        .for_kinds(&["method_declaration"]),
+    )
+    .or(
+        // Field declarations
+        (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+            let (ctx, type_ctx, _) = inp.ctx;
+            Some(parse_field_node(ctx, type_ctx, inp.node))
+        })
+        .for_kinds(&["field_declaration"]),
+    )
+    .or(
+        // Nested type declarations (only when allowing nested types)
+        (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+            let (ctx, type_ctx, allow_nested_types) = inp.ctx;
+            if allow_nested_types {
+                let mut result = Vec::new();
+                collect_members_from_node_impl(
+                    ctx,
+                    inp.node,
+                    type_ctx,
+                    &mut result,
+                    allow_nested_types,
+                );
+                return Some(result);
             }
-            "class_declaration"
-            | "interface_declaration"
-            | "enum_declaration"
-            | "annotation_type_declaration"
-            | "record_declaration"
-                if allow_nested_types =>
-            {
-                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
-            }
-            "class_body"
-            | "interface_body"
-            | "enum_body"
-            | "enum_body_declarations"
-            | "program" => {
-                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
-            }
-            "ERROR" => {
-                collect_members_from_node_impl(ctx, child, type_ctx, members, allow_nested_types);
-                let snapshot = members.clone();
-                members.extend(parse_partial_methods_from_error(
-                    ctx, type_ctx, child, &snapshot,
-                ));
-            }
-            _ => {}
+            Some(vec![])
+        })
+        .for_kinds(&[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "annotation_type_declaration",
+            "record_declaration",
+        ]),
+    )
+    .or(
+        // Body containers - recurse
+        (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+            let (ctx, type_ctx, allow_nested_types) = inp.ctx;
+            let mut result = Vec::new();
+            collect_members_from_node_impl(
+                ctx,
+                inp.node,
+                type_ctx,
+                &mut result,
+                allow_nested_types,
+            );
+            Some(result)
+        })
+        .for_kinds(&[
+            "class_body",
+            "interface_body",
+            "enum_body",
+            "enum_body_declarations",
+            "program",
+        ]),
+    )
+    .or(
+        // ERROR nodes - recurse and extract partial methods
+        (|inp: Input<MemberCtx>| -> Option<Vec<CurrentClassMember>> {
+            let (ctx, type_ctx, allow_nested_types) = inp.ctx;
+            let mut result = Vec::new();
+            collect_members_from_node_impl(
+                ctx,
+                inp.node,
+                type_ctx,
+                &mut result,
+                allow_nested_types,
+            );
+            let snapshot = result.clone();
+            result.extend(parse_partial_methods_from_error(
+                ctx, type_ctx, inp.node, &snapshot,
+            ));
+            Some(result)
+        })
+        .for_kinds(&["ERROR"]),
+    );
+
+    // Apply handler to all children and collect results
+    let ctx_tuple = (ctx, type_ctx, allow_nested_types);
+    if let Some(child_members) = member_handler
+        .for_children()
+        .handle(Input::new(node, ctx_tuple, None))
+    {
+        for child_vec in child_members {
+            members.extend(child_vec);
         }
     }
 
+    // Handle ERROR node at current level
     if node.kind() == "ERROR" {
         let snapshot = members.clone();
         members.extend(parse_partial_methods_from_error(
@@ -396,34 +467,39 @@ pub fn parse_method_node(
     let mut params_node: Option<Node> = None;
     let mut method_annos: Vec<AnnotationSummary> = Vec::new();
 
-    let mut wc = node.walk();
-    for c in node.children(&mut wc) {
-        match c.kind() {
-            "modifiers" => {
-                flags = parse_java_modifiers(ctx.node_text(c));
-                method_annos = parse_annotations_in_node(ctx, c, type_ctx);
-            }
-            "identifier" if name.is_none() => name = Some(ctx.node_text(c)),
-            "void_type"
-            | "integral_type"
-            | "floating_point_type"
-            | "boolean_type"
-            | "type_identifier"
-            | "scoped_type_identifier"
-            | "array_type"
-            | "generic_type" => {
-                ret_type = ctx.node_text(c);
-            }
-            "formal_parameters" => params_node = Some(c),
-            _ => {}
-        }
+    // Use traversal utilities where applicable
+    if let Some(modifiers) = first_child_of_kind(node, "modifiers") {
+        flags = parse_java_modifiers(ctx.node_text(modifiers));
+        method_annos = parse_annotations_in_node(ctx, modifiers, type_ctx);
     }
+
+    name = first_child_of_kind(node, "identifier").map(|n| ctx.node_text(n));
+
+    if let Some(ret_node) = first_child_of_kinds(
+        node,
+        &[
+            "void_type",
+            "integral_type",
+            "floating_point_type",
+            "boolean_type",
+            "type_identifier",
+            "scoped_type_identifier",
+            "array_type",
+            "generic_type",
+        ],
+    ) {
+        ret_type = ctx.node_text(ret_node);
+    }
+
+    params_node = first_child_of_kind(node, "formal_parameters");
+
     if flags == 0 {
         flags = ACC_PUBLIC;
     }
 
     let name = name.filter(|n| *n != "<init>" && *n != "<clinit>" && !is_java_keyword(n))?;
     let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
+    let mut flags = flags;
     if let Some(params_node) = params_node
         && has_spread_parameter(params_node)
     {
@@ -473,35 +549,21 @@ pub fn parse_constructor_node(
     let mut params_node: Option<Node> = None;
     let mut method_annos: Vec<AnnotationSummary> = Vec::new();
 
-    let mut wc = node.walk();
-    for c in node.children(&mut wc) {
-        match c.kind() {
-            "modifiers" => {
-                flags = parse_java_modifiers(ctx.node_text(c));
-                method_annos = parse_annotations_in_node(ctx, c, type_ctx);
-            }
-            "formal_parameters" => params_node = Some(c),
-            "block" if node.kind() == "compact_constructor_declaration" => {
-                // For compact constructors, parameters come from the record declaration
-                // We'll handle this below
-            }
-            _ => {}
-        }
+    // Use traversal utilities
+    if let Some(modifiers) = first_child_of_kind(node, "modifiers") {
+        flags = parse_java_modifiers(ctx.node_text(modifiers));
+        method_annos = parse_annotations_in_node(ctx, modifiers, type_ctx);
     }
+
+    params_node = first_child_of_kind(node, "formal_parameters");
 
     // For compact constructors, find the parent record_declaration to get parameters
     if node.kind() == "compact_constructor_declaration" {
-        let mut parent = node.parent();
-        while let Some(p) = parent {
-            if p.kind() == "record_declaration" {
-                params_node = p.child_by_field_name("parameters").or_else(|| {
-                    let mut cursor = p.walk();
-                    p.children(&mut cursor)
-                        .find(|child| child.kind() == "formal_parameters")
-                });
-                break;
-            }
-            parent = p.parent();
+        use tree_sitter_utils::traversal::ancestor_of_kind;
+        if let Some(record) = ancestor_of_kind(node, "record_declaration") {
+            params_node = record
+                .child_by_field_name("parameters")
+                .or_else(|| first_child_of_kind(record, "formal_parameters"));
         }
     }
 
@@ -510,6 +572,7 @@ pub fn parse_constructor_node(
     }
 
     let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
+    let mut flags = flags;
     if let Some(params_node) = params_node
         && has_spread_parameter(params_node)
     {

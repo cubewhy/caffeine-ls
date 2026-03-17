@@ -118,8 +118,10 @@ pub(crate) fn extract_enclosing_class_by_offset(
         }
         // Handle top-level ERROR: find `class` keyword followed by identifier
         if node.kind() == "ERROR" {
-            let mut cursor = node.walk();
-            let children: Vec<Node> = node.children(&mut cursor).collect();
+            let children: Vec<Node> = {
+                let mut cursor = node.walk();
+                node.children(&mut cursor).collect()
+            };
             for i in 0..children.len().saturating_sub(1) {
                 if children[i].kind() == "class"
                     && children[i + 1].kind() == "identifier"
@@ -145,27 +147,30 @@ pub(crate) fn extract_enclosing_internal_name(
 ) -> Option<Arc<str>> {
     let decl = cursor_node.and_then(nearest_type_declaration)?;
 
-    let mut names: Vec<String> = Vec::new();
-    let mut current = Some(decl);
-    while let Some(node) = current {
-        if let Some(name_node) = node.child_by_field_name("name") {
-            names.push(ctx.node_text(name_node).to_string());
+    // Collect all type names from innermost to outermost
+    let names: Vec<String> = {
+        let mut result = Vec::new();
+        let mut current = Some(decl);
+        while let Some(node) = current {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                result.push(ctx.node_text(name_node).to_string());
+            }
+            current = find_parent_type_declaration(node);
         }
-        current = find_parent_type_declaration(node);
-    }
+        result
+    };
 
     if names.is_empty() {
         return None;
     }
 
-    names.reverse();
     let mut internal = String::new();
     if let Some(pkg) = enclosing_package {
         internal.push_str(pkg);
         internal.push('/');
     }
-    internal.push_str(&names[0]);
-    for nested in names.iter().skip(1) {
+    internal.push_str(&names[names.len() - 1]);
+    for nested in names.iter().rev().skip(1) {
         internal.push('$');
         internal.push_str(nested);
     }
@@ -218,43 +223,56 @@ pub(crate) fn extract_enclosing_statement_labels(
     ctx: &JavaContextExtractor,
     cursor_node: Option<Node>,
 ) -> Vec<StatementLabel> {
-    let Some(mut current) = cursor_node else {
+    use tree_sitter_utils::{Handler, HandlerExt, Input};
+
+    let Some(start_node) = cursor_node else {
         return vec![];
     };
 
-    let mut labels = Vec::new();
-    loop {
-        if current.kind() == "labeled_statement" {
-            let mut cursor = current.walk();
-            let mut children = current.named_children(&mut cursor);
-            let Some(name_node) = children.find(|child| child.kind() == "identifier") else {
-                if let Some(parent) = current.parent() {
-                    current = parent;
-                    continue;
-                }
-                break;
-            };
+    // Build a handler that extracts labels from labeled_statement nodes
+    let label_handler = (|inp: Input<&JavaContextExtractor>| -> Option<StatementLabel> {
+        let ctx = inp.ctx;
 
-            let target_kind = current
-                .named_children(&mut current.walk())
+        // Find the identifier child
+        let name_node = {
+            let mut cursor = inp.node.walk();
+            inp.node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "identifier")?
+        };
+
+        // Find the target (non-identifier child)
+        let target_kind = {
+            let mut cursor = inp.node.walk();
+            inp.node
+                .named_children(&mut cursor)
                 .find(|child| child.kind() != "identifier")
                 .map(unwrap_labeled_statement_target)
                 .map(statement_label_target_kind)
-                .unwrap_or_else(|| statement_label_target_kind(current));
+                .unwrap_or_else(|| statement_label_target_kind(inp.node))
+        };
 
-            let name = ctx.node_text(name_node).trim();
-            if !name.is_empty() {
-                labels.push(StatementLabel {
-                    name: Arc::from(name),
-                    target_kind,
-                });
-            }
+        let name = ctx.node_text(name_node).trim();
+        if !name.is_empty() {
+            Some(StatementLabel {
+                name: Arc::from(name),
+                target_kind,
+            })
+        } else {
+            None
         }
+    })
+    .for_kinds(&["labeled_statement"]);
 
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => break,
+    // Collect labels by climbing the tree
+    let mut labels = Vec::new();
+    let mut current = Some(start_node);
+
+    while let Some(node) = current {
+        if let Some(label) = label_handler.handle(Input::new(node, ctx, None)) {
+            labels.push(label);
         }
+        current = node.parent();
     }
 
     labels
