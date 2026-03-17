@@ -233,7 +233,12 @@ fn determine_location_impl(
         return (CursorLocation::VariableName { type_name }, String::new());
     }
 
-    (CursorLocation::Unknown, String::new())
+    (
+        CursorLocation::Expression {
+            prefix: String::new(),
+        },
+        String::new(),
+    )
 }
 
 #[cfg(test)]
