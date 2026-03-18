@@ -19,16 +19,16 @@ mod getter_tests {
 
     #[test]
     fn test_exact_user_example() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.Getter;
             import lombok.Setter;
-            
+
             @Getter
             @Setter
             public class MyConfig {
-                private String randomStringField = "Hello";
+                private String randomStringField = \"Hello\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -68,16 +68,16 @@ mod getter_tests {
 
     #[test]
     fn field_level_getter_generates_method() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Main {
                 @Getter
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -89,17 +89,17 @@ mod getter_tests {
 
     #[test]
     fn class_level_getter_generates_methods_for_all_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             @Getter
             public class Person {
                 private String name;
                 private int age;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -115,16 +115,16 @@ mod getter_tests {
 
     #[test]
     fn boolean_field_uses_is_prefix() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Main {
                 @Getter
                 private boolean active;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -136,16 +136,16 @@ mod getter_tests {
 
     #[test]
     fn getter_is_public_by_default() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Person {
                 @Getter
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -156,24 +156,24 @@ mod getter_tests {
             .expect("getName() should be generated");
 
         assert_eq!(
-            getter.access_flags & 0x0001,
-            0x0001,
+            getter.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
             "getName() should be public"
         );
     }
 
     #[test]
     fn static_field_with_field_level_getter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class MyConfig {
                 @Getter
-                private static final String randomStringField = "Hello";
+                private static final String randomStringField = \"Hello\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -215,17 +215,17 @@ mod getter_tests {
 
     #[test]
     fn static_field_skipped_with_class_level_getter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             @Getter
             public class MyConfig {
                 private String instanceField;
-                private static String staticField = "Hello";
+                private static String staticField = \"Hello\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -250,19 +250,19 @@ mod getter_tests {
 
     #[test]
     fn static_final_field_with_getter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Constants {
                 @Getter
                 private static final int MAX_SIZE = 100;
-                
+
                 @Getter
-                private static final String APP_NAME = "MyApp";
+                private static final String APP_NAME = \"MyApp\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -297,16 +297,16 @@ mod getter_tests {
 
     #[test]
     fn getter_has_correct_return_type() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Main {
                 @Getter
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
         let getter = class
@@ -323,9 +323,9 @@ mod getter_tests {
 
     #[test]
     fn class_level_getter_with_multiple_field_types() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.Getter;
-            
+
             @Getter
             public class ComplexClass {
                 private String name;
@@ -334,7 +334,7 @@ mod getter_tests {
                 private double salary;
                 private long timestamp;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -366,10 +366,10 @@ mod getter_tests {
 
     #[test]
     fn class_level_getter_setter_combined() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.Getter;
             import lombok.Setter;
-            
+
             @Getter
             @Setter
             public class Person {
@@ -377,7 +377,7 @@ mod getter_tests {
                 private String lastName;
                 private int age;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -428,16 +428,16 @@ mod setter_tests {
 
     #[test]
     fn class_level_setter_generates_methods_for_all_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.Setter;
-            
+
             @Setter
             public class Person {
                 private String name;
                 private int age;
                 private boolean active;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -457,16 +457,16 @@ mod setter_tests {
 
     #[test]
     fn field_level_setter_generates_method() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class Main {
                 @Setter
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -478,16 +478,16 @@ mod setter_tests {
 
     #[test]
     fn setter_has_one_parameter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class Main {
                 @Setter
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
         let setter = class
@@ -505,16 +505,16 @@ mod setter_tests {
 
     #[test]
     fn setter_not_generated_for_final_field() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class Main {
                 @Setter
-                private final String name = "John";
+                private final String name = \"John\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -526,17 +526,17 @@ mod setter_tests {
 
     #[test]
     fn class_level_setter_skips_final_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             @Setter
             public class Person {
                 private String name;
                 private final int age = 25;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -555,16 +555,16 @@ mod setter_tests {
 
     #[test]
     fn static_field_with_field_level_setter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class Config {
                 @Setter
-                private static String configValue = "default";
+                private static String configValue = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -601,17 +601,17 @@ mod setter_tests {
 
     #[test]
     fn static_field_skipped_with_class_level_setter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             @Setter
             public class Config {
                 private String instanceField;
-                private static String staticField = "default";
+                private static String staticField = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -636,16 +636,16 @@ mod setter_tests {
 
     #[test]
     fn static_final_field_no_setter() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class Constants {
                 @Setter
-                private static final String CONSTANT = "value";
+                private static final String CONSTANT = \"value\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -665,16 +665,16 @@ mod annotation_resolution_tests {
 
     #[test]
     fn simple_annotation_name_is_resolved() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Main {
                 @Getter
                 private String a;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -695,14 +695,14 @@ mod annotation_resolution_tests {
 
     #[test]
     fn qualified_annotation_name_works() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             public class Main {
                 @lombok.Getter
                 private String a;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -718,16 +718,16 @@ mod user_reported_issues {
 
     #[test]
     fn original_user_example() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class Main {
                 @Getter
                 private String a;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -744,25 +744,24 @@ mod user_reported_issues {
             .find(|m| m.name.as_ref() == "getA")
             .unwrap();
         assert_eq!(
-            getter.access_flags & 0x0001,
-            0x0001,
+            getter.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
             "getA() should be public"
         );
     }
 
     #[test]
     fn static_field_getter_issue() {
-        // User reported: static fields with @Getter should generate static getters
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
-            
+
             public class MyConfig {
                 @Getter
-                private static final String randomStringField = "Hello";
+                private static final String randomStringField = \"Hello\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -796,17 +795,16 @@ mod user_reported_issues {
 
     #[test]
     fn static_field_setter_issue() {
-        // Static fields with @Setter should generate static setters
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Setter;
-            
+
             public class MyConfig {
                 @Setter
-                private static String configValue = "default";
+                private static String configValue = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -840,19 +838,18 @@ mod user_reported_issues {
 
     #[test]
     fn static_field_getter_and_setter() {
-        // Test both @Getter and @Setter on the same static field
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.Getter;
             import lombok.Setter;
-            
+
             public class MyConfig {
                 @Getter
                 @Setter
-                private static String sharedConfig = "default";
+                private static String sharedConfig = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -889,17 +886,17 @@ mod to_string_tests {
 
     #[test]
     fn class_level_to_string_generates_method() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
+
             @ToString
             public class Person {
                 private String name;
                 private int age;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -921,17 +918,17 @@ mod to_string_tests {
 
     #[test]
     fn to_string_with_exclude() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
-            @ToString(exclude = "password")
+
+            @ToString(exclude = \"password\")
             public class User {
                 private String username;
                 private String password;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -943,18 +940,18 @@ mod to_string_tests {
 
     #[test]
     fn to_string_with_of() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
-            @ToString(of = {"name", "email"})
+
+            @ToString(of = {\"name\", \"email\"})
             public class User {
                 private String name;
                 private String email;
                 private String password;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -966,21 +963,21 @@ mod to_string_tests {
 
     #[test]
     fn to_string_does_not_override_existing() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
+
             @ToString
             public class Person {
                 private String name;
-                
+
                 @Override
                 public String toString() {
-                    return "Custom: " + name;
+                    return \"Custom: \" + name;
                 }
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -999,17 +996,17 @@ mod to_string_tests {
 
     #[test]
     fn to_string_skips_static_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
+
             @ToString
             public class Config {
                 private String name;
-                private static String DEFAULT_NAME = "default";
+                private static String DEFAULT_NAME = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1021,7 +1018,7 @@ mod to_string_tests {
 
     #[test]
     fn to_string_with_call_super() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
             
             import lombok.ToString;
@@ -1030,7 +1027,7 @@ mod to_string_tests {
             public class Employee extends Person {
                 private String employeeId;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1042,16 +1039,16 @@ mod to_string_tests {
 
     #[test]
     fn to_string_is_public() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package org.example;
-            
+
             import lombok.ToString;
-            
+
             @ToString
             public class Person {
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1062,29 +1059,29 @@ mod to_string_tests {
             .expect("toString() should be generated");
 
         assert_eq!(
-            to_string.access_flags & 0x0001,
-            0x0001,
+            to_string.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
             "toString() should be public"
         );
     }
 
     #[test]
     fn to_string_comprehensive_example() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package com.example;
-            
+
             import lombok.ToString;
-            
-            @ToString(exclude = {"password", "internalId"})
+
+            @ToString(exclude = {\"password\", \"internalId\"})
             public class User {
                 private String username;
                 private String email;
                 private String password;
                 private long internalId;
                 private boolean active;
-                private static String DEFAULT_ROLE = "user";
+                private static String DEFAULT_ROLE = \"user\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1106,8 +1103,8 @@ mod to_string_tests {
             "toString() should have no parameters"
         );
         assert_eq!(
-            method.access_flags & 0x0001,
-            0x0001,
+            method.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
             "toString() should be public"
         );
     }
@@ -1118,15 +1115,15 @@ mod equals_hash_code_tests {
 
     #[test]
     fn class_level_equals_and_hash_code_generates_methods() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
                 private int age;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1151,14 +1148,14 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_method_has_correct_signature() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1193,14 +1190,14 @@ mod equals_hash_code_tests {
 
     #[test]
     fn hash_code_method_has_correct_signature() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1233,14 +1230,14 @@ mod equals_hash_code_tests {
 
     #[test]
     fn can_equal_method_has_correct_signature() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1274,16 +1271,16 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_with_exclude() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
-            @EqualsAndHashCode(exclude = {"password", "internalId"})
+
+            @EqualsAndHashCode(exclude = {\"password\", \"internalId\"})
             public class User {
                 private String username;
                 private String password;
                 private long internalId;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1304,17 +1301,17 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_with_of() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
-            @EqualsAndHashCode(of = {"id", "email"})
+
+            @EqualsAndHashCode(of = {\"id\", \"email\"})
             public class User {
                 private long id;
                 private String email;
                 private String name;
                 private String password;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1335,15 +1332,15 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_skips_static_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Config {
                 private String instanceField;
-                private static String staticField = "default";
+                private static String staticField = \"default\";
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1360,15 +1357,15 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_skips_transient_fields() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class CachedObject {
                 private String data;
                 private transient String cachedValue;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1385,15 +1382,15 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_with_call_super() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode(callSuper = true)
             public class Employee extends Person {
                 private String employeeId;
                 private String department;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1414,19 +1411,19 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_does_not_override_existing_equals() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
-                
+
                 @Override
                 public boolean equals(Object other) {
                     return false;
                 }
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1450,19 +1447,19 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_does_not_override_existing_hash_code() {
-        let src = r#"
+        let src = indoc::indoc! {"
             import lombok.EqualsAndHashCode;
-            
+
             @EqualsAndHashCode
             public class Person {
                 private String name;
-                
+
                 @Override
                 public int hashCode() {
                     return 42;
                 }
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
@@ -1486,12 +1483,12 @@ mod equals_hash_code_tests {
 
     #[test]
     fn equals_and_hash_code_comprehensive_example() {
-        let src = r#"
+        let src = indoc::indoc! {"
             package com.example;
-            
+
             import lombok.EqualsAndHashCode;
-            
-            @EqualsAndHashCode(exclude = {"password", "lastLogin"})
+
+            @EqualsAndHashCode(exclude = {\"password\", \"lastLogin\"})
             public class User {
                 private long id;
                 private String username;
@@ -1499,10 +1496,10 @@ mod equals_hash_code_tests {
                 private String password;
                 private java.util.Date lastLogin;
                 private boolean active;
-                private static String DEFAULT_ROLE = "user";
+                private static String DEFAULT_ROLE = \"user\";
                 private transient String sessionToken;
             }
-        "#;
+        "};
 
         let class = parse_first_class(src);
 
