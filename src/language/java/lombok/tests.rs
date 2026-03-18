@@ -1539,3 +1539,634 @@ mod equals_hash_code_tests {
         assert!(can_equal.is_some(), "Should generate canEqual() method");
     }
 }
+
+mod constructor_tests {
+    use super::*;
+
+    #[test]
+    fn test_no_args_constructor_basic() {
+        let src = indoc::indoc! {"
+            import lombok.NoArgsConstructor;
+
+            @NoArgsConstructor
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have <init> constructor with no parameters
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+
+        assert!(constructor.is_some(), "Should generate no-args constructor");
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 0);
+        assert!(
+            (ctor.access_flags & rust_asm::constants::ACC_PUBLIC) != 0,
+            "Constructor should be public"
+        );
+    }
+
+    #[test]
+    fn test_no_args_constructor_with_access_level() {
+        let src = indoc::indoc! {"
+            import lombok.NoArgsConstructor;
+            import lombok.AccessLevel;
+
+            @NoArgsConstructor(access = AccessLevel.PROTECTED)
+            public class Person {
+                private String name;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+
+        assert!(constructor.is_some(), "Should generate constructor");
+
+        let ctor = constructor.unwrap();
+        assert!(
+            (ctor.access_flags & rust_asm::constants::ACC_PROTECTED) != 0,
+            "Constructor should be protected"
+        );
+    }
+
+    #[test]
+    fn test_no_args_constructor_with_static_name() {
+        let src = indoc::indoc! {"
+            import lombok.NoArgsConstructor;
+
+            @NoArgsConstructor(staticName = \"of\")
+            public class Person {
+                private String name;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have the constructor
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+        assert!(constructor.is_some(), "Should generate constructor");
+
+        // Should have static factory method
+        let factory = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "of" && m.params.is_empty());
+        assert!(factory.is_some(), "Should generate static factory method");
+
+        let factory_method = factory.unwrap();
+        assert!(
+            (factory_method.access_flags & rust_asm::constants::ACC_STATIC) != 0,
+            "Factory method should be static"
+        );
+        assert!(
+            (factory_method.access_flags & rust_asm::constants::ACC_PUBLIC) != 0,
+            "Factory method should be public"
+        );
+    }
+
+    #[test]
+    fn test_all_args_constructor_basic() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+
+            @AllArgsConstructor
+            public class Person {
+                private String name;
+                private int age;
+                private boolean active;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have <init> constructor with 3 parameters
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 3);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate all-args constructor"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 3);
+
+        // Check parameter types - descriptors come from field descriptors which may be simplified
+        // The parser generates descriptors based on source type resolution
+        assert!(
+            ctor.params.items[0].descriptor.as_ref().contains("String"),
+            "First param should be String type, got: {}",
+            ctor.params.items[0].descriptor
+        );
+        assert_eq!(ctor.params.items[1].descriptor.as_ref(), "I");
+        assert_eq!(ctor.params.items[2].descriptor.as_ref(), "Z");
+
+        // Check parameter names
+        assert_eq!(ctor.params.items[0].name.as_ref(), "name");
+        assert_eq!(ctor.params.items[1].name.as_ref(), "age");
+        assert_eq!(ctor.params.items[2].name.as_ref(), "active");
+    }
+
+    #[test]
+    fn test_all_args_constructor_skips_static_fields() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+
+            @AllArgsConstructor
+            public class Person {
+                private static final String DEFAULT_NAME = \"Unknown\";
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have constructor with only 2 parameters (skipping static field)
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate constructor with 2 params"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 2);
+        assert_eq!(ctor.params.items[0].name.as_ref(), "name");
+        assert_eq!(ctor.params.items[1].name.as_ref(), "age");
+    }
+
+    #[test]
+    fn test_all_args_constructor_with_static_name() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+
+            @AllArgsConstructor(staticName = \"create\")
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have the constructor
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+        assert!(constructor.is_some(), "Should generate constructor");
+
+        // Should have static factory method
+        let factory = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "create" && m.params.len() == 2);
+        assert!(factory.is_some(), "Should generate static factory method");
+
+        let factory_method = factory.unwrap();
+        assert!(
+            (factory_method.access_flags & rust_asm::constants::ACC_STATIC) != 0,
+            "Factory method should be static"
+        );
+    }
+
+    #[test]
+    fn test_required_args_constructor_final_fields() {
+        let src = indoc::indoc! {"
+            import lombok.RequiredArgsConstructor;
+
+            @RequiredArgsConstructor
+            public class Person {
+                private final String name;
+                private final int age;
+                private String nickname;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have constructor with 2 parameters (only final fields)
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate required-args constructor"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 2);
+        assert_eq!(ctor.params.items[0].name.as_ref(), "name");
+        assert_eq!(ctor.params.items[1].name.as_ref(), "age");
+    }
+
+    #[test]
+    fn test_required_args_constructor_nonnull_fields() {
+        let src = indoc::indoc! {"
+            import lombok.RequiredArgsConstructor;
+            import lombok.NonNull;
+
+            @RequiredArgsConstructor
+            public class Person {
+                @NonNull
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have constructor with 1 parameter (@NonNull field)
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 1);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate required-args constructor"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 1);
+        assert_eq!(ctor.params.items[0].name.as_ref(), "name");
+    }
+
+    #[test]
+    fn test_required_args_constructor_mixed() {
+        let src = indoc::indoc! {"
+            import lombok.RequiredArgsConstructor;
+            import lombok.NonNull;
+
+            @RequiredArgsConstructor
+            public class Person {
+                private final String id;
+                @NonNull
+                private String name;
+                private int age;
+                private final boolean active;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have constructor with 3 parameters (2 final + 1 @NonNull)
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 3);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate required-args constructor"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 3);
+        // Should be in field declaration order
+        assert_eq!(ctor.params.items[0].name.as_ref(), "id");
+        assert_eq!(ctor.params.items[1].name.as_ref(), "name");
+        assert_eq!(ctor.params.items[2].name.as_ref(), "active");
+    }
+
+    #[test]
+    fn test_required_args_constructor_no_required_fields() {
+        let src = indoc::indoc! {"
+            import lombok.RequiredArgsConstructor;
+
+            @RequiredArgsConstructor
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have no-args constructor when no required fields
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+
+        assert!(
+            constructor.is_some(),
+            "Should generate no-args constructor when no required fields"
+        );
+    }
+
+    #[test]
+    fn test_multiple_constructor_annotations() {
+        let src = indoc::indoc! {"
+            import lombok.NoArgsConstructor;
+            import lombok.AllArgsConstructor;
+
+            @NoArgsConstructor
+            @AllArgsConstructor
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have both constructors
+        let no_args = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+        assert!(no_args.is_some(), "Should generate no-args constructor");
+
+        let all_args = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+        assert!(all_args.is_some(), "Should generate all-args constructor");
+    }
+
+    #[test]
+    fn test_constructor_does_not_override_explicit() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+
+            @AllArgsConstructor
+            public class Person {
+                private String name;
+                private int age;
+
+                public Person(String name, int age) {
+                    this.name = name.toUpperCase();
+                    this.age = age;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should only have one constructor (the explicit one)
+        let constructors: Vec<_> = class
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "<init>")
+            .collect();
+
+        assert_eq!(
+            constructors.len(),
+            1,
+            "Should not generate duplicate constructor"
+        );
+    }
+
+    #[test]
+    fn test_constructor_with_generics() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+            import java.util.List;
+
+            @AllArgsConstructor
+            public class Container<T> {
+                private T value;
+                private List<T> items;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate constructor with generic types"
+        );
+
+        let ctor = constructor.unwrap();
+        assert_eq!(ctor.params.len(), 2);
+        assert_eq!(ctor.params.items[0].name.as_ref(), "value");
+        assert_eq!(ctor.params.items[1].name.as_ref(), "items");
+    }
+
+    #[test]
+    fn test_enum_constructor_is_private() {
+        let src = indoc::indoc! {"
+            import lombok.AllArgsConstructor;
+
+            @AllArgsConstructor
+            public enum Status {
+                ACTIVE, INACTIVE;
+
+                private String description;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 1);
+
+        assert!(
+            constructor.is_some(),
+            "Should generate constructor for enum"
+        );
+
+        let ctor = constructor.unwrap();
+        assert!(
+            (ctor.access_flags & rust_asm::constants::ACC_PRIVATE) != 0,
+            "Enum constructor should be private"
+        );
+    }
+
+    #[test]
+    fn test_required_args_with_static_name() {
+        let src = indoc::indoc! {"
+            import lombok.RequiredArgsConstructor;
+
+            @RequiredArgsConstructor(staticName = \"of\")
+            public class Person {
+                private final String name;
+                private final int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have the constructor
+        let constructor = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 2);
+        assert!(constructor.is_some(), "Should generate constructor");
+
+        // Should have static factory method
+        let factory = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "of" && m.params.len() == 2);
+        assert!(
+            factory.is_some(),
+            "Should generate static factory method 'of'"
+        );
+
+        let factory_method = factory.unwrap();
+        assert!(
+            (factory_method.access_flags & rust_asm::constants::ACC_STATIC) != 0,
+            "Factory method should be static"
+        );
+        assert_eq!(factory_method.params.len(), 2);
+    }
+
+    #[test]
+    fn test_all_three_constructor_annotations() {
+        let src = indoc::indoc! {"
+            import lombok.NoArgsConstructor;
+            import lombok.RequiredArgsConstructor;
+            import lombok.AllArgsConstructor;
+
+            @NoArgsConstructor(force = true)
+            @RequiredArgsConstructor
+            @AllArgsConstructor
+            public class Person {
+                private final String id;
+                private String name;
+                private int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should have all three constructors
+        let no_args = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.is_empty());
+        assert!(
+            no_args.is_some(),
+            "Should generate no-args constructor with force=true"
+        );
+
+        let required_args = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 1);
+        assert!(
+            required_args.is_some(),
+            "Should generate required-args constructor"
+        );
+
+        let all_args = class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "<init>" && m.params.len() == 3);
+        assert!(all_args.is_some(), "Should generate all-args constructor");
+    }
+}
+#[cfg(test)]
+mod manual_test {
+    use crate::index::ClassOrigin;
+    use crate::language::java::class_parser::parse_java_source;
+
+    #[test]
+    fn test_lombok_constructors_manual() {
+        let src = r#"
+import lombok.NoArgsConstructor;
+import lombok.RequiredArgsConstructor;
+import lombok.AllArgsConstructor;
+import lombok.NonNull;
+
+@NoArgsConstructor
+@AllArgsConstructor
+class Person {
+    private String name;
+    private int age;
+}
+
+@RequiredArgsConstructor
+class User {
+    private final String id;
+    @NonNull
+    private String username;
+    private String email;
+}
+        "#;
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+
+        println!("\n=== Parsed {} classes ===", classes.len());
+
+        for class in &classes {
+            println!("\nClass: {}", class.name);
+
+            let constructors: Vec<_> = class
+                .methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "<init>")
+                .collect();
+
+            println!("  Constructors: {}", constructors.len());
+            for ctor in constructors {
+                print!("    <init>(");
+                for (i, param) in ctor.params.items.iter().enumerate() {
+                    if i > 0 {
+                        print!(", ");
+                    }
+                    print!("{}: {}", param.name, param.descriptor);
+                }
+                println!(")");
+            }
+        }
+
+        // Verify Person has 2 constructors
+        let person = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+        let person_ctors: Vec<_> = person
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "<init>")
+            .collect();
+        assert_eq!(person_ctors.len(), 2, "Person should have 2 constructors");
+
+        // Verify User has 1 constructor with 2 params
+        let user = classes.iter().find(|c| c.name.as_ref() == "User").unwrap();
+        let user_ctors: Vec<_> = user
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "<init>")
+            .collect();
+        assert_eq!(user_ctors.len(), 1, "User should have 1 constructor");
+        assert_eq!(
+            user_ctors[0].params.len(),
+            2,
+            "User constructor should have 2 params"
+        );
+    }
+}

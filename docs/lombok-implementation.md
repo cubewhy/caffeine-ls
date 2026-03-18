@@ -159,11 +159,23 @@ When user navigates to a synthetic method, the LSP resolves it back to the sourc
 
 ## Implemented Features
 
-### Phase 1-2: @Getter and @Setter (Complete)
+### Phase 1: @Getter and @Setter (Complete)
 
 See sections below for detailed documentation.
 
-### Phase 3: @ToString (Complete)
+### Phase 2: @ToString and @EqualsAndHashCode (Complete)
+
+See sections below for detailed documentation.
+
+### Phase 3: Constructor Annotations (Complete)
+
+**@NoArgsConstructor** - Generates a no-args constructor
+**@RequiredArgsConstructor** - Generates constructor for final and @NonNull fields
+**@AllArgsConstructor** - Generates constructor with all fields
+
+See detailed documentation below.
+
+### @ToString (Complete)
 
 **Class-level usage:**
 ```java
@@ -201,6 +213,186 @@ public class User {
 }
 ```
 
+### Constructor Annotations (Complete)
+
+#### @NoArgsConstructor
+
+Generates a constructor with no parameters.
+
+**Basic usage:**
+```java
+@NoArgsConstructor
+public class Person {
+    private String name;
+    private int age;
+}
+// Generates: public Person()
+```
+
+**Supported Parameters:**
+- `access` - AccessLevel (default: PUBLIC) - Set constructor visibility
+- `force` - boolean (default: false) - Initialize final fields to 0/false/null
+- `staticName` - String (optional) - Generate static factory method instead
+
+**Features:**
+- Generates public no-args constructor by default
+- Skips generation if final fields exist (unless `force = true`)
+- With `force = true`, initializes final fields to default values
+- Static factory method makes constructor private and adds public static method
+- Enum constructors are always private
+
+**Examples:**
+```java
+// With access level
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public class Singleton {
+    private static Singleton instance;
+}
+
+// With force for final fields
+@NoArgsConstructor(force = true)
+public class Config {
+    private final String value = "default";
+}
+
+// With static factory
+@NoArgsConstructor(staticName = "create")
+public class Factory {
+    private String data;
+}
+// Generates: private Factory() and public static Factory create()
+```
+
+#### @RequiredArgsConstructor
+
+Generates a constructor with parameters for fields that require special handling:
+- All non-initialized `final` fields
+- All fields marked with `@NonNull` that aren't initialized
+
+**Basic usage:**
+```java
+@RequiredArgsConstructor
+public class Person {
+    private final String id;
+    @NonNull
+    private String name;
+    private int age;  // Not included
+}
+// Generates: public Person(String id, String name)
+```
+
+**Supported Parameters:**
+- `access` - AccessLevel (default: PUBLIC)
+- `staticName` - String (optional) - Generate static factory method
+
+**Features:**
+- Includes final fields in constructor parameters
+- Includes @NonNull fields in constructor parameters
+- Generates null checks for @NonNull parameters
+- Parameters appear in field declaration order
+- Skips static fields
+- If no required fields, generates no-args constructor
+
+**Examples:**
+```java
+// Mixed final and @NonNull
+@RequiredArgsConstructor
+public class User {
+    private final String id;
+    @NonNull
+    private String username;
+    @NonNull
+    private String email;
+    private String phone;  // Optional
+}
+// Generates: public User(String id, String username, String email)
+
+// With static factory
+@RequiredArgsConstructor(staticName = "of")
+public class Point {
+    private final int x;
+    private final int y;
+}
+// Generates: private Point(int x, int y) and public static Point of(int x, int y)
+```
+
+#### @AllArgsConstructor
+
+Generates a constructor with one parameter for each field in the class.
+
+**Basic usage:**
+```java
+@AllArgsConstructor
+public class Person {
+    private String name;
+    private int age;
+    private boolean active;
+}
+// Generates: public Person(String name, int age, boolean active)
+```
+
+**Supported Parameters:**
+- `access` - AccessLevel (default: PUBLIC)
+- `staticName` - String (optional) - Generate static factory method
+
+**Features:**
+- Includes all non-static fields
+- Generates null checks for @NonNull fields
+- Parameters appear in field declaration order
+- Works with generic types
+- Enum constructors are always private
+
+**Examples:**
+```java
+// With access level
+@AllArgsConstructor(access = AccessLevel.PROTECTED)
+public class Base {
+    private String value;
+}
+
+// With static factory
+@AllArgsConstructor(staticName = "of")
+public class Pair<T, U> {
+    private T first;
+    private U second;
+}
+// Generates: private Pair(T first, U second) and public static <T,U> Pair<T,U> of(T first, U second)
+
+// Multiple constructors
+@NoArgsConstructor
+@AllArgsConstructor
+public class Flexible {
+    private String name;
+    private int value;
+}
+// Generates both: public Flexible() and public Flexible(String name, int value)
+```
+
+#### Combining Constructor Annotations
+
+You can use multiple constructor annotations on the same class:
+
+```java
+@NoArgsConstructor(force = true)
+@RequiredArgsConstructor
+@AllArgsConstructor
+public class Person {
+    private final String id;
+    private String name;
+    private int age;
+}
+// Generates three constructors:
+// - public Person()                           // NoArgs with force
+// - public Person(String id)                  // RequiredArgs (only final field)
+// - public Person(String id, String name, int age)  // AllArgs
+```
+
+**Important Notes:**
+- Constructors are not generated if an explicit constructor with the same signature exists
+- Static fields are always excluded from constructor parameters
+- Enum constructors are always private regardless of access level setting
+- Field initialization detection is conservative (assumes final fields need initialization)
+
 ## Testing Strategy
 
 ### Test Organization
@@ -218,6 +410,14 @@ mod setter_tests {
 
 mod to_string_tests {
     // Tests for @ToString annotation
+}
+
+mod constructor_tests {
+    // Tests for constructor annotations
+}
+
+mod equals_hash_code_tests {
+    // Tests for @EqualsAndHashCode annotation
 }
 
 mod annotation_resolution_tests {
@@ -245,10 +445,15 @@ mod user_reported_issues {
 - Final field handling
 - Access modifiers
 - Annotation resolution
-- Parameter handling (exclude, of, callSuper)
+- Parameter handling (exclude, of, callSuper, access, staticName, force)
+- Constructor generation (NoArgs, RequiredArgs, AllArgs)
+- Static factory methods
+- Multiple constructor annotations
+- Enum constructors
+- Generic types
 - User-reported issues
 
-**Total: 28 tests, all passing**
+**Total: 61 tests, all passing**
 
 ### Running Tests
 
@@ -267,16 +472,14 @@ cargo test --lib lombok -- --nocapture
 
 ### Planned Features (Priority Order)
 
-1. **@ToString** - Generate `toString()` methods
-2. **@EqualsAndHashCode** - Generate `equals()` and `hashCode()`
-3. **Constructor Annotations** - @NoArgsConstructor, @RequiredArgsConstructor, @AllArgsConstructor
-4. **@Data** - Composite annotation combining multiple features
-5. **@Value** - Immutable class support
-6. **@Builder** - Builder pattern generation
-7. **@With** - Immutable setters
-8. **@Log** - Logger field generation
-9. **@Delegate** - Method delegation
-10. **lombok.var/val** - Local variable type inference
+1. **@Data** - Composite annotation combining @Getter, @Setter, @ToString, @EqualsAndHashCode, @RequiredArgsConstructor
+2. **@Value** - Immutable class support (final class, final fields, @AllArgsConstructor, @Getter, @ToString, @EqualsAndHashCode)
+3. **@Builder** - Builder pattern generation
+4. **@With** - Immutable setters (return new instance with changed field)
+5. **@Log** - Logger field generation (@Slf4j, @Log4j2, etc.)
+6. **@Delegate** - Method delegation
+7. **@SneakyThrows** - Exception wrapping
+8. **lombok.var/val** - Local variable type inference
 
 ### Extension Points
 
@@ -295,11 +498,20 @@ New Lombok rules should:
 
 ## Known Limitations
 
-1. **Type Resolution**: Field types may not resolve to fully qualified names if imports are missing
-2. **Complex Annotations**: Some advanced Lombok features (e.g., `@Builder.Default`) not yet supported
-3. **Delombok**: No support for delombok operation (converting Lombok code to plain Java)
+1. **Field Initialization Detection**: Cannot reliably detect if a field has an initializer in source code. Conservative approach treats all final fields as requiring initialization for @RequiredArgsConstructor.
+2. **Type Resolution**: Field types may not resolve to fully qualified names if imports are missing
+3. **Complex Annotations**: Some advanced Lombok features (e.g., `@Builder.Default`) not yet supported
+4. **Delombok**: No support for delombok operation (converting Lombok code to plain Java)
 
 ## Troubleshooting
+
+### Constructors Not Generated
+
+**Check:**
+1. Annotation is imported: `import lombok.NoArgsConstructor;`
+2. For @NoArgsConstructor with final fields: use `force = true`
+3. No existing constructor with same signature
+4. Enum constructors are always private
 
 ### Getters/Setters Not Generated
 
