@@ -173,7 +173,6 @@ impl CompletionProvider for ExpressionProvider {
         };
 
         let t0 = Instant::now();
-        let is_type_annotation = matches!(&ctx.location, CursorLocation::TypeAnnotation { .. });
 
         if prefix.contains('.') {
             let results = provide_qualified_type_prefix(prefix, ctx, index, self.name());
@@ -201,7 +200,7 @@ impl CompletionProvider for ExpressionProvider {
         let reached_limit = |len: usize, lim: Option<usize>| {
             lim.is_some_and(|effective_limit| len >= effective_limit)
         };
-        let mut visibility_filter = VisibilityFilter::new(ctx, index, is_type_annotation);
+        let mut visibility_filter = VisibilityFilter::new(ctx, index);
 
         let t_imports = Instant::now();
         let imported = index.resolve_imports(&ctx.existing_imports);
@@ -391,7 +390,6 @@ enum CandidateSourceGroup {
 }
 
 struct VisibilityFilter {
-    is_type_annotation: bool,
     visible_inner_by_simple_name: HashMap<Arc<str>, Arc<str>>,
     total_checks: usize,
     nested_checks: usize,
@@ -399,19 +397,19 @@ struct VisibilityFilter {
 }
 
 impl VisibilityFilter {
-    fn new(ctx: &SemanticContext, index: &IndexView, is_type_annotation: bool) -> Self {
+    fn new(ctx: &SemanticContext, index: &IndexView) -> Self {
         let mut visible_inner_by_simple_name = HashMap::new();
-        if is_type_annotation
-            && let Some(enclosing_internal) = ctx.enclosing_internal_name.as_deref()
-        {
+
+        // Always collect inner classes of the enclosing class, not just for type annotations
+        if let Some(enclosing_internal) = ctx.enclosing_internal_name.as_deref() {
             for inner in index.direct_inner_classes_of(enclosing_internal) {
                 visible_inner_by_simple_name
                     .entry(Arc::clone(&inner.name))
                     .or_insert_with(|| Arc::clone(&inner.internal_name));
             }
         }
+
         Self {
-            is_type_annotation,
             visible_inner_by_simple_name,
             total_checks: 0,
             nested_checks: 0,
@@ -423,10 +421,10 @@ impl VisibilityFilter {
         let start = Instant::now();
         self.total_checks += 1;
         let visible = if meta.inner_class_of.is_none() {
-            true
-        } else if !self.is_type_annotation {
-            false
+            true // Top-level classes always visible
         } else {
+            // Allow nested classes if they're in the visible_inner_by_simple_name map
+            // This includes direct inner classes of the enclosing class
             self.nested_checks += 1;
             self.visible_inner_by_simple_name
                 .get(&meta.name)

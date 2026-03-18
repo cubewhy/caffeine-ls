@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tree_sitter::Node;
 
 use crate::{
-    index::{FieldSummary, MethodSummary},
+    index::{ClassMetadata, FieldSummary, MethodSummary},
     language::java::{
         JavaContextExtractor,
         lombok::rules::{
@@ -83,6 +83,7 @@ pub struct SyntheticMemberSet {
     pub methods: Vec<MethodSummary>,
     pub fields: Vec<FieldSummary>,
     pub definitions: Vec<SyntheticDefinition>,
+    pub nested_classes: Vec<ClassMetadata>,
 }
 
 pub trait SyntheticMemberRule {

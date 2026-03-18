@@ -57,6 +57,14 @@ pub fn parse_java_source(
         &mut results,
     );
 
+    // Generate synthetic nested classes (e.g., Builder classes from @Builder)
+    let synthetic_nested = generate_synthetic_nested_classes(&results, &type_ctx, &origin);
+    results.extend(synthetic_nested);
+
+    // Generate synthetic nested classes (e.g., Builder classes from @Builder)
+    let synthetic_nested = generate_synthetic_nested_classes(&results, &type_ctx, &origin);
+    results.extend(synthetic_nested);
+
     results
 }
 
@@ -280,10 +288,23 @@ pub fn find_symbol_range(
     let imports = crate::language::java::scope::extract_imports(&ctx, root);
     let type_ctx = SourceTypeCtx::new(package, imports, Some(index.build_name_table()));
 
-    let target_simple = target_internal
-        .rsplit('/')
-        .next()
-        .unwrap_or(target_internal);
+    // For nested classes, we need to look up the class metadata to get the simple name
+    // We can't just split by '$' because '$' is a valid character in Java identifiers
+    let target_simple_owned = if let Some(meta) = index.get_class(target_internal) {
+        // Use the name field from ClassMetadata which is the simple name
+        Some(meta.name.to_string())
+    } else {
+        None
+    };
+
+    let target_simple = target_simple_owned.as_deref().unwrap_or_else(|| {
+        // Fallback: extract from internal name (after last '/')
+        target_internal
+            .rsplit('/')
+            .next()
+            .unwrap_or(target_internal)
+    });
+
     let class_node = find_class_node(root, target_simple, ctx.bytes())?;
 
     let target_node = if let Some(m_name) = member_name {
@@ -1573,4 +1594,287 @@ record Point(int x, int y) {
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 18);
     }
+}
+
+/// Generate synthetic nested classes from Lombok annotations (e.g., @Builder)
+fn generate_synthetic_nested_classes(
+    classes: &[ClassMetadata],
+    _type_ctx: &SourceTypeCtx,
+    _origin: &ClassOrigin,
+) -> Vec<ClassMetadata> {
+    let mut synthetic_nested = Vec::new();
+
+    for _class in classes {
+        // For each class, check if it has annotations that generate nested classes
+        // Currently, this is primarily @Builder
+
+        // Extract synthetic nested classes from the class's synthetic member set
+        // This requires re-parsing to get the tree node, which we'll optimize later
+        // For now, we'll collect nested classes that were generated during synthesis
+
+        // TODO: Implement actual nested class generation
+        // This will be filled in by the BuilderRule
+    }
+
+    synthetic_nested
+}
+
+#[cfg(test)]
+mod nested_class_navigation_tests {
+    use super::*;
+    use crate::index::{ClassOrigin, IndexScope, ModuleId, WorkspaceIndex};
+
+    #[test]
+    fn test_find_nested_class_by_internal_name() {
+        let src = indoc::indoc! {"
+            package com.example;
+            
+            public class Outer {
+                private String outerField;
+                
+                public static class Inner {
+                    private String innerField;
+                    
+                    public String getInnerField() {
+                        return innerField;
+                    }
+                }
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        println!("\n=== Parsed {} classes ===", classes.len());
+        for class in &classes {
+            println!(
+                "  Class: {} (internal: {})",
+                class.name, class.internal_name
+            );
+            println!("    inner_class_of: {:?}", class.inner_class_of);
+            println!(
+                "    methods: {:?}",
+                class
+                    .methods
+                    .iter()
+                    .map(|m| m.name.as_ref())
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        assert_eq!(
+            classes.len(),
+            2,
+            "Should parse both Outer and Inner classes"
+        );
+
+        let outer = classes.iter().find(|c| c.name.as_ref() == "Outer").unwrap();
+        let inner = classes.iter().find(|c| c.name.as_ref() == "Inner").unwrap();
+
+        assert_eq!(outer.internal_name.as_ref(), "com/example/Outer");
+        assert_eq!(inner.internal_name.as_ref(), "com/example/Outer$Inner");
+        assert_eq!(inner.inner_class_of.as_deref(), Some("Outer"));
+
+        // Test find_symbol_range for nested class
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(classes);
+        let view = idx.view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+
+        // Try to find the Inner class
+        let range = find_symbol_range(src, "com/example/Outer$Inner", None, None, &view);
+        println!("\n=== Find Inner class range: {:?} ===", range);
+        assert!(range.is_some(), "Should find Inner class by internal name");
+
+        // Try to find getInnerField method
+        let range = find_symbol_range(
+            src,
+            "com/example/Outer$Inner",
+            Some("getInnerField"),
+            Some("()LString;"), // Use the actual descriptor format from parsing
+            &view,
+        );
+        println!("=== Find getInnerField range: {:?} ===", range);
+        assert!(
+            range.is_some(),
+            "Should find getInnerField method in Inner class"
+        );
+    }
+}
+
+#[test]
+fn test_nested_class_completion_scenarios() {
+    let src = indoc::indoc! {"
+            package com.example;
+            
+            public class Outer {
+                private String outerField;
+                
+                public static class StaticInner {
+                    private String staticInnerField;
+                    
+                    public String getStaticInnerField() {
+                        return staticInnerField;
+                    }
+                }
+                
+                public class InstanceInner {
+                    private String instanceInnerField;
+                    
+                    public String getInstanceInnerField() {
+                        return instanceInnerField;
+                    }
+                }
+                
+                public void testMethod() {
+                    // Should be able to reference StaticInner by simple name
+                    StaticInner si = new StaticInner();
+                    
+                    // Should be able to reference InstanceInner by simple name
+                    InstanceInner ii = new InstanceInner();
+                }
+            }
+        "};
+
+    let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+    println!("\n=== Parsed {} classes ===", classes.len());
+    for class in &classes {
+        println!(
+            "  Class: {} (internal: {})",
+            class.name, class.internal_name
+        );
+        println!("    inner_class_of: {:?}", class.inner_class_of);
+        println!("    access_flags: 0x{:x}", class.access_flags);
+    }
+
+    assert_eq!(
+        classes.len(),
+        3,
+        "Should parse Outer, StaticInner, and InstanceInner"
+    );
+
+    let outer = classes.iter().find(|c| c.name.as_ref() == "Outer").unwrap();
+    let static_inner = classes
+        .iter()
+        .find(|c| c.name.as_ref() == "StaticInner")
+        .unwrap();
+    let instance_inner = classes
+        .iter()
+        .find(|c| c.name.as_ref() == "InstanceInner")
+        .unwrap();
+
+    assert_eq!(outer.internal_name.as_ref(), "com/example/Outer");
+    assert_eq!(
+        static_inner.internal_name.as_ref(),
+        "com/example/Outer$StaticInner"
+    );
+    assert_eq!(
+        instance_inner.internal_name.as_ref(),
+        "com/example/Outer$InstanceInner"
+    );
+
+    // Verify inner_class_of is set correctly
+    assert_eq!(static_inner.inner_class_of.as_deref(), Some("Outer"));
+    assert_eq!(instance_inner.inner_class_of.as_deref(), Some("Outer"));
+
+    // Verify static flag
+    use rust_asm::constants::ACC_STATIC;
+    assert_ne!(
+        static_inner.access_flags & ACC_STATIC,
+        0,
+        "StaticInner should have ACC_STATIC flag"
+    );
+    assert_eq!(
+        instance_inner.access_flags & ACC_STATIC,
+        0,
+        "InstanceInner should NOT have ACC_STATIC flag"
+    );
+}
+
+#[test]
+fn test_nested_class_with_dollar_in_name() {
+    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
+
+    // Test that we handle nested classes correctly even when $ is in the class name
+    let src = indoc::indoc! {"
+            package com.example;
+            
+            public class Outer$Class {
+                private String outerField;
+                
+                public static class Inner$Class {
+                    private String innerField;
+                    
+                    public String getInnerField() {
+                        return innerField;
+                    }
+                }
+            }
+        "};
+
+    let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+    println!("\n=== Parsed {} classes ===", classes.len());
+    for class in &classes {
+        println!(
+            "  Class: {} (internal: {})",
+            class.name, class.internal_name
+        );
+        println!("    inner_class_of: {:?}", class.inner_class_of);
+    }
+
+    assert_eq!(
+        classes.len(),
+        2,
+        "Should parse both Outer$Class and Inner$Class"
+    );
+
+    let outer = classes
+        .iter()
+        .find(|c| c.name.as_ref() == "Outer$Class")
+        .unwrap();
+    let inner = classes
+        .iter()
+        .find(|c| c.name.as_ref() == "Inner$Class")
+        .unwrap();
+
+    assert_eq!(outer.internal_name.as_ref(), "com/example/Outer$Class");
+    assert_eq!(
+        inner.internal_name.as_ref(),
+        "com/example/Outer$Class$Inner$Class"
+    );
+    assert_eq!(inner.inner_class_of.as_deref(), Some("Outer$Class"));
+
+    // Test find_symbol_range for nested class with $ in name
+    let idx = WorkspaceIndex::new();
+    idx.add_classes(classes);
+    let view = idx.view(IndexScope {
+        module: ModuleId::ROOT,
+    });
+
+    // Try to find the Inner$Class
+    let range = find_symbol_range(
+        src,
+        "com/example/Outer$Class$Inner$Class",
+        None,
+        None,
+        &view,
+    );
+    println!("\n=== Find Inner$Class range: {:?} ===", range);
+    assert!(
+        range.is_some(),
+        "Should find Inner$Class by internal name using metadata lookup"
+    );
+
+    // Try to find getInnerField method
+    let range = find_symbol_range(
+        src,
+        "com/example/Outer$Class$Inner$Class",
+        Some("getInnerField"),
+        Some("()LString;"),
+        &view,
+    );
+    println!("=== Find getInnerField range: {:?} ===", range);
+    assert!(
+        range.is_some(),
+        "Should find getInnerField method in Inner$Class"
+    );
 }

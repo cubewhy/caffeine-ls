@@ -2692,7 +2692,7 @@ mod value_tests {
     fn test_value_generates_getters_only() {
         let src = indoc::indoc! {"
             import lombok.Value;
-            
+
             @Value
             public class Point {
                 double x;
