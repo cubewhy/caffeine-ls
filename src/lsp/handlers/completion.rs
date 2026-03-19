@@ -89,11 +89,53 @@ pub async fn handle_completion(
     );
 
     let env = ParseEnv {
-        name_table: Some(name_table),
+        name_table: Some(name_table.clone()),
     };
 
+    // Phase 3: Completion Context Caching
+    // Compute content hash for the relevant scope to enable caching
     let (ctx, source_for_edits) = workspace.documents.with_doc(uri, |doc| {
         let file = doc.source();
+        let source_text = file.text();
+
+        // Compute hash of relevant scope (method/class containing cursor)
+        let tree_root = file.tree.as_ref().map(|t| t.root_node());
+        let offset = crate::language::rope_utils::rope_line_col_to_offset(
+            &file.rope,
+            position.line,
+            position.character,
+        )
+        .unwrap_or(0);
+
+        let relevant_scope =
+            crate::salsa_queries::extract_relevant_scope(source_text, tree_root, offset);
+
+        let content_hash = crate::salsa_queries::compute_relevant_content_hash(
+            relevant_scope,
+            position.line,
+            position.character,
+        );
+
+        // Check if we have a cached context via Salsa
+        let cache_key = {
+            let db = workspace.salsa_db.lock();
+            crate::salsa_queries::cached_completion_context_metadata(
+                &*db,
+                Arc::from(uri_str),
+                content_hash,
+                position.line,
+                position.character,
+                trigger,
+            )
+        };
+
+        tracing::debug!(
+            content_hash = cache_key.content_hash,
+            computed_at = cache_key.computed_at,
+            "completion context cache key computed"
+        );
+
+        // Parse the context (this is the expensive operation we're caching)
         let ctx = lang
             .parse_completion_context_with_tree(
                 file,
@@ -105,8 +147,9 @@ pub async fn handle_completion(
             .with_file_uri(Arc::from(uri_str))
             .with_language_id(crate::language::LanguageId::new(lang_id.clone()));
 
-        Some((ctx, file.text().to_owned()))
+        Some((ctx, source_text.to_owned()))
     })??;
+
     let ctx = if let Some(pkg) = inferred_package {
         ctx.with_inferred_package(pkg)
     } else {

@@ -1,3 +1,4 @@
+pub mod completion;
 pub mod index;
 /// Salsa query infrastructure for incremental computation
 ///
@@ -22,6 +23,10 @@ pub trait Db: salsa::Database {
     fn workspace_index(&self) -> Arc<RwLock<WorkspaceIndex>>;
 }
 
+pub use completion::{
+    CompletionContextKey, CompletionContextMetadata, cached_completion_context_metadata,
+    compute_relevant_content_hash, extract_relevant_scope,
+};
 pub use index::{
     build_name_table_for_context, cached_index_view_metadata, cached_name_table, extract_classes,
     get_extracted_classes, get_index_view_for_context, get_name_table_for_context,

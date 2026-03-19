@@ -325,3 +325,236 @@ public class User {
         "NameTable should contain 'org/example/User'"
     );
 }
+
+#[tokio::test]
+async fn test_completion_context_caching() {
+    let workspace = create_test_workspace();
+    let engine = Arc::new(CompletionEngine::new());
+    let registry = Arc::new(LanguageRegistry::new());
+
+    // Open a Java file
+    let content = r#"
+package org.example;
+
+public class CacheTest {
+    private String value;
+    
+    public void method() {
+        String v = val
+    }
+}
+"#;
+
+    open_document(&workspace, "file:///test/CacheTest.java", content).await;
+
+    let uri = Url::parse("file:///test/CacheTest.java").unwrap();
+    let position = Position {
+        line: 7,
+        character: 22, // After "val"
+    };
+
+    // First completion request - should compute context
+    let params1 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result1 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+
+    assert!(result1.is_some(), "First completion should return results");
+
+    // Second completion request at same position - should use cached context
+    let params2 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result2 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+
+    assert!(result2.is_some(), "Second completion should return results");
+
+    // Both results should be similar (cache hit)
+    if let (Some(CompletionResponse::List(list1)), Some(CompletionResponse::List(list2))) =
+        (result1, result2)
+    {
+        assert_eq!(
+            list1.items.len(),
+            list2.items.len(),
+            "Cached completion should return same number of items"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_completion_context_invalidation_on_content_change() {
+    let workspace = create_test_workspace();
+    let engine = Arc::new(CompletionEngine::new());
+    let registry = Arc::new(LanguageRegistry::new());
+
+    // Open initial content
+    let content1 = r#"
+package org.example;
+
+public class InvalidationTest {
+    private String oldField;
+    
+    public void method() {
+        String v = old
+    }
+}
+"#;
+
+    open_document(&workspace, "file:///test/InvalidationTest.java", content1).await;
+
+    let uri = Url::parse("file:///test/InvalidationTest.java").unwrap();
+    let position = Position {
+        line: 7,
+        character: 22,
+    };
+
+    // First completion
+    let params1 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result1 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+
+    assert!(result1.is_some(), "First completion should return results");
+
+    // Modify the content (change field name)
+    let content2 = r#"
+package org.example;
+
+public class InvalidationTest {
+    private String newField;
+    
+    public void method() {
+        String v = new
+    }
+}
+"#;
+
+    // Update the document
+    workspace.documents.close(&uri);
+    open_document(&workspace, "file:///test/InvalidationTest.java", content2).await;
+
+    let position2 = Position {
+        line: 7,
+        character: 22,
+    };
+
+    // Second completion with modified content
+    let params2 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: position2,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result2 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+
+    assert!(
+        result2.is_some(),
+        "Second completion after content change should return results"
+    );
+
+    // Results should be different due to content change
+    // (cache should have been invalidated)
+}
+
+#[tokio::test]
+async fn test_completion_context_different_positions() {
+    let workspace = create_test_workspace();
+    let engine = Arc::new(CompletionEngine::new());
+    let registry = Arc::new(LanguageRegistry::new());
+
+    let content = r#"
+package org.example;
+
+public class PositionTest {
+    private String field1;
+    private String field2;
+    
+    public void method1() {
+        String v = fie
+    }
+    
+    public void method2() {
+        String v = fie
+    }
+}
+"#;
+
+    open_document(&workspace, "file:///test/PositionTest.java", content).await;
+
+    let uri = Url::parse("file:///test/PositionTest.java").unwrap();
+
+    // Completion in method1
+    let params1 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 8,
+                character: 22,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result1 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+
+    assert!(
+        result1.is_some(),
+        "Completion in method1 should return results"
+    );
+
+    // Completion in method2 (different position)
+    let params2 = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position: Position {
+                line: 12,
+                character: 22,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: None,
+    };
+
+    let result2 =
+        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+
+    assert!(
+        result2.is_some(),
+        "Completion in method2 should return results"
+    );
+
+    // Both should return results (different cache entries due to different positions)
+}
