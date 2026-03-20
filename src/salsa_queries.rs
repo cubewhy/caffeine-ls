@@ -5,6 +5,7 @@
 /// and automatically invalidated when inputs change.
 pub mod completion;
 pub mod context;
+pub mod conversion;
 pub mod hints;
 pub mod index;
 pub mod java;
@@ -37,6 +38,7 @@ pub use context::{
     compute_scope_content_hash, extract_completion_context, find_node_at_position,
     line_col_to_offset,
 };
+pub use conversion::{FromSalsaData, convert_local_var};
 pub use hints::{
     InlayHintData, InlayHintKindData, MethodCallMetadata, VarDeclMetadata, compute_inlay_hints,
     find_method_calls_in_range, find_variable_declarations_in_range, infer_variable_type,

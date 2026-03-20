@@ -324,6 +324,53 @@ impl Language for JavaLanguage {
                 .collect(),
         )
     }
+
+    // ========================================================================
+    // Salsa-based methods for incremental computation
+    // ========================================================================
+
+    fn extract_completion_context_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+        trigger_char: Option<char>,
+    ) -> Option<Arc<crate::salsa_queries::CompletionContextData>> {
+        Some(crate::salsa_queries::java::extract_java_completion_context(
+            db,
+            file,
+            line,
+            character,
+            trigger_char,
+        ))
+    }
+
+    fn resolve_symbol_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+    ) -> Option<Arc<crate::salsa_queries::ResolvedSymbolData>> {
+        crate::salsa_queries::java::resolve_java_symbol(db, file, line, character)
+    }
+
+    fn compute_inlay_hints_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        range: Range,
+    ) -> Option<Arc<Vec<crate::salsa_queries::InlayHintData>>> {
+        Some(crate::salsa_queries::java::compute_java_inlay_hints(
+            db,
+            file,
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+        ))
+    }
 }
 
 fn is_annotation_name(node: Node) -> bool {

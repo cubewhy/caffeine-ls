@@ -16,12 +16,14 @@ use tree_sitter::{Node, Parser, Tree};
 use crate::workspace::SourceFile;
 
 pub(crate) mod rope_utils;
+pub mod salsa_context;
 pub(crate) mod ts_utils;
 
 pub mod java;
 pub mod kotlin;
 pub use java::JavaLanguage;
 pub use kotlin::KotlinLanguage;
+pub use salsa_context::SalsaContext;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LanguageId(pub Arc<str>);
@@ -139,6 +141,64 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         _index: &IndexView,
     ) -> Option<Vec<InlayHint>> {
         None
+    }
+
+    // ========================================================================
+    // NEW: Salsa-based methods for incremental computation
+    // ========================================================================
+
+    /// Extract completion context using Salsa queries (CACHED)
+    ///
+    /// This is the new Salsa-based method that provides automatic memoization.
+    /// It delegates to language-specific Salsa queries.
+    fn extract_completion_context_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+        trigger_char: Option<char>,
+    ) -> Option<Arc<crate::salsa_queries::CompletionContextData>> {
+        // Default implementation delegates to the generic query
+        Some(crate::salsa_queries::extract_completion_context(
+            db,
+            file,
+            line,
+            character,
+            trigger_char,
+        ))
+    }
+
+    /// Resolve symbol at position using Salsa queries (CACHED)
+    ///
+    /// This is the new Salsa-based method for goto definition.
+    fn resolve_symbol_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+    ) -> Option<Arc<crate::salsa_queries::ResolvedSymbolData>> {
+        crate::salsa_queries::resolve_symbol_at_position(db, file, line, character)
+    }
+
+    /// Compute inlay hints using Salsa queries (CACHED)
+    ///
+    /// This is the new Salsa-based method for inlay hints.
+    fn compute_inlay_hints_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        range: Range,
+    ) -> Option<Arc<Vec<crate::salsa_queries::InlayHintData>>> {
+        Some(crate::salsa_queries::compute_inlay_hints(
+            db,
+            file,
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+        ))
     }
 }
 

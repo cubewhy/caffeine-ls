@@ -1,5 +1,6 @@
 use anyhow::Result;
 use parking_lot::RwLock as ParkingRwLock;
+use salsa::Setter;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
@@ -159,6 +160,56 @@ impl Workspace {
         // Cache it
         self.salsa_files.write().insert(url, file);
 
+        Some(file)
+    }
+
+    /// Get or update a Salsa SourceFile for a URI
+    ///
+    /// This ensures the Salsa file is synchronized with the document content.
+    /// If the file exists but content has changed, it updates the Salsa file.
+    pub fn get_or_update_salsa_file(&self, uri: &Url) -> Option<crate::salsa_db::SourceFile> {
+        // Get current document content
+        let content = self
+            .documents
+            .with_doc(uri, |doc| doc.source().text().to_string())?;
+        let language_id = self
+            .documents
+            .with_doc(uri, |doc| doc.language_id().to_string())?;
+
+        // Check if file exists
+        {
+            let files = self.salsa_files.read();
+            if let Some(&file) = files.get(uri) {
+                // Check if content is in sync
+                let salsa_content = {
+                    let db = self.salsa_db.lock();
+                    file.content(&*db).to_string()
+                };
+
+                if salsa_content == content {
+                    // Already in sync
+                    return Some(file);
+                }
+
+                // Update content
+                drop(files); // Release read lock
+                let mut db = self.salsa_db.lock();
+                file.set_content(&mut *db).to(content);
+                return Some(file);
+            }
+        }
+
+        // Create new file
+        let db = self.salsa_db.lock();
+        let file = crate::salsa_db::SourceFile::new(
+            &*db,
+            crate::salsa_db::FileId::new(uri.clone()),
+            content,
+            Arc::from(language_id.as_str()),
+        );
+
+        drop(db);
+        self.salsa_files.write().insert(uri.clone(), file);
         Some(file)
     }
 

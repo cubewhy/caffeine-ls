@@ -76,6 +76,55 @@ impl Language for KotlinLanguage {
         });
         candidates
     }
+
+    // ========================================================================
+    // Salsa-based methods for incremental computation
+    // ========================================================================
+
+    fn extract_completion_context_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+        trigger_char: Option<char>,
+    ) -> Option<Arc<crate::salsa_queries::CompletionContextData>> {
+        Some(
+            crate::salsa_queries::kotlin::extract_kotlin_completion_context(
+                db,
+                file,
+                line,
+                character,
+                trigger_char,
+            ),
+        )
+    }
+
+    fn resolve_symbol_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        line: u32,
+        character: u32,
+    ) -> Option<Arc<crate::salsa_queries::ResolvedSymbolData>> {
+        crate::salsa_queries::kotlin::resolve_kotlin_symbol(db, file, line, character)
+    }
+
+    fn compute_inlay_hints_salsa(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        file: crate::salsa_db::SourceFile,
+        range: tower_lsp::lsp_types::Range,
+    ) -> Option<Arc<Vec<crate::salsa_queries::InlayHintData>>> {
+        Some(crate::salsa_queries::kotlin::compute_kotlin_inlay_hints(
+            db,
+            file,
+            range.start.line,
+            range.start.character,
+            range.end.line,
+            range.end.character,
+        ))
+    }
 }
 
 struct KotlinContextExtractor<'s> {
