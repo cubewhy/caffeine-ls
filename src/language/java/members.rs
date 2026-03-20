@@ -1241,6 +1241,7 @@ fn has_spread_parameter(formals_node: Node) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::NameTable;
     use tree_sitter::Parser;
 
     fn setup(source: &str) -> (JavaContextExtractor, tree_sitter::Tree) {
@@ -1297,7 +1298,11 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
+        let type_ctx = SourceTypeCtx::new(
+            None,
+            vec![],
+            Some(NameTable::from_names(vec![Arc::from("java/lang/String")])),
+        );
         let mut members = Vec::new();
         collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
@@ -1310,7 +1315,7 @@ mod tests {
         };
         assert_ne!(join.access_flags & ACC_VARARGS, 0);
         assert!(
-            join.desc().as_ref().contains("[LString;"),
+            join.desc().as_ref().contains("[Ljava/lang/String;"),
             "expected varargs array descriptor in method signature, got {}",
             join.desc()
         );

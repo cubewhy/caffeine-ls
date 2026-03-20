@@ -6,6 +6,7 @@ use crate::salsa_queries::context::{
 };
 use crate::salsa_queries::hints::{InlayHintData, InlayHintKindData};
 use crate::salsa_queries::symbols::{ResolvedSymbolData, SymbolKind};
+use crate::semantic::CursorLocation;
 /// Java-specific Salsa queries
 ///
 /// These queries handle Java-specific parsing and analysis.
@@ -29,10 +30,13 @@ pub fn parse_java_classes(db: &dyn Db, file: SourceFile) -> Vec<ClassMetadata> {
 }
 
 /// Get name table for a Java file's context
-fn get_name_table_for_java_file(_db: &dyn Db, _file: SourceFile) -> Option<Arc<NameTable>> {
-    // TODO: Query the workspace model to determine the file's context
-    // For now, return None and let the parser work without name table
-    None
+fn get_name_table_for_java_file(db: &dyn Db, file: SourceFile) -> Option<Arc<NameTable>> {
+    let workspace_index = db.workspace_index();
+    let index = workspace_index.read();
+    let _ = file;
+    Some(index.build_name_table(crate::index::IndexScope {
+        module: crate::index::ModuleId::ROOT,
+    }))
 }
 
 /// Extract Java package declaration
@@ -51,6 +55,7 @@ pub fn extract_java_imports(db: &dyn Db, file: SourceFile) -> Vec<Arc<str>> {
 mod tests {
     use super::*;
     use crate::salsa_db::{Database, FileId};
+    use ropey::Rope;
     use tower_lsp::lsp_types::Url;
 
     #[test]
@@ -101,6 +106,110 @@ mod tests {
         let imports = extract_java_imports(&db, file);
         assert_eq!(imports.len(), 2);
     }
+
+    #[test]
+    fn test_extract_java_context_keeps_system_out_as_member_access() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let content = "class Test { void f() { System.out.println } }";
+        let rope = Rope::from_str(content);
+        let byte_offset = content.find("println").unwrap() + "println".len();
+        let char_idx = rope.byte_to_char(byte_offset);
+        let line = rope.char_to_line(char_idx) as u32;
+        let character = (char_idx - rope.line_to_char(line as usize)) as u32;
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            content.to_string(),
+            Arc::from("java"),
+        );
+
+        let ctx = extract_java_completion_context(&db, file, line, character, None);
+
+        match &ctx.location {
+            CursorLocationData::MemberAccess {
+                receiver_expr,
+                member_prefix,
+                ..
+            } => {
+                assert_eq!(receiver_expr.as_ref(), "System.out");
+                assert_eq!(member_prefix.as_ref(), "println");
+            }
+            other => panic!("expected MemberAccess, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_java_context_keeps_user_dot_as_member_access() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/User.java").unwrap();
+        let content = r#"
+class User {
+    void test() {
+        User user = new User();
+        user.
+    }
+}
+"#;
+        let rope = Rope::from_str(content);
+        let byte_offset = content.find("user.").unwrap() + "user.".len();
+        let char_idx = rope.byte_to_char(byte_offset);
+        let line = rope.char_to_line(char_idx) as u32;
+        let character = (char_idx - rope.line_to_char(line as usize)) as u32;
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            content.to_string(),
+            Arc::from("java"),
+        );
+
+        let ctx = extract_java_completion_context(&db, file, line, character, Some('.'));
+
+        match &ctx.location {
+            CursorLocationData::MemberAccess {
+                receiver_expr,
+                member_prefix,
+                ..
+            } => {
+                assert_eq!(receiver_expr.as_ref(), "user");
+                assert!(member_prefix.is_empty());
+            }
+            other => panic!("expected MemberAccess, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_java_context_keeps_new_prefix_as_expression() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/InvalidationTest.java").unwrap();
+        let content = r#"
+class InvalidationTest {
+    void method() {
+        String v = new
+    }
+}
+"#;
+        let rope = Rope::from_str(content);
+        let byte_offset = content.rfind("new").unwrap() + "new".len();
+        let char_idx = rope.byte_to_char(byte_offset);
+        let line = rope.char_to_line(char_idx) as u32;
+        let character = (char_idx - rope.line_to_char(line as usize)) as u32;
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            content.to_string(),
+            Arc::from("java"),
+        );
+
+        let ctx = extract_java_completion_context(&db, file, line, character, None);
+
+        match &ctx.location {
+            CursorLocationData::Expression { prefix } => {
+                assert_eq!(prefix.as_ref(), "new");
+            }
+            other => panic!("expected Expression, got {other:?}"),
+        }
+    }
 }
 
 // ============================================================================
@@ -115,6 +224,17 @@ pub fn extract_java_completion_context(
     line: u32,
     character: u32,
     trigger_char: Option<char>,
+) -> Arc<CompletionContextData> {
+    extract_java_completion_context_with_name_table(db, file, line, character, trigger_char, None)
+}
+
+pub fn extract_java_completion_context_with_name_table(
+    db: &dyn Db,
+    file: SourceFile,
+    line: u32,
+    character: u32,
+    trigger_char: Option<char>,
+    request_name_table: Option<Arc<NameTable>>,
 ) -> Arc<CompletionContextData> {
     let content = file.content(db);
     let Some(offset) = line_col_to_offset(content, line, character) else {
@@ -132,15 +252,14 @@ pub fn extract_java_completion_context(
     };
 
     let root = tree.root_node();
-
-    // Find cursor node
-    let cursor_node = root.named_descendant_for_byte_range(offset.saturating_sub(1), offset);
-
-    // Determine location
-    let location = determine_java_cursor_location(content, cursor_node, offset, trigger_char);
-
-    // Extract query string
-    let query = extract_query_string(content, offset, &location);
+    let name_table = request_name_table.or_else(|| get_name_table_for_java_file(db, file));
+    let extractor =
+        crate::language::java::JavaContextExtractor::new(content.to_string(), offset, name_table);
+    let cursor_node = extractor.find_cursor_node(root);
+    let (rich_location, rich_query) =
+        crate::language::java::location::determine_location(&extractor, cursor_node, trigger_char);
+    let location = convert_rich_location(&rich_location);
+    let query = Arc::from(rich_query.as_str());
 
     // Extract scope information (all cached separately)
     let package = super::parse::extract_package(db, file);
@@ -157,6 +276,7 @@ pub fn extract_java_completion_context(
     Arc::new(CompletionContextData {
         location,
         query,
+        cursor_offset: offset,
         enclosing_class,
         enclosing_internal_name,
         enclosing_package: package,
@@ -169,182 +289,90 @@ pub fn extract_java_completion_context(
     })
 }
 
-fn determine_java_cursor_location(
-    content: &str,
-    cursor_node: Option<tree_sitter::Node>,
-    offset: usize,
-    trigger_char: Option<char>,
-) -> CursorLocationData {
-    let source = content.as_bytes();
-
-    let Some(node) = cursor_node else {
-        return fallback_location(content, offset, trigger_char);
-    };
-
-    // Check for member access (dot trigger)
-    if trigger_char == Some('.') {
-        return handle_member_access(content, offset);
-    }
-
-    // Walk up the tree to find semantic context
-    let mut current = node;
-    loop {
-        match current.kind() {
-            "import_declaration" => {
-                return handle_import(current, source);
-            }
-            "field_access" | "method_invocation" => {
-                return handle_field_or_method_access(current, source);
-            }
-            "identifier" => {
-                // Check parent context
-                if let Some(parent) = current.parent() {
-                    match parent.kind() {
-                        "import_declaration" => {
-                            return handle_import(parent, source);
-                        }
-                        "field_access" | "method_invocation" => {
-                            return handle_field_or_method_access(parent, source);
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Default to expression
-                let text = current.utf8_text(source).unwrap_or("");
-                return CursorLocationData::Expression {
-                    prefix: Arc::from(text),
-                };
-            }
-            _ => {}
-        }
-
-        // Move to parent
-        match current.parent() {
-            Some(p) => current = p,
-            None => break,
-        }
-    }
-
-    fallback_location(content, offset, trigger_char)
-}
-
-fn handle_import(node: tree_sitter::Node, source: &[u8]) -> CursorLocationData {
-    let text = node.utf8_text(source).unwrap_or("");
-    let prefix = text
-        .trim_start_matches("import")
-        .trim_start_matches("static")
-        .trim()
-        .trim_end_matches(';')
-        .to_string();
-
-    if text.contains("static") {
-        CursorLocationData::ImportStatic {
-            prefix: Arc::from(prefix),
-        }
-    } else {
-        CursorLocationData::Import {
-            prefix: Arc::from(prefix),
-        }
-    }
-}
-
-fn handle_field_or_method_access(node: tree_sitter::Node, source: &[u8]) -> CursorLocationData {
-    // Get the receiver (object before the dot)
-    let receiver = if let Some(obj) = node.child_by_field_name("object") {
-        obj.utf8_text(source).unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
-
-    // Get the member name (after the dot)
-    let member = if let Some(field) = node.child_by_field_name("field") {
-        field.utf8_text(source).unwrap_or("").to_string()
-    } else if let Some(name) = node.child_by_field_name("name") {
-        name.utf8_text(source).unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
-
-    // Check if receiver looks like a class name (starts with uppercase)
-    if receiver.chars().next().is_some_and(|c| c.is_uppercase()) {
-        CursorLocationData::StaticAccess {
-            class_internal_name: Arc::from(receiver.replace('.', "/")),
-            member_prefix: Arc::from(member),
-        }
-    } else {
-        CursorLocationData::MemberAccess {
-            receiver_expr: Arc::from(receiver),
-            member_prefix: Arc::from(member),
-            receiver_type_hint: None,
-            arguments: None,
-        }
-    }
-}
-
-fn handle_member_access(content: &str, offset: usize) -> CursorLocationData {
-    // Find the line containing the cursor
-    let line_start = content[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let line = &content[line_start..offset];
-
-    // Find the last token before the dot
-    let receiver = line
-        .trim_end_matches('.')
-        .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
-        .next_back()
-        .unwrap_or("")
-        .to_string();
-
-    if receiver.chars().next().is_some_and(|c| c.is_uppercase()) {
-        CursorLocationData::StaticAccess {
-            class_internal_name: Arc::from(receiver.replace('.', "/")),
-            member_prefix: Arc::from(""),
-        }
-    } else {
-        CursorLocationData::MemberAccess {
-            receiver_expr: Arc::from(receiver),
-            member_prefix: Arc::from(""),
-            receiver_type_hint: None,
-            arguments: None,
-        }
-    }
-}
-
-fn fallback_location(
-    content: &str,
-    offset: usize,
-    _trigger_char: Option<char>,
-) -> CursorLocationData {
-    // Extract the word at cursor
-    let before = &content[..offset];
-    let after = &content[offset..];
-
-    let word_start = before
-        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-        .map(|i| i + 1)
-        .unwrap_or(0);
-
-    let word_end = after
-        .find(|c: char| !c.is_alphanumeric() && c != '_')
-        .unwrap_or(after.len());
-
-    let word = format!("{}{}", &before[word_start..], &after[..word_end]);
-
-    CursorLocationData::Expression {
-        prefix: Arc::from(word),
-    }
-}
-
-fn extract_query_string(_content: &str, _offset: usize, location: &CursorLocationData) -> Arc<str> {
+fn convert_rich_location(location: &CursorLocation) -> CursorLocationData {
     match location {
-        CursorLocationData::Expression { prefix } => Arc::clone(prefix),
-        CursorLocationData::MemberAccess { member_prefix, .. } => Arc::clone(member_prefix),
-        CursorLocationData::StaticAccess { member_prefix, .. } => Arc::clone(member_prefix),
-        CursorLocationData::Import { prefix } => Arc::from(prefix.rsplit('.').next().unwrap_or("")),
-        CursorLocationData::ImportStatic { prefix } => {
-            Arc::from(prefix.rsplit('.').next().unwrap_or(""))
+        CursorLocation::Expression { prefix } => CursorLocationData::Expression {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::MemberAccess {
+            receiver_type,
+            member_prefix,
+            receiver_expr,
+            arguments,
+            ..
+        } => CursorLocationData::MemberAccess {
+            receiver_expr: Arc::from(receiver_expr.as_str()),
+            member_prefix: Arc::from(member_prefix.as_str()),
+            receiver_type_hint: receiver_type.clone(),
+            arguments: arguments.as_ref().map(|s| Arc::from(s.as_str())),
+        },
+        CursorLocation::StaticAccess {
+            class_internal_name,
+            member_prefix,
+        } => CursorLocationData::StaticAccess {
+            class_internal_name: Arc::clone(class_internal_name),
+            member_prefix: Arc::from(member_prefix.as_str()),
+        },
+        CursorLocation::Import { prefix } => CursorLocationData::Import {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::ImportStatic { prefix } => CursorLocationData::ImportStatic {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::MethodArgument { prefix } => CursorLocationData::MethodArgument {
+            prefix: Arc::from(prefix.as_str()),
+            method_name: None,
+            arg_index: None,
+        },
+        CursorLocation::ConstructorCall { class_prefix, .. } => CursorLocationData::Expression {
+            prefix: if class_prefix.is_empty() {
+                Arc::from("new")
+            } else {
+                Arc::from(class_prefix.as_str())
+            },
+        },
+        CursorLocation::TypeAnnotation { prefix } => CursorLocationData::Expression {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::VariableName { type_name } => CursorLocationData::Expression {
+            prefix: Arc::from(type_name.as_str()),
+        },
+        CursorLocation::StringLiteral { prefix } => CursorLocationData::Expression {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::MethodReference {
+            qualifier_expr,
+            member_prefix,
+            is_constructor,
+        } => {
+            if *is_constructor {
+                CursorLocationData::Expression {
+                    prefix: Arc::from(qualifier_expr.as_str()),
+                }
+            } else {
+                CursorLocationData::MemberAccess {
+                    receiver_expr: Arc::from(qualifier_expr.as_str()),
+                    member_prefix: Arc::from(member_prefix.as_str()),
+                    receiver_type_hint: None,
+                    arguments: None,
+                }
+            }
         }
-        _ => Arc::from(""),
+        CursorLocation::Annotation { prefix, .. } => CursorLocationData::Annotation {
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::StatementLabel { kind, prefix } => CursorLocationData::StatementLabel {
+            kind: match kind {
+                crate::semantic::context::StatementLabelCompletionKind::Break => {
+                    crate::salsa_queries::StatementLabelKind::Break
+                }
+                crate::semantic::context::StatementLabelCompletionKind::Continue => {
+                    crate::salsa_queries::StatementLabelKind::Continue
+                }
+            },
+            prefix: Arc::from(prefix.as_str()),
+        },
+        CursorLocation::Unknown => CursorLocationData::Unknown,
     }
 }
 
@@ -375,6 +403,7 @@ fn empty_context(db: &dyn Db, file: SourceFile) -> CompletionContextData {
     CompletionContextData {
         location: CursorLocationData::Unknown,
         query: Arc::from(""),
+        cursor_offset: 0,
         enclosing_class: None,
         enclosing_internal_name: None,
         enclosing_package: None,

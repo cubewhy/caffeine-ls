@@ -104,16 +104,18 @@ fn parse_method_locals(
 
     let root = tree.root_node();
 
+    let name_table = resolve_name_table_for_file(db, file);
+
     // Create a context extractor with cursor at the end of the method
     // Use method_end - 1 to ensure we're inside the method (not at the closing brace)
     // This ensures we extract all locals declared in the method
     let cursor_pos = method_end.saturating_sub(1);
-    let ctx = JavaContextExtractor::new(content.to_string(), cursor_pos, None);
+    let ctx = JavaContextExtractor::new(content.to_string(), cursor_pos, name_table.clone());
 
     // Extract package and imports for type resolution
     let package = scope::extract_package(&ctx, root);
     let imports = scope::extract_imports(&ctx, root);
-    let type_ctx = SourceTypeCtx::new(package, imports, None);
+    let type_ctx = SourceTypeCtx::new(package, imports, name_table);
 
     // Pass None as cursor_node and let extract_locals_with_type_ctx find the method by offset
     // This is simpler and more reliable than trying to pass the right node
@@ -767,13 +769,15 @@ fn parse_class_members(
 
     let root = tree.root_node();
 
+    let name_table = resolve_name_table_for_file(db, file);
+
     // Create a minimal context extractor for parsing
-    let ctx = JavaContextExtractor::for_indexing(content, None);
+    let ctx = JavaContextExtractor::for_indexing(content, name_table.clone());
 
     // Extract package and imports for type resolution
     let package = scope::extract_package(&ctx, root);
     let imports = scope::extract_imports(&ctx, root);
-    let type_ctx = SourceTypeCtx::new(package, imports, None);
+    let type_ctx = SourceTypeCtx::new(package, imports, name_table);
 
     // Find the class node at class_start
     let class_node = find_node_at_offset(
@@ -796,4 +800,16 @@ fn parse_class_members(
 
     // Convert Vec to HashMap keyed by member name
     members.into_iter().map(|m| (m.name(), m)).collect()
+}
+
+fn resolve_name_table_for_file(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+) -> Option<Arc<crate::index::NameTable>> {
+    let workspace_index = db.workspace_index();
+    let index = workspace_index.read();
+    let _ = file;
+    Some(index.build_name_table(crate::index::IndexScope {
+        module: crate::index::ModuleId::ROOT,
+    }))
 }

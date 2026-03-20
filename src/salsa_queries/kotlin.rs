@@ -87,6 +87,7 @@ pub fn extract_kotlin_completion_context(
     Arc::new(CompletionContextData {
         location,
         query,
+        cursor_offset: offset,
         enclosing_class,
         enclosing_internal_name,
         enclosing_package: package,
@@ -297,6 +298,7 @@ fn empty_context(db: &dyn Db, file: SourceFile) -> CompletionContextData {
     CompletionContextData {
         location: CursorLocationData::Unknown,
         query: Arc::from(""),
+        cursor_offset: 0,
         enclosing_class: None,
         enclosing_internal_name: None,
         enclosing_package: None,

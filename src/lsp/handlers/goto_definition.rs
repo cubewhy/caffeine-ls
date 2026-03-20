@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::index::{ClassOrigin, IndexView};
-use crate::language::ParseEnv;
 use crate::language::java::class_parser::find_symbol_range;
 use crate::lsp::server::Backend;
+use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::semantic::context::CursorLocation;
 use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
 use tower_lsp::lsp_types::*;
@@ -34,6 +34,8 @@ pub async fn handle_goto_definition(
     let analysis = backend.workspace.analysis_context_for_uri(uri);
     let scope = analysis.scope();
 
+    let request_analysis_t0 = std::time::Instant::now();
+
     // Use cached IndexView and NameTable via Salsa for better performance
     let (view, name_table) = {
         let db = backend.workspace.salsa_db.lock();
@@ -57,16 +59,50 @@ pub async fn handle_goto_definition(
         (view, name_table)
     };
 
-    let env = ParseEnv {
-        name_table: Some(name_table),
-        workspace: Some(backend.workspace.clone()),
+    let request_analysis = RequestAnalysisState {
+        analysis,
+        name_table: Arc::clone(&name_table),
     };
 
-    let ctx = backend.workspace.documents.with_doc(uri, |doc| {
-        lang.parse_completion_context_with_tree(doc.source(), pos.line, full_end, None, &env)
-    })??;
+    tracing::debug!(
+        uri = %uri,
+        module = scope.module.0,
+        classpath = ?analysis.classpath,
+        source_root = ?analysis.source_root.map(|id| id.0),
+        view_layers = view.layer_count(),
+        name_table_len = name_table.len(),
+        analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
+        "goto: request analysis prepared"
+    );
 
-    let mut ctx = ctx;
+    let salsa_file = backend.workspace.get_or_update_salsa_file(uri)?;
+
+    let mut ctx = {
+        let context_data = {
+            let db = backend.workspace.salsa_db.lock();
+            if lang.id() == "java" {
+                crate::salsa_queries::java::extract_java_completion_context_with_name_table(
+                    &*db,
+                    salsa_file,
+                    pos.line,
+                    full_end,
+                    None,
+                    Some(Arc::clone(&request_analysis.name_table)),
+                )
+            } else {
+                lang.extract_completion_context_salsa(&*db, salsa_file, pos.line, full_end, None)?
+            }
+        };
+
+        let db = backend.workspace.salsa_db.lock();
+        crate::semantic::SemanticContext::from_salsa_data_with_analysis(
+            context_data.as_ref().clone(),
+            &*db,
+            salsa_file,
+            Some(&*backend.workspace),
+            Some(&request_analysis),
+        )
+    };
 
     // enrich context
     lang.enrich_completion_context(&mut ctx, scope, &view);

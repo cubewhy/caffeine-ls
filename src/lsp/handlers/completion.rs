@@ -5,7 +5,8 @@ use tracing::debug;
 use super::super::converters::candidate_to_lsp;
 use crate::completion::candidate::{CompletionCandidate, InsertTextMode, ReplacementMode};
 use crate::completion::engine::{CompletionEngine, CompletionMetadata, CompletionPolicy};
-use crate::language::{LanguageRegistry, ParseEnv};
+use crate::language::LanguageRegistry;
+use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::workspace::Workspace;
 
 pub async fn handle_completion(
@@ -28,7 +29,7 @@ pub async fn handle_completion(
 
     let lang = registry.find(&lang_id)?;
 
-    let uri_str = uri.as_str();
+    let _uri_str = uri.as_str();
 
     tracing::debug!(
         uri = %uri,
@@ -49,6 +50,8 @@ pub async fn handle_completion(
     let analysis = workspace.analysis_context_for_uri(uri);
     let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
     let scope = analysis.scope();
+
+    let request_analysis_t0 = std::time::Instant::now();
 
     // Use cached IndexView and NameTable via Salsa for better performance
     let (view, name_table) = {
@@ -73,6 +76,11 @@ pub async fn handle_completion(
         (view, name_table)
     };
 
+    let request_analysis = RequestAnalysisState {
+        analysis,
+        name_table: Arc::clone(&name_table),
+    };
+
     let index = workspace.index.read();
     let visible_classpath = index.module_classpath_jars(scope.module, analysis.classpath);
 
@@ -85,77 +93,57 @@ pub async fn handle_completion(
         visible_classpath_len = visible_classpath.len(),
         name_table_len = name_table.len(),
         view_layers = view.layer_count(),
+        analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
         "completion using cached IndexView and NameTable"
     );
 
-    let env = ParseEnv {
-        name_table: Some(name_table.clone()),
-        workspace: Some(workspace.clone()),
-    };
+    let ctx: crate::semantic::SemanticContext = {
+        let salsa_file = workspace.get_or_update_salsa_file(uri)?;
 
-    // Phase 3: Completion Context Caching
-    // Compute content hash for the relevant scope to enable caching
-    let (ctx, source_for_edits) = workspace.documents.with_doc(uri, |doc| {
-        let file = doc.source();
-        let source_text = file.text();
-
-        // Compute hash of relevant scope (method/class containing cursor)
-        let tree_root = file.tree.as_ref().map(|t| t.root_node());
-        let offset = crate::language::rope_utils::rope_line_col_to_offset(
-            &file.rope,
-            position.line,
-            position.character,
-        )
-        .unwrap_or(0);
-
-        let relevant_scope =
-            crate::salsa_queries::extract_relevant_scope(source_text, tree_root, offset);
-
-        let content_hash = crate::salsa_queries::compute_relevant_content_hash(
-            relevant_scope,
-            position.line,
-            position.character,
-        );
-
-        // Check if we have a cached context via Salsa
-        let cache_key = {
+        let context_data = {
             let db = workspace.salsa_db.lock();
-            crate::salsa_queries::cached_completion_context_metadata(
-                &*db,
-                Arc::from(uri_str),
-                content_hash,
-                position.line,
-                position.character,
-                trigger,
-            )
+            if lang.id() == "java" {
+                crate::salsa_queries::java::extract_java_completion_context_with_name_table(
+                    &*db,
+                    salsa_file,
+                    position.line,
+                    position.character,
+                    trigger,
+                    Some(Arc::clone(&request_analysis.name_table)),
+                )
+            } else {
+                lang.extract_completion_context_salsa(
+                    &*db,
+                    salsa_file,
+                    position.line,
+                    position.character,
+                    trigger,
+                )?
+            }
         };
 
-        tracing::debug!(
-            content_hash = cache_key.content_hash,
-            computed_at = cache_key.computed_at,
-            "completion context cache key computed"
-        );
+        let db = workspace.salsa_db.lock();
+        crate::semantic::SemanticContext::from_salsa_data_with_analysis(
+            context_data.as_ref().clone(),
+            &*db,
+            salsa_file,
+            Some(&*workspace),
+            Some(&request_analysis),
+        )
+    };
 
-        // Parse the context (this is the expensive operation we're caching)
-        let ctx = lang
-            .parse_completion_context_with_tree(
-                file,
-                position.line,
-                position.character,
-                trigger,
-                &env,
-            )?
-            .with_file_uri(Arc::from(uri_str))
-            .with_language_id(crate::language::LanguageId::new(lang_id.clone()));
+    let source_for_edits = workspace
+        .documents
+        .with_doc(uri, |doc| doc.source().text().to_owned())?;
 
-        Some((ctx, source_text.to_owned()))
-    })??;
-
-    let ctx = if let Some(pkg) = inferred_package {
+    let mut ctx = if let Some(pkg) = inferred_package {
         ctx.with_inferred_package(pkg)
     } else {
         ctx
     };
+
+    // Enrich context with type information (critical for member completion)
+    lang.enrich_completion_context(&mut ctx, scope, &view);
 
     tracing::debug!(location = ?ctx.location, query = %ctx.query, "parsed context");
 

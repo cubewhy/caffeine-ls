@@ -683,7 +683,7 @@ impl JavaContextExtractor {
         .with_extension(type_ctx)
     }
 
-    fn find_cursor_node<'tree>(&self, root: Node<'tree>) -> Option<Node<'tree>> {
+    pub(crate) fn find_cursor_node<'tree>(&self, root: Node<'tree>) -> Option<Node<'tree>> {
         if let Some(n) =
             root.named_descendant_for_byte_range(self.offset.saturating_sub(1), self.offset)
             && !utils::is_comment_kind(n.kind())

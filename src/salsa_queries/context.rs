@@ -19,6 +19,7 @@ use std::sync::Arc;
 pub struct CompletionContextData {
     pub location: CursorLocationData,
     pub query: Arc<str>,
+    pub cursor_offset: usize,
     pub enclosing_class: Option<Arc<str>>,
     pub enclosing_internal_name: Option<Arc<str>>,
     pub enclosing_package: Option<Arc<str>>,
@@ -127,6 +128,7 @@ pub fn extract_completion_context(
             Arc::new(CompletionContextData {
                 location: CursorLocationData::Unknown,
                 query: Arc::from(""),
+                cursor_offset: 0,
                 enclosing_class: None,
                 enclosing_internal_name: None,
                 enclosing_package: None,
