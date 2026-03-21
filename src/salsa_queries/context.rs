@@ -83,6 +83,7 @@ pub enum CursorLocationData {
     },
     Annotation {
         prefix: Arc<str>,
+        target_element_type: Option<Arc<str>>,
     },
     StatementLabel {
         kind: StatementLabelKind,

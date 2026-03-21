@@ -536,6 +536,10 @@ impl JavaContextExtractor {
     }
 
     fn extract(self, root: Node, trigger_char: Option<char>) -> SemanticContext {
+        if self.is_in_comment() {
+            return self.empty_context();
+        }
+
         let cursor_node = self.find_cursor_node(root);
 
         if cursor_node

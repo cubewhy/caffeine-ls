@@ -34,6 +34,12 @@ pub struct CachedMethodLocal {
     visibility_scope: ScopeRange,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FlowTypeOverrideData {
+    pub local_name: Arc<str>,
+    pub narrowed_type: Arc<str>,
+}
+
 fn parse_source_tree(content: &str, language_id: &str) -> Option<Tree> {
     crate::salsa_queries::parse::parse_tree_for_language(content, language_id)
 }
@@ -103,32 +109,7 @@ pub fn extract_visible_method_locals_from_source(
     let root = tree.root_node();
     let ctx = JavaContextExtractor::new_with_overview(source.to_string(), cursor_offset, None);
     let cursor_node = ctx.find_cursor_node(root);
-
-    let mut visible =
-        if let Some(method_node) = find_enclosing_method_node_in_tree(root, cursor_offset) {
-            filter_visible_locals(
-                &collect_method_locals(
-                    &ctx,
-                    method_node,
-                    type_ctx,
-                    fallback_visibility_scope(method_node.end_byte()),
-                ),
-                cursor_offset,
-            )
-        } else {
-            filter_visible_locals(
-                &collect_method_locals(
-                    &ctx,
-                    root,
-                    type_ctx,
-                    fallback_visibility_scope(cursor_offset),
-                ),
-                cursor_offset,
-            )
-        };
-
-    visible.extend(extract_active_lambda_params(&ctx, cursor_node, type_ctx));
-    normalize_visible_locals(visible)
+    extract_visible_locals_in_tree(root, &ctx, cursor_node, cursor_offset, type_ctx)
 }
 
 /// Extract the active lambda parameter names at the cursor without needing a workspace.
@@ -162,6 +143,54 @@ pub fn extract_active_lambda_param_names_incremental(
     let content: Arc<str> = Arc::from(file.content(db).as_str());
     let ctx = JavaContextExtractor::new_with_overview(Arc::clone(&content), cursor_offset, None);
     extract_active_lambda_param_names(&ctx, ctx.find_cursor_node(root))
+}
+
+/// Extract Java flow-sensitive narrowing facts at the cursor (CACHED).
+#[salsa::tracked]
+pub fn extract_java_flow_type_overrides(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+) -> Arc<Vec<FlowTypeOverrideData>> {
+    use crate::language::java::{flow, scope};
+
+    let content = file.content(db);
+    let language_id = file.language_id(db);
+    if language_id.as_ref() != "java" {
+        return Arc::new(vec![]);
+    }
+
+    let Some(tree) = parse_file_tree(db, file) else {
+        return Arc::new(vec![]);
+    };
+    let root = tree.root_node();
+    let name_table = resolve_name_table_for_file(db, file);
+    let ctx = JavaContextExtractor::new_with_overview(
+        content.to_string(),
+        cursor_offset,
+        name_table.clone(),
+    );
+    let cursor_node = ctx.find_cursor_node(root);
+    let package = scope::extract_package(&ctx, root);
+    let imports = scope::extract_imports(&ctx, root);
+    let type_ctx = SourceTypeCtx::from_overview(package, imports, name_table);
+    let locals =
+        extract_visible_locals_in_tree(root, &ctx, cursor_node, cursor_offset, Some(&type_ctx));
+
+    let mut overrides: Vec<FlowTypeOverrideData> =
+        flow::extract_instanceof_true_branch_overrides(&ctx, cursor_node, &type_ctx, &locals)
+            .into_iter()
+            .map(|(local_name, narrowed_type)| FlowTypeOverrideData {
+                local_name,
+                narrowed_type: Arc::from(narrowed_type.to_jvm_signature()),
+            })
+            .collect();
+    overrides.sort_by(|a, b| {
+        a.local_name
+            .cmp(&b.local_name)
+            .then_with(|| a.narrowed_type.cmp(&b.narrowed_type))
+    });
+    Arc::new(overrides)
 }
 
 fn get_or_parse_method_locals(
@@ -213,6 +242,40 @@ fn materialize_method_locals(mut locals: Vec<CachedMethodLocal>) -> Vec<LocalVar
         }
     }
     out
+}
+
+fn extract_visible_locals_in_tree<'a>(
+    root: Node<'a>,
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node<'a>>,
+    cursor_offset: usize,
+    type_ctx: Option<&SourceTypeCtx>,
+) -> Vec<LocalVar> {
+    let mut visible =
+        if let Some(method_node) = find_enclosing_method_node_in_tree(root, cursor_offset) {
+            filter_visible_locals(
+                &collect_method_locals(
+                    ctx,
+                    method_node,
+                    type_ctx,
+                    fallback_visibility_scope(method_node.end_byte()),
+                ),
+                cursor_offset,
+            )
+        } else {
+            filter_visible_locals(
+                &collect_method_locals(
+                    ctx,
+                    root,
+                    type_ctx,
+                    fallback_visibility_scope(cursor_offset),
+                ),
+                cursor_offset,
+            )
+        };
+
+    visible.extend(extract_active_lambda_params(ctx, cursor_node, type_ctx));
+    normalize_visible_locals(visible)
 }
 
 fn extract_root_recovery_locals(
@@ -1869,8 +1932,9 @@ fn resolve_name_table_for_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{ClassMetadata, ClassOrigin};
     use crate::language::java::{JavaContextExtractor, scope};
-    use crate::salsa_db::{Database, FileId};
+    use crate::salsa_db::{Database, FileId, SourceFile};
     use crate::workspace::Workspace;
     use indoc::indoc;
     use tower_lsp::lsp_types::Url;
@@ -1907,6 +1971,27 @@ mod tests {
         let file = SourceFile::new(&db, FileId::new(uri), source.to_string(), Arc::from("java"));
         let name_table = resolve_name_table_for_file(&db, file).expect("name table");
         (db, workspace, file, name_table)
+    }
+
+    fn minimal_class(internal_name: &str) -> ClassMetadata {
+        let (package, name) = internal_name
+            .rsplit_once('/')
+            .map(|(package, name)| (Some(Arc::from(package)), Arc::from(name)))
+            .unwrap_or((None, Arc::from(internal_name)));
+        ClassMetadata {
+            package,
+            name,
+            internal_name: Arc::from(internal_name),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: 0,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }
     }
 
     fn reference_locals(
@@ -2401,6 +2486,51 @@ mod tests {
         assert_eq!(
             field_count, 2,
             "outer field and deep local-class field should both be counted"
+        );
+    }
+
+    #[test]
+    fn test_extract_java_flow_type_overrides_tracks_short_circuit_instanceof_fact() {
+        let source = indoc! {r#"
+            class Test {
+                void demo() {
+                    Object a = new StringBuilder();
+                    if (a instanceof StringBuilder && a.appe/*caret*/) {
+                    }
+                }
+            }
+        "#};
+        let offset = source.find("/*caret*/").expect("caret marker");
+        let source = source.replacen("/*caret*/", "", 1);
+        let workspace_index =
+            Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+        workspace_index.write().add_jdk_classes(vec![
+            minimal_class("java/lang/Object"),
+            minimal_class("java/lang/StringBuilder"),
+        ]);
+        let db = Database::with_workspace_index(Arc::clone(&workspace_index));
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+        let name_table = resolve_name_table_for_file(&db, file).expect("name table");
+        assert!(
+            name_table.exists("java/lang/StringBuilder"),
+            "seeded StringBuilder should be visible in the test name table"
+        );
+        assert!(
+            SourceTypeCtx::from_overview(None, vec![], Some(name_table))
+                .resolve_type_name_relaxed("StringBuilder")
+                .is_some(),
+            "StringBuilder should resolve before flow extraction"
+        );
+
+        let overrides = extract_java_flow_type_overrides(&db, file, offset);
+
+        assert_eq!(
+            overrides.as_ref(),
+            &[FlowTypeOverrideData {
+                local_name: Arc::from("a"),
+                narrowed_type: Arc::from("Ljava/lang/StringBuilder;"),
+            }]
         );
     }
 }

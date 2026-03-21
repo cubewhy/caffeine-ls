@@ -2,21 +2,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::index::{FieldSummary, IndexView, MethodParams, MethodSummary};
-use crate::language::java::JavaContextExtractor;
-use crate::language::java::flow;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
 use crate::salsa_queries::{
-    CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
-    FunctionalTargetHintData, MethodRefQualifierKindData, MethodSummaryData, StatementLabelData,
-    StatementLabelTargetKindData,
+    CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FlowTypeOverrideData,
+    FunctionalExprShapeData, FunctionalTargetHintData, MethodRefQualifierKindData,
+    MethodSummaryData, StatementLabelData, StatementLabelTargetKindData,
 };
 use crate::semantic::context::{
     CurrentClassMember, ExpectedTypeSource, FunctionalExprShape, FunctionalMethodCallHint,
     FunctionalTargetHint, MethodRefQualifierKind, StatementLabel, StatementLabelTargetKind,
 };
 use crate::semantic::types::type_name::TypeName;
+use crate::semantic::types::{parse_single_type_to_internal, singleton_descriptor_to_type};
 use crate::semantic::{CursorLocation, LocalVar, SemanticContext};
 use crate::workspace::AnalysisContext;
 
@@ -109,15 +108,6 @@ fn enrich_java_semantic_context(
     analysis: Option<&RequestAnalysisState>,
 ) -> SemanticContext {
     let source = file.content(db);
-    let tree = crate::salsa_queries::parse::parse_tree(db, file)
-        .expect("java completion conversion parse tree");
-    let root = tree.root_node();
-    let extractor = JavaContextExtractor::new_with_overview(
-        source.to_string(),
-        data.cursor_offset.min(source.len()),
-        None,
-    );
-    let cursor_node = extractor.find_cursor_node(root);
 
     let members = workspace
         .map(|ws| fetch_class_members_from_workspace(db, file, ws, data.cursor_offset))
@@ -177,11 +167,9 @@ fn enrich_java_semantic_context(
                 data.cursor_offset,
             )
         });
-    let flow_type_overrides = flow::extract_instanceof_true_branch_overrides(
-        &extractor,
-        cursor_node,
-        &type_ctx,
-        &local_variables,
+    let flow_type_overrides = convert_flow_type_overrides(
+        crate::salsa_queries::extract_java_flow_type_overrides(db, file, data.cursor_offset)
+            .as_ref(),
     );
     let statement_labels = convert_statement_labels(&data.statement_labels);
     let functional_target_hint = data
@@ -280,9 +268,12 @@ fn convert_cursor_location(data: &CursorLocationData) -> CursorLocation {
             member_prefix: member_prefix.to_string(),
             is_constructor: *is_constructor,
         },
-        CursorLocationData::Annotation { prefix } => CursorLocation::Annotation {
+        CursorLocationData::Annotation {
+            prefix,
+            target_element_type,
+        } => CursorLocation::Annotation {
             prefix: prefix.to_string(),
-            target_element_type: None,
+            target_element_type: target_element_type.clone(),
         },
         CursorLocationData::StatementLabel { kind, prefix } => {
             use crate::semantic::context::StatementLabelCompletionKind;
@@ -441,9 +432,24 @@ fn convert_method_summary_data_to_member(data: &MethodSummaryData) -> CurrentCla
     }))
 }
 
+fn convert_flow_type_overrides(data: &[FlowTypeOverrideData]) -> HashMap<Arc<str>, TypeName> {
+    data.iter()
+        .map(|override_data| {
+            let narrowed_type = parse_single_type_to_internal(override_data.narrowed_type.as_ref())
+                .or_else(|| {
+                    singleton_descriptor_to_type(override_data.narrowed_type.as_ref())
+                        .map(TypeName::new)
+                })
+                .unwrap_or_else(|| TypeName::new(Arc::clone(&override_data.narrowed_type)));
+            (Arc::clone(&override_data.local_name), narrowed_type)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{ClassMetadata, ClassOrigin};
     use crate::salsa_db::{Database, FileId, SourceFile};
     use crate::semantic::context::{
         ExpectedTypeSource, FunctionalExprShape, StatementLabelCompletionKind,
@@ -451,6 +457,27 @@ mod tests {
     };
     use ropey::Rope;
     use tower_lsp::lsp_types::Url;
+
+    fn minimal_class(internal_name: &str) -> ClassMetadata {
+        let (package, name) = internal_name
+            .rsplit_once('/')
+            .map(|(package, name)| (Some(Arc::from(package)), Arc::from(name)))
+            .unwrap_or((None, Arc::from(internal_name)));
+        ClassMetadata {
+            package,
+            name,
+            internal_name: Arc::from(internal_name),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: 0,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }
+    }
 
     #[test]
     fn test_convert_cursor_location_expression() {
@@ -609,6 +636,40 @@ mod tests {
     }
 
     #[test]
+    fn test_java_completion_context_conversion_preserves_annotation_target_element_type() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let marked_source = indoc::indoc! {r#"
+            class Test {
+                @Overri|
+                void demo() {}
+            }
+        "#};
+        let marker = marked_source.find('|').expect("cursor marker");
+        let source = marked_source.replacen('|', "", 1);
+        let rope = Rope::from_str(&source);
+        let line = rope.byte_to_line(marker) as u32;
+        let character = (marker - rope.line_to_byte(line as usize)) as u32;
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+
+        let data = crate::salsa_queries::java::extract_java_completion_context(
+            &db, file, line, character, None,
+        );
+        let ctx = SemanticContext::from_salsa_data(data.as_ref().clone(), &db, file, None);
+
+        match &ctx.location {
+            CursorLocation::Annotation {
+                prefix,
+                target_element_type,
+            } => {
+                assert_eq!(prefix, "Overri");
+                assert_eq!(target_element_type.as_deref(), Some("METHOD"));
+            }
+            other => panic!("expected annotation location, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_java_completion_context_conversion_preserves_enclosing_static_method() {
         let db = Database::default();
         let uri = Url::parse("file:///test/Test.java").unwrap();
@@ -639,6 +700,44 @@ mod tests {
                 .as_ref()
                 .map(|member| member.name()),
             Some(Arc::from("main"))
+        );
+    }
+
+    #[test]
+    fn test_java_completion_context_conversion_preserves_flow_type_overrides() {
+        let workspace_index =
+            Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+        workspace_index.write().add_jdk_classes(vec![
+            minimal_class("java/lang/Object"),
+            minimal_class("java/lang/StringBuilder"),
+        ]);
+        let db = Database::with_workspace_index(Arc::clone(&workspace_index));
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let marked_source = indoc::indoc! {r#"
+            class Test {
+                void demo() {
+                    Object a = new StringBuilder();
+                    if (a instanceof StringBuilder && a.appe|) {
+                    }
+                }
+            }
+        "#};
+        let marker = marked_source.find('|').expect("cursor marker");
+        let source = marked_source.replacen('|', "", 1);
+        let rope = Rope::from_str(&source);
+        let line = rope.byte_to_line(marker) as u32;
+        let character = (marker - rope.line_to_byte(line as usize)) as u32;
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+
+        let data = crate::salsa_queries::java::extract_java_completion_context(
+            &db, file, line, character, None,
+        );
+        let ctx = SemanticContext::from_salsa_data(data.as_ref().clone(), &db, file, None);
+
+        assert_eq!(
+            ctx.flow_override_for_local("a")
+                .map(TypeName::erased_internal),
+            Some("java/lang/StringBuilder")
         );
     }
 }

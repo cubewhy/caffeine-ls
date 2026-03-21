@@ -391,8 +391,12 @@ fn convert_rich_location(location: &CursorLocation) -> CursorLocationData {
             member_prefix: Arc::from(member_prefix.as_str()),
             is_constructor: *is_constructor,
         },
-        CursorLocation::Annotation { prefix, .. } => CursorLocationData::Annotation {
+        CursorLocation::Annotation {
+            prefix,
+            target_element_type,
+        } => CursorLocationData::Annotation {
             prefix: Arc::from(prefix.as_str()),
+            target_element_type: target_element_type.clone(),
         },
         CursorLocation::StatementLabel { kind, prefix } => CursorLocationData::StatementLabel {
             kind: match kind {
