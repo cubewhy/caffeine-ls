@@ -1824,6 +1824,46 @@ fn find_deepest_node_at_offset<'a>(
     }
 }
 
+fn recover_enclosing_type_from_error(
+    root: tree_sitter::Node<'_>,
+    content: &str,
+    cursor_offset: usize,
+) -> Option<(Arc<str>, usize, usize)> {
+    fn dfs(
+        node: tree_sitter::Node<'_>,
+        offset: usize,
+        bytes: &[u8],
+        result: &mut Option<(Arc<str>, usize, usize)>,
+    ) {
+        if node.start_byte() > offset || node.end_byte() <= offset {
+            return;
+        }
+
+        if node.kind() == "ERROR" {
+            let mut cursor = node.walk();
+            let children: Vec<_> = node.children(&mut cursor).collect();
+            for i in 0..children.len().saturating_sub(1) {
+                let keyword = children[i].kind();
+                if matches!(keyword, "class" | "interface" | "enum" | "record")
+                    && children[i + 1].kind() == "identifier"
+                    && let Ok(name) = children[i + 1].utf8_text(bytes)
+                {
+                    *result = Some((Arc::from(name), node.start_byte(), node.end_byte()));
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            dfs(child, offset, bytes, result);
+        }
+    }
+
+    let mut result = None;
+    dfs(root, cursor_offset, content.as_bytes(), &mut result);
+    result
+}
+
 /// Find a node of specific kinds at a given offset
 fn find_node_at_offset<'a>(
     root: tree_sitter::Node<'a>,
@@ -1871,8 +1911,10 @@ pub fn find_enclosing_class_bounds(
         .or_else(|| find_node_by_offset(root, "block", cursor_offset))
         .or_else(|| find_deepest_node_at_offset(root, cursor_offset))?;
 
-    // Walk up to find class/interface/enum/record
-    let class_node = ancestor_of_kinds(
+    // Walk up to find class/interface/enum/record. When the file is malformed,
+    // tree-sitter may wrap the declaration in ERROR instead of producing a type
+    // declaration node, so fall back to recovering the name from that subtree.
+    let (class_name, start, end) = if let Some(class_node) = ancestor_of_kinds(
         node_at_cursor,
         &[
             "class_declaration",
@@ -1880,17 +1922,16 @@ pub fn find_enclosing_class_bounds(
             "enum_declaration",
             "record_declaration",
         ],
-    )?;
-
-    // Extract the class name
-    let class_name = class_node
-        .child_by_field_name("name")
-        .and_then(|n| n.utf8_text(content.as_bytes()).ok())
-        .map(Arc::from)
-        .unwrap_or_else(|| Arc::from("Unknown"));
-
-    let start = class_node.start_byte();
-    let end = class_node.end_byte();
+    ) {
+        let class_name = class_node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(content.as_bytes()).ok())
+            .map(Arc::from)
+            .unwrap_or_else(|| Arc::from("Unknown"));
+        (class_name, class_node.start_byte(), class_node.end_byte())
+    } else {
+        recover_enclosing_type_from_error(root, content, cursor_offset)?
+    };
 
     tracing::debug!(
         file_uri = file.file_id(db).as_str(),
@@ -2034,7 +2075,6 @@ fn resolve_name_table_for_file(
 mod tests {
     use super::*;
     use crate::index::{ClassMetadata, ClassOrigin};
-    use crate::language::java::{JavaContextExtractor, scope};
     use crate::salsa_db::{Database, FileId, SourceFile};
     use crate::workspace::Workspace;
     use indoc::indoc;
@@ -2102,19 +2142,15 @@ mod tests {
         offset: usize,
         name_table: Arc<crate::index::NameTable>,
     ) -> Vec<LocalVar> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .expect("java grammar");
-        let tree = parser.parse(source, None).expect("parsed");
-        let root = tree.root_node();
-        let extractor = JavaContextExtractor::new_with_overview(
+        let db = Database::default();
+        let file = SourceFile::new(
+            &db,
+            FileId::new(Url::parse("file:///test/ReferenceLocals.java").unwrap()),
             source.to_string(),
-            offset,
-            Some(name_table.clone()),
+            Arc::from("java"),
         );
-        let package = scope::extract_package(&extractor, root);
-        let imports = scope::extract_imports(&extractor, root);
+        let package = crate::salsa_queries::java::extract_java_package(&db, file);
+        let imports = crate::salsa_queries::java::extract_java_imports(&db, file);
         let type_ctx = SourceTypeCtx::from_overview(package, imports, Some(name_table));
         extract_visible_method_locals_from_source(source, offset, Some(&type_ctx))
     }

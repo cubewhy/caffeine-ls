@@ -3830,7 +3830,6 @@ mod tests {
         use crate::completion::provider::CompletionProvider;
         use crate::language::java::completion::providers::member::MemberProvider;
         use crate::salsa_queries::extract_visible_method_locals_from_source;
-        use tree_sitter::Parser;
 
         let idx = make_index_with_scoped_inner_box_get_and_list_add();
         let scope = IndexScope {
@@ -3858,16 +3857,6 @@ mod tests {
             }
         "#};
         let offset = src.find("nums.add(").expect("offset");
-        let extractor =
-            crate::language::java::JavaContextExtractor::new(src, offset, Some(name_table));
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .expect("java grammar");
-        let tree = parser.parse(src, None).expect("parsed");
-        let root = tree.root_node();
-        let cursor_node = extractor.find_cursor_node(root);
-        let _ = cursor_node;
         let locals = extract_visible_method_locals_from_source(src, offset, Some(&type_ctx));
 
         let single_local = locals

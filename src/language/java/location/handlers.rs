@@ -359,6 +359,22 @@ pub(super) fn handle_constructor(
     ctx: &JavaContextExtractor,
     node: Node,
 ) -> (CursorLocation, String) {
+    if let Some(relative_semicolon) =
+        ctx.source[node.start_byte()..ctx.offset.min(ctx.source.len())].rfind(';')
+    {
+        let semicolon_offset = node.start_byte() + relative_semicolon;
+        let trailing = &ctx.source[semicolon_offset + 1..ctx.offset.min(ctx.source.len())];
+        if trailing.chars().any(|ch| !ch.is_whitespace()) {
+            let prefix = extract_identifier_prefix_near_cursor(ctx, semicolon_offset + 1);
+            return (
+                CursorLocation::Expression {
+                    prefix: prefix.clone(),
+                },
+                prefix,
+            );
+        }
+    }
+
     let type_node = node.child_by_field_name("type");
 
     if let Some(ty) = type_node
@@ -902,20 +918,18 @@ fn is_in_formal_param_name_position(id_node: Node, param_node: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use ropey::Rope;
     use tree_sitter::Parser;
 
-    use crate::language::java::{
-        JavaContextExtractor, location::handlers::infer_annotation_target,
-    };
+    use crate::language::java::location::handlers::infer_annotation_target;
+    use crate::language::test_helpers::completion_context_from_source;
+    use crate::semantic::SemanticContext;
 
-    fn setup_with(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .expect("failed to load java grammar");
-        let tree = parser.parse(source, None).unwrap();
-        let ctx = JavaContextExtractor::new(source, offset, None);
-        (ctx, tree)
+    fn semantic_context_at_offset(source: &str, offset: usize) -> SemanticContext {
+        let rope = Rope::from_str(source);
+        let line = rope.byte_to_line(offset) as u32;
+        let col = (offset - rope.line_to_byte(line as usize)) as u32;
+        completion_context_from_source("java", source, line, col, None)
     }
 
     #[test]
@@ -927,8 +941,18 @@ mod tests {
         "#};
         // Position cursor at the end of @Overr
         let offset = src.find("@Overr").unwrap() + 6;
-        let (ctx, tree) = setup_with(src, offset);
-        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .expect("failed to load java grammar");
+        let tree = parser.parse(src, None).unwrap();
+        let cursor_node = tree
+            .root_node()
+            .named_descendant_for_byte_range(offset.saturating_sub(1), offset)
+            .or_else(|| {
+                tree.root_node()
+                    .named_descendant_for_byte_range(offset, offset + 1)
+            });
 
         // Traverse up to find the annotation node
         let mut n = cursor_node.expect("Node should exist");
@@ -954,9 +978,8 @@ mod tests {
     fn test_identifier_after_empty_array_initializer_is_expression_without_space() {
         let src = "Object[] o = new Object[]{};\nArrayList";
         let offset = src.find("ArrayList").unwrap();
-        let (ctx, tree) = setup_with(src, offset);
-        let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let (location, _) = super::handle_identifier(&ctx, cursor_node.unwrap(), None);
+        let ctx = semantic_context_at_offset(src, offset);
+        let location = ctx.location;
         assert!(
             matches!(location, crate::semantic::CursorLocation::Expression { .. }),
             "Expected Expression without trailing space after complete array initializer, got {:?}",
@@ -968,9 +991,8 @@ mod tests {
     fn test_identifier_after_invalid_array_syntax_is_expression_without_space() {
         let src = "Object[] o = new Object[];\nArrayList";
         let offset = src.find("ArrayList").unwrap();
-        let (ctx, tree) = setup_with(src, offset);
-        let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let (location, _) = super::handle_identifier(&ctx, cursor_node.unwrap(), None);
+        let ctx = semantic_context_at_offset(src, offset);
+        let location = ctx.location;
         assert!(
             matches!(location, crate::semantic::CursorLocation::Expression { .. }),
             "Expected Expression without trailing space after invalid array syntax, got {:?}",
@@ -982,9 +1004,8 @@ mod tests {
     fn test_identifier_with_semicolon_after_type_is_expression() {
         let src = "Object[] o = new Object[]{};\nArrayList ;";
         let offset = src.find("ArrayList").unwrap() + "ArrayList".len();
-        let (ctx, tree) = setup_with(src, offset);
-        let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let (location, _) = super::handle_identifier(&ctx, cursor_node.unwrap(), None);
+        let ctx = semantic_context_at_offset(src, offset);
+        let location = ctx.location;
         assert!(
             matches!(location, crate::semantic::CursorLocation::Expression { .. }),
             "Expected Expression for `ArrayList ;`, got {:?}",

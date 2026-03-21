@@ -44,7 +44,7 @@ mod tests {
     };
     use crate::language::java::completion_context::ContextEnricher;
     use crate::language::java::type_ctx::SourceTypeCtx;
-    use crate::language::test_helpers::completion_context_from_marked_source_with_view;
+    use crate::language::{ParseEnv, java::extract_java_semantic_context_for_test};
     use crate::semantic::context::CursorLocation;
     use std::sync::Arc;
 
@@ -125,12 +125,37 @@ mod tests {
         idx
     }
 
+    fn java_ctx_from_marked_source_with_view(
+        marked_source: &str,
+        trigger_char: Option<char>,
+        view: &IndexView,
+    ) -> crate::semantic::SemanticContext {
+        let marker = marked_source.find('|').expect("cursor marker");
+        let source = marked_source.replacen('|', "", 1);
+        let rope = ropey::Rope::from_str(&source);
+        let line = rope.byte_to_line(marker) as u32;
+        let col = (marker - rope.line_to_byte(line as usize)) as u32;
+        extract_java_semantic_context_for_test(
+            &source,
+            line,
+            col,
+            trigger_char,
+            &ParseEnv {
+                name_table: Some(view.build_name_table()),
+                view: Some(view.clone()),
+                workspace: None,
+                file_uri: None,
+                metrics: None,
+            },
+        )
+        .expect("java semantic context with view")
+    }
+
     fn complete(src: &str) -> (crate::semantic::SemanticContext, Vec<CompletionCandidate>) {
         let idx = make_index();
         let view = idx.view(root_scope());
         let name_table = view.build_name_table();
-        let mut ctx =
-            completion_context_from_marked_source_with_view("java", src, Some('.'), &view);
+        let mut ctx = java_ctx_from_marked_source_with_view(src, Some('.'), &view);
         ctx = ctx.with_extension(Arc::new(
             SourceTypeCtx::new(
                 Some(Arc::from("pkg")),

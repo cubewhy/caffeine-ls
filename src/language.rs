@@ -356,8 +356,7 @@ pub(crate) mod test_helpers {
 
     use tower_lsp::lsp_types::Url;
 
-    use crate::index::{ClassOrigin, IndexScope, IndexView, ModuleId};
-    use crate::language::java::type_ctx::SourceTypeCtx;
+    use crate::index::ClassOrigin;
     use crate::lsp::request_context::PreparedRequest;
     use crate::semantic::SemanticContext;
     use crate::workspace::document::Document;
@@ -441,77 +440,5 @@ pub(crate) mod test_helpers {
         let line = rope.byte_to_line(marker) as u32;
         let col = (marker - rope.line_to_byte(line as usize)) as u32;
         completion_context_from_source(language_id, &source, line, col, trigger_char)
-    }
-
-    #[deprecated]
-    pub(crate) fn completion_context_from_source_with_view(
-        language_id: &str,
-        source: &str,
-        line: u32,
-        character: u32,
-        trigger_char: Option<char>,
-        view: &IndexView,
-    ) -> SemanticContext {
-        if language_id == "java" {
-            return crate::language::java::extract_java_semantic_context_for_test(
-                source,
-                line,
-                character,
-                trigger_char,
-                &ParseEnv {
-                    name_table: Some(view.build_name_table()),
-                    view: Some(view.clone()),
-                    workspace: None,
-                    file_uri: None,
-                    metrics: None,
-                },
-            )
-            .expect("java semantic context with view");
-        }
-
-        let registry = LanguageRegistry::new();
-        let mut ctx =
-            completion_context_from_source(language_id, source, line, character, trigger_char);
-        if language_id == "java" {
-            let lang = registry.find(language_id).expect("language registered");
-            let base_package = ctx.enclosing_package.clone();
-            let base_imports = ctx.existing_imports.clone();
-            let type_ctx = Arc::new(SourceTypeCtx::from_view(
-                base_package,
-                base_imports,
-                view.clone(),
-            ));
-            ctx = ctx.with_extension(type_ctx);
-            lang.enrich_completion_context(&mut ctx, root_scope(), view);
-        }
-        ctx
-    }
-
-    #[deprecated]
-    pub(crate) fn completion_context_from_marked_source_with_view(
-        language_id: &str,
-        marked_source: &str,
-        trigger_char: Option<char>,
-        view: &IndexView,
-    ) -> SemanticContext {
-        let marker = marked_source.find('|').expect("cursor marker");
-        let source = marked_source.replacen('|', "", 1);
-        let rope = ropey::Rope::from_str(&source);
-        let line = rope.byte_to_line(marker) as u32;
-        let col = (marker - rope.line_to_byte(line as usize)) as u32;
-        completion_context_from_source_with_view(
-            language_id,
-            &source,
-            line,
-            col,
-            trigger_char,
-            view,
-        )
-    }
-
-    pub(crate) fn root_scope() -> IndexScope {
-        IndexScope {
-            module: ModuleId::ROOT,
-        }
     }
 }

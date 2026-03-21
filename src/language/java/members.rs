@@ -1256,18 +1256,46 @@ fn has_spread_parameter(formals_node: Node) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::NameTable;
-    use tree_sitter::Parser;
+    use crate::index::ClassOrigin;
+    use crate::language::java::class_parser::{parse_java_source, test_fixture_class};
+    use crate::salsa_db::{Database, FileId, SourceFile};
+    use tower_lsp::lsp_types::Url;
 
-    fn setup(source: &str) -> (JavaContextExtractor, tree_sitter::Tree) {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .expect("failed to load java grammar");
-        let tree = parser.parse(source, None).unwrap();
+    fn current_members(source: &str) -> Vec<CurrentClassMember> {
+        let workspace_index =
+            Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+        workspace_index.write().add_jdk_classes(vec![
+            test_fixture_class("java/lang/Object"),
+            test_fixture_class("java/lang/String"),
+        ]);
+        let db = Database::with_workspace_index(workspace_index);
+        let file = SourceFile::new(
+            &db,
+            FileId::new(Url::parse("file:///test/A.java").expect("valid test uri")),
+            source.to_string(),
+            Arc::from("java"),
+        );
+        let cursor_offset = source
+            .find("class A")
+            .map(|idx| idx + "class A".len())
+            .unwrap_or_else(|| source.len().saturating_sub(1));
+        let mut members: Vec<CurrentClassMember> =
+            crate::salsa_queries::extract_java_current_class_members_from_source(
+                &db,
+                file,
+                cursor_offset,
+            )
+            .into_values()
+            .collect();
+        members.sort_by(|left, right| left.name().cmp(&right.name()));
+        members
+    }
 
-        let ctx = JavaContextExtractor::new(source, source.len(), None);
-        (ctx, tree)
+    fn first_class(source: &str) -> crate::index::ClassMetadata {
+        parse_java_source(source, ClassOrigin::Unknown, None)
+            .into_iter()
+            .next()
+            .expect("at least one parsed type")
     }
 
     #[test]
@@ -1281,10 +1309,7 @@ mod tests {
             private static Object methodB(int p) { return null; }
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let a = members.iter().find(|m| m.name().as_ref() == "a").unwrap();
         assert!(!a.is_method() && !a.is_static() && !a.is_private());
@@ -1312,14 +1337,7 @@ mod tests {
             public static String join(String separator, String... parts) { return ""; }
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(
-            None,
-            vec![],
-            Some(NameTable::from_names(vec![Arc::from("java/lang/String")])),
-        );
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let join = members
             .iter()
@@ -1352,10 +1370,7 @@ mod tests {
             protected java.lang.Object clone() { return null; }
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let clone = members
             .iter()
@@ -1390,10 +1405,7 @@ mod tests {
             void normalMethod() {}
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         assert!(members.iter().any(|m| m.name().as_ref() == "normalMethod"));
         assert!(!members.iter().any(|m| m.name().as_ref() == "<init>"));
@@ -1408,10 +1420,7 @@ mod tests {
             private static int x, y;
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let x = members.iter().find(|m| m.name().as_ref() == "x").unwrap();
         assert!(!x.is_method() && x.is_static() && x.is_private());
@@ -1430,10 +1439,7 @@ mod tests {
             private static void swallowedMethod() {}
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let swallowed = members
             .iter()
@@ -1453,10 +1459,7 @@ mod tests {
             private static String misreadMethod(int a) {}
         }
         "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let misread = members
             .iter()
@@ -1480,10 +1483,7 @@ mod tests {
         private Object anotherSalvaged() { return null; }
         "#};
 
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let salvaged1 = members
             .iter()
@@ -1510,10 +1510,7 @@ mod tests {
     }
     "#};
 
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let f = members.iter().find(|m| m.name().as_ref() == "f").unwrap();
         let f = match f {
@@ -1565,11 +1562,7 @@ mod tests {
         public void m(@Deprecated int x, @SuppressWarnings("y") String y) {}
     }
     "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+        let members = current_members(src);
 
         let a = members.iter().find(|m| m.name().as_ref() == "a").unwrap();
         let a = match a {
@@ -1662,14 +1655,7 @@ mod tests {
     @Target(ElementType.METHOD)
     public @interface MyAnno {}
     "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
-
-        // 在注解声明节点上直接调 parse_annotations_in_node
-        let root = tree.root_node();
-        let annos = parse_annotations_in_node(&ctx, root, &type_ctx);
+        let annos = first_class(src).annotations;
         let target = annos
             .iter()
             .find(|a| a.internal_name.as_ref().contains("Target"))
@@ -1690,9 +1676,7 @@ mod tests {
     @Target({ElementType.METHOD, ElementType.FIELD})
     public @interface MyAnno {}
     "#};
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let annos = parse_annotations_in_node(&ctx, tree.root_node(), &type_ctx);
+        let annos = first_class(src).annotations;
         let target = annos
             .iter()
             .find(|a| a.internal_name.as_ref().contains("Target"))
@@ -1720,9 +1704,7 @@ mod tests {
     #[test]
     fn test_annotation_elements_string() {
         let src = r#"@SuppressWarnings("unchecked") public class A {}"#;
-        let (ctx, tree) = setup(src);
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-        let annos = parse_annotations_in_node(&ctx, tree.root_node(), &type_ctx);
+        let annos = first_class(src).annotations;
         let sw = annos
             .iter()
             .find(|a| a.internal_name.as_ref().contains("SuppressWarnings"))

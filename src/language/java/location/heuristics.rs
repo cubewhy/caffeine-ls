@@ -173,12 +173,13 @@ fn non_empty(s: &str) -> Option<String> {
 pub(super) fn detect_new_keyword_before_cursor(
     before_cursor: &str,
 ) -> Option<(String, Option<String>)> {
-    let s = before_cursor.trim_end();
-    if s.is_empty() {
+    let current_line = before_cursor.rsplit('\n').next().unwrap_or(before_cursor);
+    let current_line = current_line.trim_end();
+    if current_line.is_empty() {
         return None;
     }
 
-    let last_line = s.rsplit('\n').next().unwrap_or(s).trim_start();
+    let last_line = current_line.trim_start();
 
     let new_start = find_new_token_pos(last_line)?;
     let after_new = last_line[new_start + 3..].trim_start();
@@ -1223,168 +1224,120 @@ pub(super) fn detect_dot_after_expression_child(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tree_sitter::Parser;
+    use ropey::Rope;
 
-    fn setup_with(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .expect("failed to load java grammar");
-        let tree = parser.parse(source, None).unwrap();
-        let ctx = JavaContextExtractor::new(source, offset, None);
-        (ctx, tree)
+    use crate::language::test_helpers::completion_context_from_source;
+    use crate::semantic::CursorLocation;
+
+    fn location_at_offset(source: &str, offset: usize) -> CursorLocation {
+        let rope = Rope::from_str(source);
+        let line = rope.byte_to_line(offset) as u32;
+        let col = (offset - rope.line_to_byte(line as usize)) as u32;
+        completion_context_from_source("java", source, line, col, None).location
     }
 
     #[test]
     fn test_variable_name_after_simple_type_with_space() {
         let src = "String ";
         let offset = src.len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let decl = crate::language::java::utils::find_ancestor(
-                cursor_node,
-                "local_variable_declaration",
-            );
-
-            if let Some(decl_node) = decl {
-                assert!(
-                    is_variable_name_after_complete_type(cursor_node, decl_node, &ctx),
-                    "Should detect variable name position after 'String '"
-                );
-            }
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::VariableName { .. }
+            ),
+            "Should detect variable name position after 'String '"
+        );
     }
 
     #[test]
     fn test_variable_name_after_generic_type_with_space() {
         let src = "List<String> ";
         let offset = src.len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let decl = crate::language::java::utils::find_ancestor(
-                cursor_node,
-                "local_variable_declaration",
-            );
-
-            if let Some(decl_node) = decl {
-                assert!(
-                    is_variable_name_after_complete_type(cursor_node, decl_node, &ctx),
-                    "Should detect variable name position after 'List<String> '"
-                );
-            }
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::VariableName { .. }
+            ),
+            "Should detect variable name position after 'List<String> '"
+        );
     }
 
     #[test]
     fn test_not_variable_name_without_space() {
         let src = "String";
         let offset = src.len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let decl = crate::language::java::utils::find_ancestor(
-                cursor_node,
-                "local_variable_declaration",
-            );
-
-            if let Some(decl_node) = decl {
-                assert!(
-                    !is_variable_name_after_complete_type(cursor_node, decl_node, &ctx),
-                    "Should NOT detect variable name position without space after 'String'"
-                );
-            }
-        }
+        assert!(
+            !matches!(
+                location_at_offset(src, offset),
+                CursorLocation::VariableName { .. }
+            ),
+            "Should NOT detect variable name position without space after 'String'"
+        );
     }
 
     #[test]
     fn test_not_variable_name_after_array_initializer_without_space() {
         let src = "Object[] o = new Object[]{};\nArrayList";
         let offset = src.find("ArrayList").unwrap() + "ArrayList".len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let result = is_variable_name_after_previous_declaration(cursor_node, &ctx);
-            assert!(
-                result.is_none(),
-                "Should NOT detect variable name position without trailing space"
-            );
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::Expression { .. }
+            ),
+            "Should NOT detect variable name position without trailing space"
+        );
     }
 
     #[test]
     fn test_not_variable_name_after_invalid_array_syntax_without_space() {
         let src = "Object[] o = new Object[];\nArrayList";
         let offset = src.find("ArrayList").unwrap() + "ArrayList".len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let result = is_variable_name_after_previous_declaration(cursor_node, &ctx);
-            assert!(
-                result.is_none(),
-                "Should NOT detect variable name position without trailing space"
-            );
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::Expression { .. }
+            ),
+            "Should NOT detect variable name position without trailing space"
+        );
     }
 
     #[test]
     fn test_variable_name_after_type_with_space_in_error() {
         let src = "ArrayList ";
         let offset = src.len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let err = if cursor_node.kind() == "ERROR" {
-                Some(cursor_node)
-            } else {
-                crate::language::java::utils::find_ancestor(cursor_node, "ERROR")
-            };
-            if let Some(err_node) = err {
-                let result = detect_variable_name_position_in_error(&ctx, err_node);
-                assert!(
-                    result.is_some(),
-                    "Should detect variable name position after 'ArrayList ' in error context"
-                );
-            }
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::VariableName { .. }
+            ),
+            "Should detect variable name position after 'ArrayList ' in error context"
+        );
     }
 
     #[test]
     fn test_not_variable_name_after_type_without_space_in_error() {
         let src = "ArrayList";
         let offset = src.len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let err = if cursor_node.kind() == "ERROR" {
-                Some(cursor_node)
-            } else {
-                crate::language::java::utils::find_ancestor(cursor_node, "ERROR")
-            };
-            if let Some(err_node) = err {
-                let result = detect_variable_name_position_in_error(&ctx, err_node);
-                assert!(
-                    result.is_none(),
-                    "Should NOT detect variable name position without whitespace in error context"
-                );
-            }
-        }
+        assert!(
+            !matches!(
+                location_at_offset(src, offset),
+                CursorLocation::VariableName { .. }
+            ),
+            "Should NOT detect variable name position without whitespace in error context"
+        );
     }
 
     #[test]
     fn test_not_variable_name_when_semicolon_follows_identifier() {
         let src = "Object[] o = new Object[]{};\nArrayList ;";
         let offset = src.find("ArrayList").unwrap() + "ArrayList".len();
-        let (ctx, tree) = setup_with(src, offset);
-
-        if let Some(cursor_node) = ctx.find_cursor_node(tree.root_node()) {
-            let result = is_variable_name_after_previous_declaration(cursor_node, &ctx);
-            assert!(
-                result.is_none(),
-                "Should not treat `ArrayList ;` as variable name position"
-            );
-        }
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::Expression { .. }
+            ),
+            "Should not treat `ArrayList ;` as variable name position"
+        );
     }
 
     #[test]

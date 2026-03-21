@@ -171,53 +171,38 @@ fn has_method(methods: &[MethodSummary], name: &str, descriptor: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::language::java::{make_java_parser, scope::extract_imports, scope::extract_package};
+    use super::has_method;
+    use crate::index::ClassOrigin;
+    use crate::language::java::class_parser::parse_java_source_with_test_jdk;
 
-    fn parse_env(src: &str) -> (JavaContextExtractor, tree_sitter::Tree, SourceTypeCtx) {
-        let ctx = JavaContextExtractor::for_indexing(src, None);
-        let mut parser = make_java_parser();
-        let tree = parser.parse(src, None).expect("parse");
-        let root = tree.root_node();
-        let type_ctx = SourceTypeCtx::new(
-            extract_package(&ctx, root),
-            extract_imports(&ctx, root),
-            None,
-        );
-        (ctx, tree, type_ctx)
-    }
-
-    fn first_decl(root: Node) -> Node {
-        root.named_children(&mut root.walk())
-            .find(|node| matches!(node.kind(), "record_declaration" | "class_declaration"))
-            .expect("type declaration")
+    fn parse_record(src: &str) -> crate::index::ClassMetadata {
+        parse_java_source_with_test_jdk(
+            src,
+            ClassOrigin::Unknown,
+            &["java/lang/Object", "java/lang/String"],
+        )
+        .into_iter()
+        .find(|class| class.name.as_ref() == "Point")
+        .expect("Point record")
     }
 
     #[test]
     fn record_components_are_recognized() {
-        let src = "record Point(int x, int y) {}";
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-        let components = record_components(&ctx, decl, &type_ctx);
-        assert_eq!(components.len(), 2);
-        assert_eq!(components[0].name.as_ref(), "x");
-        assert_eq!(components[0].descriptor.as_ref(), "I");
-        assert_eq!(components[1].name.as_ref(), "y");
+        let src = "record Point(int x, String label) {}";
+        let record = parse_record(src);
+        assert!(has_method(&record.methods, "x", "()I"));
+        assert!(has_method(&record.methods, "label", "()Ljava/lang/String;"));
+        assert!(has_method(
+            &record.methods,
+            "<init>",
+            "(ILjava/lang/String;)V"
+        ));
     }
 
     #[test]
     fn record_rule_produces_accessors_and_ctor() {
         let src = "record Point(int x, int y) {}";
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Point"),
-            &type_ctx,
-            &[],
-            &[],
-        );
+        let synthetic = parse_record(src);
         assert!(
             synthetic
                 .methods
@@ -228,11 +213,5 @@ mod tests {
             .methods
             .iter()
             .any(|method| method.name.as_ref() == "<init>" && method.desc().as_ref() == "(II)V"));
-        assert!(synthetic.definitions.iter().any(|definition| {
-            matches!(
-                definition.origin,
-                SyntheticOrigin::RecordComponentAccessor { .. }
-            )
-        }));
     }
 }

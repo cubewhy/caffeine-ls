@@ -4,13 +4,21 @@
 //! Java source parsing and that synthetic members are correctly generated.
 
 use crate::index::ClassOrigin;
-use crate::language::java::class_parser::parse_java_source;
+use crate::language::java::class_parser::parse_java_source_with_test_jdk;
 use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
 use std::sync::Arc;
 
+fn parse_classes(src: &str) -> Vec<crate::index::ClassMetadata> {
+    parse_java_source_with_test_jdk(
+        src,
+        ClassOrigin::Unknown,
+        &["java/lang/Object", "java/lang/String"],
+    )
+}
+
 /// Helper function to parse Java source and return the first class
 fn parse_first_class(src: &str) -> crate::index::ClassMetadata {
-    let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+    let classes = parse_classes(src);
     assert_eq!(classes.len(), 1, "Expected exactly one class");
     classes.into_iter().next().unwrap()
 }
@@ -2091,9 +2099,6 @@ mod constructor_tests {
 }
 #[cfg(test)]
 mod manual_test {
-    use crate::index::ClassOrigin;
-    use crate::language::java::class_parser::parse_java_source;
-
     #[test]
     fn test_lombok_constructors_manual() {
         let src = r#"
@@ -2118,7 +2123,7 @@ class User {
 }
         "#;
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
 
         println!("\n=== Parsed {} classes ===", classes.len());
 
@@ -3126,7 +3131,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         assert_eq!(
             classes.len(),
             2,
@@ -3159,7 +3164,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let person_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "Person")
@@ -3202,7 +3207,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3242,7 +3247,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3282,7 +3287,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3319,7 +3324,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3346,7 +3351,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3386,7 +3391,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let person_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "Person")
@@ -3423,7 +3428,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let person_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "Person")
@@ -3473,7 +3478,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
 
         // Should have custom builder class name
         let builder_class = classes.iter().find(|c| c.name.as_ref() == "PersonFactory");
@@ -3499,7 +3504,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let person_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "Person")
@@ -3530,7 +3535,7 @@ mod builder_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let builder_class = classes
             .iter()
             .find(|c| c.name.as_ref() == "PersonBuilder")
@@ -3806,7 +3811,7 @@ mod with_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let class = &classes[0];
 
         let with_method = class.methods.iter().find(|m| m.name.as_ref() == "withName");
@@ -4166,7 +4171,7 @@ mod log_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         assert_eq!(classes.len(), 2, "Should have two classes");
 
         let service_a = classes.iter().find(|c| c.name.as_ref() == "ServiceA");
@@ -4347,7 +4352,7 @@ mod delegate_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let my_printer = classes.iter().find(|c| c.name.as_ref() == "MyPrinter");
         assert!(my_printer.is_some());
 
@@ -4377,7 +4382,7 @@ mod delegate_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let my_collection = classes.iter().find(|c| c.name.as_ref() == "MyCollection");
         assert!(my_collection.is_some());
 
@@ -4476,7 +4481,7 @@ mod delegate_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let my_list = classes.iter().find(|c| c.name.as_ref() == "MyList");
         assert!(my_list.is_some());
 
@@ -4536,7 +4541,7 @@ mod delegate_tests {
             }
         "};
 
-        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let classes = super::parse_classes(src);
         let simple_stack = classes.iter().find(|c| c.name.as_ref() == "SimpleStack");
         assert!(simple_stack.is_some(), "Should find SimpleStack class");
 

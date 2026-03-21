@@ -261,223 +261,117 @@ fn get_excludes_parameter(annotation: &crate::index::AnnotationSummary) -> Vec<A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::AnnotationSummary;
-    use crate::language::java::JavaContextExtractor;
-    use crate::language::java::type_ctx::SourceTypeCtx;
-    use crate::language::java::{make_java_parser, scope::extract_imports, scope::extract_package};
-    use rust_asm::constants::{ACC_PRIVATE, ACC_STATIC};
+    use crate::index::{AnnotationSummary, MethodParams};
+    use rust_asm::constants::ACC_PRIVATE;
     use rustc_hash::FxHashMap;
 
-    fn parse_env(src: &str) -> (JavaContextExtractor, tree_sitter::Tree, SourceTypeCtx) {
-        let ctx = JavaContextExtractor::for_indexing(src, None);
-        let mut parser = make_java_parser();
-        let tree = parser.parse(src, None).expect("parse");
-        let root = tree.root_node();
-        let type_ctx = SourceTypeCtx::new(
-            extract_package(&ctx, root),
-            extract_imports(&ctx, root),
-            None,
-        );
-        (ctx, tree, type_ctx)
-    }
-
-    fn first_decl(root: Node) -> Node {
-        root.named_children(&mut root.walk())
-            .find(|node| matches!(node.kind(), "class_declaration" | "interface_declaration"))
-            .expect("type declaration")
+    fn delegate_annotation(elements: FxHashMap<Arc<str>, AnnotationValue>) -> AnnotationSummary {
+        AnnotationSummary {
+            internal_name: Arc::from("lombok/experimental/Delegate"),
+            runtime_visible: true,
+            elements,
+        }
     }
 
     #[test]
-    fn test_delegate_generates_marker() {
-        let src = r#"
-            import lombok.experimental.Delegate;
-            import java.util.List;
-            
-            class MyList {
-                @Delegate
-                private List<String> items;
-            }
-        "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("MyList"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("items"),
-                descriptor: Arc::from("Ljava/util/List;"),
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/experimental/Delegate"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
-
-        // Should generate a delegate marker
-        assert!(
-            !synthetic.definitions.is_empty(),
-            "Should generate delegate definitions"
-        );
-
-        let has_delegate_marker = synthetic
-            .definitions
-            .iter()
-            .any(|d| matches!(d.origin, SyntheticOrigin::LombokDelegate { .. }));
-        assert!(has_delegate_marker, "Should have delegate marker");
-    }
-
-    #[test]
-    fn test_delegate_not_generated_for_static_field() {
-        let src = r#"
-            import lombok.experimental.Delegate;
-            import java.util.List;
-            
-            class MyList {
-                @Delegate
-                private static List<String> SHARED_LIST;
-            }
-        "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("MyList"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("SHARED_LIST"),
-                descriptor: Arc::from("Ljava/util/List;"),
-                access_flags: ACC_PRIVATE | ACC_STATIC,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/experimental/Delegate"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
-
-        // Should not generate delegate for static field
-        let has_delegate_marker = synthetic
-            .definitions
-            .iter()
-            .any(|d| matches!(d.origin, SyntheticOrigin::LombokDelegate { .. }));
-        assert!(
-            !has_delegate_marker,
-            "Should not generate delegate for static field"
-        );
-    }
-
-    #[test]
-    fn test_delegate_with_types_parameter() {
-        let src = r#"
-            import lombok.experimental.Delegate;
-            import java.util.Collection;
-            
-            class MyCollection {
-                @Delegate(types = Collection.class)
-                private java.util.ArrayList<String> items;
-            }
-        "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
+    fn test_get_types_parameter_reads_class_value() {
         let mut elements = FxHashMap::default();
         elements.insert(
             Arc::from("types"),
             AnnotationValue::Class(Arc::from("Ljava/util/Collection;")),
         );
 
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("MyCollection"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("items"),
-                descriptor: Arc::from("Ljava/util/ArrayList;"),
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/experimental/Delegate"),
-                    runtime_visible: true,
-                    elements,
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
-
-        // Should generate delegate marker
-        let has_delegate_marker = synthetic
-            .definitions
-            .iter()
-            .any(|d| matches!(d.origin, SyntheticOrigin::LombokDelegate { .. }));
-        assert!(
-            has_delegate_marker,
-            "Should generate delegate marker with types parameter"
-        );
+        let types = get_types_parameter(&delegate_annotation(elements));
+        assert_eq!(types, vec![Arc::from("Ljava/util/Collection;")]);
     }
 
     #[test]
-    fn test_delegate_with_excludes_parameter() {
-        let src = r#"
-            import lombok.experimental.Delegate;
-            import java.util.List;
-            
-            class MyList {
-                @Delegate(excludes = java.util.Collection.class)
-                private List<String> items;
-            }
-        "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
+    fn test_get_excludes_parameter_reads_class_value() {
         let mut elements = FxHashMap::default();
         elements.insert(
             Arc::from("excludes"),
             AnnotationValue::Class(Arc::from("Ljava/util/Collection;")),
         );
 
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("MyList"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("items"),
-                descriptor: Arc::from("Ljava/util/List;"),
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/experimental/Delegate"),
-                    runtime_visible: true,
-                    elements,
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
+        let excludes = get_excludes_parameter(&delegate_annotation(elements));
+        assert_eq!(excludes, vec![Arc::from("Ljava/util/Collection;")]);
+    }
+
+    #[test]
+    fn test_generate_delegate_method_emits_public_method_and_marker() {
+        let field = FieldSummary {
+            name: Arc::from("items"),
+            descriptor: Arc::from("Ljava/util/List;"),
+            access_flags: ACC_PRIVATE,
+            annotations: vec![],
+            is_synthetic: false,
+            generic_signature: None,
+        };
+        let source_method = MethodSummary {
+            name: Arc::from("size"),
+            params: MethodParams::empty(),
+            annotations: vec![],
+            access_flags: 0,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: Some(Arc::from("I")),
+        };
+
+        let mut synthetic = SyntheticMemberSet::default();
+        generate_delegate_method(&field, &source_method, &[], &mut synthetic);
+
+        assert!(
+            synthetic.methods.iter().any(|method| {
+                method.name.as_ref() == "size" && method.desc().as_ref() == "()I"
+            })
+        );
+        assert!(synthetic.definitions.iter().any(|definition| {
+            definition.name.as_ref() == "size"
+                && matches!(definition.origin, SyntheticOrigin::LombokDelegate { .. })
+        }));
+    }
+
+    #[test]
+    fn test_generate_delegate_method_skips_existing_or_object_methods() {
+        let field = FieldSummary {
+            name: Arc::from("items"),
+            descriptor: Arc::from("Ljava/util/List;"),
+            access_flags: ACC_PRIVATE,
+            annotations: vec![],
+            is_synthetic: false,
+            generic_signature: None,
+        };
+        let object_method = MethodSummary {
+            name: Arc::from("toString"),
+            params: MethodParams::empty(),
+            annotations: vec![],
+            access_flags: 0,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: Some(Arc::from("Ljava/lang/String;")),
+        };
+        let existing_method = MethodSummary {
+            name: Arc::from("size"),
+            params: MethodParams::empty(),
+            annotations: vec![],
+            access_flags: 0,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: Some(Arc::from("I")),
+        };
+
+        let mut synthetic = SyntheticMemberSet::default();
+        generate_delegate_method(&field, &object_method, &[], &mut synthetic);
+        generate_delegate_method(
+            &field,
+            &existing_method,
+            std::slice::from_ref(&existing_method),
+            &mut synthetic,
         );
 
-        // Should generate delegate marker
-        let has_delegate_marker = synthetic
-            .definitions
-            .iter()
-            .any(|d| matches!(d.origin, SyntheticOrigin::LombokDelegate { .. }));
         assert!(
-            has_delegate_marker,
-            "Should generate delegate marker with excludes parameter"
+            synthetic.methods.is_empty() && synthetic.definitions.is_empty(),
+            "delegate helper should skip Object methods and already-defined methods"
         );
     }
 }

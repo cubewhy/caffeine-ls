@@ -3,3 +3,4 @@ source: src/language/java.rs
 expression: "result.join(\"\\n\")"
 ---
 agentmain static=true private=false
+test static=true private=true

@@ -377,7 +377,7 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
         WorkspaceIndex,
     };
-    use crate::language::java::class_parser::parse_java_source;
+    use crate::language::java::class_parser::parse_java_source_with_test_jdk;
     use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
@@ -527,7 +527,11 @@ mod tests {
             }
         "#};
         let origin = ClassOrigin::SourceFile(Arc::from("file:///tmp/VarargsExample.java"));
-        let classes = parse_java_source(src, origin.clone(), None);
+        let classes = parse_java_source_with_test_jdk(
+            src,
+            origin.clone(),
+            &["java/lang/Object", "java/lang/String"],
+        );
         idx.update_source(scope, origin, classes);
         let view = idx.view(scope);
         let resolver = SymbolResolver::new(&view);
@@ -576,7 +580,11 @@ mod tests {
             }
         "#};
         let origin = ClassOrigin::SourceFile(Arc::from("file:///tmp/VarargsExample.java"));
-        let classes = parse_java_source(src, origin.clone(), None);
+        let classes = parse_java_source_with_test_jdk(
+            src,
+            origin.clone(),
+            &["java/lang/Object", "java/lang/String"],
+        );
         idx.update_source(scope, origin, classes);
         let view = idx.view(scope);
         let resolver = SymbolResolver::new(&view);

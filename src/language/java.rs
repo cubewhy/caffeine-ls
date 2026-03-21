@@ -347,33 +347,69 @@ pub(crate) fn extract_java_semantic_context_for_test(
     trigger_char: Option<char>,
     env: &ParseEnv,
 ) -> Option<SemanticContext> {
-    let rope = Rope::from_str(source);
-    let offset = rope_line_col_to_offset(&rope, line, character)?;
-    let mut parser = make_java_parser();
-    let tree = parser.parse(source, None)?;
-    let root = tree.root_node();
+    use crate::salsa_queries::conversion::FromSalsaDataWithAnalysis;
 
-    let mut extractor = JavaContextExtractor::with_rope(
-        Arc::<str>::from(source),
-        offset,
-        rope,
-        env.name_table.clone(),
+    rope_line_col_to_offset(&Rope::from_str(source), line, character)?;
+    let workspace_index = env
+        .workspace
+        .as_ref()
+        .map(|workspace| Arc::clone(&workspace.index))
+        .or_else(|| {
+            env.view.as_ref().map(|view| {
+                let index = Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+                index.write().add_classes(
+                    view.iter_all_classes()
+                        .into_iter()
+                        .map(|class| (*class).clone())
+                        .collect(),
+                );
+                index
+            })
+        });
+    let db = workspace_index
+        .map(crate::salsa_db::Database::with_workspace_index)
+        .unwrap_or_default();
+    let file = crate::salsa_db::SourceFile::new(
+        &db,
+        crate::salsa_db::FileId::new(
+            tower_lsp::lsp_types::Url::parse(
+                "file:///__java_analyzer__/tests/semantic_context.java",
+            )
+            .expect("valid static url"),
+        ),
+        source.to_string(),
+        Arc::from("java"),
     );
+    let view = env.view.clone().unwrap_or_else(|| {
+        let workspace = crate::workspace::Workspace::new();
+        workspace.index.read().view(crate::index::IndexScope {
+            module: crate::index::ModuleId::ROOT,
+        })
+    });
+    let analysis = crate::salsa_queries::conversion::RequestAnalysisState {
+        analysis: crate::workspace::AnalysisContext {
+            module: crate::index::ModuleId::ROOT,
+            classpath: crate::index::ClasspathId::Main,
+            source_root: None,
+            root_kind: None,
+        },
+        view,
+    };
 
-    if let Some(view) = env.view.clone() {
-        extractor = extractor.with_view(view);
-    }
-    if let Some(workspace) = env.workspace.as_ref() {
-        extractor = extractor.with_workspace(Arc::clone(workspace));
-    }
-    if let Some(file_uri) = env.file_uri.as_ref() {
-        extractor = extractor.with_file_uri(Arc::clone(file_uri));
-    }
-    if let Some(metrics) = env.metrics.as_ref() {
-        extractor = extractor.with_metrics(Arc::clone(metrics));
-    }
-
-    Some(extractor.extract(root, trigger_char))
+    let context = crate::salsa_queries::java::extract_java_completion_context(
+        &db,
+        file,
+        line,
+        character,
+        trigger_char,
+    );
+    Some(SemanticContext::from_salsa_data_with_analysis(
+        context.as_ref().clone(),
+        &db,
+        file,
+        None,
+        Some(&analysis),
+    ))
 }
 
 fn is_annotation_name(node: Node) -> bool {
@@ -899,17 +935,14 @@ mod tests {
             ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
             WorkspaceIndex,
         },
-        language::test_helpers::{
-            completion_context_from_marked_source_with_view, completion_context_from_source,
-            completion_context_from_source_with_view,
+        language::test_helpers::completion_context_from_source,
+        language::{
+            java::class_parser::{parse_java_source, parse_java_source_with_test_jdk},
+            rope_utils::line_col_to_offset,
         },
-        language::{java::class_parser::parse_java_source, rope_utils::line_col_to_offset},
         semantic::{
             LocalVar,
-            context::{
-                CurrentClassMember, CursorLocation, StatementLabelCompletionKind,
-                StatementLabelTargetKind,
-            },
+            context::{CursorLocation, StatementLabelCompletionKind, StatementLabelTargetKind},
             types::{CallArgs, EvalContext, type_name::TypeName},
         },
     };
@@ -929,6 +962,49 @@ mod tests {
         let line = (lines.len().saturating_sub(1)) as u32;
         let col = lines.last().map(|l| l.len()).unwrap_or(0) as u32;
         at(src, line, col)
+    }
+
+    fn completion_ctx_with_view(
+        src: &str,
+        line: u32,
+        col: u32,
+        trigger: Option<char>,
+        view: &IndexView,
+    ) -> SemanticContext {
+        extract_java_semantic_context_for_test(
+            src,
+            line,
+            col,
+            trigger,
+            &ParseEnv {
+                name_table: Some(view.build_name_table()),
+                view: Some(view.clone()),
+                workspace: None,
+                file_uri: None,
+                metrics: None,
+            },
+        )
+        .expect("java semantic context with view")
+    }
+
+    fn completion_ctx_from_marked_source_with_view(
+        src_with_cursor: &str,
+        trigger: Option<char>,
+        view: &IndexView,
+    ) -> SemanticContext {
+        let (src, cursor_byte) = if let Some(idx) = src_with_cursor.find("/*caret*/") {
+            (src_with_cursor.replacen("/*caret*/", "", 1), idx)
+        } else {
+            let idx = src_with_cursor
+                .find('|')
+                .expect("expected | or /*caret*/ cursor marker in source");
+            (src_with_cursor.replacen('|', "", 1), idx)
+        };
+        let rope = ropey::Rope::from_str(&src);
+        let cursor_char = rope.byte_to_char(cursor_byte);
+        let line = rope.char_to_line(cursor_char) as u32;
+        let col = (cursor_char - rope.line_to_char(line as usize)) as u32;
+        completion_ctx_with_view(&src, line, col, trigger, view)
     }
 
     fn root_scope() -> IndexScope {
@@ -1144,7 +1220,7 @@ mod tests {
         let cursor_char = rope.byte_to_char(cursor_byte);
         let line = rope.char_to_line(cursor_char) as u32;
         let col = (cursor_char - rope.line_to_char(line as usize)) as u32;
-        let ctx = completion_context_from_source_with_view("java", &src, line, col, None, view);
+        let ctx = completion_ctx_with_view(&src, line, col, None, view);
         let engine = CompletionEngine::new();
         let candidates = engine.complete(root_scope(), ctx.clone(), &JavaLanguage, view);
         (ctx, candidates)
@@ -4057,7 +4133,7 @@ mod tests {
             },
         ]);
         let view = idx.view(root_scope());
-        let ctx = completion_context_from_source_with_view("java", src, line, col, None, &view);
+        let ctx = completion_ctx_with_view(src, line, col, None, &view);
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
@@ -4143,7 +4219,7 @@ mod tests {
             }
         }
         "#};
-        let ctx = completion_context_from_marked_source_with_view("java", src, None, &view);
+        let ctx = completion_ctx_from_marked_source_with_view(src, None, &view);
         let results = CompletionEngine::new().complete(root_scope(), ctx, &JavaLanguage, &view);
         let a = results
             .iter()
@@ -4238,7 +4314,7 @@ mod tests {
             }
         }
         "#};
-        let ctx = completion_context_from_marked_source_with_view("java", src, None, &view);
+        let ctx = completion_ctx_from_marked_source_with_view(src, None, &view);
         let results = CompletionEngine::new().complete(root_scope(), ctx, &JavaLanguage, &view);
         let b = results
             .iter()
@@ -4725,7 +4801,11 @@ mod tests {
             }
         }
         "#};
-        let parsed = parse_java_source(src, ClassOrigin::Unknown, None);
+        let parsed = parse_java_source_with_test_jdk(
+            src,
+            ClassOrigin::Unknown,
+            &["java/lang/Object", "java/lang/String"],
+        );
         let cls = parsed
             .iter()
             .find(|c| c.name.as_ref() == "VarargsExample")
@@ -5724,9 +5804,7 @@ mod tests {
             .enumerate()
             .find_map(|(i, l)| l.find("Bo>").map(|c| (i as u32, c as u32 + 2)))
             .expect("List<Bo> marker");
-        let type_ctx = completion_context_from_source_with_view(
-            "java", src_type, type_line, type_col, None, &view,
-        );
+        let type_ctx = completion_ctx_with_view(src_type, type_line, type_col, None, &view);
         let type_location = format!("{:?}", type_ctx.location);
         let mut type_labels: Vec<String> = engine
             .complete(root_scope(), type_ctx, &JavaLanguage, &view)
@@ -5754,9 +5832,7 @@ mod tests {
                     .map(|c| (i as u32, c as u32 + "new Bo".len() as u32))
             })
             .expect("new Bo marker");
-        let ctor_ctx = completion_context_from_source_with_view(
-            "java", src_ctor, ctor_line, ctor_col, None, &view,
-        );
+        let ctor_ctx = completion_ctx_with_view(src_ctor, ctor_line, ctor_col, None, &view);
         let ctor_location = format!("{:?}", ctor_ctx.location);
         let mut ctor_labels: Vec<String> = engine
             .complete(root_scope(), ctor_ctx, &JavaLanguage, &view)
@@ -5781,9 +5857,7 @@ mod tests {
             .enumerate()
             .find_map(|(i, l)| l.find("Box<String>").map(|c| (i as u32, c as u32 + 2)))
             .expect("Box<String> marker");
-        let decl_ctx = completion_context_from_source_with_view(
-            "java", src_decl, decl_line, decl_col, None, &view,
-        );
+        let decl_ctx = completion_ctx_with_view(src_decl, decl_line, decl_col, None, &view);
         let decl_location = format!("{:?}", decl_ctx.location);
         let mut decl_labels: Vec<String> = engine
             .complete(root_scope(), decl_ctx, &JavaLanguage, &view)
@@ -7245,8 +7319,6 @@ mod tests {
         let error_node = root.child(0).unwrap();
         assert_eq!(error_node.kind(), "ERROR");
 
-        let extractor = super::JavaContextExtractor::new(src, 0, None);
-
         // Snapshot direct children kinds
         let mut cursor = error_node.walk();
         let children_info: Vec<String> = error_node
@@ -7261,20 +7333,20 @@ mod tests {
             .collect();
         insta::assert_snapshot!("error_children", children_info.join("\n"));
 
-        let type_ctx = SourceTypeCtx::new(None, vec![], None);
-
-        // Snapshot what parse_partial_methods_from_error returns
-        let snapshot: Vec<CurrentClassMember> = vec![];
-        let partial =
-            members::parse_partial_methods_from_error(&extractor, &type_ctx, error_node, &snapshot);
-        let mut result: Vec<String> = partial
+        let parsed = parse_java_source(src, ClassOrigin::Unknown, None);
+        let agent = parsed
             .iter()
-            .map(|m| {
+            .find(|class| class.name.as_ref() == "Agent")
+            .expect("parsed Agent");
+        let mut result: Vec<String> = agent
+            .methods
+            .iter()
+            .map(|method| {
                 format!(
                     "{} static={} private={}",
-                    m.name(),
-                    m.is_static(),
-                    m.is_private()
+                    method.name,
+                    (method.access_flags & rust_asm::constants::ACC_STATIC) != 0,
+                    (method.access_flags & rust_asm::constants::ACC_PRIVATE) != 0
                 )
             })
             .collect();
@@ -8241,73 +8313,6 @@ mod tests {
             "Should include asterisk, got {:?}",
             ctx.location
         );
-    }
-
-    #[test]
-    fn test_extractor_new_no_lifetime() {
-        // 验证 JavaContextExtractor 可以脱离 source 字符串独立存活
-        let ctx = {
-            let src = String::from("class A { void f() { int x = 1; } }");
-            JavaContextExtractor::new(src, 22, None) // 离开作用域 src 已 move 进去
-        };
-        // ctx 仍然有效
-        assert_eq!(ctx.source_str().len(), 35);
-        assert!(!ctx.is_in_comment());
-    }
-
-    #[test]
-    fn test_extractor_for_indexing() {
-        let ctx = JavaContextExtractor::for_indexing("class A {}", None);
-        assert_eq!(ctx.offset, 0);
-        assert_eq!(ctx.source_str(), "class A {}");
-    }
-
-    #[test]
-    fn test_extractor_byte_slice() {
-        let src = "class A { void f() {} }";
-        let ctx = JavaContextExtractor::new(src, 0, None);
-        // tree-sitter 给出字节偏移，byte_slice 应正确切片
-        assert_eq!(ctx.byte_slice(0, 5), "class");
-        assert_eq!(ctx.byte_slice(6, 7), "A");
-    }
-
-    #[test]
-    fn test_extractor_is_in_comment_true() {
-        let src = "class A { // comment\n void f() {} }";
-        // offset 在 comment 内部
-        let col = src.find("//").unwrap() + 5;
-        let ctx = JavaContextExtractor::new(src, col, None);
-        assert!(ctx.is_in_comment());
-    }
-
-    #[test]
-    fn test_extractor_is_in_comment_false() {
-        let src = "class A { void f() {} }";
-        let ctx = JavaContextExtractor::new(src, 10, None);
-        assert!(!ctx.is_in_comment());
-    }
-
-    #[test]
-    fn test_extractor_with_rope_reuses_rope() {
-        // with_rope 构造不重复建 Rope（性能路径）
-        let src = String::from("package a; class B {}");
-        let rope = ropey::Rope::from_str(&src);
-        let line_count = rope.len_lines();
-        let ctx = JavaContextExtractor::with_rope(src, 0, rope, None);
-        assert_eq!(ctx.rope.len_lines(), line_count);
-    }
-
-    #[test]
-    fn test_extractor_node_text_multibyte() {
-        // 含 CJK 字符的类名，node_text 应正确返回
-        let src = "class 测试类 {}";
-        let ctx = JavaContextExtractor::new(src, 0, None);
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_java::LANGUAGE.into())
-            .unwrap();
-        // 仅确保不 panic，multibyte 处理正确
-        let _ = parser.parse(ctx.source_str(), None);
     }
 
     fn make_nested_chaincheck_index() -> WorkspaceIndex {

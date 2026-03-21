@@ -234,29 +234,18 @@ fn has_method(methods: &[MethodSummary], name: &str, descriptor: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::index::AnnotationSummary;
-    use crate::language::java::{make_java_parser, scope::extract_imports, scope::extract_package};
-    use rust_asm::constants::{ACC_FINAL, ACC_PRIVATE};
-    use rustc_hash::FxHashMap;
+    use crate::index::ClassOrigin;
+    use crate::language::java::class_parser::parse_java_source_with_test_jdk;
 
-    fn parse_env(src: &str) -> (JavaContextExtractor, tree_sitter::Tree, SourceTypeCtx) {
-        let ctx = JavaContextExtractor::for_indexing(src, None);
-        let mut parser = make_java_parser();
-        let tree = parser.parse(src, None).expect("parse");
-        let root = tree.root_node();
-        let type_ctx = SourceTypeCtx::new(
-            extract_package(&ctx, root),
-            extract_imports(&ctx, root),
-            None,
-        );
-        (ctx, tree, type_ctx)
-    }
-
-    fn first_decl(root: Node) -> Node {
-        root.named_children(&mut root.walk())
-            .find(|node| matches!(node.kind(), "class_declaration" | "record_declaration"))
-            .expect("type declaration")
+    fn parse_class(src: &str) -> crate::index::ClassMetadata {
+        parse_java_source_with_test_jdk(
+            src,
+            ClassOrigin::Unknown,
+            &["java/lang/Object", "java/lang/String"],
+        )
+        .into_iter()
+        .find(|class| class.name.as_ref() == "Person")
+        .expect("Person class")
     }
 
     #[test]
@@ -268,28 +257,7 @@ mod tests {
                 private String name;
             }
         "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Person"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("name"),
-                descriptor: Arc::from("Ljava/lang/String;"),
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/Getter"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
+        let synthetic = parse_class(src);
 
         assert!(
             synthetic.methods.iter().any(
@@ -308,28 +276,7 @@ mod tests {
                 private String name;
             }
         "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Person"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("name"),
-                descriptor: Arc::from("Ljava/lang/String;"),
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/Setter"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
+        let synthetic = parse_class(src);
 
         assert!(
             synthetic
@@ -350,28 +297,7 @@ mod tests {
                 private final String name = "John";
             }
         "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Person"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("name"),
-                descriptor: Arc::from("Ljava/lang/String;"),
-                access_flags: ACC_FINAL | ACC_PRIVATE, // private final
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/Setter"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
+        let synthetic = parse_class(src);
 
         assert!(
             !synthetic
@@ -391,28 +317,7 @@ mod tests {
                 private boolean active;
             }
         "#;
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = first_decl(tree.root_node());
-
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Person"),
-            &type_ctx,
-            &[],
-            &[FieldSummary {
-                name: Arc::from("active"),
-                descriptor: Arc::from("Z"), // boolean
-                access_flags: ACC_PRIVATE,
-                annotations: vec![AnnotationSummary {
-                    internal_name: Arc::from("lombok/Getter"),
-                    runtime_visible: true,
-                    elements: FxHashMap::default(),
-                }],
-                is_synthetic: false,
-                generic_signature: None,
-            }],
-        );
+        let synthetic = parse_class(src);
 
         assert!(
             synthetic

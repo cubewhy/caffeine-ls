@@ -243,24 +243,58 @@ fn determine_location_impl(
 
 #[cfg(test)]
 mod tests {
+    use ropey::Rope;
     use tree_sitter::Parser;
 
     use crate::{
-        language::java::{JavaContextExtractor, location::determine_location},
+        language::test_helpers::completion_context_from_source,
         semantic::{
-            CursorLocation,
+            CursorLocation, SemanticContext,
             context::{FunctionalTargetHint, StatementLabelCompletionKind},
         },
     };
 
-    fn setup_with(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
+    #[derive(Clone)]
+    struct TestCtx {
+        semantic: SemanticContext,
+    }
+
+    type CursorNode = ();
+
+    impl TestCtx {
+        fn find_cursor_node(&self, _root: tree_sitter::Node) -> Option<CursorNode> {
+            Some(())
+        }
+    }
+
+    fn setup_with(source: &str, offset: usize) -> (TestCtx, tree_sitter::Tree) {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_java::LANGUAGE.into())
             .expect("failed to load java grammar");
         let tree = parser.parse(source, None).unwrap();
-        let ctx = JavaContextExtractor::new(source, offset, None);
+        let rope = Rope::from_str(source);
+        let line = rope.byte_to_line(offset) as u32;
+        let col = (offset - rope.line_to_byte(line as usize)) as u32;
+        let ctx = TestCtx {
+            semantic: completion_context_from_source("java", source, line, col, None),
+        };
         (ctx, tree)
+    }
+
+    fn determine_location(
+        ctx: &TestCtx,
+        _cursor_node: Option<CursorNode>,
+        _trigger_char: Option<char>,
+    ) -> (CursorLocation, String) {
+        (ctx.semantic.location.clone(), ctx.semantic.query.clone())
+    }
+
+    fn infer_functional_target_hint(
+        ctx: &TestCtx,
+        _cursor_node: Option<CursorNode>,
+    ) -> Option<FunctionalTargetHint> {
+        ctx.semantic.functional_target_hint.clone()
     }
 
     #[test]
@@ -1219,7 +1253,7 @@ class A {
         let offset = src.find(marker).unwrap() + marker.len();
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+        let hint = infer_functional_target_hint(&ctx, cursor_node);
 
         assert!(
             matches!(
@@ -1261,7 +1295,7 @@ class A {
         let offset = src.rfind(marker).unwrap() + 1;
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+        let hint = infer_functional_target_hint(&ctx, cursor_node);
 
         assert!(matches!(
             hint.as_ref().and_then(|h| h.assignment_lhs_expr.as_deref()),
@@ -1286,7 +1320,7 @@ class A {
         let offset = src.find(marker).unwrap() + marker.len();
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+        let hint = infer_functional_target_hint(&ctx, cursor_node);
 
         assert!(
             matches!(
@@ -1323,7 +1357,7 @@ class A {
         let offset = src.find(marker).unwrap() + marker.len();
         let (ctx, tree) = setup_with(src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
-        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+        let hint = infer_functional_target_hint(&ctx, cursor_node);
 
         assert!(matches!(
             hint.and_then(|h| h.expr_shape),

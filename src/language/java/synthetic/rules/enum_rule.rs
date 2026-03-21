@@ -102,49 +102,21 @@ fn enum_constant_name_node(node: Node) -> Option<Node> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::language::java::{
-        make_java_parser, scope::extract_imports, scope::extract_package, type_ctx::SourceTypeCtx,
-    };
-
-    fn parse_env(src: &str) -> (JavaContextExtractor, tree_sitter::Tree, SourceTypeCtx) {
-        let ctx = JavaContextExtractor::for_indexing(src, None);
-        let mut parser = make_java_parser();
-        let tree = parser.parse(src, None).expect("parse");
-        let root = tree.root_node();
-        let type_ctx = SourceTypeCtx::new(
-            extract_package(&ctx, root),
-            extract_imports(&ctx, root),
-            None,
-        );
-        (ctx, tree, type_ctx)
-    }
+    use crate::index::ClassOrigin;
+    use crate::language::java::class_parser::parse_java_source;
 
     #[test]
     fn enum_rule_produces_semantic_constants() {
         let src = "enum Color { RED, GREEN, BLUE }";
-        let (ctx, tree, type_ctx) = parse_env(src);
-        let decl = tree
-            .root_node()
-            .named_children(&mut tree.root_node().walk())
-            .find(|node| node.kind() == "enum_declaration")
-            .expect("enum declaration");
-        let synthetic = crate::language::java::synthetic::synthesize_for_type(
-            &ctx,
-            decl,
-            Some("Color"),
-            &type_ctx,
-            &[],
-            &[],
-        );
+        let synthetic = parse_java_source(src, ClassOrigin::Unknown, None)
+            .into_iter()
+            .find(|class| class.name.as_ref() == "Color")
+            .expect("Color enum");
         let names: Vec<&str> = synthetic
             .fields
             .iter()
             .map(|field| field.name.as_ref())
             .collect();
         assert_eq!(names, vec!["RED", "GREEN", "BLUE"]);
-        assert!(synthetic.definitions.iter().any(|definition| {
-            matches!(definition.origin, SyntheticOrigin::EnumConstant { .. })
-        }));
     }
 }

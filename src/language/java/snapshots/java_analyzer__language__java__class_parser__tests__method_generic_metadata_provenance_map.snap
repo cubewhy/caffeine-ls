@@ -8,11 +8,11 @@ public <R> Demo<R> map(Function<? super T, ? extends R> fn)
 ideal_generic_signature:
 <R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Lorg/example/Demo<TR;>;
 
-stage_parse_method_node:
+stage_source_method_summary:
 name=map
-desc=(LFunction;)LDemo;
-generic_signature=Some("<R:Ljava/lang/Object;>(LFunction<-TT;+TR;>;)LDemo<TR;>;")
-return_type=Some("LDemo;")
+desc=(LFunction;)Lorg/example/Demo;
+generic_signature=Some("<R:Ljava/lang/Object;>(LFunction<-TT;+TR;>;)Lorg/example/Demo<TR;>;")
+return_type=Some("Lorg/example/Demo;")
 param_names=["fn"]
 param_descs=["LFunction;"]
 

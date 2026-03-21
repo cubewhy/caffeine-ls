@@ -1,35 +1,14 @@
-/// Regression tests for stack overflow issues
+// Regression tests for stack overflow issues
 ///
 /// This test suite verifies that the parser doesn't stack overflow
 /// when processing incomplete code in Lombok-annotated classes.
-use java_analyzer::{
-    language::java::JavaContextExtractor,
-    language::java::members::{extract_class_members_from_body, extract_valid_members_only},
-    language::java::type_ctx::SourceTypeCtx,
-};
-use tree_sitter::Parser;
+use java_analyzer::{index::ClassOrigin, language::java::class_parser::parse_java_source};
 
-fn parse_java(source: &str) -> tree_sitter::Tree {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_java::LANGUAGE.into())
-        .unwrap();
-    parser.parse(source, None).unwrap()
-}
-
-fn find_class_body(root: tree_sitter::Node) -> Option<tree_sitter::Node> {
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        if child.kind() == "class_declaration" {
-            let mut class_cursor = child.walk();
-            for class_child in child.children(&mut class_cursor) {
-                if class_child.kind() == "class_body" {
-                    return Some(class_child);
-                }
-            }
-        }
-    }
-    None
+fn parse_first_class(source: &str) -> java_analyzer::index::ClassMetadata {
+    parse_java_source(source, ClassOrigin::Unknown, None)
+        .into_iter()
+        .find(|class| !class.name.is_empty())
+        .expect("Should parse at least one class")
 }
 
 #[test]
@@ -51,27 +30,11 @@ public class User {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
-
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    // This should NOT stack overflow - it used to before the two-phase refactor
-    let members = extract_class_members_from_body(&ctx, class_body, &type_ctx);
+    let class = parse_first_class(source);
+    let members = class.fields.len() + class.methods.len();
 
     // Should extract at least the foo method and fields
-    assert!(!members.is_empty(), "Should extract some members");
+    assert!(members > 0, "Should extract some members");
 }
 
 #[test]
@@ -100,26 +63,10 @@ public class Person {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
+    let class = parse_first_class(source);
+    let members = class.fields.len() + class.methods.len();
 
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    // Should not stack overflow with multiple incomplete statements
-    let members = extract_class_members_from_body(&ctx, class_body, &type_ctx);
-
-    assert!(!members.is_empty());
+    assert!(members > 0);
 }
 
 #[test]
@@ -140,26 +87,10 @@ public class Test {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
+    let class = parse_first_class(source);
+    let members = class.fields.len() + class.methods.len();
 
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    // Should not stack overflow even with nested ERROR nodes
-    let members = extract_class_members_from_body(&ctx, class_body, &type_ctx);
-
-    assert!(!members.is_empty());
+    assert!(members > 0);
 }
 
 #[test]
@@ -181,29 +112,12 @@ public class Test {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
-
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    // Extract only valid members (should skip ERROR nodes)
-    let valid_members = extract_valid_members_only(&ctx, class_body, &type_ctx);
-
-    // Should extract at least the valid methods
-    assert!(!valid_members.is_empty());
-
-    let member_names: Vec<_> = valid_members.iter().map(|m| m.name()).collect();
+    let class = parse_first_class(source);
+    let member_names: Vec<_> = class
+        .methods
+        .iter()
+        .map(|method| method.name.clone())
+        .collect();
 
     // Should have validMethod and anotherValidMethod
     assert!(member_names.iter().any(|n| n.as_ref() == "validMethod"));
@@ -229,26 +143,12 @@ public class Test {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
-
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    // Two-phase extraction should get both valid and error-recovered members
-    let all_members = extract_class_members_from_body(&ctx, class_body, &type_ctx);
-
-    let member_names: Vec<_> = all_members.iter().map(|m| m.name()).collect();
+    let class = parse_first_class(source);
+    let member_names: Vec<_> = class
+        .methods
+        .iter()
+        .map(|method| method.name.clone())
+        .collect();
 
     // Should have both methods
     assert!(member_names.iter().any(|n| n.as_ref() == "validMethod"));
@@ -291,36 +191,28 @@ public class Agent {
 }
 "#;
 
-    let tree = parse_java(source);
-    let root = tree.root_node();
-    let class_body = find_class_body(root).expect("Should find class body");
-
-    let ctx = JavaContextExtractor::new(
-        source,
-        source.len() - 10,
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let type_ctx = SourceTypeCtx::new(
-        None,
-        vec![],
-        Some(java_analyzer::index::NameTable::from_classes(&[])),
-    );
-
-    let members = extract_class_members_from_body(&ctx, class_body, &type_ctx);
-
-    let member_names: Vec<_> = members.iter().map(|m| m.name()).collect();
+    let class = parse_first_class(source);
+    let method_names: Vec<_> = class
+        .methods
+        .iter()
+        .map(|method| method.name.clone())
+        .collect();
+    let field_names: Vec<_> = class
+        .fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect();
 
     // Should extract the valid members
     assert!(
-        member_names.iter().any(|n| n.as_ref() == "agentmain"),
+        method_names.iter().any(|n| n.as_ref() == "agentmain"),
         "Should find agentmain, found: {:?}",
-        member_names.iter().map(|n| n.as_ref()).collect::<Vec<_>>()
+        method_names.iter().map(|n| n.as_ref()).collect::<Vec<_>>()
     );
     assert!(
-        member_names.iter().any(|n| n.as_ref() == "inst"),
+        field_names.iter().any(|n| n.as_ref() == "inst"),
         "Should find inst field, found: {:?}",
-        member_names.iter().map(|n| n.as_ref()).collect::<Vec<_>>()
+        field_names.iter().map(|n| n.as_ref()).collect::<Vec<_>>()
     );
 
     // Known limitation: test() method is not extracted because tree-sitter splits it

@@ -300,11 +300,36 @@ fn first_named_child(node: Node) -> Option<Node> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::index::NameTable;
-    use crate::language::java::make_java_parser;
+    use std::sync::Arc;
 
-    fn setup(src_with_cursor: &str) -> (JavaContextExtractor, tree_sitter::Tree, usize) {
+    use crate::index::{ClassMetadata, ClassOrigin};
+    use crate::salsa_db::{Database, FileId, SourceFile};
+    use crate::salsa_queries::{extract_java_flow_type_overrides, materialize_flow_type_overrides};
+    use crate::semantic::types::type_name::TypeName;
+    use tower_lsp::lsp_types::Url;
+
+    fn minimal_class(internal_name: &str) -> ClassMetadata {
+        let (package, name) = internal_name
+            .rsplit_once('/')
+            .map(|(package, name)| (Some(Arc::from(package)), Arc::from(name)))
+            .unwrap_or((None, Arc::from(internal_name)));
+        ClassMetadata {
+            package,
+            name,
+            internal_name: Arc::from(internal_name),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: 0,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }
+    }
+
+    fn overrides_at(src_with_cursor: &str) -> std::collections::HashMap<Arc<str>, TypeName> {
         let (src, cursor_offset) = if let Some(idx) = src_with_cursor.find("/*caret*/") {
             (src_with_cursor.replacen("/*caret*/", "", 1), idx)
         } else {
@@ -313,30 +338,22 @@ mod tests {
                 .expect("expected | or /*caret*/ cursor marker");
             (src_with_cursor.replacen('|', "", 1), idx)
         };
-        let mut parser = make_java_parser();
-        let tree = parser.parse(&src, None).expect("parse java");
-        (
-            JavaContextExtractor::new(src, cursor_offset, None),
-            tree,
-            cursor_offset,
-        )
-    }
-
-    fn cursor_node(root: Node, offset: usize) -> Option<Node> {
-        root.named_descendant_for_byte_range(offset.saturating_sub(1), offset)
-            .or_else(|| root.named_descendant_for_byte_range(offset, offset + 1))
-    }
-
-    fn type_ctx() -> SourceTypeCtx {
-        SourceTypeCtx::new(
-            None,
-            vec![],
-            Some(NameTable::from_names(vec![
-                Arc::from("java/lang/String"),
-                Arc::from("java/lang/StringBuilder"),
-                Arc::from("java/lang/Object"),
-            ])),
-        )
+        let workspace_index =
+            Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+        workspace_index.write().add_jdk_classes(vec![
+            minimal_class("java/lang/Object"),
+            minimal_class("java/lang/StringBuilder"),
+            minimal_class("java/lang/String"),
+        ]);
+        let db = Database::with_workspace_index(workspace_index);
+        let file = SourceFile::new(
+            &db,
+            FileId::new(Url::parse("file:///test/Flow.java").unwrap()),
+            src,
+            Arc::from("java"),
+        );
+        let overrides = extract_java_flow_type_overrides(&db, file, cursor_offset);
+        materialize_flow_type_overrides(overrides.as_ref())
     }
 
     #[test]
@@ -349,19 +366,7 @@ mod tests {
                 }
             }
         "#;
-        let (extractor, tree, offset) = setup(src);
-        let root = tree.root_node();
-        let locals = vec![LocalVar {
-            name: Arc::from("a"),
-            type_internal: TypeName::new("java/lang/Object"),
-            init_expr: None,
-        }];
-        let facts = extract_instanceof_true_branch_overrides(
-            &extractor,
-            cursor_node(root, offset),
-            &type_ctx(),
-            &locals,
-        );
+        let facts = overrides_at(src);
         assert_eq!(
             facts.get("a").map(TypeName::erased_internal),
             Some("java/lang/StringBuilder")
@@ -378,20 +383,7 @@ mod tests {
                 }
             }
         "#;
-        let (extractor, tree, offset) = setup(src);
-        let root = tree.root_node();
-        let cursor = cursor_node(root, offset).expect("cursor node");
-        let locals = vec![LocalVar {
-            name: Arc::from("x"),
-            type_internal: TypeName::new("java/lang/Object"),
-            init_expr: None,
-        }];
-        let facts = extract_instanceof_true_branch_overrides(
-            &extractor,
-            Some(cursor),
-            &type_ctx(),
-            &locals,
-        );
+        let facts = overrides_at(src);
         assert_eq!(
             facts.get("x").map(TypeName::erased_internal),
             Some("java/lang/String")
@@ -409,26 +401,7 @@ mod tests {
                 }
             }
         "#;
-        let (extractor, tree, offset) = setup(src);
-        let root = tree.root_node();
-        let locals = vec![
-            LocalVar {
-                name: Arc::from("a"),
-                type_internal: TypeName::new("java/lang/Object"),
-                init_expr: None,
-            },
-            LocalVar {
-                name: Arc::from("b"),
-                type_internal: TypeName::new("java/lang/Object"),
-                init_expr: None,
-            },
-        ];
-        let facts = extract_instanceof_true_branch_overrides(
-            &extractor,
-            cursor_node(root, offset),
-            &type_ctx(),
-            &locals,
-        );
+        let facts = overrides_at(src);
         assert!(
             facts.is_empty(),
             "general || true-branch should not be over-narrowed, got: {:?}",

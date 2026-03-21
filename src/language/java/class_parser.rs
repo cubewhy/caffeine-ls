@@ -8,10 +8,7 @@ use tree_sitter_utils::{
     traversal::{any_child_of_kind, first_child_of_kind},
 };
 
-use crate::index::{
-    AnnotationSummary, BucketIndex, ClassMetadata, ClassOrigin, FieldSummary, MethodParams,
-    MethodSummary,
-};
+use crate::index::{AnnotationSummary, BucketIndex, ClassMetadata, ClassOrigin};
 use crate::jvm::descriptor::consume_one_descriptor_type;
 use crate::language::java::type_ctx::{SourceTypeCtx, build_java_descriptor};
 use crate::language::java::utils::extract_generic_signature;
@@ -21,12 +18,13 @@ use crate::{
         java::{
             JavaContextExtractor, make_java_parser,
             members::{
-                extract_class_members_from_body, extract_javadoc, parse_annotations_in_node,
+                collect_members_from_node, extract_class_members_from_body, extract_javadoc,
+                parse_annotations_in_node,
             },
             scope,
             scope::extract_package,
             synthetic::{self, SyntheticDefinitionKind},
-            utils::parse_java_modifiers,
+            utils::{find_top_error_node, parse_java_modifiers},
         },
         ts_utils::{capture_text, run_query},
     },
@@ -61,7 +59,7 @@ pub fn parse_java_source_with_view(
         Some(view.clone())
     } else {
         let bucket = Arc::new(BucketIndex::new());
-        let mut seed_classes = discover_java_names(source)
+        let seed_classes = discover_java_names(source)
             .into_iter()
             .map(|internal_name| ClassMetadata {
                 package: internal_name
@@ -85,7 +83,6 @@ pub fn parse_java_source_with_view(
                 origin: origin.clone(),
             })
             .collect::<Vec<_>>();
-        seed_classes.extend(minimal_java_lang_seed_classes());
         bucket.add_classes(seed_classes);
         Some(IndexView::new(smallvec::smallvec![bucket]))
     };
@@ -108,6 +105,14 @@ pub fn parse_java_source_with_view(
         &mut results,
     );
 
+    if results.is_empty()
+        && let Some(error_node) = find_top_error_node(root)
+        && let Some(meta) =
+            parse_java_error_class(&ctx, error_node, &package, None, None, &origin, &type_ctx)
+    {
+        results.push(meta);
+    }
+
     if parsing_view.is_none() {
         refine_source_metadata_with_index_view(&mut results, name_table);
     }
@@ -115,94 +120,155 @@ pub fn parse_java_source_with_view(
     results
 }
 
-fn minimal_java_lang_seed_classes() -> Vec<ClassMetadata> {
-    fn cls(internal: &str) -> ClassMetadata {
-        ClassMetadata {
-            package: internal.rsplit_once('/').map(|(pkg, _)| Arc::from(pkg)),
-            name: Arc::from(internal.rsplit('/').next().unwrap_or(internal)),
-            internal_name: Arc::from(internal),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![],
-            fields: vec![],
-            access_flags: 0,
-            generic_signature: None,
-            inner_class_of: None,
-            origin: ClassOrigin::Unknown,
+#[cfg(test)]
+pub(crate) fn test_fixture_class(internal_name: &str) -> ClassMetadata {
+    let package = internal_name
+        .rsplit_once('/')
+        .map(|(pkg, _)| Arc::from(pkg));
+    let name = Arc::from(
+        internal_name
+            .rsplit(['/', '$'])
+            .next()
+            .unwrap_or(internal_name),
+    );
+    ClassMetadata {
+        package,
+        name,
+        internal_name: Arc::from(internal_name),
+        super_name: None,
+        interfaces: vec![],
+        annotations: vec![],
+        methods: vec![],
+        fields: vec![],
+        access_flags: 0,
+        generic_signature: None,
+        inner_class_of: None,
+        origin: ClassOrigin::Jar(Arc::from("jdk://test-fixture")),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn parse_java_source_with_test_jdk(
+    source: &str,
+    origin: ClassOrigin,
+    jdk_internal_names: &[&str],
+) -> Vec<ClassMetadata> {
+    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
+
+    let idx = WorkspaceIndex::new();
+    idx.add_jdk_classes(
+        jdk_internal_names
+            .iter()
+            .map(|internal_name| test_fixture_class(internal_name))
+            .collect(),
+    );
+    let view = idx.view(IndexScope {
+        module: ModuleId::ROOT,
+    });
+    parse_java_source_with_view(source, origin, Some(view.build_name_table()), Some(&view))
+}
+
+fn recover_error_type_decl(
+    ctx: &JavaContextExtractor,
+    error_node: Node,
+) -> Option<(&'static str, Arc<str>)> {
+    let mut cursor = error_node.walk();
+    let children: Vec<_> = error_node.children(&mut cursor).collect();
+    for i in 0..children.len().saturating_sub(1) {
+        let keyword = children[i].kind();
+        if matches!(keyword, "class" | "interface" | "enum" | "record")
+            && children[i + 1].kind() == "identifier"
+        {
+            let name = ctx.node_text(children[i + 1]);
+            if !name.is_empty() {
+                return Some((keyword, Arc::from(name)));
+            }
+        }
+    }
+    None
+}
+
+fn parse_java_error_class(
+    ctx: &JavaContextExtractor,
+    error_node: Node,
+    package: &Option<Arc<str>>,
+    outer_internal: Option<Arc<str>>,
+    outer_simple: Option<Arc<str>>,
+    origin: &ClassOrigin,
+    type_ctx: &SourceTypeCtx,
+) -> Option<ClassMetadata> {
+    let (kind, name) = recover_error_type_decl(ctx, error_node)?;
+    let internal_name: Arc<str> = match (package, &outer_internal) {
+        (Some(_pkg), Some(outer)) => Arc::from(format!("{}${}", outer, name).as_str()),
+        (Some(pkg), None) => Arc::from(format!("{}/{}", pkg, name).as_str()),
+        (None, Some(outer)) => Arc::from(format!("{}${}", outer, name).as_str()),
+        (None, None) => Arc::clone(&name),
+    };
+
+    let mut recovered_members = Vec::new();
+    collect_members_from_node(ctx, error_node, type_ctx, &mut recovered_members);
+    let mut methods = Vec::new();
+    let mut fields = Vec::new();
+    for member in recovered_members {
+        match member {
+            CurrentClassMember::Method(method) => methods.push((*method).clone()),
+            CurrentClassMember::Field(field) => fields.push((*field).clone()),
         }
     }
 
-    let mut object = cls("java/lang/Object");
-    object.methods.push(MethodSummary {
-        name: Arc::from("toString"),
-        params: MethodParams::empty(),
-        annotations: Vec::<AnnotationSummary>::new(),
-        access_flags: 0,
-        is_synthetic: false,
-        generic_signature: None,
-        return_type: Some(Arc::from("Ljava/lang/String;")),
-    });
+    let mut access_flags = ACC_PUBLIC;
+    let mut annotations = Vec::new();
+    let mut cursor = error_node.walk();
+    for child in error_node.children(&mut cursor) {
+        match child.kind() {
+            "modifiers" => {
+                access_flags = parse_java_modifiers(ctx.node_text(child));
+                annotations = parse_annotations_in_node(ctx, child, type_ctx);
+                break;
+            }
+            "class" | "interface" | "enum" | "record" => break,
+            _ => {}
+        }
+    }
+    access_flags |= match kind {
+        "class" | "record" => ACC_SUPER,
+        "enum" => ACC_ENUM | ACC_SUPER,
+        "interface" => ACC_INTERFACE,
+        _ => 0,
+    };
 
-    let mut string = cls("java/lang/String");
-    string.super_name = Some(Arc::from("java/lang/Object"));
+    let generic_signature =
+        extract_generic_signature(error_node, ctx.bytes(), "Ljava/lang/Object;");
+    if let Some(sig) = generic_signature.as_deref() {
+        let class_type_params = parse_class_type_parameters(sig);
+        if !class_type_params.is_empty() {
+            for method in &mut methods {
+                if method.generic_signature.is_none() {
+                    let desc = method.desc();
+                    if let Some(synth) =
+                        synthesize_class_typevar_method_signature(&desc, &class_type_params)
+                    {
+                        method.generic_signature = Some(synth);
+                    }
+                }
+            }
+        }
+    }
 
-    let mut string_builder = cls("java/lang/StringBuilder");
-    string_builder.super_name = Some(Arc::from("java/lang/Object"));
-    string_builder.methods.push(MethodSummary {
-        name: Arc::from("append"),
-        params: MethodParams::from([("Ljava/lang/String;", "str")]),
-        annotations: Vec::<AnnotationSummary>::new(),
-        access_flags: 0,
-        is_synthetic: false,
-        generic_signature: None,
-        return_type: Some(Arc::from("Ljava/lang/StringBuilder;")),
-    });
-
-    let mut system = cls("java/lang/System");
-    system.super_name = Some(Arc::from("java/lang/Object"));
-    system.fields.push(FieldSummary {
-        name: Arc::from("out"),
-        descriptor: Arc::from("Ljava/io/PrintStream;"),
-        access_flags: 0,
-        annotations: vec![],
-        is_synthetic: false,
-        generic_signature: None,
-    });
-
-    vec![
-        object,
-        string,
-        string_builder,
-        system,
-        cls("java/lang/StringBuffer"),
-        cls("java/lang/Class"),
-        cls("java/lang/Throwable"),
-        cls("java/lang/Exception"),
-        cls("java/lang/RuntimeException"),
-        cls("java/lang/Error"),
-        cls("java/lang/Enum"),
-        cls("java/lang/Record"),
-        cls("java/lang/Comparable"),
-        cls("java/lang/CharSequence"),
-        cls("java/lang/Number"),
-        cls("java/lang/Integer"),
-        cls("java/lang/Long"),
-        cls("java/lang/Short"),
-        cls("java/lang/Byte"),
-        cls("java/lang/Double"),
-        cls("java/lang/Float"),
-        cls("java/lang/Boolean"),
-        cls("java/lang/Character"),
-        cls("java/lang/Void"),
-        cls("java/lang/Runnable"),
-        cls("java/lang/AutoCloseable"),
-        cls("java/lang/Deprecated"),
-        cls("java/lang/Override"),
-        cls("java/lang/SuppressWarnings"),
-        cls("java/lang/SafeVarargs"),
-        cls("java/lang/FunctionalInterface"),
-    ]
+    Some(ClassMetadata {
+        package: package.clone(),
+        name,
+        internal_name,
+        super_name: None,
+        interfaces: vec![],
+        annotations,
+        methods,
+        fields,
+        access_flags,
+        inner_class_of: outer_simple,
+        generic_signature,
+        origin: origin.clone(),
+    })
 }
 
 fn refine_source_metadata_with_index_view(
@@ -758,6 +824,18 @@ pub fn discover_java_names(source: &str) -> Vec<Arc<str>> {
             }
         }
     }
+
+    if results.is_empty()
+        && let Some(error_node) = find_top_error_node(root)
+        && let Some((_, name)) = recover_error_type_decl(&ctx, error_node)
+    {
+        let internal_name = match &package {
+            Some(pkg) => Arc::from(format!("{}/{}", pkg, name).as_str()),
+            None => name,
+        };
+        results.push(internal_name);
+    }
+
     results
 }
 
@@ -972,14 +1050,7 @@ fn clean_javadoc(raw: &str) -> String {
 mod tests {
     use crate::{
         index::{ClassOrigin, IndexScope, ModuleId, WorkspaceIndex},
-        language::java::{
-            JavaContextExtractor,
-            class_parser::parse_java_source,
-            make_java_parser, render,
-            scope::{extract_imports, extract_package},
-            type_ctx::SourceTypeCtx,
-        },
-        semantic::context::CurrentClassMember,
+        language::java::{class_parser::parse_java_source, render},
         semantic::types::{
             SymbolProvider, descriptor_to_source_type,
             generics::{JvmType, substitute_type},
@@ -988,7 +1059,6 @@ mod tests {
     };
     use std::sync::Arc;
     use tracing_subscriber::{EnvFilter, fmt};
-    use tree_sitter::Query;
 
     fn init_test_tracing() {
         let _ = fmt()
@@ -1298,41 +1368,6 @@ public class Main {
         "#};
         let expected_ideal = "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Lorg/example/Demo<TR;>;";
 
-        let mut parser = make_java_parser();
-        let tree = parser.parse(src, None).expect("parse");
-        let root = tree.root_node();
-        let ctx = JavaContextExtractor::for_indexing(src, None);
-        let package = extract_package(&ctx, root);
-        let imports = extract_imports(&ctx, root);
-        let type_ctx = SourceTypeCtx::new(package, imports, None);
-
-        let q = Query::new(
-            &tree_sitter_java::LANGUAGE.into(),
-            "(method_declaration name: (identifier) @name) @m",
-        )
-        .unwrap();
-        let m_idx = q.capture_index_for_name("m").unwrap();
-        let n_idx = q.capture_index_for_name("name").unwrap();
-        let mut extracted_method = None;
-        for caps in crate::language::ts_utils::run_query(&q, root, ctx.bytes(), None) {
-            let m = caps.iter().find(|(i, _)| *i == m_idx).map(|(_, n)| *n);
-            let n = caps.iter().find(|(i, _)| *i == n_idx).map(|(_, n)| *n);
-            if let (Some(method_node), Some(name_node)) = (m, n)
-                && ctx.node_text(name_node) == "map"
-            {
-                extracted_method = match crate::language::java::members::parse_method_node(
-                    &ctx,
-                    &type_ctx,
-                    method_node,
-                ) {
-                    Some(CurrentClassMember::Method(m)) => Some(m),
-                    _ => None,
-                };
-                break;
-            }
-        }
-        let extracted_method = extracted_method.expect("map method from parse_method_node");
-
         let origin = ClassOrigin::SourceFile(Arc::from("file:///tmp/provenance/Demo.java"));
         let parsed_classes = parse_java_source(src, origin.clone(), None);
         let parsed_demo = parsed_classes
@@ -1344,6 +1379,7 @@ public class Main {
             .iter()
             .find(|m| m.name.as_ref() == "map")
             .expect("parsed map method");
+        let extracted_method = parsed_map.clone();
         let parsed_class_internal = parsed_demo.internal_name.to_string();
         let parsed_class_generic_signature = parsed_demo.generic_signature.clone();
         let parsed_class_origin = parsed_demo.origin.clone();
@@ -1386,7 +1422,7 @@ public class Main {
         out.push_str("public <R> Demo<R> map(Function<? super T, ? extends R> fn)\n\n");
         out.push_str(&format!("ideal_generic_signature:\n{}\n\n", expected_ideal));
 
-        out.push_str("stage_parse_method_node:\n");
+        out.push_str("stage_source_method_summary:\n");
         out.push_str(&format!(
             "name={}\ndesc={}\ngeneric_signature={:?}\nreturn_type={:?}\nparam_names={:?}\nparam_descs={:?}\n\n",
             extracted_method.name,
