@@ -1202,6 +1202,7 @@ impl<'idx> TypeResolver<'idx> {
         bindings
     }
 
+    #[deprecated]
     pub fn score_params(&self, descriptor: &str, arg_types: &[TypeName]) -> i32 {
         let param_descs = split_param_descriptors(descriptor);
 

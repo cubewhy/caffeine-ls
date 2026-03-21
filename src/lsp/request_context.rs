@@ -114,6 +114,13 @@ impl<'a> PreparedRequest<'a> {
         }
     }
 
+    pub fn token_end_position(&self, position: Position) -> Position {
+        Position::new(
+            position.line,
+            token_end_character(self.source_text(), position.line, position.character),
+        )
+    }
+
     pub fn semantic_context(
         &self,
         position: Position,
@@ -159,6 +166,14 @@ impl<'a> PreparedRequest<'a> {
 
         Some(ctx)
     }
+
+    pub fn semantic_context_at_token_end(
+        &self,
+        position: Position,
+        trigger: Option<char>,
+    ) -> Option<SemanticContext> {
+        self.semantic_context(self.token_end_position(position), trigger)
+    }
 }
 
 fn ensure_tree(workspace: &Workspace, uri: &Url, lang: &dyn Language) -> Option<Arc<SourceFile>> {
@@ -180,4 +195,31 @@ fn ensure_tree(workspace: &Workspace, uri: &Url, lang: &dyn Language) -> Option<
     workspace
         .documents
         .with_doc(uri, |doc| Arc::clone(doc.source()))
+}
+
+fn token_end_character(content: &str, line: u32, character: u32) -> u32 {
+    let Some(line_str) = content.lines().nth(line as usize) else {
+        return character;
+    };
+    let mut byte_offset = 0usize;
+    let mut utf16_col = 0u32;
+    for ch in line_str.chars() {
+        if utf16_col >= character {
+            break;
+        }
+        utf16_col += ch.len_utf16() as u32;
+        byte_offset += ch.len_utf8();
+    }
+    let rest = &line_str[byte_offset..];
+    if !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
+        return character;
+    }
+    let mut end_utf16 = character;
+    for ch in rest.chars() {
+        if !(ch.is_alphanumeric() || ch == '_') {
+            break;
+        }
+        end_utf16 += ch.len_utf16() as u32;
+    }
+    end_utf16
 }

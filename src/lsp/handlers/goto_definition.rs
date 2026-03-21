@@ -17,16 +17,12 @@ pub async fn handle_goto_definition(
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
 
-    let full_end = backend.workspace.documents.with_doc(uri, |doc| {
-        let full_end = token_end_character(doc.source().text(), pos.line, pos.character);
-        Some(full_end)
-    })??;
-
     let request = PreparedRequest::prepare(
         Arc::clone(&backend.workspace),
         backend.registry.as_ref(),
         uri,
     )?;
+    let lookup_pos = request.token_end_position(pos);
     let analysis = request.analysis();
     let scope = request.scope();
     let view = request.view();
@@ -45,7 +41,7 @@ pub async fn handle_goto_definition(
         "goto: request analysis prepared"
     );
 
-    let ctx = request.semantic_context(Position::new(pos.line, full_end), None)?;
+    let ctx = request.semantic_context(lookup_pos, None)?;
 
     tracing::debug!(
         module = scope.module.0,
@@ -58,7 +54,6 @@ pub async fn handle_goto_definition(
         "goto: parsed context"
     );
 
-    // ── 局部变量 / 参数跳转（在符号解析之前处理）─────────────────────────────
     let local_token: Option<&str> = match &ctx.location {
         CursorLocation::Expression { prefix } if !prefix.is_empty() => Some(prefix.as_str()),
         CursorLocation::MethodArgument { prefix } if !prefix.is_empty() => Some(prefix.as_str()),
@@ -93,7 +88,6 @@ pub async fn handle_goto_definition(
         return None;
     }
 
-    // Index 符号解析
     let resolver = SymbolResolver::new(view);
     let symbol = match resolver.resolve(&ctx) {
         Some(s) => s,
@@ -438,35 +432,6 @@ fn find_var_decl_col(line: &str, var_name: &str) -> Option<usize> {
         }
         start = abs + 1;
     }
-}
-
-// ── 工具函数 ──────────────────────────────────────────────────────────────────
-
-fn token_end_character(content: &str, line: u32, character: u32) -> u32 {
-    let Some(line_str) = content.lines().nth(line as usize) else {
-        return character;
-    };
-    let mut byte_offset = 0usize;
-    let mut utf16_col = 0u32;
-    for ch in line_str.chars() {
-        if utf16_col >= character {
-            break;
-        }
-        utf16_col += ch.len_utf16() as u32;
-        byte_offset += ch.len_utf8();
-    }
-    let rest = &line_str[byte_offset..];
-    if !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
-        return character;
-    }
-    let mut end_utf16 = character;
-    for ch in rest.chars() {
-        if !(ch.is_alphanumeric() || ch == '_') {
-            break;
-        }
-        end_utf16 += ch.len_utf16() as u32;
-    }
-    end_utf16
 }
 
 fn find_word_boundary(line: &str, word: &str) -> Option<usize> {
