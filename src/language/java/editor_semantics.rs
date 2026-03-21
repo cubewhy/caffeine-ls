@@ -5,12 +5,10 @@ use ropey::Rope;
 use tree_sitter::Node;
 
 use crate::index::{ClassOrigin, IndexView, MethodSummary};
-use crate::language::java::JavaContextExtractor;
 use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::language::java::{scope, utils};
 use crate::request_metrics::RequestMetrics;
 use crate::semantic::context::{
     CurrentClassMember, ExpectedTypeConfidence, FunctionalMethodCallHint,
@@ -123,31 +121,24 @@ impl ResolvedJavaCall {
 
 pub(crate) fn semantic_context_at_offset(
     source: &str,
-    rope: &Rope,
-    root: Node,
+    _rope: &Rope,
+    _root: Node,
     offset: usize,
     view: &IndexView,
 ) -> Option<SemanticContext> {
-    let extractor = JavaContextExtractor::with_rope(
-        source.to_string(),
-        offset.min(source.len()),
-        rope.clone(),
-        None,
-    )
-    .with_view(view.clone());
-    if extractor.is_in_comment() {
-        return None;
-    }
-
-    let mut ctx = extractor.extract(root, None);
+    let mut ctx = crate::salsa_queries::java::extract_java_semantic_context_from_source_at_offset(
+        source,
+        offset,
+        view.clone(),
+    )?;
     ContextEnricher::new(view).enrich(&mut ctx);
     Some(ctx)
 }
 
 pub(crate) struct JavaSemanticRequestContext<'a> {
     source: Arc<str>,
-    rope: Rope,
-    root: Node<'a>,
+    _rope: Rope,
+    _root: Node<'a>,
     view: &'a IndexView,
     enricher: ContextEnricher<'a>,
     metrics: Option<Arc<RequestMetrics>>,
@@ -163,8 +154,8 @@ impl<'a> JavaSemanticRequestContext<'a> {
     ) -> Self {
         Self {
             source: Arc::from(source),
-            rope: rope.clone(),
-            root,
+            _rope: rope.clone(),
+            _root: root,
             view,
             enricher: ContextEnricher::new(view),
             metrics,
@@ -184,21 +175,12 @@ impl<'a> JavaSemanticRequestContext<'a> {
             metrics.record_semantic_context_lookup("inlay_semantic_context", offset);
         }
         let extract_started = std::time::Instant::now();
-        let mut extractor = JavaContextExtractor::with_rope(
-            Arc::clone(&self.source),
-            offset.min(self.source.len()),
-            self.rope.clone(),
-            None,
-        )
-        .with_view(self.view.clone());
-        if let Some(metrics) = self.metrics.as_ref() {
-            extractor = extractor.with_metrics(Arc::clone(metrics));
-        }
-        if extractor.is_in_comment() {
-            return None;
-        }
-
-        let mut ctx = extractor.extract(self.root, None);
+        let mut ctx =
+            crate::salsa_queries::java::extract_java_semantic_context_from_source_at_offset(
+                self.source.as_ref(),
+                offset,
+                self.view.clone(),
+            )?;
         if let Some(metrics) = self.metrics.as_ref() {
             metrics.record_phase_duration_at(
                 "inlay.extract_semantic_context",
@@ -246,146 +228,30 @@ impl<'a> JavaSemanticRequestContext<'a> {
         if let Some(metrics) = self.metrics.as_ref() {
             metrics.record_semantic_context_lookup("inlay_scope_context", offset);
         }
-
-        let mut extractor = JavaContextExtractor::with_rope(
-            Arc::clone(&self.source),
-            offset.min(self.source.len()),
-            self.rope.clone(),
-            None,
-        )
-        .with_view(self.view.clone());
-        if let Some(metrics) = self.metrics.as_ref() {
-            extractor = extractor.with_metrics(Arc::clone(metrics));
-        }
-        if extractor.is_in_comment() {
-            return None;
-        }
-
-        let cursor_started = std::time::Instant::now();
-        let cursor_node = extractor.find_cursor_node(self.root);
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_cursor_node",
-                Some(offset),
-                cursor_started.elapsed(),
-            );
-        }
-
-        let structure_started = std::time::Instant::now();
-        let enclosing_class = scope::extract_enclosing_class(&extractor, cursor_node)
-            .or_else(|| scope::extract_enclosing_class_by_offset(&extractor, self.root));
-        let enclosing_package = scope::extract_package(&extractor, self.root);
-        let existing_imports = scope::extract_imports(&extractor, self.root);
-        let existing_static_imports = scope::extract_static_imports(&extractor, self.root);
-        let enclosing_internal_name = scope::extract_enclosing_internal_name(
-            &extractor,
-            cursor_node,
-            enclosing_package.as_ref(),
-        )
-        .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_structure",
-                Some(offset),
-                structure_started.elapsed(),
-            );
-        }
-
-        let type_ctx_started = std::time::Instant::now();
-        let type_ctx = Arc::new(SourceTypeCtx::from_view(
-            enclosing_package.clone(),
-            existing_imports.clone(),
-            self.view.clone(),
-        ));
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_type_ctx",
-                Some(offset),
-                type_ctx_started.elapsed(),
-            );
-        }
-
         let db = workspace.salsa_db.lock();
-        let locals_started = std::time::Instant::now();
-        let local_variables = crate::salsa_queries::extract_visible_method_locals_incremental(
-            &*db, salsa_file, offset, workspace,
-        );
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_locals",
-                Some(offset),
-                locals_started.elapsed(),
-            );
-        }
-
-        let members_started = std::time::Instant::now();
-        let current_class_members = if self.indexed_source_class_covers_file(
+        let started = std::time::Instant::now();
+        let mut ctx = crate::salsa_queries::java::extract_java_semantic_context_at_offset(
             &*db,
             salsa_file,
-            enclosing_internal_name.as_ref(),
+            offset,
+            self.view.clone(),
+            Some(workspace),
+        )?;
+        if self.indexed_source_class_covers_file(
+            &*db,
+            salsa_file,
+            ctx.enclosing_internal_name.as_ref(),
         ) {
-            std::collections::HashMap::new()
-        } else {
-            crate::salsa_queries::extract_java_current_class_members(
-                &*db,
-                salsa_file,
-                offset,
-                Some(workspace),
-            )
-        };
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_class_members",
-                Some(offset),
-                members_started.elapsed(),
-            );
+            ctx.current_class_members.clear();
         }
-
-        let lambda_started = std::time::Instant::now();
-        let active_lambda_param_names =
-            crate::salsa_queries::extract_active_lambda_param_names_incremental(
-                &*db, salsa_file, offset,
-            );
-        let flow_started = std::time::Instant::now();
-        let flow_type_overrides = crate::salsa_queries::materialize_flow_type_overrides(
-            crate::salsa_queries::extract_java_flow_type_overrides(&*db, salsa_file, offset)
-                .as_ref(),
-        );
         drop(db);
         if let Some(metrics) = self.metrics.as_ref() {
             metrics.record_phase_duration_at(
-                "inlay.prepare_lambda_params",
+                "inlay.prepare_semantic_context_salsa",
                 Some(offset),
-                lambda_started.elapsed(),
+                started.elapsed(),
             );
         }
-
-        let statement_labels = scope::extract_enclosing_statement_labels(&extractor, cursor_node);
-        let is_class_member_position = scope::is_cursor_in_class_member_position(cursor_node);
-        if let Some(metrics) = self.metrics.as_ref() {
-            metrics.record_phase_duration_at(
-                "inlay.prepare_flow_and_labels",
-                Some(offset),
-                flow_started.elapsed(),
-            );
-        }
-
-        let mut ctx = SemanticContext::new(
-            crate::semantic::CursorLocation::Unknown,
-            "",
-            local_variables,
-            enclosing_class,
-            enclosing_internal_name,
-            enclosing_package,
-            existing_imports,
-        )
-        .with_statement_labels(statement_labels)
-        .with_active_lambda_param_names(active_lambda_param_names)
-        .with_flow_type_overrides(flow_type_overrides)
-        .with_class_member_position(is_class_member_position)
-        .with_static_imports(existing_static_imports)
-        .with_extension(type_ctx);
-        ctx.current_class_members = current_class_members;
         Some(ctx)
     }
 }
@@ -965,6 +831,94 @@ mod tests {
     }
 
     #[test]
+    fn semantic_context_preserves_member_access_location_from_salsa_source_bridge() {
+        let workspace = Workspace::new();
+        let view = workspace.index.read().view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let source = r#"
+class Test {
+    void demo() {
+        StringBuilder sb = new StringBuilder();
+        sb.appe
+    }
+}
+"#;
+        let rope = Rope::from_str(source);
+        let mut parser = make_java_parser();
+        let tree = parser.parse(source, None).expect("tree");
+        let root = tree.root_node();
+        let offset = source.find("appe").expect("member prefix") + "appe".len();
+
+        let ctx =
+            semantic_context_at_offset(source, &rope, root, offset, &view).expect("semantic ctx");
+
+        match &ctx.location {
+            CursorLocation::MemberAccess {
+                receiver_expr,
+                member_prefix,
+                ..
+            } => {
+                assert_eq!(receiver_expr, "sb");
+                assert_eq!(member_prefix, "appe");
+            }
+            other => panic!("expected member-access location, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn semantic_context_preserves_enclosing_static_member_from_salsa_source_bridge() {
+        let workspace = Workspace::new();
+        let view = workspace.index.read().view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let source = r#"
+class Test {
+    static void main(String[] args) {
+        
+    }
+}
+"#;
+        let rope = Rope::from_str(source);
+        let mut parser = make_java_parser();
+        let tree = parser.parse(source, None).expect("tree");
+        let root = tree.root_node();
+        let offset = source.find("\n        \n").expect("blank line") + 9;
+
+        let ctx =
+            semantic_context_at_offset(source, &rope, root, offset, &view).expect("semantic ctx");
+
+        assert!(ctx.is_in_static_context());
+        assert_eq!(
+            ctx.enclosing_class_member
+                .as_ref()
+                .map(|member| member.name()),
+            Some(Arc::from("main"))
+        );
+    }
+
+    #[test]
+    fn semantic_context_returns_none_inside_line_comment() {
+        let workspace = Workspace::new();
+        let view = workspace.index.read().view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let source = "class Test { void demo() { // comment\n} }";
+        let rope = Rope::from_str(source);
+        let mut parser = make_java_parser();
+        let tree = parser.parse(source, None).expect("tree");
+        let root = tree.root_node();
+        let offset = source.find("// comment").expect("comment") + "// comment".len();
+
+        let ctx = semantic_context_at_offset(source, &rope, root, offset, &view);
+
+        assert!(
+            ctx.is_none(),
+            "expected no semantic context inside line comment"
+        );
+    }
+
+    #[test]
     fn same_class_method_resolution_can_use_indexed_source_members() {
         let view = make_view();
         let ctx = SemanticContext::new(
@@ -1085,5 +1039,96 @@ class Test {
 
         assert!(ctx.current_class_members.contains_key("helper"));
         assert!(!ctx.current_class_members.contains_key("<init>"));
+    }
+
+    #[test]
+    fn inlay_context_preserves_member_access_location_from_salsa() {
+        let workspace = Workspace::new();
+        let view = workspace.index.read().view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let source = r#"
+class Test {
+    void demo() {
+        StringBuilder sb = new StringBuilder();
+        sb.appe
+    }
+}
+"#;
+        let offset = source.find("appe").expect("member prefix") + "appe".len();
+        let rope = Rope::from_str(source);
+        let mut parser = make_java_parser();
+        let tree = parser.parse(source, None).expect("tree");
+        let root = tree.root_node();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let salsa_file = {
+            let db = workspace.salsa_db.lock();
+            SourceFile::new(
+                &*db,
+                FileId::new(uri),
+                source.to_string(),
+                Arc::from("java"),
+            )
+        };
+
+        let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
+        let ctx = semantic
+            .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay semantic context");
+
+        match &ctx.location {
+            CursorLocation::MemberAccess {
+                receiver_expr,
+                member_prefix,
+                ..
+            } => {
+                assert_eq!(receiver_expr, "sb");
+                assert_eq!(member_prefix, "appe");
+            }
+            other => panic!("expected member-access location, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn inlay_context_preserves_enclosing_static_member_from_salsa() {
+        let workspace = Workspace::new();
+        let view = workspace.index.read().view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let source = r#"
+class Test {
+    static void main(String[] args) {
+        
+    }
+}
+"#;
+        let offset = source.find("\n        \n").expect("blank line") + 9;
+        let rope = Rope::from_str(source);
+        let mut parser = make_java_parser();
+        let tree = parser.parse(source, None).expect("tree");
+        let root = tree.root_node();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let salsa_file = {
+            let db = workspace.salsa_db.lock();
+            SourceFile::new(
+                &*db,
+                FileId::new(uri),
+                source.to_string(),
+                Arc::from("java"),
+            )
+        };
+
+        let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
+        let ctx = semantic
+            .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay semantic context");
+
+        assert!(ctx.is_in_static_context());
+        assert_eq!(
+            ctx.enclosing_class_member
+                .as_ref()
+                .map(|member| member.name()),
+            Some(Arc::from("main"))
+        );
     }
 }

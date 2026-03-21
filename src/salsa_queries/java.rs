@@ -1,22 +1,23 @@
 use super::Db;
-use crate::index::{ClassMetadata, IndexScope, ModuleId, NameTable};
-use crate::language::java::editor_semantics::semantic_context_at_offset;
+use crate::index::{ClassMetadata, ClasspathId, IndexScope, ModuleId, NameTable};
 use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
-use crate::salsa_db::SourceFile;
+use crate::salsa_db::{FileId, SourceFile};
 use crate::salsa_queries::context::{
     CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
     FunctionalMethodCallHintData, FunctionalTargetHintData, MethodRefQualifierKindData,
     MethodSummaryData, StatementLabelData, StatementLabelTargetKindData, line_col_to_offset,
 };
+use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::salsa_queries::hints::{InlayHintData, InlayHintKindData};
 use crate::salsa_queries::symbols::{ResolvedSymbolData, SymbolKind};
-use crate::semantic::CursorLocation;
 use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
+use crate::semantic::{CursorLocation, SemanticContext};
 use ropey::Rope;
 /// Java-specific Salsa queries
 ///
 /// These queries handle Java-specific parsing and analysis.
 use std::sync::Arc;
+use tower_lsp::lsp_types::Url;
 use tree_sitter_utils::traversal::find_node_by_offset;
 
 /// Parse Java source and extract class metadata with full incremental support
@@ -414,26 +415,7 @@ fn convert_rich_location(location: &CursorLocation) -> CursorLocationData {
 }
 
 fn is_in_comment(content: &str, offset: usize) -> bool {
-    // Simple check: look backwards for comment markers
-    let before = &content[..offset];
-
-    // Check for line comment
-    if let Some(line_start) = before.rfind('\n') {
-        let line = &before[line_start + 1..];
-        if line.trim_start().starts_with("//") {
-            return true;
-        }
-    }
-
-    // Check for block comment
-    let last_block_start = before.rfind("/*");
-    let last_block_end = before.rfind("*/");
-
-    match (last_block_start, last_block_end) {
-        (Some(start), Some(end)) => start > end,
-        (Some(_), None) => true,
-        _ => false,
-    }
+    crate::language::java::utils::is_cursor_in_comment(content, offset.min(content.len()))
 }
 
 fn empty_context(db: &dyn Db, file: SourceFile) -> CompletionContextData {
@@ -455,6 +437,74 @@ fn empty_context(db: &dyn Db, file: SourceFile) -> CompletionContextData {
         file_uri: Arc::from(file.file_id(db).as_str()),
         language_id: Arc::from("java"),
     }
+}
+
+pub fn extract_java_semantic_context_at_offset(
+    db: &dyn Db,
+    file: SourceFile,
+    offset: usize,
+    view: crate::index::IndexView,
+    workspace: Option<&crate::workspace::Workspace>,
+) -> Option<SemanticContext> {
+    let content = file.content(db);
+    if is_in_comment(content, offset.min(content.len())) {
+        return None;
+    }
+
+    let rope = Rope::from_str(content);
+    let (line, character) = offset_to_line_col_utf16(&rope, offset);
+    let context = extract_java_completion_context(db, file, line, character, None);
+    let analysis = RequestAnalysisState {
+        analysis: workspace
+            .map(|workspace| workspace.analysis_context_for_uri(file.file_id(db).uri()))
+            .unwrap_or(crate::workspace::AnalysisContext {
+                module: ModuleId::ROOT,
+                classpath: ClasspathId::Main,
+                source_root: None,
+                root_kind: None,
+            }),
+        view,
+    };
+
+    Some(SemanticContext::from_salsa_data_with_analysis(
+        context.as_ref().clone(),
+        db,
+        file,
+        workspace,
+        Some(&analysis),
+    ))
+}
+
+pub fn extract_java_semantic_context_from_source_at_offset(
+    source: &str,
+    offset: usize,
+    view: crate::index::IndexView,
+) -> Option<SemanticContext> {
+    let db = crate::salsa_db::Database::default();
+    let file = SourceFile::new(
+        &db,
+        FileId::new(
+            Url::parse("file:///__java_analyzer__/ephemeral/semantic_context.java")
+                .expect("valid static url"),
+        ),
+        source.to_string(),
+        Arc::from("java"),
+    );
+
+    extract_java_semantic_context_at_offset(&db, file, offset, view, None)
+}
+
+fn offset_to_line_col_utf16(rope: &Rope, offset: usize) -> (u32, u32) {
+    let offset = offset.min(rope.len_bytes());
+    let line = rope.byte_to_line(offset);
+    let line_start_char = rope.line_to_char(line);
+    let target_char = rope.byte_to_char(offset);
+    let character = rope
+        .slice(line_start_char..target_char)
+        .chars()
+        .map(|ch| if (ch as u32) >= 0x10000 { 2 } else { 1 })
+        .sum::<usize>() as u32;
+    (line as u32, character)
 }
 
 fn convert_statement_labels(
@@ -926,13 +976,9 @@ fn resolve_java_symbol_with_resolver(
     offset: usize,
     location_override: Option<CursorLocation>,
 ) -> Option<Arc<ResolvedSymbolData>> {
-    let content = file.content(db);
-    let tree = super::parse::parse_tree(db, file)?;
-    let root = tree.root_node();
-    let rope = Rope::from_str(content);
     let view = root_index_view(db);
 
-    let mut ctx = semantic_context_at_offset(content, &rope, root, offset, &view)?;
+    let mut ctx = extract_java_semantic_context_at_offset(db, file, offset, view.clone(), None)?;
     if let Some(location) = location_override {
         ctx.location = location;
     }
