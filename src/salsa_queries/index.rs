@@ -183,6 +183,7 @@ pub fn get_index_view_for_context(
     classpath: ClasspathId,
     source_root: Option<SourceRootId>,
 ) -> crate::index::IndexView {
+    let started = std::time::Instant::now();
     // Get workspace version for cache invalidation
     let workspace_version = {
         let workspace_index = db.workspace_index();
@@ -197,8 +198,16 @@ pub fn get_index_view_for_context(
     // Get actual IndexView (fast)
     let workspace_index = db.workspace_index();
     let index = workspace_index.read();
-
-    index.view_for_analysis_context(module_id, classpath, source_root)
+    let view = index.view_for_analysis_context(module_id, classpath, source_root);
+    tracing::debug!(
+        module = module_id.0,
+        classpath = ?classpath,
+        source_root = ?source_root.map(|id| id.0),
+        layer_count = view.layer_count(),
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "prepared IndexView for analysis context"
+    );
+    view
 }
 
 /// Metadata for NameTable caching
@@ -223,6 +232,13 @@ pub fn get_name_table_for_context(
     classpath: ClasspathId,
     source_root: Option<SourceRootId>,
 ) -> Arc<NameTable> {
+    tracing::debug!(
+        module = module_id.0,
+        classpath = ?classpath,
+        source_root = ?source_root.map(|id| id.0),
+        phase = "indexing_or_discovery",
+        "fetching NameTable for non-request-time context"
+    );
     // Get workspace version for cache invalidation
     let workspace_version = {
         let workspace_index = db.workspace_index();
@@ -239,20 +255,6 @@ pub fn get_name_table_for_context(
 
     let view = index.view_for_analysis_context(module_id, classpath, source_root);
     view.build_name_table()
-}
-
-/// Build a name table for a specific analysis context (legacy)
-///
-/// DEPRECATED: Use get_name_table_for_context() instead for better performance.
-/// This function is kept for backward compatibility but now uses Salsa caching.
-#[deprecated(note = "Use get_name_table_for_context() for better performance")]
-pub fn build_name_table_for_context(
-    db: &dyn Db,
-    module_id: ModuleId,
-    classpath: ClasspathId,
-    source_root: Option<SourceRootId>,
-) -> Arc<NameTable> {
-    get_name_table_for_context(db, module_id, classpath, source_root)
 }
 
 /// Get visible classpath JARs for a module and classpath

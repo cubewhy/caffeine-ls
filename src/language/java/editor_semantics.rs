@@ -4,7 +4,7 @@ use std::sync::Arc;
 use ropey::Rope;
 use tree_sitter::Node;
 
-use crate::index::{IndexView, MethodSummary, NameTable};
+use crate::index::{IndexView, MethodSummary};
 use crate::language::java::JavaContextExtractor;
 use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
@@ -124,15 +124,15 @@ pub(crate) fn semantic_context_at_offset(
     rope: &Rope,
     root: Node,
     offset: usize,
-    name_table: Option<Arc<NameTable>>,
     view: &IndexView,
 ) -> Option<SemanticContext> {
     let extractor = JavaContextExtractor::with_rope(
         source.to_string(),
         offset.min(source.len()),
         rope.clone(),
-        name_table,
-    );
+        None,
+    )
+    .with_view(view.clone());
     if extractor.is_in_comment() {
         return None;
     }
@@ -630,15 +630,8 @@ mod tests {
         let tree = parser.parse(src, None).expect("tree");
         let root = tree.root_node();
         let offset = src.find("1").expect("arg offset");
-        let ctx = semantic_context_at_offset(
-            src,
-            &rope,
-            root,
-            offset,
-            Some(view.build_name_table()),
-            &view,
-        )
-        .expect("semantic ctx");
+        let ctx =
+            semantic_context_at_offset(src, &rope, root, offset, &view).expect("semantic ctx");
         let type_ctx = ctx.extension::<SourceTypeCtx>().expect("type ctx");
         let site = JavaInvocationSite::Constructor {
             call_text: "new ArrayList<>(1)".to_string(),
@@ -660,15 +653,8 @@ mod tests {
         let tree = parser.parse(src, None).expect("tree");
         let root = tree.root_node();
         let offset = src.find("n").expect("var offset") + 1;
-        let ctx = semantic_context_at_offset(
-            src,
-            &rope,
-            root,
-            offset,
-            Some(view.build_name_table()),
-            &view,
-        )
-        .expect("semantic ctx");
+        let ctx =
+            semantic_context_at_offset(src, &rope, root, offset, &view).expect("semantic ctx");
         let local = ctx
             .local_variables
             .iter()

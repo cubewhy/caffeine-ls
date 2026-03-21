@@ -44,9 +44,8 @@ pub use hints::{
     find_method_calls_in_range, find_variable_declarations_in_range, infer_variable_type,
 };
 pub use index::{
-    build_name_table_for_context, cached_index_view_metadata, cached_name_table, extract_classes,
-    get_extracted_classes, get_index_view_for_context, get_name_table_for_context,
-    visible_classpath_for_context,
+    cached_index_view_metadata, cached_name_table, extract_classes, get_extracted_classes,
+    get_index_view_for_context, get_name_table_for_context, visible_classpath_for_context,
 };
 pub use parse::{extract_imports, extract_package, parse_file};
 pub use resolve::resolve_type_in_context;

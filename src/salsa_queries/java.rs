@@ -34,6 +34,12 @@ fn get_name_table_for_java_file(db: &dyn Db, file: SourceFile) -> Option<Arc<Nam
     let workspace_index = db.workspace_index();
     let index = workspace_index.read();
     let _ = file;
+    tracing::debug!(
+        phase = "indexing",
+        file = %file.file_id(db).as_str(),
+        purpose = "java source indexing parse",
+        "constructing NameTable for Java file"
+    );
     Some(index.build_name_table(crate::index::IndexScope {
         module: crate::index::ModuleId::ROOT,
     }))
@@ -225,17 +231,6 @@ pub fn extract_java_completion_context(
     character: u32,
     trigger_char: Option<char>,
 ) -> Arc<CompletionContextData> {
-    extract_java_completion_context_with_name_table(db, file, line, character, trigger_char, None)
-}
-
-pub fn extract_java_completion_context_with_name_table(
-    db: &dyn Db,
-    file: SourceFile,
-    line: u32,
-    character: u32,
-    trigger_char: Option<char>,
-    request_name_table: Option<Arc<NameTable>>,
-) -> Arc<CompletionContextData> {
     let content = file.content(db);
     let Some(offset) = line_col_to_offset(content, line, character) else {
         return Arc::new(empty_context(db, file));
@@ -252,9 +247,8 @@ pub fn extract_java_completion_context_with_name_table(
     };
 
     let root = tree.root_node();
-    let name_table = request_name_table.or_else(|| get_name_table_for_java_file(db, file));
     let extractor =
-        crate::language::java::JavaContextExtractor::new(content.to_string(), offset, name_table);
+        crate::language::java::JavaContextExtractor::new(content.to_string(), offset, None);
     let cursor_node = extractor.find_cursor_node(root);
     let (rich_location, rich_query) =
         crate::language::java::location::determine_location(&extractor, cursor_node, trigger_char);

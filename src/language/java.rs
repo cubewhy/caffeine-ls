@@ -129,6 +129,9 @@ impl Language for JavaLanguage {
             (*file.rope).clone(),
             env.name_table.clone(),
         );
+        if let Some(view) = env.view.clone() {
+            extractor = extractor.with_view(view);
+        }
 
         // Set workspace and file URI if available for incremental parsing
         if let Some(workspace) = env.workspace.clone() {
@@ -291,19 +294,12 @@ impl Language for JavaLanguage {
         &self,
         file: &SourceFile,
         range: Range,
-        env: &ParseEnv,
+        _env: &ParseEnv,
         index: &IndexView,
     ) -> Option<Vec<InlayHint>> {
         let root = file.root_node()?;
         let byte_range = lsp_range_to_byte_range(&file.rope, range, file.text().len())?;
-        let hints = collect_java_inlay_hints(
-            file.text(),
-            &file.rope,
-            root,
-            env.name_table.clone(),
-            index,
-            byte_range,
-        );
+        let hints = collect_java_inlay_hints(file.text(), &file.rope, root, index, byte_range);
 
         Some(
             hints
@@ -411,6 +407,7 @@ pub struct JavaContextExtractor {
     pub rope: Rope,
     pub offset: usize,
     name_table: Option<Arc<NameTable>>,
+    view: Option<IndexView>,
     workspace: Option<Arc<crate::workspace::Workspace>>,
     file_uri: Option<Arc<str>>,
 }
@@ -428,6 +425,7 @@ impl JavaContextExtractor {
             rope,
             offset,
             name_table,
+            view: None,
             workspace: None,
             file_uri: None,
         }
@@ -449,9 +447,15 @@ impl JavaContextExtractor {
             rope,
             offset,
             name_table,
+            view: None,
             workspace: None,
             file_uri: None,
         }
+    }
+
+    pub fn with_view(mut self, view: IndexView) -> Self {
+        self.view = Some(view);
+        self
     }
 
     /// Set the workspace reference for incremental parsing
@@ -516,11 +520,29 @@ impl JavaContextExtractor {
         )
         .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
         let existing_imports = scope::extract_imports(semantic_extractor, semantic_root);
-        let type_ctx = Arc::new(SourceTypeCtx::new(
+        let mut type_ctx = SourceTypeCtx::new(
             enclosing_package.clone(),
             existing_imports.clone(),
             self.name_table.clone(),
-        ));
+        );
+        if let Some(view) = &self.view {
+            type_ctx = type_ctx.with_view(view.clone());
+        }
+        if let Some(workspace) = &self.workspace
+            && let Some(file_uri) = &self.file_uri
+            && let Ok(uri) = tower_lsp::lsp_types::Url::parse(file_uri)
+        {
+            let analysis = workspace.analysis_context_for_uri(&uri);
+            let db = workspace.salsa_db.lock();
+            let view = crate::salsa_queries::get_index_view_for_context(
+                &*db,
+                analysis.module,
+                analysis.classpath,
+                analysis.source_root,
+            );
+            type_ctx = type_ctx.with_view(view);
+        }
+        let type_ctx = Arc::new(type_ctx);
 
         // Feature flag to enable incremental extraction
         let use_incremental = std::env::var("JAVA_ANALYZER_INCREMENTAL")
@@ -841,6 +863,7 @@ mod tests {
                 trigger,
                 &ParseEnv {
                     name_table: None,
+                    view: None,
                     workspace: None,
                 },
             )
@@ -1084,6 +1107,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    view: Some(view.clone()),
                     workspace: None,
                 },
             )
@@ -4018,6 +4042,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    view: Some(view.clone()),
                     workspace: None,
                 },
             )
@@ -4129,6 +4154,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    view: Some(view.clone()),
                     workspace: None,
                 },
             )
@@ -4249,6 +4275,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    view: Some(view.clone()),
                     workspace: None,
                 },
             )
@@ -4966,6 +4993,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    view: Some(view.clone()),
                     workspace: None,
                 },
             )
@@ -5773,6 +5801,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        view: Some(view.clone()),
                         workspace: None,
                     },
                 )
@@ -5823,6 +5852,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        view: Some(view.clone()),
                         workspace: None,
                     },
                 )
@@ -5870,6 +5900,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        view: Some(view.clone()),
                         workspace: None,
                     },
                 )

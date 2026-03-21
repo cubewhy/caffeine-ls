@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tower_lsp::lsp_types::{Position, Url};
 
-use crate::index::{IndexScope, IndexView, NameTable};
+use crate::index::{IndexScope, IndexView};
 use crate::language::{Language, LanguageRegistry, ParseEnv};
 use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::semantic::SemanticContext;
@@ -14,7 +14,6 @@ pub struct PreparedRequest<'a> {
     lang: &'a dyn Language,
     file: Arc<SourceFile>,
     view: IndexView,
-    name_table: Arc<NameTable>,
     salsa_file: crate::salsa_db::SourceFile,
     inferred_package: Option<Arc<str>>,
     request_analysis: RequestAnalysisState,
@@ -36,21 +35,14 @@ impl<'a> PreparedRequest<'a> {
         let scope = analysis.scope();
         let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
 
-        let (view, name_table) = {
+        let view = {
             let db = workspace.salsa_db.lock();
-            let view = crate::salsa_queries::get_index_view_for_context(
+            crate::salsa_queries::get_index_view_for_context(
                 &*db,
                 scope.module,
                 analysis.classpath,
                 analysis.source_root,
-            );
-            let name_table = crate::salsa_queries::get_name_table_for_context(
-                &*db,
-                scope.module,
-                analysis.classpath,
-                analysis.source_root,
-            );
-            (view, name_table)
+            )
         };
 
         let salsa_file = workspace.get_or_update_salsa_file(uri)?;
@@ -61,13 +53,9 @@ impl<'a> PreparedRequest<'a> {
             lang,
             file,
             view,
-            name_table: Arc::clone(&name_table),
             salsa_file,
             inferred_package,
-            request_analysis: RequestAnalysisState {
-                analysis,
-                name_table,
-            },
+            request_analysis: RequestAnalysisState { analysis },
         })
     }
 
@@ -99,17 +87,14 @@ impl<'a> PreparedRequest<'a> {
         &self.view
     }
 
-    pub fn name_table(&self) -> &Arc<NameTable> {
-        &self.name_table
-    }
-
     pub fn salsa_file(&self) -> crate::salsa_db::SourceFile {
         self.salsa_file
     }
 
     pub fn parse_env(&self) -> ParseEnv {
         ParseEnv {
-            name_table: Some(Arc::clone(&self.name_table)),
+            name_table: None,
+            view: Some(self.view.clone()),
             workspace: Some(Arc::clone(&self.workspace)),
         }
     }
@@ -126,16 +111,23 @@ impl<'a> PreparedRequest<'a> {
         position: Position,
         trigger: Option<char>,
     ) -> Option<SemanticContext> {
+        tracing::debug!(
+            uri = %self.uri,
+            module = self.request_analysis.analysis.module.0,
+            classpath = ?self.request_analysis.analysis.classpath,
+            source_root = ?self.request_analysis.analysis.source_root.map(|id| id.0),
+            path = "index_view",
+            "building request semantic context without NameTable"
+        );
         let context_data = {
             let db = self.workspace.salsa_db.lock();
             if self.lang.id() == "java" {
-                crate::salsa_queries::java::extract_java_completion_context_with_name_table(
+                crate::salsa_queries::java::extract_java_completion_context(
                     &*db,
                     self.salsa_file,
                     position.line,
                     position.character,
                     trigger,
-                    Some(Arc::clone(&self.request_analysis.name_table)),
                 )
             } else {
                 self.lang.extract_completion_context_salsa(

@@ -1,11 +1,9 @@
-use std::ops::Range;
-use std::sync::Arc;
-
 use ropey::Rope;
+use std::ops::Range;
 use tree_sitter::Node;
 use tree_sitter_utils::{Handler, HandlerExt, Input};
 
-use crate::index::{IndexView, NameTable};
+use crate::index::IndexView;
 use crate::language::java::editor_semantics::{
     JavaInvocationSite, intersects_range, render_type_for_ui, resolve_invocation,
     semantic_context_at_offset,
@@ -29,31 +27,12 @@ pub fn collect_java_inlay_hints(
     source: &str,
     rope: &Rope,
     root: Node,
-    name_table: Option<Arc<NameTable>>,
     view: &IndexView,
     byte_range: Range<usize>,
 ) -> Vec<JavaInlayHint> {
     let mut hints = Vec::new();
-    collect_var_hints(
-        source,
-        rope,
-        root,
-        root,
-        name_table.clone(),
-        view,
-        &byte_range,
-        &mut hints,
-    );
-    collect_parameter_hints(
-        source,
-        rope,
-        root,
-        root,
-        name_table,
-        view,
-        &byte_range,
-        &mut hints,
-    );
+    collect_var_hints(source, rope, root, root, view, &byte_range, &mut hints);
+    collect_parameter_hints(source, rope, root, root, view, &byte_range, &mut hints);
     hints.sort_by_key(|hint| hint.offset);
     hints
 }
@@ -64,7 +43,6 @@ fn collect_var_hints(
     rope: &Rope,
     root: Node,
     node: Node,
-    name_table: Option<Arc<NameTable>>,
     view: &IndexView,
     byte_range: &Range<usize>,
     out: &mut Vec<JavaInlayHint>,
@@ -87,14 +65,9 @@ fn collect_var_hints(
             if !intersects_range(name_node, byte_range) {
                 continue;
             }
-            let Some(ctx) = semantic_context_at_offset(
-                source,
-                rope,
-                root,
-                name_node.end_byte(),
-                name_table.clone(),
-                view,
-            ) else {
+            let Some(ctx) =
+                semantic_context_at_offset(source, rope, root, name_node.end_byte(), view)
+            else {
                 continue;
             };
             let Some(local) = name_node
@@ -124,16 +97,7 @@ fn collect_var_hints(
 
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
-        collect_var_hints(
-            source,
-            rope,
-            root,
-            child,
-            name_table.clone(),
-            view,
-            byte_range,
-            out,
-        );
+        collect_var_hints(source, rope, root, child, view, byte_range, out);
     }
 }
 
@@ -143,7 +107,6 @@ fn collect_parameter_hints(
     rope: &Rope,
     root: Node,
     node: Node,
-    name_table: Option<Arc<NameTable>>,
     view: &IndexView,
     byte_range: &Range<usize>,
     out: &mut Vec<JavaInlayHint>,
@@ -158,8 +121,7 @@ fn collect_parameter_hints(
         let arg_nodes = named_argument_nodes(arguments);
         if !arg_nodes.is_empty() {
             let ctx_offset = arguments.start_byte().saturating_add(1);
-            if let Some(ctx) =
-                semantic_context_at_offset(source, rope, root, ctx_offset, name_table.clone(), view)
+            if let Some(ctx) = semantic_context_at_offset(source, rope, root, ctx_offset, view)
                 && let Some(type_ctx) = ctx.extension::<SourceTypeCtx>()
                 && let Some(call) = resolve_invocation(&ctx, view, type_ctx, &site, None)
             {
@@ -185,16 +147,7 @@ fn collect_parameter_hints(
 
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
-        collect_parameter_hints(
-            source,
-            rope,
-            root,
-            child,
-            name_table.clone(),
-            view,
-            byte_range,
-            out,
-        );
+        collect_parameter_hints(source, rope, root, child, view, byte_range, out);
     }
 }
 

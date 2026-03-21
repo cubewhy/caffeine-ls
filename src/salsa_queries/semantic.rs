@@ -809,6 +809,12 @@ fn resolve_name_table_for_file(
     let workspace_index = db.workspace_index();
     let index = workspace_index.read();
     let _ = file;
+    tracing::debug!(
+        phase = "indexing",
+        file = %file.file_id(db).as_str(),
+        purpose = "incremental source parse/discovery",
+        "constructing NameTable for semantic parse helper"
+    );
     Some(index.build_name_table(crate::index::IndexScope {
         module: crate::index::ModuleId::ROOT,
     }))

@@ -28,7 +28,6 @@ pub async fn handle_completion(
     let analysis = request.analysis();
     let scope = request.scope();
     let view = request.view();
-    let name_table_len = request.name_table().len();
 
     let _uri_str = uri.as_str();
 
@@ -53,10 +52,9 @@ pub async fn handle_completion(
         source_root = ?analysis.source_root.map(|id| id.0),
         root_kind = ?analysis.root_kind,
         visible_classpath_len = visible_classpath.len(),
-        name_table_len,
         view_layers = view.layer_count(),
         analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
-        "completion using cached IndexView and NameTable"
+        "completion using analysis IndexView"
     );
 
     let ctx = request.semantic_context(position, trigger)?;

@@ -14,7 +14,6 @@ use crate::workspace::AnalysisContext;
 #[derive(Clone)]
 pub struct RequestAnalysisState {
     pub analysis: AnalysisContext,
-    pub name_table: Arc<crate::index::NameTable>,
 }
 
 /// Conversion layer between Salsa-compatible data and rich semantic types.
@@ -103,30 +102,7 @@ fn enrich_java_semantic_context(
     existing_imports: Vec<Arc<str>>,
     analysis: Option<&RequestAnalysisState>,
 ) -> SemanticContext {
-    let name_table = if let Some(state) = analysis {
-        tracing::debug!(
-            module = state.analysis.module.0,
-            classpath = ?state.analysis.classpath,
-            source_root = ?state.analysis.source_root.map(|id| id.0),
-            name_table_len = state.name_table.len(),
-            "conversion: using request-scoped name table"
-        );
-        Some(Arc::clone(&state.name_table))
-    } else {
-        tracing::debug!(
-            uri = %file.file_id(db).as_str(),
-            "conversion: falling back to workspace analysis for name table"
-        );
-        workspace.map(|ws| {
-            let analysis = ws.analysis_context_for_uri(file.file_id(db).uri());
-            crate::salsa_queries::get_name_table_for_context(
-                db,
-                analysis.module,
-                analysis.classpath,
-                analysis.source_root,
-            )
-        })
-    };
+    let _ = analysis;
 
     let members = workspace
         .map(|ws| fetch_class_members_from_workspace(db, file, ws, data.cursor_offset))
@@ -142,14 +118,36 @@ fn enrich_java_semantic_context(
         })
         .collect();
 
-    let type_ctx = Arc::new(
-        SourceTypeCtx::new(
-            data.enclosing_package.clone(),
-            existing_imports.clone(),
-            name_table,
-        )
-        .with_current_class_methods(method_map),
+    let runtime_view = analysis
+        .map(|state| {
+            crate::salsa_queries::get_index_view_for_context(
+                db,
+                state.analysis.module,
+                state.analysis.classpath,
+                state.analysis.source_root,
+            )
+        })
+        .or_else(|| {
+            workspace.map(|ws| {
+                let analysis = ws.analysis_context_for_uri(file.file_id(db).uri());
+                crate::salsa_queries::get_index_view_for_context(
+                    db,
+                    analysis.module,
+                    analysis.classpath,
+                    analysis.source_root,
+                )
+            })
+        });
+
+    let mut type_ctx = SourceTypeCtx::new(
+        data.enclosing_package.clone(),
+        existing_imports.clone(),
+        None,
     );
+    if let Some(view) = runtime_view {
+        type_ctx = type_ctx.with_view(view);
+    }
+    let type_ctx = Arc::new(type_ctx.with_current_class_methods(method_map));
 
     let static_imports = fetch_static_imports(db, file);
     let is_class_member_position = detect_java_class_member_position(db, file, data.cursor_offset);

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::index::MethodSummary;
+use crate::index::{IndexView, MethodSummary};
 
 /// Per-file type resolution context built from the file's own package + imports.
 /// Converts bare Java simple names → JVM internal names following JLS §7.5 priority.
@@ -10,6 +10,7 @@ pub struct SourceTypeCtx {
     /// Normalized import strings, e.g. `"java.util.List"` or `"java.util.*"`.
     imports: Vec<Arc<str>>,
     name_table: Option<Arc<crate::index::NameTable>>,
+    view: Option<IndexView>,
     current_class_methods: std::collections::HashMap<Arc<str>, Arc<MethodSummary>>,
 }
 
@@ -35,8 +36,14 @@ impl SourceTypeCtx {
             package,
             imports,
             name_table,
+            view: None,
             current_class_methods: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn with_view(mut self, view: IndexView) -> Self {
+        self.view = Some(view);
+        self
     }
 
     pub fn with_current_class_methods(
@@ -121,13 +128,8 @@ impl SourceTypeCtx {
 
     fn resolve_simple_inner_strict(&self, simple: &str) -> Option<String> {
         if simple.contains('/') {
-            return self
-                .name_table
-                .as_ref()
-                .filter(|nt| nt.exists(simple))
-                .map(|_| simple.to_string());
+            return self.class_exists(simple).then(|| simple.to_string());
         }
-        let nt = self.name_table.as_ref()?;
         // Rule 1: Single-type-import — JLS §7.5.1
         // The import text itself IS the full qualified name; must exist in NameTable.
         let mut exact_candidates = Vec::new();
@@ -135,7 +137,7 @@ impl SourceTypeCtx {
             let s = imp.as_ref();
             if !s.ends_with(".*") && (s == simple || s.ends_with(&format!(".{}", simple))) {
                 let internal = s.replace('.', "/");
-                if nt.exists(&internal) {
+                if self.class_exists(&internal) {
                     exact_candidates.push(internal);
                 }
             }
@@ -149,22 +151,26 @@ impl SourceTypeCtx {
             return None;
         }
         if let Some(hit) = exact_candidates.pop() {
+            self.log_resolution_hit(simple, &hit, "single_import");
             return Some(hit);
         }
 
         // Rule 2: Same package — JLS §6.4.1; verify via index, never assume
         if let Some(pkg) = &self.package {
             let candidate = format!("{}/{}", pkg, simple);
-            if nt.exists(&candidate) {
+            if self.class_exists(&candidate) {
+                self.log_resolution_hit(simple, &candidate, "same_package");
                 return Some(candidate);
             }
-        } else if nt.exists(simple) {
+        } else if self.class_exists(simple) {
+            self.log_resolution_hit(simple, simple, "default_package");
             return Some(simple.to_string());
         }
 
         // Rule 3: java.lang.* — JLS §7.5.3 (always implicit)
         let java_lang = format!("java/lang/{}", simple);
-        if nt.exists(&java_lang) {
+        if self.class_exists(&java_lang) {
+            self.log_resolution_hit(simple, &java_lang, "java_lang");
             return Some(java_lang);
         }
 
@@ -175,7 +181,7 @@ impl SourceTypeCtx {
             if s.ends_with(".*") {
                 let pkg = s.trim_end_matches(".*").replace('.', "/");
                 let candidate = format!("{}/{}", pkg, simple);
-                if nt.exists(&candidate) {
+                if self.class_exists(&candidate) {
                     wildcard_candidates.push(candidate);
                 }
             }
@@ -188,7 +194,11 @@ impl SourceTypeCtx {
             );
             return None;
         }
-        wildcard_candidates.pop()
+        let resolved = wildcard_candidates.pop();
+        if let Some(hit) = &resolved {
+            self.log_resolution_hit(simple, hit, "wildcard_import");
+        }
+        resolved
     }
 
     /// Resolve a source-level type name (with optional generics/arrays) to an internal TypeName.
@@ -206,6 +216,53 @@ impl SourceTypeCtx {
     pub fn resolve_type_name_relaxed(&self, ty: &str) -> Option<RelaxedTypeResolution> {
         let (ty, quality) = resolve_type_name_relaxed_inner(self, ty)?;
         Some(RelaxedTypeResolution { ty, quality })
+    }
+}
+
+impl SourceTypeCtx {
+    fn log_resolution_hit(&self, simple: &str, internal: &str, rule: &str) {
+        let origin = self
+            .view
+            .as_ref()
+            .and_then(|view| view.get_class(internal))
+            .map(|class| match class.origin {
+                crate::index::ClassOrigin::SourceFile(_) => "source",
+                crate::index::ClassOrigin::Jar(_) => "jar_or_jdk",
+                crate::index::ClassOrigin::ZipSource { .. } => "zip_source",
+                crate::index::ClassOrigin::Unknown => "unknown",
+            });
+        tracing::debug!(
+            simple,
+            internal,
+            rule,
+            lookup = if self.view.is_some() { "index_view" } else { "name_table" },
+            origin = ?origin,
+            "SourceTypeCtx resolved simple name"
+        );
+    }
+
+    fn class_exists(&self, internal: &str) -> bool {
+        if let Some(view) = &self.view {
+            let exists = view.get_class(internal).is_some();
+            tracing::trace!(
+                lookup = internal,
+                path = "index_view",
+                found = exists,
+                "SourceTypeCtx class existence lookup"
+            );
+            return exists;
+        }
+        let exists = self
+            .name_table
+            .as_ref()
+            .is_some_and(|nt| nt.exists(internal));
+        tracing::trace!(
+            lookup = internal,
+            path = "name_table",
+            found = exists,
+            "SourceTypeCtx class existence lookup"
+        );
+        exists
     }
 }
 
@@ -236,16 +293,10 @@ fn resolve_type_name_strict_inner(
     let (base_name, args_str) = split_generic_base(base)?;
 
     let base_internal = if base_name.contains('/') {
-        ctx.name_table
-            .as_ref()
-            .filter(|nt| nt.exists(base_name))
-            .map(|_| base_name.to_string())
+        ctx.class_exists(base_name).then(|| base_name.to_string())
     } else if base_name.contains('.') {
         let internal = base_name.replace('.', "/");
-        ctx.name_table
-            .as_ref()
-            .filter(|nt| nt.exists(&internal))
-            .map(|_| internal)
+        ctx.class_exists(&internal).then_some(internal)
     } else {
         ctx.resolve_simple_strict(base_name)
     }?;
@@ -336,19 +387,11 @@ fn resolve_type_name_relaxed_inner(
 
 fn resolve_base_internal(ctx: &SourceTypeCtx, base_name: &str) -> Option<String> {
     if base_name.contains('/') {
-        return ctx
-            .name_table
-            .as_ref()
-            .filter(|nt| nt.exists(base_name))
-            .map(|_| base_name.to_string());
+        return ctx.class_exists(base_name).then(|| base_name.to_string());
     }
     if base_name.contains('.') {
         let internal = base_name.replace('.', "/");
-        return ctx
-            .name_table
-            .as_ref()
-            .filter(|nt| nt.exists(&internal))
-            .map(|_| internal);
+        return ctx.class_exists(&internal).then_some(internal);
     }
     ctx.resolve_simple_strict(base_name)
 }

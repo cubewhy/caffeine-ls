@@ -220,15 +220,13 @@ impl<'idx> TypeResolver<'idx> {
             return Some(lv.type_internal.clone());
         }
 
-        if let Some(enc) = enclosing {
-            for class in self.view.mro(enc) {
-                if let Some(f) = class.fields.iter().find(|f| f.name.as_ref() == expr) {
-                    if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
-                        return Some(TypeName::new(ty));
-                    } else {
-                        return parse_single_type_to_internal(&f.descriptor);
-                    }
-                }
+        if let Some(enc) = enclosing
+            && let Some(f) = self.view.lookup_field_in_hierarchy(enc, expr)
+        {
+            if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
+                return Some(TypeName::new(ty));
+            } else {
+                return parse_single_type_to_internal(&f.descriptor);
             }
         }
 
@@ -336,22 +334,22 @@ impl<'idx> TypeResolver<'idx> {
         let (base_receiver, _receiver_type_args) = split_internal_name(receiver_internal);
 
         // Use base_receiver to find MRO in the index
-        for class in self.view.mro(base_receiver) {
-            let candidates: Vec<&MethodSummary> = class
-                .methods
-                .iter()
-                .filter(|m| m.name.as_ref() == method_name)
-                .collect();
-            if candidates.is_empty() {
-                continue;
-            }
-
+        let overloads = self
+            .view
+            .lookup_methods_in_hierarchy(base_receiver, method_name);
+        let candidates: Vec<&MethodSummary> = overloads.iter().map(|m| m.as_ref()).collect();
+        if !candidates.is_empty() {
             let selected = self.select_overload_match(&candidates, arg_count, arg_types)?;
+            let owner = self.view.find_declaring_method_owner(
+                base_receiver,
+                selected.method.name.as_ref(),
+                selected.method.desc().as_ref(),
+            )?;
             return self.resolve_selected_method_return_with_callsite_and_qualifier_resolver(
                 receiver_internal,
                 selected.method,
-                class.internal_name.as_ref(),
-                class.generic_signature.as_deref(),
+                owner.internal_name.as_ref(),
+                owner.generic_signature.as_deref(),
                 args,
                 ctx,
             );
@@ -727,7 +725,7 @@ impl<'idx> TypeResolver<'idx> {
             .iter()
             .map(type_name_to_jvm_type)
             .collect::<Option<Vec<_>>>()?;
-        let (methods, _) = self.view.collect_inherited_members(owner);
+        let methods = self.view.collect_inherited_members(owner).0;
         let mut abstract_methods = methods.iter().filter(|m| {
             let flags = m.access_flags;
             (flags & ACC_ABSTRACT) != 0
@@ -779,26 +777,23 @@ impl<'idx> TypeResolver<'idx> {
         member_name: &str,
     ) -> Option<JvmType> {
         let mut fallback: Option<JvmType> = None;
-        for class in self.view.mro(owner_internal) {
-            for method in class
-                .methods
-                .iter()
-                .filter(|m| m.name.as_ref() == member_name)
-            {
-                let desc = method
-                    .generic_signature
-                    .clone()
-                    .unwrap_or_else(|| method.desc());
-                let (_, ret) = parse_method_signature_types(&desc)?;
-                if let JvmType::Primitive('V') = ret {
-                    continue;
-                }
-                if method.params.is_empty() {
-                    return Some(ret);
-                }
-                if fallback.is_none() {
-                    fallback = Some(ret);
-                }
+        for method in self
+            .view
+            .lookup_methods_in_hierarchy(owner_internal, member_name)
+        {
+            let desc = method
+                .generic_signature
+                .clone()
+                .unwrap_or_else(|| method.desc());
+            let (_, ret) = parse_method_signature_types(&desc)?;
+            if let JvmType::Primitive('V') = ret {
+                continue;
+            }
+            if method.params.is_empty() {
+                return Some(ret);
+            }
+            if fallback.is_none() {
+                fallback = Some(ret);
             }
         }
         fallback
@@ -825,16 +820,9 @@ impl<'idx> TypeResolver<'idx> {
             return Some(lang);
         }
 
-        let mut found: Option<String> = None;
-        for class in self.view.iter_all_classes() {
-            if class.name.as_ref() == text {
-                if found.is_some() {
-                    return None;
-                }
-                found = Some(class.internal_name.to_string());
-            }
-        }
-        found
+        self.view
+            .get_unique_class_by_simple_name(text)
+            .map(|class| class.internal_name.to_string())
     }
 
     fn resolve_owner_from_text_with_context(
@@ -958,16 +946,14 @@ impl<'idx> TypeResolver<'idx> {
                     );
                 } else {
                     let mut found_field: Option<TypeName> = None;
-                    for class in self.view.mro(receiver.erased_internal()) {
-                        if let Some(f) =
-                            class.fields.iter().find(|f| f.name.as_ref() == actual_name)
-                        {
-                            if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
-                                found_field = Some(TypeName::new(ty));
-                            } else {
-                                found_field = parse_single_type_to_internal(&f.descriptor);
-                            }
-                            break;
+                    if let Some(f) = self
+                        .view
+                        .lookup_field_in_hierarchy(receiver.erased_internal(), actual_name)
+                    {
+                        if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
+                            found_field = Some(TypeName::new(ty));
+                        } else {
+                            found_field = parse_single_type_to_internal(&f.descriptor);
                         }
                     }
                     current_type = found_field;
@@ -1106,16 +1092,13 @@ impl<'idx> TypeResolver<'idx> {
         receiver_owner: &str,
         selected: &MethodSummary,
     ) -> Option<Arc<str>> {
-        for class in self.view.mro(receiver_owner) {
-            let matched = class
-                .methods
-                .iter()
-                .any(|m| m.name.as_ref() == selected.name.as_ref() && m.desc() == selected.desc());
-            if matched {
-                return class.generic_signature.clone();
-            }
-        }
-        None
+        self.view
+            .find_declaring_method_owner(
+                receiver_owner,
+                selected.name.as_ref(),
+                selected.desc().as_ref(),
+            )
+            .and_then(|class| class.generic_signature.clone())
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -1,13 +1,30 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::index::{BucketIndex, ClassMetadata, FieldSummary, MethodSummary, NameTable};
 
+#[derive(Default)]
+struct IndexViewCaches {
+    inherited_members: DashMap<Arc<str>, Arc<InheritedMembers>>,
+    mro: DashMap<Arc<str>, Arc<Vec<Arc<ClassMetadata>>>>,
+    methods_by_name: DashMap<(Arc<str>, Arc<str>), Arc<Vec<Arc<MethodSummary>>>>,
+    fields_by_name: DashMap<(Arc<str>, Arc<str>), Option<Arc<FieldSummary>>>,
+    declaring_method_owner: DashMap<(Arc<str>, Arc<str>, Arc<str>), Option<Arc<ClassMetadata>>>,
+}
+
+struct InheritedMembers {
+    methods: Vec<Arc<MethodSummary>>,
+    fields: Vec<Arc<FieldSummary>>,
+}
+
+#[derive(Clone)]
 pub struct IndexView {
     layers: SmallVec<Arc<BucketIndex>, 8>,
+    caches: Arc<IndexViewCaches>,
 }
 
 impl IndexView {
@@ -46,7 +63,10 @@ impl IndexView {
     }
 
     pub fn new(layers: SmallVec<Arc<BucketIndex>, 8>) -> Self {
-        Self { layers }
+        Self {
+            layers,
+            caches: Arc::new(IndexViewCaches::default()),
+        }
     }
 
     /// Get the number of layers in this view
@@ -323,6 +343,10 @@ impl IndexView {
         &self,
         class_internal: &str,
     ) -> (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>) {
+        if let Some(cached) = self.caches.inherited_members.get(class_internal) {
+            return (cached.methods.clone(), cached.fields.clone());
+        }
+
         let mut methods: Vec<Arc<MethodSummary>> = Vec::new();
         let mut fields: Vec<Arc<FieldSummary>> = Vec::new();
         let mut seen_methods: FxHashSet<(Arc<str>, Arc<str>)> = Default::default();
@@ -365,10 +389,21 @@ impl IndexView {
                 }
             }
         }
+        let cached = Arc::new(InheritedMembers {
+            methods: methods.clone(),
+            fields: fields.clone(),
+        });
+        self.caches
+            .inherited_members
+            .insert(Arc::from(class_internal), cached);
         (methods, fields)
     }
 
     pub fn mro(&self, class_internal: &str) -> Vec<Arc<ClassMetadata>> {
+        if let Some(cached) = self.caches.mro.get(class_internal) {
+            return cached.as_ref().clone();
+        }
+
         let mut result = Vec::new();
         let mut seen: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
         let mut seen_methods: FxHashSet<(Arc<str>, Arc<str>)> = Default::default();
@@ -403,7 +438,87 @@ impl IndexView {
                 .retain(|f| seen_fields.insert(Arc::clone(&f.name)));
             result.push(Arc::new(projected));
         }
+        self.caches
+            .mro
+            .insert(Arc::from(class_internal), Arc::new(result.clone()));
         result
+    }
+
+    pub fn lookup_methods_in_hierarchy(
+        &self,
+        class_internal: &str,
+        method_name: &str,
+    ) -> Vec<Arc<MethodSummary>> {
+        let key = (Arc::from(class_internal), Arc::from(method_name));
+        if let Some(cached) = self.caches.methods_by_name.get(&key) {
+            return cached.as_ref().clone();
+        }
+
+        let methods = self
+            .collect_inherited_members(class_internal)
+            .0
+            .into_iter()
+            .filter(|method| method.name.as_ref() == method_name)
+            .collect::<Vec<_>>();
+        self.caches
+            .methods_by_name
+            .insert(key, Arc::new(methods.clone()));
+        methods
+    }
+
+    pub fn lookup_field_in_hierarchy(
+        &self,
+        class_internal: &str,
+        field_name: &str,
+    ) -> Option<Arc<FieldSummary>> {
+        let key = (Arc::from(class_internal), Arc::from(field_name));
+        if let Some(cached) = self.caches.fields_by_name.get(&key) {
+            return cached.clone();
+        }
+
+        let field = self
+            .collect_inherited_members(class_internal)
+            .1
+            .into_iter()
+            .find(|field| field.name.as_ref() == field_name);
+        self.caches.fields_by_name.insert(key, field.clone());
+        field
+    }
+
+    pub fn find_declaring_method_owner(
+        &self,
+        class_internal: &str,
+        method_name: &str,
+        method_desc: &str,
+    ) -> Option<Arc<ClassMetadata>> {
+        let key = (
+            Arc::from(class_internal),
+            Arc::from(method_name),
+            Arc::from(method_desc),
+        );
+        if let Some(cached) = self.caches.declaring_method_owner.get(&key) {
+            return cached.clone();
+        }
+
+        let owner = self.mro(class_internal).into_iter().find(|class| {
+            class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == method_name && m.desc().as_ref() == method_desc)
+        });
+        self.caches
+            .declaring_method_owner
+            .insert(key, owner.clone());
+        owner
+    }
+
+    pub fn get_unique_class_by_simple_name(&self, simple_name: &str) -> Option<Arc<ClassMetadata>> {
+        let mut matches = self.get_classes_by_simple_name(simple_name).into_iter();
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
     }
 
     pub fn fuzzy_autocomplete(&self, query: &str, limit: usize) -> Vec<Arc<str>> {
@@ -479,7 +594,8 @@ impl IndexView {
         tracing::debug!(
             layer_count = self.layers.len(),
             name_count = names.len(),
-            "IndexView::build_name_table"
+            phase = "indexing_or_discovery",
+            "build NameTable from IndexView"
         );
         NameTable::from_names(names)
     }

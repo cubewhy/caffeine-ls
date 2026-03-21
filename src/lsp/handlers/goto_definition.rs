@@ -26,7 +26,6 @@ pub async fn handle_goto_definition(
     let analysis = request.analysis();
     let scope = request.scope();
     let view = request.view();
-    let name_table_len = request.name_table().len();
 
     let request_analysis_t0 = std::time::Instant::now();
 
@@ -36,7 +35,6 @@ pub async fn handle_goto_definition(
         classpath = ?analysis.classpath,
         source_root = ?analysis.source_root.map(|id| id.0),
         view_layers = view.layer_count(),
-        name_table_len,
         analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
         "goto: request analysis prepared"
     );

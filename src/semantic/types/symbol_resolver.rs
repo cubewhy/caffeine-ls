@@ -3,6 +3,8 @@ use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::semantic::types::TypeResolver;
 use crate::semantic::types::type_name::TypeName;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -20,11 +22,27 @@ pub enum ResolvedSymbol {
 
 pub struct SymbolResolver<'a> {
     pub view: &'a IndexView,
+    caches: RefCell<SymbolResolverCaches>,
+}
+
+#[derive(Default)]
+struct SymbolResolverCaches {
+    type_names: HashMap<TypeNameCacheKey, Option<Arc<str>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TypeNameCacheKey {
+    name: Arc<str>,
+    enclosing_internal: Option<Arc<str>>,
+    package: Option<Arc<str>>,
 }
 
 impl<'a> SymbolResolver<'a> {
     pub fn new(view: &'a IndexView) -> Self {
-        Self { view }
+        Self {
+            view,
+            caches: RefCell::new(SymbolResolverCaches::default()),
+        }
     }
 
     pub fn resolve(&self, ctx: &SemanticContext) -> Option<ResolvedSymbol> {
@@ -101,10 +119,8 @@ impl<'a> SymbolResolver<'a> {
             return None;
         }
 
-        let (methods, fields) = self.view.collect_inherited_members(owner);
-
-        let named_candidates: Vec<&Arc<MethodSummary>> =
-            methods.iter().filter(|m| m.name.as_ref() == name).collect();
+        let methods = self.view.lookup_methods_in_hierarchy(owner, name);
+        let named_candidates: Vec<&Arc<MethodSummary>> = methods.iter().collect();
 
         if let Some(args) = arguments {
             let arg_text = args.trim().trim_start_matches('(').trim_end_matches(')');
@@ -150,12 +166,10 @@ impl<'a> SymbolResolver<'a> {
             return None;
         }
 
-        // 如果没有参数 (arguments == None)，例如跳转到方法引用或字段
-        // 优先匹配字段 (Field)
-        if let Some(f) = fields.iter().find(|f| f.name.as_ref() == name) {
+        if let Some(f) = self.view.lookup_field_in_hierarchy(owner, name) {
             return Some(ResolvedSymbol::Field {
                 owner: Arc::from(owner),
-                summary: f.clone(),
+                summary: f,
             });
         }
 
@@ -258,8 +272,7 @@ impl<'a> SymbolResolver<'a> {
                 continue;
             }
             tracing::debug!(owner = %current, field = %part, "resolve: chained field lookup");
-            let (_, fields) = self.view.collect_inherited_members(&current);
-            let field = fields.iter().find(|f| f.name.as_ref() == part)?;
+            let field = self.view.lookup_field_in_hierarchy(&current, part)?;
             current = descriptor_to_internal_arc(&field.descriptor)?;
         }
 
@@ -268,6 +281,18 @@ impl<'a> SymbolResolver<'a> {
     }
 
     pub fn resolve_type_name(&self, ctx: &SemanticContext, name: &str) -> Option<Arc<str>> {
+        let cache_key = TypeNameCacheKey {
+            name: Arc::from(name),
+            enclosing_internal: ctx.enclosing_internal_name.clone(),
+            package: ctx
+                .enclosing_package
+                .clone()
+                .or_else(|| ctx.inferred_package.clone()),
+        };
+        if let Some(cached) = self.caches.borrow().type_names.get(&cache_key) {
+            return cached.clone();
+        }
+
         let resolve_head = |head: &str| self.resolve_type_head(ctx, head);
         let resolved = self
             .view
@@ -276,6 +301,10 @@ impl<'a> SymbolResolver<'a> {
         if resolved.is_none() {
             tracing::debug!(name = %name, "resolve: type not found in index");
         }
+        self.caches
+            .borrow_mut()
+            .type_names
+            .insert(cache_key, resolved.clone());
         resolved
     }
 

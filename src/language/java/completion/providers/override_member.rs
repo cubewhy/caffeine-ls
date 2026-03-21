@@ -399,6 +399,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: None,
+                    view: None,
                     workspace: None,
                 },
             )
