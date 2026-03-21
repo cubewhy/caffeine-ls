@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::index::{ClassOrigin, IndexView};
 use crate::language::java::class_parser::find_symbol_range;
+use crate::lsp::request_context::PreparedRequest;
 use crate::lsp::server::Backend;
-use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::semantic::context::CursorLocation;
 use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
 use tower_lsp::lsp_types::*;
@@ -17,52 +17,22 @@ pub async fn handle_goto_definition(
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
 
-    let (lang_id, full_end) = backend.workspace.documents.with_doc(uri, |doc| {
+    let full_end = backend.workspace.documents.with_doc(uri, |doc| {
         let full_end = token_end_character(doc.source().text(), pos.line, pos.character);
-        Some((doc.language_id().to_owned(), full_end))
+        Some(full_end)
     })??;
 
-    let lang = backend.registry.find(&lang_id)?;
-
-    backend.workspace.documents.with_doc_mut(uri, |doc| {
-        if doc.source().tree.is_none() {
-            let tree = lang.parse_tree(doc.source().text(), None);
-            doc.set_tree(tree);
-        }
-    })?;
-
-    let analysis = backend.workspace.analysis_context_for_uri(uri);
-    let scope = analysis.scope();
+    let request = PreparedRequest::prepare(
+        Arc::clone(&backend.workspace),
+        backend.registry.as_ref(),
+        uri,
+    )?;
+    let analysis = request.analysis();
+    let scope = request.scope();
+    let view = request.view();
+    let name_table_len = request.name_table().len();
 
     let request_analysis_t0 = std::time::Instant::now();
-
-    // Use cached IndexView and NameTable via Salsa for better performance
-    let (view, name_table) = {
-        let db = backend.workspace.salsa_db.lock();
-
-        // Get cached IndexView (memoized)
-        let view = crate::salsa_queries::get_index_view_for_context(
-            &*db,
-            scope.module,
-            analysis.classpath,
-            analysis.source_root,
-        );
-
-        // Get cached NameTable (memoized)
-        let name_table = crate::salsa_queries::get_name_table_for_context(
-            &*db,
-            scope.module,
-            analysis.classpath,
-            analysis.source_root,
-        );
-
-        (view, name_table)
-    };
-
-    let request_analysis = RequestAnalysisState {
-        analysis,
-        name_table: Arc::clone(&name_table),
-    };
 
     tracing::debug!(
         uri = %uri,
@@ -70,42 +40,12 @@ pub async fn handle_goto_definition(
         classpath = ?analysis.classpath,
         source_root = ?analysis.source_root.map(|id| id.0),
         view_layers = view.layer_count(),
-        name_table_len = name_table.len(),
+        name_table_len,
         analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
         "goto: request analysis prepared"
     );
 
-    let salsa_file = backend.workspace.get_or_update_salsa_file(uri)?;
-
-    let mut ctx = {
-        let context_data = {
-            let db = backend.workspace.salsa_db.lock();
-            if lang.id() == "java" {
-                crate::salsa_queries::java::extract_java_completion_context_with_name_table(
-                    &*db,
-                    salsa_file,
-                    pos.line,
-                    full_end,
-                    None,
-                    Some(Arc::clone(&request_analysis.name_table)),
-                )
-            } else {
-                lang.extract_completion_context_salsa(&*db, salsa_file, pos.line, full_end, None)?
-            }
-        };
-
-        let db = backend.workspace.salsa_db.lock();
-        crate::semantic::SemanticContext::from_salsa_data_with_analysis(
-            context_data.as_ref().clone(),
-            &*db,
-            salsa_file,
-            Some(&*backend.workspace),
-            Some(&request_analysis),
-        )
-    };
-
-    // enrich context
-    lang.enrich_completion_context(&mut ctx, scope, &view);
+    let ctx = request.semantic_context(Position::new(pos.line, full_end), None)?;
 
     tracing::debug!(
         module = scope.module.0,
@@ -147,18 +87,14 @@ pub async fn handle_goto_definition(
         let raw = prefix.trim().trim_end_matches(".*").trim();
         let internal = raw.replace('.', "/");
         if view.get_class(&internal).is_some() {
-            return goto_resolved_symbol(
-                backend,
-                &view,
-                ResolvedSymbol::Class(Arc::from(internal)),
-            )
-            .await;
+            return goto_resolved_symbol(backend, view, ResolvedSymbol::Class(Arc::from(internal)))
+                .await;
         }
         return None;
     }
 
     // Index 符号解析
-    let resolver = SymbolResolver::new(&view);
+    let resolver = SymbolResolver::new(view);
     let symbol = match resolver.resolve(&ctx) {
         Some(s) => s,
         None => {
@@ -168,7 +104,7 @@ pub async fn handle_goto_definition(
     };
     tracing::debug!(symbol = ?symbol, "goto: resolved symbol");
 
-    goto_resolved_symbol(backend, &view, symbol).await
+    goto_resolved_symbol(backend, view, symbol).await
 }
 
 async fn goto_resolved_symbol(

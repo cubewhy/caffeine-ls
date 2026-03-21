@@ -6,7 +6,7 @@ use super::super::converters::candidate_to_lsp;
 use crate::completion::candidate::{CompletionCandidate, InsertTextMode, ReplacementMode};
 use crate::completion::engine::{CompletionEngine, CompletionMetadata, CompletionPolicy};
 use crate::language::LanguageRegistry;
-use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
+use crate::lsp::request_context::PreparedRequest;
 use crate::workspace::Workspace;
 
 pub async fn handle_completion(
@@ -23,11 +23,12 @@ pub async fn handle_completion(
         .and_then(|ctx| ctx.trigger_character.as_deref())
         .and_then(|s| s.chars().next());
 
-    let lang_id = workspace
-        .documents
-        .with_doc(uri, |doc| doc.language_id().to_owned())?;
-
-    let lang = registry.find(&lang_id)?;
+    let request = PreparedRequest::prepare(Arc::clone(&workspace), registry.as_ref(), uri)?;
+    let lang = request.lang();
+    let analysis = request.analysis();
+    let scope = request.scope();
+    let view = request.view();
+    let name_table_len = request.name_table().len();
 
     let _uri_str = uri.as_str();
 
@@ -40,46 +41,7 @@ pub async fn handle_completion(
         "completion request"
     );
 
-    workspace.documents.with_doc_mut(uri, |doc| {
-        if doc.source().tree.is_none() {
-            let tree = lang.parse_tree(doc.source().text(), None);
-            doc.set_tree(tree);
-        }
-    })?;
-
-    let analysis = workspace.analysis_context_for_uri(uri);
-    let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
-    let scope = analysis.scope();
-
     let request_analysis_t0 = std::time::Instant::now();
-
-    // Use cached IndexView and NameTable via Salsa for better performance
-    let (view, name_table) = {
-        let db = workspace.salsa_db.lock();
-
-        // Get cached IndexView (memoized)
-        let view = crate::salsa_queries::get_index_view_for_context(
-            &*db,
-            scope.module,
-            analysis.classpath,
-            analysis.source_root,
-        );
-
-        // Get cached NameTable (memoized)
-        let name_table = crate::salsa_queries::get_name_table_for_context(
-            &*db,
-            scope.module,
-            analysis.classpath,
-            analysis.source_root,
-        );
-
-        (view, name_table)
-    };
-
-    let request_analysis = RequestAnalysisState {
-        analysis,
-        name_table: Arc::clone(&name_table),
-    };
 
     let index = workspace.index.read();
     let visible_classpath = index.module_classpath_jars(scope.module, analysis.classpath);
@@ -91,68 +53,24 @@ pub async fn handle_completion(
         source_root = ?analysis.source_root.map(|id| id.0),
         root_kind = ?analysis.root_kind,
         visible_classpath_len = visible_classpath.len(),
-        name_table_len = name_table.len(),
+        name_table_len,
         view_layers = view.layer_count(),
         analysis_bundle_ms = request_analysis_t0.elapsed().as_secs_f64() * 1000.0,
         "completion using cached IndexView and NameTable"
     );
 
-    let ctx: crate::semantic::SemanticContext = {
-        let salsa_file = workspace.get_or_update_salsa_file(uri)?;
+    let ctx = request.semantic_context(position, trigger)?;
 
-        let context_data = {
-            let db = workspace.salsa_db.lock();
-            if lang.id() == "java" {
-                crate::salsa_queries::java::extract_java_completion_context_with_name_table(
-                    &*db,
-                    salsa_file,
-                    position.line,
-                    position.character,
-                    trigger,
-                    Some(Arc::clone(&request_analysis.name_table)),
-                )
-            } else {
-                lang.extract_completion_context_salsa(
-                    &*db,
-                    salsa_file,
-                    position.line,
-                    position.character,
-                    trigger,
-                )?
-            }
-        };
-
-        let db = workspace.salsa_db.lock();
-        crate::semantic::SemanticContext::from_salsa_data_with_analysis(
-            context_data.as_ref().clone(),
-            &*db,
-            salsa_file,
-            Some(&*workspace),
-            Some(&request_analysis),
-        )
-    };
-
-    let source_for_edits = workspace
-        .documents
-        .with_doc(uri, |doc| doc.source().text().to_owned())?;
-
-    let mut ctx = if let Some(pkg) = inferred_package {
-        ctx.with_inferred_package(pkg)
-    } else {
-        ctx
-    };
-
-    // Enrich context with type information (critical for member completion)
-    lang.enrich_completion_context(&mut ctx, scope, &view);
+    let source_for_edits = request.source_text().to_owned();
 
     tracing::debug!(location = ?ctx.location, query = %ctx.query, "parsed context");
 
     const MAX_ITEMS: usize = 100;
-    let completion = engine.complete_with_policy(
+    let completion = engine.complete_prepared_with_policy(
         scope,
         ctx.clone(),
         lang,
-        &view,
+        view,
         CompletionPolicy {
             broad_provider_limit: 256,
             final_result_limit: Some(MAX_ITEMS),
@@ -177,7 +95,7 @@ pub async fn handle_completion(
         MAX_ITEMS,
     );
 
-    debug!(
+    tracing::debug!(
         count = completion_list.items.len(),
         incomplete = completion_list.is_incomplete,
         broad_query = metadata.broad_query,

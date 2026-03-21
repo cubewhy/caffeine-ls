@@ -78,6 +78,18 @@ impl CompletionEngine {
         policy: CompletionPolicy,
     ) -> CompletionOutput {
         lang.enrich_completion_context(&mut ctx, scope, index);
+        self.complete_prepared_with_policy(scope, ctx, lang, index, policy)
+    }
+
+    pub fn complete_prepared_with_policy(
+        &self,
+        scope: IndexScope,
+        ctx: SemanticContext,
+        lang: &dyn Language,
+        index: &IndexView,
+        policy: CompletionPolicy,
+    ) -> CompletionOutput {
+        let ctx = ctx;
 
         let t_total = Instant::now();
         let broad_query = is_broad_query(&ctx, policy.short_prefix_len);
