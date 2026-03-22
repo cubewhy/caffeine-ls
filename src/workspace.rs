@@ -650,7 +650,7 @@ impl Workspace {
             let db = self.salsa_db.lock();
             prepared
                 .iter()
-                .flat_map(|source| source.discover_internal_names(&*db))
+                .flat_map(|source| source.discover_internal_names(&db))
                 .collect::<Vec<_>>()
         };
 
@@ -663,7 +663,7 @@ impl Workspace {
             let db = self.salsa_db.lock();
             prepared
                 .into_iter()
-                .flat_map(|source| source.extract_classes(&*db, Some(enriched_name_table.clone())))
+                .flat_map(|source| source.extract_classes(&db, Some(enriched_name_table.clone())))
                 .collect::<Vec<_>>()
         };
 
