@@ -171,7 +171,23 @@ fn resolve_ast_node_type(
         }
         "identifier" => {
             let text = node.utf8_text(bytes).ok()?;
-            resolver.resolve(text.trim(), locals, enclosing_internal)
+            let ident = text.trim();
+            if let Some(local) = locals.iter().find(|lv| lv.name.as_ref() == ident)
+                && local.type_internal.erased_internal() == "var"
+                && let Some(init_expr) = local.init_expr.as_deref()
+                && init_expr.trim() != ident
+            {
+                return resolve_var_init_expr(
+                    init_expr,
+                    locals,
+                    enclosing_internal,
+                    resolver,
+                    type_ctx,
+                    view,
+                )
+                .or_else(|| resolver.resolve(ident, locals, enclosing_internal));
+            }
+            resolver.resolve(ident, locals, enclosing_internal)
         }
         "decimal_integer_literal"
         | "hex_integer_literal"
@@ -1312,6 +1328,31 @@ mod tests {
         .expect("type");
 
         assert_eq!(ty.erased_internal(), "double");
+    }
+
+    #[test]
+    fn test_identifier_var_local_falls_back_to_initializer_type() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let locals = vec![LocalVar {
+            name: Arc::from("m"),
+            type_internal: TypeName::new("var"),
+            init_expr: Some("new Main()".to_string()),
+        }];
+
+        let ty = resolve_expression_type(
+            "m",
+            &locals,
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("resolved type");
+
+        assert_eq!(ty.erased_internal(), "org/cubewhy/Main");
     }
 
     #[test]

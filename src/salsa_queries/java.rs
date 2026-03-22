@@ -9,8 +9,8 @@ mod resolve;
 mod scope;
 
 pub use completion::{
-    extract_java_completion_context, extract_java_semantic_context_at_offset,
-    extract_java_semantic_context_from_source_at_offset,
+    build_java_semantic_context, extract_java_completion_context,
+    extract_java_semantic_context_at_offset, extract_java_semantic_context_from_source_at_offset,
 };
 pub use hints::{compute_java_inlay_hints, infer_java_variable_type};
 pub use indexing::{
@@ -25,8 +25,10 @@ pub use scope::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{ClassOrigin, WorkspaceIndex};
     use crate::salsa_db::{Database, FileId, SourceFile};
     use crate::salsa_queries::context::{CursorLocationData, line_col_to_offset};
+    use crate::semantic::context::CursorLocation;
     use ropey::Rope;
     use std::sync::Arc;
     use tower_lsp::lsp_types::Url;
@@ -188,5 +190,68 @@ class User {
             0,
             "expected enclosing method to preserve static access"
         );
+    }
+
+    #[test]
+    fn test_extract_java_semantic_context_at_offset_materializes_var_receiver() {
+        let workspace_index = Arc::new(parking_lot::RwLock::new(WorkspaceIndex::new()));
+        let source = indoc::indoc! {r#"
+            package org.example;
+
+            class Main {
+                void foo(String name, int age) {
+                    var a = new User(name, age);
+                    a.
+                }
+            }
+
+            class User {
+                User(String name, int age) {}
+
+                void greet() {}
+            }
+        "#}
+        .to_string();
+        let parsed = crate::language::java::class_parser::parse_java_source_via_tree_for_test(
+            &source,
+            ClassOrigin::Unknown,
+            None,
+        );
+        workspace_index.write().add_classes(parsed);
+
+        let db = Database::with_workspace_index(Arc::clone(&workspace_index));
+        let uri = Url::parse("file:///test/Main.java").unwrap();
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+        let offset = source.find("a.").expect("member access") + 2;
+        let view = workspace_index.read().view(crate::index::IndexScope {
+            module: crate::index::ModuleId::ROOT,
+        });
+
+        let ctx =
+            extract_java_semantic_context_at_offset(&db, file, offset, view, None).expect("ctx");
+
+        let local = ctx
+            .local_variables
+            .iter()
+            .find(|local| local.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(local.type_internal.erased_internal(), "org/example/User");
+
+        match &ctx.location {
+            CursorLocation::MemberAccess {
+                receiver_type,
+                receiver_semantic_type,
+                ..
+            } => {
+                assert_eq!(receiver_type.as_deref(), Some("org/example/User"));
+                assert_eq!(
+                    receiver_semantic_type
+                        .as_ref()
+                        .map(|ty| ty.erased_internal()),
+                    Some("org/example/User")
+                );
+            }
+            other => panic!("expected MemberAccess, got {other:?}"),
+        }
     }
 }

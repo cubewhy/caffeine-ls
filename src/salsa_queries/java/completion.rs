@@ -119,13 +119,32 @@ pub fn extract_java_semantic_context_at_offset(
         view,
     };
 
-    Some(SemanticContext::from_salsa_data_with_analysis(
+    Some(build_java_semantic_context(
+        db,
+        file,
         context.as_ref().clone(),
+        workspace,
+        &analysis,
+    ))
+}
+
+pub fn build_java_semantic_context(
+    db: &dyn Db,
+    file: SourceFile,
+    context: CompletionContextData,
+    workspace: Option<&crate::workspace::Workspace>,
+    analysis: &RequestAnalysisState,
+) -> SemanticContext {
+    let mut ctx = SemanticContext::from_salsa_data_with_analysis(
+        context,
         db,
         file,
         workspace,
-        Some(&analysis),
-    ))
+        Some(analysis),
+    );
+    crate::language::java::completion_context::ContextEnricher::new(&analysis.view)
+        .enrich(&mut ctx);
+    ctx
 }
 
 pub fn extract_java_semantic_context_from_source_at_offset(
@@ -143,8 +162,26 @@ pub fn extract_java_semantic_context_from_source_at_offset(
         source.to_string(),
         Arc::from("java"),
     );
+    let rope = Rope::from_str(source);
+    let (line, character) = offset_to_line_col_utf16(&rope, offset);
+    let context = extract_java_completion_context(&db, file, line, character, None);
+    let analysis = RequestAnalysisState {
+        analysis: crate::workspace::AnalysisContext {
+            module: ModuleId::ROOT,
+            classpath: ClasspathId::Main,
+            source_root: None,
+            root_kind: None,
+        },
+        view,
+    };
 
-    extract_java_semantic_context_at_offset(&db, file, offset, view, None)
+    Some(SemanticContext::from_salsa_data_with_analysis(
+        context.as_ref().clone(),
+        &db,
+        file,
+        None,
+        Some(&analysis),
+    ))
 }
 
 fn convert_rich_location(location: &CursorLocation) -> CursorLocationData {

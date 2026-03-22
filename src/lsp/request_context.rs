@@ -163,20 +163,30 @@ impl<'a> PreparedRequest<'a> {
         };
 
         let db = self.workspace.salsa_db.lock();
-        let mut ctx = SemanticContext::from_salsa_data_with_analysis(
-            context_data.as_ref().clone(),
-            &*db,
-            self.salsa_file,
-            Some(&*self.workspace),
-            Some(&self.request_analysis),
-        );
+        let mut ctx = if self.lang.id() == "java" {
+            crate::salsa_queries::java::build_java_semantic_context(
+                &*db,
+                self.salsa_file,
+                context_data.as_ref().clone(),
+                Some(&*self.workspace),
+                &self.request_analysis,
+            )
+        } else {
+            let mut ctx = SemanticContext::from_salsa_data_with_analysis(
+                context_data.as_ref().clone(),
+                &*db,
+                self.salsa_file,
+                Some(&*self.workspace),
+                Some(&self.request_analysis),
+            );
+            self.lang
+                .enrich_completion_context(&mut ctx, self.scope(), &self.view);
+            ctx
+        };
 
         if let Some(pkg) = self.inferred_package.as_ref() {
             ctx = ctx.with_inferred_package(Arc::clone(pkg));
         }
-
-        self.lang
-            .enrich_completion_context(&mut ctx, self.scope(), &self.view);
 
         Some(ctx)
     }
@@ -236,4 +246,91 @@ fn token_end_character(content: &str, line: u32, character: u32) -> u32 {
         end_utf16 += ch.len_utf16() as u32;
     }
     end_utf16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::ClassOrigin;
+    use crate::semantic::context::CursorLocation;
+    use crate::workspace::document::Document;
+    use ropey::Rope;
+
+    #[test]
+    fn java_prepared_request_materializes_var_receiver_type() {
+        let workspace = Arc::new(Workspace::new());
+        let registry = LanguageRegistry::new();
+        let uri = Url::parse("file:///workspace/Main.java").expect("uri");
+        let source = indoc::indoc! {r#"
+            package org.example;
+
+            class Main {
+                void foo(String name, int age) {
+                    var a = new User(name, age);
+                    a.
+                }
+            }
+
+            class User {
+                User(String name, int age) {}
+
+                void greet() {}
+            }
+        "#}
+        .to_string();
+
+        let lang = registry.find("java").expect("java language");
+        let tree = lang.parse_tree(&source, None);
+        let parsed = crate::language::java::class_parser::parse_java_source_via_tree_for_test(
+            &source,
+            ClassOrigin::SourceFile(Arc::from(uri.as_str())),
+            None,
+        );
+        workspace.index.write().add_classes(parsed);
+        workspace.documents.open(Document::new(SourceFile::new(
+            uri.clone(),
+            "java",
+            1,
+            source.clone(),
+            tree,
+        )));
+
+        let request =
+            PreparedRequest::prepare(Arc::clone(&workspace), &registry, &uri, "test_completion")
+                .expect("prepared request");
+
+        let byte_offset = source.find("a.").expect("member access") + 2;
+        let rope = Rope::from_str(&source);
+        let line = rope.byte_to_line(byte_offset) as u32;
+        let character = (byte_offset - rope.line_to_byte(line as usize)) as u32;
+        let ctx = request
+            .semantic_context(Position::new(line, character), Some('.'))
+            .expect("semantic context");
+
+        let local = ctx
+            .local_variables
+            .iter()
+            .find(|local| local.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(local.type_internal.erased_internal(), "org/example/User");
+
+        match &ctx.location {
+            CursorLocation::MemberAccess {
+                receiver_expr,
+                receiver_type,
+                receiver_semantic_type,
+                ..
+            } => {
+                assert_eq!(receiver_expr, "a");
+                assert_eq!(receiver_type.as_deref(), Some("org/example/User"));
+                assert_eq!(
+                    receiver_semantic_type
+                        .as_ref()
+                        .map(|ty| ty.erased_internal()),
+                    Some("org/example/User")
+                );
+            }
+            other => panic!("expected MemberAccess, got {other:?}"),
+        }
+    }
 }
