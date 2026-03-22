@@ -1,5 +1,8 @@
 use rust_asm::constants::{ACC_ANNOTATION, ACC_ENUM, ACC_INTERFACE, ACC_PUBLIC, ACC_SUPER};
-use std::sync::Arc;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Instant,
+};
 use tree_sitter::{Node, Query, Tree};
 use tree_sitter_utils::{
     Handler, Input, NodePredicate,
@@ -30,6 +33,21 @@ use crate::{
     },
     semantic::{context::CurrentClassMember, types::generics::parse_class_type_parameters},
 };
+
+fn interface_type_query() -> &'static (Query, u32) {
+    static QUERY: OnceLock<(Query, u32)> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        let query = Query::new(
+            &tree_sitter_java::LANGUAGE.into(),
+            r#"(type_identifier) @t"#,
+        )
+        .expect("interface type query must compile");
+        let idx = query
+            .capture_index_for_name("t")
+            .expect("interface type query capture must exist");
+        (query, idx)
+    })
+}
 
 #[cfg_attr(
     not(test),
@@ -142,20 +160,32 @@ pub fn extract_java_classes_from_root(
     name_table: Option<Arc<crate::index::NameTable>>,
     view: Option<&IndexView>,
 ) -> Vec<ClassMetadata> {
+    let total_started = Instant::now();
+    let ctx_started = Instant::now();
     let ctx = JavaContextExtractor::for_indexing_with_overview(source, name_table.clone());
+    let ctx_elapsed = ctx_started.elapsed();
+    let package_started = Instant::now();
     let package = extract_package(&ctx, root);
+    let package_elapsed = package_started.elapsed();
+    let imports_started = Instant::now();
     let imports = crate::language::java::scope::extract_imports(&ctx, root);
+    let imports_elapsed = imports_started.elapsed();
     let should_refine = view.is_none();
+    let discovery_view_started = Instant::now();
     let parsing_view = if let Some(view) = view.cloned() {
         view
     } else {
         source_discovery_view_from_root(source, root, origin)
     };
+    let discovery_view_elapsed = discovery_view_started.elapsed();
 
+    let type_ctx_started = Instant::now();
     let mut base_type_ctx =
         SourceTypeCtx::from_overview(package.clone(), imports, name_table.clone());
     base_type_ctx = base_type_ctx.with_view(parsing_view.clone());
     let type_ctx = Arc::new(base_type_ctx);
+    let type_ctx_elapsed = type_ctx_started.elapsed();
+    let collect_started = Instant::now();
     let mut results = Vec::new();
     collect_java_classes(
         &ctx,
@@ -167,7 +197,9 @@ pub fn extract_java_classes_from_root(
         &type_ctx,
         &mut results,
     );
+    let collect_elapsed = collect_started.elapsed();
 
+    let error_recovery_started = Instant::now();
     if results.is_empty()
         && let Some(error_node) = find_top_error_node(root)
         && let Some(meta) =
@@ -175,10 +207,50 @@ pub fn extract_java_classes_from_root(
     {
         results.push(meta);
     }
+    let error_recovery_elapsed = error_recovery_started.elapsed();
 
+    let refine_started = Instant::now();
     if should_refine {
         refine_source_metadata_with_index_view(&mut results, name_table);
     }
+    let refine_elapsed = refine_started.elapsed();
+
+    let methods = results
+        .iter()
+        .map(|class| class.methods.len())
+        .sum::<usize>();
+    let fields = results
+        .iter()
+        .map(|class| class.fields.len())
+        .sum::<usize>();
+    let profile = type_ctx.profile_snapshot();
+    tracing::debug!(
+        origin = ?origin,
+        source_len = source.len(),
+        class_count = results.len(),
+        method_count = methods,
+        field_count = fields,
+        ctx_ms = ctx_elapsed.as_secs_f64() * 1000.0,
+        package_ms = package_elapsed.as_secs_f64() * 1000.0,
+        imports_ms = imports_elapsed.as_secs_f64() * 1000.0,
+        discovery_view_ms = discovery_view_elapsed.as_secs_f64() * 1000.0,
+        type_ctx_setup_ms = type_ctx_elapsed.as_secs_f64() * 1000.0,
+        collect_ms = collect_elapsed.as_secs_f64() * 1000.0,
+        error_recovery_ms = error_recovery_elapsed.as_secs_f64() * 1000.0,
+        refine_ms = refine_elapsed.as_secs_f64() * 1000.0,
+        total_ms = total_started.elapsed().as_secs_f64() * 1000.0,
+        resolve_simple_calls = profile.resolve_simple_calls,
+        resolve_simple_unique_keys = profile.resolve_simple_unique_keys,
+        resolve_simple_cache_hits = profile.resolve_simple_cache_hits,
+        resolve_simple_cache_misses = profile.resolve_simple_cache_misses,
+        class_exists_calls = profile.class_exists_calls,
+        class_exists_unique_keys = profile.class_exists_unique_keys,
+        class_exists_cache_hits = profile.class_exists_cache_hits,
+        class_exists_cache_misses = profile.class_exists_cache_misses,
+        class_exists_found = profile.class_exists_found,
+        class_exists_missing = profile.class_exists_missing,
+        "extract_java_classes_from_root profile"
+    );
 
     results
 }
@@ -546,16 +618,11 @@ fn parse_java_class(
     let interfaces: Vec<Arc<str>> = node
         .child_by_field_name("interfaces")
         .map(|iface_node| {
-            let q_src = r#"(type_identifier) @t"#;
-            if let Ok(q) = Query::new(&tree_sitter_java::LANGUAGE.into(), q_src) {
-                let idx = q.capture_index_for_name("t").unwrap();
-                run_query(&q, iface_node, ctx.bytes(), None)
-                    .into_iter()
-                    .filter_map(|caps| capture_text(&caps, idx, ctx.bytes()).map(intern_str))
-                    .collect()
-            } else {
-                vec![]
-            }
+            let (q, idx) = interface_type_query();
+            run_query(q, iface_node, ctx.bytes(), None)
+                .into_iter()
+                .filter_map(|caps| capture_text(&caps, *idx, ctx.bytes()).map(intern_str))
+                .collect()
         })
         .unwrap_or_default();
 
@@ -564,8 +631,6 @@ fn parse_java_class(
     let mut fields = Vec::new();
 
     let body = node.child_by_field_name("body");
-    let full_source = std::str::from_utf8(ctx.bytes()).unwrap_or("");
-    let ctx = JavaContextExtractor::for_indexing_with_overview(full_source, ctx.name_table.clone());
     if let Some(b) = body {
         for member in extract_class_members_from_body(&ctx, b, type_ctx) {
             match member {

@@ -1,5 +1,5 @@
 use rust_asm::constants::{ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC, ACC_VARARGS};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tree_sitter::{Node, Query};
 use tree_sitter_utils::traversal::{ancestor_of_kind, first_child_of_kind, first_child_of_kinds};
 use tree_sitter_utils::{Handler, HandlerExt, Input};
@@ -18,6 +18,44 @@ use crate::{
     },
     semantic::{context::CurrentClassMember, types::parse_return_type_from_descriptor},
 };
+
+fn annotation_query() -> &'static (Query, u32) {
+    static QUERY: OnceLock<(Query, u32)> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        let query = Query::new(
+            &tree_sitter_java::LANGUAGE.into(),
+            r#"
+        (marker_annotation) @a
+        (annotation) @a
+    "#,
+        )
+        .expect("annotation query must compile");
+        let idx = query
+            .capture_index_for_name("a")
+            .expect("annotation capture must exist");
+        (query, idx)
+    })
+}
+
+fn annotation_name_query() -> &'static (Query, u32) {
+    static QUERY: OnceLock<(Query, u32)> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        let query = Query::new(
+            &tree_sitter_java::LANGUAGE.into(),
+            r#"
+        (marker_annotation name: (identifier) @n)
+        (marker_annotation name: (scoped_identifier) @n)
+        (annotation name: (identifier) @n)
+        (annotation name: (scoped_identifier) @n)
+    "#,
+        )
+        .expect("annotation name query must compile");
+        let idx = query
+            .capture_index_for_name("n")
+            .expect("annotation name capture must exist");
+        (query, idx)
+    })
+}
 
 #[rustfmt::skip]
 pub fn is_java_keyword(name: &str) -> bool {
@@ -966,23 +1004,11 @@ pub fn parse_annotations_in_node(
     node: Node,
     type_ctx: &SourceTypeCtx,
 ) -> Vec<AnnotationSummary> {
-    let q_src = r#"
-        (marker_annotation) @a
-        (annotation) @a
-    "#;
-
-    let q = match Query::new(&tree_sitter_java::LANGUAGE.into(), q_src) {
-        Ok(q) => q,
-        Err(_) => return vec![],
-    };
-    let idx = match q.capture_index_for_name("a") {
-        Some(i) => i,
-        None => return vec![],
-    };
+    let (q, idx) = annotation_query();
 
     let mut out = Vec::new();
-    for caps in run_query(&q, node, ctx.bytes(), None) {
-        let anno_node = match caps.iter().find(|(i, _)| *i == idx) {
+    for caps in run_query(q, node, ctx.bytes(), None) {
+        let anno_node = match caps.iter().find(|(i, _)| *i == *idx) {
             Some((_, n)) => *n,
             None => continue,
         };
@@ -998,18 +1024,11 @@ pub(crate) fn parse_single_annotation(
     node: Node,
     type_ctx: &SourceTypeCtx,
 ) -> Option<AnnotationSummary> {
-    let name_q_src = r#"
-        (marker_annotation name: (identifier) @n)
-        (marker_annotation name: (scoped_identifier) @n)
-        (annotation name: (identifier) @n)
-        (annotation name: (scoped_identifier) @n)
-    "#;
-    let q = Query::new(&tree_sitter_java::LANGUAGE.into(), name_q_src).ok()?;
-    let n_idx = q.capture_index_for_name("n")?;
+    let (q, n_idx) = annotation_name_query();
 
-    let name = run_query(&q, node, ctx.bytes(), None)
+    let name = run_query(q, node, ctx.bytes(), None)
         .first()
-        .and_then(|caps| capture_text(caps, n_idx, ctx.bytes()))?;
+        .and_then(|caps| capture_text(caps, *n_idx, ctx.bytes()))?;
 
     let resolved = if name.contains('.') {
         name.replace('.', "/")

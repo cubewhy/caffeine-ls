@@ -1,6 +1,43 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use crate::index::{IndexView, MethodSummary};
+use parking_lot::Mutex;
+use rustc_hash::FxHashMap;
+
+#[derive(Default)]
+struct SourceTypeCtxCaches {
+    resolve_simple: Mutex<FxHashMap<Arc<str>, Option<Arc<str>>>>,
+    class_exists: Mutex<FxHashMap<Arc<str>, bool>>,
+}
+
+#[derive(Default)]
+struct SourceTypeCtxStats {
+    resolve_simple_calls: AtomicUsize,
+    resolve_simple_cache_hits: AtomicUsize,
+    resolve_simple_cache_misses: AtomicUsize,
+    class_exists_calls: AtomicUsize,
+    class_exists_cache_hits: AtomicUsize,
+    class_exists_cache_misses: AtomicUsize,
+    class_exists_found: AtomicUsize,
+    class_exists_missing: AtomicUsize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SourceTypeCtxProfileSnapshot {
+    pub resolve_simple_calls: usize,
+    pub resolve_simple_unique_keys: usize,
+    pub resolve_simple_cache_hits: usize,
+    pub resolve_simple_cache_misses: usize,
+    pub class_exists_calls: usize,
+    pub class_exists_unique_keys: usize,
+    pub class_exists_cache_hits: usize,
+    pub class_exists_cache_misses: usize,
+    pub class_exists_found: usize,
+    pub class_exists_missing: usize,
+}
 
 /// Per-file type resolution context built from the file's own package + imports.
 /// Converts bare Java simple names → JVM internal names following JLS §7.5 priority.
@@ -12,6 +49,8 @@ pub struct SourceTypeCtx {
     name_table: Option<Arc<crate::index::NameTable>>,
     view: Option<IndexView>,
     current_class_methods: std::collections::HashMap<Arc<str>, Arc<MethodSummary>>,
+    caches: Arc<SourceTypeCtxCaches>,
+    stats: Arc<SourceTypeCtxStats>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +77,8 @@ impl SourceTypeCtx {
             name_table,
             view: None,
             current_class_methods: std::collections::HashMap::new(),
+            caches: Arc::new(SourceTypeCtxCaches::default()),
+            stats: Arc::new(SourceTypeCtxStats::default()),
         }
     }
 
@@ -48,6 +89,8 @@ impl SourceTypeCtx {
             name_table: None,
             view: Some(view),
             current_class_methods: std::collections::HashMap::new(),
+            caches: Arc::new(SourceTypeCtxCaches::default()),
+            stats: Arc::new(SourceTypeCtxStats::default()),
         }
     }
 
@@ -122,29 +165,62 @@ impl SourceTypeCtx {
     /// Resolve a bare simple name to its JVM internal name.
     /// Returns `simple` unchanged if unresolvable.
     pub fn resolve_simple(&self, simple: &str) -> String {
-        match self.resolve_simple_strict(simple) {
-            Some(result) => {
-                tracing::trace!(simple, resolved = %result, "type resolved");
-                result
-            }
-            None => {
-                tracing::trace!(
-                    simple,
-                    has_table = self.name_table.is_some(),
-                    "type unresolved"
-                );
-                simple.to_string()
-            }
-        }
+        self.resolve_simple_cached(simple)
+            .map(|result| result.as_ref().to_string())
+            .unwrap_or_else(|| simple.to_string())
     }
 
     /// Resolve a bare simple name to its JVM internal name.
     /// Returns None if resolution cannot be proven (no guessing).
     pub fn resolve_simple_strict(&self, simple: &str) -> Option<String> {
-        self.resolve_simple_inner_strict(simple)
+        self.resolve_simple_cached(simple)
+            .map(|result| result.as_ref().to_string())
     }
 
-    fn resolve_simple_inner_strict(&self, simple: &str) -> Option<String> {
+    pub fn profile_snapshot(&self) -> SourceTypeCtxProfileSnapshot {
+        SourceTypeCtxProfileSnapshot {
+            resolve_simple_calls: self.stats.resolve_simple_calls.load(Ordering::Relaxed),
+            resolve_simple_unique_keys: self.caches.resolve_simple.lock().len(),
+            resolve_simple_cache_hits: self.stats.resolve_simple_cache_hits.load(Ordering::Relaxed),
+            resolve_simple_cache_misses: self
+                .stats
+                .resolve_simple_cache_misses
+                .load(Ordering::Relaxed),
+            class_exists_calls: self.stats.class_exists_calls.load(Ordering::Relaxed),
+            class_exists_unique_keys: self.caches.class_exists.lock().len(),
+            class_exists_cache_hits: self.stats.class_exists_cache_hits.load(Ordering::Relaxed),
+            class_exists_cache_misses: self.stats.class_exists_cache_misses.load(Ordering::Relaxed),
+            class_exists_found: self.stats.class_exists_found.load(Ordering::Relaxed),
+            class_exists_missing: self.stats.class_exists_missing.load(Ordering::Relaxed),
+        }
+    }
+
+    fn resolve_simple_cached(&self, simple: &str) -> Option<Arc<str>> {
+        self.stats
+            .resolve_simple_calls
+            .fetch_add(1, Ordering::Relaxed);
+
+        if let Some(cached) = self.caches.resolve_simple.lock().get(simple).cloned() {
+            self.stats
+                .resolve_simple_cache_hits
+                .fetch_add(1, Ordering::Relaxed);
+            return cached;
+        }
+
+        self.stats
+            .resolve_simple_cache_misses
+            .fetch_add(1, Ordering::Relaxed);
+        let resolved = self
+            .resolve_simple_inner_strict_uncached(simple)
+            .map(Arc::<str>::from);
+        self.caches
+            .resolve_simple
+            .lock()
+            .insert(Arc::from(simple), resolved.clone());
+        resolved
+    }
+
+    fn resolve_simple_inner_strict_uncached(&self, simple: &str) -> Option<String> {
         if simple.contains('/') {
             return self.class_exists(simple).then(|| simple.to_string());
         }
@@ -239,47 +315,86 @@ impl SourceTypeCtx {
 
 impl SourceTypeCtx {
     fn log_resolution_hit(&self, simple: &str, internal: &str, rule: &str) {
-        let origin = self
-            .view
-            .as_ref()
-            .and_then(|view| view.get_class(internal))
-            .map(|class| match class.origin {
-                crate::index::ClassOrigin::SourceFile(_) => "source",
-                crate::index::ClassOrigin::Jar(_) => "jar_or_jdk",
-                crate::index::ClassOrigin::ZipSource { .. } => "zip_source",
-                crate::index::ClassOrigin::Unknown => "unknown",
-            });
-        tracing::debug!(
+        if !tracing::enabled!(tracing::Level::TRACE) {
+            return;
+        }
+
+        tracing::trace!(
             simple,
             internal,
             rule,
-            lookup = if self.view.is_some() { "index_view" } else { "name_table" },
-            origin = ?origin,
+            has_view = self.view.is_some(),
+            has_name_table = self.name_table.is_some(),
             "SourceTypeCtx resolved simple name"
         );
     }
 
     fn class_exists(&self, internal: &str) -> bool {
-        if let Some(view) = &self.view {
-            let exists = view.get_class(internal).is_some();
-            tracing::trace!(
-                lookup = internal,
-                path = "index_view",
-                found = exists,
-                "SourceTypeCtx class existence lookup"
-            );
+        self.stats
+            .class_exists_calls
+            .fetch_add(1, Ordering::Relaxed);
+
+        if let Some(exists) = self.caches.class_exists.lock().get(internal).copied() {
+            self.stats
+                .class_exists_cache_hits
+                .fetch_add(1, Ordering::Relaxed);
+            if exists {
+                self.stats
+                    .class_exists_found
+                    .fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.stats
+                    .class_exists_missing
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            if tracing::enabled!(tracing::Level::TRACE) {
+                tracing::trace!(
+                    lookup = internal,
+                    cache = "hit",
+                    found = exists,
+                    "SourceTypeCtx class existence lookup"
+                );
+            }
             return exists;
         }
-        let exists = self
+
+        self.stats
+            .class_exists_cache_misses
+            .fetch_add(1, Ordering::Relaxed);
+        let view_hit = self
+            .view
+            .as_ref()
+            .is_some_and(|view| view.get_class(internal).is_some());
+        let table_hit = self
             .name_table
             .as_ref()
             .is_some_and(|nt| nt.exists(internal));
-        tracing::trace!(
-            lookup = internal,
-            path = "name_table",
-            found = exists,
-            "SourceTypeCtx class existence lookup"
-        );
+        let exists = view_hit || table_hit;
+        self.caches
+            .class_exists
+            .lock()
+            .insert(Arc::from(internal), exists);
+
+        if exists {
+            self.stats
+                .class_exists_found
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.stats
+                .class_exists_missing
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                lookup = internal,
+                cache = "miss",
+                view_hit,
+                name_table_hit = table_hit,
+                found = exists,
+                "SourceTypeCtx class existence lookup"
+            );
+        }
         exists
     }
 }
