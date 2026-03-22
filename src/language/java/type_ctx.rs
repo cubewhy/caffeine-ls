@@ -49,6 +49,7 @@ pub struct SourceTypeCtx {
     name_table: Option<Arc<crate::index::NameTable>>,
     view: Option<IndexView>,
     current_class_methods: std::collections::HashMap<Arc<str>, Arc<MethodSummary>>,
+    current_class_super_name: Option<Arc<str>>,
     caches: Arc<SourceTypeCtxCaches>,
     stats: Arc<SourceTypeCtxStats>,
 }
@@ -77,6 +78,7 @@ impl SourceTypeCtx {
             name_table,
             view: None,
             current_class_methods: std::collections::HashMap::new(),
+            current_class_super_name: None,
             caches: Arc::new(SourceTypeCtxCaches::default()),
             stats: Arc::new(SourceTypeCtxStats::default()),
         }
@@ -89,6 +91,7 @@ impl SourceTypeCtx {
             name_table: None,
             view: Some(view),
             current_class_methods: std::collections::HashMap::new(),
+            current_class_super_name: None,
             caches: Arc::new(SourceTypeCtxCaches::default()),
             stats: Arc::new(SourceTypeCtxStats::default()),
         }
@@ -117,6 +120,15 @@ impl SourceTypeCtx {
 
     pub fn current_class_method(&self, name: &str) -> Option<&Arc<MethodSummary>> {
         self.current_class_methods.get(name)
+    }
+
+    pub fn with_current_class_super_name(mut self, super_name: Option<Arc<str>>) -> Self {
+        self.current_class_super_name = super_name;
+        self
+    }
+
+    pub fn current_class_super_name(&self) -> Option<&Arc<str>> {
+        self.current_class_super_name.as_ref()
     }
 
     /// Convert a Java source-level type expression to a JVM descriptor fragment.

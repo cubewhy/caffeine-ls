@@ -1,4 +1,5 @@
 use crate::index::{FieldSummary, IndexView, MethodSummary};
+use crate::language::java::super_support::{is_super_receiver_expr, resolve_direct_super_owner};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::semantic::types::TypeResolver;
@@ -185,6 +186,10 @@ impl<'a> SymbolResolver<'a> {
     }
 
     fn resolve_bare_id(&self, ctx: &SemanticContext, id: &str) -> Option<ResolvedSymbol> {
+        if is_super_receiver_expr(id) {
+            return resolve_direct_super_owner(ctx, self.view).map(ResolvedSymbol::Class);
+        }
+
         // local variable -> return its type
         if let Some(local) = ctx.local_variables.iter().find(|v| v.name.as_ref() == id) {
             let base = local.type_internal.erased_internal();
@@ -234,6 +239,9 @@ impl<'a> SymbolResolver<'a> {
         if expr.is_empty() || expr == "this" {
             return ctx.enclosing_internal_name.clone();
         }
+        if is_super_receiver_expr(expr) {
+            return resolve_direct_super_owner(ctx, self.view);
+        }
 
         // local variable
         if let Some(lv) = ctx.local_variables.iter().find(|v| v.name.as_ref() == expr) {
@@ -256,6 +264,8 @@ impl<'a> SymbolResolver<'a> {
 
         let mut current: Arc<str> = if first == "this" {
             ctx.enclosing_internal_name.clone()?
+        } else if is_super_receiver_expr(first) {
+            resolve_direct_super_owner(ctx, self.view)?
         } else if let Some(lv) = ctx
             .local_variables
             .iter()
@@ -1101,5 +1111,154 @@ mod tests {
 
         let resolved = resolver.resolve_type_name(&ctx, "ChainCheck.Box.BoxV");
         assert_eq!(resolved.as_deref(), Some("org/cubewhy/ChainCheck$Box$BoxV"));
+    }
+
+    #[test]
+    fn test_resolve_bare_super_to_source_hint_superclass() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Object"),
+                    internal_name: Arc::from("java/lang/Object"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Base"),
+                    internal_name: Arc::from("org/cubewhy/Base"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "super".to_string(),
+            },
+            "super",
+            vec![],
+            Some(Arc::from("Child")),
+            Some(Arc::from("org/cubewhy/Child")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        let resolved = resolver.resolve(&ctx).expect("resolve bare super");
+        match resolved {
+            ResolvedSymbol::Class(owner) => {
+                assert_eq!(owner.as_ref(), "org/cubewhy/Base");
+            }
+            other => panic!("expected class resolution for super, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_member_access_from_super_receiver() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Object"),
+                    internal_name: Arc::from("java/lang/Object"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Base"),
+                    internal_name: Arc::from("org/cubewhy/Base"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("baseWork"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                receiver_expr: "super".to_string(),
+                member_prefix: "baseWork".to_string(),
+                arguments: None,
+            },
+            "baseWork",
+            vec![],
+            Some(Arc::from("Child")),
+            Some(Arc::from("org/cubewhy/Child")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        let resolved = resolver.resolve(&ctx).expect("resolve super member");
+        match resolved {
+            ResolvedSymbol::Method { owner, summary } => {
+                assert_eq!(owner.as_ref(), "org/cubewhy/Base");
+                assert_eq!(summary.name.as_ref(), "baseWork");
+            }
+            other => panic!("expected method resolution for super member, got {other:?}"),
+        }
     }
 }

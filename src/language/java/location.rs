@@ -134,7 +134,7 @@ fn determine_location_impl(
                 }
                 Some(handlers::handle_identifier(ctx, inp.node, trigger_char))
             })
-            .for_kinds(&["identifier", "type_identifier"]),
+            .for_kinds(&["identifier", "type_identifier", "this", "super"]),
         )
         .or(
             (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
@@ -218,7 +218,10 @@ fn determine_location_impl(
         return result;
     }
 
-    if matches!(node.kind(), "identifier" | "type_identifier") {
+    if matches!(
+        node.kind(),
+        "identifier" | "type_identifier" | "this" | "super"
+    ) {
         let text = utils::cursor_truncated_text(ctx, node);
         let clean = crate::language::java::utils::strip_sentinel(&text);
         return (
@@ -1207,6 +1210,61 @@ class A {
             loc
         );
         assert_eq!(query, "toString");
+    }
+
+    #[test]
+    fn test_method_reference_super_method_classification() {
+        let src = indoc::indoc! {r#"
+class Child extends Base {
+    void f() {
+        super::toString
+    }
+}
+"#};
+        let marker = "super::toString";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MethodReference {
+                    ref qualifier_expr,
+                    ref member_prefix,
+                    is_constructor: false
+                } if qualifier_expr == "super" && member_prefix == "toString"
+            ),
+            "Expected MethodReference for super::toString, got {:?}",
+            loc
+        );
+        assert_eq!(query, "toString");
+    }
+
+    #[test]
+    fn test_bare_super_is_expression() {
+        let src = indoc::indoc! {r#"
+class Child extends Base {
+    void f() {
+        super
+    }
+}
+"#};
+        let marker = "super";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::Expression { ref prefix } if prefix == "super"),
+            "Expected Expression for bare super, got {:?}",
+            loc
+        );
+        assert_eq!(query, "super");
     }
 
     #[test]

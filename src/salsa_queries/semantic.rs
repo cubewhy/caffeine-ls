@@ -141,6 +141,31 @@ pub fn extract_java_current_class_members_from_source(
     materialize_current_class_members(members)
 }
 
+pub fn extract_java_enclosing_super_name(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+) -> Option<Arc<str>> {
+    if file.language_id(db).as_ref() != "java" {
+        return None;
+    }
+
+    let tree = parse_file_tree(db, file)?;
+    let root = tree.root_node();
+    let content: Arc<str> = Arc::from(file.content(db).as_str());
+    let ctx = JavaContextExtractor::new_with_overview(Arc::clone(&content), cursor_offset, None);
+    let cursor_node = ctx.find_cursor_node(root);
+    let decl = cursor_node.and_then(scope::nearest_type_declaration)?;
+    let superclass = decl.child_by_field_name("superclass")?;
+    let raw = ctx.node_text(superclass).trim();
+    let raw = raw.strip_prefix("extends").unwrap_or(raw).trim();
+    if raw.is_empty() {
+        None
+    } else {
+        Some(Arc::from(raw))
+    }
+}
+
 fn parse_source_tree(content: &str, language_id: &str) -> Option<Tree> {
     crate::salsa_queries::parse::parse_tree_for_language(content, language_id)
 }

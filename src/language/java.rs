@@ -40,6 +40,7 @@ pub mod lombok;
 pub mod members;
 pub mod render;
 pub mod scope;
+pub mod super_support;
 pub mod symbols;
 pub mod synthetic;
 pub mod type_ctx;

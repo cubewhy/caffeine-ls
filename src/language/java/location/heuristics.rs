@@ -1184,6 +1184,7 @@ pub(super) fn detect_dot_after_expression_child(
                     | "field_access"
                     | "identifier"
                     | "this"
+                    | "super"
             )
     })?;
 
@@ -1389,10 +1390,41 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_trailing_dot_with_super() {
+        assert_eq!(
+            detect_trailing_dot_in_text("class A extends B { void f() { super."),
+            Some(("super".to_string(), String::new()))
+        );
+    }
+
+    #[test]
     fn test_detect_trailing_dot_with_call() {
         assert_eq!(
             detect_trailing_dot_in_text("class A { void f() { RealMain.getInstance()."),
             Some(("RealMain.getInstance()".to_string(), String::new()))
+        );
+    }
+
+    #[test]
+    fn test_super_dot_location_in_error_context() {
+        let src = indoc::indoc! {r#"
+class Child extends Base {
+    void f() {
+        super.
+    }
+}
+"#};
+        let offset = src.find("super.").unwrap() + "super.".len();
+        assert!(
+            matches!(
+                location_at_offset(src, offset),
+                CursorLocation::MemberAccess {
+                    receiver_expr,
+                    member_prefix,
+                    ..
+                } if receiver_expr == "super" && member_prefix.is_empty()
+            ),
+            "super. should stay on the member-access path in incomplete code"
         );
     }
 

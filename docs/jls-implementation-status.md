@@ -141,7 +141,7 @@ Legend:
 | Lambda expressions (§15.27) | Partial | SAM parameter types used; body type not fully inferred |
 | Method references (§15.13) | Partial | Kind recognized (`Type::method`, `expr::method`, `Type::new`); constraint solving shallow |
 | Class literals `Foo.class` (§15.8.2) | Done | Typed as `Class<Foo>` via intrinsic |
-| `this` / `super` (§15.8.3–4) | Done | Enclosing class type used |
+| `this` / `super` (§15.8.3–4) | Partial | `this`, bare `super`, `super.member`, and `super::method` resolve; qualified forms like `Outer.super` / `InterfaceName.super` are not modeled yet |
 | Generic method invocation | Partial | Type arguments parsed; explicit type arg not forced on completion |
 
 ## Chapter 18 — Type Inference (Generics)

@@ -139,7 +139,17 @@ fn enrich_java_semantic_context(
             None,
         )
     };
-    let type_ctx = Arc::new(type_ctx.with_current_class_methods(method_map));
+    let current_class_super_name =
+        crate::salsa_queries::semantic::extract_java_enclosing_super_name(
+            db,
+            file,
+            data.cursor_offset,
+        );
+    let type_ctx = Arc::new(
+        type_ctx
+            .with_current_class_methods(method_map)
+            .with_current_class_super_name(current_class_super_name),
+    );
 
     let local_variables = workspace
         .map(|ws| fetch_locals_from_workspace(db, file, ws, &data))

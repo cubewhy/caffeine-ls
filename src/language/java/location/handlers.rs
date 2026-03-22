@@ -558,7 +558,10 @@ fn find_prefix_in_expr_subtree(ctx: &JavaContextExtractor, node: Node) -> String
     if node.start_byte() > ctx.offset || node.end_byte() < ctx.offset.saturating_sub(1) {
         return String::new();
     }
-    if matches!(node.kind(), "identifier" | "type_identifier") {
+    if matches!(
+        node.kind(),
+        "identifier" | "type_identifier" | "this" | "super"
+    ) {
         return strip_sentinel(&cursor_truncated_text(ctx, node));
     }
     let mut walker = node.walk();

@@ -6,6 +6,7 @@ use crate::completion::scorer::AccessFilter;
 use crate::completion::{CandidateKind, CompletionCandidate, fuzzy};
 use crate::language::java::expression_typing;
 use crate::language::java::render;
+use crate::language::java::super_support::{is_super_receiver_expr, resolve_direct_super_type};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{
@@ -814,6 +815,12 @@ fn resolve_receiver_type(
         return r.map(TypeName::from);
     }
 
+    if is_super_receiver_expr(expr) {
+        let r = resolve_direct_super_type(ctx, index);
+        tracing::debug!(?r, "super -> direct superclass");
+        return r;
+    }
+
     if expr.trim().is_empty() {
         let r = ctx.enclosing_internal_name.clone();
         tracing::debug!(?r, "empty receiver -> implicit enclosing");
@@ -1238,6 +1245,29 @@ mod tests {
         )
     }
 
+    fn ctx_super(
+        enclosing_simple: &str,
+        enclosing_internal: &str,
+        enclosing_pkg: &str,
+        prefix: &str,
+    ) -> SemanticContext {
+        SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: prefix.to_string(),
+                receiver_expr: "super".to_string(),
+                arguments: None,
+            },
+            prefix,
+            vec![],
+            Some(Arc::from(enclosing_simple)),
+            Some(Arc::from(enclosing_internal)),
+            Some(Arc::from(enclosing_pkg)),
+            vec![],
+        )
+    }
+
     #[test]
     fn test_instance_method_found() {
         let idx = make_index(
@@ -1576,6 +1606,66 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_super_completion_uses_direct_super_from_source_hint() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/Base"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    make_method("baseWork", "()V", ACC_PUBLIC, false),
+                    make_method("baseSecret", "()V", ACC_PRIVATE, false),
+                ],
+                fields: vec![make_field("baseValue", "I", ACC_PUBLIC, false)],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(root_scope());
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+        let ctx =
+            ctx_super("Child", "org/cubewhy/Child", "org/cubewhy", "base").with_extension(type_ctx);
+
+        let labels: Vec<String> = MemberProvider
+            .provide_test(root_scope(), &ctx, &view, None)
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.label.to_string())
+            .collect();
+
+        assert!(labels.iter().any(|label| label == "baseWork"));
+        assert!(labels.iter().any(|label| label == "baseValue"));
+        assert!(
+            !labels.iter().any(|label| label == "baseSecret"),
+            "private superclass members must stay hidden for super access"
+        );
     }
 
     #[test]

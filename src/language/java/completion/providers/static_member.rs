@@ -261,7 +261,7 @@ fn is_self_class_by_simple_name(class_name_raw: &str, ctx: &SemanticContext) -> 
 }
 
 fn is_likely_static_receiver(expr: &str, ctx: &SemanticContext) -> bool {
-    if expr == "this" {
+    if matches!(expr, "this" | "super") {
         return false;
     }
     if expr.contains('(') || expr.contains('.') {

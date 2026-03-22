@@ -8,6 +8,9 @@ use crate::language::java::editor_semantics::{
 };
 use crate::language::java::expression_typing;
 use crate::language::java::intrinsics::access::classify_intrinsic_access;
+use crate::language::java::super_support::{
+    is_super_receiver_expr, resolve_direct_super_type, resolve_direct_super_type_with_type_ctx,
+};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{
     ExpectedType, ExpectedTypeConfidence, ExpectedTypeSource, FunctionalCompat,
@@ -259,7 +262,7 @@ fn resolve_type_qualifier_internal(
     receiver_expr: &str,
 ) -> Option<Arc<str>> {
     let expr = receiver_expr.trim();
-    if expr.is_empty() || expr == "this" {
+    if expr.is_empty() || expr == "this" || is_super_receiver_expr(expr) {
         return None;
     }
 
@@ -278,6 +281,7 @@ fn resolve_type_qualifier_internal(
 
     // Value symbols shadow type qualifiers.
     if parts[0] == "this"
+        || parts[0] == "super"
         || ctx
             .local_variables
             .iter()
@@ -526,6 +530,9 @@ fn resolve_hint_receiver_type(
             .as_ref()
             .map(|name| TypeName::new(name.as_ref()));
     }
+    if is_super_receiver_expr(expr) {
+        return resolve_direct_super_type(ctx, view);
+    }
     let resolved = expression_typing::resolve_expression_type(
         expr,
         &ctx.local_variables,
@@ -559,6 +566,9 @@ fn resolve_member_receiver_with_flow(
     receiver_expr: &str,
 ) -> Option<TypeName> {
     let receiver_expr = receiver_expr.trim();
+    if is_super_receiver_expr(receiver_expr) {
+        return resolve_direct_super_type_with_type_ctx(enclosing_internal, Some(type_ctx), view);
+    }
     if is_simple_identifier(receiver_expr)
         && let Some(narrowed) = flow_type_overrides.get(receiver_expr)
     {
@@ -2777,6 +2787,102 @@ mod tests {
             ctx.location
         );
         assert_eq!(ctx.query, "toString");
+    }
+
+    #[test]
+    fn test_enrich_context_keeps_super_method_reference_on_member_access_path() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy/a")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/a/Base"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("toString"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("Ljava/lang/String;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(scope);
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy/a")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MethodReference {
+                qualifier_expr: "super".to_string(),
+                member_prefix: "toString".to_string(),
+                is_constructor: false,
+            },
+            "toString",
+            vec![],
+            Some(Arc::from("Child")),
+            Some(Arc::from("org/cubewhy/a/Child")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        assert!(
+            matches!(
+                ctx.location,
+                CursorLocation::MemberAccess {
+                    receiver_expr: ref r,
+                    member_prefix: ref p,
+                    ..
+                } if r == "super" && p == "toString"
+            ),
+            "Expected super::method to stay on MemberAccess, got {:?}",
+            ctx.location
+        );
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            ..
+        } = &ctx.location
+        {
+            assert_eq!(
+                receiver_semantic_type
+                    .as_ref()
+                    .expect("semantic super receiver should resolve")
+                    .erased_internal(),
+                "org/cubewhy/a/Base"
+            );
+        } else {
+            panic!("expected MemberAccess");
+        }
     }
 
     #[test]
