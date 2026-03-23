@@ -63,95 +63,28 @@ impl CompletionProvider for MemberProvider {
             "MemberProvider.provide"
         );
 
-        if receiver_expr == "this" {
-            let trace_timing = tracing::enabled!(tracing::Level::DEBUG);
-            let t_total = trace_timing.then(Instant::now);
-            // static methods doesn't have `this` context
-            if ctx.is_in_static_context() {
-                return Ok(ProviderCompletionResult::default());
-            }
-            let has_paren_after_cursor = ctx.is_followed_by_opener();
+        let is_this_receiver = receiver_expr == "this";
+        let is_super_receiver = is_super_receiver_expr(receiver_expr);
 
-            // source members (including private members, directly parsed from the AST)
-            let mut results = if !ctx.current_class_members.is_empty() {
-                self.provide_from_source_members(ctx, member_prefix)
-            } else {
-                vec![]
-            };
-            let resolver = ContextualResolver::new(index, ctx);
-
-            if let Some(enclosing) = ctx.enclosing_internal_name.as_deref() {
-                let source_names: std::collections::HashSet<Arc<str>> =
-                    ctx.current_class_members.keys().map(Arc::clone).collect();
-                let prefix_lower = if member_prefix.is_empty() {
-                    None
-                } else {
-                    Some(member_prefix.to_lowercase())
-                };
-
-                // index MRO: skip(0) means starting from the current class, using the same_class filter
-                //
-                // When source members have already covered the current class, the index entries of the current class will be skipped due to
-                // source_names deduplication, and will not be repeated.
-                let mro = index.mro(enclosing);
-
-                for (i, class_meta) in mro.iter().enumerate() {
-                    let filter = if i == 0 {
-                        AccessFilter::same_class()
-                    } else {
-                        AccessFilter::member_completion()
-                    };
-
-                    for method in &class_meta.methods {
-                        self.push_this_branch_method_candidate(
-                            &mut results,
-                            ctx,
-                            class_meta,
-                            method,
-                            &resolver,
-                            &filter,
-                            prefix_lower.as_deref(),
-                            &source_names,
-                            i == 0,
-                            has_paren_after_cursor,
-                        );
-                    }
-
-                    for field in &class_meta.fields {
-                        self.push_this_branch_field_candidate(
-                            &mut results,
-                            ctx,
-                            class_meta,
-                            field,
-                            &resolver,
-                            &filter,
-                            prefix_lower.as_deref(),
-                            &source_names,
-                            i == 0,
-                        );
-                    }
-                }
-            }
-            if let Some(t_total) = t_total {
-                tracing::debug!(
-                    elapsed_ms = t_total.elapsed().as_secs_f64() * 1000.0,
-                    candidates = results.len(),
-                    "MemberProvider.this_branch_timing"
-                );
-            }
-            return Ok(results.into());
+        if (is_this_receiver || is_super_receiver) && ctx.is_in_static_context() {
+            return Ok(ProviderCompletionResult::default());
         }
 
         let trace_timing = tracing::enabled!(tracing::Level::DEBUG);
         let t_total = trace_timing.then(Instant::now);
         let t_resolve = trace_timing.then(Instant::now);
+
         let resolved_semantic = receiver_semantic_type
             .cloned()
             .or_else(|| receiver_owner_internal.map(TypeName::new))
             .or_else(|| {
-                ctx.typed_chain_receiver
-                    .as_ref()
-                    .map(|t| t.receiver_ty.clone())
+                if is_this_receiver || is_super_receiver {
+                    None
+                } else {
+                    ctx.typed_chain_receiver
+                        .as_ref()
+                        .map(|t| t.receiver_ty.clone())
+                }
             })
             .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope));
 
@@ -165,15 +98,20 @@ impl CompletionProvider for MemberProvider {
                 return Ok(ProviderCompletionResult::default());
             }
         };
+
         let resolve_elapsed_ms = t_resolve
             .map(|t| t.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or_default();
 
-        let resolved_effective = ctx
-            .typed_chain_receiver
-            .as_ref()
-            .map(|t| t.receiver_ty.clone())
-            .unwrap_or_else(|| resolved_original.clone());
+        let resolved_effective = if is_this_receiver || is_super_receiver {
+            resolved_original.clone()
+        } else {
+            ctx.typed_chain_receiver
+                .as_ref()
+                .map(|t| t.receiver_ty.clone())
+                .unwrap_or_else(|| resolved_original.clone())
+        };
+
         let resolved_effective =
             normalize_receiver_owner_for_members(resolved_effective, ctx, index, scope);
 
@@ -200,8 +138,8 @@ impl CompletionProvider for MemberProvider {
             "looking up class in index"
         );
 
-        // Check if it's a similar access (allow private/protected access)
-        let is_same_class = ctx.enclosing_internal_name.as_deref() == Some(base_class_internal);
+        let is_same_class =
+            is_this_receiver && ctx.enclosing_internal_name.as_deref() == Some(base_class_internal);
 
         let filter = if is_same_class {
             AccessFilter::same_class()
@@ -214,24 +152,44 @@ impl CompletionProvider for MemberProvider {
         } else {
             Some(member_prefix.to_lowercase())
         };
+
         let has_paren_after_cursor = ctx.is_followed_by_opener();
+        let resolver = ContextualResolver::new(index, ctx);
+
         let mut results = Vec::new();
-        let flow_receiver_cast_plan =
-            build_flow_receiver_cast_plan(ctx, index, receiver_expr, &resolved_effective);
+        let mut seen_methods: std::collections::HashSet<(Arc<str>, Arc<str>)> =
+            std::collections::HashSet::new();
+        let mut seen_fields: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
+
+        if is_this_receiver && !ctx.current_class_members.is_empty() {
+            for candidate in self.provide_from_source_members(ctx, member_prefix) {
+                match &candidate.kind {
+                    CandidateKind::Method { descriptor, .. }
+                    | CandidateKind::StaticMethod { descriptor, .. } => {
+                        seen_methods.insert((Arc::clone(&candidate.label), Arc::clone(descriptor)));
+                    }
+                    CandidateKind::Field { .. } | CandidateKind::StaticField { .. } => {
+                        seen_fields.insert(Arc::clone(&candidate.label));
+                    }
+                    _ => {}
+                }
+                results.push(candidate);
+            }
+        }
+
+        let flow_receiver_cast_plan = if is_this_receiver || is_super_receiver {
+            None
+        } else {
+            build_flow_receiver_cast_plan(ctx, index, receiver_expr, &resolved_effective)
+        };
 
         let t_mro = trace_timing.then(Instant::now);
         let mro = index.mro(base_class_internal);
         let mro_elapsed_ms = t_mro
             .map(|t| t.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or_default();
-        let mut seen_methods = std::collections::HashSet::new();
-        let mut seen_fields = std::collections::HashSet::new();
 
-        let resolver = ContextualResolver::new(index, ctx);
-        let trace_arraylist =
-            class_internal.contains("ArrayList") || base_class_internal.contains("ArrayList");
         let t_collect = trace_timing.then(Instant::now);
-
         for class_meta in &mro {
             for method in &class_meta.methods {
                 self.push_member_method_candidate(
@@ -247,13 +205,8 @@ impl CompletionProvider for MemberProvider {
                     &class_internal_for_substitution,
                     has_paren_after_cursor,
                     flow_receiver_cast_plan.as_ref(),
-                    trace_arraylist,
-                    receiver_expr,
-                    member_prefix,
-                    base_class_internal,
                 );
             }
-
             for field in &class_meta.fields {
                 self.push_member_field_candidate(
                     &mut results,
@@ -270,6 +223,7 @@ impl CompletionProvider for MemberProvider {
                 );
             }
         }
+
         if let (Some(t_collect), Some(t_total)) = (t_collect, t_total) {
             let collect_elapsed_ms = t_collect.elapsed().as_secs_f64() * 1000.0;
             tracing::debug!(
@@ -282,6 +236,7 @@ impl CompletionProvider for MemberProvider {
                 "MemberProvider.phase_timing"
             );
         }
+
         Ok(results.into())
     }
 }
@@ -418,6 +373,7 @@ impl MemberProvider {
             );
         }
 
+        // resolve inherit member from Object for arrays
         for class_meta in index.mro(JAVA_LANG_OBJECT_INTERNAL) {
             for method in &class_meta.methods {
                 self.push_member_method_candidate(
@@ -433,10 +389,6 @@ impl MemberProvider {
                     class_internal_for_substitution,
                     has_paren_after_cursor,
                     None,
-                    false,
-                    "",
-                    member_prefix,
-                    JAVA_LANG_OBJECT_INTERNAL,
                 );
             }
         }
@@ -448,117 +400,6 @@ impl MemberProvider {
         );
 
         results
-    }
-
-    fn push_this_branch_method_candidate(
-        &self,
-        results: &mut Vec<CompletionCandidate>,
-        ctx: &SemanticContext,
-        class_meta: &crate::index::ClassMetadata,
-        method: &crate::index::MethodSummary,
-        resolver: &ContextualResolver<'_>,
-        filter: &AccessFilter,
-        prefix_lower: Option<&str>,
-        source_names: &std::collections::HashSet<Arc<str>>,
-        same_class: bool,
-        has_paren_after_cursor: bool,
-    ) {
-        if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
-            return;
-        }
-        if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
-            return;
-        }
-        if same_class && source_names.contains(&method.name) {
-            return;
-        }
-        if !name_matches_member_prefix(method.name.as_ref(), prefix_lower) {
-            return;
-        }
-        if method.access_flags & ACC_STATIC != 0 {
-            return;
-        }
-
-        let detail = if same_class {
-            render::method_detail(
-                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
-                class_meta,
-                method,
-                resolver,
-            )
-        } else {
-            inherited_member_detail(class_meta)
-        };
-
-        results.push(
-            CompletionCandidate::new(
-                Arc::clone(&method.name),
-                method.name.to_string(),
-                CandidateKind::Method {
-                    descriptor: method.desc(),
-                    defining_class: Arc::clone(&class_meta.internal_name),
-                },
-                self.name(),
-            )
-            .with_callable_insert(
-                method.name.as_ref(),
-                &method.params.param_names(),
-                has_paren_after_cursor,
-            )
-            .with_detail(detail)
-            .with_score(if same_class { 60.0 } else { 55.0 }),
-        );
-    }
-
-    fn push_this_branch_field_candidate(
-        &self,
-        results: &mut Vec<CompletionCandidate>,
-        ctx: &SemanticContext,
-        class_meta: &crate::index::ClassMetadata,
-        field: &crate::index::FieldSummary,
-        resolver: &ContextualResolver<'_>,
-        filter: &AccessFilter,
-        prefix_lower: Option<&str>,
-        source_names: &std::collections::HashSet<Arc<str>>,
-        same_class: bool,
-    ) {
-        if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
-            return;
-        }
-        if same_class && source_names.contains(&field.name) {
-            return;
-        }
-        if !name_matches_member_prefix(field.name.as_ref(), prefix_lower) {
-            return;
-        }
-        if field.access_flags & ACC_STATIC != 0 {
-            return;
-        }
-
-        let detail = if same_class {
-            render::field_detail(
-                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
-                class_meta,
-                field,
-                resolver,
-            )
-        } else {
-            inherited_member_detail(class_meta)
-        };
-
-        results.push(
-            CompletionCandidate::new(
-                Arc::clone(&field.name),
-                field.name.to_string(),
-                CandidateKind::Field {
-                    descriptor: Arc::clone(&field.descriptor),
-                    defining_class: Arc::clone(&class_meta.internal_name),
-                },
-                self.name(),
-            )
-            .with_detail(detail)
-            .with_score(if same_class { 60.0 } else { 55.0 }),
-        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -576,10 +417,6 @@ impl MemberProvider {
         class_internal_for_substitution: &str,
         has_paren_after_cursor: bool,
         flow_receiver_cast_plan: Option<&FlowReceiverCastPlan>,
-        trace_arraylist: bool,
-        receiver_expr: &str,
-        member_prefix: &str,
-        base_class_internal: &str,
     ) {
         if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
             return;
@@ -593,28 +430,6 @@ impl MemberProvider {
         }
         if !name_matches_member_prefix(method.name.as_ref(), prefix_lower) {
             return;
-        }
-
-        let trace_add = trace_arraylist
-            && method.name.as_ref() == "add"
-            && tracing::enabled!(tracing::Level::DEBUG);
-        if trace_add {
-            tracing::debug!(
-                receiver_expr,
-                member_prefix,
-                class_internal,
-                base_class_internal,
-                class_meta_internal = %class_meta.internal_name,
-                class_meta_origin = ?class_meta.origin,
-                class_meta_generic_signature = ?class_meta.generic_signature,
-                method_name = %method.name,
-                method_desc = %method.desc(),
-                method_generic_signature = ?method.generic_signature,
-                method_return_type = ?method.return_type,
-                param_descriptors = ?method.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
-                param_names = ?method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                "member_provider: add overload candidate before detail rendering"
-            );
         }
 
         if method.access_flags & ACC_STATIC != 0 {
@@ -636,21 +451,12 @@ impl MemberProvider {
             has_paren_after_cursor,
         )
         .with_detail({
-            let detail = render::method_detail(
+            render::method_detail(
                 class_internal_for_substitution,
                 class_meta,
                 method,
                 resolver,
-            );
-            if trace_add {
-                tracing::debug!(
-                    method_name = %method.name,
-                    method_desc = %method.desc(),
-                    detail,
-                    "member_provider: add overload candidate after detail rendering"
-                );
-            }
-            detail
+            )
         });
 
         if let Some(plan) = flow_receiver_cast_plan
@@ -792,10 +598,6 @@ impl MemberProvider {
     }
 }
 
-fn inherited_member_detail(class_meta: &crate::index::ClassMetadata) -> String {
-    format!("inherited from {}", class_meta.name)
-}
-
 /// Parses the receiver expression into an inner class name
 fn resolve_receiver_type(
     expr: &str,
@@ -808,18 +610,6 @@ fn resolve_receiver_type(
         locals_count = ctx.local_variables.len(),
         "resolve_receiver_type"
     );
-
-    if expr == "this" {
-        let r = ctx.enclosing_internal_name.clone();
-        tracing::debug!(?r, "this -> enclosing");
-        return r.map(TypeName::from);
-    }
-
-    if is_super_receiver_expr(expr) {
-        let r = resolve_direct_super_type(ctx, index);
-        tracing::debug!(?r, "super -> direct superclass");
-        return r;
-    }
 
     if expr.trim().is_empty() {
         let r = ctx.enclosing_internal_name.clone();
@@ -2479,5 +2269,244 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn test_no_super_completion_in_static_method() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy")),
+            name: Arc::from("Base"),
+            internal_name: Arc::from("org/cubewhy/Base"),
+            super_name: Some(Arc::from("java/lang/Object")),
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let enclosing_method = Arc::new(make_method(
+            "main",
+            "([Ljava/lang/String;)V",
+            ACC_STATIC,
+            false,
+        ));
+
+        let view = idx.view(root_scope());
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+
+        let ctx = ctx_super("Child", "org/cubewhy/Child", "org/cubewhy", "")
+            .with_extension(type_ctx)
+            .with_enclosing_member(Some(CurrentClassMember::Method(enclosing_method)));
+
+        let results = MemberProvider
+            .provide_test(root_scope(), &ctx, &view, None)
+            .candidates;
+
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_super_completion_prefers_super_mro_without_current_class_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/Base"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Child"),
+                internal_name: Arc::from("org/cubewhy/Child"),
+                super_name: Some(Arc::from("org/cubewhy/Base")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(root_scope());
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+
+        let ctx =
+            ctx_super("Child", "org/cubewhy/Child", "org/cubewhy", "wo").with_extension(type_ctx);
+
+        let results = MemberProvider
+            .provide_test(root_scope(), &ctx, &view, None)
+            .candidates;
+
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "work")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_this_completion_includes_inherited_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/Base"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("baseWork", "()V", ACC_PUBLIC, false)],
+                fields: vec![make_field("baseValue", "I", ACC_PUBLIC, false)],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Child"),
+                internal_name: Arc::from("org/cubewhy/Child"),
+                super_name: Some(Arc::from("org/cubewhy/Base")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("childWork", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = ctx_this("Child", "org/cubewhy/Child", "org/cubewhy", "base");
+        let labels: Vec<String> = MemberProvider
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.label.to_string())
+            .collect();
+
+        assert!(labels.iter().any(|label| label == "baseWork"));
+        assert!(labels.iter().any(|label| label == "baseValue"));
+    }
+
+    #[test]
+    fn test_super_completion_includes_inherited_super_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("GrandBase"),
+                internal_name: Arc::from("org/cubewhy/GrandBase"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("grandWork", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/Base"),
+                super_name: Some(Arc::from("org/cubewhy/GrandBase")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("baseWork", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(root_scope());
+        let type_ctx = Arc::new(
+            SourceTypeCtx::from_view(Some(Arc::from("org/cubewhy")), vec![], view.clone())
+                .with_current_class_super_name(Some(Arc::from("Base"))),
+        );
+        let ctx =
+            ctx_super("Child", "org/cubewhy/Child", "org/cubewhy", "").with_extension(type_ctx);
+
+        let labels: Vec<String> = MemberProvider
+            .provide_test(root_scope(), &ctx, &view, None)
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.label.to_string())
+            .collect();
+
+        assert!(labels.iter().any(|label| label == "baseWork"));
+        assert!(labels.iter().any(|label| label == "grandWork"));
     }
 }
