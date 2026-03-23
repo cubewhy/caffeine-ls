@@ -6,7 +6,7 @@ use crate::completion::scorer::AccessFilter;
 use crate::completion::{CandidateKind, CompletionCandidate, fuzzy};
 use crate::language::java::expression_typing;
 use crate::language::java::render;
-use crate::language::java::super_support::{is_super_receiver_expr, resolve_direct_super_type};
+use crate::language::java::super_support::is_super_receiver_expr;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{

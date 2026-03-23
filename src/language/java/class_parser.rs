@@ -193,7 +193,7 @@ pub fn extract_java_classes_from_root(
         &package,
         None,
         None,
-        &origin,
+        origin,
         &type_ctx,
         &mut results,
     );
@@ -203,7 +203,7 @@ pub fn extract_java_classes_from_root(
     if results.is_empty()
         && let Some(error_node) = find_top_error_node(root)
         && let Some(meta) =
-            parse_java_error_class(&ctx, error_node, &package, None, None, &origin, &type_ctx)
+            parse_java_error_class(&ctx, error_node, &package, None, None, origin, &type_ctx)
     {
         results.push(meta);
     }
@@ -632,7 +632,7 @@ fn parse_java_class(
 
     let body = node.child_by_field_name("body");
     if let Some(b) = body {
-        for member in extract_class_members_from_body(&ctx, b, type_ctx) {
+        for member in extract_class_members_from_body(ctx, b, type_ctx) {
             match member {
                 CurrentClassMember::Method(m) => methods.push((*m).clone()),
                 CurrentClassMember::Field(f) => fields.push((*f).clone()),
@@ -640,7 +640,7 @@ fn parse_java_class(
         }
     }
     let synthetic = synthetic::synthesize_for_type(
-        &ctx,
+        ctx,
         node,
         Some(internal_name.as_ref()),
         type_ctx,
@@ -649,9 +649,9 @@ fn parse_java_class(
     );
     methods.extend(synthetic.methods);
     fields.extend(synthetic.fields);
-    let access_flags = extract_java_access_flags(&ctx, node);
+    let access_flags = extract_java_access_flags(ctx, node);
 
-    let annos = extract_class_annotations(&ctx, node, type_ctx);
+    let annos = extract_class_annotations(ctx, node, type_ctx);
 
     let class_generic_signature =
         extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
