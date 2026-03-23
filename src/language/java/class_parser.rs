@@ -786,8 +786,12 @@ fn parse_java_error_class(
         _ => 0,
     };
 
-    let generic_signature =
-        extract_generic_signature(error_node, ctx.bytes(), "Ljava/lang/Object;");
+    let generic_signature = extract_generic_signature(
+        error_node,
+        ctx.bytes(),
+        "Ljava/lang/Object;",
+        Some(type_ctx),
+    );
     if let Some(sig) = generic_signature.as_deref() {
         let class_type_params = parse_class_type_parameters(sig);
         if !class_type_params.is_empty() {
@@ -978,7 +982,7 @@ fn parse_java_class(
     let annos = extract_class_annotations(ctx, node, type_ctx);
 
     let class_generic_signature =
-        extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;");
+        extract_generic_signature(node, ctx.bytes(), "Ljava/lang/Object;", Some(type_ctx));
     if let Some(sig) = class_generic_signature.as_deref() {
         let class_type_params = parse_class_type_parameters(sig);
         if !class_type_params.is_empty() {
@@ -1765,6 +1769,25 @@ public class Main {
         // 验证方法上的泛型 T 被正确抓取，并且携带了后续的 descriptor
         let sig = method.generic_signature.as_deref().unwrap();
         assert!(sig.starts_with("<T:Ljava/lang/Object;>"));
+    }
+
+    #[test]
+    fn test_extract_java_class_generic_signature_preserves_intersection_bounds() {
+        let src = indoc::indoc! {r#"
+            import java.io.Closeable;
+            public class Demo<T extends Closeable & java.lang.Runnable> { }
+        "#};
+        let classes = super::parse_java_source_with_test_jdk(
+            src,
+            ClassOrigin::Unknown,
+            &["java/io/Closeable", "java/lang/Runnable"],
+        );
+        let meta = classes.first().unwrap();
+
+        assert_eq!(
+            meta.generic_signature.as_deref(),
+            Some("<T:Ljava/io/Closeable;:Ljava/lang/Runnable;>Ljava/lang/Object;")
+        );
     }
 
     #[test]

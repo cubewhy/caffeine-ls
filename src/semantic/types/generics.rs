@@ -1,5 +1,5 @@
 use crate::semantic::types::type_name::TypeName;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JvmType {
@@ -182,30 +182,32 @@ pub fn split_internal_name(internal: &str) -> (&str, Vec<JvmType>) {
     }
 }
 
-/// Extract the declared generic parameter names from the class's JVM signature.
-/// Example: "<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;" -> ["K", "V"]
-pub fn parse_class_type_parameters(signature: &str) -> Vec<String> {
-    let mut params = Vec::new();
+fn find_type_parameter_prefix_end(signature: &str) -> Option<usize> {
     if !signature.starts_with('<') {
-        return params;
+        return None;
     }
 
     let mut depth = 0;
-    let mut end_angle = 0;
     for (i, c) in signature.char_indices() {
         if c == '<' {
             depth += 1;
         } else if c == '>' {
             depth -= 1;
             if depth == 0 {
-                end_angle = i;
-                break;
+                return Some(i);
             }
         }
     }
-    if end_angle == 0 {
+    None
+}
+
+/// Extract the declared generic parameter names from the class's JVM signature.
+/// Example: "<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;" -> ["K", "V"]
+pub fn parse_class_type_parameters(signature: &str) -> Vec<String> {
+    let mut params = Vec::new();
+    let Some(end_angle) = find_type_parameter_prefix_end(signature) else {
         return params;
-    }
+    };
 
     let mut rest = &signature[1..end_angle];
     while !rest.is_empty() {
@@ -254,6 +256,138 @@ pub fn parse_class_type_parameters(signature: &str) -> Vec<String> {
         }
     }
     params
+}
+
+/// Extract declared type parameter bounds from a JVM signature prefix.
+/// Example: `<T:Ljava/lang/Object;:Ljava/io/Closeable;>...` -> `T => [Object, Closeable]`
+pub fn parse_type_parameter_bounds(signature: &str) -> HashMap<String, Vec<JvmType>> {
+    let Some(end_angle) = find_type_parameter_prefix_end(signature) else {
+        return HashMap::new();
+    };
+
+    let mut bounds = HashMap::new();
+    let mut rest = &signature[1..end_angle];
+    while !rest.is_empty() {
+        let Some(colon_pos) = rest.find(':') else {
+            break;
+        };
+        let param_name = rest[..colon_pos].trim();
+        if param_name.is_empty() {
+            break;
+        }
+
+        rest = &rest[colon_pos + 1..];
+        let mut param_bounds = Vec::new();
+
+        // Empty class bound (`::LIface;`) is valid; only parse when the slot is populated.
+        if !rest.starts_with(':')
+            && let Some((bound, next_rest)) = JvmType::parse(rest)
+        {
+            param_bounds.push(bound);
+            rest = next_rest;
+        }
+
+        while rest.starts_with(':') {
+            rest = &rest[1..];
+            if rest.starts_with(':') {
+                continue;
+            }
+            let Some((bound, next_rest)) = JvmType::parse(rest) else {
+                break;
+            };
+            param_bounds.push(bound);
+            rest = next_rest;
+        }
+
+        bounds.insert(param_name.to_string(), param_bounds);
+    }
+    bounds
+}
+
+fn is_likely_type_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() {
+        return false;
+    }
+    if name.len() == 1 {
+        return true;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn expand_type_name_with_bounds_impl(
+    ty: &TypeName,
+    method_bounds: &HashMap<String, Vec<JvmType>>,
+    class_bounds: &HashMap<String, Vec<JvmType>>,
+    visiting: &mut HashSet<String>,
+) -> Option<TypeName> {
+    if ty.is_intersection() {
+        let expanded_bounds = ty
+            .args
+            .iter()
+            .map(|bound| {
+                expand_type_name_with_bounds_impl(bound, method_bounds, class_bounds, visiting)
+                    .unwrap_or_else(|| bound.clone())
+            })
+            .collect::<Vec<_>>();
+        return Some(TypeName::intersection(expanded_bounds).with_array_dims(ty.array_dims));
+    }
+
+    let expanded_args = ty
+        .args
+        .iter()
+        .map(|arg| {
+            expand_type_name_with_bounds_impl(arg, method_bounds, class_bounds, visiting)
+                .unwrap_or_else(|| arg.clone())
+        })
+        .collect::<Vec<_>>();
+
+    let base = ty.base_internal.as_ref();
+    if ty.args.is_empty() && !ty.contains_slash() && is_likely_type_var_name(base) {
+        let bounds = method_bounds.get(base).or_else(|| class_bounds.get(base))?;
+        if !visiting.insert(base.to_string()) {
+            return None;
+        }
+        let expanded_bounds = bounds
+            .iter()
+            .map(|bound| {
+                let bound_ty = bound.to_type_name();
+                expand_type_name_with_bounds_impl(&bound_ty, method_bounds, class_bounds, visiting)
+                    .unwrap_or(bound_ty)
+            })
+            .collect::<Vec<_>>();
+        visiting.remove(base);
+        if expanded_bounds.is_empty() {
+            return None;
+        }
+        return Some(TypeName::intersection(expanded_bounds).with_array_dims(ty.array_dims));
+    }
+
+    Some(TypeName {
+        base_internal: ty.base_internal.clone(),
+        args: expanded_args,
+        array_dims: ty.array_dims,
+    })
+}
+
+pub fn expand_type_name_with_type_parameter_bounds(
+    ty: &TypeName,
+    method_signature: Option<&str>,
+    class_signature: Option<&str>,
+) -> Option<TypeName> {
+    let method_bounds = method_signature
+        .map(parse_type_parameter_bounds)
+        .unwrap_or_default();
+    let class_bounds = class_signature
+        .map(parse_type_parameter_bounds)
+        .unwrap_or_default();
+    if method_bounds.is_empty() && class_bounds.is_empty() {
+        return None;
+    }
+    expand_type_name_with_bounds_impl(ty, &method_bounds, &class_bounds, &mut HashSet::new())
 }
 
 /// Extract declared method type parameter names from a JVM method signature.

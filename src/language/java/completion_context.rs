@@ -12,6 +12,10 @@ use crate::language::java::super_support::{
     is_super_receiver_expr, resolve_direct_super_type, resolve_direct_super_type_with_type_ctx,
 };
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::language::java::utils::{
+    split_java_generic_args, split_java_generic_base, split_top_level_java_intersection_bounds,
+    strip_leading_java_type_modifiers,
+};
 use crate::semantic::context::{
     ExpectedType, ExpectedTypeConfidence, ExpectedTypeSource, FunctionalCompat,
     FunctionalCompatStatus, FunctionalExprShape, FunctionalMethodCallHint, MethodRefQualifierKind,
@@ -231,6 +235,14 @@ fn canonicalize_receiver_semantic(
         None => {
             tracing::debug!("enrich_context: final match -> None");
             None
+        }
+        Some(ty) if ty.is_intersection() => {
+            let bounds = ty
+                .args
+                .iter()
+                .map(|bound| canonicalize_receiver_semantic(Some(bound.clone()), type_ctx))
+                .collect::<Option<Vec<_>>>()?;
+            Some(TypeName::intersection(bounds).with_array_dims(ty.array_dims))
         }
         Some(ty) if ty.contains_slash() => Some(ty),
         Some(ty) if matches!(ty.base_internal.as_ref(), "+" | "-" | "?" | "*" | "capture") => {
@@ -616,7 +628,7 @@ pub(crate) fn resolve_source_like_type_with_scope(
     sym: &SymbolResolver<'_>,
     ty: &str,
 ) -> Option<TypeName> {
-    let ty = ty.trim();
+    let ty = strip_leading_java_type_modifiers(ty.trim());
     if ty.is_empty() {
         return None;
     }
@@ -628,11 +640,25 @@ pub(crate) fn resolve_source_like_type_with_scope(
         base = stripped.trim();
     }
 
-    let (base_name, args_str) = split_source_generic_base(base)?;
+    let base = strip_leading_java_type_modifiers(base);
+    let bounds = split_top_level_java_intersection_bounds(base);
+    if bounds.len() > 1 {
+        let bound_types = bounds
+            .into_iter()
+            .map(|bound| resolve_source_like_type_with_scope(ctx, type_ctx, sym, bound))
+            .collect::<Option<Vec<_>>>()?;
+        let mut out = TypeName::intersection(bound_types);
+        if dims > 0 {
+            out = out.with_array_dims(dims);
+        }
+        return Some(out);
+    }
+
+    let (base_name, args_str) = split_java_generic_base(base)?;
     let base_internal = resolve_source_base_with_scope(ctx, type_ctx, sym, base_name)?.to_string();
 
     let mut out = if let Some(args) = args_str {
-        let arg_types = split_source_generic_args(args)
+        let arg_types = split_java_generic_args(args)
             .into_iter()
             .map(|arg| resolve_source_type_arg_with_scope(ctx, type_ctx, sym, arg))
             .collect::<Option<Vec<TypeName>>>()?;
@@ -675,7 +701,11 @@ fn resolve_source_type_arg_with_scope(
         return Some(TypeName::with_args("-", vec![inner]));
     }
 
-    resolve_source_like_type_with_scope(ctx, type_ctx, sym, arg)
+    let resolved = resolve_source_like_type_with_scope(ctx, type_ctx, sym, arg)?;
+    if resolved.is_intersection() {
+        return None;
+    }
+    Some(resolved)
 }
 
 fn resolve_source_base_with_scope(
@@ -698,50 +728,6 @@ fn resolve_source_base_with_scope(
         return Some(Arc::from(strict));
     }
     sym.resolve_type_name(ctx, base_name)
-}
-
-fn split_source_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
-    if let Some(start) = ty.find('<') {
-        let mut depth = 0i32;
-        for (i, c) in ty.char_indices().skip(start) {
-            match c {
-                '<' => depth += 1,
-                '>' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let base = ty[..start].trim();
-                        let args = ty[start + 1..i].trim();
-                        return Some((base, Some(args)));
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    } else {
-        Some((ty.trim(), None))
-    }
-}
-
-fn split_source_generic_args(s: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth -= 1,
-            ',' if depth == 0 => {
-                result.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < s.len() {
-        result.push(s[start..].trim());
-    }
-    result.into_iter().filter(|x| !x.is_empty()).collect()
 }
 
 fn evaluate_functional_compatibility(
@@ -1082,6 +1068,22 @@ fn descriptor_compat_status(
     actual_desc: &str,
     expected_ty: &TypeName,
 ) -> FunctionalCompatStatus {
+    if expected_ty.is_intersection() {
+        let mut saw_partial = false;
+        for bound in expected_ty.bounds_for_lookup() {
+            match descriptor_compat_status(resolver, actual_desc, bound) {
+                FunctionalCompatStatus::Exact => return FunctionalCompatStatus::Exact,
+                FunctionalCompatStatus::Partial => saw_partial = true,
+                FunctionalCompatStatus::Incompatible => {}
+            }
+        }
+        return if saw_partial {
+            FunctionalCompatStatus::Partial
+        } else {
+            FunctionalCompatStatus::Incompatible
+        };
+    }
+
     let Some(actual_ty) = descriptor_to_type_name(actual_desc) else {
         return FunctionalCompatStatus::Partial;
     };
@@ -1107,6 +1109,13 @@ fn method_return_type_from_descriptor(desc: &str) -> Option<TypeName> {
 }
 
 fn extract_sam_signature(view: &IndexView, interface_ty: &TypeName) -> Option<SamSignature> {
+    if interface_ty.is_intersection() {
+        return interface_ty
+            .bounds_for_lookup()
+            .into_iter()
+            .find_map(|bound| extract_sam_signature(view, bound));
+    }
+
     let owner = interface_ty.erased_internal();
     let class_meta = view.get_class(owner)?;
     let (methods, _) = view.collect_inherited_members(owner);

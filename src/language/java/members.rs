@@ -12,6 +12,7 @@ use crate::{
             type_ctx::{SourceTypeCtx, build_java_descriptor, extract_param_type, split_params},
             utils::{
                 extract_generic_signature, extract_type_parameters_prefix, parse_java_modifiers,
+                source_type_to_signature,
             },
         },
         ts_utils::{capture_text, run_query},
@@ -622,7 +623,7 @@ pub fn parse_method_node(
 
     let generic_signature =
         build_source_method_generic_signature(ctx, type_ctx, node, params_text, ret_type)
-            .or_else(|| extract_generic_signature(node, ctx.bytes(), &descriptor));
+            .or_else(|| extract_generic_signature(node, ctx.bytes(), &descriptor, Some(type_ctx)));
 
     let params = params_node
         .map(|n| parse_params(ctx, &descriptor, n, type_ctx))
@@ -693,7 +694,8 @@ pub fn parse_constructor_node(
     // Constructors always have void return type
     let descriptor = build_java_descriptor(params_text, "void", type_ctx);
 
-    let generic_signature = extract_generic_signature(node, ctx.bytes(), &descriptor);
+    let generic_signature =
+        extract_generic_signature(node, ctx.bytes(), &descriptor, Some(type_ctx));
 
     let params = params_node
         .map(|n| parse_params(ctx, &descriptor, n, type_ctx))
@@ -717,7 +719,7 @@ fn build_source_method_generic_signature(
     params_text: &str,
     ret_type: &str,
 ) -> Option<Arc<str>> {
-    let type_params_prefix = extract_type_parameters_prefix(node, ctx.bytes())?;
+    let type_params_prefix = extract_type_parameters_prefix(node, ctx.bytes(), Some(type_ctx))?;
     let inner = params_text
         .trim()
         .trim_start_matches('(')
@@ -735,127 +737,6 @@ fn build_source_method_generic_signature(
     Some(Arc::from(
         format!("{}({}){}", type_params_prefix, param_sigs, ret_sig).as_str(),
     ))
-}
-
-fn source_type_to_signature(type_ctx: &SourceTypeCtx, ty: &str) -> String {
-    fn split_generic_base_local(ty: &str) -> Option<(&str, Option<&str>)> {
-        if let Some(start) = ty.find('<') {
-            let mut depth = 0i32;
-            for (i, c) in ty.char_indices().skip(start) {
-                match c {
-                    '<' => depth += 1,
-                    '>' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            let base = ty[..start].trim();
-                            let args = ty[start + 1..i].trim();
-                            return Some((base, Some(args)));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            None
-        } else {
-            Some((ty.trim(), None))
-        }
-    }
-
-    fn split_generic_args_local(s: &str) -> Vec<&str> {
-        let mut result = Vec::new();
-        let mut depth = 0i32;
-        let mut start = 0usize;
-        for (i, c) in s.char_indices() {
-            match c {
-                '<' => depth += 1,
-                '>' => depth -= 1,
-                ',' if depth == 0 => {
-                    result.push(s[start..i].trim());
-                    start = i + 1;
-                }
-                _ => {}
-            }
-        }
-        if start < s.len() {
-            result.push(s[start..].trim());
-        }
-        result.into_iter().filter(|x| !x.is_empty()).collect()
-    }
-
-    fn strip_leading_modifiers(mut s: &str) -> &str {
-        loop {
-            s = s.trim_start();
-            if let Some(rest) = s.strip_prefix("final ") {
-                s = rest;
-                continue;
-            }
-            if s.starts_with('@')
-                && let Some(space) = s.find(' ')
-            {
-                s = &s[space + 1..];
-                continue;
-            }
-            break;
-        }
-        s.trim()
-    }
-
-    let mut s = strip_leading_modifiers(ty.trim());
-    if s == "?" {
-        return "*".to_string();
-    }
-    if let Some(bound) = s.strip_prefix("? extends ") {
-        return format!("+{}", source_type_to_signature(type_ctx, bound));
-    }
-    if let Some(bound) = s.strip_prefix("? super ") {
-        return format!("-{}", source_type_to_signature(type_ctx, bound));
-    }
-
-    let mut dims = 0usize;
-    if let Some(stripped) = s.strip_suffix("...") {
-        s = stripped.trim();
-        dims += 1;
-    }
-    while let Some(stripped) = s.strip_suffix("[]") {
-        s = stripped.trim();
-        dims += 1;
-    }
-
-    let (base, args) = split_generic_base_local(s).unwrap_or((s, None));
-    let mut out = match base {
-        "void" => "V".to_string(),
-        "boolean" => "Z".to_string(),
-        "byte" => "B".to_string(),
-        "char" => "C".to_string(),
-        "short" => "S".to_string(),
-        "int" => "I".to_string(),
-        "long" => "J".to_string(),
-        "float" => "F".to_string(),
-        "double" => "D".to_string(),
-        other => {
-            let resolved = type_ctx.resolve_simple(other);
-            let internal = resolved.replace('.', "/");
-            let is_type_var =
-                !internal.contains('/') && internal.chars().all(|c| c.is_ascii_uppercase());
-            if is_type_var {
-                format!("T{};", internal)
-            } else if let Some(arg_str) = args {
-                let arg_sigs = split_generic_args_local(arg_str)
-                    .into_iter()
-                    .map(|a| source_type_to_signature(type_ctx, a))
-                    .collect::<Vec<_>>()
-                    .join("");
-                format!("L{}<{}>;", internal, arg_sigs)
-            } else {
-                format!("L{};", internal)
-            }
-        }
-    };
-
-    for _ in 0..dims {
-        out = format!("[{}", out);
-    }
-    out
 }
 
 fn parse_field_node(

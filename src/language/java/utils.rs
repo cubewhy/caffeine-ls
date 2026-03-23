@@ -1,3 +1,4 @@
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::StatementLabelTargetKind;
 use ropey::Rope;
 use rust_asm::constants::{
@@ -39,16 +40,177 @@ fn node_text<'a>(node: Node, bytes: &'a [u8]) -> &'a str {
     node.utf8_text(bytes).unwrap_or("")
 }
 
+pub(crate) fn strip_leading_java_type_modifiers(mut s: &str) -> &str {
+    loop {
+        s = s.trim_start();
+        if let Some(rest) = s.strip_prefix("final ") {
+            s = rest;
+            continue;
+        }
+        if s.starts_with('@')
+            && let Some(space) = s.find(' ')
+        {
+            s = &s[space + 1..];
+            continue;
+        }
+        break;
+    }
+    s.trim()
+}
+
+pub(crate) fn split_java_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(start) = ty.find('<') {
+        let mut depth = 0i32;
+        for (i, c) in ty.char_indices().skip(start) {
+            match c {
+                '<' => depth += 1,
+                '>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let base = ty[..start].trim();
+                        let args = ty[start + 1..i].trim();
+                        return Some((base, Some(args)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    } else {
+        Some((ty.trim(), None))
+    }
+}
+
+pub(crate) fn split_java_generic_args(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            ',' if depth == 0 => {
+                result.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < s.len() {
+        result.push(s[start..].trim());
+    }
+    result.into_iter().filter(|x| !x.is_empty()).collect()
+}
+
+pub(crate) fn split_top_level_java_intersection_bounds(s: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '<' => depth += 1,
+            '>' => depth -= 1,
+            '&' if depth == 0 => {
+                let bound = s[start..i].trim();
+                if !bound.is_empty() {
+                    result.push(bound);
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = s[start..].trim();
+    if !tail.is_empty() {
+        result.push(tail);
+    }
+    result
+}
+
+pub(crate) fn source_type_to_signature(type_ctx: &SourceTypeCtx, ty: &str) -> String {
+    let mut s = strip_leading_java_type_modifiers(ty.trim());
+    if s == "?" {
+        return "*".to_string();
+    }
+    if let Some(bound) = s.strip_prefix("? extends ") {
+        return format!("+{}", source_type_to_signature(type_ctx, bound));
+    }
+    if let Some(bound) = s.strip_prefix("? super ") {
+        return format!("-{}", source_type_to_signature(type_ctx, bound));
+    }
+
+    let mut dims = 0usize;
+    if let Some(stripped) = s.strip_suffix("...") {
+        s = stripped.trim();
+        dims += 1;
+    }
+    while let Some(stripped) = s.strip_suffix("[]") {
+        s = stripped.trim();
+        dims += 1;
+    }
+
+    let bounds = split_top_level_java_intersection_bounds(s);
+    if bounds.len() > 1 {
+        return source_type_to_signature(type_ctx, bounds[0]);
+    }
+
+    let (base, args) = split_java_generic_base(s).unwrap_or((s, None));
+    let mut out = match base {
+        "void" => "V".to_string(),
+        "boolean" => "Z".to_string(),
+        "byte" => "B".to_string(),
+        "char" => "C".to_string(),
+        "short" => "S".to_string(),
+        "int" => "I".to_string(),
+        "long" => "J".to_string(),
+        "float" => "F".to_string(),
+        "double" => "D".to_string(),
+        other => {
+            let resolved = type_ctx.resolve_simple(other);
+            let internal = resolved.replace('.', "/");
+            let is_type_var =
+                !internal.contains('/') && internal.chars().all(|c| c.is_ascii_uppercase());
+            if is_type_var {
+                format!("T{};", internal)
+            } else if let Some(args_text) = args {
+                let rendered_args = split_java_generic_args(args_text)
+                    .into_iter()
+                    .map(|a| source_type_to_signature(type_ctx, a))
+                    .collect::<Vec<_>>()
+                    .join("");
+                format!("L{}<{}>;", internal, rendered_args)
+            } else {
+                format!("L{};", internal)
+            }
+        }
+    };
+
+    while dims > 0 {
+        out = format!("[{out}");
+        dims -= 1;
+    }
+    out
+}
+
 /// Extracts generic parameters from a class or method and constructs them into a generic signature according to the JVM specification.
 /// For example, extracts `<T:Ljava/lang/Object;E:Ljava/lang/Object;>Ljava/lang/Object;` from `class List<T, E>`.
-pub fn extract_generic_signature(node: Node, bytes: &[u8], suffix: &str) -> Option<Arc<str>> {
-    let mut sig = extract_type_parameters_prefix(node, bytes)?;
+pub fn extract_generic_signature(
+    node: Node,
+    bytes: &[u8],
+    suffix: &str,
+    type_ctx: Option<&SourceTypeCtx>,
+) -> Option<Arc<str>> {
+    let mut sig = extract_type_parameters_prefix(node, bytes, type_ctx)?;
     sig.push_str(suffix);
     Some(Arc::from(sig))
 }
 
 /// Extract only the `<...>` type-parameter prefix from class/method declarations.
-pub fn extract_type_parameters_prefix(node: Node, bytes: &[u8]) -> Option<String> {
+pub fn extract_type_parameters_prefix(
+    node: Node,
+    bytes: &[u8],
+    type_ctx: Option<&SourceTypeCtx>,
+) -> Option<String> {
     // Compatible with Java (child_by_field_name) and Kotlin (directly search for kind)
     let tp_node = node
         .child_by_field_name("type_parameters")
@@ -67,8 +229,26 @@ pub fn extract_type_parameters_prefix(node: Node, bytes: &[u8]) -> Option<String
                 let name = node_text(id_node, bytes).trim();
                 if !name.is_empty() {
                     sig.push_str(name);
-                    // Erasure to Object uniformly, because our engine currently only cares about the name mapping of parameter placeholders.
-                    sig.push_str(":Ljava/lang/Object;");
+                    if let Some(bound_node) = traversal::first_child_of_kind(child, "type_bound") {
+                        let bound_text = node_text(bound_node, bytes).trim();
+                        let bounds = bound_text
+                            .strip_prefix("extends")
+                            .map(str::trim)
+                            .map(split_top_level_java_intersection_bounds)
+                            .unwrap_or_default();
+                        if bounds.is_empty() {
+                            sig.push_str(":Ljava/lang/Object;");
+                        } else if let Some(type_ctx) = type_ctx {
+                            for bound in bounds {
+                                sig.push(':');
+                                sig.push_str(&source_type_to_signature(type_ctx, bound));
+                            }
+                        } else {
+                            sig.push_str(":Ljava/lang/Object;");
+                        }
+                    } else {
+                        sig.push_str(":Ljava/lang/Object;");
+                    }
                     has_params = true;
                 }
             }

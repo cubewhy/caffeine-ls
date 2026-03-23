@@ -115,12 +115,11 @@ impl CompletionProvider for MemberProvider {
         let resolved_effective =
             normalize_receiver_owner_for_members(resolved_effective, ctx, index, scope);
 
-        let class_internal = resolved_effective.to_internal_with_generics();
-        let class_internal_for_substitution =
-            resolved_effective.to_internal_with_generics_for_substitution();
         let base_class_internal = resolved_effective.erased_internal();
 
         if resolved_effective.is_array() {
+            let class_internal_for_substitution =
+                resolved_effective.to_internal_with_generics_for_substitution();
             return Ok(self
                 .provide_array_members(
                     ctx,
@@ -132,11 +131,7 @@ impl CompletionProvider for MemberProvider {
                 .into());
         }
 
-        tracing::debug!(
-            base_class_internal,
-            class_internal,
-            "looking up class in index"
-        );
+        tracing::debug!(base_class_internal, "looking up class in index");
 
         let is_same_class =
             is_this_receiver && ctx.enclosing_internal_name.as_deref() == Some(base_class_internal);
@@ -184,43 +179,50 @@ impl CompletionProvider for MemberProvider {
         };
 
         let t_mro = trace_timing.then(Instant::now);
-        let mro = index.mro(base_class_internal);
         let mro_elapsed_ms = t_mro
             .map(|t| t.elapsed().as_secs_f64() * 1000.0)
             .unwrap_or_default();
 
         let t_collect = trace_timing.then(Instant::now);
-        for class_meta in &mro {
-            for method in &class_meta.methods {
-                self.push_member_method_candidate(
-                    &mut results,
-                    index,
-                    class_meta,
-                    method,
-                    &resolver,
-                    &filter,
-                    prefix_lower.as_deref(),
-                    &mut seen_methods,
-                    class_internal.as_str(),
-                    &class_internal_for_substitution,
-                    has_paren_after_cursor,
-                    flow_receiver_cast_plan.as_ref(),
-                );
-            }
-            for field in &class_meta.fields {
-                self.push_member_field_candidate(
-                    &mut results,
-                    index,
-                    class_meta,
-                    field,
-                    &resolver,
-                    &filter,
-                    prefix_lower.as_deref(),
-                    &mut seen_fields,
-                    class_internal.as_str(),
-                    &class_internal_for_substitution,
-                    flow_receiver_cast_plan.as_ref(),
-                );
+        let mut total_mro_len = 0usize;
+        for bound in resolved_effective.bounds_for_lookup() {
+            let class_internal = bound.to_internal_with_generics();
+            let class_internal_for_substitution =
+                bound.to_internal_with_generics_for_substitution();
+            let mro = index.mro(bound.erased_internal());
+            total_mro_len += mro.len();
+            for class_meta in &mro {
+                for method in &class_meta.methods {
+                    self.push_member_method_candidate(
+                        &mut results,
+                        index,
+                        class_meta,
+                        method,
+                        &resolver,
+                        &filter,
+                        prefix_lower.as_deref(),
+                        &mut seen_methods,
+                        class_internal.as_str(),
+                        &class_internal_for_substitution,
+                        has_paren_after_cursor,
+                        flow_receiver_cast_plan.as_ref(),
+                    );
+                }
+                for field in &class_meta.fields {
+                    self.push_member_field_candidate(
+                        &mut results,
+                        index,
+                        class_meta,
+                        field,
+                        &resolver,
+                        &filter,
+                        prefix_lower.as_deref(),
+                        &mut seen_fields,
+                        class_internal.as_str(),
+                        &class_internal_for_substitution,
+                        flow_receiver_cast_plan.as_ref(),
+                    );
+                }
             }
         }
 
@@ -231,7 +233,7 @@ impl CompletionProvider for MemberProvider {
                 mro_ms = mro_elapsed_ms,
                 collect_ms = collect_elapsed_ms,
                 total_ms = t_total.elapsed().as_secs_f64() * 1000.0,
-                mro_len = mro.len(),
+                mro_len = total_mro_len,
                 candidates = results.len(),
                 "MemberProvider.phase_timing"
             );
@@ -672,6 +674,17 @@ fn normalize_receiver_owner_for_members(
     index: &IndexView,
     scope: IndexScope,
 ) -> TypeName {
+    if receiver.is_intersection() {
+        return TypeName::intersection(
+            receiver
+                .args
+                .iter()
+                .map(|bound| normalize_receiver_owner_for_members(bound.clone(), ctx, index, scope))
+                .collect(),
+        )
+        .with_array_dims(receiver.array_dims);
+    }
+
     if matches!(
         receiver.base_internal.as_ref(),
         "+" | "-" | "?" | "*" | "capture"
@@ -1336,6 +1349,74 @@ mod tests {
             "member_completion_wildcard_generic_receiver_labels",
             labels.join("\n")
         );
+    }
+
+    #[test]
+    fn test_member_completion_unions_intersection_receiver_bounds() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/io")),
+                name: Arc::from("Closeable"),
+                internal_name: Arc::from("java/io/Closeable"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("close", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Runnable"),
+                internal_name: Arc::from("java/lang/Runnable"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("run", "()V", ACC_PUBLIC, false)],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = ctx_with_semantic_and_erased(
+            TypeName::intersection(vec![
+                TypeName::new("java/io/Closeable"),
+                TypeName::new("java/lang/Runnable"),
+            ]),
+            "java/io/Closeable",
+            "",
+        );
+
+        let results = MemberProvider
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .candidates;
+        let labels: Vec<&str> = results
+            .iter()
+            .map(|candidate| candidate.label.as_ref())
+            .collect();
+        assert!(labels.contains(&"close"), "labels={labels:?}");
+        assert!(labels.contains(&"run"), "labels={labels:?}");
     }
 
     #[test]

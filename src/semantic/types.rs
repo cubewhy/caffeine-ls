@@ -1451,6 +1451,9 @@ fn is_reference_type_name(ty: &TypeName) -> bool {
     if ty.is_primitive() {
         return false;
     }
+    if ty.is_intersection() {
+        return true;
+    }
     ty.array_dims > 0
         || ty.contains_slash()
         || matches!(ty.erased_internal(), "*" | "+" | "-" | "capture")

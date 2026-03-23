@@ -16,6 +16,19 @@ use crate::{
 };
 
 pub(crate) fn type_name_to_source_style(ty: &TypeName, provider: &impl SymbolProvider) -> String {
+    if ty.is_intersection() {
+        let mut rendered = ty
+            .args
+            .iter()
+            .map(|bound| type_name_to_source_style(bound, provider))
+            .collect::<Vec<_>>()
+            .join(" & ");
+        if ty.array_dims > 0 {
+            rendered.push_str(&"[]".repeat(ty.array_dims));
+        }
+        return rendered;
+    }
+
     let base = match ty.base_internal.as_ref() {
         "byte" | "char" | "double" | "float" | "int" | "long" | "short" | "boolean" | "void" => {
             ty.base_internal.to_string()

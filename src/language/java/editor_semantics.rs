@@ -19,7 +19,8 @@ use crate::semantic::context::{
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     CallArgs, ContextualResolver, EvalContext, OverloadInvocationMode, TypeResolver,
-    parse_single_type_to_internal, singleton_descriptor_to_type,
+    generics::expand_type_name_with_type_parameter_bounds, parse_single_type_to_internal,
+    singleton_descriptor_to_type,
 };
 use crate::semantic::{LocalVar, SemanticContext};
 use crate::{
@@ -44,10 +45,17 @@ pub(crate) enum JavaInvocationSite {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedJavaCall {
     pub receiver: TypeName,
+    pub receiver_for_substitution: String,
     pub method: Arc<MethodSummary>,
     pub invocation_mode: OverloadInvocationMode,
     pub arg_texts: Vec<String>,
     pub arg_types: Vec<TypeName>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedMethodCandidate {
+    method: Arc<MethodSummary>,
+    receiver_for_substitution: String,
 }
 
 impl ResolvedJavaCall {
@@ -74,7 +82,7 @@ impl ResolvedJavaCall {
     ) -> Option<(TypeName, ExpectedTypeConfidence)> {
         resolver
             .resolve_selected_param_type_with_callsite_inference(
-                &self.receiver.to_internal_with_generics_for_substitution(),
+                &self.receiver_for_substitution,
                 &self.method,
                 arg_index,
                 self.invocation_mode,
@@ -94,7 +102,7 @@ impl ResolvedJavaCall {
             .or_else(|| {
                 resolver
                     .resolve_selected_param_type_from_generic_signature(
-                        &self.receiver.to_internal_with_generics_for_substitution(),
+                        &self.receiver_for_substitution,
                         &self.method,
                         arg_index,
                         self.invocation_mode,
@@ -497,8 +505,7 @@ fn resolve_method_invocation(
     selection_unknown_arg_index: Option<usize>,
 ) -> Option<ResolvedJavaCall> {
     let receiver = resolve_receiver_type(ctx, type_ctx, view, resolver, receiver_expr)?;
-    let receiver_owner = receiver.erased_internal();
-    let candidates = collect_method_candidates(ctx, view, receiver_owner, method_name);
+    let candidates = collect_method_candidates(ctx, view, &receiver, method_name);
     resolve_selected_call(
         ctx,
         view,
@@ -529,7 +536,12 @@ fn resolve_constructor_invocation(
         view,
     )?;
     let receiver_owner = receiver.erased_internal();
-    let candidates = collect_constructor_candidates(ctx, view, receiver_owner);
+    let candidates = collect_constructor_candidates(
+        ctx,
+        view,
+        receiver_owner,
+        receiver.to_internal_with_generics_for_substitution(),
+    );
     resolve_selected_call(
         ctx,
         view,
@@ -549,7 +561,7 @@ fn resolve_selected_call(
     type_ctx: &SourceTypeCtx,
     resolver: &TypeResolver,
     receiver: TypeName,
-    candidates: Vec<Arc<MethodSummary>>,
+    candidates: Vec<ResolvedMethodCandidate>,
     arg_texts: &[String],
     selection_unknown_arg_index: Option<usize>,
 ) -> Option<ResolvedJavaCall> {
@@ -578,7 +590,10 @@ fn resolve_selected_call(
         *slot = TypeName::new("unknown");
     }
 
-    let candidate_refs: Vec<&MethodSummary> = candidates.iter().map(|m| m.as_ref()).collect();
+    let candidate_refs: Vec<&MethodSummary> = candidates
+        .iter()
+        .map(|candidate| candidate.method.as_ref())
+        .collect();
     let (selected_name, selected_desc, selected_mode) = {
         let selected = resolver.select_overload_match(
             &candidate_refs,
@@ -591,13 +606,14 @@ fn resolve_selected_call(
             selected.mode,
         )
     };
-    let method = candidates
-        .into_iter()
-        .find(|candidate| candidate.name == selected_name && candidate.desc() == selected_desc)?;
+    let method = candidates.into_iter().find(|candidate| {
+        candidate.method.name == selected_name && candidate.method.desc() == selected_desc
+    })?;
 
     Some(ResolvedJavaCall {
         receiver,
-        method,
+        receiver_for_substitution: method.receiver_for_substitution,
+        method: method.method,
         invocation_mode: selected_mode,
         arg_texts: arg_texts.to_vec(),
         arg_types,
@@ -607,19 +623,48 @@ fn resolve_selected_call(
 fn collect_method_candidates(
     ctx: &SemanticContext,
     view: &IndexView,
-    owner_internal: &str,
+    receiver: &TypeName,
     method_name: &str,
-) -> Vec<Arc<MethodSummary>> {
-    let (methods, _) = view.collect_inherited_members(owner_internal);
-    let mut candidates: Vec<Arc<MethodSummary>> = methods
-        .into_iter()
-        .filter(|m| m.name.as_ref() == method_name)
-        .collect();
-    if ctx.enclosing_internal_name.as_deref() == Some(owner_internal)
-        && let Some(CurrentClassMember::Method(method)) = ctx.current_class_members.get(method_name)
-        && method.name.as_ref() == method_name
-    {
-        candidates.push(method.clone());
+) -> Vec<ResolvedMethodCandidate> {
+    let mut candidates = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for bound in receiver.bounds_for_lookup() {
+        let owner_internal = bound.erased_internal();
+        let receiver_for_substitution = bound.to_internal_with_generics_for_substitution();
+        let (methods, _) = view.collect_inherited_members(owner_internal);
+        for method in methods
+            .into_iter()
+            .filter(|method| method.name.as_ref() == method_name)
+        {
+            let key = (
+                owner_internal.to_string(),
+                method.name.to_string(),
+                method.desc().to_string(),
+            );
+            if seen.insert(key) {
+                candidates.push(ResolvedMethodCandidate {
+                    method,
+                    receiver_for_substitution: receiver_for_substitution.clone(),
+                });
+            }
+        }
+        if ctx.enclosing_internal_name.as_deref() == Some(owner_internal)
+            && let Some(CurrentClassMember::Method(method)) =
+                ctx.current_class_members.get(method_name)
+            && method.name.as_ref() == method_name
+        {
+            let key = (
+                owner_internal.to_string(),
+                method.name.to_string(),
+                method.desc().to_string(),
+            );
+            if seen.insert(key) {
+                candidates.push(ResolvedMethodCandidate {
+                    method: method.clone(),
+                    receiver_for_substitution: receiver_for_substitution.clone(),
+                });
+            }
+        }
     }
     candidates
 }
@@ -628,16 +673,20 @@ fn collect_constructor_candidates(
     ctx: &SemanticContext,
     view: &IndexView,
     owner_internal: &str,
-) -> Vec<Arc<MethodSummary>> {
+    receiver_for_substitution: String,
+) -> Vec<ResolvedMethodCandidate> {
     let Some(class_meta) = view.get_class(owner_internal) else {
         return Vec::new();
     };
-    let mut candidates: Vec<Arc<MethodSummary>> = class_meta
+    let mut candidates: Vec<ResolvedMethodCandidate> = class_meta
         .methods
         .iter()
         .filter(|m| m.name.as_ref() == "<init>")
         .cloned()
-        .map(Arc::new)
+        .map(|method| ResolvedMethodCandidate {
+            method: Arc::new(method),
+            receiver_for_substitution: receiver_for_substitution.clone(),
+        })
         .collect();
     if ctx.enclosing_internal_name.as_deref() == Some(owner_internal) {
         candidates.extend(
@@ -645,7 +694,10 @@ fn collect_constructor_candidates(
                 .values()
                 .filter_map(|member| match member {
                     CurrentClassMember::Method(method) if method.name.as_ref() == "<init>" => {
-                        Some(method.clone())
+                        Some(ResolvedMethodCandidate {
+                            method: method.clone(),
+                            receiver_for_substitution: receiver_for_substitution.clone(),
+                        })
                     }
                     _ => None,
                 }),
@@ -693,6 +745,15 @@ fn canonicalize_scoped_type(
     sym: &SymbolResolver<'_>,
     ty: TypeName,
 ) -> Option<TypeName> {
+    if ty.is_intersection() {
+        let bounds = ty
+            .args
+            .iter()
+            .map(|bound| canonicalize_scoped_type(ctx, type_ctx, sym, bound.clone()))
+            .collect::<Option<Vec<_>>>()?;
+        return Some(TypeName::intersection(bounds).with_array_dims(ty.array_dims));
+    }
+
     if ty.contains_slash() || !ty.args.is_empty() {
         return Some(ty);
     }
@@ -730,6 +791,16 @@ fn expand_local_type_strict(
         return ty.clone();
     }
 
+    if ty.is_intersection() {
+        return TypeName::intersection(
+            ty.args
+                .iter()
+                .map(|bound| expand_local_type_strict(sym, ctx, type_ctx, bound))
+                .collect(),
+        )
+        .with_array_dims(ty.array_dims);
+    }
+
     let base = ty.erased_internal();
 
     if ty.args.is_empty() && base.contains('<') {
@@ -750,29 +821,42 @@ fn expand_local_type_strict(
         .map(|a| expand_local_type_strict(sym, ctx, type_ctx, a))
         .collect();
 
-    if ty.contains_slash() || sym.view.get_class(base).is_some() {
-        return TypeName {
+    let resolved = if ty.contains_slash() || sym.view.get_class(base).is_some() {
+        TypeName {
             base_internal: ty.base_internal.clone(),
             args: expanded_args,
             array_dims: ty.array_dims,
-        };
-    }
-
-    if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
+        }
+    } else if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
         resolved.args = expanded_args;
         resolved.array_dims = ty.array_dims;
-        return resolved;
-    }
-
-    if let Some(internal) = sym.resolve_type_name(ctx, base) {
-        return TypeName {
+        resolved
+    } else if let Some(internal) = sym.resolve_type_name(ctx, base) {
+        TypeName {
             base_internal: internal,
             args: expanded_args,
             array_dims: ty.array_dims,
-        };
-    }
+        }
+    } else {
+        ty.clone()
+    };
 
-    ty.clone()
+    let method_signature = match ctx.enclosing_class_member.as_ref() {
+        Some(CurrentClassMember::Method(method)) => method.generic_signature.as_deref(),
+        _ => None,
+    };
+    let class_signature = ctx
+        .enclosing_internal_name
+        .as_deref()
+        .and_then(|internal| sym.view.get_class(internal))
+        .and_then(|class_meta| class_meta.generic_signature.clone());
+
+    expand_type_name_with_type_parameter_bounds(
+        &resolved,
+        method_signature,
+        class_signature.as_deref(),
+    )
+    .unwrap_or(resolved)
 }
 
 pub(crate) fn intersects_range(node: Node, range: &Range<usize>) -> bool {
@@ -928,6 +1012,62 @@ mod tests {
             .find(|local| local.name.as_ref() == "n")
             .expect("var local");
         assert_eq!(local.type_internal.erased_internal(), "int");
+    }
+
+    #[test]
+    fn materialize_local_variable_types_expands_intersection_bounded_type_vars() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            minimal_class("java/io/Closeable"),
+            minimal_class("java/lang/Runnable"),
+        ]);
+        let view = idx.view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+        let type_ctx = SourceTypeCtx::new(None, vec![], Some(view.build_name_table()));
+        let method = Arc::new(MethodSummary {
+            name: Arc::from("work"),
+            params: MethodParams::empty(),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: Some(Arc::from("<T:Ljava/io/Closeable;:Ljava/lang/Runnable;>()V")),
+            return_type: None,
+        });
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: String::new(),
+            },
+            "",
+            vec![LocalVar {
+                name: Arc::from("value"),
+                type_internal: TypeName::new("T"),
+                init_expr: None,
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec![],
+        )
+        .with_enclosing_member(Some(CurrentClassMember::Method(method)));
+
+        materialize_local_variable_types(&mut ctx, &view, &type_ctx);
+
+        let local = ctx
+            .local_variables
+            .iter()
+            .find(|local| local.name.as_ref() == "value")
+            .expect("expanded local");
+        assert!(local.type_internal.is_intersection());
+        assert_eq!(local.type_internal.args.len(), 2);
+        assert_eq!(
+            local.type_internal.args[0].erased_internal(),
+            "java/io/Closeable"
+        );
+        assert_eq!(
+            local.type_internal.args[1].erased_internal(),
+            "java/lang/Runnable"
+        );
     }
 
     #[test]

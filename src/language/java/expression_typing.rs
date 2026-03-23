@@ -683,13 +683,26 @@ fn resolve_cast_expression_type(
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
-    let cast_type_node = node.child_by_field_name("type").or_else(|| {
-        let mut cursor = node.walk();
-        node.named_children(&mut cursor)
-            .find(|n| n.kind() != "parenthesized_expression")
-    })?;
-    let cast_text = cast_type_node.utf8_text(bytes).ok()?.trim();
-    resolve_source_type_name(cast_text, enclosing_internal, type_ctx, view)
+    let value_node = node.child_by_field_name("value");
+    let mut cursor = node.walk();
+    let type_nodes = node
+        .named_children(&mut cursor)
+        .filter(|child| {
+            child.kind().contains("type") && value_node.is_none_or(|value| child.id() != value.id())
+        })
+        .collect::<Vec<_>>();
+    if type_nodes.is_empty() {
+        return None;
+    }
+
+    let resolved = type_nodes
+        .into_iter()
+        .map(|cast_type_node| {
+            let cast_text = cast_type_node.utf8_text(bytes).ok()?.trim();
+            resolve_source_type_name(cast_text, enclosing_internal, type_ctx, view)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(TypeName::intersection(resolved))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1377,6 +1390,82 @@ mod tests {
         )
         .expect("type");
         assert_eq!(ty.erased_internal(), "double");
+    }
+
+    #[test]
+    fn test_cast_expression_supports_intersection_types() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/io")),
+                name: Arc::from("Closeable"),
+                internal_name: Arc::from("java/io/Closeable"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Runnable"),
+                internal_name: Arc::from("java/lang/Runnable"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(root_scope());
+        let type_ctx = SourceTypeCtx::new(
+            None,
+            vec!["java.io.*".into(), "java.lang.*".into()],
+            Some(view.build_name_table()),
+        );
+        let resolver = TypeResolver::new(&view);
+        let locals = vec![LocalVar {
+            name: Arc::from("x"),
+            type_internal: TypeName::new("java/lang/Object"),
+            init_expr: None,
+        }];
+
+        let ty = resolve_expression_type(
+            "((Closeable & Runnable) x)",
+            &locals,
+            None,
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("type");
+
+        assert!(ty.is_intersection());
+        assert_eq!(ty.args.len(), 2);
+        assert_eq!(ty.args[0].erased_internal(), "java/io/Closeable");
+        assert_eq!(ty.args[1].erased_internal(), "java/lang/Runnable");
     }
 
     #[test]

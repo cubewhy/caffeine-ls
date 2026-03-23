@@ -29,7 +29,7 @@ Legend:
 | Type variables (§4.4) | Partial | Recognized in generic signatures; full capture conversion not done |
 | Parameterized types (§4.5) | Partial | `TypeName` preserves generic args; wildcard bounds are coarse |
 | Raw types (§4.8) | Done | Raw type access falls back to erased member lookup |
-| Intersection types (§4.9) | Not implemented | Not represented in `TypeName` |
+| Intersection types (§4.9) | Partial | Implemented with minor issues. |
 | Array types (§4.10.1) | Done | Array depth tracked in `TypeName`; `.length` and `clone()` as intrinsics |
 | `null` type (§4.1) | Done | `null` expression returns null-compatible type |
 | Boxing / unboxing (§4.3.2) | Done | `ConversionKind::Boxing` / `Unboxing` in overload scoring |

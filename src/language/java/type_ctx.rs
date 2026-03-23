@@ -4,6 +4,10 @@ use std::sync::{
 };
 
 use crate::index::{IndexView, MethodSummary};
+use crate::language::java::utils::{
+    split_java_generic_args, split_java_generic_base, split_top_level_java_intersection_bounds,
+    strip_leading_java_type_modifiers,
+};
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
 
@@ -134,7 +138,7 @@ impl SourceTypeCtx {
     /// Convert a Java source-level type expression to a JVM descriptor fragment.
     /// Handles arrays, generics (erasure), varargs, primitives.
     pub fn to_descriptor(&self, ty: &str) -> String {
-        let ty = ty.trim();
+        let ty = strip_leading_java_type_modifiers(ty.trim());
         // Vararg → treated as one extra array dimension
         let (ty, extra_dim) = if let Some(stripped) = ty.strip_suffix("...") {
             (stripped, 1usize)
@@ -148,7 +152,14 @@ impl SourceTypeCtx {
             base = base[..base.len() - 2].trim();
         }
         // Erase generics
-        let base = base.split('<').next().unwrap_or(base).trim();
+        let base = split_top_level_java_intersection_bounds(base)
+            .into_iter()
+            .next()
+            .unwrap_or(base);
+        let base = split_java_generic_base(base)
+            .map(|(head, _)| head)
+            .unwrap_or(base)
+            .trim();
 
         let mut desc = String::new();
         for _ in 0..dims {
@@ -415,7 +426,7 @@ fn resolve_type_name_strict_inner(
     ctx: &SourceTypeCtx,
     ty: &str,
 ) -> Option<crate::semantic::types::type_name::TypeName> {
-    let ty = ty.trim();
+    let ty = strip_leading_java_type_modifiers(ty.trim());
     if ty.is_empty() {
         return None;
     }
@@ -427,15 +438,21 @@ fn resolve_type_name_strict_inner(
         base = stripped.trim();
     }
 
-    while base.starts_with('@') {
-        if let Some(idx) = base.find(' ') {
-            base = base[idx..].trim_start();
-        } else {
-            return None;
+    let base = strip_leading_java_type_modifiers(base);
+    let bounds = split_top_level_java_intersection_bounds(base);
+    if bounds.len() > 1 {
+        let bound_types = bounds
+            .into_iter()
+            .map(|bound| resolve_type_name_strict_inner(ctx, bound))
+            .collect::<Option<Vec<_>>>()?;
+        let mut ty = crate::semantic::types::type_name::TypeName::intersection(bound_types);
+        if dims > 0 {
+            ty = ty.with_array_dims(dims);
         }
+        return Some(ty);
     }
 
-    let (base_name, args_str) = split_generic_base(base)?;
+    let (base_name, args_str) = split_java_generic_base(base)?;
 
     let base_internal = if base_name.contains('/') {
         ctx.class_exists(base_name).then(|| base_name.to_string())
@@ -447,7 +464,7 @@ fn resolve_type_name_strict_inner(
     }?;
 
     let mut ty = if let Some(args) = args_str {
-        let arg_types = split_generic_args(args)
+        let arg_types = split_java_generic_args(args)
             .into_iter()
             .map(|arg| resolve_type_arg_type(ctx, arg))
             .collect::<Option<Vec<crate::semantic::types::type_name::TypeName>>>()?;
@@ -474,7 +491,7 @@ fn resolve_type_name_relaxed_inner(
     crate::semantic::types::type_name::TypeName,
     TypeResolveQuality,
 )> {
-    let ty = ty.trim();
+    let ty = strip_leading_java_type_modifiers(ty.trim());
     if ty.is_empty() {
         return None;
     }
@@ -486,21 +503,41 @@ fn resolve_type_name_relaxed_inner(
         base = stripped.trim();
     }
 
-    while base.starts_with('@') {
-        if let Some(idx) = base.find(' ') {
-            base = base[idx..].trim_start();
-        } else {
+    let base = strip_leading_java_type_modifiers(base);
+    let bounds = split_top_level_java_intersection_bounds(base);
+    if bounds.len() > 1 {
+        let mut quality = TypeResolveQuality::Exact;
+        let mut resolved_bounds = Vec::new();
+        for bound in bounds {
+            match resolve_type_name_relaxed_inner(ctx, bound) {
+                Some((bound_ty, bound_quality)) => {
+                    if bound_quality == TypeResolveQuality::Partial {
+                        quality = TypeResolveQuality::Partial;
+                    }
+                    resolved_bounds.push(bound_ty);
+                }
+                None => {
+                    quality = TypeResolveQuality::Partial;
+                }
+            }
+        }
+        if resolved_bounds.is_empty() {
             return None;
         }
+        let mut out = crate::semantic::types::type_name::TypeName::intersection(resolved_bounds);
+        if dims > 0 {
+            out = out.with_array_dims(dims);
+        }
+        return Some((out, quality));
     }
 
-    let (base_name, args_str) = split_generic_base(base)?;
+    let (base_name, args_str) = split_java_generic_base(base)?;
     let base_internal = resolve_base_internal(ctx, base_name)?;
 
     let mut quality = TypeResolveQuality::Exact;
     let mut out = if let Some(args) = args_str {
         let mut resolved_args = Vec::new();
-        for arg in split_generic_args(args) {
+        for arg in split_java_generic_args(args) {
             match resolve_type_arg_type_relaxed(ctx, arg) {
                 Some((arg_ty, arg_quality)) => {
                     if arg_quality == TypeResolveQuality::Partial {
@@ -541,50 +578,6 @@ fn resolve_base_internal(ctx: &SourceTypeCtx, base_name: &str) -> Option<String>
     ctx.resolve_simple_strict(base_name)
 }
 
-fn split_generic_base(ty: &str) -> Option<(&str, Option<&str>)> {
-    if let Some(start) = ty.find('<') {
-        let mut depth = 0i32;
-        for (i, c) in ty.char_indices().skip(start) {
-            match c {
-                '<' => depth += 1,
-                '>' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        let base = ty[..start].trim();
-                        let args = ty[start + 1..i].trim();
-                        return Some((base, Some(args)));
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    } else {
-        Some((ty.trim(), None))
-    }
-}
-
-fn split_generic_args(s: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, c) in s.char_indices() {
-        match c {
-            '<' => depth += 1,
-            '>' => depth -= 1,
-            ',' if depth == 0 => {
-                result.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < s.len() {
-        result.push(s[start..].trim());
-    }
-    result.into_iter().filter(|s| !s.is_empty()).collect()
-}
-
 fn resolve_type_arg_type(
     ctx: &SourceTypeCtx,
     arg: &str,
@@ -612,7 +605,7 @@ fn resolve_type_arg_type(
     }
 
     let resolved = resolve_type_name_strict_inner(ctx, arg)?;
-    if resolved.is_array() {
+    if resolved.is_array() || resolved.is_intersection() {
         return None;
     }
     let base = resolved.erased_internal();
@@ -662,7 +655,11 @@ fn resolve_type_arg_type_relaxed(
         ));
     }
 
-    resolve_type_name_relaxed_inner(ctx, arg)
+    let (resolved, quality) = resolve_type_name_relaxed_inner(ctx, arg)?;
+    if resolved.is_intersection() {
+        return None;
+    }
+    Some((resolved, quality))
 }
 
 pub fn build_java_descriptor(
@@ -833,5 +830,35 @@ mod tests {
             .expect("base should be preserved");
         assert_eq!(resolved.ty.erased_internal(), "java/util/function/Function");
         assert_eq!(resolved.quality, TypeResolveQuality::Partial);
+    }
+
+    #[test]
+    fn test_resolve_type_name_strict_supports_intersection_bounds() {
+        let nt = name_table(&["java/io/Closeable", "java/lang/Runnable"]);
+        let ctx = SourceTypeCtx::new(
+            None,
+            vec!["java.io.*".into(), "java.lang.*".into()],
+            Some(nt),
+        );
+
+        let resolved = ctx
+            .resolve_type_name_strict("Closeable & Runnable")
+            .expect("should resolve");
+        assert!(resolved.is_intersection());
+        assert_eq!(resolved.args.len(), 2);
+        assert_eq!(resolved.args[0].erased_internal(), "java/io/Closeable");
+        assert_eq!(resolved.args[1].erased_internal(), "java/lang/Runnable");
+    }
+
+    #[test]
+    fn test_resolve_type_name_relaxed_preserves_known_intersection_bounds_on_partial_failure() {
+        let nt = name_table(&["java/io/Closeable"]);
+        let ctx = SourceTypeCtx::new(None, vec!["java.io.*".into()], Some(nt));
+
+        let resolved = ctx
+            .resolve_type_name_relaxed("Closeable & MissingBound")
+            .expect("known bound should be preserved");
+        assert_eq!(resolved.quality, TypeResolveQuality::Partial);
+        assert_eq!(resolved.ty.erased_internal(), "java/io/Closeable");
     }
 }

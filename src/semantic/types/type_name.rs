@@ -13,6 +13,8 @@ pub struct TypeName {
 }
 
 impl TypeName {
+    const INTERSECTION_INTERNAL: &'static str = "&";
+
     pub fn new(base_internal: impl Into<Arc<str>>) -> Self {
         let raw: Arc<str> = base_internal.into();
         let mut base = raw.as_ref().trim();
@@ -36,6 +38,25 @@ impl TypeName {
         }
     }
 
+    pub fn intersection(bounds: Vec<TypeName>) -> Self {
+        let mut flattened = Vec::new();
+        for bound in bounds {
+            if bound.is_intersection() {
+                flattened.extend(bound.args);
+            } else {
+                flattened.push(bound);
+            }
+        }
+        match flattened.len() {
+            0 => TypeName::new(Self::INTERSECTION_INTERNAL),
+            1 => flattened
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| TypeName::new("unknown")),
+            _ => TypeName::with_args(Self::INTERSECTION_INTERNAL, flattened),
+        }
+    }
+
     pub fn with_array_dims(mut self, dims: usize) -> Self {
         self.array_dims = dims;
         self
@@ -46,10 +67,17 @@ impl TypeName {
     }
 
     pub fn is_primitive(&self) -> bool {
+        if self.is_intersection() {
+            return false;
+        }
         matches!(
             self.base_internal.as_ref(),
             "int" | "long" | "short" | "byte" | "char" | "float" | "double" | "boolean" | "void"
         )
+    }
+
+    pub fn is_intersection(&self) -> bool {
+        self.base_internal.as_ref() == Self::INTERSECTION_INTERNAL
     }
 
     pub fn has_generics(&self) -> bool {
@@ -58,12 +86,23 @@ impl TypeName {
 
     /// Erase generic parameters and array dims for index lookup.
     pub fn erased_internal(&self) -> &str {
+        if self.is_intersection() {
+            if let Some(primary) = self.primary_bound() {
+                return primary.erased_internal();
+            }
+        }
         &self.base_internal
     }
 
     /// Erase generics but keep array dims, e.g. "java/lang/String[]".
     pub fn erased_internal_with_arrays(&self) -> String {
-        let mut s = self.base_internal.to_string();
+        let mut s = if self.is_intersection() {
+            self.primary_bound()
+                .map(TypeName::erased_internal_with_arrays)
+                .unwrap_or_else(|| self.base_internal.to_string())
+        } else {
+            self.base_internal.to_string()
+        };
         if self.array_dims > 0 {
             s.push_str(&"[]".repeat(self.array_dims));
         }
@@ -71,6 +110,9 @@ impl TypeName {
     }
 
     pub fn contains_slash(&self) -> bool {
+        if self.is_intersection() {
+            return self.args.iter().any(TypeName::contains_slash);
+        }
         self.base_internal.contains('/')
     }
 
@@ -79,6 +121,17 @@ impl TypeName {
             return self.args.first();
         }
         None
+    }
+
+    pub fn primary_bound(&self) -> Option<&TypeName> {
+        self.is_intersection().then(|| self.args.first()).flatten()
+    }
+
+    pub fn bounds_for_lookup(&self) -> Vec<&TypeName> {
+        if self.is_intersection() {
+            return self.args.iter().collect();
+        }
+        vec![self]
     }
 
     /// "java/lang/String[][]" → Some("java/lang/String[]")
@@ -100,6 +153,19 @@ impl TypeName {
 
     /// Internal style with generics, e.g. "java/util/List<Ljava/lang/String;>".
     pub fn to_internal_with_generics(&self) -> String {
+        if self.is_intersection() {
+            let mut rendered = self
+                .args
+                .iter()
+                .map(TypeName::to_internal_with_generics)
+                .collect::<Vec<_>>()
+                .join(" & ");
+            if self.array_dims > 0 {
+                rendered.push_str(&"[]".repeat(self.array_dims));
+            }
+            return rendered;
+        }
+
         let base = self.base_internal.as_ref();
         let mut s = if self.args.is_empty() {
             base.to_string()
@@ -118,6 +184,19 @@ impl TypeName {
     /// as object signatures in generic arguments (e.g. `LBox;`), while retaining
     /// likely type variables (e.g. `TR;`).
     pub fn to_internal_with_generics_for_substitution(&self) -> String {
+        if self.is_intersection() {
+            let mut rendered = self
+                .args
+                .iter()
+                .map(TypeName::to_internal_with_generics_for_substitution)
+                .collect::<Vec<_>>()
+                .join(" & ");
+            if self.array_dims > 0 {
+                rendered.push_str(&"[]".repeat(self.array_dims));
+            }
+            return rendered;
+        }
+
         fn is_likely_type_var(name: &str) -> bool {
             let mut chars = name.chars();
             let Some(first) = chars.next() else {
@@ -197,6 +276,17 @@ impl TypeName {
 
     /// JVM signature, e.g. "Ljava/util/List<Ljava/lang/String;>;" or "[I".
     pub fn to_jvm_signature(&self) -> String {
+        if self.is_intersection() {
+            if let Some(primary) = self.primary_bound() {
+                let mut sig = primary.to_jvm_signature();
+                if self.array_dims > 0 {
+                    sig = format!("{}{}", "[".repeat(self.array_dims), sig);
+                }
+                return sig;
+            }
+            return "Ljava/lang/Object;".to_string();
+        }
+
         let mut sig = match self.base_internal.as_ref() {
             "byte" => "B".to_string(),
             "char" => "C".to_string(),
@@ -274,5 +364,19 @@ mod tests {
     fn test_to_internal_with_generics_preserves_array_dims() {
         let ty = TypeName::new("java/lang/String[][]");
         assert_eq!(ty.to_internal_with_generics(), "java/lang/String[][]");
+    }
+
+    #[test]
+    fn test_intersection_erases_to_primary_bound() {
+        let ty = TypeName::intersection(vec![
+            TypeName::new("java/io/Closeable"),
+            TypeName::new("java/lang/Runnable"),
+        ]);
+        assert!(ty.is_intersection());
+        assert_eq!(ty.erased_internal(), "java/io/Closeable");
+        assert_eq!(
+            ty.to_internal_with_generics(),
+            "java/io/Closeable & java/lang/Runnable"
+        );
     }
 }
