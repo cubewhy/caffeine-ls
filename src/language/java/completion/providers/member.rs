@@ -167,9 +167,12 @@ impl CompletionProvider for MemberProvider {
         let mut seen_fields: std::collections::HashSet<Arc<str>> = std::collections::HashSet::new();
 
         if (is_this_receiver || is_implicit_receiver) && !ctx.current_class_members.is_empty() {
-            for candidate in
-                self.provide_from_source_members(ctx, member_prefix, is_implicit_receiver)
-            {
+            for candidate in self.provide_from_source_members(
+                ctx,
+                member_prefix,
+                is_implicit_receiver,
+                &resolver,
+            ) {
                 match &candidate.kind {
                     CandidateKind::Method { descriptor, .. }
                     | CandidateKind::StaticMethod { descriptor, .. } => {
@@ -387,7 +390,8 @@ impl MemberProvider {
             let mut candidates = index.get_classes_by_simple_name(class_name_raw).to_vec();
             if candidates.is_empty() {
                 if is_self_class_by_simple_name(class_name_raw, ctx) {
-                    return Some(self.provide_static_source_members(ctx, member_prefix));
+                    let resolver = ContextualResolver::new(index, ctx);
+                    return Some(self.provide_static_source_members(ctx, member_prefix, &resolver));
                 }
                 return Some(Vec::new());
             }
@@ -403,9 +407,10 @@ impl MemberProvider {
 
         let is_same_class =
             is_same_enclosing_class_internal(class_meta.internal_name.as_ref(), ctx);
+        let resolver = ContextualResolver::new(index, ctx);
 
         if is_same_class && !ctx.current_class_members.is_empty() {
-            return Some(self.provide_static_source_members(ctx, member_prefix));
+            return Some(self.provide_static_source_members(ctx, member_prefix, &resolver));
         }
 
         let filter = if is_same_class {
@@ -414,7 +419,6 @@ impl MemberProvider {
             AccessFilter::member_completion()
         };
 
-        let resolver = ContextualResolver::new(index, ctx);
         let mut results = Vec::new();
 
         for method in &class_meta.methods {
@@ -737,6 +741,7 @@ impl MemberProvider {
         ctx: &SemanticContext,
         member_prefix: &str,
         implicit_receiver: bool,
+        resolver: &ContextualResolver<'_>,
     ) -> Vec<CompletionCandidate> {
         let enclosing = ctx.enclosing_internal_name.as_deref().unwrap_or("");
         let in_static = ctx.is_in_static_context();
@@ -770,12 +775,7 @@ impl MemberProvider {
                 },
             };
             let insert_text = m.name().to_string();
-            let detail = format!(
-                "{} {} {}",
-                if m.is_private() { "private" } else { "public" },
-                if m.is_static() { "static" } else { "" },
-                m.name()
-            );
+            let detail = render::source_member_detail(enclosing, m, resolver);
             let candidate = CompletionCandidate::new(m.name(), insert_text, kind, self.name())
                 .with_detail(detail)
                 .with_score(70.0 + score as f32 * 0.1);
@@ -797,6 +797,7 @@ impl MemberProvider {
         &self,
         ctx: &SemanticContext,
         member_prefix: &str,
+        resolver: &ContextualResolver<'_>,
     ) -> Vec<CompletionCandidate> {
         let enclosing = ctx.enclosing_internal_name.as_deref().unwrap_or("");
 
@@ -821,11 +822,7 @@ impl MemberProvider {
                 }
             };
             let insert_text = m.name().to_string();
-            let detail = format!(
-                "{} static {}",
-                if m.is_private() { "private" } else { "public" },
-                m.name()
-            );
+            let detail = render::source_member_detail(enclosing, m, resolver);
             let candidate = CompletionCandidate::new(m.name(), insert_text, kind, self.name())
                 .with_detail(detail)
                 .with_score(70.0 + score as f32 * 0.1);
