@@ -176,7 +176,12 @@ impl CompletionProvider for MemberProvider {
                 match &candidate.kind {
                     CandidateKind::Method { descriptor, .. }
                     | CandidateKind::StaticMethod { descriptor, .. } => {
-                        seen_methods.insert((Arc::clone(&candidate.label), Arc::clone(descriptor)));
+                        let method_name = candidate
+                            .insertion
+                            .filter_text
+                            .as_deref()
+                            .unwrap_or(candidate.label.as_ref());
+                        seen_methods.insert((Arc::from(method_name), Arc::clone(descriptor)));
                     }
                     CandidateKind::Field { .. } | CandidateKind::StaticField { .. } => {
                         seen_fields.insert(Arc::clone(&candidate.label));
@@ -434,9 +439,15 @@ impl MemberProvider {
             let Some(match_score) = fuzzy::fuzzy_match(member_prefix, method.name.as_ref()) else {
                 continue;
             };
+            let label = render::method_label(
+                class_meta.internal_name.as_ref(),
+                &class_meta,
+                method,
+                &resolver,
+            );
             results.push(
                 CompletionCandidate::new(
-                    Arc::clone(&method.name),
+                    label,
                     method.name.to_string(),
                     CandidateKind::StaticMethod {
                         descriptor: method.desc(),
@@ -449,6 +460,7 @@ impl MemberProvider {
                     &method.params.param_names(),
                     ctx.is_followed_by_opener(),
                 )
+                .with_filter_text(method.name.to_string())
                 .with_detail(render::method_detail(
                     class_meta.internal_name.as_ref(),
                     &class_meta,
@@ -615,8 +627,14 @@ impl MemberProvider {
             return;
         }
 
+        let label = render::method_label(
+            class_internal_for_substitution,
+            class_meta,
+            method,
+            resolver,
+        );
         let mut candidate = CompletionCandidate::new(
-            Arc::clone(&method.name),
+            label,
             method.name.to_string(),
             if is_static {
                 CandidateKind::StaticMethod {
@@ -636,6 +654,7 @@ impl MemberProvider {
             &method.params.param_names(),
             has_paren_after_cursor,
         )
+        .with_filter_text(method.name.to_string())
         .with_detail({
             render::method_detail(
                 class_internal_for_substitution,
@@ -756,38 +775,53 @@ impl MemberProvider {
         )
         .into_iter()
         .map(|(m, score)| {
-            let kind = match (m.is_method(), m.is_static()) {
-                (true, true) => CandidateKind::StaticMethod {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                },
-                (true, false) => CandidateKind::Method {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                },
-                (false, true) => CandidateKind::StaticField {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                },
-                (false, false) => CandidateKind::Field {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                },
-            };
-            let insert_text = m.name().to_string();
             let detail = render::source_member_detail(enclosing, m, resolver);
-            let candidate = CompletionCandidate::new(m.name(), insert_text, kind, self.name())
-                .with_detail(detail)
-                .with_score(70.0 + score as f32 * 0.1);
 
             if let crate::semantic::context::CurrentClassMember::Method(md) = m {
-                candidate.with_callable_insert(
+                let kind = if m.is_static() {
+                    CandidateKind::StaticMethod {
+                        descriptor: m.descriptor(),
+                        defining_class: Arc::from(enclosing),
+                    }
+                } else {
+                    CandidateKind::Method {
+                        descriptor: m.descriptor(),
+                        defining_class: Arc::from(enclosing),
+                    }
+                };
+                CompletionCandidate::new(
+                    render::source_method_label(md, resolver),
+                    md.name.to_string(),
+                    kind,
+                    self.name(),
+                )
+                .with_detail(detail)
+                .with_filter_text(md.name.to_string())
+                .with_score(70.0 + score as f32 * 0.1)
+                .with_callable_insert(
                     md.name.as_ref(),
                     &md.params.param_names(),
                     ctx.is_followed_by_opener(),
                 )
             } else {
-                candidate
+                CompletionCandidate::new(
+                    m.name(),
+                    m.name().to_string(),
+                    if m.is_static() {
+                        CandidateKind::StaticField {
+                            descriptor: m.descriptor(),
+                            defining_class: Arc::from(enclosing),
+                        }
+                    } else {
+                        CandidateKind::Field {
+                            descriptor: m.descriptor(),
+                            defining_class: Arc::from(enclosing),
+                        }
+                    },
+                    self.name(),
+                )
+                .with_detail(detail)
+                .with_score(70.0 + score as f32 * 0.1)
             }
         })
         .collect()
@@ -810,31 +844,38 @@ impl MemberProvider {
         )
         .into_iter()
         .map(|(m, score)| {
-            let kind = if m.is_method() {
-                CandidateKind::StaticMethod {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                }
-            } else {
-                CandidateKind::StaticField {
-                    descriptor: m.descriptor(),
-                    defining_class: Arc::from(enclosing),
-                }
-            };
-            let insert_text = m.name().to_string();
             let detail = render::source_member_detail(enclosing, m, resolver);
-            let candidate = CompletionCandidate::new(m.name(), insert_text, kind, self.name())
-                .with_detail(detail)
-                .with_score(70.0 + score as f32 * 0.1);
 
             if let crate::semantic::context::CurrentClassMember::Method(md) = m {
-                candidate.with_callable_insert(
+                CompletionCandidate::new(
+                    render::source_method_label(md, resolver),
+                    md.name.to_string(),
+                    CandidateKind::StaticMethod {
+                        descriptor: m.descriptor(),
+                        defining_class: Arc::from(enclosing),
+                    },
+                    self.name(),
+                )
+                .with_detail(detail)
+                .with_filter_text(md.name.to_string())
+                .with_score(70.0 + score as f32 * 0.1)
+                .with_callable_insert(
                     md.name.as_ref(),
                     &md.params.param_names(),
                     ctx.is_followed_by_opener(),
                 )
             } else {
-                candidate
+                CompletionCandidate::new(
+                    m.name(),
+                    m.name().to_string(),
+                    CandidateKind::StaticField {
+                        descriptor: m.descriptor(),
+                        defining_class: Arc::from(enclosing),
+                    },
+                    self.name(),
+                )
+                .with_detail(detail)
+                .with_score(70.0 + score as f32 * 0.1)
             }
         })
         .collect()
@@ -1190,6 +1231,14 @@ mod tests {
         }
     }
 
+    fn candidate_name(candidate: &crate::completion::CompletionCandidate) -> &str {
+        candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref())
+    }
+
     fn make_method(name: &str, descriptor: &str, flags: u16, is_synthetic: bool) -> MethodSummary {
         MethodSummary {
             name: Arc::from(name),
@@ -1492,7 +1541,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "getValue"));
+        assert!(results.iter().any(|c| candidate_name(c) == "getValue"));
     }
 
     #[test]
@@ -1534,27 +1583,36 @@ mod tests {
             .candidates;
 
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "act"),
+            results.iter().any(|c| candidate_name(c) == "act"),
             "implicit same-class static call should resolve through inferred package: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
         assert!(matches!(
             results
                 .iter()
-                .find(|c| c.label.as_ref() == "act")
+                .find(|c| candidate_name(c) == "act")
                 .unwrap()
                 .kind,
             CandidateKind::StaticMethod { .. }
         ));
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "actPrivate"),
+            results.iter().any(|c| candidate_name(c) == "actPrivate"),
             "implicit same-class static call should preserve same-class private access: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
         assert!(
-            !results.iter().any(|c| c.label.as_ref() == "actInstance"),
+            !results.iter().any(|c| candidate_name(c) == "actInstance"),
             "static context must not suggest instance members for implicit receiver: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1574,11 +1632,11 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
 
-        assert!(results.iter().any(|c| c.label.as_ref() == "create"));
+        assert!(results.iter().any(|c| candidate_name(c) == "create"));
         assert!(matches!(
             results
                 .iter()
-                .find(|c| c.label.as_ref() == "create")
+                .find(|c| candidate_name(c) == "create")
                 .unwrap()
                 .kind,
             CandidateKind::StaticMethod { .. }
@@ -1653,7 +1711,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "size"),
+            results.iter().any(|c| candidate_name(c) == "size"),
             "member completion should keep outer List base even when nested generic args are partial"
         );
     }
@@ -1739,7 +1797,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "size"),
+            results.iter().any(|c| candidate_name(c) == "size"),
             "source-style generic receiver should still resolve outer List owner for member lookup"
         );
     }
@@ -1826,7 +1884,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &view, None)
             .candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         labels.sort();
         insta::assert_snapshot!(
@@ -1897,7 +1955,7 @@ mod tests {
             .candidates;
         let labels: Vec<&str> = results
             .iter()
-            .map(|candidate| candidate.label.as_ref())
+            .map(|candidate| candidate_name(candidate))
             .collect();
         assert!(labels.contains(&"close"), "labels={labels:?}");
         assert!(labels.contains(&"run"), "labels={labels:?}");
@@ -1928,7 +1986,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "pri"));
+        assert!(results.iter().any(|c| candidate_name(c) == "pri"));
     }
 
     #[test]
@@ -1946,8 +2004,8 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "priFunc"));
-        assert!(results.iter().any(|c| c.label.as_ref() == "fun"));
+        assert!(results.iter().any(|c| candidate_name(c) == "priFunc"));
+        assert!(results.iter().any(|c| candidate_name(c) == "fun"));
     }
 
     #[test]
@@ -2024,7 +2082,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &view, None)
             .candidates
             .into_iter()
-            .map(|candidate| candidate.label.to_string())
+            .map(|candidate| candidate_name(&candidate).to_string())
             .collect();
 
         assert!(labels.iter().any(|label| label == "baseWork"));
@@ -2088,7 +2146,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "func"));
+        assert!(results.iter().any(|c| candidate_name(c) == "func"));
     }
 
     #[test]
@@ -2134,8 +2192,8 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "listOnly"));
-        assert!(!results.iter().any(|c| c.label.as_ref() == "legacyOnly"));
+        assert!(results.iter().any(|c| candidate_name(c) == "listOnly"));
+        assert!(!results.iter().any(|c| candidate_name(c) == "legacyOnly"));
     }
 
     #[test]
@@ -2160,7 +2218,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "legacyOnly"));
+        assert!(results.iter().any(|c| candidate_name(c) == "legacyOnly"));
     }
 
     #[test]
@@ -2232,11 +2290,15 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().filter(|c| c.label.as_ref() == "add").count() >= 2,
+            results
+                .iter()
+                .filter(|c| candidate_name(c) == "add")
+                .count()
+                >= 2,
             "expected at least 2 add overloads, got {:?}",
             results
                 .iter()
-                .filter(|c| c.label.as_ref() == "add")
+                .filter(|c| candidate_name(c) == "add")
                 .map(|c| c.detail.clone())
                 .collect::<Vec<_>>()
         );
@@ -2255,7 +2317,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
-            .map(|candidate| candidate.label.to_string())
+            .map(|candidate| candidate_name(&candidate).to_string())
             .collect();
 
         assert!(labels.iter().any(|label| label == "length"), "{labels:?}");
@@ -2471,9 +2533,12 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "size"),
+            results.iter().any(|c| candidate_name(c) == "size"),
             "exact prefix should still work for member provider: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2536,11 +2601,11 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "get"),
+            results.iter().any(|c| candidate_name(c) == "get"),
             "erased owner lookup should still target Box and find get()"
         );
         assert!(
-            !results.iter().any(|c| c.label.as_ref() == "legacyOnly"),
+            !results.iter().any(|c| candidate_name(c) == "legacyOnly"),
             "legacy receiver_type should not override semantic owner"
         );
     }
@@ -2639,7 +2704,7 @@ mod tests {
             .candidates;
         let add = results
             .iter()
-            .find(|c| c.label.as_ref() == "add")
+            .find(|c| candidate_name(c) == "add")
             .expect("expected add candidate");
         let detail = add.detail.clone().unwrap_or_default();
         assert!(
@@ -2705,7 +2770,7 @@ mod tests {
             .candidates;
         let labels: Vec<&str> = results
             .iter()
-            .map(|candidate| candidate.label.as_ref())
+            .map(|candidate| candidate_name(candidate))
             .collect();
         assert!(labels.contains(&"x"), "labels={labels:?}");
         assert!(labels.contains(&"y"), "labels={labels:?}");
@@ -2727,7 +2792,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
-            .map(|candidate| candidate.label.to_string())
+            .map(|candidate| candidate_name(&candidate).to_string())
             .collect();
 
         assert!(
@@ -2767,14 +2832,14 @@ mod tests {
         assert_eq!(
             results
                 .iter()
-                .filter(|candidate| candidate.label.as_ref() == "work")
+                .filter(|candidate| candidate_name(candidate) == "work")
                 .count(),
             1
         );
         assert_eq!(
             results
                 .iter()
-                .filter(|candidate| candidate.label.as_ref() == "value")
+                .filter(|candidate| candidate_name(candidate) == "value")
                 .count(),
             1
         );
@@ -2835,14 +2900,14 @@ mod tests {
         assert_eq!(
             results
                 .iter()
-                .filter(|candidate| candidate.label.as_ref() == "work")
+                .filter(|candidate| candidate_name(candidate) == "work")
                 .count(),
             1
         );
         assert_eq!(
             results
                 .iter()
-                .filter(|candidate| candidate.label.as_ref() == "value")
+                .filter(|candidate| candidate_name(candidate) == "value")
                 .count(),
             1
         );
@@ -2954,7 +3019,7 @@ mod tests {
         assert_eq!(
             results
                 .iter()
-                .filter(|candidate| candidate.label.as_ref() == "work")
+                .filter(|candidate| candidate_name(candidate) == "work")
                 .count(),
             1
         );
@@ -3013,7 +3078,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
-            .map(|candidate| candidate.label.to_string())
+            .map(|candidate| candidate_name(&candidate).to_string())
             .collect();
 
         assert!(labels.iter().any(|label| label == "baseWork"));
@@ -3080,7 +3145,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &view, None)
             .candidates
             .into_iter()
-            .map(|candidate| candidate.label.to_string())
+            .map(|candidate| candidate_name(&candidate).to_string())
             .collect();
 
         assert!(labels.iter().any(|label| label == "baseWork"));
@@ -3095,9 +3160,12 @@ mod tests {
             .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "func"),
+            results.iter().any(|c| candidate_name(c) == "func"),
             "should find func via simple name lookup: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3108,7 +3176,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "func"));
+        assert!(results.iter().any(|c| candidate_name(c) == "func"));
     }
 
     #[test]
@@ -3119,7 +3187,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(!results.is_empty());
-        assert!(results.iter().any(|c| c.label.as_ref() == "func"));
+        assert!(results.iter().any(|c| candidate_name(c) == "func"));
     }
 
     // ── new tests for self-class static access ────────────────────────────
@@ -3195,9 +3263,12 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "randomField"),
+            results.iter().any(|c| candidate_name(c) == "randomField"),
             "private static field should be visible when accessing own class: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3208,7 +3279,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "publicField"));
+        assert!(results.iter().any(|c| candidate_name(c) == "publicField"));
     }
 
     #[test]
@@ -3251,13 +3322,16 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "staticF"),
+            results.iter().any(|c| candidate_name(c) == "staticF"),
             "static field must appear"
         );
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "instanceF"),
+            results.iter().all(|c| candidate_name(c) != "instanceF"),
             "instance field must NOT appear for Cls.xxx access: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3269,12 +3343,15 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "randomField"),
+            results.iter().any(|c| candidate_name(c) == "randomField"),
             "prefix 'rand' should match 'randomField': {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "publicField"),
+            results.iter().all(|c| candidate_name(c) != "publicField"),
             "'rand' should not match 'publicField'"
         );
     }
@@ -3328,18 +3405,24 @@ mod tests {
             .candidates;
 
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "randomField"),
+            results.iter().any(|c| candidate_name(c) == "randomField"),
             "private static field from source members should appear: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "staticHelper"),
+            results.iter().any(|c| candidate_name(c) == "staticHelper"),
             "static method from source members should appear"
         );
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "instanceField"),
+            results.iter().all(|c| candidate_name(c) != "instanceField"),
             "instance field must NOT appear even from source members: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3387,9 +3470,12 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "secret"),
+            results.iter().all(|c| candidate_name(c) != "secret"),
             "private field of another class must NOT be visible: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3544,9 +3630,12 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "FIELD"),
+            results.iter().any(|c| candidate_name(c) == "FIELD"),
             "lowercase class name static field should be found via provider, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3587,11 +3676,11 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "main"));
+        assert!(results.iter().any(|c| candidate_name(c) == "main"));
         assert!(
             results
                 .iter()
-                .all(|c| c.label.as_ref() != "veryLongStaticName")
+                .all(|c| candidate_name(c) != "veryLongStaticName")
         );
     }
 
@@ -3639,9 +3728,12 @@ mod tests {
         assert!(
             results
                 .iter()
-                .any(|c| c.label.as_ref() == "veryLongStaticName"),
+                .any(|c| candidate_name(c) == "veryLongStaticName"),
             "fuzzy subsequence should match static member, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3695,7 +3787,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"Box"), "{:?}", labels);
     }
 
@@ -3763,7 +3855,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"BoxV"), "{:?}", labels);
     }
 
@@ -3796,7 +3888,7 @@ mod tests {
             .candidates;
         let labels: Vec<&str> = results
             .iter()
-            .map(|candidate| candidate.label.as_ref())
+            .map(|candidate| candidate_name(candidate))
             .collect();
         assert!(labels.contains(&"RED"), "labels={labels:?}");
         assert!(labels.contains(&"GREEN"), "labels={labels:?}");

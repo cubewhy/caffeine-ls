@@ -1251,6 +1251,14 @@ mod tests {
             .collect()
     }
 
+    fn candidate_name(candidate: &crate::completion::CompletionCandidate) -> &str {
+        candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref())
+    }
+
     #[test]
     fn test_chain_simple_variable() {
         // "list.ge" should parse as two variable-like segments.
@@ -3656,7 +3664,7 @@ mod tests {
             .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
-            .find(|c| c.label.as_ref() == "add")
+            .find(|c| candidate_name(c) == "add")
             .expect("add candidate should exist");
         let detail = add.detail.unwrap_or_default();
         assert!(
@@ -3741,7 +3749,7 @@ mod tests {
         let results = provider.provide_test(scope, &ctx, &view, None).candidates;
         let add = results
             .iter()
-            .find(|c| c.label.as_ref() == "add")
+            .find(|c| candidate_name(c) == "add")
             .expect("expected add candidate");
         let detail = add.detail.as_deref().unwrap_or_default();
         assert!(
@@ -4028,7 +4036,7 @@ mod tests {
                 .provide_test(scope, &member_ctx, &view, None)
                 .candidates
                 .into_iter()
-                .find(|c| c.label.as_ref() == "add")
+                .find(|c| candidate_name(c) == "add")
                 .and_then(|c| c.detail)
                 .unwrap_or_else(|| "<none>".to_string());
 
@@ -4188,7 +4196,7 @@ mod tests {
             .provide_test(scope, &nums_ctx, &view, None)
             .candidates
             .into_iter()
-            .find(|c| c.label.as_ref() == "add")
+            .find(|c| candidate_name(c) == "add")
             .and_then(|c| c.detail)
             .unwrap_or_else(|| "<none>".to_string());
 
@@ -4284,7 +4292,7 @@ mod tests {
             .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
 
         insta::assert_snapshot!(
@@ -5032,7 +5040,7 @@ mod tests {
             .provide_test(scope, &ctx_trim, &view, None)
             .candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         trim_labels.sort();
         assert!(
@@ -5104,7 +5112,7 @@ mod tests {
             .provide_test(scope, &ctx_ctor, &view, None)
             .candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         ctor_labels.sort();
         assert!(
@@ -6011,7 +6019,7 @@ mod tests {
             .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         assert!(
             labels.iter().any(|l| l == "size"),

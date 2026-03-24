@@ -82,7 +82,7 @@ pub fn local_variable_detail(
     )
 }
 
-fn render_param_type_for_detail(method: &MethodSummary, idx: usize, rendered: String) -> String {
+fn render_param_type_for_display(method: &MethodSummary, idx: usize, rendered: String) -> String {
     let is_last = idx + 1 == method.params.items.len();
     if !(method.is_varargs() && is_last) {
         return rendered;
@@ -91,6 +91,153 @@ fn render_param_type_for_detail(method: &MethodSummary, idx: usize, rendered: St
         return format!("{base}...");
     }
     rendered
+}
+
+fn short_class_name(receiver_internal: &str) -> &str {
+    let base_class_name = receiver_internal
+        .split('<')
+        .next()
+        .unwrap_or(receiver_internal);
+    base_class_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(base_class_name)
+}
+
+fn clean_fallback_jvm_sig(jvm_sig: &str) -> String {
+    let mut array_dims = 0;
+    let mut base = jvm_sig.trim();
+    while base.starts_with('[') {
+        array_dims += 1;
+        base = &base[1..];
+    }
+    let type_name = match base {
+        "B" => "byte",
+        "C" => "char",
+        "D" => "double",
+        "F" => "float",
+        "I" => "int",
+        "J" => "long",
+        "S" => "short",
+        "Z" => "boolean",
+        "V" => "void",
+        _ if base.starts_with('L') && base.ends_with(';') => &base[1..base.len() - 1],
+        _ => base,
+    };
+    let source_type = type_name.replace('/', ".");
+    let source_type = source_type.replace('$', ".");
+    format!("{}{}", source_type, "[]".repeat(array_dims))
+}
+
+fn method_signature_to_use(method: &MethodSummary) -> Arc<str> {
+    method
+        .generic_signature
+        .clone()
+        .unwrap_or_else(|| method.desc())
+}
+
+fn render_source_param_types(
+    method: &MethodSummary,
+    provider: &impl SymbolProvider,
+) -> Vec<String> {
+    let sig_to_use = method_signature_to_use(method);
+    let mut param_types = Vec::new();
+
+    if let Some(start) = sig_to_use.find('(')
+        && let Some(end) = sig_to_use.find(')')
+    {
+        let mut params_str = &sig_to_use[start + 1..end];
+        while !params_str.is_empty() {
+            if let Some((_, rest)) = JvmType::parse(params_str) {
+                let param_jvm_str = &params_str[..params_str.len() - rest.len()];
+                let rendered = signature_to_source_type(param_jvm_str, provider)
+                    .or_else(|| descriptor_to_source_type(param_jvm_str, provider))
+                    .unwrap_or_else(|| clean_fallback_jvm_sig(param_jvm_str));
+                param_types.push(rendered);
+                params_str = rest;
+            } else {
+                break;
+            }
+        }
+    }
+
+    param_types
+        .into_iter()
+        .enumerate()
+        .map(|(i, type_name)| render_param_type_for_display(method, i, type_name))
+        .collect()
+}
+
+fn render_substituted_param_types(
+    receiver_internal: &str,
+    class_meta: &ClassMetadata,
+    method: &MethodSummary,
+    provider: &impl SymbolProvider,
+) -> Vec<String> {
+    let sig_to_use = method_signature_to_use(method);
+    let mut param_types = Vec::new();
+
+    if let Some(start) = sig_to_use.find('(')
+        && let Some(end) = sig_to_use.find(')')
+    {
+        let mut params_str = &sig_to_use[start + 1..end];
+        while !params_str.is_empty() {
+            if let Some((_, rest)) = JvmType::parse(params_str) {
+                let param_jvm_str = &params_str[..params_str.len() - rest.len()];
+                let substituted = substitute_type(
+                    receiver_internal,
+                    class_meta.generic_signature.as_deref(),
+                    param_jvm_str,
+                );
+                let rendered = substituted
+                    .as_ref()
+                    .map(|t| type_name_to_source_style(t, provider))
+                    .or_else(|| signature_to_source_type(param_jvm_str, provider))
+                    .or_else(|| descriptor_to_source_type(param_jvm_str, provider))
+                    .unwrap_or_else(|| clean_fallback_jvm_sig(param_jvm_str));
+                param_types.push(rendered);
+                params_str = rest;
+            } else {
+                break;
+            }
+        }
+    }
+
+    param_types
+        .into_iter()
+        .enumerate()
+        .map(|(i, type_name)| render_param_type_for_display(method, i, type_name))
+        .collect()
+}
+
+fn render_source_return_type(method: &MethodSummary, provider: &impl SymbolProvider) -> String {
+    let base_return = method.return_type.as_deref().unwrap_or("V");
+    let ret_jvm = method
+        .generic_signature
+        .as_deref()
+        .and_then(|sig| sig.find(')').map(|i| &sig[i + 1..]))
+        .unwrap_or(base_return);
+
+    signature_to_source_type(ret_jvm, provider)
+        .or_else(|| descriptor_to_source_type(ret_jvm, provider))
+        .unwrap_or_else(|| clean_fallback_jvm_sig(ret_jvm))
+}
+
+#[instrument(skip(class_meta, method, provider))]
+pub fn method_label(
+    receiver_internal: &str,
+    class_meta: &ClassMetadata,
+    method: &MethodSummary,
+    provider: &impl SymbolProvider,
+) -> String {
+    let rendered_params =
+        render_substituted_param_types(receiver_internal, class_meta, method, provider);
+    format!("{}({})", method.name, rendered_params.join(", "))
+}
+
+pub fn source_method_label(method: &MethodSummary, provider: &impl SymbolProvider) -> String {
+    let rendered_params = render_source_param_types(method, provider);
+    format!("{}({})", method.name, rendered_params.join(", "))
 }
 
 #[instrument(skip(class_meta, method, provider))]
@@ -118,64 +265,26 @@ pub fn method_detail(
         .map(|t| type_name_to_source_style(t, provider))
         .or_else(|| signature_to_source_type(ret_jvm, provider))
         .or_else(|| descriptor_to_source_type(ret_jvm, provider))
-        .unwrap_or_else(|| ret_jvm.to_string());
+        .unwrap_or_else(|| clean_fallback_jvm_sig(ret_jvm));
 
-    let sig_to_use = method
-        .generic_signature
-        .clone()
-        .unwrap_or_else(|| method.desc());
-
-    let mut param_types = Vec::new();
-
-    if let Some(start) = sig_to_use.find('(')
-        && let Some(end) = sig_to_use.find(')')
-    {
-        let mut params_str = &sig_to_use[start + 1..end];
-        while !params_str.is_empty() {
-            if let Some((_, rest)) = JvmType::parse(params_str) {
-                let param_jvm_str = &params_str[..params_str.len() - rest.len()];
-                let substituted = substitute_type(
-                    receiver_internal,
-                    class_meta.generic_signature.as_deref(),
-                    param_jvm_str,
-                );
-                let rendered = substituted
-                    .as_ref()
-                    .map(|t| type_name_to_source_style(t, provider))
-                    .or_else(|| signature_to_source_type(param_jvm_str, provider))
-                    .or_else(|| descriptor_to_source_type(param_jvm_str, provider))
-                    .unwrap_or_else(|| param_jvm_str.to_string());
-                param_types.push(rendered);
-                params_str = rest;
-            } else {
-                break;
-            }
-        }
-    }
+    let param_types =
+        render_substituted_param_types(receiver_internal, class_meta, method, provider);
 
     let full_params: Vec<String> = param_types
         .into_iter()
         .enumerate()
         .map(|(i, type_name)| {
-            let display_type = render_param_type_for_detail(method, i, type_name);
             let param_name = method
                 .params
                 .param_names()
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| Arc::<str>::from(format!("arg{}", i)));
-            format!("{} {}", display_type, param_name)
+            format!("{} {}", type_name, param_name)
         })
         .collect();
 
-    let base_class_name = receiver_internal
-        .split('<')
-        .next()
-        .unwrap_or(receiver_internal);
-    let short_class_name = base_class_name
-        .rsplit('/')
-        .next()
-        .unwrap_or(base_class_name);
+    let short_class_name = short_class_name(receiver_internal);
 
     let detail = format!(
         "{} — {} {}({})",
@@ -233,91 +342,24 @@ pub fn source_member_detail(
     member: &CurrentClassMember,
     provider: &impl SymbolProvider,
 ) -> String {
-    let base_class_name = receiver_internal
-        .split('<')
-        .next()
-        .unwrap_or(receiver_internal);
-    let short_class_name = base_class_name
-        .rsplit('/')
-        .next()
-        .unwrap_or(base_class_name);
-
-    let clean_fallback = |jvm_sig: &str| -> String {
-        let mut array_dims = 0;
-        let mut base = jvm_sig.trim();
-        while base.starts_with('[') {
-            array_dims += 1;
-            base = &base[1..];
-        }
-        let type_name = match base {
-            "B" => "byte",
-            "C" => "char",
-            "D" => "double",
-            "F" => "float",
-            "I" => "int",
-            "J" => "long",
-            "S" => "short",
-            "Z" => "boolean",
-            "V" => "void",
-            _ if base.starts_with('L') && base.ends_with(';') => &base[1..base.len() - 1],
-            _ => base,
-        };
-        let source_type = type_name.replace('/', ".");
-        let source_type = source_type.replace('$', "."); // 处理内部类 Map$Entry -> Map.Entry
-        format!("{}{}", source_type, "[]".repeat(array_dims))
-    };
+    let short_class_name = short_class_name(receiver_internal);
 
     if let CurrentClassMember::Method(md) = member {
         let md = md.clone();
-        let sig = member.descriptor();
-
-        let ret_jvm = if let Some(ret_idx) = sig.find(')') {
-            &sig[ret_idx + 1..]
-        } else {
-            "V"
-        };
-
-        let display_return: Arc<str> = JvmType::parse(ret_jvm)
-            .map(|(t, _)| Arc::from(t.to_signature_string()))
-            .unwrap_or_else(|| Arc::from(ret_jvm));
-
-        let source_style_return = descriptor_to_source_type(&display_return, provider)
-            .unwrap_or_else(|| clean_fallback(ret_jvm));
-
-        let mut param_types = Vec::new();
-        if let Some(start) = sig.find('(')
-            && let Some(end) = sig.find(')')
-        {
-            let mut params_str = &sig[start + 1..end];
-            while !params_str.is_empty() {
-                if let Some((t, rest)) = JvmType::parse(params_str) {
-                    let param_jvm_str = &params_str[..params_str.len() - rest.len()];
-
-                    let subbed: Arc<str> = Arc::from(t.to_signature_string());
-
-                    let rendered = descriptor_to_source_type(&subbed, provider)
-                        .unwrap_or_else(|| clean_fallback(param_jvm_str));
-                    param_types.push(rendered);
-
-                    params_str = rest;
-                } else {
-                    break;
-                }
-            }
-        }
+        let source_style_return = render_source_return_type(&md, provider);
+        let param_types = render_source_param_types(&md, provider);
 
         let full_params: Vec<String> = param_types
             .into_iter()
             .enumerate()
             .map(|(i, type_name)| {
-                let display_type = render_param_type_for_detail(&md, i, type_name);
                 let param_name = md // method not found
                     .params
                     .param_names()
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| Arc::<str>::from(format!("arg{}", i)));
-                format!("{} {}", display_type, param_name)
+                format!("{} {}", type_name, param_name)
             })
             .collect();
 
@@ -336,7 +378,7 @@ pub fn source_member_detail(
             .unwrap_or_else(|| sig_to_use.clone());
 
         let source_style_type = descriptor_to_source_type(&display_type, provider)
-            .unwrap_or_else(|| clean_fallback(&sig_to_use));
+            .unwrap_or_else(|| clean_fallback_jvm_sig(&sig_to_use));
 
         format!(
             "{} — {} : {}",

@@ -309,6 +309,14 @@ mod tests {
         ctx.with_extension(type_ctx)
     }
 
+    fn candidate_name(candidate: &CompletionCandidate) -> &str {
+        candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref())
+    }
+
     fn seg_names(expr: &str) -> Vec<(String, Option<usize>)> {
         parse_chain_from_expr(expr)
             .into_iter()
@@ -740,9 +748,12 @@ mod tests {
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "f"),
+            results.iter().any(|c| candidate_name(c) == "f"),
             "should find method f(): {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -799,11 +810,11 @@ mod tests {
         assert!(
             results
                 .iter()
-                .any(|c| c.label.as_ref() == "Box" && c.source == "expression"),
+                .any(|c| candidate_name(c) == "Box" && c.source == "expression"),
             "expected nested type from expression provider, got: {:?}",
             results
                 .iter()
-                .map(|c| format!("{}@{}", c.label, c.source))
+                .map(|c| format!("{}@{}", candidate_name(c), c.source))
                 .collect::<Vec<_>>()
         );
         assert!(
@@ -811,7 +822,7 @@ mod tests {
             "package provider should be gated off, got: {:?}",
             results
                 .iter()
-                .map(|c| format!("{}@{}", c.label, c.source))
+                .map(|c| format!("{}@{}", candidate_name(c), c.source))
                 .collect::<Vec<_>>()
         );
     }
@@ -942,10 +953,13 @@ mod tests {
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(!results.is_empty(), "should have candidates");
         assert_eq!(
-            results[0].label.as_ref(),
+            candidate_name(&results[0]),
             "RandomClass",
             "RandomClass should rank first when it matches expected_type, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results
+                .iter()
+                .map(|c| candidate_name(c))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1267,7 +1281,7 @@ mod tests {
         let view = idx.view(root_scope());
         let ctx = with_type_ctx(ctx, &view);
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
-        assert!(results.iter().any(|c| c.label.as_ref() == "func"));
+        assert!(results.iter().any(|c| candidate_name(c) == "func"));
     }
 
     #[test]

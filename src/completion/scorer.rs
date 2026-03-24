@@ -102,7 +102,12 @@ impl<'idx> Scorer<'idx> {
 
     pub fn score(&self, candidate: &super::candidate::CompletionCandidate) -> f32 {
         let mut score = 0.0f32;
-        score += self.prefix_score(candidate.label.as_ref());
+        let match_text = candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref());
+        score += self.prefix_score(match_text);
         score += self.kind_base_score(&candidate.kind);
         score += self.compatibility_score(candidate);
         score

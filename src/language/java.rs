@@ -619,6 +619,14 @@ mod tests {
         at(src, line, col)
     }
 
+    fn candidate_name(candidate: &CompletionCandidate) -> &str {
+        candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref())
+    }
+
     fn parse_test_classes(src: &str) -> Vec<ClassMetadata> {
         parse_java_source_via_tree_for_test(src, ClassOrigin::Unknown, None)
     }
@@ -857,7 +865,7 @@ mod tests {
         let (ctx, candidates) = ctx_and_candidates_from_marked_source(src_with_cursor, view);
         let mut labels: Vec<String> = candidates
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         labels.sort();
         (ctx, labels)
@@ -890,7 +898,7 @@ mod tests {
         label: &str,
     ) -> Option<&'a str> {
         candidates.iter().find_map(|candidate| {
-            if candidate.label.as_ref() != label {
+            if candidate_name(candidate) != label {
                 return None;
             }
             match &candidate.kind {
@@ -1182,7 +1190,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"outer"), "{labels:?}");
     }
 
@@ -1205,7 +1213,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"loop"), "{labels:?}");
         assert!(!labels.contains(&"outer"), "{labels:?}");
     }
@@ -1227,7 +1235,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"outerLabel"), "{labels:?}");
     }
 
@@ -1248,7 +1256,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
         assert!(labels.contains(&"outerLoop"), "{labels:?}");
     }
 
@@ -1274,7 +1282,7 @@ mod tests {
         let labels: Vec<&str> = candidates
             .iter()
             .filter(|c| matches!(c.kind, CandidateKind::StatementLabel))
-            .map(|c| c.label.as_ref())
+            .map(|c| candidate_name(c))
             .collect();
         assert_eq!(labels, vec!["inner", "outer"], "{labels:?}");
     }
@@ -1296,11 +1304,11 @@ mod tests {
         );
 
         assert!(
-            candidates.iter().any(|c| c.label.as_ref() == "localValue"),
+            candidates.iter().any(|c| candidate_name(c) == "localValue"),
             "{:?}",
             candidates
                 .iter()
-                .map(|c| c.label.as_ref())
+                .map(|c| candidate_name(c))
                 .collect::<Vec<_>>()
         );
         assert!(
@@ -1336,11 +1344,11 @@ mod tests {
             ctx.location
         );
         assert!(
-            candidates.iter().any(|c| c.label.as_ref() == "localValue"),
+            candidates.iter().any(|c| candidate_name(c) == "localValue"),
             "{:?}",
             candidates
                 .iter()
-                .map(|c| c.label.as_ref())
+                .map(|c| candidate_name(c))
                 .collect::<Vec<_>>()
         );
     }
@@ -3383,7 +3391,7 @@ mod tests {
         let view = idx.view(root_scope());
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         assert!(
-            candidates.iter().any(|c| c.label.as_ref() == "append"),
+            candidates.iter().any(|c| candidate_name(c) == "append"),
             "append should be available via flow narrowing in true branch"
         );
     }
@@ -3405,7 +3413,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let append = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "append")
+            .find(|c| candidate_name(c) == "append")
             .expect("append candidate should exist in narrowed branch");
         assert!(
             append.insert_text.starts_with("append("),
@@ -3420,8 +3428,8 @@ mod tests {
         assert_eq!(rewrite.receiver_expr, "sb");
         assert_eq!(rewrite.cast_type, "java.lang.StringBuilder");
         assert!(
-            append.insertion.filter_text.is_none(),
-            "cast rewrite should not force custom filter_text here"
+            append.insertion.filter_text.as_deref() == Some("append"),
+            "member methods should filter on the bare method name even with cast rewrite"
         );
     }
 
@@ -3440,7 +3448,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let append = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "append")
+            .find(|c| candidate_name(c) == "append")
             .expect("append candidate should exist for typed receiver");
         assert!(
             append.insert_text.starts_with("append("),
@@ -3475,7 +3483,7 @@ mod tests {
         let view = idx.view(root_scope());
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         assert!(
-            !candidates.iter().any(|c| c.label.as_ref() == "append"),
+            !candidates.iter().any(|c| candidate_name(c) == "append"),
             "append should not be available outside instanceof true branch"
         );
     }
@@ -3509,12 +3517,14 @@ mod tests {
 
         let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
         assert!(
-            candidates_a.iter().any(|c| c.label.as_ref() == "append"),
+            candidates_a.iter().any(|c| candidate_name(c) == "append"),
             "a should narrow to StringBuilder in && true branch"
         );
         let (_ctx_b, candidates_b) = ctx_and_candidates_from_marked_source(src_b, &view);
         assert!(
-            candidates_b.iter().any(|c| c.label.as_ref() == "substring"),
+            candidates_b
+                .iter()
+                .any(|c| candidate_name(c) == "substring"),
             "b should narrow to String in && true branch"
         );
     }
@@ -3534,7 +3544,7 @@ mod tests {
         let view = idx.view(root_scope());
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         assert!(
-            candidates.iter().any(|c| c.label.as_ref() == "append"),
+            candidates.iter().any(|c| candidate_name(c) == "append"),
             "RHS of && should see lhs true-facts"
         );
     }
@@ -3573,7 +3583,7 @@ mod tests {
         let engine = CompletionEngine::new();
         let candidates = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
         assert!(
-            candidates.iter().any(|c| c.label.as_ref() == "substring"),
+            candidates.iter().any(|c| candidate_name(c) == "substring"),
             "RHS of || should narrow from false case of !(x instanceof String)"
         );
     }
@@ -3603,12 +3613,12 @@ mod tests {
 
         let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
         assert!(
-            !candidates_a.iter().any(|c| c.label.as_ref() == "append"),
+            !candidates_a.iter().any(|c| candidate_name(c) == "append"),
             "a should not be narrowed in true branch of general ||"
         );
         let (_ctx_b, candidates_b) = ctx_and_candidates_from_marked_source(src_b, &view);
         assert!(
-            !candidates_b.iter().any(|c| c.label.as_ref() == "append"),
+            !candidates_b.iter().any(|c| candidate_name(c) == "append"),
             "b should not be narrowed in true branch of general ||"
         );
     }
@@ -3644,7 +3654,7 @@ mod tests {
         let view = idx.view(root_scope());
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
-        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
 
         assert!(
             !labels.is_empty() && labels.contains(&"Box"),
@@ -3795,7 +3805,7 @@ mod tests {
         let ctx = completion_ctx_with_view(src, line, col, None, &view);
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
-        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
         assert!(
             labels.contains(&"put"),
             "member completion should include put for a.put, got {:?}",
@@ -3882,7 +3892,7 @@ mod tests {
         let results = CompletionEngine::new().complete(root_scope(), ctx, &JavaLanguage, &view);
         let a = results
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local candidate a");
         match &a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -3977,7 +3987,7 @@ mod tests {
         let results = CompletionEngine::new().complete(root_scope(), ctx, &JavaLanguage, &view);
         let b = results
             .iter()
-            .find(|c| c.label.as_ref() == "b")
+            .find(|c| candidate_name(c) == "b")
             .expect("expected local candidate b");
         match &b.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4042,7 +4052,7 @@ mod tests {
 
         let a = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local variable completion for a");
         match &a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4071,7 +4081,7 @@ mod tests {
         let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
         let cand_a = candidates_a
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local candidate a");
         match &cand_a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4094,7 +4104,7 @@ mod tests {
 
         let cand_b = candidates_b
             .iter()
-            .find(|c| c.label.as_ref() == "b")
+            .find(|c| candidate_name(c) == "b")
             .expect("expected local candidate b");
         match &cand_b.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4123,7 +4133,7 @@ mod tests {
         let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
         let cand_a = candidates_a
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local candidate a");
         match &cand_a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4145,7 +4155,7 @@ mod tests {
         let (_ctx_b, candidates_b) = ctx_and_candidates_from_marked_source(src_b, &view);
         let cand_b = candidates_b
             .iter()
-            .find(|c| c.label.as_ref() == "b")
+            .find(|c| candidate_name(c) == "b")
             .expect("expected local candidate b");
         match &cand_b.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4176,7 +4186,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let cand_a = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local candidate a");
         match &cand_a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4210,7 +4220,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let cand_a = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "a")
+            .find(|c| candidate_name(c) == "a")
             .expect("expected local candidate a");
         match &cand_a.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4244,7 +4254,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let cand_b = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "b")
+            .find(|c| candidate_name(c) == "b")
             .expect("expected local candidate b");
         match &cand_b.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4279,7 +4289,7 @@ mod tests {
         let (_, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let join = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "join")
+            .find(|c| candidate_name(c) == "join")
             .expect("join should be completable regardless of declaration order");
         match &join.kind {
             crate::completion::CandidateKind::Method { descriptor, .. }
@@ -4331,7 +4341,7 @@ mod tests {
 
         let p = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "p")
+            .find(|c| candidate_name(c) == "p")
             .expect("expected local variable completion for p");
         match &p.kind {
             crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
@@ -4405,7 +4415,7 @@ mod tests {
                 crate::completion::CandidateKind::Method { descriptor, .. } => {
                     format!(
                         "{}@{}|method|desc={}",
-                        c.label.as_ref(),
+                        candidate_name(c),
                         c.source,
                         descriptor.as_ref()
                     )
@@ -4413,12 +4423,12 @@ mod tests {
                 crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
                     format!(
                         "{}@{}|local|ty={}",
-                        c.label.as_ref(),
+                        candidate_name(c),
                         c.source,
                         type_descriptor.as_ref()
                     )
                 }
-                other => format!("{}@{}|{:?}", c.label.as_ref(), c.source, other),
+                other => format!("{}@{}|{:?}", candidate_name(c), c.source, other),
             })
             .collect();
         out.sort();
@@ -4967,14 +4977,14 @@ mod tests {
 
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         assert!(candidates.iter().any(|candidate| {
-            candidate.label.as_ref() == "length"
+            candidate_name(candidate) == "length"
                 && matches!(
                     candidate.kind,
                     crate::completion::CandidateKind::Field { .. }
                 )
         }));
         assert!(!candidates.iter().any(|candidate| {
-            candidate.label.as_ref() == "length"
+            candidate_name(candidate) == "length"
                 && matches!(
                     candidate.kind,
                     crate::completion::CandidateKind::Method { .. }
@@ -5034,7 +5044,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let a = candidates
             .iter()
-            .find(|candidate| candidate.label.as_ref() == "a")
+            .find(|candidate| candidate_name(candidate) == "a")
             .expect("expected local variable completion for a");
 
         match &a.kind {
@@ -5169,7 +5179,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let a = candidates
             .iter()
-            .find(|candidate| candidate.label.as_ref() == "a")
+            .find(|candidate| candidate_name(candidate) == "a")
             .expect("expected local variable completion for a");
 
         match &a.kind {
@@ -5203,7 +5213,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let a = candidates
             .iter()
-            .find(|candidate| candidate.label.as_ref() == "a")
+            .find(|candidate| candidate_name(candidate) == "a")
             .expect("expected local variable completion for a");
 
         match &a.kind {
@@ -5291,17 +5301,14 @@ mod tests {
             .into_iter()
             .filter(|candidate| {
                 matches!(
-                    candidate.label.as_ref(),
+                    candidate_name(candidate),
                     "length" | "getClass" | "substring"
                 )
             })
             .map(|candidate| {
-                format!(
-                    "{}|{:?}|{}",
-                    candidate.label,
-                    candidate.kind,
-                    candidate.detail.unwrap_or_default()
-                )
+                let match_name = candidate_name(&candidate).to_string();
+                let detail = candidate.detail.clone().unwrap_or_default();
+                format!("{}|{:?}|{}", match_name, candidate.kind, detail)
             })
             .collect();
         rows.sort();
@@ -5460,7 +5467,7 @@ mod tests {
         let mut type_labels: Vec<String> = engine
             .complete(root_scope(), type_ctx, &JavaLanguage, &view)
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         type_labels.sort();
 
@@ -5488,7 +5495,7 @@ mod tests {
         let mut ctor_labels: Vec<String> = engine
             .complete(root_scope(), ctor_ctx, &JavaLanguage, &view)
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         ctor_labels.sort();
 
@@ -5513,7 +5520,7 @@ mod tests {
         let mut decl_labels: Vec<String> = engine
             .complete(root_scope(), decl_ctx, &JavaLanguage, &view)
             .into_iter()
-            .map(|c| c.label.to_string())
+            .map(|c| candidate_name(&c).to_string())
             .collect();
         decl_labels.sort();
 
@@ -6044,7 +6051,7 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let foo = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "foo" && matches!(c.kind, CandidateKind::Method { .. }))
+            .find(|c| candidate_name(c) == "foo" && matches!(c.kind, CandidateKind::Method { .. }))
             .expect("expected method candidate foo");
         assert_eq!(foo.insert_text, "foo()");
     }
@@ -6065,7 +6072,9 @@ mod tests {
         let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
         let print = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "print" && matches!(c.kind, CandidateKind::Method { .. }))
+            .find(|c| {
+                candidate_name(c) == "print" && matches!(c.kind, CandidateKind::Method { .. })
+            })
             .expect("expected method candidate print");
         assert_eq!(print.insert_text, "print(${1:s}, ${2:n})$0");
     }
@@ -6090,7 +6099,7 @@ mod tests {
         );
         let foo = candidates
             .iter()
-            .find(|c| c.label.as_ref() == "foo" && matches!(c.kind, CandidateKind::Method { .. }))
+            .find(|c| candidate_name(c) == "foo" && matches!(c.kind, CandidateKind::Method { .. }))
             .expect("expected method candidate foo");
         assert_eq!(
             foo.insert_text, "foo",
@@ -6137,7 +6146,8 @@ mod tests {
         let ctor = candidates
             .iter()
             .find(|c| {
-                c.label.as_ref() == "Printer" && matches!(c.kind, CandidateKind::Constructor { .. })
+                candidate_name(c) == "Printer"
+                    && matches!(c.kind, CandidateKind::Constructor { .. })
             })
             .expect("expected constructor candidate Printer");
         assert_eq!(ctor.insert_text, "Printer(${1:message}, ${2:count})$0");
@@ -8033,16 +8043,19 @@ mod tests {
             "#},
             &view,
         );
-        let labels: Vec<String> = candidates.iter().map(|c| c.label.to_string()).collect();
+        let labels: Vec<String> = candidates
+            .iter()
+            .map(|c| candidate_name(c).to_string())
+            .collect();
         assert!(labels.iter().any(|l| l == "Box"), "{labels:?}");
         assert!(
             candidates
                 .iter()
-                .any(|c| c.label.as_ref() == "Box" && c.source == "expression"),
+                .any(|c| candidate_name(c) == "Box" && c.source == "expression"),
             "expected Box from expression provider, got {:?}",
             candidates
                 .iter()
-                .map(|c| format!("{}@{}", c.label, c.source))
+                .map(|c| format!("{}@{}", candidate_name(c), c.source))
                 .collect::<Vec<_>>()
         );
         assert!(
@@ -8050,7 +8063,7 @@ mod tests {
             "package provider should be gated off here: {:?}",
             candidates
                 .iter()
-                .map(|c| format!("{}@{}", c.label, c.source))
+                .map(|c| format!("{}@{}", candidate_name(c), c.source))
                 .collect::<Vec<_>>()
         );
     }
