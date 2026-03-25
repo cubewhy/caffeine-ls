@@ -2,6 +2,7 @@ use crate::index::{FieldSummary, IndexView, MethodSummary};
 use crate::language::java::super_support::{is_super_receiver_expr, resolve_direct_super_owner};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
+use crate::semantic::enclosing::resolve_enclosing_owner_internal;
 use crate::semantic::types::TypeResolver;
 use crate::semantic::types::type_name::TypeName;
 use std::cell::RefCell;
@@ -413,7 +414,10 @@ impl<'a> SymbolResolver<'a> {
         let resolved = self
             .view
             .resolve_qualified_type_path(name, &resolve_head)
-            .map(|c| Arc::clone(&c.internal_name));
+            .map(|c| Arc::clone(&c.internal_name))
+            .or_else(|| {
+                (!name.contains('.') && !name.contains('/')).then(|| resolve_head(name))?
+            });
         if resolved.is_none() {
             tracing::debug!(name = %name, "resolve: type not found in index");
         }
@@ -458,27 +462,14 @@ impl<'a> SymbolResolver<'a> {
         ctx: &SemanticContext,
         simple_name: &str,
     ) -> Option<Arc<str>> {
-        let mut current = ctx.enclosing_internal_name.as_deref()?;
-        loop {
-            if internal_simple_name(current) == simple_name {
-                return self
-                    .view
-                    .get_class(current)
-                    .map(|class| Arc::clone(&class.internal_name))
-                    .or_else(|| Some(Arc::from(current)));
-            }
-
-            let Some((owner_internal, _)) = current.rsplit_once('$') else {
-                break;
-            };
-            current = owner_internal;
-        }
-        None
+        resolve_enclosing_owner_internal(
+            Some(self.view),
+            ctx.enclosing_internal_name.as_deref(),
+            ctx.enclosing_package.as_deref(),
+            &ctx.enclosing_class_chain,
+            simple_name,
+        )
     }
-}
-
-fn internal_simple_name(internal: &str) -> &str {
-    internal.rsplit(['$', '/']).next().unwrap_or(internal)
 }
 
 /// `Ljava/io/PrintStream;` -> `java/io/PrintStream`
@@ -1578,5 +1569,36 @@ mod tests {
             }
             other => panic!("expected method resolution for super member, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_resolve_type_name_uses_enclosing_class_chain_for_dollar_names_without_index() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("Inner$Class")),
+            Some(Arc::from("com/example/Outer$Class$Inner$Class")),
+            Some(Arc::from("com/example")),
+            vec![],
+        )
+        .with_enclosing_class_chain(vec![Arc::from("Outer$Class"), Arc::from("Inner$Class")]);
+
+        assert_eq!(
+            resolver.resolve_type_name(&ctx, "Outer$Class").as_deref(),
+            Some("com/example/Outer$Class")
+        );
+        assert_eq!(
+            resolver.resolve_type_name(&ctx, "Inner$Class").as_deref(),
+            Some("com/example/Outer$Class$Inner$Class")
+        );
     }
 }

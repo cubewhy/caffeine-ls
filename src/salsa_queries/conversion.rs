@@ -79,6 +79,7 @@ impl FromSalsaDataWithAnalysis<CompletionContextData> for SemanticContext {
             data.enclosing_package.clone(),
             existing_imports.clone(),
         )
+        .with_enclosing_class_chain(data.enclosing_class_chain.clone())
         .with_file_uri(data.file_uri.clone())
         .with_language_id(crate::language::LanguageId::new(data.language_id.clone()));
 

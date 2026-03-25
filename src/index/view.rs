@@ -313,6 +313,34 @@ impl IndexView {
         best
     }
 
+    /// Resolves the direct owner of `class_internal` using authoritative `inner_class_of`
+    /// metadata. Returns `None` when ownership cannot be proven.
+    pub fn resolve_owner_class(&self, class_internal: &str) -> Option<Arc<ClassMetadata>> {
+        let class = self.get_class(class_internal)?;
+        let owner_name = class.inner_class_of.as_deref()?;
+        let mut best: Option<Arc<ClassMetadata>> = None;
+
+        for candidate in self.get_classes_by_simple_name(owner_name) {
+            if candidate.package != class.package {
+                continue;
+            }
+            if !self
+                .direct_inner_classes_of(candidate.internal_name.as_ref())
+                .into_iter()
+                .any(|inner| inner.internal_name == class.internal_name)
+            {
+                continue;
+            }
+
+            match &best {
+                Some(current) if !Self::should_replace(current, &candidate) => {}
+                _ => best = Some(candidate),
+            }
+        }
+
+        best
+    }
+
     /// Resolve a potentially-qualified nested type path (e.g. `Outer.Inner`, `a.b.Outer.Inner`)
     /// by first resolving a head owner type, then following direct nested-owner edges.
     /// Ownership is resolved only through authoritative `inner_class_of` metadata.
@@ -1306,6 +1334,51 @@ mod tests {
         assert_eq!(
             resolved.map(|c| c.internal_name.to_string()),
             Some("org/cubewhy/ChainCheck$Box$BoxV".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_owner_class_handles_dollar_in_owner_name() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("com/example")),
+                name: Arc::from("Outer$Class"),
+                internal_name: Arc::from("com/example/Outer$Class"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("com/example")),
+                name: Arc::from("Inner$Class"),
+                internal_name: Arc::from("com/example/Outer$Class$Inner$Class"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Outer$Class")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(scope);
+        let resolved = view.resolve_owner_class("com/example/Outer$Class$Inner$Class");
+        assert_eq!(
+            resolved.map(|class| class.internal_name.to_string()),
+            Some("com/example/Outer$Class".to_string())
         );
     }
 }

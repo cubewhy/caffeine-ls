@@ -75,6 +75,14 @@ pub fn extract_java_completion_context_at_offset(
     let imports = crate::salsa_queries::parse::extract_imports(db, file);
     let static_imports = extract_java_static_imports(db, file);
     let enclosing_class = find_java_enclosing_class_name(db, file, offset);
+    let enclosing_class_chain =
+        crate::language::java::scope::extract_enclosing_class_chain(&extractor, cursor_node)
+            .or_else(|| {
+                crate::language::java::scope::extract_enclosing_class_chain_by_offset(
+                    &extractor, root,
+                )
+            })
+            .unwrap_or_default();
     let enclosing_internal_name = crate::language::java::scope::extract_enclosing_internal_name(
         &extractor,
         cursor_node,
@@ -90,6 +98,7 @@ pub fn extract_java_completion_context_at_offset(
         cursor_offset: offset,
         enclosing_class,
         enclosing_internal_name,
+        enclosing_class_chain,
         enclosing_package: package,
         local_var_count,
         import_count: imports.len(),
@@ -293,6 +302,7 @@ fn empty_context(db: &dyn Db, file: SourceFile) -> CompletionContextData {
         cursor_offset: 0,
         enclosing_class: None,
         enclosing_internal_name: None,
+        enclosing_class_chain: vec![],
         enclosing_package: None,
         local_var_count: 0,
         import_count: 0,

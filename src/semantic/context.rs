@@ -385,6 +385,10 @@ pub struct SemanticContext {
     pub active_lambda_param_names: Vec<Arc<str>>,
     pub enclosing_class: Option<Arc<str>>,
     pub enclosing_internal_name: Option<Arc<str>>,
+    /// Exact enclosing type chain from outermost to innermost source declaration.
+    /// This preserves legal `$` characters inside identifiers and must be preferred
+    /// over reverse-parsing `enclosing_internal_name`.
+    pub enclosing_class_chain: Vec<Arc<str>>,
     pub enclosing_package: Option<Arc<str>>,
     /// Existing imports, contains wildcard imports
     pub existing_imports: Vec<Arc<str>>,
@@ -442,6 +446,7 @@ impl SemanticContext {
             active_lambda_param_names: vec![],
             enclosing_class,
             enclosing_internal_name,
+            enclosing_class_chain: vec![],
             enclosing_package,
             existing_imports,
             static_imports: vec![],
@@ -477,6 +482,11 @@ impl SemanticContext {
 
     pub fn with_statement_labels(mut self, labels: Vec<StatementLabel>) -> Self {
         self.statement_labels = labels;
+        self
+    }
+
+    pub fn with_enclosing_class_chain(mut self, chain: Vec<Arc<str>>) -> Self {
+        self.enclosing_class_chain = chain;
         self
     }
 

@@ -102,6 +102,14 @@ pub fn extract_enclosing_class(
     Some(Arc::from(ctx.node_text(name_node)))
 }
 
+pub(crate) fn extract_enclosing_class_chain(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+) -> Option<Vec<Arc<str>>> {
+    let decl = cursor_node.and_then(nearest_type_declaration)?;
+    Some(extract_type_declaration_chain(ctx, decl))
+}
+
 pub(crate) fn extract_enclosing_class_by_offset(
     ctx: &JavaContextExtractor,
     root: Node,
@@ -141,6 +149,53 @@ pub(crate) fn extract_enclosing_class_by_offset(
     result
 }
 
+pub(crate) fn extract_enclosing_class_chain_by_offset(
+    ctx: &JavaContextExtractor,
+    root: Node,
+) -> Option<Vec<Arc<str>>> {
+    let mut result: Option<Vec<Arc<str>>> = None;
+
+    fn dfs<'a>(
+        ctx: &JavaContextExtractor,
+        node: Node<'a>,
+        offset: usize,
+        stack: &mut Vec<Arc<str>>,
+        result: &mut Option<Vec<Arc<str>>>,
+    ) {
+        if node.start_byte() > offset || node.end_byte() <= offset {
+            return;
+        }
+
+        let pushed = if is_type_declaration_kind(node.kind()) {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                stack.push(Arc::from(ctx.node_text(name_node)));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if !stack.is_empty() {
+            *result = Some(stack.clone());
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            dfs(ctx, child, offset, stack, result);
+        }
+
+        if pushed {
+            stack.pop();
+        }
+    }
+
+    let mut stack = Vec::new();
+    dfs(ctx, root, ctx.offset, &mut stack, &mut result);
+    result
+}
+
 pub(crate) fn extract_enclosing_internal_name(
     ctx: &JavaContextExtractor,
     cursor_node: Option<Node>,
@@ -177,6 +232,20 @@ pub(crate) fn extract_enclosing_internal_name(
     }
 
     Some(Arc::from(internal))
+}
+
+fn extract_type_declaration_chain(ctx: &JavaContextExtractor, decl: Node) -> Vec<Arc<str>> {
+    let mut names = Vec::new();
+    let mut current = Some(decl);
+    while let Some(node) = current {
+        let Some(name_node) = node.child_by_field_name("name") else {
+            break;
+        };
+        names.push(Arc::from(ctx.node_text(name_node)));
+        current = find_parent_type_declaration(node);
+    }
+    names.reverse();
+    names
 }
 
 pub(crate) fn is_cursor_in_class_member_position(cursor_node: Option<Node>) -> bool {

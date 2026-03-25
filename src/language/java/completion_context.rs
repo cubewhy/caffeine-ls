@@ -22,6 +22,7 @@ use crate::semantic::context::{
     SamSignature, TypedChainConfidence, TypedChainReceiver, TypedChainReceiverMode,
     TypedExpressionContext,
 };
+use crate::semantic::enclosing::resolve_enclosing_owner_internal;
 use crate::semantic::types::generics::{
     JvmType, parse_class_type_parameters, parse_method_signature_types,
 };
@@ -774,25 +775,13 @@ pub(crate) fn resolve_enclosing_owner_type_name(
     view: &IndexView,
     simple_name: &str,
 ) -> Option<Arc<str>> {
-    let mut current = ctx.enclosing_internal_name.as_deref()?;
-    loop {
-        if internal_simple_name(current) == simple_name {
-            return view
-                .get_class(current)
-                .map(|class| Arc::clone(&class.internal_name))
-                .or_else(|| Some(Arc::from(current)));
-        }
-
-        let Some((owner_internal, _)) = current.rsplit_once('$') else {
-            break;
-        };
-        current = owner_internal;
-    }
-    None
-}
-
-fn internal_simple_name(internal: &str) -> &str {
-    internal.rsplit(['$', '/']).next().unwrap_or(internal)
+    resolve_enclosing_owner_internal(
+        Some(view),
+        ctx.enclosing_internal_name.as_deref(),
+        ctx.enclosing_package.as_deref(),
+        &ctx.enclosing_class_chain,
+        simple_name,
+    )
 }
 
 fn evaluate_functional_compatibility(
