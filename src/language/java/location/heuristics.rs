@@ -340,6 +340,9 @@ pub(super) fn handle_import_from_text(
 ///   lives under `ERROR`.
 /// - Tree-sitter may recover `expr\nType.Name name = ...` as a declaration with
 ///   the later qualified type path stored in a direct `ERROR` child.
+/// - Tree-sitter may recover `expr\nreturn ...` as a declaration whose
+///   declarator name is a Java keyword, even though that cannot be a real
+///   local variable name.
 ///
 /// Effect on behavior:
 /// - Forces the cursor location to `Expression` to avoid type completions.
@@ -400,6 +403,9 @@ pub(super) fn is_misread_expression_in_local_decl(
         if !declarator_gap.contains('\n') {
             return false;
         }
+    }
+    if is_java_keyword(declarator_name) {
+        return true;
     }
 
     let direct_error_child = {

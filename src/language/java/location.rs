@@ -504,6 +504,32 @@ class Test {
     }
 
     #[test]
+    fn test_misread_before_return_statement_stays_expression() {
+        let src = indoc::indoc! {r#"
+class Example {
+    public static String join(String[] parts) {
+        var p = parts;
+        p // expected expression there
+        return "";
+    }
+}
+"#};
+        let marker = "parts;\n        p";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::Expression { .. }),
+            "Expected Expression before recovered return statement, got {:?}",
+            loc
+        );
+        assert_eq!(query, "p");
+    }
+
+    #[test]
     fn test_break_routes_to_statement_label_location() {
         let src = indoc::indoc! {r#"
 class A {
