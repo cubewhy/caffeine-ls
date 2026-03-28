@@ -1,11 +1,12 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use java_analyzer::completion::engine::{CompletionEngine, CompletionPolicy};
 use java_analyzer::index::{
     ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId, WorkspaceIndex,
 };
 use java_analyzer::language::JavaLanguage;
-use java_analyzer::semantic::{CursorLocation, SemanticContext};
+use java_analyzer::semantic::{AccessReceiverKind, CursorLocation, SemanticContext};
 use rust_asm::constants::ACC_PUBLIC;
+use std::hint::black_box;
 use std::sync::Arc;
 
 fn create_test_index() -> WorkspaceIndex {
@@ -98,6 +99,7 @@ fn bench_member_access_completion(c: &mut Criterion) {
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_semantic_type: None,
+                receiver_kind: AccessReceiverKind::Unknown,
                 receiver_type: Some(Arc::from("com/example/TestClass0")),
                 member_prefix: "meth".to_string(),
                 receiver_expr: "obj".to_string(),
