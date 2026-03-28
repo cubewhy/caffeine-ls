@@ -2,7 +2,7 @@
 source: src/language/java.rs
 expression: "format!(\"location={:?}\\nreceiver_semantic_type={:?}\\njava_intrinsic_access={:?}\\n{}\\n\",\nctx.location, ctx.location.member_access_receiver_semantic_type(),\nctx.java_intrinsic_access, rows.join(\"\\n\"))"
 ---
-location=MemberAccess { receiver_semantic_type: Some(TypeName { base_internal: "java/lang/String", kind: Internal, args: [], array_dims: 1 }), receiver_type: Some("java/lang/String"), member_prefix: "", receiver_expr: "s", arguments: None }
+location=MemberAccess { receiver_kind: Expression, receiver_semantic_type: Some(TypeName { base_internal: "java/lang/String", kind: Internal, args: [], array_dims: 1 }), receiver_type: Some("java/lang/String"), member_prefix: "", receiver_expr: "s", arguments: None }
 receiver_semantic_type=Some(TypeName { base_internal: "java/lang/String", kind: Internal, args: [], array_dims: 1 })
 java_intrinsic_access=None
 getClass|Method { descriptor: "()Ljava/lang/Class;", defining_class: "java/lang/Object" }|String[] — java.lang.Class getClass()

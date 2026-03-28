@@ -376,9 +376,15 @@ impl<'s> KotlinContextExtractor<'s> {
             if recv_text.chars().next().is_some_and(|c| c.is_uppercase()) {
                 let internal = recv_text.replace('.', "/");
                 return (
-                    CursorLocation::StaticAccess {
-                        class_internal_name: Arc::from(internal.as_str()),
+                    CursorLocation::MemberAccess {
+                        receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                            class_internal_name: Arc::from(internal.as_str()),
+                        },
+                        receiver_semantic_type: None,
+                        receiver_type: Some(Arc::from(internal.as_str())),
                         member_prefix: member_prefix.clone(),
+                        receiver_expr: recv_text.to_string(),
+                        arguments: None,
                     },
                     member_prefix,
                 );
@@ -387,6 +393,7 @@ impl<'s> KotlinContextExtractor<'s> {
 
         (
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
@@ -412,15 +419,22 @@ impl<'s> KotlinContextExtractor<'s> {
             let is_type = receiver.chars().next().is_some_and(|c| c.is_uppercase());
             return if is_type {
                 (
-                    CursorLocation::StaticAccess {
-                        class_internal_name: Arc::from(receiver.replace('.', "/").as_str()),
+                    CursorLocation::MemberAccess {
+                        receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                            class_internal_name: Arc::from(receiver.replace('.', "/").as_str()),
+                        },
+                        receiver_semantic_type: None,
+                        receiver_type: Some(Arc::from(receiver.replace('.', "/").as_str())),
                         member_prefix: member_prefix.clone(),
+                        receiver_expr: receiver.to_string(),
+                        arguments: None,
                     },
                     member_prefix,
                 )
             } else {
                 (
                     CursorLocation::MemberAccess {
+                        receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                         receiver_semantic_type: None,
                         receiver_type: None,
                         member_prefix: member_prefix.clone(),

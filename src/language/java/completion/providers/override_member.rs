@@ -1189,6 +1189,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "pub".to_string(),

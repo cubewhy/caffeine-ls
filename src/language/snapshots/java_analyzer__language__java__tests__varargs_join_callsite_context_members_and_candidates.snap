@@ -2,7 +2,7 @@
 source: src/language/java.rs
 expression: snapshot
 ---
-location=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "join", receiver_expr: "", arguments: Some("(\"-\", \"java\", \"lsp\", \"test\")") }
+location=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "join", receiver_expr: "", arguments: Some("(\"-\", \"java\", \"lsp\", \"test\")") }
 enclosing=Some("VarargsExample")
 enclosing_internal=Some("VarargsExample")
 locals=

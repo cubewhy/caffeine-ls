@@ -385,6 +385,7 @@ pub(super) fn handle_member_access(
             if arguments.is_some() {
                 return (
                     CursorLocation::MemberAccess {
+                        receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                         receiver_semantic_type: None,
                         receiver_type: None,
                         member_prefix: clean.clone(),
@@ -455,6 +456,7 @@ pub(super) fn handle_member_access(
 
     (
         CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: member_prefix.clone(),
@@ -556,6 +558,7 @@ pub(super) fn handle_constructor(
         {
             return (
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: member_prefix.clone(),
@@ -684,6 +687,7 @@ pub(super) fn handle_argument_list(
     if let Some((receiver_expr, member_prefix)) = detect_member_access_in_arg_list(ctx, node) {
         return (
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
@@ -875,6 +879,7 @@ pub(super) fn handle_expression_statement(
         };
         return Some((
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
@@ -988,6 +993,7 @@ pub(super) fn handle_identifier(
         {
             return Some((
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: member_prefix.clone(),
@@ -1076,6 +1082,7 @@ pub(super) fn handle_identifier(
         if let Some((receiver_expr, member_prefix)) = detect_trailing_dot_in_text(before) {
             return Some((
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: member_prefix.clone(),

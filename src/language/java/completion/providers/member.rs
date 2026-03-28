@@ -9,7 +9,7 @@ use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::super_support::{is_super_receiver_expr, resolve_direct_super_type};
 use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::semantic::context::{CursorLocation, SemanticContext};
+use crate::semantic::context::{AccessReceiverKind, CursorLocation, SemanticContext};
 use crate::{
     index::{IndexScope, IndexView},
     semantic::types::{ContextualResolver, TypeResolver, type_name::TypeName},
@@ -43,7 +43,6 @@ impl CompletionProvider for MemberProvider {
             CursorLocation::Expression { .. }
                 | CursorLocation::MethodArgument { .. }
                 | CursorLocation::MemberAccess { .. }
-                | CursorLocation::StaticAccess { .. }
         )
     }
 
@@ -411,18 +410,26 @@ impl MemberProvider {
         index: &IndexView,
     ) -> Option<Vec<CompletionCandidate>> {
         let (class_name_raw, member_prefix) = match &ctx.location {
-            CursorLocation::StaticAccess {
-                class_internal_name,
+            CursorLocation::MemberAccess {
+                receiver_kind:
+                    AccessReceiverKind::Type {
+                        class_internal_name,
+                    },
                 member_prefix,
+                ..
             } => (class_internal_name.as_ref(), member_prefix.as_str()),
 
             CursorLocation::MemberAccess {
+                receiver_kind,
                 receiver_expr,
                 member_prefix,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 arguments: None,
-            } if is_likely_static_receiver(receiver_expr, ctx) => {
+                ..
+            } if !matches!(receiver_kind, AccessReceiverKind::Expression)
+                && is_likely_static_receiver(receiver_expr, ctx) =>
+            {
                 (receiver_expr.as_str(), member_prefix.as_str())
             }
 
@@ -1340,9 +1347,15 @@ mod tests {
 
     fn static_ctx(class_raw: &str, prefix: &str, pkg: &str) -> SemanticContext {
         SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from(class_raw),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from(class_raw),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from(class_raw)),
                 member_prefix: prefix.to_string(),
+                receiver_expr: class_raw.to_string(),
+                arguments: None,
             },
             prefix,
             vec![],
@@ -1467,6 +1480,7 @@ mod tests {
     fn ctx_with_type(receiver_internal: &str, prefix: &str) -> SemanticContext {
         SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from(receiver_internal)),
                 member_prefix: prefix.to_string(),
@@ -1489,6 +1503,7 @@ mod tests {
     ) -> SemanticContext {
         SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(semantic_receiver),
                 receiver_type: Some(Arc::from(erased_receiver)),
                 member_prefix: prefix.to_string(),
@@ -1512,6 +1527,7 @@ mod tests {
     ) -> SemanticContext {
         SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: prefix.to_string(),
@@ -1535,6 +1551,7 @@ mod tests {
     ) -> SemanticContext {
         SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: prefix.to_string(),
@@ -1559,6 +1576,7 @@ mod tests {
     ) -> SemanticContext {
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: prefix.to_string(),
@@ -1589,9 +1607,15 @@ mod tests {
 
     fn ctx_static_access(class_internal: &str, prefix: &str) -> SemanticContext {
         SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from(class_internal),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from(class_internal),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from(class_internal)),
                 member_prefix: prefix.to_string(),
+                receiver_expr: class_internal.to_string(),
+                arguments: None,
             },
             prefix,
             vec![],
@@ -1835,6 +1859,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "si".to_string(),
@@ -1922,6 +1947,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -2010,6 +2036,7 @@ mod tests {
         ));
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -2510,6 +2537,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -2643,6 +2671,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::with_args(
                     "java/util/ArrayList",
                     vec![TypeName::new("java/lang/String")],
@@ -2799,6 +2828,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::with_args(
                     "java/util/ArrayList",
                     vec![TypeName::new("java/lang/String")],
@@ -2898,6 +2928,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("org/cubewhy/Sample")),
                 receiver_type: Some(Arc::from("org/cubewhy/Sample")),
                 member_prefix: "si".to_string(),
@@ -2966,6 +2997,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::with_args("Box", vec![TypeName::new("R")])),
                 receiver_type: Some(Arc::from("Legacy")),
                 member_prefix: "ge".to_string(),
@@ -3064,6 +3096,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(receiver_semantic.clone()),
                 receiver_type: Some(Arc::from("java/util/List")),
                 member_prefix: "add".to_string(),
@@ -3625,9 +3658,15 @@ mod tests {
     fn self_static_ctx(prefix: &str) -> SemanticContext {
         // Simulates: inside org.cubewhy.a.Main, typing "Main.|"
         SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("Main"), // simple name from parser
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("Main"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("Main")), // simple name from parser
                 member_prefix: prefix.to_string(),
+                receiver_expr: "Main".to_string(),
+                arguments: None,
             },
             prefix,
             vec![],
@@ -3771,9 +3810,15 @@ mod tests {
         ];
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("Main"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("Main"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("Main")),
                 member_prefix: "".to_string(),
+                receiver_expr: "Main".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -3838,9 +3883,15 @@ mod tests {
 
         // We are inside Main, accessing Other.secret
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("Other"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("Other"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("Other")),
                 member_prefix: "".to_string(),
+                receiver_expr: "Other".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -3996,6 +4047,7 @@ mod tests {
         // Parser 产生 MemberAccess，enrich 后 receiver_type 仍为 None（不是局部变量）
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "FIELD".to_string(),
@@ -4045,9 +4097,15 @@ mod tests {
         }]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/a/Main"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/a/Main"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/a/Main")),
                 member_prefix: "ma".to_string(),
+                receiver_expr: "org/cubewhy/a/Main".to_string(),
+                arguments: None,
             },
             "ma",
             vec![],
@@ -4094,9 +4152,15 @@ mod tests {
         }]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/a/Util"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/a/Util"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/a/Util")),
                 member_prefix: "vlsn".to_string(),
+                receiver_expr: "org/cubewhy/a/Util".to_string(),
+                arguments: None,
             },
             "vlsn",
             vec![],
@@ -4156,9 +4220,15 @@ mod tests {
         ]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck")),
                 member_prefix: "".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -4210,9 +4280,15 @@ mod tests {
         ]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("java/lang/Integer"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("java/lang/Integer"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/lang/Integer")),
                 member_prefix: "".to_string(),
+                receiver_expr: "java/lang/Integer".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -4265,9 +4341,15 @@ mod tests {
         ]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("java/lang/Integer"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("java/lang/Integer"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/lang/Integer")),
                 member_prefix: "".to_string(),
+                receiver_expr: "java/lang/Integer".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -4334,9 +4416,15 @@ mod tests {
         ]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 member_prefix: "".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck$Box".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -4365,9 +4453,15 @@ mod tests {
         );
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("Color"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("Color"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("Color")),
                 member_prefix: "".to_string(),
+                receiver_expr: "Color".to_string(),
+                arguments: None,
             },
             "",
             vec![],

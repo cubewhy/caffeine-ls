@@ -1,8 +1,8 @@
 use crate::index::IndexView;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{
-    CursorLocation, JavaAccessReceiverKind, JavaIntrinsicAccess, JavaIntrinsicAccessKind,
-    SemanticContext,
+    AccessReceiverKind, CursorLocation, JavaAccessReceiverKind, JavaIntrinsicAccess,
+    JavaIntrinsicAccessKind, SemanticContext,
 };
 use crate::semantic::types::symbol_resolver::SymbolResolver;
 use crate::semantic::types::type_name::TypeName;
@@ -18,16 +18,18 @@ pub fn classify_intrinsic_access(
     type_ctx: &SourceTypeCtx,
 ) -> Option<JavaIntrinsicAccess> {
     match &ctx.location {
-        CursorLocation::StaticAccess { member_prefix, .. } => {
-            class_literal_access_for_prefix(member_prefix)
-        }
         CursorLocation::MemberAccess {
+            receiver_kind,
             receiver_semantic_type,
             receiver_expr,
             member_prefix,
             arguments,
             ..
         } => {
+            if matches!(receiver_kind, AccessReceiverKind::Type { .. }) {
+                return class_literal_access_for_prefix(member_prefix);
+            }
+
             if arguments.is_none()
                 && class_literal_access_for_member_receiver(ctx, view, type_ctx, receiver_expr)
                     .is_some()
@@ -244,9 +246,15 @@ mod tests {
         let view = idx.view(root_scope());
         let type_ctx = make_type_ctx(&view);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("java/lang/String"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("java/lang/String"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "cl".to_string(),
+                receiver_expr: "java/lang/String".to_string(),
+                arguments: None,
             },
             "cl",
             vec![],
@@ -272,6 +280,7 @@ mod tests {
         let type_ctx = make_type_ctx(&view);
         let primitive_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -287,6 +296,7 @@ mod tests {
         );
         let array_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "cl".to_string(),
@@ -318,6 +328,7 @@ mod tests {
         let type_ctx = make_type_ctx(&view);
         let value_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/String")),
                 receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "".to_string(),
@@ -338,6 +349,7 @@ mod tests {
         );
         let generic_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "cl".to_string(),
@@ -369,6 +381,7 @@ mod tests {
         let type_ctx = make_type_ctx(&view);
         let array_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/String").with_array_dims(1)),
                 receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "length".to_string(),
@@ -384,6 +397,7 @@ mod tests {
         );
         let get_class_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/String")),
                 receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "getClass".to_string(),

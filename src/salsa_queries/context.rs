@@ -40,6 +40,14 @@ pub struct CompletionContextData {
 
 /// Cursor location data (Salsa-compatible)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AccessReceiverKindData {
+    Unknown,
+    Expression,
+    Type { class_internal_name: Arc<str> },
+}
+
+/// Cursor location data (Salsa-compatible)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CursorLocationData {
     Expression {
         prefix: Arc<str>,
@@ -51,15 +59,12 @@ pub enum CursorLocationData {
         qualifier_owner_internal: Option<Arc<str>>,
     },
     MemberAccess {
+        receiver_kind: AccessReceiverKindData,
         receiver_expr: Arc<str>,
         member_prefix: Arc<str>,
         receiver_type_hint: Option<Arc<str>>,
         /// Serialized CallArgs for method calls
         arguments: Option<Arc<str>>,
-    },
-    StaticAccess {
-        class_internal_name: Arc<str>,
-        member_prefix: Arc<str>,
     },
     Import {
         prefix: Arc<str>,

@@ -58,6 +58,13 @@ impl CurrentClassMember {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessReceiverKind {
+    Unknown,
+    Expression,
+    Type { class_internal_name: Arc<str> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorLocation {
     /// `import com.example.|`
     Import {
@@ -69,6 +76,8 @@ pub enum CursorLocation {
     },
     /// `someObj.|` or `someObj.prefix|`
     MemberAccess {
+        /// Whether semantic enrichment proved the receiver is a value or a type.
+        receiver_kind: AccessReceiverKind,
         /// The inferred semantic type of the accessed object, preserving generics/arrays when known.
         receiver_semantic_type: Option<TypeName>,
         /// Legacy compatibility field for the erased receiver owner internal name
@@ -80,11 +89,6 @@ pub enum CursorLocation {
         receiver_expr: String,
         /// Raw arguments text if this is a method invocation, e.g., "(1)"
         arguments: Option<String>,
-    },
-    /// `ClassName.|` (static access)
-    StaticAccess {
-        class_internal_name: Arc<str>,
-        member_prefix: String,
     },
     /// `new Foo|`
     ConstructorCall {
@@ -151,6 +155,26 @@ impl CursorLocation {
                 receiver_semantic_type,
                 ..
             } => receiver_semantic_type.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_receiver_kind(&self) -> Option<&AccessReceiverKind> {
+        match self {
+            CursorLocation::MemberAccess { receiver_kind, .. } => Some(receiver_kind),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_receiver_class_internal(&self) -> Option<&str> {
+        match self {
+            CursorLocation::MemberAccess {
+                receiver_kind:
+                    AccessReceiverKind::Type {
+                        class_internal_name,
+                    },
+                ..
+            } => Some(class_internal_name.as_ref()),
             _ => None,
         }
     }
@@ -666,6 +690,7 @@ mod tests {
     #[test]
     fn test_member_access_owner_derivation_prefers_semantic() {
         let loc = CursorLocation::MemberAccess {
+            receiver_kind: AccessReceiverKind::Expression,
             receiver_semantic_type: Some(TypeName::with_args(
                 "java/util/List",
                 vec![TypeName::new("java/lang/String")],
@@ -685,6 +710,7 @@ mod tests {
     #[test]
     fn test_member_access_owner_derivation_falls_back_to_legacy() {
         let loc = CursorLocation::MemberAccess {
+            receiver_kind: AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: Some(Arc::from("java/util/List")),
             member_prefix: String::new(),

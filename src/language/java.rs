@@ -4039,6 +4039,7 @@ mod tests {
         flow.insert(Arc::from("x"), TypeName::new("java/lang/String"));
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "subs".to_string(),

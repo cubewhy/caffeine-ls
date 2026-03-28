@@ -60,9 +60,27 @@ impl<'a> SymbolResolver<'a> {
     pub fn resolve(&self, ctx: &SemanticContext) -> Option<ResolvedSymbol> {
         match &ctx.location {
             CursorLocation::MemberAccess { .. } => {
-                let receiver_expr = ctx.location.member_access_expr()?;
                 let member_prefix = ctx.location.member_access_prefix()?;
                 let arguments = ctx.location.member_access_arguments();
+                if let Some(class_internal_name) =
+                    ctx.location.member_access_receiver_class_internal()
+                {
+                    let receiver = TypeName::internal(class_internal_name);
+                    if let Some(resolved_member) =
+                        self.resolve_member(ctx, &receiver, member_prefix, arguments)
+                    {
+                        return Some(resolved_member);
+                    }
+                    if arguments.is_none() {
+                        return self
+                            .view
+                            .lookup_member_type_in_hierarchy(class_internal_name, member_prefix)
+                            .map(|inner| ResolvedSymbol::Class(Arc::clone(&inner.internal_name)));
+                    }
+                    return None;
+                }
+
+                let receiver_expr = ctx.location.member_access_expr()?;
                 let receiver = ctx
                     .location
                     .member_access_receiver_semantic_type()
@@ -81,20 +99,6 @@ impl<'a> SymbolResolver<'a> {
                     "resolve: member access"
                 );
                 self.resolve_member(ctx, &receiver?, member_prefix, arguments)
-            }
-            CursorLocation::StaticAccess {
-                class_internal_name,
-                member_prefix,
-            } => {
-                let receiver = TypeName::internal(class_internal_name.as_ref());
-                if let Some(resolved_member) =
-                    self.resolve_member(ctx, &receiver, member_prefix, None)
-                {
-                    return Some(resolved_member);
-                }
-                self.view
-                    .lookup_member_type_in_hierarchy(class_internal_name, member_prefix)
-                    .map(|inner| ResolvedSymbol::Class(Arc::clone(&inner.internal_name)))
             }
             CursorLocation::Expression { prefix } => {
                 if prefix.is_empty() {
@@ -787,6 +791,7 @@ mod tests {
         // 测试 1: 解析 System.out.println(1) 应该落在 (I)V
         let ctx_int = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from("java/io/PrintStream")),
                 receiver_expr: "out".to_string(),
@@ -817,6 +822,7 @@ mod tests {
         // 测试 2: 解析 System.out.println("hello") 应该落在 (Ljava/lang/String;)V
         let ctx_str = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from("java/io/PrintStream")),
                 receiver_expr: "out".to_string(),
@@ -844,6 +850,7 @@ mod tests {
 
         let ctx_invalid = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from("java/io/PrintStream")),
                 receiver_expr: "out".to_string(),
@@ -887,6 +894,7 @@ mod tests {
         let resolver = SymbolResolver::new(&view);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 receiver_expr: "".to_string(),
@@ -940,6 +948,7 @@ mod tests {
         let resolver = SymbolResolver::new(&view);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 receiver_expr: "".to_string(),
@@ -994,6 +1003,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::with_args(
                     "java/util/List",
                     vec![TypeName::new("java/lang/String")],
@@ -1057,6 +1067,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from("java/util/List")),
                 receiver_expr: "xs".to_string(),
@@ -1141,6 +1152,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::intersection(vec![
                     TypeName::new("org/example/Flyable"),
                     TypeName::new("org/example/Swimmable"),
@@ -1230,6 +1242,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 receiver_expr: "animal".to_string(),
@@ -1536,9 +1549,15 @@ mod tests {
         let view = idx.view(scope);
         let resolver = SymbolResolver::new(&view);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck")),
                 member_prefix: "Box".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck".to_string(),
+                arguments: None,
             },
             "Box",
             vec![],
@@ -1606,9 +1625,15 @@ mod tests {
         let view = idx.view(scope);
         let resolver = SymbolResolver::new(&view);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck")),
                 member_prefix: "Box".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck".to_string(),
+                arguments: None,
             },
             "Box",
             vec![],
@@ -1972,6 +1997,7 @@ mod tests {
         );
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 receiver_expr: "super".to_string(),

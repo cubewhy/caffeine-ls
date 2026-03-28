@@ -240,12 +240,19 @@ fn handle_navigation(node: tree_sitter::Node, source: &[u8]) -> CursorLocationDa
 
     // Check if receiver looks like a class name (starts with uppercase)
     if receiver.chars().next().is_some_and(|c| c.is_uppercase()) {
-        CursorLocationData::StaticAccess {
-            class_internal_name: Arc::from(receiver.replace('.', "/")),
+        let internal = receiver.replace('.', "/");
+        CursorLocationData::MemberAccess {
+            receiver_kind: crate::salsa_queries::context::AccessReceiverKindData::Type {
+                class_internal_name: Arc::from(internal.as_str()),
+            },
+            receiver_expr: Arc::from(receiver.as_str()),
             member_prefix: Arc::from(member),
+            receiver_type_hint: Some(Arc::from(internal.as_str())),
+            arguments: None,
         }
     } else {
         CursorLocationData::MemberAccess {
+            receiver_kind: crate::salsa_queries::context::AccessReceiverKindData::Unknown,
             receiver_expr: Arc::from(receiver),
             member_prefix: Arc::from(member),
             receiver_type_hint: None,
@@ -271,12 +278,18 @@ fn handle_member_access(content: &str, offset: usize) -> CursorLocationData {
         .to_string();
 
     if receiver.chars().next().is_some_and(|c| c.is_uppercase()) {
-        CursorLocationData::StaticAccess {
-            class_internal_name: Arc::from(receiver.replace('.', "/")),
+        CursorLocationData::MemberAccess {
+            receiver_kind: crate::salsa_queries::context::AccessReceiverKindData::Type {
+                class_internal_name: Arc::from(receiver.replace('.', "/")),
+            },
+            receiver_expr: Arc::from(receiver.clone()),
             member_prefix: Arc::from(""),
+            receiver_type_hint: Some(Arc::from(receiver.replace('.', "/"))),
+            arguments: None,
         }
     } else {
         CursorLocationData::MemberAccess {
+            receiver_kind: crate::salsa_queries::context::AccessReceiverKindData::Unknown,
             receiver_expr: Arc::from(receiver),
             member_prefix: Arc::from(""),
             receiver_type_hint: None,
@@ -314,7 +327,6 @@ fn extract_query_string(_content: &str, _offset: usize, location: &CursorLocatio
     match location {
         CursorLocationData::Expression { prefix } => Arc::clone(prefix),
         CursorLocationData::MemberAccess { member_prefix, .. } => Arc::clone(member_prefix),
-        CursorLocationData::StaticAccess { member_prefix, .. } => Arc::clone(member_prefix),
         CursorLocationData::Import { prefix } => Arc::from(prefix.rsplit('.').next().unwrap_or("")),
         _ => Arc::from(""),
     }
@@ -531,23 +543,25 @@ pub fn resolve_kotlin_symbol(
         CursorLocationData::MemberAccess {
             receiver_expr,
             member_prefix,
+            receiver_kind,
             ..
-        } => resolve_kotlin_member_symbol(
-            db,
-            file,
-            Arc::clone(receiver_expr),
-            Arc::clone(member_prefix),
-            offset,
-        ),
-        CursorLocationData::StaticAccess {
-            class_internal_name,
-            member_prefix,
-        } => Some(Arc::new(ResolvedSymbolData {
-            kind: SymbolKind::Class,
-            target_internal_name: Arc::clone(class_internal_name),
-            member_name: Some(Arc::clone(member_prefix)),
-            descriptor: None,
-        })),
+        } => match receiver_kind {
+            crate::salsa_queries::context::AccessReceiverKindData::Type {
+                class_internal_name,
+            } => Some(Arc::new(ResolvedSymbolData {
+                kind: SymbolKind::Class,
+                target_internal_name: Arc::clone(class_internal_name),
+                member_name: Some(Arc::clone(member_prefix)),
+                descriptor: None,
+            })),
+            _ => resolve_kotlin_member_symbol(
+                db,
+                file,
+                Arc::clone(receiver_expr),
+                Arc::clone(member_prefix),
+                offset,
+            ),
+        },
         CursorLocationData::Import { prefix } => {
             let internal = prefix.replace('.', "/");
             Some(Arc::new(ResolvedSymbolData {

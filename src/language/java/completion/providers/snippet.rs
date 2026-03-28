@@ -463,6 +463,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let mut c = ctx("class", Some("file:///Foo.java"), None, None);
         c.location = CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: "class".to_string(),

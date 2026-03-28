@@ -315,6 +315,7 @@ mod tests {
         let idx = make_index();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -341,6 +342,7 @@ mod tests {
     fn test_member_access_with_semantic_receiver_not_applicable() {
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
                     "org/cubewhy/ChainCheck",
                 )),
@@ -363,6 +365,7 @@ mod tests {
     fn test_member_access_empty_receiver_call_not_applicable() {
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "join".to_string(),
@@ -571,6 +574,7 @@ mod tests {
         let idx = make_index();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -599,6 +603,7 @@ mod tests {
         let idx = make_index();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -630,6 +635,7 @@ mod tests {
         let idx = make_index();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -666,6 +672,7 @@ mod tests {
         let idx = make_index();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "Ma".to_string(),

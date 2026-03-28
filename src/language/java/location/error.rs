@@ -31,6 +31,7 @@ pub(super) fn handle_error(
             let receiver_expr = ctx.node_text(recv).to_string();
             return (
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: String::new(),
@@ -70,6 +71,7 @@ pub(super) fn handle_error(
     if let Some((receiver, member_prefix)) = detect_trailing_dot_in_text(before) {
         return (
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),

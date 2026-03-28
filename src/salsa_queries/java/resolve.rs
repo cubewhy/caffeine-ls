@@ -2,7 +2,9 @@ use super::common::root_index_view;
 use super::completion::{extract_java_completion_context, extract_java_semantic_context_at_offset};
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
-use crate::salsa_queries::context::{CursorLocationData, line_col_to_offset};
+use crate::salsa_queries::context::{
+    AccessReceiverKindData, CursorLocationData, line_col_to_offset,
+};
 use crate::salsa_queries::symbols::{ResolvedSymbolData, SymbolKind};
 use crate::semantic::CursorLocation;
 use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
@@ -24,27 +26,29 @@ pub fn resolve_java_symbol(
             resolve_java_expression_symbol(db, file, Arc::clone(prefix), offset)
         }
         CursorLocationData::MemberAccess {
+            receiver_kind,
             receiver_expr,
             member_prefix,
             arguments,
             ..
-        } => resolve_java_member_symbol(
-            db,
-            file,
-            Arc::clone(receiver_expr),
-            Arc::clone(member_prefix),
-            arguments.clone(),
-            offset,
-        ),
-        CursorLocationData::StaticAccess {
-            class_internal_name,
-            member_prefix,
-        } => Some(Arc::new(ResolvedSymbolData {
-            kind: SymbolKind::Class,
-            target_internal_name: Arc::clone(class_internal_name),
-            member_name: Some(Arc::clone(member_prefix)),
-            descriptor: None,
-        })),
+        } => match receiver_kind {
+            AccessReceiverKindData::Type {
+                class_internal_name,
+            } => Some(Arc::new(ResolvedSymbolData {
+                kind: SymbolKind::Class,
+                target_internal_name: Arc::clone(class_internal_name),
+                member_name: Some(Arc::clone(member_prefix)),
+                descriptor: None,
+            })),
+            _ => resolve_java_member_symbol(
+                db,
+                file,
+                Arc::clone(receiver_expr),
+                Arc::clone(member_prefix),
+                arguments.clone(),
+                offset,
+            ),
+        },
         CursorLocationData::Import { prefix } => {
             let internal = prefix.replace('.', "/");
             Some(Arc::new(ResolvedSymbolData {
@@ -109,6 +113,7 @@ fn resolve_java_member_symbol(
         file,
         offset,
         Some(CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: member_name.to_string(),

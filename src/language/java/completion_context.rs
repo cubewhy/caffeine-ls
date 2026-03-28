@@ -32,7 +32,7 @@ use crate::semantic::types::{
     TypeResolver, is_concrete_type_name, parse_single_type_to_internal,
     singleton_descriptor_to_type,
 };
-use crate::semantic::{CursorLocation, SemanticContext};
+use crate::semantic::{AccessReceiverKind, CursorLocation, SemanticContext};
 use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC, ACC_VARARGS};
 
 pub struct ContextEnricher<'a> {
@@ -77,6 +77,7 @@ impl<'a> ContextEnricher<'a> {
                 ctx.query = qualifier_expr;
             } else {
                 ctx.location = CursorLocation::MemberAccess {
+                    receiver_kind: AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: member_prefix.clone(),
@@ -121,12 +122,14 @@ impl<'a> ContextEnricher<'a> {
         };
         if let Some(resolved_semantic) = resolved_member_receiver
             && let CursorLocation::MemberAccess {
+                receiver_kind,
                 receiver_semantic_type,
                 receiver_type,
                 ..
             } = &mut ctx.location
         {
             ctx.typed_chain_receiver = Some(build_typed_chain_receiver(&resolved_semantic));
+            *receiver_kind = AccessReceiverKind::Expression;
 
             if receiver_semantic_type.is_none() {
                 *receiver_semantic_type = Some(resolved_semantic.clone());
@@ -159,12 +162,14 @@ impl<'a> ContextEnricher<'a> {
         };
         if let Some(ty) = resolved_chain_receiver
             && let CursorLocation::MemberAccess {
+                receiver_kind,
                 receiver_semantic_type,
                 receiver_type,
                 ..
             } = &mut ctx.location
         {
             ctx.typed_chain_receiver = Some(build_typed_chain_receiver(&ty));
+            *receiver_kind = AccessReceiverKind::Expression;
             if receiver_semantic_type.is_none() {
                 *receiver_semantic_type = Some(ty.clone());
             }
@@ -231,12 +236,14 @@ impl<'a> ContextEnricher<'a> {
         if let Some(crate::semantic::names::NameClassification::Expression { ty, .. }) =
             classified_member_receiver.as_ref()
             && let CursorLocation::MemberAccess {
+                receiver_kind,
                 receiver_semantic_type,
                 receiver_type,
                 ..
             } = &mut ctx.location
         {
             ctx.typed_chain_receiver = Some(build_typed_chain_receiver(ty));
+            *receiver_kind = AccessReceiverKind::Expression;
             if receiver_semantic_type.is_none() {
                 *receiver_semantic_type = Some(ty.clone());
             }
@@ -250,10 +257,20 @@ impl<'a> ContextEnricher<'a> {
         {
             match classified {
                 crate::semantic::names::NameClassification::Type { internal_name, .. } => {
-                    ctx.location = CursorLocation::StaticAccess {
-                        class_internal_name: internal_name,
-                        member_prefix: member_prefix.clone(),
-                    };
+                    if let CursorLocation::MemberAccess {
+                        receiver_kind,
+                        receiver_semantic_type,
+                        receiver_type,
+                        ..
+                    } = &mut ctx.location
+                    {
+                        *receiver_kind = AccessReceiverKind::Type {
+                            class_internal_name: Arc::clone(&internal_name),
+                        };
+                        *receiver_semantic_type = None;
+                        *receiver_type = Some(Arc::clone(&internal_name));
+                    }
+                    ctx.typed_chain_receiver = None;
                     ctx.query = member_prefix.clone();
                 }
                 crate::semantic::names::NameClassification::Package { .. }
@@ -2639,6 +2656,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -2694,6 +2712,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -2743,6 +2762,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/Object")),
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -2833,6 +2853,7 @@ mod tests {
         let type_ctx = Arc::new(SourceTypeCtx::new(None, vec![], Some(name_table)));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "ge".to_string(),
@@ -2896,6 +2917,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "ge".to_string(),
@@ -3103,6 +3125,7 @@ mod tests {
 
         let mut class_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "cl".to_string(),
@@ -3125,6 +3148,7 @@ mod tests {
 
         let mut length_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/String").with_array_dims(1)),
                 receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "length".to_string(),
@@ -3147,6 +3171,7 @@ mod tests {
 
         let mut get_class_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("java/lang/String")),
                 receiver_type: Some(Arc::from("java/lang/String")),
                 member_prefix: "getClass".to_string(),
@@ -3696,6 +3721,7 @@ mod tests {
 
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "add".to_string(),
@@ -3770,6 +3796,7 @@ mod tests {
 
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(receiver_semantic.clone()),
                 receiver_type: Some(Arc::from("java/util/List")),
                 member_prefix: "add".to_string(),
@@ -4082,6 +4109,7 @@ mod tests {
 
             let mut member_ctx = SemanticContext::new(
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: "add".to_string(),
@@ -4197,6 +4225,7 @@ mod tests {
 
         let mut single_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "subs".to_string(),
@@ -4221,6 +4250,7 @@ mod tests {
 
         let mut nums_ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "add".to_string(),
@@ -4317,6 +4347,7 @@ mod tests {
         );
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "doubleV".to_string(),
@@ -4711,6 +4742,7 @@ mod tests {
             ));
             let mut ctx = SemanticContext::new(
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: "ge".to_string(),
@@ -5023,6 +5055,7 @@ mod tests {
         let mk_ctx = |receiver_expr: &str, prefix: &str| {
             SemanticContext::new(
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: prefix.to_string(),
@@ -5310,6 +5343,7 @@ mod tests {
 
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(TypeName::new("Box")),
                 receiver_type: Some(Arc::from("Box")),
                 member_prefix: "sub".to_string(),
@@ -6102,6 +6136,7 @@ mod tests {
 
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "si".to_string(),
@@ -6170,6 +6205,7 @@ mod tests {
 
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "toS".to_string(),
@@ -6456,6 +6492,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -6473,14 +6510,18 @@ mod tests {
 
         ContextEnricher::new(&view).enrich(&mut ctx);
         match &ctx.location {
-            CursorLocation::StaticAccess {
-                class_internal_name,
+            CursorLocation::MemberAccess {
+                receiver_kind:
+                    crate::semantic::AccessReceiverKind::Type {
+                        class_internal_name,
+                    },
                 member_prefix,
+                ..
             } => {
                 assert_eq!(class_internal_name.as_ref(), "org/cubewhy/ChainCheck");
                 assert!(member_prefix.is_empty());
             }
-            other => panic!("expected StaticAccess, got {other:?}"),
+            other => panic!("expected type-qualified MemberAccess, got {other:?}"),
         }
     }
 
@@ -6498,6 +6539,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -6539,6 +6581,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -6556,14 +6599,18 @@ mod tests {
 
         ContextEnricher::new(&view).enrich(&mut ctx);
         match &ctx.location {
-            CursorLocation::StaticAccess {
-                class_internal_name,
+            CursorLocation::MemberAccess {
+                receiver_kind:
+                    crate::semantic::AccessReceiverKind::Type {
+                        class_internal_name,
+                    },
                 member_prefix,
+                ..
             } => {
                 assert_eq!(class_internal_name.as_ref(), "org/cubewhy/ChainCheck$Box");
                 assert!(member_prefix.is_empty());
             }
-            other => panic!("expected StaticAccess, got {other:?}"),
+            other => panic!("expected type-qualified MemberAccess, got {other:?}"),
         }
     }
 
@@ -6581,6 +6628,7 @@ mod tests {
         ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),

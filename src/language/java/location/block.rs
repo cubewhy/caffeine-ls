@@ -44,6 +44,7 @@ pub(super) fn handle_block_as_cursor(
     if let Some((receiver_expr, member_prefix)) = detect_trailing_dot_in_text(before) {
         return (
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),

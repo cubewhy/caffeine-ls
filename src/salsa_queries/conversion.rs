@@ -5,7 +5,7 @@ use crate::index::{FieldSummary, IndexView, MethodParams, MethodSummary};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
-use crate::salsa_queries::context::JavaModuleContextKindData;
+use crate::salsa_queries::context::{AccessReceiverKindData, JavaModuleContextKindData};
 use crate::salsa_queries::{
     CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
     FunctionalTargetHintData, MethodRefQualifierKindData, MethodSummaryData, StatementLabelData,
@@ -243,25 +243,35 @@ fn convert_cursor_location(data: &CursorLocationData) -> CursorLocation {
             prefix: prefix.to_string(),
         },
         CursorLocationData::MemberAccess {
+            receiver_kind,
             receiver_expr,
             member_prefix,
             receiver_type_hint,
             arguments,
         } => CursorLocation::MemberAccess {
+            receiver_kind: match receiver_kind {
+                AccessReceiverKindData::Unknown => crate::semantic::AccessReceiverKind::Unknown,
+                AccessReceiverKindData::Expression => {
+                    crate::semantic::AccessReceiverKind::Expression
+                }
+                AccessReceiverKindData::Type {
+                    class_internal_name,
+                } => crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::clone(class_internal_name),
+                },
+            },
             receiver_semantic_type: receiver_type_hint
                 .as_ref()
                 .map(|s| TypeName::new(Arc::clone(s))),
-            receiver_type: receiver_type_hint.clone(),
+            receiver_type: receiver_type_hint.clone().or_else(|| match receiver_kind {
+                AccessReceiverKindData::Type {
+                    class_internal_name,
+                } => Some(Arc::clone(class_internal_name)),
+                _ => None,
+            }),
             member_prefix: member_prefix.to_string(),
             receiver_expr: receiver_expr.to_string(),
             arguments: arguments.as_ref().map(|s| s.to_string()),
-        },
-        CursorLocationData::StaticAccess {
-            class_internal_name,
-            member_prefix,
-        } => CursorLocation::StaticAccess {
-            class_internal_name: Arc::clone(class_internal_name),
-            member_prefix: member_prefix.to_string(),
         },
         CursorLocationData::Import { prefix } => CursorLocation::Import {
             prefix: prefix.to_string(),
@@ -545,6 +555,7 @@ mod tests {
     #[test]
     fn test_convert_cursor_location_member_access() {
         let data = CursorLocationData::MemberAccess {
+            receiver_kind: crate::salsa_queries::context::AccessReceiverKindData::Unknown,
             receiver_expr: Arc::from("obj"),
             member_prefix: Arc::from("get"),
             receiver_type_hint: Some(Arc::from("java/lang/Object")),

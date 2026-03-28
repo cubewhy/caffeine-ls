@@ -2,14 +2,14 @@
 source: src/language/java.rs
 expression: "format!(\"trim_location={:?}\\ntrim_has_substring={}\\ntrim_first10={:?}\\n\\nctor_location={:?}\\nctor_has_add={}\\nctor_first10={:?}\\n\\nneg_location={:?}\\nneg_has_substring={}\\nneg_first10={:?}\\n\",\ntrim_ctx.location, trim_labels.iter().any(|l| l == \"substring\"),\ntrim_labels.iter().take(10).collect::<Vec<_>>(), ctor_ctx.location,\nctor_labels.iter().any(|l| l == \"add\"),\nctor_labels.iter().take(10).collect::<Vec<_>>(), neg_ctx.location,\nneg_labels.iter().any(|l| l == \"substring\"),\nneg_labels.iter().take(10).collect::<Vec<_>>(),)"
 ---
-trim_location=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "subs", receiver_expr: "strBox.map(String::trim).get()", arguments: None }
+trim_location=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "subs", receiver_expr: "strBox.map(String::trim).get()", arguments: None }
 trim_has_substring=true
 trim_first10=["substring"]
 
-ctor_location=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "ad", receiver_expr: "s.map(ArrayList::new).get()", arguments: None }
+ctor_location=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "ad", receiver_expr: "s.map(ArrayList::new).get()", arguments: None }
 ctor_has_add=true
 ctor_first10=["add"]
 
-neg_location=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "subs", receiver_expr: "strBox.map(Unknown::trim).get()", arguments: None }
+neg_location=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "subs", receiver_expr: "strBox.map(Unknown::trim).get()", arguments: None }
 neg_has_substring=false
 neg_first10=[]

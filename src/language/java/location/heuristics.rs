@@ -1220,6 +1220,7 @@ pub(super) fn detect_member_access_in_scoped_type(
     let member_prefix = strip_sentinel(&cursor_truncated_text(ctx, member_node));
     Some((
         CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: member_prefix.clone(),
@@ -1281,6 +1282,7 @@ pub(super) fn detect_member_access_in_local_decl(
 
     Some((
         CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: member_prefix.clone(),
@@ -1445,6 +1447,7 @@ pub(super) fn detect_dot_after_expression_child(
 
     Some((
         CursorLocation::MemberAccess {
+            receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
             receiver_semantic_type: None,
             receiver_type: None,
             member_prefix: member_prefix.clone(),

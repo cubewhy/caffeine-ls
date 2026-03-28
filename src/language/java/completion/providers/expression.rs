@@ -10,7 +10,7 @@ use crate::{
     language::java::completion::providers::type_lookup::{
         qualified_nested_type_matches, visible_direct_inner_classes,
     },
-    semantic::context::{CursorLocation, SemanticContext},
+    semantic::context::{AccessReceiverKind, CursorLocation, SemanticContext},
     semantic::types::symbol_resolver::SymbolResolver,
 };
 use std::collections::HashMap;
@@ -44,7 +44,6 @@ impl CompletionProvider for ExpressionProvider {
                 | CursorLocation::TypeAnnotation { .. }
                 | CursorLocation::MethodArgument { .. }
                 | CursorLocation::MemberAccess { .. }
-                | CursorLocation::StaticAccess { .. }
         )
     }
 
@@ -65,6 +64,7 @@ impl CompletionProvider for ExpressionProvider {
         }
 
         if let CursorLocation::MemberAccess {
+            receiver_kind,
             receiver_semantic_type,
             receiver_type,
             receiver_expr,
@@ -77,6 +77,7 @@ impl CompletionProvider for ExpressionProvider {
                 ctx,
                 index,
                 receiver_expr,
+                receiver_kind,
                 receiver_semantic_type,
                 receiver_type,
             );
@@ -122,56 +123,6 @@ impl CompletionProvider for ExpressionProvider {
                     limit = ?limit,
                     receiver_expr,
                     owner_internal = %owner_internal,
-                    candidates = out.len(),
-                    elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
-                    "completion provider timing"
-                );
-            }
-            return Ok(ProviderCompletionResult {
-                candidates: out,
-                is_incomplete: false,
-            });
-        }
-
-        if let CursorLocation::StaticAccess {
-            class_internal_name,
-            member_prefix,
-        } = &ctx.location
-        {
-            let t0 = Instant::now();
-            let mut out = Vec::new();
-            let member_prefix_lower =
-                (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
-            for (i, inner) in visible_direct_inner_classes(class_internal_name.as_ref(), ctx, index)
-                .into_iter()
-                .enumerate()
-            {
-                maybe_check_cancelled(request, "completion.expression.static_access", i)?;
-                let inner_name = inner.direct_name();
-                let Some(score) =
-                    fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner_name)
-                else {
-                    continue;
-                };
-                out.push(
-                    CompletionCandidate::new(
-                        Arc::from(inner_name),
-                        inner_name.to_string(),
-                        CandidateKind::ClassName,
-                        self.name(),
-                    )
-                    .with_replacement_mode(ReplacementMode::MemberSegment)
-                    .with_filter_text(inner_name.to_string())
-                    .with_detail(source_fqn_of(inner.as_ref(), index))
-                    .with_score(88.0 + score),
-                );
-            }
-            if trace_enabled {
-                tracing::debug!(
-                    provider = self.name(),
-                    static_access = true,
-                    limit = ?limit,
-                    owner_internal = %class_internal_name,
                     candidates = out.len(),
                     elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
                     "completion provider timing"
@@ -505,9 +456,17 @@ fn member_access_nested_type_owner(
     ctx: &SemanticContext,
     index: &IndexView,
     receiver_expr: &str,
+    receiver_kind: &AccessReceiverKind,
     receiver_semantic_type: &Option<crate::semantic::types::type_name::TypeName>,
     receiver_type: &Option<Arc<str>>,
 ) -> Option<Arc<str>> {
+    if let AccessReceiverKind::Type {
+        class_internal_name,
+    } = receiver_kind
+    {
+        return Some(Arc::clone(class_internal_name));
+    }
+
     if !is_type_qualifier_expr(ctx, index, receiver_expr) {
         return None;
     }
@@ -911,6 +870,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
                     "org/cubewhy/ChainCheck",
                 )),
@@ -953,6 +913,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
                     "app/Test",
                 )),
@@ -988,6 +949,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
                     "app/Test",
                 )),
@@ -1029,9 +991,15 @@ mod tests {
             c
         }]);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck")),
                 member_prefix: "".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -1060,9 +1028,15 @@ mod tests {
             c
         }]);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("java/lang/Integer"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("java/lang/Integer"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/lang/Integer")),
                 member_prefix: "".to_string(),
+                receiver_expr: "java/lang/Integer".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -1091,9 +1065,15 @@ mod tests {
             c
         }]);
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("java/lang/Integer"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("java/lang/Integer"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/lang/Integer")),
                 member_prefix: "".to_string(),
+                receiver_expr: "java/lang/Integer".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -1167,6 +1147,7 @@ mod tests {
         let view = index.view(root_scope());
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
                     "bench/p/Owner",
                 )),

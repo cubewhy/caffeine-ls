@@ -2,7 +2,7 @@
 source: src/language/java.rs
 expression: out
 ---
-member=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "put", receiver_expr: "a", arguments: None }
-member_alt=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "a", receiver_expr: "a", arguments: None }
+member=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "put", receiver_expr: "a", arguments: None }
+member_alt=MemberAccess { receiver_kind: Unknown, receiver_semantic_type: None, receiver_type: None, member_prefix: "a", receiver_expr: "a", arguments: None }
 generic=TypeAnnotation { prefix: "Bo" }
 ctor_generic=TypeAnnotation { prefix: "In" }

@@ -2429,6 +2429,7 @@ mod tests {
         let resolver = TypeResolver::new(&view);
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "class".to_string(),

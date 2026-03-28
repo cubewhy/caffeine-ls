@@ -255,7 +255,6 @@ fn is_broad_query(ctx: &SemanticContext, short_prefix_len: usize) -> bool {
             !class_prefix.contains('.') && class_prefix.len() <= short_prefix_len
         }
         CursorLocation::MemberAccess { .. }
-        | CursorLocation::StaticAccess { .. }
         | CursorLocation::Import { .. }
         | CursorLocation::ImportStatic { .. }
         | CursorLocation::MethodReference { .. }
@@ -534,6 +533,7 @@ mod tests {
         let view = idx.view(root_scope());
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: Some(Arc::from("org/cubewhy/Owner")),
                 member_prefix: "m".to_string(),
@@ -662,6 +662,7 @@ mod tests {
         let idx = make_index_with_random_class();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -698,6 +699,7 @@ mod tests {
         let idx = make_index_with_random_class();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -729,6 +731,7 @@ mod tests {
         let idx = make_index_with_random_class();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -796,9 +799,15 @@ mod tests {
         ]);
 
         let ctx = SemanticContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Type {
+                    class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                },
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("org/cubewhy/ChainCheck")),
                 member_prefix: "".to_string(),
+                receiver_expr: "org/cubewhy/ChainCheck".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -877,6 +886,7 @@ mod tests {
         // 模拟用户输入了 System.out.|
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -998,6 +1008,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1077,6 +1088,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1143,6 +1155,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1276,6 +1289,7 @@ mod tests {
         let engine = CompletionEngine::new();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1314,6 +1328,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1356,6 +1371,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1420,6 +1436,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1467,6 +1484,7 @@ mod tests {
         }]);
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "ArrayL".to_string(),
@@ -1494,6 +1512,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "foo".to_string(),
@@ -1536,6 +1555,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1644,6 +1664,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1696,6 +1717,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1750,6 +1772,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1831,6 +1854,7 @@ mod tests {
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: "".to_string(),

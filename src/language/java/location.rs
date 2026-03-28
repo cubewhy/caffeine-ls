@@ -40,6 +40,7 @@ fn determine_location_impl(
         {
             return (
                 CursorLocation::MemberAccess {
+                    receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                     receiver_semantic_type: None,
                     receiver_type: None,
                     member_prefix: member_prefix.clone(),
@@ -269,6 +270,7 @@ fn determine_location_impl(
     if let Some((receiver_expr, member_prefix)) = heuristics::detect_trailing_dot_in_text(before) {
         return (
             CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
                 receiver_semantic_type: None,
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
