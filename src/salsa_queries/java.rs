@@ -219,6 +219,36 @@ class User {
     }
 
     #[test]
+    fn test_extract_java_context_marks_requires_module_after_trailing_dot() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/module-info.java").unwrap();
+        let content = "module demo { requires java. }";
+        let rope = Rope::from_str(content);
+        let byte_offset = content.find("java.").unwrap() + "java.".len();
+        let char_idx = rope.byte_to_char(byte_offset);
+        let line = rope.char_to_line(char_idx) as u32;
+        let character = (char_idx - rope.line_to_char(line as usize)) as u32;
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            content.to_string(),
+            Arc::from("java"),
+        );
+
+        let ctx = extract_java_completion_context(&db, file, line, character, Some('.'));
+
+        assert_eq!(
+            ctx.java_module_context,
+            Some(JavaModuleContextKindData::RequiresModule)
+        );
+        assert_eq!(ctx.query.as_ref(), "java.");
+        assert!(matches!(
+            ctx.location,
+            CursorLocationData::Expression { .. }
+        ));
+    }
+
+    #[test]
     fn test_extract_java_enclosing_method_preserves_static_main() {
         let db = Database::default();
         let uri = Url::parse("file:///test/Test.java").unwrap();

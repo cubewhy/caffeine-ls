@@ -306,6 +306,9 @@ pub(crate) fn infer_module_completion_context(
     }
 
     if contains_offset(body, ctx.offset) {
+        if let Some(fragment_match) = infer_broken_directive_completion_context(ctx, body) {
+            return Some(fragment_match);
+        }
         let prefix = identifier_prefix_before_cursor(ctx.source_str(), ctx.offset);
         return Some(ModuleCompletionMatch::expression(
             prefix,
@@ -314,6 +317,20 @@ pub(crate) fn infer_module_completion_context(
     }
 
     None
+}
+
+fn infer_broken_directive_completion_context(
+    ctx: &JavaContextExtractor,
+    body: Node<'_>,
+) -> Option<ModuleCompletionMatch> {
+    let offset = ctx.offset.min(body.end_byte());
+    if offset < body.start_byte() {
+        return None;
+    }
+
+    let before = ctx.byte_slice(body.start_byte(), offset);
+    let fragment = current_module_statement_fragment(before);
+    infer_directive_completion_context_from_text(ctx, fragment)
 }
 
 fn infer_directive_completion_context(
@@ -364,6 +381,56 @@ fn infer_directive_completion_context(
         }
         _ => None,
     }
+}
+
+fn infer_directive_completion_context_from_text(
+    ctx: &JavaContextExtractor,
+    before: &str,
+) -> Option<ModuleCompletionMatch> {
+    if starts_with_directive_keyword(before, "requires") {
+        return Some(ModuleCompletionMatch::expression(
+            dotted_prefix_before_cursor(ctx.source_str(), ctx.offset),
+            classify_requires_context(before),
+        ));
+    }
+    if starts_with_directive_keyword(before, "exports") {
+        return Some(infer_package_directive_completion_context(
+            ctx,
+            before,
+            "exports",
+            JavaModuleContextKind::ExportsPackage,
+        ));
+    }
+    if starts_with_directive_keyword(before, "opens") {
+        return Some(infer_package_directive_completion_context(
+            ctx,
+            before,
+            "opens",
+            JavaModuleContextKind::OpensPackage,
+        ));
+    }
+    if starts_with_directive_keyword(before, "uses") {
+        return Some(ModuleCompletionMatch::type_annotation(
+            dotted_prefix_before_cursor(ctx.source_str(), ctx.offset),
+            JavaModuleContextKind::UsesType,
+        ));
+    }
+    if starts_with_directive_keyword(before, "provides") {
+        let after_keyword = before
+            .strip_prefix("provides")
+            .unwrap_or(before)
+            .trim_start();
+        let context = if contains_with_separator(after_keyword) {
+            JavaModuleContextKind::ProvidesImplementation
+        } else {
+            JavaModuleContextKind::ProvidesService
+        };
+        return Some(ModuleCompletionMatch::type_annotation(
+            dotted_prefix_before_cursor(ctx.source_str(), ctx.offset),
+            context,
+        ));
+    }
+    None
 }
 
 fn infer_package_directive_completion_context(
@@ -502,6 +569,18 @@ fn contains_to_separator(text: &str) -> bool {
 
 fn contains_with_separator(text: &str) -> bool {
     text.split_whitespace().any(|token| token == "with")
+}
+
+fn current_module_statement_fragment(before: &str) -> &str {
+    let start = before
+        .rfind(|c: char| c == ';' || c == '{' || c == '}')
+        .map_or(0, |index| index + 1);
+    before[start..].trim_start()
+}
+
+fn starts_with_directive_keyword(text: &str, keyword: &str) -> bool {
+    text.strip_prefix(keyword)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
 
 fn parse_requires_directive(text: &str) -> Option<JavaModuleRequires> {
@@ -647,6 +726,21 @@ mod tests {
 
         assert_eq!(context.context, JavaModuleContextKind::RequiresModifier);
         assert_eq!(context.query, "trans");
+    }
+
+    #[test]
+    fn infers_requires_module_completion_context_for_broken_trailing_dot_directive() {
+        let (source, offset) = strip_cursor_marker("module demo { requires java.| }");
+        let mut parser = crate::language::java::make_java_parser();
+        let tree = parser.parse(&source, None).expect("tree");
+        let ctx = JavaContextExtractor::new(source.as_str(), offset, None);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let context =
+            infer_module_completion_context(&ctx, tree.root_node(), cursor_node).expect("context");
+
+        assert_eq!(context.context, JavaModuleContextKind::RequiresModule);
+        assert_eq!(context.query, "java.");
     }
 
     #[test]
