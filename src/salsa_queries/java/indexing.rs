@@ -57,13 +57,10 @@ pub fn parse_java_classes_for_analysis_context(
 ) -> Arc<Vec<ClassMetadata>> {
     let started = Instant::now();
     let file_id = file.file_id(db);
-    let name_table =
-        crate::salsa_queries::get_name_table_for_context(db, module_id, classpath, source_root);
     let view =
         crate::salsa_queries::get_index_view_for_context(db, module_id, classpath, source_root);
     let origin = ClassOrigin::SourceFile(Arc::from(file_id.as_str()));
-    let classes =
-        parse_java_classes_with_index_view(db, file, &origin, Some(name_table), Some(&view));
+    let classes = parse_java_classes_with_index_view(db, file, &origin, None, Some(&view));
     tracing::debug!(
         file = %file_id.as_str(),
         module = module_id.0,
@@ -88,6 +85,16 @@ pub fn parse_java_classes_with_index_view(
         return vec![];
     };
 
+    if let Some(view) = view {
+        return crate::language::java::class_parser::extract_java_classes_from_tree(
+            content,
+            &tree,
+            origin,
+            None,
+            Some(view),
+        );
+    }
+
     let discovered_names =
         crate::language::java::class_parser::discover_java_names_from_tree(content, &tree);
     let name_table = match (name_table, discovered_names.is_empty()) {
@@ -98,7 +105,7 @@ pub fn parse_java_classes_with_index_view(
     };
 
     crate::language::java::class_parser::extract_java_classes_from_tree(
-        content, &tree, origin, name_table, view,
+        content, &tree, origin, name_table, None,
     )
 }
 

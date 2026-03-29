@@ -172,8 +172,12 @@ pub fn extract_java_classes_from_root(
     let imports_elapsed = imports_started.elapsed();
     let should_refine = view.is_none();
     let discovery_view_started = Instant::now();
-    let parsing_view = if let Some(view) = view.cloned() {
-        view
+    let parsing_view = if let Some(view) = view {
+        if name_table.is_some() {
+            view.clone()
+        } else {
+            with_source_discovery_overlay(view, origin, discover_java_names_from_root(source, root))
+        }
     } else {
         source_discovery_view_from_root(source, root, origin)
     };
@@ -251,10 +255,31 @@ fn source_discovery_view_from_root(
     root: Node<'_>,
     origin: &ClassOrigin,
 ) -> IndexView {
-    let bucket = Arc::new(BucketIndex::new());
     // Reuse the current syntax tree instead of reparsing the same source text
     // just to seed a discovery view for local type refinement.
-    let seed_classes = discover_java_names_from_root(source, root)
+    let seed_classes = discovery_seed_classes(origin, discover_java_names_from_root(source, root));
+    let bucket = Arc::new(BucketIndex::new());
+    bucket.add_classes(seed_classes);
+    IndexView::new(smallvec::smallvec![bucket])
+}
+
+pub(crate) fn with_source_discovery_overlay(
+    view: &IndexView,
+    origin: &ClassOrigin,
+    discovered_names: Vec<Arc<str>>,
+) -> IndexView {
+    let seed_classes = discovery_seed_classes(origin, discovered_names);
+    if seed_classes.is_empty() {
+        return view.clone();
+    }
+    view.with_overlay_classes(seed_classes)
+}
+
+fn discovery_seed_classes(
+    origin: &ClassOrigin,
+    internal_names: Vec<Arc<str>>,
+) -> Vec<ClassMetadata> {
+    internal_names
         .into_iter()
         .map(|internal_name| ClassMetadata {
             package: internal_name
@@ -277,9 +302,7 @@ fn source_discovery_view_from_root(
             inner_class_of: None,
             origin: origin.clone(),
         })
-        .collect::<Vec<_>>();
-    bucket.add_classes(seed_classes);
-    IndexView::new(smallvec::smallvec![bucket])
+        .collect()
 }
 
 pub fn extract_package_from_root(source: &str, root: Node<'_>) -> Option<Arc<str>> {
@@ -1612,7 +1635,10 @@ fn clean_javadoc(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_java_source_via_tree_for_test, parse_test_classes};
+    use super::{
+        parse_java_source_via_tree_for_test, parse_java_source_with_view_via_tree_for_test,
+        parse_test_classes, test_fixture_class,
+    };
     use crate::{
         index::{ClassOrigin, IndexScope, ModuleId, WorkspaceIndex},
         language::java::render,
@@ -1869,6 +1895,49 @@ public class Main {
             meta.generic_signature.as_deref(),
             Some("<T:Ljava/io/Closeable;:Ljava/lang/Runnable;>Ljava/lang/Object;")
         );
+    }
+
+    #[test]
+    fn test_extract_java_classes_with_view_discovers_same_file_types_without_name_table() {
+        let src = indoc::indoc! {r#"
+            package org.example;
+
+            import java.util.List;
+
+            class Base {}
+
+            class Demo extends Base {
+                List<String> values;
+            }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_jdk_classes(vec![
+            test_fixture_class("java/util/List"),
+            test_fixture_class("java/lang/String"),
+        ]);
+        let view = idx.view(IndexScope {
+            module: ModuleId::ROOT,
+        });
+
+        let classes = parse_java_source_with_view_via_tree_for_test(
+            src,
+            ClassOrigin::Unknown,
+            None,
+            Some(&view),
+        );
+
+        let demo = classes
+            .iter()
+            .find(|class| class.internal_name.as_ref() == "org/example/Demo")
+            .expect("demo class");
+        let field = demo
+            .fields
+            .iter()
+            .find(|field| field.name.as_ref() == "values")
+            .expect("values field");
+
+        assert_eq!(demo.super_name.as_deref(), Some("org/example/Base"));
+        assert_eq!(field.descriptor.as_ref(), "Ljava/util/List;");
     }
 
     #[test]

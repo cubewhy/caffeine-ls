@@ -1342,6 +1342,15 @@ impl Workspace {
 
         let view =
             index.view_for_analysis_context(context.module, context.classpath, context.source_root);
+        if salsa_file.language_id(db).as_ref() == "java" {
+            return language.extract_classes_with_index_salsa(
+                db,
+                salsa_file,
+                origin,
+                None,
+                Some(&view),
+            );
+        }
         let name_table = index.build_name_table_for_analysis_context(
             context.module,
             context.classpath,
@@ -1621,16 +1630,20 @@ impl Workspace {
                     context.classpath,
                     context.source_root,
                 );
-                let base_name_table = index_snapshot.build_name_table_for_analysis_context(
-                    context.module,
-                    context.classpath,
-                    context.source_root,
-                );
-                let discovered_names = language.discover_internal_names(&content, None);
-                let name_table = if discovered_names.is_empty() {
-                    Some(base_name_table)
+                let name_table = if language_id == "java" {
+                    None
                 } else {
-                    Some(base_name_table.extend_with(discovered_names))
+                    let base_name_table = index_snapshot.build_name_table_for_analysis_context(
+                        context.module,
+                        context.classpath,
+                        context.source_root,
+                    );
+                    let discovered_names = language.discover_internal_names(&content, None);
+                    if discovered_names.is_empty() {
+                        Some(base_name_table)
+                    } else {
+                        Some(base_name_table.extend_with(discovered_names))
+                    }
                 };
 
                 language.extract_classes_from_source(
