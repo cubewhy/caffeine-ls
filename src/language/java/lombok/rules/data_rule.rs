@@ -1,3 +1,4 @@
+use rust_asm::constants::ACC_STATIC;
 use std::sync::Arc;
 use tree_sitter::Node;
 use tree_sitter_utils::traversal::first_child_of_kind;
@@ -136,8 +137,6 @@ fn generate_getters_and_setters(
     has_explicit_getter: bool,
     has_explicit_setter: bool,
 ) {
-    use rust_asm::constants::ACC_STATIC;
-
     for field in explicit_fields {
         // Skip static fields
         if (field.access_flags & ACC_STATIC) != 0 {

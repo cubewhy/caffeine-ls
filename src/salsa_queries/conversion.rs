@@ -159,7 +159,7 @@ pub(crate) fn enrich_java_semantic_context(
     );
 
     let local_variables = workspace
-        .map(|ws| fetch_locals_from_workspace(db, file, ws, &data))
+        .map(|ws| fetch_locals_from_workspace(db, file, ws, data))
         .unwrap_or_else(|| {
             crate::salsa_queries::extract_visible_method_locals_from_source(
                 source,

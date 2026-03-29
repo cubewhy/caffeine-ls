@@ -926,7 +926,7 @@ impl Workspace {
                 let _result = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
 
                 self.extract_salsa_classes_for_index_context(
-                    &*db, salsa_file, &origin, &new_index, context,
+                    &db, salsa_file, &origin, &new_index, context,
                 )
             };
 
@@ -1254,7 +1254,7 @@ impl Workspace {
 
         let is_module_info = uri
             .path_segments()
-            .and_then(|segments| segments.last())
+            .and_then(|mut segments| segments.next_back())
             .is_some_and(|segment| segment == "module-info.java");
         if !is_module_info {
             return None;
@@ -2173,7 +2173,7 @@ mod tests {
 
         {
             let db = workspace.salsa_db.lock();
-            workspace.refresh_java_module_descriptor_for_salsa_file(&*db, salsa_file);
+            workspace.refresh_java_module_descriptor_for_salsa_file(&db, salsa_file);
         }
 
         assert_eq!(
@@ -2205,7 +2205,7 @@ mod tests {
 
         {
             let db = workspace.salsa_db.lock();
-            workspace.refresh_java_module_descriptor_for_salsa_file(&*db, salsa_file);
+            workspace.refresh_java_module_descriptor_for_salsa_file(&db, salsa_file);
         }
 
         workspace.index.update(|index| {
@@ -2243,7 +2243,7 @@ mod tests {
 
         {
             let db = workspace.salsa_db.lock();
-            workspace.refresh_java_module_descriptor_for_salsa_file(&*db, salsa_file);
+            workspace.refresh_java_module_descriptor_for_salsa_file(&db, salsa_file);
         }
 
         workspace.index.update(|index| {

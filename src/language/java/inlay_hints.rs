@@ -25,6 +25,7 @@ pub struct JavaInlayHint {
     pub kind: JavaInlayHintKind,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn collect_java_inlay_hints(
     source: &str,
     rope: &Rope,
@@ -57,7 +58,6 @@ pub fn collect_java_inlay_hints(
     collect_var_hints(
         source,
         root,
-        root,
         &semantic,
         workspace,
         salsa_file,
@@ -67,7 +67,6 @@ pub fn collect_java_inlay_hints(
     semantic.check_cancelled("inlay.collect.before_parameter_hints")?;
     collect_parameter_hints(
         source,
-        root,
         root,
         &semantic,
         workspace,
@@ -85,7 +84,6 @@ pub fn collect_java_inlay_hints(
 #[allow(clippy::too_many_arguments)]
 fn collect_var_hints(
     source: &str,
-    root: Node,
     node: Node,
     semantic: &JavaSemanticRequestContext<'_>,
     workspace: Option<&Workspace>,
@@ -156,8 +154,9 @@ fn collect_var_hints(
 
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
+        // TODO: remove recursion
         collect_var_hints(
-            source, root, child, semantic, workspace, salsa_file, byte_range, out,
+            source, child, semantic, workspace, salsa_file, byte_range, out,
         )?;
     }
     Ok(())
@@ -166,7 +165,6 @@ fn collect_var_hints(
 #[allow(clippy::too_many_arguments)]
 fn collect_parameter_hints(
     source: &str,
-    root: Node,
     node: Node,
     semantic: &JavaSemanticRequestContext<'_>,
     workspace: Option<&Workspace>,
@@ -227,7 +225,7 @@ fn collect_parameter_hints(
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
         collect_parameter_hints(
-            source, root, child, semantic, workspace, salsa_file, byte_range, out,
+            source, child, semantic, workspace, salsa_file, byte_range, out,
         )?;
     }
     Ok(())

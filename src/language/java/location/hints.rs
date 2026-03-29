@@ -23,17 +23,17 @@ pub(crate) fn infer_functional_target_hint(
     }
     let method_call = infer_method_argument_target_hint(ctx, node);
     let mut expr_shape = infer_functional_expr_shape(ctx, node);
-    if expected_type_source.is_none() || expr_shape.is_none() {
-        if let Some(recovered) = infer_functional_target_hint_from_error_arrow(ctx, node) {
-            if expected_type_source.is_none() {
-                expected_type_source = recovered.expected_type_source;
-            }
-            if expected_type_context.is_none() {
-                expected_type_context = recovered.expected_type_context;
-            }
-            if expr_shape.is_none() {
-                expr_shape = recovered.expr_shape;
-            }
+    if (expected_type_source.is_none() || expr_shape.is_none())
+        && let Some(recovered) = infer_functional_target_hint_from_error_arrow(ctx, node)
+    {
+        if expected_type_source.is_none() {
+            expected_type_source = recovered.expected_type_source;
+        }
+        if expected_type_context.is_none() {
+            expected_type_context = recovered.expected_type_context;
+        }
+        if expr_shape.is_none() {
+            expr_shape = recovered.expr_shape;
         }
     }
     if expected_type_source.is_none() && assignment_lhs_expr.is_none() && method_call.is_none() {

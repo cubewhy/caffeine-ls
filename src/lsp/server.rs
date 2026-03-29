@@ -226,7 +226,7 @@ impl Backend {
             let materialize_started = Instant::now();
             let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
             let classes = workspace.extract_salsa_classes_for_index_context(
-                &*db,
+                &db,
                 salsa_file,
                 &origin,
                 index_snapshot.as_ref(),
@@ -268,7 +268,7 @@ impl Backend {
         });
         {
             let db = workspace.salsa_db.lock();
-            workspace.refresh_java_module_descriptor_for_salsa_file(&*db, salsa_file);
+            workspace.refresh_java_module_descriptor_for_salsa_file(&db, salsa_file);
         }
         tracing::debug!(
             uri = %uri,

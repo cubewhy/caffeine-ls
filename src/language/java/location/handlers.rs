@@ -937,9 +937,7 @@ pub(super) fn handle_identifier(
 
     let id_handler = (|inp: Input<Ctx<'_>>| {
         let (ctx, orig): (&JavaContextExtractor, Node) = inp.ctx;
-        let Some(name) = inp.node.child_by_field_name("name") else {
-            return None;
-        };
+        let name = inp.node.child_by_field_name("name")?;
         if orig.id() == name.id() || is_descendant_of(orig, name) {
             return Some(handle_annotation(ctx, inp.node));
         }

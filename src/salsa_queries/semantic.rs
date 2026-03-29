@@ -151,7 +151,7 @@ pub fn extract_java_current_class_member_list_from_source(
         resolve_index_view_for_file(db, file),
     );
 
-    let members = cursor_node
+    cursor_node
         .and_then(scope::nearest_type_declaration)
         .map(|decl| {
             synthetic::extract_type_members_with_synthetics(
@@ -167,8 +167,7 @@ pub fn extract_java_current_class_member_list_from_source(
             members::collect_members_from_node(&ctx, error_node, &type_ctx, &mut members);
             Some(members)
         })
-        .unwrap_or_default();
-    members
+        .unwrap_or_default()
 }
 
 pub fn extract_java_enclosing_super_name(
@@ -2255,13 +2254,7 @@ fn parse_class_members(
         SourceTypeCtx::from_view(package, imports, resolve_index_view_for_file(db, file));
 
     // Extract members with synthetics (Lombok, etc.)
-    let members = extract_type_members_with_synthetics(
-        &ctx,
-        class_node,
-        &type_ctx,
-        owner_internal.as_deref(),
-    );
-    members
+    extract_type_members_with_synthetics(&ctx, class_node, &type_ctx, owner_internal.as_deref())
 }
 
 #[cfg(test)]

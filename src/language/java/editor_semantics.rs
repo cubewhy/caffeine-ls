@@ -196,6 +196,7 @@ impl<'a> JavaSemanticRequestContext<'a> {
         Self::new_with_salsa(source, rope, root, view, request, request_scope, None, None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_salsa(
         source: &str,
         rope: &Rope,

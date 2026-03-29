@@ -621,9 +621,7 @@ fn contains_with_separator(text: &str) -> bool {
 }
 
 fn current_module_statement_fragment(before: &str) -> &str {
-    let start = before
-        .rfind(|c: char| c == ';' || c == '{' || c == '}')
-        .map_or(0, |index| index + 1);
+    let start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
     before[start..].trim_start()
 }
 

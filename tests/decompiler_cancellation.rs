@@ -1,13 +1,13 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use java_analyzer::decompiler::Decompiler;
 use java_analyzer::decompiler::backend::cfr::CfrDecompiler;
 use java_analyzer::lsp::request_cancellation::{CancellationToken, Cancelled};
 
-fn write_executable_script(path: &PathBuf, started: &PathBuf, finished: &PathBuf) {
+fn write_executable_script(path: &PathBuf, started: &Path, finished: &Path) {
     let script = format!(
         "#!/bin/sh\nset -eu\ntouch '{}'\nsleep 1\nprintf 'class Output {{}}\\n'\ntouch '{}'\n",
         started.display(),
@@ -24,7 +24,7 @@ fn write_executable_script(path: &PathBuf, started: &PathBuf, finished: &PathBuf
     }
 }
 
-async fn wait_for_path(path: &PathBuf) {
+async fn wait_for_path(path: &Path) {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             if path.exists() {

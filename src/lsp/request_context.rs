@@ -151,7 +151,7 @@ impl<'a> PreparedRequest<'a> {
         let overlay_classes = {
             let db = workspace.salsa_db.lock();
             workspace.extract_salsa_classes_for_index_context(
-                &*db,
+                &db,
                 salsa_file,
                 &origin,
                 index_snapshot.as_ref(),

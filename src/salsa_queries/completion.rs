@@ -88,7 +88,7 @@ pub fn compute_relevant_content_hash(source: &str, line: u32, character: u32) ->
     hasher.finish()
 }
 
-fn relevant_scope_for_hash<'a>(source: &'a str, cursor_offset: usize) -> &'a str {
+fn relevant_scope_for_hash(source: &str, cursor_offset: usize) -> &str {
     let mut best_scope = source;
 
     for language in crate::language::builtin_languages() {

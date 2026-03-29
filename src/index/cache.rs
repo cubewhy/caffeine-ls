@@ -59,9 +59,7 @@ pub fn save_cached_artifact(
     source_path: &Path,
     data: &IndexedArchiveData,
 ) -> Option<StoredArtifact> {
-    let Some(store) = shared_store() else {
-        return None;
-    };
+    let store = shared_store()?;
     let Ok(source) = ArtifactSource::from_path(source_path, detect_artifact_kind(source_path))
     else {
         return None;
@@ -111,9 +109,7 @@ pub fn store_generated_artifact(
     kind: ArtifactKind,
     data: &IndexedArchiveData,
 ) -> Option<StoredArtifact> {
-    let Some(store) = shared_store() else {
-        return None;
-    };
+    let store = shared_store()?;
     let fingerprint = match fingerprint_archive_data(data) {
         Ok(fingerprint) => fingerprint,
         Err(err) => {

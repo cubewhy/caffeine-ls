@@ -20,6 +20,10 @@ enum ClassHandleRef {
     Artifact(ArtifactClassHandle),
 }
 
+type MethodsByNameCache = DashMap<(Arc<str>, Arc<str>), Arc<Vec<Arc<MethodSummary>>>>;
+type FieldsByNameCache = DashMap<(Arc<str>, Arc<str>), Option<Arc<FieldSummary>>>;
+type DeclaringMethodOwnerCache = DashMap<(Arc<str>, Arc<str>, Arc<str>), Option<Arc<str>>>;
+
 #[derive(Default)]
 struct IndexViewCaches {
     class_by_internal: DashMap<Arc<str>, Option<ClassHandleRef>>,
@@ -28,9 +32,9 @@ struct IndexViewCaches {
     classes_in_package: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
     direct_inner_classes: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
     hierarchy_order: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
-    methods_by_name: DashMap<(Arc<str>, Arc<str>), Arc<Vec<Arc<MethodSummary>>>>,
-    fields_by_name: DashMap<(Arc<str>, Arc<str>), Option<Arc<FieldSummary>>>,
-    declaring_method_owner: DashMap<(Arc<str>, Arc<str>, Arc<str>), Option<Arc<str>>>,
+    methods_by_name: MethodsByNameCache,
+    fields_by_name: FieldsByNameCache,
+    declaring_method_owner: DeclaringMethodOwnerCache,
     all_classes: OnceLock<Arc<Vec<ClassHandleRef>>>,
 }
 

@@ -1212,6 +1212,7 @@ fn evaluate_chain_inner(
     current
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_chain_segment_on_receiver(
     recv: &TypeName,
     seg: &ChainSegment,
@@ -1229,7 +1230,8 @@ fn resolve_chain_segment_on_receiver(
     }
 
     let recv_full = canonicalize_chain_receiver_type(recv, type_ctx)?;
-    let current = if seg.arg_count.is_some() {
+
+    if seg.arg_count.is_some() {
         if let Some(intrinsic) =
             intrinsic_method_return_type(&recv_full, base_name, seg.arg_count.unwrap_or(0))
         {
@@ -1271,9 +1273,7 @@ fn resolve_chain_segment_on_receiver(
         } else {
             None
         }
-    };
-
-    current
+    }
 }
 
 fn canonicalize_chain_receiver_type(recv: &TypeName, type_ctx: &SourceTypeCtx) -> Option<TypeName> {

@@ -211,16 +211,6 @@ struct KotlinContextExtractor<'s> {
 }
 
 impl<'s> KotlinContextExtractor<'s> {
-    #[cfg(test)]
-    fn new(source: &'s str, offset: usize) -> Self {
-        Self {
-            source,
-            bytes: source.as_bytes(),
-            offset,
-            rope: Rope::from(source),
-        }
-    }
-
     fn new_with_rope(source: &'s str, offset: usize, rope: Rope) -> Self {
         Self {
             source,

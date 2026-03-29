@@ -757,10 +757,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "f"),
             "should find method f(): {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -972,10 +969,7 @@ mod tests {
             candidate_name(&results[0]),
             "RandomClass",
             "RandomClass should rank first when it matches expected_type, got: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 

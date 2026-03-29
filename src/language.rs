@@ -524,7 +524,7 @@ impl<'a> TokenCollector<'a> {
 
     fn check_cancelled(&mut self, phase: &'static str) -> RequestResult<()> {
         self.visited_nodes += 1;
-        if self.visited_nodes % 64 == 0
+        if self.visited_nodes.is_multiple_of(64)
             && let Some(request) = self.request
         {
             request.check_cancelled(phase)?;

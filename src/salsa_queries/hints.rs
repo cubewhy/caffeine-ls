@@ -292,6 +292,7 @@ pub(crate) fn collect_java_method_calls(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        // TODO: remove recursion
         collect_java_method_calls(root, child, source, rope, view, db, file, start, end, calls);
     }
 }

@@ -1,7 +1,8 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use java_analyzer::index::{ClasspathId, ModuleId};
 use java_analyzer::salsa_db::{Database, FileId, SourceFile};
 use java_analyzer::salsa_queries;
+use std::hint::black_box;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
 
