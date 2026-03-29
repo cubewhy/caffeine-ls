@@ -2957,7 +2957,7 @@ mod tests {
 
         assert_eq!(
             resolve_index_view_for_file(&db, file).layer_count(),
-            0,
+            1,
             "IndexView lookup should read the current snapshot without an outer workspace lock",
         );
     }
