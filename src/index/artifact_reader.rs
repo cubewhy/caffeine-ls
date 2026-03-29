@@ -12,7 +12,8 @@ use nucleo_matcher::{
 use crate::index::cache;
 use crate::index::store::StoredArtifactArchive;
 use crate::index::{
-    ArchiveClassStub, ArtifactId, ArtifactMetadata, ClassMetadata, ClassOrigin, IndexedJavaModule,
+    ArchiveClassStub, ArtifactId, ArtifactMetadata, ClassMetadata, ClassOrigin, FieldSummary,
+    IndexedJavaModule, MethodSummary,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,6 +187,43 @@ impl ArtifactScopeReader {
             ClassOrigin::SourceFile(_) => 2,
             _ => 1,
         })
+    }
+
+    pub fn materialize_methods(
+        &self,
+        handle: ArtifactClassHandle,
+    ) -> Option<Vec<Arc<MethodSummary>>> {
+        Some(
+            self.stub(handle)?
+                .methods
+                .iter()
+                .map(|method| Arc::new(method.materialize()))
+                .collect(),
+        )
+    }
+
+    pub fn materialize_fields(
+        &self,
+        handle: ArtifactClassHandle,
+    ) -> Option<Vec<Arc<FieldSummary>>> {
+        Some(
+            self.stub(handle)?
+                .fields
+                .iter()
+                .map(|field| Arc::new(field.materialize()))
+                .collect(),
+        )
+    }
+
+    pub fn has_method_named_desc(
+        &self,
+        handle: ArtifactClassHandle,
+        method_name: &str,
+        method_desc: &str,
+    ) -> Option<bool> {
+        Some(self.stub(handle)?.methods.iter().any(|method| {
+            method.name.as_ref() == method_name && method.descriptor.as_ref() == method_desc
+        }))
     }
 
     pub fn class_handles_by_simple_name(&self, simple_name: &str) -> Vec<ArtifactClassHandle> {

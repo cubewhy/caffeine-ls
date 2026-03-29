@@ -41,7 +41,7 @@ impl ArchiveMethodStub {
         }
     }
 
-    fn materialize(&self) -> MethodSummary {
+    pub(crate) fn materialize(&self) -> MethodSummary {
         MethodSummary {
             name: Arc::clone(&self.name),
             params: MethodParams::from_descriptor_and_names(
@@ -80,7 +80,7 @@ impl ArchiveFieldStub {
         }
     }
 
-    fn materialize(&self) -> FieldSummary {
+    pub(crate) fn materialize(&self) -> FieldSummary {
         FieldSummary {
             name: Arc::clone(&self.name),
             descriptor: Arc::clone(&self.descriptor),

@@ -165,7 +165,9 @@ impl<'a> PreparedRequest<'a> {
             .metrics()
             .record_event("request_setup.overlay_class_extract");
         let overlay_class_count = overlay_classes.len();
-        let view = view.with_overlay_classes(overlay_classes);
+        let view = view
+            .with_overlay_classes(overlay_classes)
+            .with_request_metrics(Arc::clone(request.metrics()));
         tracing::debug!(
             uri = %uri,
             module = analysis.module.0,

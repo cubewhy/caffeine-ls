@@ -9,6 +9,7 @@ use crate::index::{
     ArtifactClassHandle, BucketIndex, ClassMetadata, FieldSummary, MethodSummary, NameTable,
     ScopeLayer, ScopeSnapshot,
 };
+use crate::request_metrics::RequestMetrics;
 
 #[derive(Clone)]
 enum ClassHandleRef {
@@ -37,6 +38,7 @@ struct IndexViewCaches {
 pub struct IndexView {
     scope: Arc<ScopeSnapshot>,
     caches: Arc<IndexViewCaches>,
+    request_metrics: Option<Arc<RequestMetrics>>,
 }
 
 impl IndexView {
@@ -179,15 +181,15 @@ impl IndexView {
 
     fn resolve_internal_hint_to_class(&self, internal_hint: &str) -> Option<Arc<ClassMetadata>> {
         let (pkg, simple) = internal_hint.rsplit_once('/')?;
-        let mut matches = self
-            .classes_in_package(pkg)
-            .into_iter()
-            .filter(|c| c.matches_internal_name_tail(simple));
+        let package_refs = self.classes_in_package_refs(pkg);
+        let mut matches = package_refs
+            .iter()
+            .filter(|class_ref| self.class_ref_matches_internal_name_tail(class_ref, simple));
         let first = matches.next()?;
         if matches.next().is_some() {
             return None;
         }
-        Some(first)
+        self.resolve_class_ref(first)
     }
 
     fn origin_precedence(class: &ClassMetadata) -> u8 {
@@ -223,7 +225,13 @@ impl IndexView {
         Self {
             scope,
             caches: Arc::new(IndexViewCaches::default()),
+            request_metrics: None,
         }
+    }
+
+    pub fn with_request_metrics(mut self, metrics: Arc<RequestMetrics>) -> Self {
+        self.request_metrics = Some(metrics);
+        self
     }
 
     pub fn with_overlay_classes(&self, classes: Vec<ClassMetadata>) -> Self {
@@ -333,16 +341,8 @@ impl IndexView {
     }
 
     pub fn classes_in_package(&self, pkg: &str) -> Vec<Arc<ClassMetadata>> {
-        if let Some(cached) = self.caches.classes_in_package.get(pkg) {
-            return self.resolve_class_refs(cached.value().as_ref());
-        }
-
-        let merged =
-            Arc::new(self.merge_class_refs(|layer| self.layer_classes_in_package_refs(layer, pkg)));
-        self.caches
-            .classes_in_package
-            .insert(Arc::from(pkg), Arc::clone(&merged));
-        self.resolve_class_refs(merged.as_ref())
+        let refs = self.classes_in_package_refs(pkg);
+        self.resolve_class_refs(refs.as_ref())
     }
 
     /// Returns classes directly declared in the package (excludes nested/inner classes).
@@ -500,19 +500,47 @@ impl IndexView {
         let hierarchy_order = self.hierarchy_order(class_internal);
 
         for class_ref in hierarchy_order.iter() {
-            let Some(meta) = self.resolve_class_ref(class_ref) else {
-                continue;
-            };
+            match class_ref {
+                ClassHandleRef::Overlay { .. } => {
+                    let Some(meta) = self.resolve_class_ref(class_ref) else {
+                        continue;
+                    };
 
-            for method in &meta.methods {
-                let key = Self::method_shadow_key(method);
-                if seen_methods.insert(key) {
-                    methods.push(Arc::new(method.clone()));
+                    for method in &meta.methods {
+                        let key = Self::method_shadow_key(method);
+                        if seen_methods.insert(key) {
+                            methods.push(Arc::new(method.clone()));
+                        }
+                    }
+                    for field in &meta.fields {
+                        if seen_fields.insert(Arc::clone(&field.name)) {
+                            fields.push(Arc::new(field.clone()));
+                        }
+                    }
                 }
-            }
-            for field in &meta.fields {
-                if seen_fields.insert(Arc::clone(&field.name)) {
-                    fields.push(Arc::new(field.clone()));
+                ClassHandleRef::Artifact(handle) => {
+                    let Some(reader) = self.scope.artifact_reader(handle.artifact_id) else {
+                        continue;
+                    };
+                    let artifact_methods = reader.materialize_methods(*handle).unwrap_or_default();
+                    let artifact_fields = reader.materialize_fields(*handle).unwrap_or_default();
+
+                    if let Some(metrics) = self.request_metrics() {
+                        metrics.record_artifact_method_materialization(artifact_methods.len());
+                        metrics.record_artifact_field_materialization(artifact_fields.len());
+                    }
+
+                    for method in artifact_methods {
+                        let key = Self::method_shadow_key(method.as_ref());
+                        if seen_methods.insert(key) {
+                            methods.push(method);
+                        }
+                    }
+                    for field in artifact_fields {
+                        if seen_fields.insert(Arc::clone(&field.name)) {
+                            fields.push(field);
+                        }
+                    }
                 }
             }
         }
@@ -603,16 +631,28 @@ impl IndexView {
         }
 
         let hierarchy_order = self.hierarchy_order(class_internal);
-        let owner_internal = hierarchy_order.iter().find_map(|class_ref| {
-            let class = self.resolve_class_ref(class_ref)?;
-            class
-                .methods
-                .iter()
-                .any(|method| {
-                    method.name.as_ref() == method_name && method.desc().as_ref() == method_desc
-                })
-                .then(|| Arc::clone(&class.internal_name))
-        });
+        let owner_internal = hierarchy_order
+            .iter()
+            .find_map(|class_ref| match class_ref {
+                ClassHandleRef::Overlay { .. } => {
+                    let class = self.resolve_class_ref(class_ref)?;
+                    class
+                        .methods
+                        .iter()
+                        .any(|method| {
+                            method.name.as_ref() == method_name
+                                && method.desc().as_ref() == method_desc
+                        })
+                        .then(|| Arc::clone(&class.internal_name))
+                }
+                ClassHandleRef::Artifact(handle) => {
+                    let reader = self.scope.artifact_reader(handle.artifact_id)?;
+                    reader
+                        .has_method_named_desc(*handle, method_name, method_desc)?
+                        .then(|| reader.class_internal_name(*handle))
+                        .flatten()
+                }
+            });
         self.caches
             .declaring_method_owner
             .insert(key, owner_internal.clone());
@@ -683,6 +723,23 @@ impl IndexView {
         self.scope.build_name_table()
     }
 
+    fn request_metrics(&self) -> Option<&Arc<RequestMetrics>> {
+        self.request_metrics.as_ref()
+    }
+
+    fn classes_in_package_refs(&self, pkg: &str) -> Arc<Vec<ClassHandleRef>> {
+        if let Some(cached) = self.caches.classes_in_package.get(pkg) {
+            return Arc::clone(cached.value());
+        }
+
+        let merged =
+            Arc::new(self.merge_class_refs(|layer| self.layer_classes_in_package_refs(layer, pkg)));
+        self.caches
+            .classes_in_package
+            .insert(Arc::from(pkg), Arc::clone(&merged));
+        merged
+    }
+
     fn resolve_class_ref(&self, class_ref: &ClassHandleRef) -> Option<Arc<ClassMetadata>> {
         match class_ref {
             ClassHandleRef::Overlay {
@@ -692,7 +749,13 @@ impl IndexView {
             ClassHandleRef::Artifact(handle) => self
                 .scope
                 .artifact_reader(handle.artifact_id)
-                .and_then(|reader| reader.get_class(*handle)),
+                .and_then(|reader| {
+                    let class = reader.get_class(*handle)?;
+                    if let Some(metrics) = self.request_metrics() {
+                        metrics.record_artifact_class_projection(1);
+                    }
+                    Some(class)
+                }),
         }
     }
 
@@ -735,6 +798,21 @@ impl IndexView {
                 .scope
                 .artifact_reader(handle.artifact_id)
                 .is_some_and(|reader| reader.class_matches_simple_name(*handle, simple_name)),
+        }
+    }
+
+    fn class_ref_matches_internal_name_tail(&self, class_ref: &ClassHandleRef, tail: &str) -> bool {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .is_some_and(|class| class.matches_internal_name_tail(tail)),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .is_some_and(|reader| reader.class_matches_internal_name_tail(*handle, tail)),
         }
     }
 
@@ -880,7 +958,9 @@ mod tests {
     };
     use crate::index::{ClassOrigin, MethodParams};
     use crate::language::java::module_info::JavaModuleDescriptor;
+    use crate::request_metrics::RequestMetrics;
     use rust_asm::constants::ACC_PUBLIC;
+    use tower_lsp::lsp_types::Url;
 
     fn make_class(
         internal: &str,
@@ -1676,5 +1756,39 @@ mod tests {
                 .module_names(),
             vec![Arc::from("demo.module")]
         );
+    }
+
+    #[test]
+    fn test_artifact_hierarchy_member_lookup_avoids_class_projection_until_needed() {
+        let mut base = (*make_class(
+            "pkg/Base",
+            ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            &["()V"],
+        ))
+        .clone();
+        base.methods[0].name = Arc::from("ping");
+
+        let mut child = (*make_class(
+            "pkg/Child",
+            ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            &["(I)V"],
+        ))
+        .clone();
+        child.super_name = Some(Arc::from("pkg/Base"));
+        child.methods[0].name = Arc::from("pong");
+
+        let metrics = RequestMetrics::new(
+            "test-artifact-metrics",
+            &Url::parse("file:///workspace/Test.java").expect("uri"),
+        );
+        let view = make_artifact_view(vec![base, child]).with_request_metrics(Arc::clone(&metrics));
+
+        let inherited = view.lookup_methods_in_hierarchy("pkg/Child", "ping");
+        assert_eq!(inherited.len(), 1);
+        assert_eq!(metrics.artifact_class_projection_count(), 0);
+        assert_eq!(metrics.artifact_method_materialization_count(), 2);
+
+        assert!(view.get_class("pkg/Child").is_some());
+        assert_eq!(metrics.artifact_class_projection_count(), 1);
     }
 }

@@ -16,6 +16,9 @@ pub struct RequestMetrics {
     uri: Arc<str>,
     index_view_acquisitions: AtomicUsize,
     semantic_context_lookups: AtomicUsize,
+    artifact_class_projections: AtomicUsize,
+    artifact_method_materializations: AtomicUsize,
+    artifact_field_materializations: AtomicUsize,
     event_counts: Mutex<HashMap<&'static str, usize>>,
     phase_stats: Mutex<HashMap<&'static str, PhaseStat>>,
     hot_spots: Mutex<Vec<HotSpot>>,
@@ -43,6 +46,9 @@ impl RequestMetrics {
             uri: Arc::from(uri.as_str()),
             index_view_acquisitions: AtomicUsize::new(0),
             semantic_context_lookups: AtomicUsize::new(0),
+            artifact_class_projections: AtomicUsize::new(0),
+            artifact_method_materializations: AtomicUsize::new(0),
+            artifact_field_materializations: AtomicUsize::new(0),
             event_counts: Mutex::new(HashMap::new()),
             phase_stats: Mutex::new(HashMap::new()),
             hot_spots: Mutex::new(Vec::new()),
@@ -107,6 +113,34 @@ impl RequestMetrics {
 
     pub fn semantic_context_lookup_count(&self) -> usize {
         self.semantic_context_lookups.load(Ordering::Relaxed)
+    }
+
+    pub fn record_artifact_class_projection(&self, count: usize) {
+        self.artifact_class_projections
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn record_artifact_method_materialization(&self, count: usize) {
+        self.artifact_method_materializations
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn record_artifact_field_materialization(&self, count: usize) {
+        self.artifact_field_materializations
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn artifact_class_projection_count(&self) -> usize {
+        self.artifact_class_projections.load(Ordering::Relaxed)
+    }
+
+    pub fn artifact_method_materialization_count(&self) -> usize {
+        self.artifact_method_materializations
+            .load(Ordering::Relaxed)
+    }
+
+    pub fn artifact_field_materialization_count(&self) -> usize {
+        self.artifact_field_materializations.load(Ordering::Relaxed)
     }
 
     pub fn record_event(&self, event: &'static str) {
@@ -237,6 +271,9 @@ impl RequestMetrics {
             source_root = ?source_root,
             index_view_acquisitions = self.index_view_acquisition_count(),
             semantic_context_lookups = self.semantic_context_lookup_count(),
+            artifact_class_projections = self.artifact_class_projection_count(),
+            artifact_method_materializations = self.artifact_method_materialization_count(),
+            artifact_field_materializations = self.artifact_field_materialization_count(),
             phase_breakdown,
             hottest,
             event_counts,
