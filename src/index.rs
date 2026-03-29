@@ -330,6 +330,39 @@ impl AsRef<str> for TypeRef {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NavigationDeclKind {
+    Type,
+    Method,
+    Field,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NavigationSymbol {
+    pub target_internal_name: Arc<str>,
+    pub member_name: Option<Arc<str>>,
+    pub descriptor: Option<Arc<str>>,
+    pub fallback_name: Option<Arc<str>>,
+    pub decl_kind: NavigationDeclKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum NavigationTarget {
+    SourceFile {
+        uri: Arc<str>,
+        symbol: NavigationSymbol,
+    },
+    ZipSource {
+        zip_path: Arc<str>,
+        entry_name: Arc<str>,
+        symbol: NavigationSymbol,
+    },
+    Bytecode {
+        jar_path: Arc<str>,
+        symbol: NavigationSymbol,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MethodRef {
     pub owner: TypeRef,

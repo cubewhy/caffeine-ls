@@ -152,6 +152,10 @@ impl ArtifactScopeReader {
         Some(Arc::clone(&self.stub(handle)?.internal_name))
     }
 
+    pub fn class_origin(&self, handle: ArtifactClassHandle) -> Option<ClassOrigin> {
+        Some(self.stub(handle)?.origin.clone())
+    }
+
     pub fn class_package(&self, handle: ArtifactClassHandle) -> Option<Option<Arc<str>>> {
         Some(self.stub(handle)?.package.clone())
     }

@@ -8,7 +8,8 @@ use smallvec::SmallVec;
 
 use crate::index::{
     ArtifactClassHandle, BucketIndex, ClassMetadata, FieldRef, FieldSummary, MethodRef,
-    MethodSummary, NameTable, ScopeLayer, ScopeSnapshot, TypeRef,
+    MethodSummary, NameTable, NavigationDeclKind, NavigationSymbol, NavigationTarget, ScopeLayer,
+    ScopeSnapshot, TypeRef,
 };
 use crate::request_metrics::RequestMetrics;
 
@@ -332,6 +333,48 @@ impl IndexView {
                 && field.descriptor.as_ref() == field_ref.descriptor.as_ref())
             .then(|| Arc::new(field.clone()))
         })
+    }
+
+    pub fn project_type_navigation_target(&self, type_ref: &TypeRef) -> Option<NavigationTarget> {
+        let class_ref = self.resolve_class_handle_ref(type_ref)?;
+        let symbol = NavigationSymbol {
+            target_internal_name: Arc::clone(type_ref.internal_name()),
+            member_name: None,
+            descriptor: None,
+            fallback_name: Some(self.class_ref_direct_name(&class_ref)?),
+            decl_kind: NavigationDeclKind::Type,
+        };
+        self.navigation_target_from_class_ref(&class_ref, symbol)
+    }
+
+    pub fn project_method_navigation_target(
+        &self,
+        method_ref: &MethodRef,
+    ) -> Option<NavigationTarget> {
+        let class_ref = self.resolve_class_handle_ref(&method_ref.owner)?;
+        let symbol = NavigationSymbol {
+            target_internal_name: Arc::clone(method_ref.owner.internal_name()),
+            member_name: Some(Arc::clone(&method_ref.name)),
+            descriptor: Some(Arc::clone(&method_ref.descriptor)),
+            fallback_name: Some(Arc::clone(&method_ref.name)),
+            decl_kind: NavigationDeclKind::Method,
+        };
+        self.navigation_target_from_class_ref(&class_ref, symbol)
+    }
+
+    pub fn project_field_navigation_target(
+        &self,
+        field_ref: &FieldRef,
+    ) -> Option<NavigationTarget> {
+        let class_ref = self.resolve_class_handle_ref(&field_ref.owner)?;
+        let symbol = NavigationSymbol {
+            target_internal_name: Arc::clone(field_ref.owner.internal_name()),
+            member_name: Some(Arc::clone(&field_ref.name)),
+            descriptor: None,
+            fallback_name: Some(Arc::clone(&field_ref.name)),
+            decl_kind: NavigationDeclKind::Field,
+        };
+        self.navigation_target_from_class_ref(&class_ref, symbol)
     }
 
     pub fn get_source_type_name(&self, internal: &str) -> Option<String> {
@@ -1025,6 +1068,60 @@ impl IndexView {
                 .scope
                 .artifact_reader(handle.artifact_id)
                 .and_then(|reader| reader.class_internal_name(*handle)),
+        }
+    }
+
+    fn class_ref_origin(&self, class_ref: &ClassHandleRef) -> Option<crate::index::ClassOrigin> {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .map(|class| class.origin.clone()),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.class_origin(*handle)),
+        }
+    }
+
+    fn class_ref_direct_name(&self, class_ref: &ClassHandleRef) -> Option<Arc<str>> {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .map(|class| Arc::clone(&class.name)),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.class_name(*handle)),
+        }
+    }
+
+    fn navigation_target_from_class_ref(
+        &self,
+        class_ref: &ClassHandleRef,
+        symbol: NavigationSymbol,
+    ) -> Option<NavigationTarget> {
+        match self.class_ref_origin(class_ref)? {
+            crate::index::ClassOrigin::SourceFile(uri) => {
+                Some(NavigationTarget::SourceFile { uri, symbol })
+            }
+            crate::index::ClassOrigin::ZipSource {
+                zip_path,
+                entry_name,
+            } => Some(NavigationTarget::ZipSource {
+                zip_path,
+                entry_name,
+                symbol,
+            }),
+            crate::index::ClassOrigin::Jar(jar_path) => {
+                Some(NavigationTarget::Bytecode { jar_path, symbol })
+            }
+            crate::index::ClassOrigin::Unknown => None,
         }
     }
 
@@ -2094,6 +2191,23 @@ mod tests {
 
         let inherited = view.lookup_methods_in_hierarchy_refs("pkg/Child", "ping");
         assert_eq!(inherited.len(), 1);
+        assert_eq!(metrics.artifact_class_projection_count(), 0);
+        assert_eq!(metrics.artifact_method_materialization_count(), 0);
+
+        let projected = view
+            .project_method_navigation_target(&inherited[0])
+            .expect("navigation target");
+        match projected {
+            NavigationTarget::Bytecode { jar_path, symbol } => {
+                assert_eq!(jar_path.as_ref(), "memory://artifact.jar");
+                assert_eq!(symbol.target_internal_name.as_ref(), "pkg/Base");
+                assert_eq!(symbol.member_name.as_deref(), Some("ping"));
+                assert_eq!(symbol.descriptor.as_deref(), Some("()V"));
+                assert_eq!(symbol.fallback_name.as_deref(), Some("ping"));
+                assert_eq!(symbol.decl_kind, NavigationDeclKind::Method);
+            }
+            other => panic!("expected bytecode navigation target, got {other:?}"),
+        }
         assert_eq!(metrics.artifact_class_projection_count(), 0);
         assert_eq!(metrics.artifact_method_materialization_count(), 0);
 

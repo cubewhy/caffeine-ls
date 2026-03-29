@@ -4,7 +4,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::index::{ClassOrigin, IndexView, TypeRef};
+use crate::index::{IndexView, NavigationDeclKind, NavigationSymbol, NavigationTarget, TypeRef};
 use crate::language::LanguageRegistry;
 use crate::language::java::class_parser::find_symbol_range;
 use crate::language::java::module_info::{
@@ -207,38 +207,19 @@ fn goto_resolved_symbol_blocking(
     symbol: ResolvedSymbol,
     request: &RequestContext,
 ) -> crate::lsp::request_cancellation::RequestResult<GotoPrepared> {
-    let (target_internal, member_name, descriptor, decl_kind) = match &symbol {
-        ResolvedSymbol::Class(class_ref) => (
-            Arc::clone(class_ref.internal_name()),
-            None,
-            None,
-            DeclKind::Type,
-        ),
-        ResolvedSymbol::Method(method_ref) => (
-            Arc::clone(method_ref.owner.internal_name()),
-            Some(Arc::clone(&method_ref.name)),
-            Some(Arc::clone(&method_ref.descriptor)),
-            DeclKind::Method,
-        ),
-        ResolvedSymbol::Field(field_ref) => (
-            Arc::clone(field_ref.owner.internal_name()),
-            Some(Arc::clone(&field_ref.name)),
-            None,
-            DeclKind::Field,
-        ),
+    let projected = match &symbol {
+        ResolvedSymbol::Class(class_ref) => view.project_type_navigation_target(class_ref),
+        ResolvedSymbol::Method(method_ref) => view.project_method_navigation_target(method_ref),
+        ResolvedSymbol::Field(field_ref) => view.project_field_navigation_target(field_ref),
+    };
+    let Some(projected) = projected else {
+        return Ok(GotoPrepared::Ready(None));
     };
 
     request.check_cancelled("goto.before_origin_lookup")?;
-    let Some(meta) = view.get_class(&target_internal) else {
-        return Ok(GotoPrepared::Ready(None));
-    };
-    let fallback_name = match decl_kind {
-        DeclKind::Type => Some(Arc::from(meta.direct_name())),
-        DeclKind::Method | DeclKind::Field => member_name.clone(),
-    };
-    match &meta.origin {
-        ClassOrigin::SourceFile(uri_str) => {
-            let Some(target_uri) = Url::parse(uri_str).ok() else {
+    match projected {
+        NavigationTarget::SourceFile { uri, symbol } => {
+            let Some(target_uri) = Url::parse(uri.as_ref()).ok() else {
                 return Ok(GotoPrepared::Ready(None));
             };
 
@@ -251,17 +232,9 @@ fn goto_resolved_symbol_blocking(
                         .ok()
                         .and_then(|p| std::fs::read_to_string(p).ok())
                 });
-            let range = content.as_deref().and_then(|content| {
-                find_resolved_symbol_range(
-                    content,
-                    &target_internal,
-                    member_name.as_deref(),
-                    descriptor.as_deref(),
-                    fallback_name.as_deref(),
-                    decl_kind,
-                    view,
-                )
-            });
+            let range = content
+                .as_deref()
+                .and_then(|content| find_resolved_symbol_range(content, &symbol, view));
 
             Ok(GotoPrepared::Ready(Some(GotoDefinitionResponse::Scalar(
                 Location {
@@ -271,22 +244,19 @@ fn goto_resolved_symbol_blocking(
             ))))
         }
 
-        ClassOrigin::Jar(jar_path) => {
+        NavigationTarget::Bytecode { jar_path, symbol } => {
             request.check_cancelled("goto.before_decompile_extract")?;
             Ok(GotoPrepared::Decompile(DecompilePlan {
-                jar_path: Arc::clone(jar_path),
-                target_internal,
-                member_name,
-                fallback_name,
-                descriptor,
-                decl_kind,
+                jar_path,
+                symbol,
                 view: view.clone(),
             }))
         }
 
-        ClassOrigin::ZipSource {
+        NavigationTarget::ZipSource {
             zip_path,
             entry_name,
+            symbol,
         } => {
             request.check_cancelled("goto.before_zip_extract")?;
             let base_cache = std::env::temp_dir().join("java_analyzer_sources");
@@ -308,17 +278,9 @@ fn goto_resolved_symbol_blocking(
 
             request.check_cancelled("goto.after_zip_extract")?;
             let content = std::fs::read_to_string(&cache_path).ok();
-            let range = content.as_deref().and_then(|content| {
-                find_resolved_symbol_range(
-                    content,
-                    &target_internal,
-                    member_name.as_deref(),
-                    descriptor.as_deref(),
-                    fallback_name.as_deref(),
-                    decl_kind,
-                    view,
-                )
-            });
+            let range = content
+                .as_deref()
+                .and_then(|content| find_resolved_symbol_range(content, &symbol, view));
 
             let Some(target_uri) = Url::from_file_path(&cache_path).ok() else {
                 return Ok(GotoPrepared::Ready(None));
@@ -330,11 +292,6 @@ fn goto_resolved_symbol_blocking(
                 },
             ))))
         }
-
-        ClassOrigin::Unknown => {
-            tracing::debug!(class = %target_internal, "goto: unknown origin");
-            Ok(GotoPrepared::Ready(None))
-        }
     }
 }
 
@@ -344,16 +301,19 @@ async fn goto_decompile(
     request: &RequestContext,
 ) -> crate::lsp::request_cancellation::RequestResult<Option<GotoDefinitionResponse>> {
     request.check_cancelled("goto.before_decompile_extract")?;
-    let Some(bytes) = extract_class_bytes(plan.jar_path.as_ref(), &plan.target_internal).ok()
-    else {
+    let Some(bytes) = extract_class_bytes(
+        plan.jar_path.as_ref(),
+        plan.symbol.target_internal_name.as_ref(),
+    )
+    .ok() else {
         return Ok(None);
     };
     let cache_path = backend
         .decompiler_cache
-        .resolve(&plan.target_internal, &bytes);
+        .resolve(plan.symbol.target_internal_name.as_ref(), &bytes);
 
     if !cache_path.exists() {
-        tracing::info!(class = %plan.target_internal, "goto: cache miss, decompiling");
+        tracing::info!(class = %plan.symbol.target_internal_name, "goto: cache miss, decompiling");
         let config = backend.config.read().await;
         let Some(decompiler_jar) = config.decompiler_path.clone() else {
             return Ok(None);
@@ -377,29 +337,21 @@ async fn goto_decompile(
             }
             tracing::error!(
                 error = %e,
-                class = %plan.target_internal,
+                class = %plan.symbol.target_internal_name,
                 "goto: decompile failed"
             );
             return Ok(None);
         }
         backend
             .decompiler_cache
-            .cleanup_stale(&plan.target_internal, &cache_path);
+            .cleanup_stale(plan.symbol.target_internal_name.as_ref(), &cache_path);
     }
 
     request.check_cancelled("goto.after_decompile")?;
     let content = std::fs::read_to_string(&cache_path).ok();
-    let range = content.as_deref().and_then(|content| {
-        find_resolved_symbol_range(
-            content,
-            &plan.target_internal,
-            plan.member_name.as_deref(),
-            plan.descriptor.as_deref(),
-            plan.fallback_name.as_deref(),
-            plan.decl_kind,
-            &plan.view,
-        )
-    });
+    let range = content
+        .as_deref()
+        .and_then(|content| find_resolved_symbol_range(content, &plan.symbol, &plan.view));
 
     let Some(target_uri) = Url::from_file_path(&cache_path).ok() else {
         return Ok(None);
@@ -417,44 +369,38 @@ enum GotoPrepared {
 
 struct DecompilePlan {
     jar_path: Arc<str>,
-    target_internal: Arc<str>,
-    member_name: Option<Arc<str>>,
-    fallback_name: Option<Arc<str>>,
-    descriptor: Option<Arc<str>>,
-    decl_kind: DeclKind,
+    symbol: NavigationSymbol,
     view: IndexView,
 }
 
 fn find_resolved_symbol_range(
     content: &str,
-    target_internal: &str,
-    member_name: Option<&str>,
-    descriptor: Option<&str>,
-    fallback_name: Option<&str>,
-    decl_kind: DeclKind,
+    symbol: &NavigationSymbol,
     view: &IndexView,
 ) -> Option<Range> {
-    find_symbol_range(content, target_internal, member_name, descriptor, view)
-        .or_else(|| fallback_name.and_then(|name| find_declaration_range(content, name, decl_kind)))
-}
-
-// ── 声明类型 ──────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Copy)]
-enum DeclKind {
-    Type,
-    Method,
-    Field,
+    find_symbol_range(
+        content,
+        symbol.target_internal_name.as_ref(),
+        symbol.member_name.as_deref(),
+        symbol.descriptor.as_deref(),
+        view,
+    )
+    .or_else(|| {
+        symbol
+            .fallback_name
+            .as_deref()
+            .and_then(|name| find_declaration_range(content, name, symbol.decl_kind))
+    })
 }
 
 // ── 声明位置查找 ───────────────────────────────────────────────────────────────
 
-fn find_declaration_range(content: &str, name: &str, kind: DeclKind) -> Option<Range> {
+fn find_declaration_range(content: &str, name: &str, kind: NavigationDeclKind) -> Option<Range> {
     for (line_idx, line) in content.lines().enumerate() {
         let col = match kind {
-            DeclKind::Type => find_type_decl(line, name),
-            DeclKind::Method => find_method_decl(line, name),
-            DeclKind::Field => find_field_decl(line, name),
+            NavigationDeclKind::Type => find_type_decl(line, name),
+            NavigationDeclKind::Method => find_method_decl(line, name),
+            NavigationDeclKind::Field => find_field_decl(line, name),
         };
         if let Some(col) = col {
             return Some(Range {
