@@ -298,10 +298,7 @@ public class Main {
 
     if let Some(CompletionResponse::List(list)) = response {
         let labels: Vec<&str> = list.items.iter().map(|item| item.label.as_str()).collect();
-        assert!(
-            labels.iter().any(|label| *label == "NestedNonStatic"),
-            "labels={labels:?}"
-        );
+        assert!(labels.contains(&"NestedNonStatic"), "labels={labels:?}");
     }
 }
 
@@ -728,10 +725,7 @@ public enum RandomEnum {
 
     if let Some(CompletionResponse::List(list)) = response {
         let labels: Vec<&str> = list.items.iter().map(|item| item.label.as_str()).collect();
-        assert!(
-            labels.iter().any(|label| *label == "A"),
-            "labels={labels:?}"
-        );
+        assert!(labels.contains(&"A"), "labels={labels:?}");
     }
 }
 
@@ -1016,14 +1010,8 @@ class A {}
 
     if let Some(CompletionResponse::List(list)) = response {
         let labels: Vec<&str> = list.items.iter().map(|item| item.label.as_str()).collect();
-        assert!(
-            labels.iter().any(|label| *label == "value"),
-            "labels={labels:?}"
-        );
-        assert!(
-            !labels.iter().any(|label| *label == "name"),
-            "labels={labels:?}"
-        );
+        assert!(labels.contains(&"value"), "labels={labels:?}");
+        assert!(!labels.contains(&"name"), "labels={labels:?}");
 
         let value_item = list
             .items
@@ -1034,9 +1022,9 @@ class A {}
         assert_eq!(value_item.kind, Some(CompletionItemKind::PROPERTY));
         assert_eq!(value_item.filter_text.as_deref(), Some("value"));
 
-        let new_text = value_item.text_edit.as_ref().and_then(|edit| match edit {
-            CompletionTextEdit::Edit(edit) => Some(edit.new_text.as_str()),
-            CompletionTextEdit::InsertAndReplace(edit) => Some(edit.new_text.as_str()),
+        let new_text = value_item.text_edit.as_ref().map(|edit| match edit {
+            CompletionTextEdit::Edit(edit) => edit.new_text.as_str(),
+            CompletionTextEdit::InsertAndReplace(edit) => edit.new_text.as_str(),
         });
         assert_eq!(new_text, Some("value = "));
     }

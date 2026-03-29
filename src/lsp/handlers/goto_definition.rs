@@ -733,7 +733,7 @@ mod tests {
             .get_or_update_salsa_file(uri)
             .expect("salsa file for document");
         let db = workspace.salsa_db.lock();
-        workspace.refresh_java_module_descriptor_for_salsa_file(&*db, salsa_file);
+        workspace.refresh_java_module_descriptor_for_salsa_file(&db, salsa_file);
     }
 
     fn make_bytecode_module(name: &str) -> IndexedJavaModule {

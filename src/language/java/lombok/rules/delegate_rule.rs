@@ -175,9 +175,9 @@ fn resolve_delegate_type_internal(input: &SyntheticInput<'_>, type_name: &str) -
         .map(|ty| ty.erased_internal().to_string())
 }
 
-fn find_delegate_annotation<'a>(
-    annotations: &'a [crate::index::AnnotationSummary],
-) -> Option<&'a crate::index::AnnotationSummary> {
+fn find_delegate_annotation(
+    annotations: &[crate::index::AnnotationSummary],
+) -> Option<&crate::index::AnnotationSummary> {
     find_lombok_annotation(annotations, annotations::DELEGATE).or_else(|| {
         annotations
             .iter()

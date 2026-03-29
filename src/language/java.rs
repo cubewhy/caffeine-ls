@@ -1414,7 +1414,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = candidates.iter().map(candidate_name).collect();
         assert!(labels.contains(&"outer"), "{labels:?}");
     }
 
@@ -1437,7 +1437,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = candidates.iter().map(candidate_name).collect();
         assert!(labels.contains(&"loop"), "{labels:?}");
         assert!(!labels.contains(&"outer"), "{labels:?}");
     }
@@ -1459,7 +1459,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = candidates.iter().map(candidate_name).collect();
         assert!(labels.contains(&"outerLabel"), "{labels:?}");
     }
 
@@ -1480,7 +1480,7 @@ mod tests {
             &view,
         );
 
-        let labels: Vec<&str> = candidates.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = candidates.iter().map(candidate_name).collect();
         assert!(labels.contains(&"outerLoop"), "{labels:?}");
     }
 
@@ -1506,7 +1506,7 @@ mod tests {
         let labels: Vec<&str> = candidates
             .iter()
             .filter(|c| matches!(c.kind, CandidateKind::StatementLabel))
-            .map(|c| candidate_name(c))
+            .map(candidate_name)
             .collect();
         assert_eq!(labels, vec!["inner", "outer"], "{labels:?}");
     }
@@ -1530,10 +1530,7 @@ mod tests {
         assert!(
             candidates.iter().any(|c| candidate_name(c) == "localValue"),
             "{:?}",
-            candidates
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            candidates.iter().map(candidate_name).collect::<Vec<_>>()
         );
         assert!(
             candidates
@@ -1570,10 +1567,7 @@ mod tests {
         assert!(
             candidates.iter().any(|c| candidate_name(c) == "localValue"),
             "{:?}",
-            candidates
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            candidates.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -4138,7 +4132,7 @@ mod tests {
         let view = idx.view(root_scope());
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
 
         assert!(
             !labels.is_empty() && labels.contains(&"Box"),
@@ -4289,7 +4283,7 @@ mod tests {
         let ctx = completion_ctx_with_view(src, line, col, None, &view);
         let engine = CompletionEngine::new();
         let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(
             labels.contains(&"put"),
             "member completion should include put for a.put, got {:?}",

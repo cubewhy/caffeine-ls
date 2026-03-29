@@ -1723,10 +1723,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "act"),
             "implicit same-class static call should resolve through inferred package: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
         assert!(matches!(
             results
@@ -1739,18 +1736,12 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "actPrivate"),
             "implicit same-class static call should preserve same-class private access: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
         assert!(
             !results.iter().any(|c| candidate_name(c) == "actInstance"),
             "static context must not suggest instance members for implicit receiver: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -2130,10 +2121,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results
-            .iter()
-            .map(|candidate| candidate_name(candidate))
-            .collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"close"), "labels={labels:?}");
         assert!(labels.contains(&"run"), "labels={labels:?}");
     }
@@ -2949,10 +2937,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "size"),
             "exact prefix should still work for member provider: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -3185,10 +3170,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results
-            .iter()
-            .map(|candidate| candidate_name(candidate))
-            .collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"x"), "labels={labels:?}");
         assert!(labels.contains(&"y"), "labels={labels:?}");
     }
@@ -3579,10 +3561,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "func"),
             "should find func via simple name lookup: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -3688,10 +3667,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "randomField"),
             "private static field should be visible when accessing own class: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -3751,10 +3727,7 @@ mod tests {
         assert!(
             results.iter().all(|c| candidate_name(c) != "instanceF"),
             "instance field must NOT appear for Cls.xxx access: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -3768,10 +3741,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "randomField"),
             "prefix 'rand' should match 'randomField': {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
         assert!(
             results.iter().all(|c| candidate_name(c) != "publicField"),
@@ -3836,10 +3806,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "randomField"),
             "private static field from source members should appear: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
         assert!(
             results.iter().any(|c| candidate_name(c) == "staticHelper"),
@@ -3848,10 +3815,7 @@ mod tests {
         assert!(
             results.iter().all(|c| candidate_name(c) != "instanceField"),
             "instance field must NOT appear even from source members: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -3907,10 +3871,7 @@ mod tests {
         assert!(
             results.iter().all(|c| candidate_name(c) != "secret"),
             "private field of another class must NOT be visible: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -4068,10 +4029,7 @@ mod tests {
         assert!(
             results.iter().any(|c| candidate_name(c) == "FIELD"),
             "lowercase class name static field should be found via provider, got: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -4178,10 +4136,7 @@ mod tests {
                 .iter()
                 .any(|c| candidate_name(c) == "veryLongStaticName"),
             "fuzzy subsequence should match static member, got: {:?}",
-            results
-                .iter()
-                .map(|c| candidate_name(c))
-                .collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -4241,7 +4196,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"Box"), "{:?}", labels);
     }
 
@@ -4301,7 +4256,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"PublicCache"), "{labels:?}");
         assert!(!labels.contains(&"Integer$PublicCache"), "{labels:?}");
     }
@@ -4362,7 +4317,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(!labels.contains(&"IntegerCache"), "{labels:?}");
         assert!(!labels.contains(&"Integer$IntegerCache"), "{labels:?}");
     }
@@ -4437,7 +4392,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results.iter().map(|c| candidate_name(c)).collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"BoxV"), "{:?}", labels);
     }
 
@@ -4474,10 +4429,7 @@ mod tests {
         let results = MemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        let labels: Vec<&str> = results
-            .iter()
-            .map(|candidate| candidate_name(candidate))
-            .collect();
+        let labels: Vec<&str> = results.iter().map(candidate_name).collect();
         assert!(labels.contains(&"RED"), "labels={labels:?}");
         assert!(labels.contains(&"GREEN"), "labels={labels:?}");
         assert!(labels.contains(&"BLUE"), "labels={labels:?}");

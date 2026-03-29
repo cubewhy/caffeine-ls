@@ -1252,7 +1252,7 @@ mod tests {
             )
             .into_values()
             .collect();
-        members.sort_by(|left, right| left.name().cmp(&right.name()));
+        members.sort_by_key(|left| left.name());
         members
     }
 
