@@ -9,18 +9,19 @@ use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::build_integration::SourceRootId;
+use crate::index::cache;
 use crate::index::view::IndexView;
 use crate::index::{
-    AnalysisContextKey, ArtifactId, BucketIndex, ClassMetadata, ClassOrigin, ClasspathEntry,
-    ClasspathId, IndexScope, IndexedArchiveData, IndexedJavaModule, ModuleGraph, ModuleId,
-    ModuleIndex, NameTable, ScopeSnapshot, cache, index_jar,
+    AnalysisContextKey, ArtifactId, ArtifactReaderCache, BucketIndex, ClassMetadata, ClassOrigin,
+    ClasspathEntry, ClasspathId, IndexScope, IndexedArchiveData, IndexedJavaModule, ModuleGraph,
+    ModuleId, ModuleIndex, NameTable, ScopeLayer, ScopeSnapshot, index_jar,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct WorkspaceIndexStats {
     pub module_count: usize,
     pub jar_cache_entries: usize,
-    pub artifact_projection_entries: usize,
+    pub artifact_reader_entries: usize,
     pub scope_cache_entries: usize,
     pub classpath_jar_refs: usize,
     pub unique_bucket_count: usize,
@@ -32,6 +33,7 @@ pub(crate) struct WorkspaceIndexStats {
     pub owner_entry_count: usize,
     pub name_table_entries: usize,
     pub mro_cache_entries: usize,
+    pub artifact_materialized_class_count: usize,
 }
 
 #[derive(Default)]
@@ -44,7 +46,7 @@ pub struct WorkspaceIndex {
     modules: DashMap<ModuleId, Arc<ModuleIndex>>,
     jdk: RwLock<JdkIndexState>,
     jar_cache: DashMap<Arc<str>, ClasspathEntry>,
-    artifact_projection_cache: DashMap<ArtifactId, Arc<BucketIndex>>,
+    artifact_readers: Arc<ArtifactReaderCache>,
     scope_cache: DashMap<AnalysisContextKey, (u64, Arc<ScopeSnapshot>)>,
     graph: RwLock<ModuleGraph>,
     /// Version counter that increments on every mutation
@@ -61,7 +63,7 @@ impl WorkspaceIndex {
             modules,
             jdk: RwLock::new(JdkIndexState::default()),
             jar_cache: DashMap::new(),
-            artifact_projection_cache: DashMap::new(),
+            artifact_readers: Arc::new(ArtifactReaderCache::default()),
             scope_cache: DashMap::new(),
             graph: RwLock::new(ModuleGraph::new()),
             version: AtomicU64::new(0),
@@ -86,7 +88,7 @@ impl WorkspaceIndex {
 
     fn invalidate_dependency_caches(&self) {
         self.scope_cache.clear();
-        self.artifact_projection_cache.clear();
+        self.artifact_readers.clear();
         self.increment_version();
     }
 
@@ -287,9 +289,20 @@ impl WorkspaceIndex {
     ) -> Vec<Arc<str>> {
         let mut names = BTreeSet::new();
         let scope = self.scope_for_analysis_context(module_id, classpath_id, source_root);
-        for bucket in scope.layers() {
-            for name in bucket.module_names() {
-                names.insert(name);
+        for layer in scope.layers() {
+            match layer {
+                ScopeLayer::Overlay(bucket) => {
+                    for name in bucket.module_names() {
+                        names.insert(name);
+                    }
+                }
+                ScopeLayer::Artifact(artifact_id) => {
+                    if let Some(reader) = scope.artifact_reader(*artifact_id) {
+                        for name in reader.module_names() {
+                            names.insert(name);
+                        }
+                    }
+                }
             }
         }
         names.into_iter().collect()
@@ -303,9 +316,15 @@ impl WorkspaceIndex {
         module_name: &str,
     ) -> Option<Arc<IndexedJavaModule>> {
         let scope = self.scope_for_analysis_context(module_id, classpath_id, source_root);
-        for bucket in scope.layers() {
-            if let Some(module) = bucket.get_module(module_name) {
-                return Some(module);
+        for layer in scope.layers() {
+            let module = match layer {
+                ScopeLayer::Overlay(bucket) => bucket.get_module(module_name),
+                ScopeLayer::Artifact(artifact_id) => scope
+                    .artifact_reader(*artifact_id)
+                    .and_then(|reader| reader.get_module(module_name)),
+            };
+            if module.is_some() {
+                return module;
             }
         }
         None
@@ -386,11 +405,18 @@ impl WorkspaceIndex {
     }
 
     pub(crate) fn memory_stats(&self) -> WorkspaceIndexStats {
+        let artifact_reader_stats = self.artifact_readers.memory_stats();
         let mut stats = WorkspaceIndexStats {
             module_count: self.modules.len(),
             jar_cache_entries: self.jar_cache.len(),
-            artifact_projection_entries: self.artifact_projection_cache.len(),
+            artifact_reader_entries: artifact_reader_stats.reader_entries,
             scope_cache_entries: self.scope_cache.len(),
+            class_count: artifact_reader_stats.class_count,
+            java_module_count: artifact_reader_stats.module_count,
+            simple_name_entry_count: artifact_reader_stats.simple_name_entry_count,
+            package_entry_count: artifact_reader_stats.package_entry_count,
+            owner_entry_count: artifact_reader_stats.owner_entry_count,
+            artifact_materialized_class_count: artifact_reader_stats.materialized_class_count,
             ..WorkspaceIndexStats::default()
         };
 
@@ -425,10 +451,6 @@ impl WorkspaceIndex {
             }
         }
 
-        for bucket in &self.artifact_projection_cache {
-            accumulate_bucket(Arc::clone(bucket.value()));
-        }
-
         for cached in &self.jar_cache {
             if let ClasspathEntry::Overlay(bucket) = cached.value() {
                 accumulate_bucket(Arc::clone(bucket));
@@ -440,7 +462,7 @@ impl WorkspaceIndex {
 
     pub(crate) fn clear_analysis_caches(&self) {
         self.scope_cache.clear();
-        self.artifact_projection_cache.clear();
+        self.artifact_readers.clear();
 
         if let Some(bucket) = self.jdk.read().overlay.as_ref() {
             bucket.clear_query_caches();
@@ -470,7 +492,14 @@ impl WorkspaceIndex {
             "building scope snapshot for analysis context"
         );
 
-        ScopeSnapshot::new(module_id, classpath_id, source_root, layers, jar_paths)
+        ScopeSnapshot::new(
+            module_id,
+            classpath_id,
+            source_root,
+            layers,
+            jar_paths,
+            Arc::clone(&self.artifact_readers),
+        )
     }
 
     fn build_scope_layers(
@@ -478,12 +507,12 @@ impl WorkspaceIndex {
         module_id: ModuleId,
         classpath_id: ClasspathId,
         source_root: Option<SourceRootId>,
-    ) -> SmallVec<Arc<BucketIndex>, 8> {
+    ) -> SmallVec<ScopeLayer, 8> {
         let module = self.ensure_module(module_id, default_module_name(module_id));
 
-        let mut layers: SmallVec<Arc<BucketIndex>, 8> = SmallVec::new();
+        let mut layers: SmallVec<ScopeLayer, 8> = SmallVec::new();
         for bucket in module.visible_source_layers(classpath_id, source_root) {
-            layers.push(bucket);
+            layers.push(ScopeLayer::Overlay(bucket));
         }
         self.extend_classpath_layers(&mut layers, &module.classpath_entries(classpath_id));
 
@@ -499,7 +528,7 @@ impl WorkspaceIndex {
             }
             let dep_module = self.ensure_module(dep, default_module_name(dep));
             for bucket in dep_module.visible_source_layers(ClasspathId::Main, None) {
-                layers.push(bucket);
+                layers.push(ScopeLayer::Overlay(bucket));
             }
             self.extend_classpath_layers(
                 &mut layers,
@@ -525,6 +554,11 @@ impl WorkspaceIndex {
     pub fn graph_version(&self) -> u64 {
         self.graph.read().version()
     }
+
+    #[cfg(test)]
+    pub(crate) fn preload_artifact_reader(&self, reader: Arc<crate::index::ArtifactScopeReader>) {
+        self.artifact_readers.insert_preloaded(reader);
+    }
 }
 
 impl Default for WorkspaceIndex {
@@ -541,43 +575,29 @@ impl WorkspaceIndex {
         bucket
     }
 
-    fn project_artifact_bucket(&self, artifact_id: ArtifactId) -> Option<Arc<BucketIndex>> {
-        if let Some(existing) = self.artifact_projection_cache.get(&artifact_id) {
-            return Some(Arc::clone(existing.value()));
-        }
-
-        let stored = cache::load_artifact_by_id(artifact_id)?;
-        let bucket = Self::bucket_from_archive_data(stored.data);
-        self.artifact_projection_cache
-            .insert(artifact_id, Arc::clone(&bucket));
-        Some(bucket)
-    }
-
     fn extend_classpath_layers(
         &self,
-        layers: &mut SmallVec<Arc<BucketIndex>, 8>,
+        layers: &mut SmallVec<ScopeLayer, 8>,
         entries: &[ClasspathEntry],
     ) {
         for entry in entries {
             match entry {
                 ClasspathEntry::Artifact(artifact_id) => {
-                    if let Some(bucket) = self.project_artifact_bucket(*artifact_id) {
-                        layers.push(bucket);
-                    }
+                    layers.push(ScopeLayer::Artifact(*artifact_id))
                 }
-                ClasspathEntry::Overlay(bucket) => layers.push(Arc::clone(bucket)),
+                ClasspathEntry::Overlay(bucket) => {
+                    layers.push(ScopeLayer::Overlay(Arc::clone(bucket)))
+                }
             }
         }
     }
 
-    fn extend_jdk_layer(&self, layers: &mut SmallVec<Arc<BucketIndex>, 8>) {
+    fn extend_jdk_layer(&self, layers: &mut SmallVec<ScopeLayer, 8>) {
         let jdk = self.jdk.read();
         if let Some(artifact_id) = jdk.artifact_id {
-            if let Some(bucket) = self.project_artifact_bucket(artifact_id) {
-                layers.push(bucket);
-            }
+            layers.push(ScopeLayer::Artifact(artifact_id));
         } else if let Some(bucket) = jdk.overlay.as_ref() {
-            layers.push(Arc::clone(bucket));
+            layers.push(ScopeLayer::Overlay(Arc::clone(bucket)));
         }
     }
 }
@@ -594,7 +614,8 @@ fn default_module_name(id: ModuleId) -> Arc<str> {
 mod tests {
     use super::*;
     use crate::build_integration::SourceRootId;
-    use crate::index::{FieldSummary, MethodParams, MethodSummary};
+    use crate::index::{ArtifactScopeReader, FieldSummary, MethodParams, MethodSummary};
+    use crate::language::java::module_info::JavaModuleDescriptor;
     use rust_asm::constants::ACC_PUBLIC;
 
     fn make_class(internal: &str, origin: ClassOrigin) -> ClassMetadata {
@@ -628,6 +649,41 @@ mod tests {
             generic_signature: None,
             return_type: crate::semantic::types::parse_return_type_from_descriptor(desc),
         }
+    }
+
+    fn make_artifact_reader(
+        artifact_id: ArtifactId,
+        classes: Vec<ClassMetadata>,
+        module_name: &str,
+    ) -> Arc<ArtifactScopeReader> {
+        Arc::new(ArtifactScopeReader::from_archive(
+            crate::index::StoredArtifactArchive {
+                metadata: crate::index::ArtifactMetadata {
+                    id: artifact_id,
+                    kind: crate::index::ArtifactKind::Jar,
+                    source_path: "memory://artifact.jar".to_string(),
+                    content_hash: 1,
+                    byte_len: 1,
+                    stored_at_unix_secs: 0,
+                },
+                classes: classes
+                    .into_iter()
+                    .map(crate::index::ArchiveClassStub::from_class_metadata)
+                    .collect(),
+                modules: vec![IndexedJavaModule {
+                    descriptor: Arc::new(JavaModuleDescriptor {
+                        name: Arc::from(module_name),
+                        is_open: false,
+                        requires: vec![],
+                        exports: vec![],
+                        opens: vec![],
+                        uses: vec![],
+                        provides: vec![],
+                    }),
+                    origin: ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+                }],
+            },
+        ))
     }
 
     #[test]
@@ -807,6 +863,45 @@ mod tests {
         );
         assert!(names3.exists("pkg/Alpha"));
         assert!(names3.exists("pkg/Beta"));
+    }
+
+    #[test]
+    fn test_visible_bytecode_module_lookup_uses_artifact_reader_layers() {
+        let idx = WorkspaceIndex::new();
+        let artifact_id = ArtifactId(11);
+        idx.set_jdk_artifact(artifact_id);
+        idx.preload_artifact_reader(make_artifact_reader(
+            artifact_id,
+            vec![make_class(
+                "pkg/Dep",
+                ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            )],
+            "demo.module",
+        ));
+
+        let names = idx.visible_bytecode_module_names_for_analysis_context(
+            ModuleId::ROOT,
+            ClasspathId::Main,
+            None,
+        );
+        assert_eq!(names, vec![Arc::from("demo.module")]);
+
+        let module = idx
+            .find_visible_bytecode_module_for_analysis_context(
+                ModuleId::ROOT,
+                ClasspathId::Main,
+                None,
+                "demo.module",
+            )
+            .expect("module from artifact reader");
+        assert_eq!(module.name(), "demo.module");
+        assert!(
+            idx.view(IndexScope {
+                module: ModuleId::ROOT
+            })
+            .get_class("pkg/Dep")
+            .is_some()
+        );
     }
 
     #[test]

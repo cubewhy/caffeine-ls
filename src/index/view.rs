@@ -2,25 +2,35 @@ use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::index::{
-    BucketIndex, ClassMetadata, FieldSummary, MethodSummary, NameTable, ScopeSnapshot,
+    ArtifactClassHandle, BucketIndex, ClassMetadata, FieldSummary, MethodSummary, NameTable,
+    ScopeLayer, ScopeSnapshot,
 };
+
+#[derive(Clone)]
+enum ClassHandleRef {
+    Overlay {
+        bucket: Arc<BucketIndex>,
+        internal_name: Arc<str>,
+    },
+    Artifact(ArtifactClassHandle),
+}
 
 #[derive(Default)]
 struct IndexViewCaches {
-    class_by_internal: DashMap<Arc<str>, Option<Arc<ClassMetadata>>>,
+    class_by_internal: DashMap<Arc<str>, Option<ClassHandleRef>>,
     source_type_names: DashMap<Arc<str>, Arc<str>>,
-    classes_by_simple_name: DashMap<Arc<str>, Arc<Vec<Arc<str>>>>,
-    classes_in_package: DashMap<Arc<str>, Arc<Vec<Arc<str>>>>,
-    direct_inner_classes: DashMap<Arc<str>, Arc<Vec<Arc<str>>>>,
-    hierarchy_order: DashMap<Arc<str>, Arc<Vec<Arc<str>>>>,
+    classes_by_simple_name: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
+    classes_in_package: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
+    direct_inner_classes: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
+    hierarchy_order: DashMap<Arc<str>, Arc<Vec<ClassHandleRef>>>,
     methods_by_name: DashMap<(Arc<str>, Arc<str>), Arc<Vec<Arc<MethodSummary>>>>,
     fields_by_name: DashMap<(Arc<str>, Arc<str>), Option<Arc<FieldSummary>>>,
     declaring_method_owner: DashMap<(Arc<str>, Arc<str>, Arc<str>), Option<Arc<str>>>,
-    all_classes: OnceLock<Arc<Vec<Arc<str>>>>,
+    all_classes: OnceLock<Arc<Vec<ClassHandleRef>>>,
 }
 
 #[derive(Clone)]
@@ -30,35 +40,83 @@ pub struct IndexView {
 }
 
 impl IndexView {
-    fn layers(&self) -> &[Arc<BucketIndex>] {
+    fn layers(&self) -> &[ScopeLayer] {
         self.scope.layers()
     }
 
-    fn merge_class_internals<F>(&self, mut fetch: F) -> Vec<Arc<str>>
+    fn overlay_ref(bucket: &Arc<BucketIndex>, class: Arc<ClassMetadata>) -> ClassHandleRef {
+        ClassHandleRef::Overlay {
+            bucket: Arc::clone(bucket),
+            internal_name: Arc::clone(&class.internal_name),
+        }
+    }
+
+    fn overlay_refs(
+        bucket: &Arc<BucketIndex>,
+        classes: Vec<Arc<ClassMetadata>>,
+    ) -> Vec<ClassHandleRef> {
+        classes
+            .into_iter()
+            .map(|class| Self::overlay_ref(bucket, class))
+            .collect()
+    }
+
+    fn merge_class_refs<F>(&self, mut fetch: F) -> Vec<ClassHandleRef>
     where
-        F: FnMut(&BucketIndex) -> Vec<Arc<ClassMetadata>>,
+        F: FnMut(&ScopeLayer) -> Vec<ClassHandleRef>,
     {
-        let mut seen: FxHashSet<Arc<str>> = Default::default();
+        let mut positions: FxHashMap<Arc<str>, usize> = Default::default();
         let mut merged = Vec::new();
         for layer in self.layers() {
-            for class in fetch(layer) {
-                let key = Arc::clone(&class.internal_name);
-                if seen.insert(Arc::clone(&key)) {
-                    merged.push(key);
+            for class_ref in fetch(layer) {
+                let Some(key) = self.class_ref_internal_name(&class_ref) else {
+                    continue;
+                };
+                if let Some(existing) = positions.get(key.as_ref()).copied() {
+                    if self.should_replace_ref(&merged[existing], &class_ref) {
+                        merged[existing] = class_ref;
+                    }
+                } else {
+                    positions.insert(Arc::clone(&key), merged.len());
+                    merged.push(class_ref);
                 }
             }
         }
         merged
     }
 
-    fn resolve_class_internals(&self, internals: &[Arc<str>]) -> Vec<Arc<ClassMetadata>> {
-        internals
+    fn resolve_class_refs(&self, class_refs: &[ClassHandleRef]) -> Vec<Arc<ClassMetadata>> {
+        class_refs
             .iter()
-            .filter_map(|internal| self.get_class(internal.as_ref()))
+            .filter_map(|class_ref| self.resolve_class_ref(class_ref))
             .collect()
     }
 
-    fn hierarchy_order(&self, class_internal: &str) -> Arc<Vec<Arc<str>>> {
+    fn get_class_ref_by_internal(&self, internal_name: &str) -> Option<ClassHandleRef> {
+        if let Some(cached) = self.caches.class_by_internal.get(internal_name) {
+            return cached.value().clone();
+        }
+
+        let mut best: Option<ClassHandleRef> = None;
+        for layer in self.layers() {
+            let Some(candidate) = self.layer_get_class_ref(layer, internal_name) else {
+                continue;
+            };
+            if let Some(current) = &best {
+                if self.should_replace_ref(current, &candidate) {
+                    best = Some(candidate);
+                }
+            } else {
+                best = Some(candidate);
+            }
+        }
+        self.caches
+            .class_by_internal
+            .insert(Arc::from(internal_name), best.clone());
+        best
+    }
+
+    fn hierarchy_order(&self, class_internal: &str) -> Arc<Vec<ClassHandleRef>> {
         if let Some(cached) = self.caches.hierarchy_order.get(class_internal) {
             return Arc::clone(cached.value());
         }
@@ -72,21 +130,16 @@ impl IndexView {
             if !seen.insert(Arc::clone(&internal)) {
                 continue;
             }
-            let meta = match self.get_class(&internal) {
-                Some(meta) => meta,
+            let class_ref = match self.get_class_ref_by_internal(&internal) {
+                Some(class_ref) => class_ref,
                 None => continue,
             };
 
-            order.push(Arc::clone(&meta.internal_name));
+            order.push(class_ref.clone());
 
-            if let Some(ref super_name) = meta.super_name
-                && !super_name.is_empty()
-            {
-                queue.push_back(Arc::clone(super_name));
-            }
-            for iface in &meta.interfaces {
-                if !iface.is_empty() {
-                    queue.push_back(Arc::clone(iface));
+            for parent in self.class_ref_parent_internals(&class_ref) {
+                if !parent.is_empty() {
+                    queue.push_back(parent);
                 }
             }
         }
@@ -98,13 +151,16 @@ impl IndexView {
         order
     }
 
-    fn project_hierarchy_classes(&self, hierarchy_order: &[Arc<str>]) -> Vec<Arc<ClassMetadata>> {
+    fn project_hierarchy_classes(
+        &self,
+        hierarchy_order: &[ClassHandleRef],
+    ) -> Vec<Arc<ClassMetadata>> {
         let mut result = Vec::new();
         let mut seen_methods: FxHashSet<(Arc<str>, Arc<str>)> = Default::default();
         let mut seen_fields: FxHashSet<Arc<str>> = Default::default();
 
-        for internal in hierarchy_order {
-            let Some(meta) = self.get_class(internal.as_ref()) else {
+        for class_ref in hierarchy_order {
+            let Some(meta) = self.resolve_class_ref(class_ref) else {
                 continue;
             };
 
@@ -145,6 +201,10 @@ impl IndexView {
         Self::origin_precedence(candidate) > Self::origin_precedence(current)
     }
 
+    fn should_replace_ref(&self, current: &ClassHandleRef, candidate: &ClassHandleRef) -> bool {
+        self.class_ref_origin_precedence(candidate) > self.class_ref_origin_precedence(current)
+    }
+
     fn method_shadow_key(method: &MethodSummary) -> (Arc<str>, Arc<str>) {
         (
             Arc::clone(&method.name),
@@ -174,10 +234,7 @@ impl IndexView {
         let overlay = Arc::new(BucketIndex::new());
         overlay.add_classes(classes);
 
-        let mut layers = SmallVec::with_capacity(self.scope.layer_count() + 1);
-        layers.push(overlay);
-        layers.extend(self.layers().iter().cloned());
-        Self::new(layers)
+        Self::from_scope(Arc::new(self.scope.with_prepended_overlay(overlay)))
     }
 
     /// Get the number of layers in this view
@@ -186,26 +243,8 @@ impl IndexView {
     }
 
     pub fn get_class(&self, internal_name: &str) -> Option<Arc<ClassMetadata>> {
-        if let Some(cached) = self.caches.class_by_internal.get(internal_name) {
-            return cached.clone();
-        }
-
-        let mut best: Option<Arc<ClassMetadata>> = None;
-        for layer in self.layers() {
-            if let Some(class) = layer.get_class(internal_name) {
-                if let Some(current) = &best {
-                    if Self::should_replace(current, &class) {
-                        best = Some(class);
-                    }
-                } else {
-                    best = Some(class);
-                }
-            }
-        }
-        self.caches
-            .class_by_internal
-            .insert(Arc::from(internal_name), best.clone());
-        best
+        self.get_class_ref_by_internal(internal_name)
+            .and_then(|class_ref| self.resolve_class_ref(&class_ref))
     }
 
     pub fn get_source_type_name(&self, internal: &str) -> Option<String> {
@@ -280,28 +319,30 @@ impl IndexView {
 
     pub fn get_classes_by_simple_name(&self, simple_name: &str) -> Vec<Arc<ClassMetadata>> {
         if let Some(cached) = self.caches.classes_by_simple_name.get(simple_name) {
-            return self.resolve_class_internals(cached.value().as_ref());
+            return self.resolve_class_refs(cached.value().as_ref());
         }
 
-        let merged = Arc::new(
-            self.merge_class_internals(|layer| layer.get_classes_by_simple_name(simple_name)),
-        );
+        let merged =
+            Arc::new(self.merge_class_refs(|layer| {
+                self.layer_classes_by_simple_name_refs(layer, simple_name)
+            }));
         self.caches
             .classes_by_simple_name
             .insert(Arc::from(simple_name), Arc::clone(&merged));
-        self.resolve_class_internals(merged.as_ref())
+        self.resolve_class_refs(merged.as_ref())
     }
 
     pub fn classes_in_package(&self, pkg: &str) -> Vec<Arc<ClassMetadata>> {
         if let Some(cached) = self.caches.classes_in_package.get(pkg) {
-            return self.resolve_class_internals(cached.value().as_ref());
+            return self.resolve_class_refs(cached.value().as_ref());
         }
 
-        let merged = Arc::new(self.merge_class_internals(|layer| layer.classes_in_package(pkg)));
+        let merged =
+            Arc::new(self.merge_class_refs(|layer| self.layer_classes_in_package_refs(layer, pkg)));
         self.caches
             .classes_in_package
             .insert(Arc::from(pkg), Arc::clone(&merged));
-        self.resolve_class_internals(merged.as_ref())
+        self.resolve_class_refs(merged.as_ref())
     }
 
     /// Returns classes directly declared in the package (excludes nested/inner classes).
@@ -318,17 +359,17 @@ impl IndexView {
     pub fn direct_inner_classes_of(&self, owner_internal: &str) -> Vec<Arc<ClassMetadata>> {
         let key = Arc::from(owner_internal);
         if let Some(cached) = self.caches.direct_inner_classes.get(&key) {
-            return self.resolve_class_internals(cached.value().as_ref());
+            return self.resolve_class_refs(cached.value().as_ref());
         }
 
         let merged =
-            Arc::new(self.merge_class_internals(|layer| {
-                layer.direct_inner_classes_by_owner(owner_internal)
+            Arc::new(self.merge_class_refs(|layer| {
+                self.layer_direct_inner_class_refs(layer, owner_internal)
             }));
         self.caches
             .direct_inner_classes
             .insert(Arc::clone(&key), Arc::clone(&merged));
-        self.resolve_class_internals(merged.as_ref())
+        self.resolve_class_refs(merged.as_ref())
     }
 
     /// Resolves a direct nested class by simple name under `owner_internal`.
@@ -337,14 +378,14 @@ impl IndexView {
         owner_internal: &str,
         simple_name: &str,
     ) -> Option<Arc<ClassMetadata>> {
-        let mut best: Option<Arc<ClassMetadata>> = None;
+        let mut best: Option<ClassHandleRef> = None;
         for layer in self.layers() {
-            for candidate in layer.direct_inner_classes_by_owner(owner_internal) {
-                if !candidate.matches_simple_name(simple_name) {
+            for candidate in self.layer_direct_inner_class_refs(layer, owner_internal) {
+                if !self.class_ref_matches_simple_name(&candidate, simple_name) {
                     continue;
                 }
                 if let Some(current) = &best {
-                    if Self::should_replace(current, &candidate) {
+                    if self.should_replace_ref(current, &candidate) {
                         best = Some(candidate);
                     }
                 } else {
@@ -352,7 +393,7 @@ impl IndexView {
                 }
             }
         }
-        best
+        best.and_then(|class_ref| self.resolve_class_ref(&class_ref))
     }
 
     /// Resolves the direct owner of `class_internal` using authoritative `inner_class_of`
@@ -406,13 +447,23 @@ impl IndexView {
     }
 
     pub fn has_package(&self, pkg: &str) -> bool {
-        self.layers().iter().any(|layer| layer.has_package(pkg))
+        self.layers().iter().any(|layer| match layer {
+            ScopeLayer::Overlay(bucket) => bucket.has_package(pkg),
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .is_some_and(|reader| reader.has_package(pkg)),
+        })
     }
 
     pub fn has_classes_in_package(&self, pkg: &str) -> bool {
-        self.layers()
-            .iter()
-            .any(|layer| layer.has_classes_in_package(pkg))
+        self.layers().iter().any(|layer| match layer {
+            ScopeLayer::Overlay(bucket) => bucket.has_classes_in_package(pkg),
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .is_some_and(|reader| reader.has_classes_in_package(pkg)),
+        })
     }
 
     pub fn resolve_imports(&self, imports: &[Arc<str>]) -> Vec<Arc<ClassMetadata>> {
@@ -448,8 +499,8 @@ impl IndexView {
         let mut seen_fields: FxHashSet<Arc<str>> = Default::default();
         let hierarchy_order = self.hierarchy_order(class_internal);
 
-        for internal in hierarchy_order.iter() {
-            let Some(meta) = self.get_class(internal.as_ref()) else {
+        for class_ref in hierarchy_order.iter() {
+            let Some(meta) = self.resolve_class_ref(class_ref) else {
                 continue;
             };
 
@@ -480,7 +531,7 @@ impl IndexView {
     ) -> Vec<Arc<MethodSummary>> {
         let key = (Arc::from(class_internal), Arc::from(method_name));
         if let Some(cached) = self.caches.methods_by_name.get(&key) {
-            return cached.as_ref().clone();
+            return cached.value().as_ref().clone();
         }
 
         let methods = self
@@ -502,7 +553,7 @@ impl IndexView {
     ) -> Option<Arc<FieldSummary>> {
         let key = (Arc::from(class_internal), Arc::from(field_name));
         if let Some(cached) = self.caches.fields_by_name.get(&key) {
-            return cached.clone();
+            return cached.value().clone();
         }
 
         let field = self
@@ -520,7 +571,10 @@ impl IndexView {
         simple_name: &str,
     ) -> Option<Arc<ClassMetadata>> {
         let hierarchy_order = self.hierarchy_order(class_internal);
-        for owner_internal in hierarchy_order.iter() {
+        for owner_ref in hierarchy_order.iter() {
+            let Some(owner_internal) = self.class_ref_internal_name(owner_ref) else {
+                continue;
+            };
             if let Some(inner) =
                 self.resolve_direct_inner_class(owner_internal.as_ref(), simple_name)
             {
@@ -543,13 +597,14 @@ impl IndexView {
         );
         if let Some(cached) = self.caches.declaring_method_owner.get(&key) {
             return cached
+                .value()
                 .clone()
                 .and_then(|owner_internal| self.get_class(&owner_internal));
         }
 
         let hierarchy_order = self.hierarchy_order(class_internal);
-        let owner_internal = hierarchy_order.iter().find_map(|internal| {
-            let class = self.get_class(internal.as_ref())?;
+        let owner_internal = hierarchy_order.iter().find_map(|class_ref| {
+            let class = self.resolve_class_ref(class_ref)?;
             class
                 .methods
                 .iter()
@@ -577,7 +632,15 @@ impl IndexView {
         let mut out = Vec::new();
         let mut seen: FxHashSet<Arc<str>> = Default::default();
         for layer in self.layers() {
-            for name in layer.fuzzy_autocomplete(query, limit) {
+            let matches = match layer {
+                ScopeLayer::Overlay(bucket) => bucket.fuzzy_autocomplete(query, limit),
+                ScopeLayer::Artifact(artifact_id) => self
+                    .scope
+                    .artifact_reader(*artifact_id)
+                    .map(|reader| reader.fuzzy_autocomplete(query, limit))
+                    .unwrap_or_default(),
+            };
+            for name in matches {
                 if seen.insert(Arc::clone(&name)) {
                     out.push(name);
                 }
@@ -589,8 +652,8 @@ impl IndexView {
     pub fn fuzzy_search_classes(&self, query: &str, limit: usize) -> Vec<Arc<ClassMetadata>> {
         let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
             Default::default();
-        for layer in self.layers() {
-            for class in layer.fuzzy_search_classes(query, limit) {
+        for name in self.fuzzy_autocomplete(query, limit) {
+            for class in self.get_classes_by_simple_name(&name) {
                 let key = Arc::clone(&class.internal_name);
                 if let Some(current) = by_internal.get(&key) {
                     if Self::should_replace(current, &class) {
@@ -610,23 +673,213 @@ impl IndexView {
     }
 
     pub fn iter_all_classes(&self) -> Vec<Arc<ClassMetadata>> {
-        let all_classes = self
-            .caches
-            .all_classes
-            .get_or_init(|| Arc::new(self.merge_class_internals(|layer| layer.iter_all_classes())));
-        self.resolve_class_internals(all_classes.as_ref())
+        let all_classes = self.caches.all_classes.get_or_init(|| {
+            Arc::new(self.merge_class_refs(|layer| self.layer_iter_all_class_refs(layer)))
+        });
+        self.resolve_class_refs(all_classes.as_ref())
     }
 
     pub fn build_name_table(&self) -> Arc<NameTable> {
         self.scope.build_name_table()
+    }
+
+    fn resolve_class_ref(&self, class_ref: &ClassHandleRef) -> Option<Arc<ClassMetadata>> {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket.get_class(internal_name.as_ref()),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.get_class(*handle)),
+        }
+    }
+
+    fn class_ref_internal_name(&self, class_ref: &ClassHandleRef) -> Option<Arc<str>> {
+        match class_ref {
+            ClassHandleRef::Overlay { internal_name, .. } => Some(Arc::clone(internal_name)),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.class_internal_name(*handle)),
+        }
+    }
+
+    fn class_ref_origin_precedence(&self, class_ref: &ClassHandleRef) -> u8 {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .map(|class| Self::origin_precedence(&class))
+                .unwrap_or_default(),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.class_origin_precedence(*handle))
+                .unwrap_or_default(),
+        }
+    }
+
+    fn class_ref_matches_simple_name(&self, class_ref: &ClassHandleRef, simple_name: &str) -> bool {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .is_some_and(|class| class.matches_simple_name(simple_name)),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .is_some_and(|reader| reader.class_matches_simple_name(*handle, simple_name)),
+        }
+    }
+
+    fn class_ref_parent_internals(&self, class_ref: &ClassHandleRef) -> Vec<Arc<str>> {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => {
+                let Some(class) = bucket.get_class(internal_name.as_ref()) else {
+                    return Vec::new();
+                };
+                let mut parents = Vec::new();
+                if let Some(super_name) = class.super_name.as_ref() {
+                    parents.push(Arc::clone(super_name));
+                }
+                parents.extend(class.interfaces.iter().cloned());
+                parents
+            }
+            ClassHandleRef::Artifact(handle) => {
+                let Some(reader) = self.scope.artifact_reader(handle.artifact_id) else {
+                    return Vec::new();
+                };
+                let mut parents = Vec::new();
+                if let Some(super_name) = reader.class_super_name(*handle).flatten() {
+                    parents.push(super_name);
+                }
+                if let Some(interfaces) = reader.class_interfaces(*handle) {
+                    parents.extend(interfaces);
+                }
+                parents
+            }
+        }
+    }
+
+    fn layer_get_class_ref(
+        &self,
+        layer: &ScopeLayer,
+        internal_name: &str,
+    ) -> Option<ClassHandleRef> {
+        match layer {
+            ScopeLayer::Overlay(bucket) => bucket
+                .get_class(internal_name)
+                .map(|class| Self::overlay_ref(bucket, class)),
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .and_then(|reader| reader.get_class_handle(internal_name))
+                .map(ClassHandleRef::Artifact),
+        }
+    }
+
+    fn layer_classes_by_simple_name_refs(
+        &self,
+        layer: &ScopeLayer,
+        simple_name: &str,
+    ) -> Vec<ClassHandleRef> {
+        match layer {
+            ScopeLayer::Overlay(bucket) => {
+                Self::overlay_refs(bucket, bucket.get_classes_by_simple_name(simple_name))
+            }
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .map(|reader| {
+                    reader
+                        .class_handles_by_simple_name(simple_name)
+                        .into_iter()
+                        .map(ClassHandleRef::Artifact)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn layer_classes_in_package_refs(&self, layer: &ScopeLayer, pkg: &str) -> Vec<ClassHandleRef> {
+        match layer {
+            ScopeLayer::Overlay(bucket) => {
+                Self::overlay_refs(bucket, bucket.classes_in_package(pkg))
+            }
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .map(|reader| {
+                    reader
+                        .class_handles_in_package(pkg)
+                        .into_iter()
+                        .map(ClassHandleRef::Artifact)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn layer_direct_inner_class_refs(
+        &self,
+        layer: &ScopeLayer,
+        owner_internal: &str,
+    ) -> Vec<ClassHandleRef> {
+        match layer {
+            ScopeLayer::Overlay(bucket) => {
+                Self::overlay_refs(bucket, bucket.direct_inner_classes_by_owner(owner_internal))
+            }
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .map(|reader| {
+                    reader
+                        .direct_inner_class_handles(owner_internal)
+                        .into_iter()
+                        .map(ClassHandleRef::Artifact)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    fn layer_iter_all_class_refs(&self, layer: &ScopeLayer) -> Vec<ClassHandleRef> {
+        match layer {
+            ScopeLayer::Overlay(bucket) => Self::overlay_refs(bucket, bucket.iter_all_classes()),
+            ScopeLayer::Artifact(artifact_id) => self
+                .scope
+                .artifact_reader(*artifact_id)
+                .map(|reader| {
+                    reader
+                        .iter_all_class_handles()
+                        .into_iter()
+                        .map(ClassHandleRef::Artifact)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::{
+        ArchiveClassStub, ArtifactKind, ArtifactMetadata, ArtifactReaderCache, ArtifactScopeReader,
+        ClasspathId, IndexScope, IndexedJavaModule, ModuleId, ScopeLayer, StoredArtifactArchive,
+        WorkspaceIndex,
+    };
     use crate::index::{ClassOrigin, MethodParams};
-    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
+    use crate::language::java::module_info::JavaModuleDescriptor;
     use rust_asm::constants::ACC_PUBLIC;
 
     fn make_class(
@@ -663,6 +916,50 @@ mod tests {
             inner_class_of: None,
             origin,
         })
+    }
+
+    fn make_artifact_view(classes: Vec<ClassMetadata>) -> IndexView {
+        let artifact_id = crate::index::ArtifactId(7);
+        let archive = StoredArtifactArchive {
+            metadata: ArtifactMetadata {
+                id: artifact_id,
+                kind: ArtifactKind::Jar,
+                source_path: "memory://artifact.jar".to_string(),
+                content_hash: 1,
+                byte_len: 1,
+                stored_at_unix_secs: 0,
+            },
+            classes: classes
+                .into_iter()
+                .map(ArchiveClassStub::from_class_metadata)
+                .collect(),
+            modules: vec![IndexedJavaModule {
+                descriptor: Arc::new(JavaModuleDescriptor {
+                    name: Arc::from("demo.module"),
+                    is_open: false,
+                    requires: vec![],
+                    exports: vec![],
+                    opens: vec![],
+                    uses: vec![],
+                    provides: vec![],
+                }),
+                origin: ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            }],
+        };
+        let readers = Arc::new(ArtifactReaderCache::default());
+        readers.insert_preloaded(Arc::new(ArtifactScopeReader::from_archive(archive)));
+
+        let mut layers: SmallVec<ScopeLayer, 8> = SmallVec::new();
+        layers.push(ScopeLayer::Artifact(artifact_id));
+
+        IndexView::from_scope(Arc::new(ScopeSnapshot::new(
+            ModuleId::ROOT,
+            ClasspathId::Main,
+            None,
+            layers,
+            Vec::new(),
+            readers,
+        )))
     }
 
     #[test]
@@ -1334,6 +1631,50 @@ mod tests {
         assert_eq!(
             resolved.map(|class| class.internal_name.to_string()),
             Some("com/example/Outer$Class".to_string())
+        );
+    }
+
+    #[test]
+    fn test_artifact_layer_supports_lookup_name_table_and_hierarchy() {
+        let mut base = (*make_class(
+            "pkg/Base",
+            ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            &["()V"],
+        ))
+        .clone();
+        base.methods[0].name = Arc::from("ping");
+
+        let mut child = (*make_class(
+            "pkg/Child",
+            ClassOrigin::Jar(Arc::from("memory://artifact.jar")),
+            &["(I)V"],
+        ))
+        .clone();
+        child.super_name = Some(Arc::from("pkg/Base"));
+        child.methods[0].name = Arc::from("pong");
+
+        let view = make_artifact_view(vec![base, child]);
+
+        assert!(view.get_class("pkg/Child").is_some());
+        assert_eq!(
+            view.get_classes_by_simple_name("Child")
+                .into_iter()
+                .map(|class| class.internal_name.to_string())
+                .collect::<Vec<_>>(),
+            vec!["pkg/Child".to_string()]
+        );
+        assert_eq!(view.classes_in_package("pkg").len(), 2);
+        assert!(view.build_name_table().exists("pkg/Base"));
+        assert_eq!(
+            view.lookup_methods_in_hierarchy("pkg/Child", "ping").len(),
+            1
+        );
+        assert_eq!(
+            view.scope
+                .artifact_reader(crate::index::ArtifactId(7))
+                .unwrap()
+                .module_names(),
+            vec![Arc::from("demo.module")]
         );
     }
 }

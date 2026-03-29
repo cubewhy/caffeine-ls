@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 use crate::index::IndexedArchiveData;
 use crate::index::store::{
     ArtifactId, ArtifactKind, ArtifactSource, ArtifactStore, LmdbIndexStore, StoredArtifact,
-    fingerprint_archive_data, shared_store_root,
+    StoredArtifactArchive, fingerprint_archive_data, shared_store_root,
 };
 
 pub fn cache_dir() -> Option<PathBuf> {
@@ -86,6 +86,21 @@ pub fn load_artifact_by_id(id: ArtifactId) -> Option<StoredArtifact> {
         Ok(artifact) => artifact,
         Err(err) => {
             warn!(artifact_id = id.0, error = %err, "failed to load artifact by id");
+            None
+        }
+    }
+}
+
+pub fn load_artifact_archive_by_id(id: ArtifactId) -> Option<StoredArtifactArchive> {
+    let store = shared_store()?;
+    match store.load_artifact_archive_by_id(id) {
+        Ok(artifact) => artifact,
+        Err(err) => {
+            warn!(
+                artifact_id = id.0,
+                error = %err,
+                "failed to load artifact archive by id"
+            );
             None
         }
     }

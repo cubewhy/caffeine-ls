@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::index::IndexedArchiveData;
+use crate::index::{ArchiveClassStub, IndexedArchiveData, IndexedJavaModule};
 
 pub use ids::{ArtifactId, FileId, ModuleNodeId, StringId, SymbolId, WorkspaceId};
 pub use lmdb::{INDEX_SCHEMA_VERSION, LmdbIndexStore, shared_store_root};
@@ -70,6 +70,13 @@ pub struct StoredArtifact {
     pub data: IndexedArchiveData,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredArtifactArchive {
+    pub metadata: ArtifactMetadata,
+    pub classes: Vec<ArchiveClassStub>,
+    pub modules: Vec<IndexedJavaModule>,
+}
+
 pub trait IndexStore: Send + Sync {
     fn schema_version(&self) -> u32;
     fn root_path(&self) -> &Path;
@@ -78,6 +85,11 @@ pub trait IndexStore: Send + Sync {
 pub trait ArtifactStore: IndexStore {
     fn load_artifact(&self, source: &ArtifactSource) -> Result<Option<StoredArtifact>>;
     fn load_artifact_by_id(&self, id: ArtifactId) -> Result<Option<StoredArtifact>>;
+    fn load_artifact_archive(
+        &self,
+        source: &ArtifactSource,
+    ) -> Result<Option<StoredArtifactArchive>>;
+    fn load_artifact_archive_by_id(&self, id: ArtifactId) -> Result<Option<StoredArtifactArchive>>;
     fn store_artifact(
         &self,
         source: &ArtifactSource,

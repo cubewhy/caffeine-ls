@@ -22,6 +22,7 @@ use crate::language::java::module_info::{
 use crate::semantic::types::{SymbolProvider, parse_return_type_from_descriptor};
 
 pub mod archive_stub;
+pub mod artifact_reader;
 pub mod bucket;
 pub mod cache;
 pub mod codebase;
@@ -38,15 +39,18 @@ pub mod view;
 pub mod workspace_index;
 
 pub use archive_stub::ArchiveClassStub;
+pub use artifact_reader::{
+    ArtifactClassHandle, ArtifactReaderCache, ArtifactReaderMemoryStats, ArtifactScopeReader,
+};
 pub use bucket::BucketIndex;
 pub use handle::WorkspaceIndexHandle;
 pub use module_graph::ModuleGraph;
 pub use module_index::{ClasspathEntry, ClasspathIndex, ModuleIndex, ModuleQueryCache};
 pub use scope::{ClasspathId, IndexScope, ModuleId};
-pub use scope_snapshot::{AnalysisContextKey, ScopeSnapshot};
+pub use scope_snapshot::{AnalysisContextKey, ScopeLayer, ScopeSnapshot};
 pub use store::{
     ArtifactId, ArtifactKind, ArtifactMetadata, ArtifactSource, ArtifactStore, IndexStore,
-    LmdbIndexStore, StoredArtifact,
+    LmdbIndexStore, StoredArtifact, StoredArtifactArchive,
 };
 pub use view::IndexView;
 pub use workspace_index::WorkspaceIndex;

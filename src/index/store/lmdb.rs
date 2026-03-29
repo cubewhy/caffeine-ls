@@ -14,6 +14,7 @@ use super::artifact::{
 };
 use super::{
     ArtifactId, ArtifactMetadata, ArtifactSource, ArtifactStore, IndexStore, StoredArtifact,
+    StoredArtifactArchive,
 };
 
 pub const INDEX_SCHEMA_VERSION: u32 = 1;
@@ -178,6 +179,36 @@ impl LmdbIndexStore {
         }))
     }
 
+    fn load_archive_by_id_read(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: ArtifactId,
+    ) -> Result<Option<StoredArtifactArchive>> {
+        let Some(meta_bytes) = self
+            .artifacts
+            .get(txn, &id.0)
+            .context("load artifact metadata row")?
+        else {
+            return Ok(None);
+        };
+        let Some(payload_bytes) = self
+            .artifact_payloads
+            .get(txn, &id.0)
+            .context("load artifact payload row")?
+        else {
+            return Ok(None);
+        };
+
+        let metadata = deserialize_meta(meta_bytes)?.into_public();
+        let payload = deserialize_payload(payload_bytes)?;
+
+        Ok(Some(StoredArtifactArchive {
+            metadata,
+            classes: payload.classes,
+            modules: payload.modules,
+        }))
+    }
+
     fn load_by_id_write(
         &self,
         txn: &heed::RwTxn<'_>,
@@ -234,9 +265,32 @@ impl ArtifactStore for LmdbIndexStore {
         }
     }
 
+    fn load_artifact_archive(
+        &self,
+        source: &ArtifactSource,
+    ) -> Result<Option<StoredArtifactArchive>> {
+        let rtxn = self.env.read_txn().context("open LMDB read txn")?;
+        let key = encode_hash_key(source);
+        let artifact_id = self
+            .artifact_by_hash
+            .get(&rtxn, key.as_slice())
+            .context("lookup artifact by hash")?
+            .map(ArtifactId);
+
+        match artifact_id {
+            Some(id) => self.load_archive_by_id_read(&rtxn, id),
+            None => Ok(None),
+        }
+    }
+
     fn load_artifact_by_id(&self, id: ArtifactId) -> Result<Option<StoredArtifact>> {
         let rtxn = self.env.read_txn().context("open LMDB read txn")?;
         self.load_by_id_read(&rtxn, id)
+    }
+
+    fn load_artifact_archive_by_id(&self, id: ArtifactId) -> Result<Option<StoredArtifactArchive>> {
+        let rtxn = self.env.read_txn().context("open LMDB read txn")?;
+        self.load_archive_by_id_read(&rtxn, id)
     }
 
     fn store_artifact(
