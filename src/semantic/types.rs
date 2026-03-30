@@ -1053,7 +1053,7 @@ impl<'idx> TypeResolver<'idx> {
 
         for arg_index in functional_arg_indexes.iter().copied() {
             let arg_text = args.texts.get(arg_index).map(|s| s.as_str()).unwrap_or("");
-            let Some(mut formal) = self.resolve_formal_param_jvm_for_argument(
+            let mut formal = self.resolve_formal_param_jvm_for_argument(
                 method,
                 &param_jvm_types,
                 arg_index,
@@ -1061,9 +1061,7 @@ impl<'idx> TypeResolver<'idx> {
                 &bindings,
                 &class_type_params,
                 &receiver_args,
-            ) else {
-                return None;
-            };
+            )?;
             if !bindings.is_empty() {
                 formal = substitute_type_vars(&formal, &bindings);
             }

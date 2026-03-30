@@ -209,7 +209,7 @@ fn maybe_check_cancelled(
     phase: &'static str,
     index: usize,
 ) -> RequestResult<()> {
-    if index % 32 == 0
+    if index.is_multiple_of(32)
         && let Some(request) = request
     {
         request.check_cancelled(phase)?;
