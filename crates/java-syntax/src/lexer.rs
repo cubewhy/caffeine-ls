@@ -551,7 +551,7 @@ impl<'a> JavaLexer<'a> {
     }
 
     fn handle_slash(&mut self) {
-        if self.reader.peek() == '/' {
+        if self.reader.advance_if_matches('/') {
             // single-line comment //
             while let c = self.reader.peek()
                 && c != '\n'
@@ -560,8 +560,11 @@ impl<'a> JavaLexer<'a> {
             {
                 self.reader.advance();
             }
-        } else if self.reader.peek() == '*' {
-            // multiple line comment /* */
+            self.push_token(TokenType::LineComment);
+        } else if self.reader.advance_if_matches('*') {
+            // multiple line comment /* */ or javadoc /** */
+            let is_javadoc = self.reader.peek() == '*' && self.reader.peek_next() != '/';
+
             // find */
             let mut has_terminated = false;
             while !self.reader.is_at_end() {
@@ -575,9 +578,15 @@ impl<'a> JavaLexer<'a> {
             if !has_terminated {
                 self.report_error(LexicalErrorType::UnterminatedComment);
             }
-        } else if self.reader.peek() == '=' {
+
+            let token_type = if is_javadoc {
+                TokenType::Javadoc
+            } else {
+                TokenType::BlockComment
+            };
+            self.push_token(token_type);
+        } else if self.reader.advance_if_matches('=') {
             // /=
-            self.reader.advance();
             self.push_token(TokenType::DivideEqual);
         } else {
             // /
