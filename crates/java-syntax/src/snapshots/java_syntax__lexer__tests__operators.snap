@@ -156,16 +156,24 @@ expression: lex_tokens(source)
         " ",
     ),
     (
-        SHL,
-        "<<",
+        LESS,
+        "<",
+    ),
+    (
+        LESS,
+        "<",
     ),
     (
         WHITESPACE,
         " ",
     ),
     (
-        SHL_EQUAL,
-        "<<=",
+        LESS,
+        "<",
+    ),
+    (
+        LESS_EQUAL,
+        "<=",
     ),
     (
         WHITESPACE,
@@ -188,32 +196,56 @@ expression: lex_tokens(source)
         " ",
     ),
     (
-        SHR,
-        ">>",
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER,
+        ">",
     ),
     (
         WHITESPACE,
         " ",
     ),
     (
-        SHR_EQUAL,
-        ">>=",
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER_EQUAL,
+        ">=",
     ),
     (
         WHITESPACE,
         " ",
     ),
     (
-        UNSIGNED_SHR,
-        ">>>",
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER,
+        ">",
     ),
     (
         WHITESPACE,
         " ",
     ),
     (
-        UNSIGNED_SHR_EQUAL,
-        ">>>=",
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER,
+        ">",
+    ),
+    (
+        GREATER_EQUAL,
+        ">=",
     ),
     (
         WHITESPACE,
