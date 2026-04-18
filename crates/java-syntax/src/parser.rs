@@ -1,6 +1,14 @@
-use rowan::{GreenNode, GreenNodeBuilder};
+use rowan::GreenNode;
 
-use crate::{kinds::SyntaxKind, kinds::SyntaxKind::*, lexer::token::Token};
+use crate::{
+    kinds::SyntaxKind::{self, *},
+    lexer::token::Token,
+    parser::{marker::Marker, sink::Sink},
+};
+
+mod grammar;
+mod marker;
+mod sink;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Lang {}
@@ -22,9 +30,21 @@ pub struct Parse {
     errors: Vec<ParseError>,
 }
 
+pub enum Event {
+    Tombstone,
+    AddToken,
+    Error(ParseError),
+    StartNode {
+        kind: SyntaxKind,
+        forward_parent: Option<usize>,
+    },
+    FinishNode,
+}
+
 pub struct Parser<'a> {
     tokens: Vec<Token<'a>>,
-    builder: GreenNodeBuilder<'static>,
+    pos: usize,
+    events: Vec<Event>,
     errors: Vec<ParseError>,
 }
 
@@ -33,32 +53,47 @@ impl<'a> Parser<'a> {
         Self {
             tokens,
             errors: Vec::new(),
-            builder: GreenNodeBuilder::new(),
+            events: Vec::new(),
+            pos: 0,
         }
     }
 
     pub fn parse(mut self) -> Parse {
-        self.builder.start_node(ROOT.into());
-
-        // TODO: parse tokens
+        grammar::root(&mut self);
+        let green_node = Sink::new(self.tokens, self.events).finish();
 
         Parse {
-            green_node: self.builder.finish(),
+            green_node,
             errors: self.errors,
         }
     }
-}
 
-#[derive(Debug)]
-pub struct ParseError {
-    kind: ParseErrorKind,
-}
+    pub(crate) fn start(&mut self) -> Marker {
+        let pos = self.events.len();
+        self.events.push(Event::Tombstone);
+        Marker::new(pos)
+    }
 
-impl ParseError {
-    pub fn new(kind: ParseErrorKind) -> Self {
-        Self { kind }
+    pub(crate) fn current(&self) -> Option<SyntaxKind> {
+        self.tokens.get(self.pos).map(|t| t.kind)
+    }
+
+    pub(crate) fn bump(&mut self) {
+        if self.pos < self.tokens.len() {
+            self.events.push(Event::AddToken);
+            self.pos += 1;
+        }
+    }
+
+    pub(crate) fn report_error(&mut self, error: ParseError) {
+        self.errors.push(error);
+        self.events.push(Event::Error(error));
+    }
+
+    pub(crate) fn is_at_end(&self) -> bool {
+        self.pos >= self.tokens.len()
     }
 }
 
-#[derive(Debug)]
-pub enum ParseErrorKind {}
+#[derive(Copy, Clone, Debug)]
+pub enum ParseError {}
