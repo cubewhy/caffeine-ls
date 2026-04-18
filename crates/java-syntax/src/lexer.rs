@@ -45,7 +45,7 @@ impl TemplateKind {
 
     fn literal_token(self) -> TokenType {
         match self {
-            TemplateKind::String => TokenType::StringLiteral,
+            TemplateKind::String => TokenType::StringLit,
             TemplateKind::TextBlock => TokenType::TextBlock,
         }
     }
@@ -681,7 +681,7 @@ impl<'a> JavaLexer<'a> {
             self.report_error(LexicalErrorType::InvalidChar);
         }
 
-        self.push_token(TokenType::CharLiteral);
+        self.push_token(TokenType::CharLit);
     }
 
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
