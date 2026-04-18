@@ -160,6 +160,14 @@ impl<'a> JavaLexer<'a> {
                     '%' => self.handle_mod(),
                     '!' => self.handle_bang(),
 
+                    '\x1A' => {
+                        // https://docs.oracle.com/javase/specs/jls/se17/html/jls-3.html#jls-3.5
+                        // Ascii SUB character
+                        if !self.reader.is_at_end() {
+                            self.report_error(LexicalErrorType::UnexpectedChar('\x1A'));
+                        }
+                    }
+
                     c if is_java_whitespace(c) => {
                         // consume whitespace
                     }
@@ -1627,5 +1635,25 @@ mod tests {
     #[test]
     fn test_char_literal_bmp_only() {
         assert_lex_errors!("'🐘'", [LexicalErrorType::InvalidChar]);
+    }
+
+    #[test]
+    fn test_eof_sub_character() {
+        assert_lex!(
+            "int x = 1;\x1A",
+            [
+                (TokenType::Int, "int"),
+                (TokenType::Identifier, "x"),
+                (TokenType::Equal, "="),
+                (TokenType::NumberLiteral, "1"),
+                (TokenType::Semicolon, ";"),
+            ]
+        );
+
+        // \x1A should only appear on the end of file
+        assert_lex_errors!(
+            "int \x1A x = 1;",
+            [LexicalErrorType::UnexpectedChar('\u{1a}')]
+        );
     }
 }
