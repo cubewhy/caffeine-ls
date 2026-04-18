@@ -85,7 +85,7 @@ impl<'a> JavaLexer<'a> {
                     '%' => self.handle_mod(),
                     '!' => self.handle_bang(),
 
-                    c if c.is_whitespace() => {
+                    c if is_java_whitespace(c) => {
                         // consume whitespace
                     }
 
@@ -585,6 +585,11 @@ fn is_java_identifier_start(c: char) -> bool {
 
 fn is_java_identifier_part(c: char) -> bool {
     is_java_identifier_start(c) || c.is_numeric()
+}
+
+// https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.6
+fn is_java_whitespace(c: char) -> bool {
+    matches!(c, '\u{0020}' | '\u{0009}' | '\u{000C}' | '\n' | '\r')
 }
 
 #[cfg(test)]
