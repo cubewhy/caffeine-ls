@@ -1715,4 +1715,23 @@ mod tests {
 
         assert_lex!("\u{FEFF}", []);
     }
+
+    #[test]
+    fn test_escape_sequence_s() {
+        assert_lex!(
+            r#" "trailing space\s" "#,
+            [(TokenType::StringLiteral, r#""trailing space\s""#)]
+        );
+
+        let text_block_with_s = "\"\"\"\n    line 1\\s\n    line 2\n\"\"\"";
+        assert_lex!(
+            text_block_with_s,
+            [(TokenType::TextBlock, text_block_with_s)]
+        );
+
+        assert_lex!(
+            r#" "hello\s\tworld" "#,
+            [(TokenType::StringLiteral, r#""hello\s\tworld""#)]
+        );
+    }
 }
