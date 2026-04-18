@@ -87,6 +87,11 @@ impl<'a> JavaLexer<'a> {
     pub fn scan_tokens(
         &mut self,
     ) -> Result<&[JavaToken<'a>], (&[JavaToken<'a>], &[JavaLexicalError])> {
+        // consume BOM
+        if self.reader.peek() == '\u{FEFF}' {
+            self.reader.advance();
+        }
+
         while !self.reader.is_at_end() {
             self.scan_next_token();
         }
