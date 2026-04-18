@@ -649,12 +649,15 @@ impl<'a> JavaLexer<'a> {
     }
 
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
-        if kind == TemplateKind::TextBlock
-            && role == TemplateChunkRole::FullLiteral
-            && self.reader.peek() != '\n'
-            && self.reader.peek() != '\r'
-        {
-            self.report_error(LexicalErrorType::IllegalTextBlockOpen);
+        if kind == TemplateKind::TextBlock && role == TemplateChunkRole::FullLiteral {
+            while matches!(self.reader.peek(), '\u{0020}' | '\u{0009}' | '\u{000C}') {
+                self.reader.advance();
+            }
+
+            let next_char = self.reader.peek();
+            if next_char != '\n' && next_char != '\r' {
+                self.report_error(LexicalErrorType::IllegalTextBlockOpen);
+            }
         }
 
         while !self.reader.is_at_end() {
@@ -1630,6 +1633,16 @@ mod tests {
     #[test]
     fn test_error_unterminated_string_template() {
         assert_lex_errors!("\"Hello \\{name", [LexicalErrorType::UnterminatedTemplate]);
+    }
+
+
+    #[test]
+    fn test_text_block_opening_whitespace() {
+        let valid_text_block = "\"\"\" \t \n  body\n\"\"\"";
+        assert_lex!(
+            valid_text_block,
+            [(TokenType::TextBlock, "\"\"\" \t \n  body\n\"\"\"")]
+        );
     }
 
     #[test]
