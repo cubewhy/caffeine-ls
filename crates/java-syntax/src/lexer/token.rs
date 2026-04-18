@@ -26,7 +26,13 @@ pub enum TokenType {
     LeftBracket,  // [
     RightBracket, // ]
 
-    StringLiteral,    // ""
+    StringLiteral, // ""
+    StringTemplateBegin,
+    StringTemplateMid,
+    StringTemplateEnd,
+    TextBlockTemplateBegin,
+    TextBlockTemplateMid,
+    TextBlockTemplateEnd,
     CharLiteral,      // ''
     Semicolon,        // ;
     Dot,              // .

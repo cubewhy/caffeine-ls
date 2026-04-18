@@ -107,17 +107,27 @@ impl<'a> SourceReader<'a> {
     /// - Invalid `\uXXXX` escape → raw `\` (no error recorded yet)
     /// - End of input → `\0`
     pub fn peek(&self) -> char {
-        self.logical_char_at(self.current)
+        self.peek_n(0)
     }
 
     /// Logical character **after** the current one, without advancing.
     pub fn peek_next(&self) -> char {
-        let len = self.logical_len_at(self.current);
-        if len == 0 {
-            '\0'
-        } else {
-            self.logical_char_at(self.current + len)
+        self.peek_n(1)
+    }
+
+    /// Logical character **after** n, without advancing.
+    pub fn peek_n(&self, n: usize) -> char {
+        let mut offset = self.current;
+
+        for _ in 0..n {
+            let len = self.logical_len_at(offset);
+            if len == 0 {
+                return '\0';
+            }
+            offset += len;
         }
+
+        self.logical_char_at(offset)
     }
 
     /// Advance if the current logical character equals `expected`.
@@ -524,5 +534,49 @@ mod tests {
         assert!(reader.matches(r"\u0041"));
         assert!(reader.advance_if_matches_str(r"\u0041"));
         assert!(reader.is_at_end());
+    }
+
+    #[test]
+    fn test_peek_n_ascii() {
+        let reader = SourceReader::new("abcd");
+        assert_eq!(reader.peek_n(0), 'a');
+        assert_eq!(reader.peek_n(1), 'b');
+        assert_eq!(reader.peek_n(2), 'c');
+        assert_eq!(reader.peek_n(3), 'd');
+        assert_eq!(reader.peek_n(4), '\0');
+    }
+
+    #[test]
+    fn test_peek_n_with_unicode_escape() {
+        let reader = SourceReader::new(r"\u0041BC");
+        assert_eq!(reader.peek_n(0), 'A');
+        assert_eq!(reader.peek_n(1), 'B');
+        assert_eq!(reader.peek_n(2), 'C');
+        assert_eq!(reader.peek_n(3), '\0');
+    }
+
+    #[test]
+    fn test_peek_n_with_utf8_and_escape() {
+        let reader = SourceReader::new("你\u{597d}");
+        assert_eq!(reader.peek_n(0), '你');
+        assert_eq!(reader.peek_n(1), '好');
+        assert_eq!(reader.peek_n(2), '\0');
+    }
+
+    #[test]
+    fn test_peek_n_with_invalid_escape() {
+        let reader = SourceReader::new(r"\u12Z4A");
+        assert_eq!(reader.peek_n(0), '\\');
+        assert_eq!(reader.peek_n(1), 'u');
+        assert_eq!(reader.peek_n(2), '1');
+    }
+
+    #[test]
+    fn test_peek_n_with_mixed_logical_chars() {
+        let reader = SourceReader::new("A\\u4F60B");
+        assert_eq!(reader.peek_n(0), 'A');
+        assert_eq!(reader.peek_n(1), '你');
+        assert_eq!(reader.peek_n(2), 'B');
+        assert_eq!(reader.peek_n(3), '\0');
     }
 }

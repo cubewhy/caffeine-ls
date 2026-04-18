@@ -6,10 +6,71 @@ use unicode_categories::UnicodeCategories;
 
 pub mod token;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LexerMode {
+    Normal,
+    TemplateExpression,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateKind {
+    String,
+    TextBlock,
+}
+
+impl TemplateKind {
+    fn begin_token(self) -> TokenType {
+        match self {
+            TemplateKind::String => TokenType::StringTemplateBegin,
+            TemplateKind::TextBlock => TokenType::TextBlockTemplateBegin,
+        }
+    }
+
+    fn mid_token(self) -> TokenType {
+        match self {
+            TemplateKind::String => TokenType::StringTemplateMid,
+            TemplateKind::TextBlock => TokenType::TextBlockTemplateMid,
+        }
+    }
+
+    fn end_token(self) -> TokenType {
+        match self {
+            TemplateKind::String => TokenType::StringTemplateEnd,
+            TemplateKind::TextBlock => TokenType::TextBlockTemplateEnd,
+        }
+    }
+
+    fn literal_token(self) -> TokenType {
+        match self {
+            TemplateKind::String => TokenType::StringLiteral,
+            TemplateKind::TextBlock => TokenType::TextBlock,
+        }
+    }
+
+    fn allows_newline(self) -> bool {
+        matches!(self, TemplateKind::TextBlock)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TemplateContext {
+    kind: TemplateKind,
+    brace_depth: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateChunkRole {
+    FullLiteral,
+    Continuation,
+}
+
 pub struct JavaLexer<'a> {
     reader: SourceReader<'a>,
     tokens: Vec<JavaToken<'a>>,
     errors: Vec<JavaLexicalError>,
+
+    mode: LexerMode,
+    template_stack: Vec<TemplateContext>,
 }
 
 impl<'a> JavaLexer<'a> {
@@ -18,6 +79,8 @@ impl<'a> JavaLexer<'a> {
             reader: SourceReader::new(source),
             tokens: Vec::new(),
             errors: Vec::new(),
+            mode: LexerMode::Normal,
+            template_stack: Vec::new(),
         }
     }
 
@@ -26,6 +89,11 @@ impl<'a> JavaLexer<'a> {
     ) -> Result<&[JavaToken<'a>], (&[JavaToken<'a>], &[JavaLexicalError])> {
         while !self.reader.is_at_end() {
             self.scan_next_token();
+        }
+
+        if !self.template_stack.is_empty() {
+            // unterminated string/textblock template
+            self.report_error(LexicalErrorType::UnterminatedTemplate);
         }
 
         self.errors.extend(
@@ -44,9 +112,14 @@ impl<'a> JavaLexer<'a> {
 
     fn scan_next_token(&mut self) {
         self.reader.new_token();
+        self.scan_token_dispatch();
+    }
 
+    fn scan_token_dispatch(&mut self) {
         match self.reader.peek() {
             '.' => self.handle_dot(),
+            '{' => self.handle_left_brace(),
+            '}' => self.handle_right_brace(),
             c if c.is_numeric() => self.handle_number(),
 
             _ => {
@@ -55,8 +128,6 @@ impl<'a> JavaLexer<'a> {
                     ')' => self.push_token(TokenType::RightParen),
                     '[' => self.push_token(TokenType::LeftBracket),
                     ']' => self.push_token(TokenType::RightBracket),
-                    '{' => self.push_token(TokenType::LeftBrace),
-                    '}' => self.push_token(TokenType::RightBrace),
                     ';' => self.push_token(TokenType::Semicolon),
                     ',' => self.push_token(TokenType::Comma),
                     ':' => self.handle_colon(),
@@ -73,11 +144,15 @@ impl<'a> JavaLexer<'a> {
                     '/' => self.handle_slash(),
                     '"' => {
                         if self.reader.advance_if_matches_str("\"\"") {
-                            // Java 15+ text block
-                            self.handle_text_block();
+                            self.scan_quoted_content(
+                                TemplateKind::TextBlock,
+                                TemplateChunkRole::FullLiteral,
+                            );
                         } else {
-                            // String literal
-                            self.handle_string_literal();
+                            self.scan_quoted_content(
+                                TemplateKind::String,
+                                TemplateChunkRole::FullLiteral,
+                            );
                         }
                     }
                     '|' => self.handle_or(),
@@ -99,6 +174,44 @@ impl<'a> JavaLexer<'a> {
                 }
             }
         }
+    }
+
+    fn handle_left_brace(&mut self) {
+        if self.mode == LexerMode::TemplateExpression
+            && let Some(ctx) = self.template_stack.last_mut()
+        {
+            ctx.brace_depth += 1;
+        }
+
+        self.reader.advance();
+        self.push_token(TokenType::LeftBrace);
+    }
+
+    fn handle_right_brace(&mut self) {
+        if self.mode != LexerMode::TemplateExpression {
+            self.reader.advance();
+            self.push_token(TokenType::RightBrace);
+            return;
+        }
+
+        let Some(ctx) = self.template_stack.last_mut() else {
+            self.mode = LexerMode::Normal;
+            self.reader.advance();
+            self.push_token(TokenType::RightBrace);
+            return;
+        };
+
+        if ctx.brace_depth > 0 {
+            ctx.brace_depth -= 1;
+            self.reader.advance();
+            self.push_token(TokenType::RightBrace);
+            return;
+        }
+
+        self.reader.advance(); // consume template-closing '}'
+        let kind = ctx.kind;
+        self.template_stack.pop();
+        self.resume_template_after_expression(kind);
     }
 
     fn handle_number(&mut self) {
@@ -527,65 +640,183 @@ impl<'a> JavaLexer<'a> {
         self.push_token(TokenType::CharLiteral);
     }
 
-    fn handle_text_block(&mut self) {
-        if self.reader.peek() != '\n' && self.reader.peek() != '\r' {
+    // fn handle_text_block(&mut self) {
+    //     if self.reader.peek() != '\n' && self.reader.peek() != '\r' {
+    //         self.report_error(LexicalErrorType::IllegalTextBlockOpen);
+    //     }
+    //
+    //     let mut is_terminated = false;
+    //
+    //     while !self.reader.is_at_end() {
+    //         let c = self.reader.peek();
+    //
+    //         if self.reader.advance_if_matches_str("\"\"\"") {
+    //             is_terminated = true;
+    //             break;
+    //         }
+    //
+    //         if c == '\\' {
+    //             if !self.consume_escape_sequence(true) {
+    //                 self.report_error(LexicalErrorType::InvalidEscapeSequence);
+    //             }
+    //         } else {
+    //             self.reader.advance();
+    //         }
+    //     }
+    //
+    //     if !is_terminated {
+    //         self.report_error(LexicalErrorType::UnterminatedTextBlock);
+    //     }
+    //
+    //     self.push_token(TokenType::TextBlock);
+    // }
+
+    // fn handle_string_literal(&mut self) {
+    //     while !self.reader.is_at_end() {
+    //         let c = self.reader.peek();
+    //
+    //         if c == '"' {
+    //             break;
+    //         }
+    //         if c == '\n' || c == '\r' {
+    //             self.report_error(LexicalErrorType::UnterminatedString);
+    //             return;
+    //         }
+    //
+    //         if c == '\\' {
+    //             if !self.consume_escape_sequence(false) {
+    //                 self.report_error(LexicalErrorType::InvalidEscapeSequence);
+    //             }
+    //         } else {
+    //             self.reader.advance();
+    //         }
+    //     }
+    //
+    //     if self.reader.is_at_end() {
+    //         self.report_error(LexicalErrorType::UnterminatedString);
+    //         return;
+    //     }
+    //
+    //     self.reader.advance(); // "
+    //     self.push_token(TokenType::StringLiteral);
+    // }
+
+    fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
+        if kind == TemplateKind::TextBlock
+            && role == TemplateChunkRole::FullLiteral
+            && self.reader.peek() != '\n'
+            && self.reader.peek() != '\r'
+        {
             self.report_error(LexicalErrorType::IllegalTextBlockOpen);
         }
 
-        let mut is_terminated = false;
-
         while !self.reader.is_at_end() {
-            let c = self.reader.peek();
-
-            if self.reader.advance_if_matches_str("\"\"\"") {
-                is_terminated = true;
-                break;
+            if self.is_template_close(kind) {
+                self.consume_template_close(kind);
+                self.emit_quoted_terminal_token(kind, role);
+                return;
             }
 
-            if c == '\\' {
-                if !self.consume_escape_sequence(true) {
-                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+            let c = self.reader.peek();
+
+            if !kind.allows_newline() && (c == '\n' || c == '\r') {
+                match role {
+                    TemplateChunkRole::FullLiteral => {
+                        self.report_error(LexicalErrorType::UnterminatedString);
+                    }
+                    TemplateChunkRole::Continuation => {
+                        self.report_error(LexicalErrorType::UnterminatedTemplate);
+                        self.mode = LexerMode::Normal;
+                    }
                 }
-            } else {
-                self.reader.advance();
-            }
-        }
-
-        if !is_terminated {
-            self.report_error(LexicalErrorType::UnterminatedTextBlock);
-        }
-
-        self.push_token(TokenType::TextBlock);
-    }
-
-    fn handle_string_literal(&mut self) {
-        while !self.reader.is_at_end() {
-            let c = self.reader.peek();
-
-            if c == '"' {
-                break;
-            }
-            if c == '\n' || c == '\r' {
-                self.report_error(LexicalErrorType::UnterminatedString);
                 return;
             }
 
             if c == '\\' {
-                if !self.consume_escape_sequence(false) {
+                if self.reader.peek_next() == '{' {
+                    self.reader.advance(); // '\'
+                    self.reader.advance(); // '{'
+                    self.emit_template_open_token(kind, role);
+                    self.template_stack.push(TemplateContext {
+                        kind,
+                        brace_depth: 0,
+                    });
+                    self.mode = LexerMode::TemplateExpression;
+                    return;
+                }
+
+                if !self.consume_escape_sequence(kind == TemplateKind::TextBlock) {
                     self.report_error(LexicalErrorType::InvalidEscapeSequence);
                 }
-            } else {
+                continue;
+            }
+
+            self.reader.advance();
+        }
+
+        match (kind, role) {
+            (TemplateKind::String, TemplateChunkRole::FullLiteral) => {
+                self.report_error(LexicalErrorType::UnterminatedString);
+            }
+            (TemplateKind::TextBlock, TemplateChunkRole::FullLiteral) => {
+                self.report_error(LexicalErrorType::UnterminatedTextBlock);
+            }
+            (_, TemplateChunkRole::Continuation) => {
+                self.report_error(LexicalErrorType::UnterminatedTemplate);
+                self.mode = LexerMode::Normal;
+            }
+        }
+    }
+
+    fn is_template_close(&self, kind: TemplateKind) -> bool {
+        match kind {
+            TemplateKind::String => self.reader.peek() == '"',
+            TemplateKind::TextBlock => {
+                self.reader.peek() == '"'
+                    && self.reader.peek_next() == '"'
+                    && self.reader.peek_n(2) == '"'
+            }
+        }
+    }
+
+    fn consume_template_close(&mut self, kind: TemplateKind) {
+        match kind {
+            TemplateKind::String => {
+                self.reader.advance();
+            }
+            TemplateKind::TextBlock => {
+                self.reader.advance();
+                self.reader.advance();
                 self.reader.advance();
             }
         }
+    }
 
-        if self.reader.is_at_end() {
-            self.report_error(LexicalErrorType::UnterminatedString);
-            return;
-        }
+    fn emit_quoted_terminal_token(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
+        let token_type = match role {
+            TemplateChunkRole::FullLiteral => kind.literal_token(),
+            TemplateChunkRole::Continuation => {
+                if self.template_stack.is_empty() {
+                    self.mode = LexerMode::Normal;
+                }
+                kind.end_token()
+            }
+        };
 
-        self.reader.advance(); // "
-        self.push_token(TokenType::StringLiteral);
+        self.push_token(token_type);
+    }
+
+    fn emit_template_open_token(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
+        let token_type = match role {
+            TemplateChunkRole::FullLiteral => kind.begin_token(),
+            TemplateChunkRole::Continuation => kind.mid_token(),
+        };
+
+        self.push_token(token_type);
+    }
+
+    fn resume_template_after_expression(&mut self, kind: TemplateKind) {
+        self.scan_quoted_content(kind, TemplateChunkRole::Continuation);
     }
 
     fn push_token(&mut self, token_type: TokenType) {
@@ -630,6 +861,7 @@ pub enum LexicalErrorType {
     InvalidUnicodeEscape,
     UnterminatedChar,
     InvalidEscapeSequence,
+    UnterminatedTemplate,
 }
 
 fn is_java_identifier_start(c: char) -> bool {
@@ -1372,5 +1604,84 @@ mod tests {
                 LexicalErrorType::InvalidEscapeSequence
             ]
         );
+    }
+
+    #[test]
+    fn test_string_template_simple() {
+        assert_lex!(
+            "STR.\"Hello \\{name}!\"",
+            [
+                (TokenType::Identifier, "STR"), // Template Processor
+                (TokenType::Dot, "."),
+                (TokenType::StringTemplateBegin, "\"Hello \\{"),
+                (TokenType::Identifier, "name"),
+                (TokenType::StringTemplateEnd, "}!\"")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string_template_multiple_fragments() {
+        assert_lex!(
+            "\"a \\{b} c \\{d} e\"",
+            [
+                (TokenType::StringTemplateBegin, "\"a \\{"),
+                (TokenType::Identifier, "b"),
+                (TokenType::StringTemplateMid, "} c \\{"),
+                (TokenType::Identifier, "d"),
+                (TokenType::StringTemplateEnd, "} e\"")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_string_template_with_nested_braces() {
+        assert_lex!(
+            "\"Result: \\{ new int[]{1, 2} }\"",
+            [
+                (TokenType::StringTemplateBegin, "\"Result: \\{"),
+                (TokenType::New, "new"),
+                (TokenType::Int, "int"),
+                (TokenType::LeftBracket, "["),
+                (TokenType::RightBracket, "]"),
+                (TokenType::LeftBrace, "{"),
+                (TokenType::NumberLiteral, "1"),
+                (TokenType::Comma, ","),
+                (TokenType::NumberLiteral, "2"),
+                (TokenType::RightBrace, "}"),          // array
+                (TokenType::StringTemplateEnd, "}\"")  // template
+            ]
+        );
+    }
+
+    #[test]
+    fn test_nested_string_templates() {
+        assert_lex!(
+            "\"Outer \\{ \"Inner \\{x}\" }\"",
+            [
+                (TokenType::StringTemplateBegin, "\"Outer \\{"),
+                (TokenType::StringTemplateBegin, "\"Inner \\{"),
+                (TokenType::Identifier, "x"),
+                (TokenType::StringTemplateEnd, "}\""),
+                (TokenType::StringTemplateEnd, "}\"")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_text_block_template() {
+        assert_lex!(
+            "\"\"\"\n  Line 1 \\{a}\n  Line 2\"\"\"",
+            [
+                (TokenType::TextBlockTemplateBegin, "\"\"\"\n  Line 1 \\{"),
+                (TokenType::Identifier, "a"),
+                (TokenType::TextBlockTemplateEnd, "}\n  Line 2\"\"\"")
+            ]
+        );
+    }
+
+    #[test]
+    fn test_error_unterminated_string_template() {
+        assert_lex_errors!("\"Hello \\{name", [LexicalErrorType::UnterminatedTemplate]);
     }
 }
