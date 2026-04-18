@@ -176,20 +176,27 @@ impl<'a> JavaLexer<'a> {
                         }
                     }
 
-                    c if is_java_whitespace(c) => {
-                        // consume whitespace
-                    }
+                    c if is_java_whitespace(c) => self.handle_whitespace(),
 
                     c => {
                         if is_java_identifier_start(c) {
                             self.handle_identifier();
                         } else {
+                            self.push_token(TokenType::Unknown);
                             self.report_error(LexicalErrorType::UnexpectedChar(c));
                         }
                     }
                 }
             }
         }
+    }
+
+    fn handle_whitespace(&mut self) {
+        // consume remaining whitespace
+        while is_java_whitespace(self.reader.peek()) {
+            self.reader.advance();
+        }
+        self.push_token(TokenType::Whitespace);
     }
 
     fn handle_left_brace(&mut self) {
@@ -848,19 +855,23 @@ mod tests {
             let mut lexer = JavaLexer::new($source);
             match lexer.scan_tokens() {
                 Ok(tokens) => {
+                    let actual_filtered: Vec<_> = tokens.iter()
+                        .filter(|t| !t.token_type.is_trivia())
+                        .collect();
+
                     let expected: Vec<(TokenType, &str)> = vec![
                         $( ($expected_type, $expected_lexeme) ),*
                     ];
 
                     assert_eq!(
-                        tokens.len(),
+                        actual_filtered.len(),
                         expected.len(),
                         "Token count mismatch for source: '{}'\nActual tokens: {:#?}",
                         $source,
                         tokens
                     );
 
-                    for (i, token) in tokens.iter().enumerate() {
+                    for (i, token) in actual_filtered.into_iter().enumerate() {
                         assert_eq!(
                             token.token_type, expected[i].0,
                             "Type mismatch at index {} for source '{}'", i, $source

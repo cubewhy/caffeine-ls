@@ -135,6 +135,13 @@ pub enum TokenType {
     Goto,
     Const,
 
+    // Trivia
+    LineComment,
+    BlockComment,
+    Javadoc,
+    Whitespace,
+    Unknown,
+
     // Internal
     Identifier,
     Eof,
@@ -203,5 +210,12 @@ impl TokenType {
 
             _ => TokenType::Identifier,
         }
+    }
+
+    pub fn is_trivia(&self) -> bool {
+        matches!(
+            self,
+            TokenType::Whitespace | TokenType::LineComment | TokenType::BlockComment
+        )
     }
 }
