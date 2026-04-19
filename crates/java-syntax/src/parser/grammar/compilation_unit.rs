@@ -36,15 +36,20 @@ fn package_decl(p: &mut Parser) {
 }
 
 fn import_decl(p: &mut Parser) {
-    // import [static] a.b.C;
-    // import [static] a.b.*;
     let m = p.start();
 
     p.expect(IMPORT_KW);
     p.eat(STATIC_KW);
+    import_path(p);
+    p.expect(SEMICOLON);
+
+    m.complete(p, IMPORT_DECL);
+}
+
+fn import_path(p: &mut Parser) {
+    let m = p.start();
 
     p.expect(IDENTIFIER);
-
     while p.eat(DOT) {
         if p.eat(STAR) {
             break;
@@ -52,6 +57,5 @@ fn import_decl(p: &mut Parser) {
         p.expect(IDENTIFIER);
     }
 
-    p.expect(SEMICOLON);
-    m.complete(p, IMPORT_DECL);
+    m.complete(p, IMPORT_PATH);
 }

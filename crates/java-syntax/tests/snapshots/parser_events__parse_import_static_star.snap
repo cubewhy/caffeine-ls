@@ -29,6 +29,7 @@ StartNode(ROOT, forward_parent=None)
 StartNode(IMPORT_DECL, forward_parent=None)
 AddToken
 AddToken
+StartNode(IMPORT_PATH, forward_parent=None)
 AddToken
 AddToken
 AddToken
@@ -36,6 +37,7 @@ AddToken
 AddToken
 AddToken
 AddToken
+FinishNode
 AddToken
 FinishNode
 FinishNode

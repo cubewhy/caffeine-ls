@@ -160,6 +160,7 @@ pub enum SyntaxKind {
     CLASS_DECL,
     PACKAGE_DECL,
     IMPORT_DECL,
+    IMPORT_PATH,
     FIELD_DECL,
     METHOD_DECL,
     INTERFACE_DECL,
