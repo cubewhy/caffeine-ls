@@ -36,14 +36,19 @@ fn package_decl(p: &mut Parser) {
 }
 
 fn import_decl(p: &mut Parser) {
-    // import [static] <path.to.cls>;
+    // import [static] a.b.C;
+    // import [static] a.b.*;
     let m = p.start();
-    p.expect(IMPORT_KW);
-    p.eat(STATIC_KW); // optional `static`
-    qualified_name(p);
 
-    // import pkg.*;
-    if p.eat(DOT) && !p.eat(STAR) {
+    p.expect(IMPORT_KW);
+    p.eat(STATIC_KW);
+
+    p.expect(IDENTIFIER);
+
+    while p.eat(DOT) {
+        if p.eat(STAR) {
+            break;
+        }
         p.expect(IDENTIFIER);
     }
 
