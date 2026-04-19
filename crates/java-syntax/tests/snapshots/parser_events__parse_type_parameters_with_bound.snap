@@ -1,0 +1,60 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+class A<T extends Number> {}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+LESS "<"
+IDENTIFIER "T"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Number"
+GREATER ">"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(CLASS_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(TYPE_PARAMETERS, forward_parent=None)
+AddToken
+StartNode(TYPE_PARAMETER, forward_parent=None)
+AddToken
+StartNode(TYPE_BOUND, forward_parent=None)
+AddToken
+StartNode(TYPE, forward_parent=None)
+StartNode(QUALIFIED_NAME, forward_parent=None)
+AddToken
+FinishNode
+Tombstone
+FinishNode
+FinishNode
+FinishNode
+AddToken
+FinishNode
+StartNode(CLASS_BODY, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

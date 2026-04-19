@@ -1,0 +1,58 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+class A { A() {} }
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+IDENTIFIER "A"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE " "
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(CLASS_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(CLASS_BODY, forward_parent=None)
+AddToken
+StartNode(CONSTRUCTOR_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+StartNode(FORMAL_PARAMETERS, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+StartNode(BLOCK, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

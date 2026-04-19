@@ -1,0 +1,36 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+package a.b;
+
+TOKENS:
+PACKAGE_KW "package"
+WHITESPACE " "
+IDENTIFIER "a"
+DOT "."
+IDENTIFIER "b"
+SEMICOLON ";"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(PACKAGE_DECL, forward_parent=None)
+AddToken
+StartNode(QUALIFIED_NAME, forward_parent=None)
+AddToken
+AddToken
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

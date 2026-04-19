@@ -1,0 +1,76 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+record R(int x) { R() {} }
+
+TOKENS:
+IDENTIFIER "record"
+WHITESPACE " "
+IDENTIFIER "R"
+L_PAREN "("
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+IDENTIFIER "R"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE " "
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(RECORD_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(FORMAL_PARAMETERS, forward_parent=None)
+AddToken
+StartNode(FORMAL_PARAMETER, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+StartNode(TYPE, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+AddToken
+FinishNode
+AddToken
+FinishNode
+StartNode(RECORD_BODY, forward_parent=None)
+AddToken
+StartNode(CONSTRUCTOR_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+StartNode(FORMAL_PARAMETERS, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+StartNode(BLOCK, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

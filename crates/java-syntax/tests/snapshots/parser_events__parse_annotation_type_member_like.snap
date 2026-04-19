@@ -1,0 +1,61 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+@interface A { int value(); }
+
+TOKENS:
+AT "@"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "value"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE " "
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(ANNOTATION_TYPE_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+AddToken
+StartNode(ANNOTATION_TYPE_BODY, forward_parent=None)
+AddToken
+StartNode(METHOD_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+StartNode(TYPE, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+AddToken
+StartNode(FORMAL_PARAMETERS, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

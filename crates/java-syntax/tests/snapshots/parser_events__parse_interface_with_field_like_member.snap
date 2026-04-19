@@ -1,0 +1,66 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+interface A { int X = 1; }
+
+TOKENS:
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "X"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "1"
+SEMICOLON ";"
+WHITESPACE " "
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(INTERFACE_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(INTERFACE_BODY, forward_parent=None)
+AddToken
+StartNode(FIELD_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+StartNode(TYPE, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)
+StartNode(VARIABLE_DECLARATOR, forward_parent=None)
+AddToken
+Tombstone
+AddToken
+StartNode(ERROR, forward_parent=None)
+AddToken
+FinishNode
+FinishNode
+FinishNode
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

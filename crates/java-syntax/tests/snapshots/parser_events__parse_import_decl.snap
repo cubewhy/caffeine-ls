@@ -1,0 +1,40 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+import java.util.List;
+
+TOKENS:
+IMPORT_KW "import"
+WHITESPACE " "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "List"
+SEMICOLON ";"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(IMPORT_DECL, forward_parent=None)
+AddToken
+StartNode(QUALIFIED_NAME, forward_parent=None)
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

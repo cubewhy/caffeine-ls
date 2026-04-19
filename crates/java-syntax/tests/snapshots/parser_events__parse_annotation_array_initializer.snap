@@ -1,0 +1,76 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+@A({1, 2, 3}) class B {}
+
+TOKENS:
+AT "@"
+IDENTIFIER "A"
+L_PAREN "("
+L_BRACE "{"
+NUMBER_LIT "1"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "2"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "3"
+R_BRACE "}"
+R_PAREN ")"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "B"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(CLASS_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+StartNode(ANNOTATION, forward_parent=None)
+AddToken
+StartNode(QUALIFIED_NAME, forward_parent=None)
+AddToken
+FinishNode
+StartNode(ANNOTATION_ARGUMENT_LIST, forward_parent=None)
+AddToken
+StartNode(ARRAY_INITIALIZER, forward_parent=None)
+AddToken
+StartNode(ERROR, forward_parent=None)
+AddToken
+FinishNode
+AddToken
+StartNode(ERROR, forward_parent=None)
+AddToken
+FinishNode
+AddToken
+StartNode(ERROR, forward_parent=None)
+AddToken
+FinishNode
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+AddToken
+AddToken
+StartNode(CLASS_BODY, forward_parent=None)
+AddToken
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+<none>

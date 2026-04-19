@@ -1,0 +1,79 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+class A { void f( { int x; } }
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+SEMICOLON ";"
+WHITESPACE " "
+R_BRACE "}"
+WHITESPACE " "
+R_BRACE "}"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(CLASS_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(CLASS_BODY, forward_parent=None)
+AddToken
+StartNode(METHOD_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(FORMAL_PARAMETERS, forward_parent=None)
+AddToken
+StartNode(ERROR, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+StartNode(ERROR, forward_parent=None)
+Error(ParseError { kind: ExpectedConstruct(Type), pos: 6 })
+FinishNode
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+FinishNode
+Error(ParseError { kind: ExpectedToken { expected: [R_PAREN], found: None }, pos: 12 })
+FinishNode
+Error(ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: None }, pos: 12 })
+FinishNode
+Error(ParseError { kind: ExpectedToken { expected: [R_BRACE], found: None }, pos: 12 })
+FinishNode
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+ParseError { kind: ExpectedConstruct(Type), pos: 6 }
+ParseError { kind: ExpectedToken { expected: [R_PAREN], found: None }, pos: 12 }
+ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: None }, pos: 12 }
+ParseError { kind: ExpectedToken { expected: [R_BRACE], found: None }, pos: 12 }

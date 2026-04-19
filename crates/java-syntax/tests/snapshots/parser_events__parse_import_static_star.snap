@@ -1,0 +1,56 @@
+---
+source: crates/java-syntax/tests/parser_events.rs
+expression: out
+---
+SOURCE:
+import static java.util.Collections.*;
+
+TOKENS:
+IMPORT_KW "import"
+WHITESPACE " "
+STATIC_KW "static"
+WHITESPACE " "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "Collections"
+DOT "."
+STAR "*"
+SEMICOLON ";"
+
+
+LEX_ERRORS:
+<none>
+
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(IMPORT_DECL, forward_parent=None)
+AddToken
+AddToken
+StartNode(QUALIFIED_NAME, forward_parent=None)
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+Error(ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(STAR) }, pos: 8 })
+FinishNode
+Error(ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(STAR) }, pos: 8 })
+FinishNode
+StartNode(ERROR, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+Error(ParseError { kind: ExpectedConstruct(Declaration), pos: 8 })
+AddToken
+AddToken
+FinishNode
+FinishNode
+
+
+PARSE_ERRORS:
+ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(STAR) }, pos: 8 }
+ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(STAR) }, pos: 8 }
+ParseError { kind: ExpectedConstruct(Declaration), pos: 8 }
