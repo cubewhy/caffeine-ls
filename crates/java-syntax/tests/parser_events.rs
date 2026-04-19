@@ -280,3 +280,8 @@ parser_snapshot!(
     parse_type_parameters_method_interface,
     r#"interface A { <T> T func(); }"#
 );
+
+parser_snapshot!(
+    parse_type_parameters_generic_constructor,
+    r#"class A { <T> A() {} }"#
+);
