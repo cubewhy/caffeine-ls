@@ -6,9 +6,10 @@ use crate::{
         SyntaxKind::{self, *},
     },
     lexer::token::Token,
-    parser::{marker::Marker, reader::TokenSource, sink::Sink},
+    parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
 };
 
+mod checkpoint;
 pub mod grammar;
 mod marker;
 mod reader;
@@ -111,6 +112,20 @@ impl<'a> Parser<'a> {
             green_node,
             errors: self.errors,
         }
+    }
+
+    pub(crate) fn checkpoint(&self) -> Checkpoint {
+        Checkpoint {
+            source_pos: self.source.pos(),
+            events_len: self.events.len(),
+            errors_len: self.errors.len(),
+        }
+    }
+
+    pub(crate) fn rewind(&mut self, cp: Checkpoint) {
+        self.source.set_pos(cp.source_pos);
+        self.events.truncate(cp.events_len);
+        self.errors.truncate(cp.errors_len);
     }
 
     pub(crate) fn start(&mut self) -> Marker {

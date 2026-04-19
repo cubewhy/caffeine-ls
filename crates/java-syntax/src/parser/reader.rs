@@ -55,4 +55,12 @@ impl<'a> TokenSource<'a> {
     pub fn pos(&self) -> usize {
         self.cursor
     }
+
+    pub fn set_pos(&mut self, new_pos: usize) {
+        assert!(
+            new_pos <= self.indices.len(),
+            "TokenSource::set_pos out of bounds"
+        );
+        self.cursor = new_pos;
+    }
 }
