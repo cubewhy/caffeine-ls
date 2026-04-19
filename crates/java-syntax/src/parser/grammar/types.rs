@@ -179,9 +179,3 @@ pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
     m.complete(p, TYPE);
     Ok(())
 }
-
-fn method_type_parameters_opt(p: &mut Parser) {
-    if p.at(LESS) {
-        type_parameters(p);
-    }
-}
