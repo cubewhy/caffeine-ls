@@ -56,3 +56,18 @@ pub fn recover_member(p: &mut Parser) {
 pub fn recover_parameter(p: &mut Parser) {
     recover_until(p, &[COMMA, R_PAREN]);
 }
+
+pub fn recover_type_bound(p: &mut Parser) {
+    recover_until(
+        p,
+        &[
+            COMMA,
+            GREATER,
+            BIT_AND,
+            L_BRACE,
+            L_PAREN,
+            IMPLEMENTS_KW,
+            EXTENDS_KW,
+        ],
+    );
+}

@@ -1,4 +1,5 @@
 use crate::{
+    grammar::types::type_parameters_opt,
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
@@ -70,6 +71,9 @@ pub fn record_decl_rest(p: &mut Parser, m: Marker) {
     // record name
     p.expect(IDENTIFIER);
 
+    // generics
+    type_parameters_opt(p);
+
     // record header
     formal_parameters(p);
 
@@ -115,6 +119,9 @@ pub fn class_decl_rest(p: &mut Parser, m: Marker) {
 
     // class name
     p.expect(IDENTIFIER);
+
+    // generics
+    type_parameters_opt(p);
 
     // extends
     if p.at(EXTENDS_KW) {
@@ -223,7 +230,10 @@ pub fn interface_decl_rest(p: &mut Parser, m: Marker) {
     // interface name
     p.expect(IDENTIFIER);
 
-    // implements
+    // generics
+    type_parameters_opt(p);
+
+    // extends
     if p.at(EXTENDS_KW) {
         interface_extends_clause(p);
     }
