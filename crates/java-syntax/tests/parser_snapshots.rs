@@ -248,3 +248,21 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_varargs,
+    indoc! {r#"
+        class A {
+            void func(String... args) {}
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_varargs_with_modifiers,
+    indoc! {r#"
+        class A {
+            void func(@Annotation final String... args) {}
+        }
+    "#}
+);

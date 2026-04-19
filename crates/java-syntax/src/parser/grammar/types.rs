@@ -9,16 +9,16 @@ use crate::{
 };
 
 pub fn formal_parameters(p: &mut Parser) {
-    // [modifiers] <type> <identifier>, [modifiers] <type> <identifier>
+    // [modifiers] <type>[...] <identifier>, [modifiers] <type>[...] <identifier>
     let m = p.start();
 
     p.expect(L_PAREN);
 
     // parameters
     if !p.at(R_PAREN) {
-        formal_parameter(p);
+        parameter(p);
         while p.eat(COMMA) {
-            formal_parameter(p);
+            parameter(p);
         }
     }
 
@@ -27,19 +27,32 @@ pub fn formal_parameters(p: &mut Parser) {
     m.complete(p, FORMAL_PARAMETERS);
 }
 
-fn formal_parameter(p: &mut Parser) {
+fn parameter(p: &mut Parser) {
     let m = p.start();
+
     modifiers(p);
 
+    // type
     if type_(p).is_err() {
         recover_parameter(p);
         m.complete(p, ERROR);
         return;
     }
 
-    if p.at(IDENTIFIER) {
-        p.bump();
-        m.complete(p, FORMAL_PARAMETER);
+    // ...
+    let mut is_spread = false;
+    if p.eat(ELLIPSIS) {
+        is_spread = true;
+    }
+
+    // parameter name
+    if p.eat(IDENTIFIER) {
+        let kind = if is_spread {
+            SPREAD_PARAMETER
+        } else {
+            FORMAL_PARAMETER
+        };
+        m.complete(p, kind);
     } else {
         p.error_expected(&[IDENTIFIER]);
         recover_parameter(p);

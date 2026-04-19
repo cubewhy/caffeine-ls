@@ -1,0 +1,68 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class A {
+    void func(String... args) {}
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+IDENTIFIER "String"
+ELLIPSIS "..."
+WHITESPACE " "
+IDENTIFIER "args"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    MODIFIER_LIST
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          SPREAD_PARAMETER
+            MODIFIER_LIST
+            TYPE
+              IDENTIFIER "String"
+            ELLIPSIS "..."
+            WHITESPACE " "
+            IDENTIFIER "args"
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
