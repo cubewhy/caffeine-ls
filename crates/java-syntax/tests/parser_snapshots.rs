@@ -275,3 +275,25 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_assert_statement,
+    indoc! {r#"
+        class A {
+            void func() {
+                assert true: "failed";
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_assert_statement_missing_reason,
+    indoc! {r#"
+        class A {
+            void func() {
+                assert true:;
+            }
+        }
+    "#}
+);
