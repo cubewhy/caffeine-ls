@@ -1,5 +1,9 @@
 use crate::{
-    grammar::{member::annotation_type_member_decl, types::type_parameters_opt},
+    grammar::{
+        member::annotation_type_member_decl,
+        names::qualified_name,
+        types::{type_, type_parameters_opt},
+    },
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
@@ -265,28 +269,45 @@ fn interface_body(p: &mut Parser) {
     m.complete(p, INTERFACE_BODY);
 }
 
-pub fn variable_declarator_list(p: &mut Parser) {
+pub fn variable_declarator_list(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
-    variable_declarator(p);
+    if type_(p).is_err() {}
+
+    if variable_declarator(p).is_err() {
+        m.complete(p, VARIABLE_DECLARATOR_LIST);
+        return Err(());
+    }
+
     while p.eat(COMMA) {
-        variable_declarator(p);
+        if variable_declarator(p).is_err() {
+            break;
+        }
     }
 
     m.complete(p, VARIABLE_DECLARATOR_LIST);
+    Ok(())
 }
 
-fn variable_declarator(p: &mut Parser) {
+fn variable_declarator(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
-    p.expect(IDENTIFIER); // variable name
 
-    // array type like
-    // int a[]
+    // variable name
+    if !p.eat(IDENTIFIER) {
+        p.error_expected(&[IDENTIFIER]);
+        m.complete(p, VARIABLE_DECLARATOR);
+        return Err(());
+    }
+
+    // a[]
     dimensions(p);
 
-    if p.eat(EQUAL) {
-        expression(p);
+    // init expr
+    if p.eat(EQUAL) && expression(p).is_err() {
+        m.complete(p, VARIABLE_DECLARATOR);
+        return Err(());
     }
 
     m.complete(p, VARIABLE_DECLARATOR);
+    Ok(())
 }
