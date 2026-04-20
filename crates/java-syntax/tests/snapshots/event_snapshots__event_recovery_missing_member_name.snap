@@ -37,9 +37,13 @@ AddToken
 Tombstone
 FinishNode
 StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)
+StartNode(ERROR, forward_parent=None)
+Error(ParseError { kind: ExpectedConstruct(Type), pos: 4 })
+FinishNode
 StartNode(VARIABLE_DECLARATOR, forward_parent=None)
 Error(ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(SEMICOLON) }, pos: 4 })
-Tombstone
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 FinishNode
 AddToken
@@ -50,4 +54,5 @@ FinishNode
 FinishNode
 
 PARSE_ERRORS:
+ParseError { kind: ExpectedConstruct(Type), pos: 4 }
 ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(SEMICOLON) }, pos: 4 }
