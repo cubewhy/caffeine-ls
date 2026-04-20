@@ -187,9 +187,12 @@ impl<'a> Parser<'a> {
         self.events.push(Event::Error(error));
     }
 
-    pub(crate) fn expect(&mut self, kind: SyntaxKind) {
+    pub(crate) fn expect(&mut self, kind: SyntaxKind) -> bool {
         if !self.eat(kind) {
             self.error_expected(&[kind]);
+            false
+        } else {
+            true
         }
     }
 
