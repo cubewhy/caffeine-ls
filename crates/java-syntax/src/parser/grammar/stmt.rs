@@ -68,8 +68,8 @@ fn statement(p: &mut Parser) {
         empty_statement(p);
     } else if p.at(IF_KW) {
         if_statement(p);
-    // } else if p.at(WHILE_KW) {
-    //     while_statement(p);
+    } else if p.at(WHILE_KW) {
+        while_statement(p);
     // } else if p.at(DO_KW) {
     //     do_statement(p);
     // } else if p.at(FOR_KW) {
@@ -121,10 +121,29 @@ fn assert_statement(p: &mut Parser) {
 }
 
 #[stacksafe]
+fn while_statement(p: &mut Parser) {
+    let m = p.start();
+    p.expect(WHILE_KW); // while
+
+    // condition
+    if p.at(L_PAREN) {
+        parenthesized_expression(p);
+    } else {
+        p.error_expected(&[L_PAREN]);
+        recover_until_or_eat(p, &[R_PAREN, L_BRACE, SEMICOLON], SEMICOLON);
+    }
+
+    statement(p);
+
+    m.complete(p, WHILE_STMT);
+}
+
+#[stacksafe]
 fn if_statement(p: &mut Parser) {
     let m = p.start();
     p.expect(IF_KW); // if
 
+    // condition
     if p.at(L_PAREN) {
         parenthesized_expression(p);
     } else {
@@ -142,7 +161,7 @@ fn if_statement(p: &mut Parser) {
         }
     }
 
-    m.complete(p, IF_STATEMENT);
+    m.complete(p, IF_STMT);
 }
 
 fn parenthesized_expression(p: &mut Parser) {

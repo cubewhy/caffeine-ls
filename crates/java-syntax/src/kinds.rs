@@ -158,7 +158,8 @@ pub enum SyntaxKind {
     BREAK_STMT,
     CONTINUE_STMT,
     ASSERT_STMT,
-    IF_STATEMENT,
+    IF_STMT,
+    WHILE_STMT,
     PARENTHESIZED_EXPR,
 
     DIMENSIONS,
