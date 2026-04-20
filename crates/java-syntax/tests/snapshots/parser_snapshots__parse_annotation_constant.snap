@@ -62,7 +62,7 @@ ROOT
             IDENTIFIER "MAX_SIZE"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "100"
         SEMICOLON ";"
@@ -77,7 +77,7 @@ ROOT
             IDENTIFIER "DEFAULT_TYPE"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               STRING_LIT "\"JSON\""
         SEMICOLON ";"

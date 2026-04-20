@@ -41,14 +41,14 @@ ROOT
           L_PAREN "("
           ARRAY_INITIALIZER
             L_BRACE "{"
-            ERROR
+            EXPRESSION
               NUMBER_LIT "1"
             COMMA ","
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "2"
             COMMA ","
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "3"
             R_BRACE "}"

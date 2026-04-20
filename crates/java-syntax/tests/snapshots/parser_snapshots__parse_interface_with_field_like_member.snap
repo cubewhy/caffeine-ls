@@ -46,7 +46,7 @@ ROOT
             IDENTIFIER "X"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "1"
         SEMICOLON ";"

@@ -53,7 +53,7 @@ ROOT
             IDENTIFIER "a"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "1"
           COMMA ","
@@ -62,7 +62,7 @@ ROOT
             IDENTIFIER "b"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "2"
         SEMICOLON ";"

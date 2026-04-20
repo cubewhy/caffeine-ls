@@ -37,6 +37,7 @@ ROOT
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
+            MISSING
         WHITESPACE " "
         SEMICOLON ";"
       WHITESPACE " "

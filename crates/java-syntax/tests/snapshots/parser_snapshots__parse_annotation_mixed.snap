@@ -78,7 +78,7 @@ ROOT
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        ERROR
+        EXPRESSION
           WHITESPACE " "
           NUMBER_LIT "0"
         SEMICOLON ";"
@@ -96,7 +96,7 @@ ROOT
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        ERROR
+        EXPRESSION
           WHITESPACE " "
           NUMBER_LIT "1"
         SEMICOLON ";"
@@ -111,7 +111,7 @@ ROOT
             IDENTIFIER "VERSION"
             WHITESPACE " "
             EQUAL "="
-            ERROR
+            EXPRESSION
               WHITESPACE " "
               NUMBER_LIT "1.0"
         SEMICOLON ";"

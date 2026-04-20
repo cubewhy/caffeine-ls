@@ -45,15 +45,15 @@ StartNode(ANNOTATION_ARGUMENT_LIST, forward_parent=None)
 AddToken
 StartNode(ARRAY_INITIALIZER, forward_parent=None)
 AddToken
-StartNode(ERROR, forward_parent=None)
+StartNode(EXPRESSION, forward_parent=None)
 AddToken
 FinishNode
 AddToken
-StartNode(ERROR, forward_parent=None)
+StartNode(EXPRESSION, forward_parent=None)
 AddToken
 FinishNode
 AddToken
-StartNode(ERROR, forward_parent=None)
+StartNode(EXPRESSION, forward_parent=None)
 AddToken
 FinishNode
 AddToken

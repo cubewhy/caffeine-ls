@@ -63,10 +63,16 @@ AddToken
 AddToken
 FinishNode
 Error(ParseError { kind: ExpectedToken { expected: [R_PAREN], found: None }, pos: 12 })
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 Error(ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: None }, pos: 12 })
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 Error(ParseError { kind: ExpectedToken { expected: [R_BRACE], found: None }, pos: 12 })
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 FinishNode
 FinishNode

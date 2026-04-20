@@ -44,14 +44,14 @@ ROOT
             L_BRACE "{"
             ARRAY_INITIALIZER
               L_BRACE "{"
-              ERROR
+              EXPRESSION
                 NUMBER_LIT "1"
               R_BRACE "}"
             COMMA ","
             ARRAY_INITIALIZER
               WHITESPACE " "
               L_BRACE "{"
-              ERROR
+              EXPRESSION
                 NUMBER_LIT "2"
               R_BRACE "}"
             R_BRACE "}"

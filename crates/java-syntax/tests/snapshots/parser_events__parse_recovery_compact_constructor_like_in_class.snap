@@ -43,10 +43,13 @@ FinishNode
 StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)
 StartNode(VARIABLE_DECLARATOR, forward_parent=None)
 Error(ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(L_BRACE) }, pos: 4 })
-Tombstone
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 FinishNode
 Error(ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(L_BRACE) }, pos: 4 })
+StartNode(MISSING, forward_parent=None)
+FinishNode
 FinishNode
 StartNode(INSTANCE_INITIALIZER, forward_parent=None)
 StartNode(BLOCK, forward_parent=None)

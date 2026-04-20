@@ -62,6 +62,9 @@ ROOT
             R_BRACE "}"
             WHITESPACE " "
             R_BRACE "}"
+          MISSING
+        MISSING
+      MISSING
 errors:
   ParseError { kind: ExpectedConstruct(Type), pos: 6 }
   ParseError { kind: ExpectedToken { expected: [R_PAREN], found: None }, pos: 12 }

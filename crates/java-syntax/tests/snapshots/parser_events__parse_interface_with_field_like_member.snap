@@ -49,7 +49,7 @@ StartNode(VARIABLE_DECLARATOR, forward_parent=None)
 AddToken
 Tombstone
 AddToken
-StartNode(ERROR, forward_parent=None)
+StartNode(EXPRESSION, forward_parent=None)
 AddToken
 FinishNode
 FinishNode

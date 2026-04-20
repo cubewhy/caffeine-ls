@@ -38,6 +38,8 @@ ROOT
           IDENTIFIER "A"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
+            MISSING
+        MISSING
       INSTANCE_INITIALIZER
         BLOCK
           WHITESPACE " "
