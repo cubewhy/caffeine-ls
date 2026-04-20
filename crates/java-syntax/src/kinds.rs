@@ -157,6 +157,7 @@ pub enum SyntaxKind {
     THROW_STMT,
     BREAK_STMT,
     CONTINUE_STMT,
+    ASSERT_STMT,
     IF_STATEMENT,
     PARENTHESIZED_EXPR,
 

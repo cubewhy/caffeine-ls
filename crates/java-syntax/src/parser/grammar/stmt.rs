@@ -5,7 +5,7 @@ use crate::grammar::decl::{
     class_decl_rest, enum_decl_rest, interface_decl_rest, record_decl_rest,
     variable_declarator_list,
 };
-use crate::grammar::error_recover::{recover_block_statement, recover_until_or_eat};
+use crate::grammar::error_recover::{recover_block_statement, recover_until, recover_until_or_eat};
 use crate::grammar::modifiers::{annotation, expression};
 use crate::grammar::types::type_;
 use crate::kinds::SyntaxKind::*;
@@ -87,13 +87,36 @@ fn statement(p: &mut Parser) {
         break_statement(p);
     } else if p.at(CONTINUE_KW) {
         continue_statement(p);
-    // } else if p.at(ASSERT_KW) {
-    //     assert_statement(p);
+    } else if p.at(ASSERT_KW) {
+        assert_statement(p);
     } else if p.at_contextual_kw(ContextualKeyword::Yield) {
         yield_statement(p);
     } else {
         expression_statement(p);
     }
+}
+
+/// https://docs.oracle.com/javase/specs/jls/se8/html/jls-14.html#jls-14.10
+fn assert_statement(p: &mut Parser) {
+    // assert <condition expr> [: <msg expr>];
+    let m = p.start();
+
+    p.expect(ASSERT_KW);
+
+    if expression(p).is_err() {
+        // recover until COLON or SEMICOLON
+        recover_until(p, &[COLON, SEMICOLON]);
+    }
+
+    // optional msg expr
+    if p.eat(COLON) && expression(p).is_err() {
+        // recover until SEMICOLON
+        recover_until(p, &[SEMICOLON]);
+    }
+
+    p.expect(SEMICOLON);
+
+    m.complete(p, ASSERT_STMT);
 }
 
 #[stacksafe]
