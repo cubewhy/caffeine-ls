@@ -147,6 +147,7 @@ fn if_statement(p: &mut Parser) {
     if p.at(L_PAREN) {
         parenthesized_expression(p);
     } else {
+        p.error_expected(&[L_PAREN]);
         recover_until_or_eat(p, &[R_PAREN, L_BRACE, SEMICOLON], SEMICOLON);
     }
 
