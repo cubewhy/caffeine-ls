@@ -1,5 +1,5 @@
 use crate::{
-    grammar::{member::annotation_type_member_decl, types::type_parameters_opt},
+    grammar::{expr::expression, member::annotation_type_member_decl, types::type_parameters_opt},
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
@@ -11,7 +11,7 @@ use crate::{
                 at_member_start, class_member_decl, interface_member_decl, member_decl_rest,
                 record_member_decl,
             },
-            modifiers::{annotation, expression, modifiers},
+            modifiers::{annotation, modifiers},
             types::{dimensions, formal_parameters},
         },
         marker::Marker,

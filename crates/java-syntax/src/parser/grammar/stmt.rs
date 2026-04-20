@@ -6,7 +6,8 @@ use crate::grammar::decl::{
     variable_declarator_list,
 };
 use crate::grammar::error_recover::{recover_block_statement, recover_until, recover_until_or_eat};
-use crate::grammar::modifiers::{annotation, expression};
+use crate::grammar::expr::expression;
+use crate::grammar::modifiers::annotation;
 use crate::grammar::types::type_;
 use crate::kinds::SyntaxKind::*;
 use crate::parser::{ExpectedConstruct, Parser};

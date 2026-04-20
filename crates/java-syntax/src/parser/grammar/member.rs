@@ -1,5 +1,5 @@
 use crate::grammar::error_recover::recover_annotation_type_parameter;
-use crate::grammar::modifiers::expression;
+use crate::grammar::expr::expression;
 use crate::grammar::types::{type_or_void, type_parameters_opt};
 use crate::kinds::{ContextualKeyword, SyntaxKind::*};
 use crate::parser::grammar::clauses::{throws_clause, throws_clause_opt};
