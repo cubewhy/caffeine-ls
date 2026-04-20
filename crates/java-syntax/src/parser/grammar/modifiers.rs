@@ -1,4 +1,5 @@
 use crate::{
+    grammar::error_recover::recover_parameter,
     kinds::SyntaxKind::*,
     parser::{ExpectedConstruct, Parser, grammar::names::qualified_name},
     tokenset,
@@ -75,7 +76,9 @@ fn element_value(p: &mut Parser) {
     } else if p.at(L_BRACE) {
         array_initializer(p);
     } else {
-        expression(p);
+        if expression(p).is_err() {
+            recover_parameter(p);
+        }
     }
 }
 
