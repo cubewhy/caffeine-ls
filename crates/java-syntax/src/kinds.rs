@@ -160,6 +160,7 @@ pub enum SyntaxKind {
     ASSERT_STMT,
     IF_STMT,
     WHILE_STMT,
+    SYNCHRONIZED_STMT,
     PARENTHESIZED_EXPR,
 
     DIMENSIONS,

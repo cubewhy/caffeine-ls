@@ -334,3 +334,32 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_synchronized_stmt,
+    indoc! {r#"
+        class Test {
+            public static void main(String[] args) {
+                Test t = new Test();
+                synchronized(t) {
+                    synchronized(t) {
+                        System.out.println("made it!");
+                    }
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_synchronized_stmt_missing_expr,
+    indoc! {r#"
+        class Test {
+            public static void main(String[] args) {
+                synchronized {
+                    System.out.println("made it!");
+                }
+            }
+        }
+    "#}
+);

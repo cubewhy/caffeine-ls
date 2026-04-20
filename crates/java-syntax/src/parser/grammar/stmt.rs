@@ -78,8 +78,8 @@ fn statement(p: &mut Parser) {
     //     try_statement(p);
     // } else if p.at(SWITCH_KW) {
     //     switch_statement(p);
-    // } else if p.at(SYNCHRONIZED_KW) {
-    //     synchronized_statement(p);
+    } else if p.at(SYNCHRONIZED_KW) {
+        synchronized_statement(p);
     } else if p.at(RETURN_KW) {
         return_statement(p);
     } else if p.at(THROW_KW) {
@@ -95,6 +95,29 @@ fn statement(p: &mut Parser) {
     } else {
         expression_statement(p);
     }
+}
+
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.19
+fn synchronized_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(SYNCHRONIZED_KW);
+
+    if p.at(L_PAREN) {
+        parenthesized_expression(p);
+    } else {
+        p.error_expected(&[L_PAREN]);
+        recover_until_or_eat(p, &[R_PAREN, L_BRACE, SEMICOLON], SEMICOLON);
+    }
+
+    if p.at(L_BRACE) {
+        block(p);
+    } else {
+        p.error_expected(&[L_BRACE]);
+        recover_block_statement(p);
+    }
+
+    m.complete(p, SYNCHRONIZED_STMT);
 }
 
 /// https://docs.oracle.com/javase/specs/jls/se8/html/jls-14.html#jls-14.10
