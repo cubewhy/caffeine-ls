@@ -198,6 +198,10 @@ impl<'a> Parser<'a> {
             expected: expected.to_vec(),
             found: self.current(),
         });
+
+        // insert MISSING node
+        let m = self.start();
+        m.complete(self, SyntaxKind::MISSING);
     }
 
     pub(crate) fn error_expected_construct(&mut self, construct: ExpectedConstruct) {
