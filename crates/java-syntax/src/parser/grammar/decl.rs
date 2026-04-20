@@ -1,9 +1,5 @@
 use crate::{
-    grammar::{
-        member::annotation_type_member_decl,
-        names::qualified_name,
-        types::{type_, type_parameters_opt},
-    },
+    grammar::{member::annotation_type_member_decl, types::type_parameters_opt},
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
