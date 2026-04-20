@@ -1,0 +1,91 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class A {
+    void func() {
+        while (true) {
+            // do something
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+TRUE_LIT "true"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n            "
+LINE_COMMENT "// do something"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    MODIFIER_LIST
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          WHILE_STMT
+            WHITESPACE "\n        "
+            WHILE_KW "while"
+            PARENTHESIZED_EXPR
+              WHITESPACE " "
+              L_PAREN "("
+              EXPRESSION
+                TRUE_LIT "true"
+              R_PAREN ")"
+            BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              WHITESPACE "\n            "
+              LINE_COMMENT "// do something"
+              WHITESPACE "\n        "
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

@@ -297,3 +297,40 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_while_stmt,
+    indoc! {r#"
+        class A {
+            void func() {
+                while (true) {
+                    // do something
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_while_stmt_missing_condition,
+    indoc! {r#"
+        class A {
+            void func() {
+                while {
+                    // do something
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_while_stmt_short,
+    indoc! {r#"
+        class A {
+            void func() {
+                while (true) break;
+            }
+        }
+    "#}
+);
