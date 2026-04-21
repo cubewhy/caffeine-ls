@@ -81,3 +81,17 @@ fn element_value_pair(p: &mut Parser) {
 
     m.complete(p, ELEMENT_VALUE_PAIR);
 }
+
+pub fn variable_modifier(p: &mut Parser) {
+    let m = p.start();
+
+    while p.at(AT) || p.at(FINAL_KW) {
+        if p.at(AT) {
+            annotation(p);
+        } else {
+            p.expect(FINAL_KW);
+        }
+    }
+
+    m.complete(p, MODIFIER_LIST);
+}

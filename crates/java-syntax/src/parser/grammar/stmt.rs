@@ -7,7 +7,7 @@ use crate::grammar::decl::{
 };
 use crate::grammar::error_recover::{recover_block_statement, recover_until, recover_until_or_eat};
 use crate::grammar::expr::expression;
-use crate::grammar::modifiers::annotation;
+use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::type_;
 use crate::kinds::SyntaxKind::*;
 use crate::parser::{ExpectedConstruct, Parser};
@@ -429,18 +429,4 @@ fn local_variable_declaration(p: &mut Parser) -> Result<(), ()> {
 
     m.complete(p, LOCAL_VARIABLE_DECLARATION);
     Ok(())
-}
-
-fn variable_modifier(p: &mut Parser) {
-    let m = p.start();
-
-    while p.at(AT) || p.at(FINAL_KW) {
-        if p.at(AT) {
-            annotation(p);
-        } else {
-            p.expect(FINAL_KW);
-        }
-    }
-
-    m.complete(p, MODIFIER_LIST);
 }
