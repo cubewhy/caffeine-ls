@@ -65,6 +65,10 @@ pub fn recover_parameter(p: &mut Parser) {
     recover_until(p, &[COMMA, R_PAREN]);
 }
 
+pub fn recover_catch_parameter(p: &mut Parser) {
+    recover_until(p, &[R_PAREN, L_BRACE]);
+}
+
 pub fn recover_annotation_type_parameter(p: &mut Parser) {
     recover_until(p, &[R_PAREN, SEMICOLON, R_BRACE]);
 

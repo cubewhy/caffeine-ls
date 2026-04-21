@@ -162,6 +162,11 @@ pub enum SyntaxKind {
     WHILE_STMT,
     SYNCHRONIZED_STMT,
     DO_STMT,
+    TRY_STMT,
+    TRY_WITH_RESOURCES_STMT,
+    RESOURCE_SPECIFICATION,
+    RESOURCE,
+    VARIABLE_ACCESS,
     PARENTHESIZED_EXPR,
 
     DIMENSIONS,
@@ -214,6 +219,9 @@ pub enum SyntaxKind {
     THROWS_CLAUSE,            // throws <exception a>, <exception b>
     INTERFACE_EXTENDS_CLAUSE, // interface <identifier> extends A, B
     IMPLEMENTS_CLAUSE,        // implements <interface 1>, <interface 2>
+    CATCH_CLAUSE,
+    CATCH_FORMAL_PARAMETER,
+    FINALLY_CLAUSE,
 
     // The root node
     // This should be the last variant.

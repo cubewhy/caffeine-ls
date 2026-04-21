@@ -308,5 +308,6 @@ pub enum ExpectedConstruct {
     Expression,
     Statement,
     Type,
+    Resource,
     QualifiedName,
 }

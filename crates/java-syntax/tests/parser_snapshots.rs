@@ -388,3 +388,29 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_try_statement,
+    indoc! {r#"
+        class Test {
+            void func() {
+                try {}
+                catch (final Exception e) {}
+                finally {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_try_statement_missing_catch_parameter,
+    indoc! {r#"
+        class Test {
+            void func() {
+                try {}
+                catch {}
+                finally {}
+            }
+        }
+    "#}
+);

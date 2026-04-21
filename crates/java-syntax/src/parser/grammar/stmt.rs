@@ -5,10 +5,12 @@ use crate::grammar::decl::{
     class_decl_rest, enum_decl_rest, interface_decl_rest, record_decl_rest,
     variable_declarator_list,
 };
-use crate::grammar::error_recover::{recover_block_statement, recover_until, recover_until_or_eat};
-use crate::grammar::expr::expression;
+use crate::grammar::error_recover::{
+    recover_block_statement, recover_catch_parameter, recover_until, recover_until_or_eat,
+};
+use crate::grammar::expr::{expression, variable_access};
 use crate::grammar::modifiers::variable_modifier;
-use crate::grammar::types::type_;
+use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::{ExpectedConstruct, Parser};
 
@@ -74,8 +76,8 @@ fn statement(p: &mut Parser) {
         do_statement(p);
     // } else if p.at(FOR_KW) {
     //     for_statement(p);
-    // } else if p.at(TRY_KW) {
-    //     try_statement(p);
+    } else if p.at(TRY_KW) {
+        try_statement(p);
     // } else if p.at(SWITCH_KW) {
     //     switch_statement(p);
     } else if p.at(SYNCHRONIZED_KW) {
@@ -95,6 +97,116 @@ fn statement(p: &mut Parser) {
     } else {
         expression_statement(p);
     }
+}
+
+/// TryStatement:
+///   try Block Catches
+///   try Block [Catches] Finally
+///   TryWithResourcesStatement
+///
+/// Catches:
+///   CatchClause {CatchClause}
+///
+/// CatchClause:
+///   catch ( CatchFormalParameter ) Block
+///
+/// CatchFormalParameter:
+///   {VariableModifier} CatchType VariableDeclaratorId
+///
+/// CatchType:
+///   UnannClassType {| ClassType}
+///
+/// Finally:
+///   finally Block
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.20
+fn try_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(TRY_KW);
+
+    // try-with-resources
+    let mut is_twr = false;
+    if p.at(L_PAREN) {
+        resource_specification(p);
+        is_twr = true;
+    }
+
+    // block after `try`
+    block(p);
+
+    // catch clauses
+    let mut has_catch = false;
+    while p.at(CATCH_KW) {
+        catch_clause(p);
+        has_catch = true;
+    }
+
+    // final clause
+    let mut has_finally = false;
+    if p.at(FINALLY_KW) {
+        finally_clause(p);
+        has_finally = true;
+    }
+
+    // syntax check
+    if !has_catch && !has_finally && !is_twr {
+        p.error_expected(&[CATCH_KW, FINALLY_KW]);
+    }
+
+    if is_twr {
+        m.complete(p, TRY_WITH_RESOURCES_STMT);
+    } else {
+        m.complete(p, TRY_STMT);
+    }
+}
+
+fn catch_clause(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(CATCH_KW);
+
+    if p.expect(L_PAREN) {
+        catch_formal_parameter(p);
+        p.expect(R_PAREN);
+    } else {
+        recover_catch_parameter(p);
+    }
+
+    block(p);
+
+    m.complete(p, CATCH_CLAUSE);
+}
+
+/// CatchFormalParameter:
+///   {VariableModifier} CatchType VariableDeclaratorId
+///
+/// VariableDeclaratorId:
+///   Identifier [Dims]
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-CatchFormalParameter
+fn catch_formal_parameter(p: &mut Parser) {
+    let m = p.start();
+    variable_modifier(p);
+    type_(p).ok();
+
+    p.expect(IDENTIFIER);
+
+    if p.at(L_BRACKET) {
+        dimensions(p);
+    }
+
+    m.complete(p, CATCH_FORMAL_PARAMETER);
+}
+
+fn finally_clause(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(FINALLY_KW);
+
+    block(p);
+
+    m.complete(p, FINALLY_CLAUSE);
 }
 
 /// DoStatement:
@@ -262,6 +374,59 @@ fn parenthesized_expression(p: &mut Parser) {
     m.complete(p, PARENTHESIZED_EXPR);
 }
 
+/// ResourceSpecification:
+///  ( ResourceList [;] )
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-ResourceSpecification
+fn resource_specification(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(L_PAREN);
+
+    // resource list
+    // https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-ResourceList
+    loop {
+        if resource(p).is_err() {
+            recover_until(p, &[SEMICOLON, R_PAREN, L_BRACE]);
+        }
+
+        if !p.at(SEMICOLON) {
+            break;
+        }
+
+        p.expect(SEMICOLON);
+
+        if p.at(R_PAREN) {
+            break;
+        }
+    }
+
+    p.expect(R_PAREN);
+
+    m.complete(p, RESOURCE_SPECIFICATION);
+}
+
+/// Resource:
+///  LocalVariableDeclaration
+///  VariableAccess
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-Resource
+fn resource(p: &mut Parser) -> Result<(), ()> {
+    let m = p.start();
+
+    if is_local_variable_declaration(p) {
+        if local_variable_declaration(p).is_err() {
+            return Err(());
+        }
+    } else {
+        variable_access(p);
+    }
+
+    m.complete(p, RESOURCE);
+
+    Ok(())
+}
+
 /// ExpressionStatement:
 ///   StatementExpression ;
 ///
@@ -383,7 +548,7 @@ fn continue_statement(p: &mut Parser) {
 
 fn is_local_variable_declaration(p: &mut Parser) -> bool {
     let cp = p.checkpoint();
-    let ok = local_variable_declaration(p).is_ok() && p.at(SEMICOLON);
+    let ok = local_variable_declaration(p).is_ok();
     p.rewind(cp);
     ok
 }

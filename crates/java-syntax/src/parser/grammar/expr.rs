@@ -75,3 +75,27 @@ pub fn element_value(p: &mut Parser) {
         }
     }
 }
+
+pub fn variable_access(p: &mut Parser) {
+    // TODO: Stub variable access
+    let m = p.start();
+
+    if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
+        p.bump();
+    } else {
+        p.error_expected(&[IDENTIFIER, THIS_KW, SUPER_KW]);
+        m.complete(p, ERROR);
+        return;
+    }
+
+    while p.eat(DOT) {
+        if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
+            p.bump();
+        } else {
+            p.error_expected(&[IDENTIFIER]);
+            break;
+        }
+    }
+
+    m.complete(p, VARIABLE_ACCESS);
+}
