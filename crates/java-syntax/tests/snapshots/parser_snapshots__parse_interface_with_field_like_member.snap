@@ -28,7 +28,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   INTERFACE_DECL
-    MODIFIER_LIST
     INTERFACE_KW "interface"
     WHITESPACE " "
     IDENTIFIER "A"
@@ -36,7 +35,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE " "
           INT_KW "int"

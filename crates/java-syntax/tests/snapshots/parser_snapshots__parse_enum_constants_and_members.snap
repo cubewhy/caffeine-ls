@@ -39,7 +39,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   ENUM_DECL
-    MODIFIER_LIST
     ENUM_KW "enum"
     WHITESPACE " "
     IDENTIFIER "E"
@@ -55,7 +54,6 @@ ROOT
         IDENTIFIER "B"
       SEMICOLON ";"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE " "
           INT_KW "int"
@@ -65,7 +63,6 @@ ROOT
             IDENTIFIER "x"
         SEMICOLON ";"
       METHOD_DECL
-        MODIFIER_LIST
         WHITESPACE " "
         VOID_KW "void"
         WHITESPACE " "

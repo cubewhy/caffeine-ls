@@ -32,7 +32,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   CLASS_DECL
-    MODIFIER_LIST
     CLASS_KW "class"
     WHITESPACE " "
     IDENTIFIER "A"
@@ -40,7 +39,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
-        MODIFIER_LIST
         TYPE_PARAMETERS
           WHITESPACE " "
           LESS "<"

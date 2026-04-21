@@ -43,7 +43,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   ANNOTATION_TYPE_DECL
-    MODIFIER_LIST
     AT "@"
     INTERFACE_KW "interface"
     WHITESPACE " "
@@ -52,7 +51,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE "\n    "
           INT_KW "int"
@@ -67,7 +65,6 @@ ROOT
               NUMBER_LIT "100"
         SEMICOLON ";"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE "\n    "
           IDENTIFIER "String"

@@ -58,7 +58,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   CLASS_DECL
-    MODIFIER_LIST
     CLASS_KW "class"
     WHITESPACE " "
     IDENTIFIER "Test"
@@ -66,7 +65,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
-        MODIFIER_LIST
         WHITESPACE "\n    "
         VOID_KW "void"
         WHITESPACE " "
@@ -79,7 +77,6 @@ ROOT
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
             LOCAL_VARIABLE_DECLARATION
-              MODIFIER_LIST
               TYPE
                 WHITESPACE "\n        "
                 INT_KW "int"

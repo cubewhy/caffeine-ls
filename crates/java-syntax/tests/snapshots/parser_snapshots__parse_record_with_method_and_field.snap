@@ -38,14 +38,12 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   RECORD_DECL
-    MODIFIER_LIST
     IDENTIFIER "record"
     WHITESPACE " "
     IDENTIFIER "R"
     FORMAL_PARAMETERS
       L_PAREN "("
       FORMAL_PARAMETER
-        MODIFIER_LIST
         TYPE
           INT_KW "int"
         WHITESPACE " "
@@ -55,7 +53,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE " "
           INT_KW "int"
@@ -65,7 +62,6 @@ ROOT
             IDENTIFIER "y"
         SEMICOLON ";"
       METHOD_DECL
-        MODIFIER_LIST
         WHITESPACE " "
         VOID_KW "void"
         WHITESPACE " "

@@ -38,7 +38,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   CLASS_DECL
-    MODIFIER_LIST
     CLASS_KW "class"
     WHITESPACE " "
     IDENTIFIER "A"
@@ -46,7 +45,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE "\n    "
           INT_KW "int"
@@ -56,7 +54,6 @@ ROOT
             IDENTIFIER "x"
         SEMICOLON ";"
       METHOD_DECL
-        MODIFIER_LIST
         WHITESPACE "\n    "
         VOID_KW "void"
         WHITESPACE " "

@@ -30,7 +30,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   INTERFACE_DECL
-    MODIFIER_LIST
     INTERFACE_KW "interface"
     WHITESPACE " "
     IDENTIFIER "A"
@@ -38,7 +37,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
-        MODIFIER_LIST
         TYPE_PARAMETERS
           WHITESPACE " "
           LESS "<"

@@ -54,14 +54,12 @@ ROOT
     FORMAL_PARAMETERS
       L_PAREN "("
       FORMAL_PARAMETER
-        MODIFIER_LIST
         TYPE
           IDENTIFIER "T"
         WHITESPACE " "
         IDENTIFIER "x"
       COMMA ","
       FORMAL_PARAMETER
-        MODIFIER_LIST
         TYPE
           WHITESPACE " "
           IDENTIFIER "U"

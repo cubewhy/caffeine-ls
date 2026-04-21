@@ -24,7 +24,6 @@ LEX_ERRORS:
 SYNTAX_TREE:
 ROOT
   CLASS_DECL
-    MODIFIER_LIST
     CLASS_KW "class"
     WHITESPACE " "
     IDENTIFIER "A"
@@ -32,7 +31,6 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
-        MODIFIER_LIST
         TYPE
           WHITESPACE " "
           INT_KW "int"
