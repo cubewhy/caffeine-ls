@@ -1,0 +1,118 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        int i = 0;
+        do i++; while (true);
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "i"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "0"
+SEMICOLON ";"
+WHITESPACE "\n        "
+DO_KW "do"
+WHITESPACE " "
+IDENTIFIER "i"
+PLUS_PLUS "++"
+SEMICOLON ";"
+WHITESPACE " "
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+TRUE_LIT "true"
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    MODIFIER_LIST
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              MODIFIER_LIST
+              TYPE
+                WHITESPACE "\n        "
+                INT_KW "int"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "i"
+                  WHITESPACE " "
+                  EQUAL "="
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "0"
+            SEMICOLON ";"
+          DO_STMT
+            WHITESPACE "\n        "
+            DO_KW "do"
+            EXPRESSION_STMT
+              EXPRESSION
+                WHITESPACE " "
+                IDENTIFIER "i"
+                PLUS_PLUS "++"
+              SEMICOLON ";"
+            WHITESPACE " "
+            WHILE_KW "while"
+            PARENTHESIZED_EXPR
+              WHITESPACE " "
+              L_PAREN "("
+              EXPRESSION
+                TRUE_LIT "true"
+              R_PAREN ")"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

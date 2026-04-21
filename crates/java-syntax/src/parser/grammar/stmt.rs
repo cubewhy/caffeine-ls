@@ -70,8 +70,8 @@ fn statement(p: &mut Parser) {
         if_statement(p);
     } else if p.at(WHILE_KW) {
         while_statement(p);
-    // } else if p.at(DO_KW) {
-    //     do_statement(p);
+    } else if p.at(DO_KW) {
+        do_statement(p);
     // } else if p.at(FOR_KW) {
     //     for_statement(p);
     // } else if p.at(TRY_KW) {
@@ -95,6 +95,39 @@ fn statement(p: &mut Parser) {
     } else {
         expression_statement(p);
     }
+}
+
+/// DoStatement:
+///   do Statement while ( Expression ) ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.13
+fn do_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(DO_KW);
+
+    if p.at(L_BRACE) {
+        // do { /*...*/ } while (condition);
+        block(p);
+    } else if p.at(WHILE_KW) || p.at(EOF) {
+        p.error_expected_construct(ExpectedConstruct::Statement);
+    } else {
+        // do i++; while (condition);
+        statement(p);
+    }
+
+    p.expect(WHILE_KW);
+
+    // condition
+    if p.at(L_PAREN) {
+        parenthesized_expression(p);
+    } else {
+        p.error_expected(&[L_PAREN]);
+    }
+
+    p.expect(SEMICOLON);
+
+    m.complete(p, DO_STMT);
 }
 
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.19

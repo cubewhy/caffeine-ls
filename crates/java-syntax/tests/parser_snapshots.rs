@@ -363,3 +363,28 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_do_while_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                do {
+
+                } while (true);
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_do_while_stmt_short,
+    indoc! {r#"
+        class Test {
+            void func() {
+                int i = 0;
+                do i++; while (true);
+            }
+        }
+    "#}
+);

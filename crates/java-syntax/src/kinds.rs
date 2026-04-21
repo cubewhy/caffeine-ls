@@ -161,6 +161,7 @@ pub enum SyntaxKind {
     IF_STMT,
     WHILE_STMT,
     SYNCHRONIZED_STMT,
+    DO_STMT,
     PARENTHESIZED_EXPR,
 
     DIMENSIONS,
