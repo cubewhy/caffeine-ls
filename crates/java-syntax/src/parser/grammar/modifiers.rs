@@ -10,6 +10,8 @@ pub fn modifiers(p: &mut Parser) {
     // [public] [private] [protected] [final] [static] [abstract] [default] [@<annotation>[(<arguments>)]]
     let m = p.start();
 
+    let mut is_empty = true;
+
     loop {
         if p.at_set(tokenset![
             PUBLIC_KW,
@@ -34,9 +36,14 @@ pub fn modifiers(p: &mut Parser) {
         } else {
             break;
         }
+        is_empty = false;
     }
 
-    m.complete(p, MODIFIER_LIST);
+    if is_empty {
+        m.abandon(p);
+    } else {
+        m.complete(p, MODIFIER_LIST);
+    }
 }
 
 pub fn annotation(p: &mut Parser) {
@@ -94,13 +101,20 @@ fn element_value_pair(p: &mut Parser) {
 pub fn variable_modifier(p: &mut Parser) {
     let m = p.start();
 
+    let mut is_empty = true;
+
     while p.at(AT) || p.at(FINAL_KW) {
         if p.at(AT) {
             annotation(p);
         } else {
             p.expect(FINAL_KW);
         }
+        is_empty = false;
     }
 
-    m.complete(p, MODIFIER_LIST);
+    if is_empty {
+        m.abandon(p);
+    } else {
+        m.complete(p, MODIFIER_LIST);
+    }
 }

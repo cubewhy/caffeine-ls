@@ -39,8 +39,7 @@ LEX_ERRORS:
 EVENTS:
 StartNode(ROOT, forward_parent=None)
 StartNode(ENUM_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 AddToken
 AddToken
 StartNode(ENUM_BODY, forward_parent=None)
@@ -54,8 +53,7 @@ AddToken
 FinishNode
 AddToken
 StartNode(FIELD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 StartNode(TYPE, forward_parent=None)
 AddToken
 Tombstone
@@ -69,8 +67,7 @@ FinishNode
 AddToken
 FinishNode
 StartNode(METHOD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 AddToken
 AddToken
 StartNode(FORMAL_PARAMETERS, forward_parent=None)

@@ -30,8 +30,7 @@ LEX_ERRORS:
 EVENTS:
 StartNode(ROOT, forward_parent=None)
 StartNode(INTERFACE_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 AddToken
 AddToken
 StartNode(INTERFACE_BODY, forward_parent=None)

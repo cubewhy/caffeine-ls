@@ -24,15 +24,13 @@ LEX_ERRORS:
 EVENTS:
 StartNode(ROOT, forward_parent=None)
 StartNode(CLASS_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 AddToken
 AddToken
 StartNode(CLASS_BODY, forward_parent=None)
 AddToken
 StartNode(FIELD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
+Tombstone
 StartNode(TYPE, forward_parent=None)
 AddToken
 Tombstone
