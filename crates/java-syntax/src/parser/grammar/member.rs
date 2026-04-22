@@ -198,7 +198,7 @@ pub fn member_decl_rest(p: &mut Parser, m: Marker) {
             method_body_or_semicolon(p);
             m.complete(p, METHOD_DECL);
         } else {
-            variable_declarator_list(p);
+            variable_declarator_list(p).ok();
             p.expect(SEMICOLON);
             m.complete(p, FIELD_DECL);
         }
@@ -258,7 +258,7 @@ fn annotation_type_member_decl_rest(p: &mut Parser, m: Marker) {
 
             // optional default
             if p.eat(DEFAULT_KW) {
-                expression(p); // default value
+                expression(p).ok(); // default value
             }
 
             p.expect(SEMICOLON);
@@ -267,7 +267,7 @@ fn annotation_type_member_decl_rest(p: &mut Parser, m: Marker) {
         }
     } else {
         // field
-        variable_declarator_list(p);
+        variable_declarator_list(p).ok();
         p.expect(SEMICOLON);
         m.complete(p, FIELD_DECL);
     }

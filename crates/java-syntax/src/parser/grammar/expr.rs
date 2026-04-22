@@ -99,3 +99,10 @@ pub fn variable_access(p: &mut Parser) {
 
     m.complete(p, VARIABLE_ACCESS);
 }
+
+pub fn expression_list(p: &mut Parser) {
+    expression(p);
+    while p.eat(COMMA) {
+        expression(p);
+    }
+}

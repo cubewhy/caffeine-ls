@@ -305,3 +305,20 @@ fn variable_declarator(p: &mut Parser) -> Result<(), ()> {
     m.complete(p, VARIABLE_DECLARATOR);
     Ok(())
 }
+
+pub fn variable_declarator_no_init_expr(p: &mut Parser) -> Result<(), ()> {
+    let m = p.start();
+
+    // variable name
+    if !p.eat(IDENTIFIER) {
+        p.error_expected(&[IDENTIFIER]);
+        m.complete(p, VARIABLE_DECLARATOR);
+        return Err(());
+    }
+
+    // a[]
+    dimensions(p);
+
+    m.complete(p, VARIABLE_DECLARATOR);
+    Ok(())
+}

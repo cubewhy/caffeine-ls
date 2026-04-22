@@ -3,12 +3,12 @@ use stacksafe::stacksafe;
 use crate::ContextualKeyword;
 use crate::grammar::decl::{
     class_decl_rest, enum_decl_rest, interface_decl_rest, record_decl_rest,
-    variable_declarator_list,
+    variable_declarator_list, variable_declarator_no_init_expr,
 };
 use crate::grammar::error_recover::{
     recover_block_statement, recover_catch_parameter, recover_until, recover_until_or_eat,
 };
-use crate::grammar::expr::{expression, variable_access};
+use crate::grammar::expr::{expression, expression_list, variable_access};
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
@@ -74,8 +74,8 @@ fn statement(p: &mut Parser) {
         while_statement(p);
     } else if p.at(DO_KW) {
         do_statement(p);
-    // } else if p.at(FOR_KW) {
-    //     for_statement(p);
+    } else if p.at(FOR_KW) {
+        for_statement(p);
     } else if p.at(TRY_KW) {
         try_statement(p);
     // } else if p.at(SWITCH_KW) {
@@ -97,6 +97,118 @@ fn statement(p: &mut Parser) {
     } else {
         expression_statement(p);
     }
+}
+
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14
+fn for_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(FOR_KW);
+    p.expect(L_PAREN);
+
+    let node_kind = if is_basic_for_stmt(p) {
+        basic_for_stmt(p).ok();
+        FOR_STMT
+    } else if is_enhanced_for_stmt(p) {
+        enhanced_for_stmt(p).ok();
+        ENHANCED_FOR_STMT
+    } else {
+        recover_until(p, &[R_PAREN, L_BRACE]);
+        FOR_STMT
+    };
+
+    p.expect(R_PAREN);
+
+    statement(p);
+
+    m.complete(p, node_kind);
+}
+
+fn is_basic_for_stmt(p: &mut Parser) -> bool {
+    let ckpt = p.checkpoint();
+
+    if basic_for_stmt(p).is_ok() {
+        return true;
+    }
+
+    p.rewind(ckpt);
+    false
+}
+
+fn is_enhanced_for_stmt(p: &mut Parser) -> bool {
+    let cp = p.checkpoint();
+    let ok = enhanced_for_stmt(p).is_ok();
+    p.rewind(cp);
+    ok
+}
+
+/// EnhancedForStatement:
+///   for ( LocalVariableDeclaration : Expression ) Statement
+///
+/// EnhancedForStatementNoShortIf:
+///   for ( LocalVariableDeclaration : Expression ) StatementNoShortIf
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2
+fn enhanced_for_stmt(p: &mut Parser) -> Result<(), ()> {
+    variable_modifier(p);
+
+    // type
+    if type_(p).is_err() {
+        p.error_expected_construct(ExpectedConstruct::Type);
+        return Err(());
+    }
+
+    // variable name
+    if variable_declarator_no_init_expr(p).is_err() {
+        return Err(());
+    };
+
+    // :
+    if !p.expect(COLON) {
+        return Err(());
+    }
+
+    if expression(p).is_err() {
+        return Err(());
+    };
+
+    Ok(())
+}
+
+/// BasicForStatement:
+///   for ( [ForInit] ; [Expression] ; [ForUpdate] ) Statement
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.1
+fn basic_for_stmt(p: &mut Parser) -> Result<(), ()> {
+    // ForInit
+    if !p.at(SEMICOLON) {
+        if is_local_variable_declaration(p) {
+            local_variable_declaration(p).ok();
+        } else {
+            expression_list(p);
+        }
+    }
+
+    if !p.expect(SEMICOLON) {
+        return Err(());
+    }
+
+    // Condition
+    if !p.at(SEMICOLON) && expression(p).is_err() {
+        p.error_expected_construct(ExpectedConstruct::Expression);
+        recover_until(p, &[SEMICOLON, R_PAREN, L_BRACE]);
+    }
+
+    if !p.expect(SEMICOLON) {
+        return Err(());
+    }
+
+    // ForUpdate
+    if !p.at(R_PAREN) {
+        expression_list(p);
+    }
+
+    Ok(())
 }
 
 /// TryStatement:
