@@ -414,3 +414,38 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_for_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                for (int i = 0; i < 10; i++) {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_enhanced_for_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String[] strings;
+                for (String s: strings) {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_incomplete_for_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String[] strings;
+                for (String s: ) {}
+            }
+        }
+    "#}
+);

@@ -117,8 +117,9 @@ fn for_statement(p: &mut Parser) {
         FOR_STMT
     };
 
-    p.expect(R_PAREN);
-
+    if !p.expect(R_PAREN) {
+        recover_block_statement(p);
+    }
     statement(p);
 
     m.complete(p, node_kind);
@@ -126,13 +127,9 @@ fn for_statement(p: &mut Parser) {
 
 fn is_basic_for_stmt(p: &mut Parser) -> bool {
     let ckpt = p.checkpoint();
-
-    if basic_for_stmt(p).is_ok() {
-        return true;
-    }
-
+    let ok = basic_for_stmt(p).is_ok();
     p.rewind(ckpt);
-    false
+    ok
 }
 
 fn is_enhanced_for_stmt(p: &mut Parser) -> bool {
@@ -195,7 +192,6 @@ fn basic_for_stmt(p: &mut Parser) -> Result<(), ()> {
 
     // Condition
     if !p.at(SEMICOLON) && expression(p).is_err() {
-        p.error_expected_construct(ExpectedConstruct::Expression);
         recover_until(p, &[SEMICOLON, R_PAREN, L_BRACE]);
     }
 

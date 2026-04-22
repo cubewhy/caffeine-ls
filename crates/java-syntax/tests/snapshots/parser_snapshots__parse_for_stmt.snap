@@ -1,0 +1,121 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        for (int i = 0; i < 10; i++) {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "i"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "0"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "i"
+WHITESPACE " "
+LESS "<"
+WHITESPACE " "
+NUMBER_LIT "10"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "i"
+PLUS_PLUS "++"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          FOR_STMT
+            WHITESPACE "\n        "
+            FOR_KW "for"
+            WHITESPACE " "
+            L_PAREN "("
+            LOCAL_VARIABLE_DECLARATION
+              TYPE
+                INT_KW "int"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "i"
+                  WHITESPACE " "
+                  EQUAL "="
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "0"
+            SEMICOLON ";"
+            EXPRESSION
+              WHITESPACE " "
+              IDENTIFIER "i"
+              WHITESPACE " "
+              LESS "<"
+              WHITESPACE " "
+              NUMBER_LIT "10"
+            SEMICOLON ";"
+            EXPRESSION_LIST
+              EXPRESSION
+                WHITESPACE " "
+                IDENTIFIER "i"
+                PLUS_PLUS "++"
+            R_PAREN ")"
+            BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

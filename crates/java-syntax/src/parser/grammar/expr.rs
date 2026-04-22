@@ -1,5 +1,8 @@
 use crate::{
-    grammar::{error_recover::recover_parameter, modifiers::annotation},
+    grammar::{
+        error_recover::{recover_parameter, recover_until},
+        modifiers::annotation,
+    },
     kinds::SyntaxKind::*,
     parser::{ExpectedConstruct, Parser},
 };
@@ -101,8 +104,13 @@ pub fn variable_access(p: &mut Parser) {
 }
 
 pub fn expression_list(p: &mut Parser) {
-    expression(p);
-    while p.eat(COMMA) {
-        expression(p);
+    loop {
+        if expression(p).is_err() {
+            recover_until(p, &[COMMA, R_PAREN]);
+        }
+
+        if !p.eat(COMMA) {
+            break;
+        }
     }
 }
