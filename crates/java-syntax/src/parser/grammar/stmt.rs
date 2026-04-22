@@ -133,10 +133,34 @@ fn is_basic_for_stmt(p: &mut Parser) -> bool {
 }
 
 fn is_enhanced_for_stmt(p: &mut Parser) -> bool {
-    let cp = p.checkpoint();
-    let ok = enhanced_for_stmt(p).is_ok();
-    p.rewind(cp);
-    ok
+    let ckpt = p.checkpoint();
+    let mut paren_depth = 0;
+    let mut found_colon = false;
+
+    while !p.at(EOF) && !p.at(R_PAREN) {
+        if p.at(L_PAREN) {
+            paren_depth += 1;
+        } else if p.at(R_PAREN) {
+            paren_depth -= 1;
+        }
+
+        if paren_depth == 0 {
+            if p.at(SEMICOLON) {
+                // got semicolon, this must be the basic for statement
+                p.rewind(ckpt);
+                return false;
+            }
+
+            if p.at(COLON) {
+                found_colon = true;
+                break;
+            }
+        }
+        p.bump();
+    }
+
+    p.rewind(ckpt);
+    found_colon
 }
 
 /// EnhancedForStatement:
