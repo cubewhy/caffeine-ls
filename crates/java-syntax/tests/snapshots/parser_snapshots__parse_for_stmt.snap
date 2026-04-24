@@ -104,11 +104,10 @@ ROOT
               WHITESPACE " "
               NUMBER_LIT "10"
             SEMICOLON ";"
-            EXPRESSION_LIST
-              EXPRESSION
-                WHITESPACE " "
-                IDENTIFIER "i"
-                PLUS_PLUS "++"
+            EXPRESSION
+              WHITESPACE " "
+              IDENTIFIER "i"
+              PLUS_PLUS "++"
             R_PAREN ")"
             BLOCK
               WHITESPACE " "
