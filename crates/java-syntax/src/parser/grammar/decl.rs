@@ -283,16 +283,26 @@ pub fn variable_declarator_list(p: &mut Parser) -> Result<(), ()> {
     Ok(())
 }
 
+fn variable_id(p: &mut Parser) -> bool {
+    if p.at(IDENTIFIER) || p.at(UNDERSCORE) {
+        p.bump();
+        true
+    } else {
+        p.error_expected(&[IDENTIFIER, UNDERSCORE]);
+        false
+    }
+}
+
 fn variable_declarator(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
-    // variable name
-    if !p.eat(IDENTIFIER) {
-        p.error_expected(&[IDENTIFIER]);
+    // variable id
+    if !variable_id(p) {
         m.complete(p, VARIABLE_DECLARATOR);
         return Err(());
     }
 
+    // dimensions on variable id
     // a[]
     dimensions(p);
 
@@ -309,13 +319,13 @@ fn variable_declarator(p: &mut Parser) -> Result<(), ()> {
 pub fn variable_declarator_no_init_expr(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
-    // variable name
-    if !p.eat(IDENTIFIER) {
-        p.error_expected(&[IDENTIFIER]);
+    // variable id
+    if !variable_id(p) {
         m.complete(p, VARIABLE_DECLARATOR);
         return Err(());
     }
 
+    // dimensions on variable id
     // a[]
     dimensions(p);
 

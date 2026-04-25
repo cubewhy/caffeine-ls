@@ -449,3 +449,14 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_underscope_variable_id,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String _;
+            }
+        }
+    "#}
+);
