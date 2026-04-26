@@ -206,6 +206,13 @@ pub enum SyntaxKind {
     ENUM_DECL,
     MODULE_DECL,
 
+    MODULE_NAME,
+    REQUIRES_DIRECTIVE,
+    EXPORTS_DIRECTIVE,
+    OPENS_DIRECTIVE,
+    USES_DIRECTIVE,
+    PROVIDES_DIRECTIVE,
+
     COMPACT_CONSTRUCTOR_DECL,
     CONSTRUCTOR_DECL,
     EMPTY_DECL,
@@ -271,6 +278,16 @@ pub enum ContextualKeyword {
     Yield,
     Var,
     When,
+    Module,
+    Open,
+    Requires,
+    Opens,
+    Exports,
+    Uses,
+    Provides,
+    Transitive,
+    To,
+    With,
 }
 
 impl ContextualKeyword {
@@ -283,6 +300,16 @@ impl ContextualKeyword {
             ContextualKeyword::Yield => "yield",
             ContextualKeyword::Var => "var",
             ContextualKeyword::When => "when",
+            ContextualKeyword::Module => "module",
+            ContextualKeyword::Open => "open",
+            ContextualKeyword::Requires => "requires",
+            ContextualKeyword::Opens => "opens",
+            ContextualKeyword::Exports => "exports",
+            ContextualKeyword::Uses => "uses",
+            ContextualKeyword::Provides => "provides",
+            ContextualKeyword::Transitive => "transitive",
+            ContextualKeyword::To => "to",
+            ContextualKeyword::With => "with",
         }
     }
 }
@@ -298,6 +325,17 @@ impl FromStr for ContextualKeyword {
             "record" => Ok(Self::Record),
             "var" => Ok(Self::Var),
             "permits" => Ok(Self::Permits),
+            "when" => Ok(Self::When),
+            "module" => Ok(Self::Module),
+            "open" => Ok(Self::Open),
+            "requires" => Ok(Self::Requires),
+            "opens" => Ok(Self::Opens),
+            "exports" => Ok(Self::Exports),
+            "uses" => Ok(Self::Uses),
+            "provides" => Ok(Self::Provides),
+            "transitive" => Ok(Self::Transitive),
+            "to" => Ok(Self::To),
+            "with" => Ok(Self::With),
             _ => Err(()),
         }
     }

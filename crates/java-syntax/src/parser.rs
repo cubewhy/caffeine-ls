@@ -163,6 +163,14 @@ impl<'a> Parser<'a> {
         self.current() == Some(IDENTIFIER) && self.current_lexeme() == Some(kw.as_str())
     }
 
+    pub(crate) fn nth_at_contextual_kw(&self, n: usize, kw: ContextualKeyword) -> bool {
+        let Some(token) = self.source.nth(n) else {
+            return false;
+        };
+
+        token.kind == IDENTIFIER && token.lexeme == kw.as_str()
+    }
+
     pub(crate) fn eat_contextual_kw(&mut self, kw: ContextualKeyword) -> bool {
         if self.at_contextual_kw(kw) {
             self.bump();
@@ -332,4 +340,5 @@ pub enum ExpectedConstruct {
     Resource,
     QualifiedName,
     Pattern,
+    ModuleDirective,
 }

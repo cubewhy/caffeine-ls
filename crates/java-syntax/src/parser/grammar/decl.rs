@@ -1,5 +1,8 @@
 use crate::{
-    grammar::{expr::expression, member::annotation_type_member_decl, types::type_parameters_opt},
+    grammar::{
+        expr::expression, member::annotation_type_member_decl, names::qualified_name,
+        types::type_parameters_opt,
+    },
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
@@ -16,6 +19,7 @@ use crate::{
         },
         marker::Marker,
     },
+    tokenset,
 };
 
 pub fn decl(p: &mut Parser) {
@@ -30,6 +34,8 @@ pub fn decl(p: &mut Parser) {
         enum_decl_rest(p, m);
     } else if p.at_contextual_kw(ContextualKeyword::Record) {
         record_decl_rest(p, m);
+    } else if is_module_decl_start(p) {
+        module_decl_rest(p, m);
     } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
         annotation_type_decl_rest(p, m);
     } else if at_member_start(p) {
@@ -40,6 +46,167 @@ pub fn decl(p: &mut Parser) {
         recover_decl(p);
         m.complete(p, ERROR);
     }
+}
+
+fn is_module_decl_start(p: &Parser) -> bool {
+    p.at_contextual_kw(ContextualKeyword::Module)
+        || (p.at_contextual_kw(ContextualKeyword::Open)
+            && p.nth_at_contextual_kw(1, ContextualKeyword::Module))
+}
+
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7
+fn module_decl_rest(p: &mut Parser, m: Marker) {
+    // optional `open` keyword
+    p.eat_contextual_kw(ContextualKeyword::Open);
+
+    p.expect_contextual_kw(ContextualKeyword::Module);
+
+    // module name
+    qualified_name(p);
+
+    module_body(p);
+
+    m.complete(p, MODULE_DECL);
+}
+
+fn module_body(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(L_BRACE);
+
+    while !p.at_set(tokenset![EOF, R_BRACE]) {
+        module_directive(p);
+    }
+
+    p.expect(R_BRACE);
+
+    m.complete(p, MODULE_BODY);
+}
+
+fn module_directive(p: &mut Parser) {
+    let m = p.start();
+
+    if p.at_contextual_kw(ContextualKeyword::Requires) {
+        requires_directive(p, m);
+    } else if p.at_contextual_kw(ContextualKeyword::Exports) {
+        exports_directive(p, m);
+    } else if p.at_contextual_kw(ContextualKeyword::Opens) {
+        opens_directive(p, m);
+    } else if p.at_contextual_kw(ContextualKeyword::Uses) {
+        uses_directive(p, m);
+    } else if p.at_contextual_kw(ContextualKeyword::Provides) {
+        provides_directive(p, m);
+    } else {
+        p.error_expected_construct(ExpectedConstruct::ModuleDirective);
+        recover_member(p);
+        m.complete(p, ERROR);
+    }
+}
+
+/// requires {RequiresModifier} ModuleName ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-ModuleDirective
+fn requires_directive(p: &mut Parser, m: Marker) {
+    p.expect_contextual_kw(ContextualKeyword::Requires);
+
+    requires_modifier(p);
+
+    qualified_name(p);
+    p.expect(SEMICOLON);
+    m.complete(p, REQUIRES_DIRECTIVE);
+}
+
+/// RequiresModifier:
+///   (one of)
+///   transitive static
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-RequiresModifier
+fn requires_modifier(p: &mut Parser) {
+    let m = p.start();
+    let mut is_empty = true;
+    while p.at_contextual_kw(ContextualKeyword::Transitive) || p.at(STATIC_KW) {
+        p.bump();
+        is_empty = false;
+    }
+
+    if !is_empty {
+        m.complete(p, MODIFIER_LIST);
+    }
+}
+
+/// exports PackageName [to ModuleName {, ModuleName}] ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-RequiresModifier
+fn exports_directive(p: &mut Parser, m: Marker) {
+    p.expect_contextual_kw(ContextualKeyword::Exports);
+    qualified_name(p);
+
+    // Optional [to ModuleName {, ModuleName}]
+    if p.at_contextual_kw(ContextualKeyword::To) {
+        p.bump();
+        loop {
+            qualified_name(p);
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+
+    p.expect(SEMICOLON);
+    m.complete(p, EXPORTS_DIRECTIVE);
+}
+
+/// opens PackageName [to ModuleName {, ModuleName}] ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-RequiresModifier
+fn opens_directive(p: &mut Parser, m: Marker) {
+    p.expect_contextual_kw(ContextualKeyword::Opens);
+    qualified_name(p);
+
+    if p.at_contextual_kw(ContextualKeyword::To) {
+        p.bump();
+        loop {
+            qualified_name(p);
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+
+    p.expect(SEMICOLON);
+    m.complete(p, OPENS_DIRECTIVE);
+}
+
+/// uses TypeName ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-RequiresModifier
+fn uses_directive(p: &mut Parser, m: Marker) {
+    p.expect_contextual_kw(ContextualKeyword::Uses);
+    qualified_name(p);
+    p.expect(SEMICOLON);
+    m.complete(p, USES_DIRECTIVE);
+}
+
+/// provides TypeName with TypeName {, TypeName} ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-RequiresModifier
+fn provides_directive(p: &mut Parser, m: Marker) {
+    p.expect_contextual_kw(ContextualKeyword::Provides);
+
+    // interface
+    qualified_name(p);
+
+    p.expect_contextual_kw(ContextualKeyword::With);
+    loop {
+        // impl
+        qualified_name(p);
+        if !p.eat(COMMA) {
+            break;
+        }
+    }
+
+    p.expect(SEMICOLON);
+    m.complete(p, PROVIDES_DIRECTIVE);
 }
 
 pub fn annotation_type_decl_rest(p: &mut Parser, m: Marker) {
