@@ -257,11 +257,11 @@ impl SyntaxKind {
     pub fn is_trivia(&self) -> bool {
         matches!(
             self,
-            SyntaxKind::WHITESPACE
-                | SyntaxKind::LINE_COMMENT
-                | SyntaxKind::BLOCK_COMMENT
-                | SyntaxKind::JAVADOC
-                | SyntaxKind::JAVADOC_LINE
+            Self::WHITESPACE
+                | Self::LINE_COMMENT
+                | Self::BLOCK_COMMENT
+                | Self::JAVADOC
+                | Self::JAVADOC_LINE
         )
     }
 }
