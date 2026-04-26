@@ -324,4 +324,5 @@ pub enum ExpectedConstruct {
     Type,
     Resource,
     QualifiedName,
+    Pattern,
 }

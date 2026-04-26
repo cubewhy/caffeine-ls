@@ -5,14 +5,17 @@ use crate::grammar::decl::{
     variable_declarator_list, variable_declarator_no_init_expr,
 };
 use crate::grammar::error_recover::{
-    recover_block_statement, recover_catch_parameter, recover_until, recover_until_or_eat,
+    recover_block_statement, recover_catch_parameter, recover_switch_statement, recover_until,
+    recover_until_or_eat,
 };
-use crate::grammar::expr::{expression, expression_list, variable_access};
+use crate::grammar::expr::{
+    case_pattern_or_constant, expression, expression_list, variable_access,
+};
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::{ExpectedConstruct, Parser};
-use crate::{ContextualKeyword, SyntaxKind};
+use crate::{ContextualKeyword, SyntaxKind, tokenset};
 
 pub fn method_body_or_semicolon(p: &mut Parser) {
     if p.at(L_BRACE) {
@@ -79,6 +82,7 @@ fn statement(p: &mut Parser) {
         Some(FOR_KW) => for_statement(p),
         Some(TRY_KW) => try_statement(p),
         Some(SYNCHRONIZED_KW) => synchronized_statement(p),
+        Some(SWITCH_KW) => switch_statement(p),
         Some(RETURN_KW) => return_statement(p),
         Some(THROW_KW) => throw_statement(p),
         Some(BREAK_KW) => break_statement(p),
@@ -90,6 +94,167 @@ fn statement(p: &mut Parser) {
             } else {
                 expression_statement(p);
             }
+        }
+    }
+}
+
+/// SwitchStatement:
+///   switch ( Expression ) SwitchBlock
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11
+fn switch_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(SWITCH_KW);
+
+    // ( Expression )
+    if p.expect(L_PAREN) && expression(p).is_err() {
+        recover_until(p, &[R_PAREN, L_BRACE]);
+    }
+
+    p.expect(R_PAREN);
+
+    // switch block
+    if p.at(L_BRACE) {
+        switch_block(p);
+    } else {
+        p.error_expected(&[L_BRACE]);
+        recover_block_statement(p);
+    }
+
+    m.complete(p, SWITCH_STMT);
+}
+
+fn switch_block(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(L_BRACE);
+
+    while !p.at(R_BRACE) && !p.at(EOF) {
+        if p.at(CASE_KW) || p.at(DEFAULT_KW) {
+            if is_switch_rule(p) {
+                switch_rule(p);
+            } else {
+                switch_block_statement_group(p);
+            }
+        } else {
+            p.error_expected(&[CASE_KW, DEFAULT_KW]);
+            recover_switch_statement(p);
+        }
+    }
+
+    p.expect(R_BRACE);
+    m.complete(p, SWITCH_BLOCK);
+}
+
+/// SwitchBlockStatementGroup:
+///   SwitchLabel : {SwitchLabel :} BlockStatements
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-SwitchBlockStatementGroup
+fn switch_block_statement_group(p: &mut Parser) {
+    let m = p.start();
+
+    switch_label(p);
+    p.expect(COLON);
+
+    while p.at_set(tokenset![CASE_KW, DEFAULT_KW]) {
+        switch_label(p);
+        p.expect(COLON);
+    }
+
+    while !p.at_set(tokenset![EOF, R_BRACE, CASE_KW, DEFAULT_KW]) {
+        block_statement(p);
+    }
+
+    m.complete(p, SWITCH_BLOCK_STATEMENT_GROUP);
+}
+
+/// SwitchRule:
+///   SwitchLabel -> Expression ;
+///   SwitchLabel -> Block
+///   SwitchLabel -> ThrowStatement
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-SwitchRule
+fn switch_rule(p: &mut Parser) {
+    let m = p.start();
+
+    // switch label
+    switch_label(p);
+
+    p.expect(ARROW);
+
+    match p.current() {
+        Some(L_BRACE) => block(p),
+        Some(THROW_KW) => throw_statement(p),
+        // NOTE: expression_statement() will handle the trailing semicolon
+        _ => expression_statement(p),
+    }
+
+    m.complete(p, SWITCH_RULE);
+}
+
+/// SwitchLabel:
+///   case CaseConstant {, CaseConstant}
+///   case null [, default]
+///   case CasePattern {, CasePattern} [Guard]
+///   default
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-SwitchLabel
+fn switch_label(p: &mut Parser) {
+    let m = p.start();
+    // case or default keyword
+    let current_token = p.current().unwrap_or(EOF);
+    if p.at_set(tokenset![CASE_KW, DEFAULT_KW]) {
+        p.bump();
+    } else {
+        // unreachable, we just report an error there
+        p.error_expected(&[CASE_KW, DEFAULT_KW]);
+    }
+
+    // `case`
+    if current_token == CASE_KW {
+        // parse the patterns
+        let mut meet_null = false;
+        loop {
+            if p.eat(NULL_LIT) {
+                meet_null = true;
+            } else if p.eat(DEFAULT_KW) {
+                if !meet_null {
+                    // https://github.com/JetBrains/intellij-community/blob/759cab24b385cf1a5a8ec66dcdc19ffb2d9e2dea/java/codeserver/highlighting/src/com/intellij/java/codeserver/highlighting/SwitchChecker.java#L571
+                    p.error_message("Default label not allowed here: 'default' can only be used as a single case label or paired only with 'null'");
+                }
+            } else {
+                // parse constant
+                case_pattern_or_constant(p);
+            }
+
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+
+        if p.eat_contextual_kw(ContextualKeyword::When) {
+            // switch guard
+            expression(p).ok();
+        }
+    }
+
+    // otherwise it is `default` branch
+    m.complete(p, SWITCH_LABEL);
+}
+
+fn is_switch_rule(p: &Parser) -> bool {
+    let mut i = 0;
+    loop {
+        let Some(kind) = p.nth(i) else {
+            // try to peak a token after EOF
+            // probably unreachable
+            return false;
+        };
+        match kind {
+            ARROW => return true,
+            COLON | L_BRACE | R_BRACE | EOF => return false,
+            _ => i += 1, // move the cursor
         }
     }
 }
@@ -667,7 +832,7 @@ fn continue_statement(p: &mut Parser) {
     m.complete(p, CONTINUE_STMT);
 }
 
-fn is_local_variable_declaration(p: &mut Parser) -> bool {
+pub fn is_local_variable_declaration(p: &mut Parser) -> bool {
     let cp = p.checkpoint();
     let ok = local_variable_declaration(p).is_ok();
     p.rewind(cp);
@@ -689,7 +854,7 @@ fn local_variable_declaration_statement(p: &mut Parser) -> Result<(), ()> {
     Ok(())
 }
 
-fn local_variable_declaration(p: &mut Parser) -> Result<(), ()> {
+pub fn local_variable_declaration(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
     // VariableModifier:

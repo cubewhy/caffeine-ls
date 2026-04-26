@@ -133,3 +133,7 @@ pub fn recover_block_statement(p: &mut Parser) {
 
     p.eat(SEMICOLON);
 }
+
+pub fn recover_switch_statement(p: &mut Parser) {
+    recover_until(p, &[CASE_KW, DEFAULT_KW, L_BRACE, R_BRACE]);
+}

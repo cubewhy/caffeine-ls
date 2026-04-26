@@ -1,0 +1,270 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        switch (expr) {
+            case 1, 2, 3, 4:
+            case 5, 6, 7, 8:
+                break;
+            case String _:
+            case String s:
+                break;
+            case Point(int x, int _):
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+SWITCH_KW "switch"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "expr"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+NUMBER_LIT "1"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "2"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "3"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "4"
+COLON ":"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+NUMBER_LIT "5"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "6"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "7"
+COMMA ","
+WHITESPACE " "
+NUMBER_LIT "8"
+COLON ":"
+WHITESPACE "\n                "
+BREAK_KW "break"
+SEMICOLON ";"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+UNDERSCORE "_"
+COLON ":"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "s"
+COLON ":"
+WHITESPACE "\n                "
+BREAK_KW "break"
+SEMICOLON ";"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+IDENTIFIER "Point"
+L_PAREN "("
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+COMMA ","
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+UNDERSCORE "_"
+R_PAREN ")"
+COLON ":"
+WHITESPACE "\n                "
+BREAK_KW "break"
+SEMICOLON ";"
+WHITESPACE "\n            "
+DEFAULT_KW "default"
+COLON ":"
+WHITESPACE "\n                "
+BREAK_KW "break"
+SEMICOLON ";"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          SWITCH_STMT
+            WHITESPACE "\n        "
+            SWITCH_KW "switch"
+            WHITESPACE " "
+            L_PAREN "("
+            EXPRESSION
+              IDENTIFIER "expr"
+            R_PAREN ")"
+            SWITCH_BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              SWITCH_BLOCK_STATEMENT_GROUP
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "1"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "2"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "3"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "4"
+                    COLON ":"
+                    WHITESPACE "\n            "
+                    CASE_KW "case"
+                    WHITESPACE " "
+                    NUMBER_LIT "5"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "6"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "7"
+                  COMMA ","
+                  EXPRESSION
+                    WHITESPACE " "
+                    NUMBER_LIT "8"
+                    COLON ":"
+                    WHITESPACE "\n                "
+                    BREAK_KW "break"
+                MISSING
+                EMPTY_STMT
+                  SEMICOLON ";"
+              SWITCH_BLOCK_STATEMENT_GROUP
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  TYPE_PATTERN
+                    TYPE
+                      WHITESPACE " "
+                      IDENTIFIER "String"
+                    WHITESPACE " "
+                    UNDERSCORE "_"
+                COLON ":"
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  TYPE_PATTERN
+                    TYPE
+                      WHITESPACE " "
+                      IDENTIFIER "String"
+                    WHITESPACE " "
+                    IDENTIFIER "s"
+                COLON ":"
+                BREAK_STMT
+                  WHITESPACE "\n                "
+                  BREAK_KW "break"
+                  SEMICOLON ";"
+              SWITCH_BLOCK_STATEMENT_GROUP
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  RECORD_PATTERN
+                    TYPE
+                      WHITESPACE " "
+                      IDENTIFIER "Point"
+                    L_PAREN "("
+                    TYPE_PATTERN
+                      TYPE
+                        INT_KW "int"
+                      WHITESPACE " "
+                      IDENTIFIER "x"
+                    COMMA ","
+                    TYPE_PATTERN
+                      TYPE
+                        WHITESPACE " "
+                        INT_KW "int"
+                      WHITESPACE " "
+                      UNDERSCORE "_"
+                    R_PAREN ")"
+                COLON ":"
+                BREAK_STMT
+                  WHITESPACE "\n                "
+                  BREAK_KW "break"
+                  SEMICOLON ";"
+              SWITCH_BLOCK_STATEMENT_GROUP
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  DEFAULT_KW "default"
+                COLON ":"
+                BREAK_STMT
+                  WHITESPACE "\n                "
+                  BREAK_KW "break"
+                  SEMICOLON ";"
+              WHITESPACE "\n        "
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
+errors:
+  ParseError { kind: ExpectedToken { expected: [COLON], found: Some(SEMICOLON) }, pos: 32 }

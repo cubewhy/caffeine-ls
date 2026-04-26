@@ -164,6 +164,7 @@ pub enum SyntaxKind {
     ASSERT_STMT,
     IF_STMT,
     WHILE_STMT,
+    SWITCH_STMT,
     SYNCHRONIZED_STMT,
     DO_STMT,
     TRY_STMT,
@@ -213,6 +214,15 @@ pub enum SyntaxKind {
     INSTANCE_INITIALIZER,
 
     BLOCK, // { ... }
+
+    SWITCH_BLOCK,
+    SWITCH_RULE,
+    SWITCH_BLOCK_STATEMENT_GROUP,
+    SWITCH_LABEL,
+
+    TYPE_PATTERN,
+    RECORD_PATTERN,
+    MATCH_ALL_PATTERN,
 
     CLASS_BODY,
     ENUM_BODY,

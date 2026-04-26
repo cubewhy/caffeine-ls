@@ -460,3 +460,25 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_switch_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                switch (expr) {
+                    case 1, 2, 3, 4:
+                    case 5, 6, 7, 8:
+                        break;
+                    case String _:
+                    case String s:
+                        break;
+                    case Point(int x, int _):
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+    "#}
+);
