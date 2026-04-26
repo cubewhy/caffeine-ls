@@ -89,9 +89,9 @@ fn statement(p: &mut Parser) {
         Some(CONTINUE_KW) => continue_statement(p),
         Some(ASSERT_KW) => assert_statement(p),
         _ => {
-            if is_at_yield_stmt_start(p) {
+            if is_at_yield_statement_start(p) {
                 yield_statement(p);
-            } else if is_at_labeled_stmt_start(p) {
+            } else if is_at_labeled_statement_start(p) {
                 labeled_statement(p);
             } else {
                 expression_statement(p);
@@ -100,7 +100,7 @@ fn statement(p: &mut Parser) {
     }
 }
 
-fn is_at_labeled_stmt_start(p: &Parser) -> bool {
+fn is_at_labeled_statement_start(p: &Parser) -> bool {
     p.matches(&[IDENTIFIER, COLON])
 }
 
@@ -792,7 +792,7 @@ fn yield_statement(p: &mut Parser) {
     m.complete(p, YIELD_STMT);
 }
 
-fn is_at_yield_stmt_start(p: &Parser) -> bool {
+fn is_at_yield_statement_start(p: &Parser) -> bool {
     if !p.at_contextual_kw(ContextualKeyword::Yield) {
         return false;
     }
