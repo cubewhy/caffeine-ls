@@ -2,7 +2,6 @@ use crate::{
     grammar::{
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
-        stmt::{is_local_variable_declaration, local_variable_declaration},
         types::{reference_type, type_},
     },
     kinds::SyntaxKind::*,
