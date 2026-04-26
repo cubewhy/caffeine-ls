@@ -45,19 +45,25 @@ AddToken
 StartNode(FIELD_DECL, forward_parent=None)
 Tombstone
 StartNode(TYPE, forward_parent=None)
+StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
+FinishNode
 StartNode(TYPE_ARGUMENTS, forward_parent=None)
 AddToken
 StartNode(TYPE_ARGUMENT, forward_parent=None)
 StartNode(TYPE, forward_parent=None)
+StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
+FinishNode
 Tombstone
 FinishNode
 FinishNode
 AddToken
 StartNode(TYPE_ARGUMENT, forward_parent=None)
 StartNode(TYPE, forward_parent=None)
+StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
+FinishNode
 StartNode(TYPE_ARGUMENTS, forward_parent=None)
 AddToken
 StartNode(TYPE_ARGUMENT, forward_parent=None)
@@ -66,7 +72,9 @@ AddToken
 StartNode(WILDCARD_BOUNDS, forward_parent=None)
 AddToken
 StartNode(TYPE, forward_parent=None)
+StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
+FinishNode
 Tombstone
 FinishNode
 FinishNode

@@ -35,8 +35,9 @@ ROOT
       L_BRACE "{"
       FIELD_DECL
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "List"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "List"
           TYPE_ARGUMENTS
             LESS "<"
             TYPE_ARGUMENT

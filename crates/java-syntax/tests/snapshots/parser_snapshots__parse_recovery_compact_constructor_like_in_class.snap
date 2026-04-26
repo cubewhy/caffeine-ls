@@ -32,8 +32,9 @@ ROOT
       L_BRACE "{"
       FIELD_DECL
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "A"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "A"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             MISSING

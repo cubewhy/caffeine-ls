@@ -82,8 +82,9 @@ ROOT
         SEMICOLON ";"
       ANNOTATION_TYPE_ELEMENT_DECL
         TYPE
-          WHITESPACE "\n    "
-          IDENTIFIER "String"
+          QUALIFIED_NAME
+            WHITESPACE "\n    "
+            IDENTIFIER "String"
           DIMENSIONS
             L_BRACKET "["
             R_BRACKET "]"

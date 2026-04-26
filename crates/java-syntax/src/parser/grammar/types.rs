@@ -1,5 +1,8 @@
 use crate::{
-    grammar::error_recover::{recover_type_argument, recover_type_bound},
+    grammar::{
+        error_recover::{recover_type_argument, recover_type_bound},
+        names::qualified_name,
+    },
     kinds::SyntaxKind::*,
     parser::{
         ExpectedConstruct, Parser,
@@ -185,7 +188,7 @@ pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
         return Err(());
     }
 
-    p.expect(IDENTIFIER);
+    qualified_name(p);
     type_arguments_opt(p);
 
     while p.eat(DOT) {

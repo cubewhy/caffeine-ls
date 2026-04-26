@@ -548,3 +548,12 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_type_with_fqn,
+    indoc! {r#"
+        class Test {
+            java.util.List<java.lang.String> list;
+        }
+    "#}
+);

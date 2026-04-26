@@ -55,14 +55,16 @@ ROOT
       L_PAREN "("
       FORMAL_PARAMETER
         TYPE
-          IDENTIFIER "T"
+          QUALIFIED_NAME
+            IDENTIFIER "T"
         WHITESPACE " "
         IDENTIFIER "x"
       COMMA ","
       FORMAL_PARAMETER
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "U"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "U"
         WHITESPACE " "
         IDENTIFIER "y"
       R_PAREN ")"

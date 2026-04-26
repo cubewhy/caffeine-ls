@@ -35,13 +35,15 @@ ROOT
       L_BRACE "{"
       FIELD_DECL
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "List"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "List"
           TYPE_ARGUMENTS
             LESS "<"
             TYPE_ARGUMENT
               TYPE
-                IDENTIFIER "String"
+                QUALIFIED_NAME
+                  IDENTIFIER "String"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR

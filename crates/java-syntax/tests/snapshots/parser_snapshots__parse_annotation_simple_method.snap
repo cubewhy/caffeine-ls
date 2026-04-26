@@ -48,8 +48,9 @@ ROOT
       L_BRACE "{"
       ANNOTATION_TYPE_ELEMENT_DECL
         TYPE
-          WHITESPACE "\n    "
-          IDENTIFIER "String"
+          QUALIFIED_NAME
+            WHITESPACE "\n    "
+            IDENTIFIER "String"
         WHITESPACE " "
         IDENTIFIER "value"
         L_PAREN "("

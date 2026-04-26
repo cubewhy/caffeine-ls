@@ -51,7 +51,8 @@ ROOT
           L_PAREN "("
           SPREAD_PARAMETER
             TYPE
-              IDENTIFIER "String"
+              QUALIFIED_NAME
+                IDENTIFIER "String"
             ELLIPSIS "..."
             WHITESPACE " "
             IDENTIFIER "args"

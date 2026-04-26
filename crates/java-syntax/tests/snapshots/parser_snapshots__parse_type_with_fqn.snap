@@ -3,27 +3,35 @@ source: crates/java-syntax/tests/parser_snapshots.rs
 expression: out
 ---
 SOURCE:
-class A { java.util.List<String> xs; }
+class Test {
+    java.util.List<java.lang.String> list;
+}
+
 TOKENS:
 CLASS_KW "class"
 WHITESPACE " "
-IDENTIFIER "A"
+IDENTIFIER "Test"
 WHITESPACE " "
 L_BRACE "{"
-WHITESPACE " "
+WHITESPACE "\n    "
 IDENTIFIER "java"
 DOT "."
 IDENTIFIER "util"
 DOT "."
 IDENTIFIER "List"
 LESS "<"
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "lang"
+DOT "."
 IDENTIFIER "String"
 GREATER ">"
 WHITESPACE " "
-IDENTIFIER "xs"
+IDENTIFIER "list"
 SEMICOLON ";"
-WHITESPACE " "
+WHITESPACE "\n"
 R_BRACE "}"
+WHITESPACE "\n"
 
 LEX_ERRORS:
 <none>
@@ -33,14 +41,14 @@ ROOT
   CLASS_DECL
     CLASS_KW "class"
     WHITESPACE " "
-    IDENTIFIER "A"
+    IDENTIFIER "Test"
     CLASS_BODY
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
+            WHITESPACE "\n    "
             IDENTIFIER "java"
             DOT "."
             IDENTIFIER "util"
@@ -51,12 +59,17 @@ ROOT
             TYPE_ARGUMENT
               TYPE
                 QUALIFIED_NAME
+                  IDENTIFIER "java"
+                  DOT "."
+                  IDENTIFIER "lang"
+                  DOT "."
                   IDENTIFIER "String"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "
-            IDENTIFIER "xs"
+            IDENTIFIER "list"
         SEMICOLON ";"
-      WHITESPACE " "
+      WHITESPACE "\n"
       R_BRACE "}"
+  WHITESPACE "\n"

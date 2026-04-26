@@ -36,8 +36,9 @@ ROOT
           WHITESPACE " "
           EXTENDS_KW "extends"
           TYPE
-            WHITESPACE " "
-            IDENTIFIER "Number"
+            QUALIFIED_NAME
+              WHITESPACE " "
+              IDENTIFIER "Number"
       GREATER ">"
     CLASS_BODY
       WHITESPACE " "

@@ -46,8 +46,9 @@ ROOT
             IDENTIFIER "T"
           GREATER ">"
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "T"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "T"
         WHITESPACE " "
         IDENTIFIER "func"
         FORMAL_PARAMETERS

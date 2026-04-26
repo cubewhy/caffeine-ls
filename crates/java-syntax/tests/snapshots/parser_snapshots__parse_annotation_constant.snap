@@ -66,8 +66,9 @@ ROOT
         SEMICOLON ";"
       FIELD_DECL
         TYPE
-          WHITESPACE "\n    "
-          IDENTIFIER "String"
+          QUALIFIED_NAME
+            WHITESPACE "\n    "
+            IDENTIFIER "String"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "

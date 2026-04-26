@@ -110,7 +110,8 @@ ROOT
           L_PAREN "("
           FORMAL_PARAMETER
             TYPE
-              IDENTIFIER "String"
+              QUALIFIED_NAME
+                IDENTIFIER "String"
               DIMENSIONS
                 L_BRACKET "["
                 R_BRACKET "]"
@@ -123,8 +124,9 @@ ROOT
           LOCAL_VARIABLE_DECLARATION_STMT
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
-                IDENTIFIER "Test"
+                QUALIFIED_NAME
+                  WHITESPACE "\n        "
+                  IDENTIFIER "Test"
               VARIABLE_DECLARATOR_LIST
                 VARIABLE_DECLARATOR
                   WHITESPACE " "

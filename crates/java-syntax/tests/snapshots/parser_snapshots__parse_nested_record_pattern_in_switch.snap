@@ -100,7 +100,8 @@ ROOT
           L_PAREN "("
           FORMAL_PARAMETER
             TYPE
-              IDENTIFIER "Object"
+              QUALIFIED_NAME
+                IDENTIFIER "Object"
             WHITESPACE " "
             IDENTIFIER "obj"
           R_PAREN ")"
@@ -124,16 +125,19 @@ ROOT
                   CASE_KW "case"
                   RECORD_PATTERN
                     TYPE
-                      WHITESPACE " "
-                      IDENTIFIER "Box"
+                      QUALIFIED_NAME
+                        WHITESPACE " "
+                        IDENTIFIER "Box"
                     L_PAREN "("
                     RECORD_PATTERN
                       TYPE
-                        IDENTIFIER "Item"
+                        QUALIFIED_NAME
+                          IDENTIFIER "Item"
                       L_PAREN "("
                       TYPE_PATTERN
                         TYPE
-                          IDENTIFIER "String"
+                          QUALIFIED_NAME
+                            IDENTIFIER "String"
                         WHITESPACE " "
                         IDENTIFIER "name"
                       R_PAREN ")"

@@ -82,7 +82,8 @@ ROOT
           L_PAREN "("
           FORMAL_PARAMETER
             TYPE
-              IDENTIFIER "String"
+              QUALIFIED_NAME
+                IDENTIFIER "String"
               DIMENSIONS
                 L_BRACKET "["
                 R_BRACKET "]"

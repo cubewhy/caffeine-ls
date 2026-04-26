@@ -38,18 +38,21 @@ ROOT
       L_BRACE "{"
       FIELD_DECL
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "Map"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "Map"
           TYPE_ARGUMENTS
             LESS "<"
             TYPE_ARGUMENT
               TYPE
-                IDENTIFIER "K"
+                QUALIFIED_NAME
+                  IDENTIFIER "K"
             COMMA ","
             TYPE_ARGUMENT
               TYPE
-                WHITESPACE " "
-                IDENTIFIER "V"
+                QUALIFIED_NAME
+                  WHITESPACE " "
+                  IDENTIFIER "V"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR

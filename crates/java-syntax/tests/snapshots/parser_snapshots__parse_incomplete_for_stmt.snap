@@ -76,8 +76,9 @@ ROOT
           LOCAL_VARIABLE_DECLARATION_STMT
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
-                IDENTIFIER "String"
+                QUALIFIED_NAME
+                  WHITESPACE "\n        "
+                  IDENTIFIER "String"
                 DIMENSIONS
                   L_BRACKET "["
                   R_BRACKET "]"
@@ -92,7 +93,8 @@ ROOT
             WHITESPACE " "
             L_PAREN "("
             TYPE
-              IDENTIFIER "String"
+              QUALIFIED_NAME
+                IDENTIFIER "String"
             VARIABLE_DECLARATOR
               WHITESPACE " "
               IDENTIFIER "s"

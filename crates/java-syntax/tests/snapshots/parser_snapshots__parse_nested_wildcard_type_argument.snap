@@ -45,18 +45,21 @@ ROOT
       L_BRACE "{"
       FIELD_DECL
         TYPE
-          WHITESPACE " "
-          IDENTIFIER "Map"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "Map"
           TYPE_ARGUMENTS
             LESS "<"
             TYPE_ARGUMENT
               TYPE
-                IDENTIFIER "String"
+                QUALIFIED_NAME
+                  IDENTIFIER "String"
             COMMA ","
             TYPE_ARGUMENT
               TYPE
-                WHITESPACE " "
-                IDENTIFIER "List"
+                QUALIFIED_NAME
+                  WHITESPACE " "
+                  IDENTIFIER "List"
                 TYPE_ARGUMENTS
                   LESS "<"
                   TYPE_ARGUMENT
@@ -66,8 +69,9 @@ ROOT
                         WHITESPACE " "
                         EXTENDS_KW "extends"
                         TYPE
-                          WHITESPACE " "
-                          IDENTIFIER "Number"
+                          QUALIFIED_NAME
+                            WHITESPACE " "
+                            IDENTIFIER "Number"
                   GREATER ">"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST

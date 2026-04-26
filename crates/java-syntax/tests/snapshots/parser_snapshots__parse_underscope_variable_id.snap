@@ -60,8 +60,9 @@ ROOT
           LOCAL_VARIABLE_DECLARATION_STMT
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
-                IDENTIFIER "String"
+                QUALIFIED_NAME
+                  WHITESPACE "\n        "
+                  IDENTIFIER "String"
               VARIABLE_DECLARATOR_LIST
                 VARIABLE_DECLARATOR
                   WHITESPACE " "

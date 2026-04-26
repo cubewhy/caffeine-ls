@@ -93,8 +93,9 @@ ROOT
                 MODIFIER_LIST
                   FINAL_KW "final"
                 TYPE
-                  WHITESPACE " "
-                  IDENTIFIER "Exception"
+                  QUALIFIED_NAME
+                    WHITESPACE " "
+                    IDENTIFIER "Exception"
                 WHITESPACE " "
                 IDENTIFIER "e"
               R_PAREN ")"
