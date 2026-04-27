@@ -235,7 +235,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.expect(L_BRACKET); // [
                     // expr inside []
                     if expression(p).is_err() {
-                        left = m.complete(p, ERROR);
+                        m.complete(p, ERROR);
                         return Err(());
                     }
                     p.expect(R_BRACKET); // ]
@@ -253,7 +253,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                 _ => {
                     p.bump();
                     if expr_bp(p, r_bp).is_err() {
-                        left = m.complete(p, ERROR);
+                        m.complete(p, ERROR);
                         return Err(());
                     }
                     left = m.complete(p, BINARY_EXPR);
