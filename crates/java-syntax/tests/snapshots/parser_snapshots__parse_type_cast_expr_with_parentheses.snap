@@ -1,0 +1,109 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        Foo a = (Foo)(new Foo());
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "Foo"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Foo"
+R_PAREN ")"
+L_PAREN "("
+NEW_KW "new"
+WHITESPACE " "
+IDENTIFIER "Foo"
+L_PAREN "("
+R_PAREN ")"
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "test"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              TYPE
+                QUALIFIED_NAME
+                  WHITESPACE "\n        "
+                  IDENTIFIER "Foo"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "a"
+                  WHITESPACE " "
+                  EQUAL "="
+                  CAST_EXPR
+                    WHITESPACE " "
+                    L_PAREN "("
+                    TYPE
+                      QUALIFIED_NAME
+                        IDENTIFIER "Foo"
+                    R_PAREN ")"
+                    PAREN_EXPR
+                      L_PAREN "("
+                      NEW_EXPR
+                        NEW_KW "new"
+                        TYPE
+                          QUALIFIED_NAME
+                            WHITESPACE " "
+                            IDENTIFIER "Foo"
+                        ARGUMENT_LIST
+                          L_PAREN "("
+                          R_PAREN ")"
+                      R_PAREN ")"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

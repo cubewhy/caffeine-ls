@@ -97,33 +97,20 @@ fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
 }
 
 fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
-    let m = p.start();
-    let kind = match p.current() {
-        Some(kind) => kind,
-        None => {
-            m.abandon(p);
-            return Err(());
-        }
-    };
+    let kind = p.current().ok_or(())?;
 
     match kind {
         NUMBER_LITERAL | STRING_LITERAL | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LITERAL
         | FALSE_LITERAL | NULL_LITERAL => {
+            let m = p.start();
             p.bump();
             Ok(m.complete(p, LITERAL))
         }
-        L_PAREN => {
-            p.bump();
-            if expression(p).is_err() {
-                m.complete(p, ERROR);
-                return Err(());
-            }
-            p.expect(R_PAREN);
-            Ok(m.complete(p, PAREN_EXPR))
-        }
+        L_PAREN => cast_or_paren_expr(p),
 
         // JLS 15.15.1 & 15.15.2: PreIncrement & PreDecrement
         PLUS_PLUS | MINUS_MINUS => {
+            let m = p.start();
             p.bump();
             if expr_bp(p, 25).is_err() {
                 m.complete(p, ERROR);
@@ -134,6 +121,7 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
 
         // JLS 15.15.3 - 15.15.6: +, -, ~, !
         PLUS | MINUS | TILDE | NOT => {
+            let m = p.start();
             p.bump();
             if expr_bp(p, 25).is_err() {
                 m.complete(p, ERROR);
@@ -142,36 +130,36 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             Ok(m.complete(p, UNARY_EXPR))
         }
 
-        NEW_KW => {
-            p.bump(); // new
+        NEW_KW => new_expression(p),
+        _ => Err(()),
+    }
+}
 
-            // type
-            type_(p).ok();
+fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
+    let m = p.start();
+    p.expect(NEW_KW);
 
-            match p.current() {
-                Some(L_PAREN) => {
-                    // object construction
-                    argument_list(p);
+    // type
+    type_(p).ok();
 
-                    // abstract class, interface
-                    if p.at(L_BRACE) {
-                        class_body(p);
-                    }
-                    Ok(m.complete(p, NEW_EXPR))
-                }
-                Some(L_BRACKET) => {
-                    // array construction
-                    array_creation_rest(p, m)
-                }
-                _ => {
-                    p.error_expected(&[L_PAREN, L_BRACKET]);
-                    m.complete(p, ERROR);
-                    Err(())
-                }
+    match p.current() {
+        Some(L_PAREN) => {
+            // object construction
+            argument_list(p);
+
+            // abstract class, interface
+            if p.at(L_BRACE) {
+                class_body(p);
             }
+            Ok(m.complete(p, NEW_EXPR))
+        }
+        Some(L_BRACKET) => {
+            // array construction
+            array_creation_rest(p, m)
         }
         _ => {
-            m.abandon(p);
+            p.error_expected(&[L_PAREN, L_BRACKET]);
+            m.complete(p, ERROR);
             Err(())
         }
     }
@@ -263,6 +251,75 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
     Ok(left)
 }
 
+fn cast_or_paren_expr(p: &mut Parser) -> Result<CompletedMarker, ()> {
+    let m = p.start();
+    p.expect(L_PAREN);
+
+    if is_type_cast_lookahead(p) {
+        // CastExpression:
+        //  ( PrimitiveType ) UnaryExpression
+        //  ( ReferenceType {AdditionalBound} ) UnaryExpressionNotPlusMinus
+        //  ( ReferenceType {AdditionalBound} ) LambdaExpression
+        //
+        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-CastExpression
+        type_(p).ok();
+        if p.at(BIT_AND) {
+            additional_bounds(p);
+        }
+
+        p.expect(R_PAREN);
+
+        if expr_bp(p, 25).is_err() {
+            m.complete(p, ERROR);
+            return Err(());
+        }
+        Ok(m.complete(p, CAST_EXPR))
+    } else {
+        if expression(p).is_err() {
+            m.complete(p, ERROR);
+            return Err(());
+        }
+        p.expect(R_PAREN);
+        Ok(m.complete(p, PAREN_EXPR))
+    }
+}
+
+fn additional_bounds(p: &mut Parser) {
+    while p.eat(BIT_AND) {
+        if reference_type(p).is_err() {
+            p.error_message("Expected reference type after '&' in cast");
+            break;
+        }
+    }
+}
+
+fn is_type_cast_lookahead(p: &mut Parser) -> bool {
+    let ckpt = p.checkpoint();
+
+    // PrimitiveType | ReferenceType
+    let first_type_ok = type_(p).is_ok();
+
+    // {AdditionalBound}
+    if first_type_ok && p.at(BIT_AND) {
+        while p.eat(BIT_AND) {
+            if reference_type(p).is_err() {
+                break;
+            }
+        }
+    }
+
+    let has_r_paren = p.at(R_PAREN);
+    let is_cast = if has_r_paren {
+        p.bump(); // )
+        is_expression_start(p.current().unwrap_or(UNKNOWN))
+    } else {
+        false
+    };
+
+    p.rewind(ckpt);
+    is_cast
+}
+
 pub fn is_expression_start(kind: SyntaxKind) -> bool {
     matches!(
         kind,
@@ -275,10 +332,16 @@ pub fn is_expression_start(kind: SyntaxKind) -> bool {
             | THIS_KW
             | SUPER_KW
             | NEW_KW
-            | NOT
-            | TILDE
-            | PLUS
-            | MINUS
+            | SWITCH_KW
+            | L_PAREN
+            | L_BRACE
+            | NOT         // !
+            | TILDE       // ~
+            | PLUS        // +
+            | MINUS       // -
+            | PLUS_PLUS   // ++
+            | MINUS_MINUS // --
+            | AT // Annotation
     )
 }
 

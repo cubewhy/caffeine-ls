@@ -592,3 +592,48 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_type_cast_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Integer i = (Integer)1;
+                boolean b = (boolean)1;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_type_cast_expr_with_bounds,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Foo a = (Runnable & Serializable) o;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_type_cast_expr_with_method_call,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Foo a = (Foo)Foo.getInstance();
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_type_cast_expr_with_parentheses,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Foo a = (Foo)(new Foo());
+            }
+        }
+    "#}
+);
