@@ -93,10 +93,9 @@ ROOT
                       L_PAREN "("
                       NEW_EXPR
                         NEW_KW "new"
-                        TYPE
-                          QUALIFIED_NAME
-                            WHITESPACE " "
-                            IDENTIFIER "Foo"
+                        QUALIFIED_NAME
+                          WHITESPACE " "
+                          IDENTIFIER "Foo"
                         ARGUMENT_LIST
                           L_PAREN "("
                           R_PAREN ")"

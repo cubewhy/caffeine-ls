@@ -137,10 +137,9 @@ ROOT
                   NEW_EXPR
                     WHITESPACE " "
                     NEW_KW "new"
-                    TYPE
-                      QUALIFIED_NAME
-                        WHITESPACE " "
-                        IDENTIFIER "Test"
+                    QUALIFIED_NAME
+                      WHITESPACE " "
+                      IDENTIFIER "Test"
                     ARGUMENT_LIST
                       L_PAREN "("
                       R_PAREN ")"
