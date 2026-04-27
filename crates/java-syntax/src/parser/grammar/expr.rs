@@ -396,7 +396,7 @@ pub fn case_pattern_or_constant(p: &mut Parser) {
     if is_pattern(p) {
         pattern(p);
     } else {
-        expression(p);
+        expression(p).ok();
     }
 }
 
@@ -415,7 +415,7 @@ fn pattern(p: &mut Parser) {
     let m = p.start();
 
     if is_record_pattern_lookahead(p) {
-        reference_type(p);
+        reference_type(p).ok();
         p.expect(L_PAREN);
         if !p.at(R_PAREN) {
             component_pattern_list(p);
