@@ -5,11 +5,11 @@ expression: out
 SOURCE:
 'a' '\n' '\''
 TOKENS:
-CHAR_LIT "'a'"
+CHAR_LITERAL "'a'"
 WHITESPACE " "
-CHAR_LIT "'\\n'"
+CHAR_LITERAL "'\\n'"
 WHITESPACE " "
-CHAR_LIT "'\\''"
+CHAR_LITERAL "'\\''"
 
 LEX_ERRORS:
 <none>

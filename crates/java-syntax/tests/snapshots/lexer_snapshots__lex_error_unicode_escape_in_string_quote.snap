@@ -11,7 +11,7 @@ IDENTIFIER "s"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-STRING_LIT "\"\\u0022"
+STRING_LITERAL "\"\\u0022"
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedString, at_offset: 18 }

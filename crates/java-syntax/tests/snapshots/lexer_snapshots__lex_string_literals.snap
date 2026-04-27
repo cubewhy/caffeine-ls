@@ -6,11 +6,11 @@ SOURCE:
  "hello world" "escape \" test" "" 
 TOKENS:
 WHITESPACE " "
-STRING_LIT "\"hello world\""
+STRING_LITERAL "\"hello world\""
 WHITESPACE " "
-STRING_LIT "\"escape \\\" test\""
+STRING_LITERAL "\"escape \\\" test\""
 WHITESPACE " "
-STRING_LIT "\"\""
+STRING_LITERAL "\"\""
 WHITESPACE " "
 
 LEX_ERRORS:

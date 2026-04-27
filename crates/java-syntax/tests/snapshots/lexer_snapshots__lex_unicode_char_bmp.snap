@@ -5,7 +5,7 @@ expression: out
 SOURCE:
 '你'
 TOKENS:
-CHAR_LIT "'你'"
+CHAR_LITERAL "'你'"
 
 LEX_ERRORS:
 <none>

@@ -5,7 +5,7 @@ expression: out
 SOURCE:
 0._1f
 TOKENS:
-NUMBER_LIT "0._1f"
+NUMBER_LITERAL "0._1f"
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, at_offset: 0 }

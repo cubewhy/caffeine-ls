@@ -6,7 +6,7 @@ SOURCE:
  "trailing space\s" 
 TOKENS:
 WHITESPACE " "
-STRING_LIT "\"trailing space\\s\""
+STRING_LITERAL "\"trailing space\\s\""
 WHITESPACE " "
 
 LEX_ERRORS:

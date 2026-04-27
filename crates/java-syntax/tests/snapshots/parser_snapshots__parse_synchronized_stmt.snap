@@ -71,7 +71,7 @@ IDENTIFIER "out"
 DOT "."
 IDENTIFIER "println"
 L_PAREN "("
-STRING_LIT "\"made it!\""
+STRING_LITERAL "\"made it!\""
 R_PAREN ")"
 SEMICOLON ";"
 WHITESPACE "\n            "
@@ -181,7 +181,7 @@ ROOT
                       ARGUMENT_LIST
                         L_PAREN "("
                         LITERAL
-                          STRING_LIT "\"made it!\""
+                          STRING_LITERAL "\"made it!\""
                         R_PAREN ")"
                     SEMICOLON ";"
                   WHITESPACE "\n            "

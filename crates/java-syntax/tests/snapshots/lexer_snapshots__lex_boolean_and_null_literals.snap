@@ -5,11 +5,11 @@ expression: out
 SOURCE:
 true false null
 TOKENS:
-TRUE_LIT "true"
+TRUE_LITERAL "true"
 WHITESPACE " "
-FALSE_LIT "false"
+FALSE_LITERAL "false"
 WHITESPACE " "
-NULL_LIT "null"
+NULL_LITERAL "null"
 
 LEX_ERRORS:
 <none>

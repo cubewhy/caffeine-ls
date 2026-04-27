@@ -27,7 +27,7 @@ WHITESPACE "\n        "
 WHILE_KW "while"
 WHITESPACE " "
 L_PAREN "("
-TRUE_LIT "true"
+TRUE_LITERAL "true"
 R_PAREN ")"
 WHITESPACE " "
 BREAK_KW "break"
@@ -68,7 +68,7 @@ ROOT
               WHITESPACE " "
               L_PAREN "("
               LITERAL
-                TRUE_LIT "true"
+                TRUE_LITERAL "true"
               R_PAREN ")"
             BREAK_STMT
               WHITESPACE " "

@@ -25,7 +25,7 @@ R_PAREN ")"
 WHITESPACE " "
 DEFAULT_KW "default"
 WHITESPACE " "
-NUMBER_LIT "0"
+NUMBER_LITERAL "0"
 SEMICOLON ";"
 WHITESPACE "\n    "
 IDENTIFIER "String"
@@ -38,7 +38,7 @@ R_PAREN ")"
 WHITESPACE " "
 DEFAULT_KW "default"
 WHITESPACE " "
-NUMBER_LIT "1"
+NUMBER_LITERAL "1"
 SEMICOLON ";"
 WHITESPACE "\n    "
 DOUBLE_KW "double"
@@ -47,7 +47,7 @@ IDENTIFIER "VERSION"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LIT "1.0"
+NUMBER_LITERAL "1.0"
 SEMICOLON ";"
 WHITESPACE "\n"
 R_BRACE "}"
@@ -78,7 +78,7 @@ ROOT
         DEFAULT_KW "default"
         LITERAL
           WHITESPACE " "
-          NUMBER_LIT "0"
+          NUMBER_LITERAL "0"
         SEMICOLON ";"
       ANNOTATION_TYPE_ELEMENT_DECL
         TYPE
@@ -97,7 +97,7 @@ ROOT
         DEFAULT_KW "default"
         LITERAL
           WHITESPACE " "
-          NUMBER_LIT "1"
+          NUMBER_LITERAL "1"
         SEMICOLON ";"
       FIELD_DECL
         TYPE
@@ -111,7 +111,7 @@ ROOT
             EQUAL "="
             LITERAL
               WHITESPACE " "
-              NUMBER_LIT "1.0"
+              NUMBER_LITERAL "1.0"
         SEMICOLON ";"
       WHITESPACE "\n"
       R_BRACE "}"

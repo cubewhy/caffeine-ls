@@ -29,7 +29,7 @@ WHITESPACE "\n        "
 WHILE_KW "while"
 WHITESPACE " "
 L_PAREN "("
-TRUE_LIT "true"
+TRUE_LITERAL "true"
 R_PAREN ")"
 WHITESPACE " "
 L_BRACE "{"
@@ -73,7 +73,7 @@ ROOT
               WHITESPACE " "
               L_PAREN "("
               LITERAL
-                TRUE_LIT "true"
+                TRUE_LITERAL "true"
               R_PAREN ")"
             BLOCK
               WHITESPACE " "

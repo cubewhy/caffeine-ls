@@ -71,7 +71,7 @@ IDENTIFIER "out"
 DOT "."
 IDENTIFIER "println"
 L_PAREN "("
-STRING_LIT "\"Integer\""
+STRING_LITERAL "\"Integer\""
 R_PAREN ")"
 SEMICOLON ";"
 WHITESPACE "\n            "
@@ -186,7 +186,7 @@ ROOT
                     ARGUMENT_LIST
                       L_PAREN "("
                       LITERAL
-                        STRING_LIT "\"Integer\""
+                        STRING_LITERAL "\"Integer\""
                       R_PAREN ")"
                   SEMICOLON ";"
               SWITCH_RULE
