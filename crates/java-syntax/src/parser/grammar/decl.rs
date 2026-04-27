@@ -450,13 +450,13 @@ pub fn variable_declarator_list(p: &mut Parser) -> Result<(), ()> {
     Ok(())
 }
 
-fn variable_id(p: &mut Parser) -> bool {
+fn variable_id(p: &mut Parser) -> Result<(), ()> {
     if p.at(IDENTIFIER) || p.at(UNDERSCORE) {
         p.bump();
-        true
+        Ok(())
     } else {
         p.error_expected(&[IDENTIFIER, UNDERSCORE]);
-        false
+        Err(())
     }
 }
 
@@ -464,7 +464,7 @@ fn variable_declarator(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
     // variable id
-    if !variable_id(p) {
+    if variable_id(p).is_err() {
         m.complete(p, VARIABLE_DECLARATOR);
         return Err(());
     }
@@ -487,7 +487,7 @@ pub fn variable_declarator_no_init_expr(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
     // variable id
-    if !variable_id(p) {
+    if variable_id(p).is_err() {
         m.complete(p, VARIABLE_DECLARATOR);
         return Err(());
     }
