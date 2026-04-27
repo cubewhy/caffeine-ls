@@ -791,7 +791,7 @@ fn variable_access(p: &mut Parser) -> CompletedMarker {
 ///   MethodInvocation
 ///   ClassInstanceCreationExpression
 ///
-/// docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.8
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.8
 fn expression_statement(p: &mut Parser) {
     let m = p.start();
 
