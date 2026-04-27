@@ -147,6 +147,7 @@ pub enum SyntaxKind {
     METHOD_CALL,     // method()
     NEW_EXPR,        // new Object()
     CAST_EXPR,
+    SWITCH_EXPR,
     LITERAL,
     CLASS_LITERAL,
     PAREN_EXPR,

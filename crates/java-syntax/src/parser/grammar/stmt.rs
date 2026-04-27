@@ -14,7 +14,7 @@ use crate::grammar::expr::{
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
-use crate::parser::marker::CompletedMarker;
+use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
 use crate::{ContextualKeyword, SyntaxKind, tokenset};
 
@@ -128,6 +128,11 @@ fn labeled_statement(p: &mut Parser) {
 ///
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11
 fn switch_statement(p: &mut Parser) {
+    let m = switch_common(p);
+    m.complete(p, SWITCH_STMT);
+}
+
+pub fn switch_common(p: &mut Parser) -> Marker {
     let m = p.start();
 
     p.expect(SWITCH_KW);
@@ -147,7 +152,7 @@ fn switch_statement(p: &mut Parser) {
         recover_block_statement(p);
     }
 
-    m.complete(p, SWITCH_STMT);
+    m
 }
 
 fn switch_block(p: &mut Parser) {

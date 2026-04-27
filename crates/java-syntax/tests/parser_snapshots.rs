@@ -637,3 +637,17 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_switch_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                var a = switch (expr) {
+                    case 1 -> {}
+                    case 2 -> {}
+                };
+            }
+        }
+    "#}
+);

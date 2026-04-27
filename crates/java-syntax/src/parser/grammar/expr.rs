@@ -6,6 +6,7 @@ use crate::{
         decl::class_body,
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
+        stmt::switch_common,
         types::{dimensions, reference_type, type_},
     },
     kinds::SyntaxKind::*,
@@ -108,6 +109,7 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             Ok(m.complete(p, LITERAL))
         }
         L_PAREN => cast_or_paren_expr(p),
+        SWITCH_KW => Ok(switch_expression(p)),
 
         // JLS 15.15.1 & 15.15.2: PreIncrement & PreDecrement
         PLUS_PLUS | MINUS_MINUS => {
@@ -134,6 +136,12 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
         NEW_KW => new_expression(p),
         _ => Err(()),
     }
+}
+
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28
+fn switch_expression(p: &mut Parser) -> CompletedMarker {
+    let m = switch_common(p);
+    m.complete(p, SWITCH_EXPR)
 }
 
 /// UnqualifiedClassInstanceCreationExpression:
