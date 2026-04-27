@@ -12,7 +12,7 @@ use crate::grammar::expr::{
     case_pattern_or_constant, expression, expression_list, is_expression_start,
 };
 use crate::grammar::modifiers::variable_modifier;
-use crate::grammar::types::{dimensions, type_};
+use crate::grammar::types::{dimensions, is_primitive_type, type_};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
@@ -60,15 +60,12 @@ fn block_statement(p: &mut Parser) {
         let m = p.start();
         record_decl_rest(p, m);
     } else {
-        let cp = p.checkpoint();
-        // try local variable decl
-        if local_variable_declaration_statement(p).is_ok() {
-            return;
+        if is_local_variable_declaration(p) {
+            local_variable_declaration_statement(p).ok();
+        } else {
+            // not local variable decl, parse statement
+            statement(p);
         }
-        p.rewind(cp);
-
-        // not local variable decl, parse statement
-        statement(p);
     }
 }
 
@@ -931,11 +928,90 @@ fn continue_statement(p: &mut Parser) {
     m.complete(p, CONTINUE_STMT);
 }
 
-pub fn is_local_variable_declaration(p: &mut Parser) -> bool {
-    let cp = p.checkpoint();
-    let ok = local_variable_declaration(p).is_ok();
-    p.rewind(cp);
-    ok
+pub fn is_local_variable_declaration(p: &Parser) -> bool {
+    let mut i = 0;
+
+    // skip modifiers
+    while p.nth(i) == Some(FINAL_KW) || p.nth(i) == Some(AT) {
+        if p.nth(i) == Some(AT) {
+            i += 1; // skip '@'
+
+            // skip annotation fqn
+            while p.nth(i) == Some(IDENTIFIER) || p.nth(i) == Some(DOT) {
+                i += 1;
+            }
+
+            // skip annotation arguments
+            if p.nth(i) == Some(L_PAREN) {
+                let mut depth = 1;
+                i += 1;
+                while depth > 0 {
+                    match p.nth(i) {
+                        Some(L_PAREN) => depth += 1,
+                        Some(R_PAREN) => depth -= 1,
+                        Some(EOF) | None => return false,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+        } else {
+            i += 1; // skip 'final'
+        }
+    }
+
+    let Some(kind) = p.nth(i) else {
+        return false;
+    };
+
+    if is_primitive_type(kind) {
+        return true;
+    }
+
+    // var keyword
+    if p.nth_at_contextual_kw(i, ContextualKeyword::Var) && p.nth(i + 1) == Some(IDENTIFIER) {
+        return true;
+    }
+
+    // reference type
+    if kind == IDENTIFIER {
+        i += 1;
+
+        // skip fqn
+        while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+            i += 2;
+        }
+
+        // skip type arguments
+        if p.nth(i) == Some(LESS) {
+            let mut depth = 1;
+            i += 1;
+            while depth > 0 {
+                match p.nth(i) {
+                    Some(LESS) => depth += 1,
+                    Some(GREATER) => depth -= 1,
+                    Some(RIGHT_SHIFT) => depth -= 2,
+                    Some(UNSIGNED_RIGHT_SHIFT) => depth -= 3,
+
+                    Some(SEMICOLON) | Some(L_BRACE) | Some(EOF) | None => return false,
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+
+        // skip dimensions
+        while p.nth(i) == Some(L_BRACKET) && p.nth(i + 1) == Some(R_BRACKET) {
+            i += 2;
+        }
+
+        // variable name
+        if matches!(p.nth(i), Some(IDENTIFIER) | Some(UNDERSCORE)) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn local_variable_declaration_statement(p: &mut Parser) -> Result<(), ()> {

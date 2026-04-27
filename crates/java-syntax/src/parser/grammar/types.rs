@@ -1,4 +1,5 @@
 use crate::{
+    SyntaxKind,
     grammar::{
         error_recover::{recover_type_argument, recover_type_bound},
         expr::{expression, is_expression_start},
@@ -77,6 +78,13 @@ pub fn at_primitive_type(p: &Parser) -> bool {
     p.at_set(tokenset![
         INT_KW, SHORT_KW, LONG_KW, FLOAT_KW, DOUBLE_KW, BYTE_KW, BOOLEAN_KW, CHAR_KW,
     ])
+}
+
+pub fn is_primitive_type(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        BOOLEAN_KW | BYTE_KW | SHORT_KW | INT_KW | LONG_KW | CHAR_KW | FLOAT_KW | DOUBLE_KW
+    )
 }
 
 pub fn dimensions(p: &mut Parser) {
