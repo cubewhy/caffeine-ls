@@ -1,0 +1,101 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        if (a && b || c) {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "a"
+WHITESPACE " "
+AND "&&"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+OR "||"
+WHITESPACE " "
+IDENTIFIER "c"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "test"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          IF_STMT
+            WHITESPACE "\n        "
+            IF_KW "if"
+            PARENTHESIZED_EXPR
+              WHITESPACE " "
+              L_PAREN "("
+              BINARY_EXPR
+                BINARY_EXPR
+                  LITERAL
+                    IDENTIFIER "a"
+                  WHITESPACE " "
+                  AND "&&"
+                  LITERAL
+                    WHITESPACE " "
+                    IDENTIFIER "b"
+                WHITESPACE " "
+                OR "||"
+                LITERAL
+                  WHITESPACE " "
+                  IDENTIFIER "c"
+              R_PAREN ")"
+            BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
