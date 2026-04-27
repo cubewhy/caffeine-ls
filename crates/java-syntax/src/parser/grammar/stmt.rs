@@ -9,11 +9,12 @@ use crate::grammar::error_recover::{
     recover_until_or_eat,
 };
 use crate::grammar::expr::{
-    case_pattern_or_constant, expression, expression_list, is_expression_start, variable_access,
+    case_pattern_or_constant, expression, expression_list, is_expression_start,
 };
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
+use crate::parser::marker::CompletedMarker;
 use crate::parser::{ExpectedConstruct, Parser};
 use crate::{ContextualKeyword, SyntaxKind, tokenset};
 
@@ -735,6 +736,42 @@ fn resource(p: &mut Parser) -> Result<(), ()> {
     m.complete(p, RESOURCE);
 
     Ok(())
+}
+
+/// VariableAccess:
+///   ExpressionName
+///   FieldAccess
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-VariableAccess
+fn variable_access(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+
+    // Nud
+    if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
+        p.bump();
+    } else {
+        p.error_expected(&[IDENTIFIER, THIS_KW, SUPER_KW]);
+        return m.complete(p, ERROR);
+    }
+
+    let mut left = m.complete(p, VARIABLE_ACCESS);
+
+    // Led: .identifier
+    while p.at(DOT) {
+        let m = left.precede(p);
+        p.expect(DOT);
+
+        if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
+            p.bump();
+            left = m.complete(p, VARIABLE_ACCESS);
+        } else {
+            p.error_expected(&[IDENTIFIER]);
+            left = m.complete(p, ERROR);
+            break;
+        }
+    }
+
+    left
 }
 
 /// ExpressionStatement:
