@@ -59,17 +59,17 @@ fn block_statement(p: &mut Parser) {
     } else if p.at_contextual_kw(ContextualKeyword::Record) {
         let m = p.start();
         record_decl_rest(p, m);
-    }
+    } else {
+        let cp = p.checkpoint();
+        // try local variable decl
+        if local_variable_declaration_statement(p).is_ok() {
+            return;
+        }
+        p.rewind(cp);
 
-    let cp = p.checkpoint();
-    // try local variable decl
-    if local_variable_declaration_statement(p).is_ok() {
-        return;
+        // not local variable decl, parse statement
+        statement(p);
     }
-    p.rewind(cp);
-
-    // not local variable decl, parse statement
-    statement(p);
 }
 
 #[stacksafe]
