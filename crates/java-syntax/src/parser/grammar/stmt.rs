@@ -818,6 +818,7 @@ fn is_legal_statement_expression(kind: SyntaxKind) -> bool {
     match kind {
         ASSIGNMENT_EXPR |      // a = 1
         POSTFIX_EXPR |
+        ASSIGN_EXPR |
         PREFIX_EXPR |
         METHOD_CALL |    // method()
         NEW_EXPR => true,      // new Object()

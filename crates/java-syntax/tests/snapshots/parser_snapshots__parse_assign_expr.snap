@@ -1,0 +1,284 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        a = 1;
+        a += 1;
+        a -= 1;
+        a /= 1;
+        a *= 1;
+        a |= 1;
+        a %= 1;
+        a &= 1;
+        a ^=1;
+        a >>= 1;
+        a <<= 1;
+        a >>>= 1;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS_EQUAL "+="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+MINUS_EQUAL "-="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+DIVIDE_EQUAL "/="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+MULTIPLE_EQUAL "*="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+OR_EQUAL "|="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+MODULO_EQUAL "%="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+AND_EQUAL "&="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+XOR_EQUAL "^="
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+RIGHT_SHIFT_EQUAL ">>="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+LEFT_SHIFT_EQUAL "<<="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "a"
+WHITESPACE " "
+UNSIGNED_RIGHT_SHIFT_EQUAL ">>>="
+WHITESPACE " "
+NUMBER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "test"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              EQUAL "="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              PLUS_EQUAL "+="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              MINUS_EQUAL "-="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              DIVIDE_EQUAL "/="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              MULTIPLE_EQUAL "*="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              OR_EQUAL "|="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              MODULO_EQUAL "%="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              AND_EQUAL "&="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              XOR_EQUAL "^="
+              LITERAL
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              RIGHT_SHIFT_EQUAL ">>="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              LEFT_SHIFT_EQUAL "<<="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            ASSIGN_EXPR
+              LITERAL
+                WHITESPACE "\n        "
+                IDENTIFIER "a"
+              WHITESPACE " "
+              UNSIGNED_RIGHT_SHIFT_EQUAL ">>>="
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "1"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

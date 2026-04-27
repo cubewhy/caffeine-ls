@@ -674,3 +674,25 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_assign_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                a = 1;
+                a += 1;
+                a -= 1;
+                a /= 1;
+                a *= 1;
+                a |= 1;
+                a %= 1;
+                a &= 1;
+                a ^=1;
+                a >>= 1;
+                a <<= 1;
+                a >>>= 1;
+            }
+        }
+    "#}
+);

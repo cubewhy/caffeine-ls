@@ -61,8 +61,18 @@ pub fn array_initializer(p: &mut Parser) {
 fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
     let bp = match kind {
         // assignment
-        EQUAL | PLUS_EQUAL | MINUS_EQUAL | MULTIPLE_EQUAL | DIVIDE_EQUAL | MODULO_EQUAL
-        | AND_EQUAL | OR_EQUAL | XOR_EQUAL => (2, 1),
+        EQUAL
+        | PLUS_EQUAL
+        | MINUS_EQUAL
+        | MULTIPLE_EQUAL
+        | DIVIDE_EQUAL
+        | MODULO_EQUAL
+        | AND_EQUAL
+        | OR_EQUAL
+        | XOR_EQUAL
+        | LEFT_SHIFT_EQUAL
+        | RIGHT_SHIFT_EQUAL
+        | UNSIGNED_RIGHT_SHIFT_EQUAL => (2, 1),
 
         // Conditional Operator
         QUESTION => (3, 4),
@@ -212,6 +222,27 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
             let m = left.precede(p);
 
             match kind {
+                EQUAL
+                | PLUS_EQUAL
+                | MINUS_EQUAL
+                | MULTIPLE_EQUAL
+                | DIVIDE_EQUAL
+                | MODULO_EQUAL
+                | AND_EQUAL
+                | OR_EQUAL
+                | XOR_EQUAL
+                | LEFT_SHIFT_EQUAL
+                | RIGHT_SHIFT_EQUAL
+                | UNSIGNED_RIGHT_SHIFT_EQUAL => {
+                    p.bump(); // operator
+
+                    if expr_bp(p, r_bp).is_err() {
+                        m.complete(p, ERROR);
+                        return Err(());
+                    }
+
+                    left = m.complete(p, ASSIGN_EXPR);
+                }
                 DOT => {
                     p.expect(DOT); // .
                     if p.at(CLASS_KW) {
