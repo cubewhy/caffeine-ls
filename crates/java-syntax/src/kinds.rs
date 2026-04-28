@@ -152,10 +152,13 @@ pub enum SyntaxKind {
     PREFIX_EXPR,     // ++i, --i
     METHOD_CALL,     // method()
     NEW_EXPR,        // new Object()
+    METHOD_REFERENCE,
+    SUPER_EXPR,
     CAST_EXPR,
     SWITCH_EXPR,
     COND_EXPR,
     ASSIGN_EXPR,
+    PRIMITIVE_TYPE_EXPR,
     LITERAL,
     CLASS_LITERAL,
     PAREN_EXPR,

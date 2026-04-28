@@ -708,3 +708,19 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_method_references,
+    indoc! {r#"
+        class Test {
+            void test() {
+                var alConstructor = ArrayList<String>::new;
+                var stringValueOfMd = String::valueOf;
+                var lengthOfAStringLiteral = "abc"::length;
+                var arrayCreation = int[]::new;
+                var innerClassConstructor = Outer.Inner::new;
+                var genericClassGenericConstructor = Bar<String>::<Integer>new;
+            }
+        }
+    "#}
+);

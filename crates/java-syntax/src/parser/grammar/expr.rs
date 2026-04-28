@@ -8,7 +8,7 @@ use crate::{
         modifiers::annotation,
         names::qualified_name,
         stmt::switch_common,
-        types::{at_primitive_type, dimensions, reference_type, type_},
+        types::{at_primitive_type, dimensions, reference_type, type_, type_arguments},
     },
     kinds::SyntaxKind::*,
     parser::{
@@ -59,7 +59,7 @@ pub fn array_initializer(p: &mut Parser) {
     m.complete(p, ARRAY_INITIALIZER);
 }
 
-fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
+fn get_infix_bp(p: &Parser, kind: SyntaxKind) -> Option<(u8, u8)> {
     let bp = match kind {
         // assignment
         EQUAL
@@ -92,6 +92,9 @@ fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
         // Equality Operators
         EQUAL_EQUAL | NOT_EQUAL => (15, 16),
 
+        // LESS if is_method_ref_lookahead(p) => (27, 28),
+        // L_BRACKET if is_array_type_lookahead(p) => (27, 28),
+
         // compare and type checking
         LESS | LESS_EQUAL | GREATER | GREATER_EQUAL | INSTANCEOF_KW => (17, 18),
 
@@ -119,6 +122,14 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             p.bump();
             Ok(m.complete(p, LITERAL))
         }
+
+        BOOLEAN_KW | BYTE_KW | SHORT_KW | INT_KW | LONG_KW | CHAR_KW | FLOAT_KW | DOUBLE_KW
+        | VOID_KW => {
+            let m = p.start();
+            p.bump();
+            Ok(m.complete(p, PRIMITIVE_TYPE_EXPR))
+        }
+
         L_PAREN => cast_or_paren_expr(p),
         SWITCH_KW => Ok(switch_expression(p)),
 
@@ -147,6 +158,34 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
         NEW_KW => new_expression(p),
         _ => Err(()),
     }
+}
+
+/// MethodReference:
+///   ExpressionName :: [TypeArguments] Identifier
+///   Primary :: [TypeArguments] Identifier
+///   ReferenceType :: [TypeArguments] Identifier
+///   super :: [TypeArguments] Identifier
+///   TypeName . super :: [TypeArguments] Identifier
+///   ClassType :: [TypeArguments] new
+///   ArrayType :: new
+///
+/// Note: this function only parses tokens after `::`
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13
+fn method_reference_rest(p: &mut Parser, m: Marker) -> CompletedMarker {
+    p.expect(COLON_COLON);
+
+    if p.at(LESS) {
+        type_arguments(p);
+    }
+
+    if p.at(IDENTIFIER) || p.at(NEW_KW) {
+        p.bump();
+    } else {
+        p.error_message("Expected identifier or 'new' after '::'");
+    }
+
+    m.complete(p, METHOD_REFERENCE)
 }
 
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28
@@ -219,7 +258,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
 
     // Led
     while let Some(kind) = p.current() {
-        if let Some((l_bp, r_bp)) = get_infix_bp(kind) {
+        if let Some((l_bp, r_bp)) = get_infix_bp(p, kind) {
             if l_bp < min_bp {
                 break;
             }
@@ -248,6 +287,10 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
 
                     left = m.complete(p, ASSIGN_EXPR);
                 }
+                COLON_COLON => {
+                    // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13
+                    left = method_reference_rest(p, m);
+                }
                 DOT => {
                     p.expect(DOT); // .
                     if p.at(CLASS_KW) {
@@ -258,6 +301,11 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-FieldAccess
                         p.bump();
                         left = m.complete(p, FIELD_ACCESS);
+                    } else if p.at(SUPER_KW) {
+                        // Qualified Super: TypeName.super
+                        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2
+                        p.bump();
+                        left = m.complete(p, SUPER_EXPR);
                     } else {
                         p.error_message("Expected identifier or 'class' after '.'");
                         left = m.complete(p, ERROR);
@@ -269,15 +317,23 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     left = m.complete(p, METHOD_CALL);
                 }
                 L_BRACKET => {
-                    // array access
                     p.expect(L_BRACKET); // [
-                    // expr inside []
-                    if expression(p).is_err() {
-                        m.complete(p, ERROR);
-                        return Err(());
+                    if p.at(R_BRACKET) {
+                        p.expect(R_BRACKET);
+                        while p.eat(L_BRACKET) {
+                            p.expect(R_BRACKET);
+                        }
+                        left = m.complete(p, TYPE);
+                    } else {
+                        // array access
+                        // expr inside []
+                        if expression(p).is_err() {
+                            m.complete(p, ERROR);
+                            return Err(());
+                        }
+                        p.expect(R_BRACKET); // ]
+                        left = m.complete(p, ARRAY_ACCESS);
                     }
-                    p.expect(R_BRACKET); // ]
-                    left = m.complete(p, ARRAY_ACCESS);
                 }
                 PLUS_PLUS | MINUS_MINUS => {
                     p.bump();
@@ -306,6 +362,12 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     left = m.complete(p, COND_EXPR);
                 }
 
+                LESS if is_method_ref_lookahead(p) => {
+                    // type argument in method ref
+                    type_arguments(p);
+                    left = m.complete(p, TYPE);
+                }
+
                 _ => {
                     p.bump();
                     if expr_bp(p, r_bp).is_err() {
@@ -321,6 +383,51 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
     }
 
     Ok(left)
+}
+
+fn is_array_type_lookahead(p: &Parser) -> bool {
+    let mut i = 0;
+    while p.nth(i) == Some(L_BRACKET) && p.nth(i + 1) == Some(R_BRACKET) {
+        i += 2;
+    }
+    p.nth(i) == Some(COLON_COLON)
+}
+
+fn is_method_ref_lookahead(p: &Parser) -> bool {
+    let mut i = 0;
+
+    if p.at(LESS) {
+        let mut depth = 0;
+        loop {
+            match p.nth(i) {
+                Some(LESS) => depth += 1,
+                Some(GREATER) => depth -= 1,
+                Some(RIGHT_SHIFT) => depth -= 2,
+                Some(UNSIGNED_RIGHT_SHIFT) => depth -= 3,
+                Some(IDENTIFIER) | Some(DOT) | Some(COMMA) | Some(QUESTION) | Some(EXTENDS_KW)
+                | Some(SUPER_KW) | Some(AT) | Some(L_BRACKET) | Some(R_BRACKET) => {}
+                _ => return false,
+            }
+            i += 1;
+            if depth == 0 {
+                break;
+            }
+            if depth < 0 {
+                return false;
+            }
+        }
+    }
+
+    while p.nth(i) == Some(L_BRACKET) {
+        if p.nth(i + 1) == Some(R_BRACKET) {
+            i += 2;
+        } else {
+            break;
+        }
+    }
+
+    matches!(p.nth(i), Some(COLON_COLON))
+        || (p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(CLASS_KW))
 }
 
 fn cast_or_paren_expr(p: &mut Parser) -> Result<CompletedMarker, ()> {

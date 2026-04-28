@@ -1,0 +1,274 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        var alConstructor = ArrayList<String>::new;
+        var stringValueOfMd = String::valueOf;
+        var lengthOfAStringLiteral = "abc"::length;
+        var arrayCreation = int[]::new;
+        var innerClassConstructor = Outer.Inner::new;
+        var genericClassGenericConstructor = Bar<String>::<Integer>new;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "alConstructor"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "ArrayList"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+COLON_COLON "::"
+NEW_KW "new"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "stringValueOfMd"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "String"
+COLON_COLON "::"
+IDENTIFIER "valueOf"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "lengthOfAStringLiteral"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+STRING_LITERAL "\"abc\""
+COLON_COLON "::"
+IDENTIFIER "length"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "arrayCreation"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INT_KW "int"
+L_BRACKET "["
+R_BRACKET "]"
+COLON_COLON "::"
+NEW_KW "new"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "innerClassConstructor"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "Outer"
+DOT "."
+IDENTIFIER "Inner"
+COLON_COLON "::"
+NEW_KW "new"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "genericClassGenericConstructor"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "Bar"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+COLON_COLON "::"
+LESS "<"
+IDENTIFIER "Integer"
+GREATER ">"
+NEW_KW "new"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "test"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "alConstructor"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    TYPE
+                      LITERAL
+                        WHITESPACE " "
+                        IDENTIFIER "ArrayList"
+                      TYPE_ARGUMENTS
+                        LESS "<"
+                        TYPE_ARGUMENT
+                          TYPE
+                            QUALIFIED_NAME
+                              IDENTIFIER "String"
+                        GREATER ">"
+                    COLON_COLON "::"
+                    NEW_KW "new"
+            SEMICOLON ";"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "stringValueOfMd"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    LITERAL
+                      WHITESPACE " "
+                      IDENTIFIER "String"
+                    COLON_COLON "::"
+                    IDENTIFIER "valueOf"
+            SEMICOLON ";"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "lengthOfAStringLiteral"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    LITERAL
+                      WHITESPACE " "
+                      STRING_LITERAL "\"abc\""
+                    COLON_COLON "::"
+                    IDENTIFIER "length"
+            SEMICOLON ";"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "arrayCreation"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    TYPE
+                      PRIMITIVE_TYPE_EXPR
+                        WHITESPACE " "
+                        INT_KW "int"
+                      L_BRACKET "["
+                      R_BRACKET "]"
+                    COLON_COLON "::"
+                    NEW_KW "new"
+            SEMICOLON ";"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "innerClassConstructor"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    FIELD_ACCESS
+                      LITERAL
+                        WHITESPACE " "
+                        IDENTIFIER "Outer"
+                      DOT "."
+                      IDENTIFIER "Inner"
+                    COLON_COLON "::"
+                    NEW_KW "new"
+            SEMICOLON ";"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              WHITESPACE "\n        "
+              IDENTIFIER "var"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "genericClassGenericConstructor"
+                  WHITESPACE " "
+                  EQUAL "="
+                  METHOD_REFERENCE
+                    TYPE
+                      LITERAL
+                        WHITESPACE " "
+                        IDENTIFIER "Bar"
+                      TYPE_ARGUMENTS
+                        LESS "<"
+                        TYPE_ARGUMENT
+                          TYPE
+                            QUALIFIED_NAME
+                              IDENTIFIER "String"
+                        GREATER ">"
+                    COLON_COLON "::"
+                    TYPE_ARGUMENTS
+                      LESS "<"
+                      TYPE_ARGUMENT
+                        TYPE
+                          QUALIFIED_NAME
+                            IDENTIFIER "Integer"
+                      GREATER ">"
+                    NEW_KW "new"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
