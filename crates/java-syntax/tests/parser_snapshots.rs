@@ -696,3 +696,15 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_var_name_is_contextual_kw,
+    indoc! {r#"
+        class Test {
+            void test() {
+                record record;
+                record record() {};
+            }
+        }
+    "#}
+);

@@ -1,7 +1,7 @@
 use stacksafe::stacksafe;
 
 use crate::grammar::decl::{
-    class_decl_rest, enum_decl_rest, interface_decl_rest, record_decl_rest,
+    class_decl_rest, enum_decl_rest, interface_decl_rest, is_record_decl, record_decl_rest,
     variable_declarator_list, variable_declarator_no_init_expr,
 };
 use crate::grammar::error_recover::{
@@ -56,7 +56,7 @@ fn block_statement(p: &mut Parser) {
     } else if p.at(INTERFACE_KW) {
         let m = p.start();
         interface_decl_rest(p, m);
-    } else if p.at_contextual_kw(ContextualKeyword::Record) {
+    } else if is_record_decl(p) {
         let m = p.start();
         record_decl_rest(p, m);
     } else {

@@ -32,7 +32,7 @@ pub fn decl(p: &mut Parser) {
         interface_decl_rest(p, m);
     } else if p.at(ENUM_KW) {
         enum_decl_rest(p, m);
-    } else if p.at_contextual_kw(ContextualKeyword::Record) {
+    } else if is_record_decl(p) {
         record_decl_rest(p, m);
     } else if is_module_decl_start(p) {
         module_decl_rest(p, m);
@@ -46,6 +46,28 @@ pub fn decl(p: &mut Parser) {
         recover_decl(p);
         m.complete(p, ERROR);
     }
+}
+
+pub fn is_record_decl(p: &Parser) -> bool {
+    if !p.at_contextual_kw(ContextualKeyword::Record) {
+        return false;
+    }
+
+    if p.nth(1) != Some(IDENTIFIER) {
+        return false;
+    }
+
+    let mut cur = 2;
+    loop {
+        match p.nth(cur) {
+            Some(L_PAREN) | Some(LESS) => return true,
+            Some(L_BRACE) | Some(SEMICOLON) | Some(EQUAL) | Some(DOT) | Some(EOF) | None => break,
+            _ => {}
+        }
+        cur += 1;
+    }
+
+    false
 }
 
 fn is_module_decl_start(p: &Parser) -> bool {
