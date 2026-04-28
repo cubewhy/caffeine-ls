@@ -124,7 +124,7 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
 
     match kind {
         NUMBER_LITERAL | STRING_LITERAL | THIS_KW | SUPER_KW | TRUE_LITERAL | FALSE_LITERAL
-        | NULL_LITERAL => {
+        | CHAR_LITERAL | NULL_LITERAL => {
             let m = p.start();
             p.bump();
             Ok(m.complete(p, LITERAL))
@@ -616,6 +616,7 @@ pub fn is_expression_start(kind: SyntaxKind) -> bool {
         IDENTIFIER
             | NUMBER_LITERAL
             | STRING_LITERAL
+            | CHAR_LITERAL
             | TRUE_LITERAL
             | FALSE_LITERAL
             | NULL_LITERAL
@@ -623,8 +624,8 @@ pub fn is_expression_start(kind: SyntaxKind) -> bool {
             | SUPER_KW
             | NEW_KW
             | SWITCH_KW
-            | L_PAREN
-            | L_BRACE
+            | L_PAREN // (
+            | L_BRACE // {
             | NOT         // !
             | TILDE       // ~
             | PLUS        // +
