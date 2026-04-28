@@ -359,6 +359,21 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     left = m.complete(p, COND_EXPR);
                 }
 
+                INSTANCEOF_KW => {
+                    // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.20.2
+                    p.bump(); // instanceof
+
+                    if is_pattern(p) {
+                        pattern(p);
+                    } else {
+                        if type_(p).is_err() {
+                            p.error_message("Expected type or pattern after 'instanceof'");
+                        }
+                    }
+
+                    left = m.complete(p, INSTANCEOF_EXPR);
+                }
+
                 LESS if is_method_ref_lookahead(p) => {
                     // type argument in method ref
                     type_arguments(p);

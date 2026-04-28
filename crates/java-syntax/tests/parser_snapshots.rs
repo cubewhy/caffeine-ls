@@ -738,3 +738,17 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_instanceof_expr,
+    indoc! {r#"
+        class Test {
+            String field;
+            void test() {
+                if (a instanceof String) {}
+            }
+
+            void test(String s) {}
+        }
+    "#}
+);

@@ -155,6 +155,7 @@ pub enum SyntaxKind {
     METHOD_REFERENCE,
     SUPER_EXPR,
     CAST_EXPR,
+    INSTANCEOF_EXPR,
     SWITCH_EXPR,
     COND_EXPR,
     ASSIGN_EXPR,
