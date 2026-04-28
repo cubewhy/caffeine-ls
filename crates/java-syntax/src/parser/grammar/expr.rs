@@ -10,7 +10,7 @@ use crate::{
         stmt::{block, switch_common},
         types::{
             at_primitive_type, dimensions, formal_parameters, inferred_parameters,
-            is_formal_parameters, reference_type, type_, type_arguments,
+            is_formal_parameters, reference_type, type_, type_arguments, type_arguments_opt,
         },
     },
     kinds::SyntaxKind::*,
@@ -224,6 +224,9 @@ fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
     } else {
         qualified_name(p);
     }
+
+    // optional type argument
+    type_arguments_opt(p);
 
     match p.current() {
         Some(L_PAREN) => {

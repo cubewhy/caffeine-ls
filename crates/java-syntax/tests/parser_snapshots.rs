@@ -776,3 +776,32 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_type_arguments_in_new_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                List<String> l = new ArrayList<>();
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_fqn,
+    indoc! {r#"
+        package com.example;
+
+        import java.util.ArrayList;
+
+        class Test {
+            java.util.List<java.lang.String> test() {
+                java.util.List<java.lang.String> l = new ArrayList<>();
+                l.add(new com.example.Test().toString());
+
+                return l;
+            }
+        }
+    "#}
+);
