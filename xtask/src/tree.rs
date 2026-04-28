@@ -1,3 +1,5 @@
+use std::fs::File;
+use std::io::Write;
 use std::{
     fs::{self, read_to_string},
     path::{Path, PathBuf},
@@ -116,10 +118,7 @@ fn process_with_timeout(input_path: PathBuf, output_root: PathBuf) -> anyhow::Re
                 .create(true)
                 .append(true)
                 .open(log_path)
-                .map(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "Timeout (2s): {:?}", input_path)
-                });
+                .map(|mut f| writeln!(f, "Timeout (2s): {:?}", input_path));
             Err(anyhow::anyhow!("Parsing timeout"))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!("Worker thread panicked")),
@@ -146,7 +145,9 @@ fn process_single_file(input_path: &Path, output_root: &Path) -> anyhow::Result<
         let mut output_path = output_root.to_path_buf();
         output_path.push(format!("{}.txt", relative_path));
 
-        fs::write(output_path, res)?;
+        let mut f = File::open(&output_path)?;
+        writeln!(f, "File: {input_path:?}\n\nSyntax tree:")?;
+        write!(f, "{res}")?;
     }
 
     Ok(())
