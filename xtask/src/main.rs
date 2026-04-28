@@ -2,7 +2,10 @@ use std::process;
 
 use clap::Parser;
 
-use crate::args::{Cli, ParseLanguage};
+use crate::{
+    args::{Cli, ParseLanguage},
+    tree::run_batch_parse,
+};
 
 mod args;
 mod prepare;
@@ -27,6 +30,18 @@ fn main() {
                 process::exit(1);
             };
             if let Err(e) = tree::render_tree(lang, file) {
+                eprintln!("An error has occurred: {e:#}");
+                process::exit(2);
+            }
+        }
+
+        Cli::BatchParse { input, output } => {
+            let config = tree::BatchConfig {
+                input_dir: input,
+                output_dir: output,
+            };
+
+            if let Err(e) = run_batch_parse(config) {
                 eprintln!("An error has occurred: {e:#}");
                 process::exit(2);
             }

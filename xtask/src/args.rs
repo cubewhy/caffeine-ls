@@ -14,6 +14,13 @@ pub enum Cli {
         #[arg(long, short)]
         lang: Option<ParseLanguage>,
     },
+
+    BatchParse {
+        input: PathBuf,
+
+        #[arg(long, short)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]

@@ -6,4 +6,7 @@ edition = "2024"
 [dependencies]
 java-syntax = { path = "../crates/java-syntax" }
 anyhow = { workspace = true }
-clap = { version = "4", features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
+rayon = { workspace = true }
+indicatif = { workspace = true }
+walkdir = { workspace = true }
