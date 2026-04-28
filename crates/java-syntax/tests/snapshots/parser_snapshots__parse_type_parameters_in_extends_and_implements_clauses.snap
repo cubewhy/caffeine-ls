@@ -1,0 +1,170 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test<T> extends A<T> implements B<T>, C {
+    void func() throws Exception {}
+}
+
+interface C<T> extends B<T> {}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "A"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+IMPLEMENTS_KW "implements"
+WHITESPACE " "
+IDENTIFIER "B"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "C"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+THROWS_KW "throws"
+WHITESPACE " "
+IDENTIFIER "Exception"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n\n"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "C"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "B"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    TYPE_PARAMETERS
+      LESS "<"
+      TYPE_PARAMETER
+        IDENTIFIER "T"
+      GREATER ">"
+    EXTENDS_CLAUSE
+      WHITESPACE " "
+      EXTENDS_KW "extends"
+      TYPE
+        WHITESPACE " "
+        QUALIFIED_NAME
+          IDENTIFIER "A"
+        TYPE_ARGUMENTS
+          LESS "<"
+          TYPE_ARGUMENT
+            TYPE
+              QUALIFIED_NAME
+                IDENTIFIER "T"
+          GREATER ">"
+    IMPLEMENTS_CLAUSE
+      WHITESPACE " "
+      IMPLEMENTS_KW "implements"
+      TYPE
+        WHITESPACE " "
+        QUALIFIED_NAME
+          IDENTIFIER "B"
+        TYPE_ARGUMENTS
+          LESS "<"
+          TYPE_ARGUMENT
+            TYPE
+              QUALIFIED_NAME
+                IDENTIFIER "T"
+          GREATER ">"
+      COMMA ","
+      TYPE
+        WHITESPACE " "
+        QUALIFIED_NAME
+          IDENTIFIER "C"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        THROWS_CLAUSE
+          WHITESPACE " "
+          THROWS_KW "throws"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "Exception"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  INTERFACE_DECL
+    WHITESPACE "\n\n"
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "C"
+    TYPE_PARAMETERS
+      LESS "<"
+      TYPE_PARAMETER
+        IDENTIFIER "T"
+      GREATER ">"
+    INTERFACE_EXTENDS_CLAUSE
+      WHITESPACE " "
+      EXTENDS_KW "extends"
+      TYPE
+        WHITESPACE " "
+        QUALIFIED_NAME
+          IDENTIFIER "B"
+        TYPE_ARGUMENTS
+          LESS "<"
+          TYPE_ARGUMENT
+            TYPE
+              QUALIFIED_NAME
+                IDENTIFIER "T"
+          GREATER ">"
+    INTERFACE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"
+  WHITESPACE "\n"

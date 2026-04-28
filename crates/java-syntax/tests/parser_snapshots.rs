@@ -814,3 +814,14 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_type_parameters_in_extends_and_implements_clauses,
+    indoc! {r#"
+        class Test<T> extends A<T> implements B<T>, C {
+            void func() throws Exception {}
+        }
+
+        interface C<T> extends B<T> {}
+    "#}
+);
