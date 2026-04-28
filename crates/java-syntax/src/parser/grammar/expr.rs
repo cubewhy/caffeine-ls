@@ -7,8 +7,11 @@ use crate::{
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
         names::qualified_name,
-        stmt::switch_common,
-        types::{at_primitive_type, dimensions, reference_type, type_, type_arguments},
+        stmt::{block, switch_common},
+        types::{
+            at_primitive_type, dimensions, formal_parameters, inferred_parameters,
+            is_formal_parameters, reference_type, type_, type_arguments,
+        },
     },
     kinds::SyntaxKind::*,
     parser::{
@@ -113,11 +116,21 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let kind = p.current().ok_or(())?;
 
     match kind {
-        NUMBER_LITERAL | STRING_LITERAL | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LITERAL
-        | FALSE_LITERAL | NULL_LITERAL => {
+        NUMBER_LITERAL | STRING_LITERAL | THIS_KW | SUPER_KW | TRUE_LITERAL | FALSE_LITERAL
+        | NULL_LITERAL => {
             let m = p.start();
             p.bump();
             Ok(m.complete(p, LITERAL))
+        }
+
+        IDENTIFIER | UNDERSCORE => {
+            if is_lambda_lookahead(p) {
+                lambda_expression(p)
+            } else {
+                let m = p.start();
+                p.bump();
+                Ok(m.complete(p, LITERAL))
+            }
         }
 
         BOOLEAN_KW | BYTE_KW | SHORT_KW | INT_KW | LONG_KW | CHAR_KW | FLOAT_KW | DOUBLE_KW
@@ -127,7 +140,13 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             Ok(m.complete(p, PRIMITIVE_TYPE_EXPR))
         }
 
-        L_PAREN => cast_or_paren_expr(p),
+        L_PAREN => {
+            if is_lambda_lookahead(p) {
+                lambda_expression(p)
+            } else {
+                cast_or_paren_expr(p)
+            }
+        }
         SWITCH_KW => Ok(switch_expression(p)),
 
         // JLS 15.15.1 & 15.15.2: PreIncrement & PreDecrement
@@ -395,6 +414,82 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
     }
 
     Ok(left)
+}
+
+/// LambdaExpression:
+///   LambdaParameters -> LambdaBody
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27
+fn lambda_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
+    let m = p.start();
+
+    // LambdaParameters:
+    //   ( [LambdaParameterList] )
+    //   ConciseLambdaParameter
+    //
+    // LambdaParameterList:
+    //   NormalLambdaParameter {, NormalLambdaParameter}
+    //   ConciseLambdaParameter {, ConciseLambdaParameter}
+    //
+    // NormalLambdaParameter:
+    //   {VariableModifier} LambdaParameterType VariableDeclaratorId
+    //   VariableArityParameter
+    //
+    // LambdaParameterType:
+    //   UnannType
+    //   var
+    //
+    // ConciseLambdaParameter:
+    //   Identifier
+    //   _
+    if (p.at(IDENTIFIER) || p.at(UNDERSCORE)) && p.nth(1) == Some(ARROW) {
+        // ConciseLambdaParameter
+        p.bump();
+    } else if p.at(L_PAREN) {
+        if is_formal_parameters(p) {
+            // NormalLambdaParameter
+            formal_parameters(p);
+        } else {
+            // ConciseLambdaParameter
+            inferred_parameters(p);
+        }
+    }
+
+    p.expect(ARROW);
+
+    // LambdaBody: Expression | Block
+    if p.at(L_BRACE) {
+        block(p);
+    } else {
+        expression(p).ok();
+    }
+
+    Ok(m.complete(p, LAMBDA_EXPR))
+}
+
+fn is_lambda_lookahead(p: &Parser) -> bool {
+    // x -> ...
+    if (p.at(IDENTIFIER) || p.at(UNDERSCORE)) && p.nth(1) == Some(ARROW) {
+        return true;
+    }
+
+    // (...) -> ...
+    if p.at(L_PAREN) {
+        let mut i = 1;
+        let mut depth = 1;
+        while depth > 0 {
+            match p.nth(i) {
+                Some(L_PAREN) => depth += 1,
+                Some(R_PAREN) => depth -= 1,
+                None => return false,
+                _ => {}
+            }
+            i += 1;
+        }
+        return p.nth(i) == Some(ARROW);
+    }
+
+    false
 }
 
 fn is_method_ref_lookahead(p: &Parser) -> bool {

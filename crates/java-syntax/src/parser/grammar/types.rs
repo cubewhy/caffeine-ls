@@ -32,6 +32,60 @@ pub fn formal_parameters(p: &mut Parser) {
     m.complete(p, FORMAL_PARAMETERS);
 }
 
+pub fn is_formal_parameters(p: &Parser) -> bool {
+    let i = 1; // skip L_PAREN
+    let kind = p.nth(i);
+
+    // have modifiers
+    if matches!(kind, Some(FINAL_KW) | Some(AT)) {
+        return true;
+    }
+
+    // is primitive type
+    if matches!(kind, Some(k) if is_primitive_type(k)) {
+        return true;
+    }
+
+    if matches!(kind, Some(IDENTIFIER) | Some(UNDERSCORE)) {
+        let next = p.nth(i + 1);
+
+        if !matches!(next, Some(COMMA) | Some(R_PAREN)) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_concise_param(p: &Parser) -> bool {
+    p.at(IDENTIFIER) || p.at(UNDERSCORE)
+}
+
+pub fn inferred_parameters(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+
+    if !p.at(R_PAREN) {
+        loop {
+            let m_param = p.start();
+            if is_concise_param(p) {
+                p.bump();
+                m_param.complete(p, INFERRED_PARAMETERS);
+            } else {
+                p.error_message("Expected identifier or '_'");
+                m_param.complete(p, ERROR);
+            }
+
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+
+    p.expect(R_PAREN);
+    m.complete(p, INFERRED_PARAMETERS);
+}
+
 fn parameter(p: &mut Parser) {
     let m = p.start();
 

@@ -752,3 +752,27 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_lambda,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Consumer<String> concise = s -> System.out.println(s);
+                Consumer<String> unnamed = _ -> System.out.println("Ignored input");
+                BiFunction<Integer, Integer, Integer> inferredList = (a, b) -> a + b;
+                BiConsumer<String, Integer> inferredWithUnderscore = (s, _) -> System.out.println(s);
+                BinaryOperator<Integer> explicit = (Integer x, Integer y) -> x * y;
+                BinaryOperator<Integer> varType = (var x, var y) -> x + y;
+                BiFunction<String, String, String> withModifiers =
+                    (@NotNull final var s1, final String s2) -> s1 + s2;
+                VarargsHandler vHandler = (String... names) -> {
+                    for (String n : names) System.out.println(n);
+                };
+                MultiParamHandler complex = (@NotNull final var s, int i, final double d) -> {
+                    System.out.println(s + i + d);
+                };
+            }
+        }
+    "#}
+);
