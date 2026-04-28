@@ -172,13 +172,10 @@ impl<'a> SourceReader<'a> {
     /// - Valid escape or literal → decoded char; `current` jumps past all raw bytes.
     /// - Invalid escape → records an error, returns `\`, advances **1 byte** so
     ///   subsequent calls expose the raw `u`, hex digits, etc. one at a time.
-    /// - End of input → `\0` (does not advance).
     pub fn advance(&mut self) -> char {
         match self.scan_at(self.current) {
             ScanResult::Char(c, len) => {
-                if c != '\0' {
-                    self.current += len;
-                }
+                self.current += len;
                 c
             }
             ScanResult::InvalidEscape(msg) => {
