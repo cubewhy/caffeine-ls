@@ -137,19 +137,19 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "alConstructor"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     TYPE
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "ArrayList"
                       TYPE_ARGUMENTS
                         LESS "<"
@@ -162,53 +162,53 @@ ROOT
                     NEW_KW "new"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "stringValueOfMd"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     LITERAL
-                      WHITESPACE " "
                       IDENTIFIER "String"
                     COLON_COLON "::"
                     IDENTIFIER "valueOf"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "lengthOfAStringLiteral"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     LITERAL
-                      WHITESPACE " "
                       STRING_LITERAL "\"abc\""
                     COLON_COLON "::"
                     IDENTIFIER "length"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "arrayCreation"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     TYPE
                       PRIMITIVE_TYPE_EXPR
-                        WHITESPACE " "
                         INT_KW "int"
                       L_BRACKET "["
                       R_BRACKET "]"
@@ -216,19 +216,19 @@ ROOT
                     NEW_KW "new"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "innerClassConstructor"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     FIELD_ACCESS
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "Outer"
                       DOT "."
                       IDENTIFIER "Inner"
@@ -236,19 +236,19 @@ ROOT
                     NEW_KW "new"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "genericClassGenericConstructor"
                   WHITESPACE " "
                   EQUAL "="
                   METHOD_REFERENCE
+                    WHITESPACE " "
                     TYPE
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "Bar"
                       TYPE_ARGUMENTS
                         LESS "<"

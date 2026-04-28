@@ -62,15 +62,15 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             PREFIX_EXPR
-              WHITESPACE "\n        "
               PLUS_PLUS "++"
               LITERAL
                 IDENTIFIER "i"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             PREFIX_EXPR
-              WHITESPACE "\n        "
               MINUS_MINUS "--"
               LITERAL
                 IDENTIFIER "i"

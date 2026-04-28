@@ -30,13 +30,13 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
-          WHITESPACE " "
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
             MISSING
-        WHITESPACE " "
         SEMICOLON ";"
       WHITESPACE " "
       R_BRACE "}"

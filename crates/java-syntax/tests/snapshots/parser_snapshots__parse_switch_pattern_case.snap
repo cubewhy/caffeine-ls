@@ -130,24 +130,24 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               SWITCH_RULE
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   TYPE_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "String"
                     WHITESPACE " "
                     IDENTIFIER "s"
                 WHITESPACE " "
                 ARROW "->"
                 EXPRESSION_STMT
+                  WHITESPACE " "
                   METHOD_CALL
                     FIELD_ACCESS
                       FIELD_ACCESS
                         LITERAL
-                          WHITESPACE " "
                           IDENTIFIER "System"
                         DOT "."
                         IDENTIFIER "out"
@@ -160,24 +160,24 @@ ROOT
                       R_PAREN ")"
                   SEMICOLON ";"
               SWITCH_RULE
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   TYPE_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Integer"
                     WHITESPACE " "
                     UNDERSCORE "_"
                 WHITESPACE " "
                 ARROW "->"
                 EXPRESSION_STMT
+                  WHITESPACE " "
                   METHOD_CALL
                     FIELD_ACCESS
                       FIELD_ACCESS
                         LITERAL
-                          WHITESPACE " "
                           IDENTIFIER "System"
                         DOT "."
                         IDENTIFIER "out"
@@ -190,8 +190,8 @@ ROOT
                       R_PAREN ")"
                   SEMICOLON ";"
               SWITCH_RULE
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   DEFAULT_KW "default"
                 WHITESPACE " "
                 ARROW "->"

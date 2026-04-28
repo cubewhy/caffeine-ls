@@ -370,10 +370,10 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "Consumer"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -383,8 +383,8 @@ ROOT
                         IDENTIFIER "String"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "concise"
                   WHITESPACE " "
                   EQUAL "="
@@ -394,10 +394,10 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     METHOD_CALL
+                      WHITESPACE " "
                       FIELD_ACCESS
                         FIELD_ACCESS
                           LITERAL
-                            WHITESPACE " "
                             IDENTIFIER "System"
                           DOT "."
                           IDENTIFIER "out"
@@ -410,10 +410,10 @@ ROOT
                         R_PAREN ")"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "Consumer"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -423,8 +423,8 @@ ROOT
                         IDENTIFIER "String"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "unnamed"
                   WHITESPACE " "
                   EQUAL "="
@@ -434,10 +434,10 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     METHOD_CALL
+                      WHITESPACE " "
                       FIELD_ACCESS
                         FIELD_ACCESS
                           LITERAL
-                            WHITESPACE " "
                             IDENTIFIER "System"
                           DOT "."
                           IDENTIFIER "out"
@@ -450,10 +450,10 @@ ROOT
                         R_PAREN ")"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "BiFunction"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -463,26 +463,26 @@ ROOT
                         IDENTIFIER "Integer"
                   COMMA ","
                   TYPE_ARGUMENT
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Integer"
                   COMMA ","
                   TYPE_ARGUMENT
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Integer"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "inferredList"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     INFERRED_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       INFERRED_PARAMETERS
                         IDENTIFIER "a"
@@ -494,8 +494,8 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     BINARY_EXPR
+                      WHITESPACE " "
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "a"
                       WHITESPACE " "
                       PLUS "+"
@@ -504,10 +504,10 @@ ROOT
                         IDENTIFIER "b"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "BiConsumer"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -517,20 +517,20 @@ ROOT
                         IDENTIFIER "String"
                   COMMA ","
                   TYPE_ARGUMENT
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Integer"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "inferredWithUnderscore"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     INFERRED_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       INFERRED_PARAMETERS
                         IDENTIFIER "s"
@@ -542,10 +542,10 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     METHOD_CALL
+                      WHITESPACE " "
                       FIELD_ACCESS
                         FIELD_ACCESS
                           LITERAL
-                            WHITESPACE " "
                             IDENTIFIER "System"
                           DOT "."
                           IDENTIFIER "out"
@@ -558,10 +558,10 @@ ROOT
                         R_PAREN ")"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "BinaryOperator"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -571,14 +571,14 @@ ROOT
                         IDENTIFIER "Integer"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "explicit"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     FORMAL_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       FORMAL_PARAMETER
                         TYPE
@@ -588,9 +588,9 @@ ROOT
                         IDENTIFIER "x"
                       COMMA ","
                       FORMAL_PARAMETER
+                        WHITESPACE " "
                         TYPE
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "Integer"
                         WHITESPACE " "
                         IDENTIFIER "y"
@@ -598,8 +598,8 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     BINARY_EXPR
+                      WHITESPACE " "
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "x"
                       WHITESPACE " "
                       STAR "*"
@@ -608,10 +608,10 @@ ROOT
                         IDENTIFIER "y"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "BinaryOperator"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -621,14 +621,14 @@ ROOT
                         IDENTIFIER "Integer"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "varType"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     FORMAL_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       FORMAL_PARAMETER
                         TYPE
@@ -638,9 +638,9 @@ ROOT
                         IDENTIFIER "x"
                       COMMA ","
                       FORMAL_PARAMETER
+                        WHITESPACE " "
                         TYPE
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "var"
                         WHITESPACE " "
                         IDENTIFIER "y"
@@ -648,8 +648,8 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     BINARY_EXPR
+                      WHITESPACE " "
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "x"
                       WHITESPACE " "
                       PLUS "+"
@@ -658,10 +658,10 @@ ROOT
                         IDENTIFIER "y"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "BiFunction"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -671,26 +671,26 @@ ROOT
                         IDENTIFIER "String"
                   COMMA ","
                   TYPE_ARGUMENT
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "String"
                   COMMA ","
                   TYPE_ARGUMENT
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "String"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "withModifiers"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE "\n            "
                     FORMAL_PARAMETERS
-                      WHITESPACE "\n            "
                       L_PAREN "("
                       FORMAL_PARAMETER
                         MODIFIER_LIST
@@ -701,19 +701,19 @@ ROOT
                           WHITESPACE " "
                           FINAL_KW "final"
                         TYPE
+                          WHITESPACE " "
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "var"
                         WHITESPACE " "
                         IDENTIFIER "s1"
                       COMMA ","
                       FORMAL_PARAMETER
+                        WHITESPACE " "
                         MODIFIER_LIST
-                          WHITESPACE " "
                           FINAL_KW "final"
                         TYPE
+                          WHITESPACE " "
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "String"
                         WHITESPACE " "
                         IDENTIFIER "s2"
@@ -721,8 +721,8 @@ ROOT
                     WHITESPACE " "
                     ARROW "->"
                     BINARY_EXPR
+                      WHITESPACE " "
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "s1"
                       WHITESPACE " "
                       PLUS "+"
@@ -731,20 +731,20 @@ ROOT
                         IDENTIFIER "s2"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "VarargsHandler"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "vHandler"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     FORMAL_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       SPREAD_PARAMETER
                         TYPE
@@ -777,11 +777,11 @@ ROOT
                           IDENTIFIER "names"
                         R_PAREN ")"
                         EXPRESSION_STMT
+                          WHITESPACE " "
                           METHOD_CALL
                             FIELD_ACCESS
                               FIELD_ACCESS
                                 LITERAL
-                                  WHITESPACE " "
                                   IDENTIFIER "System"
                                 DOT "."
                                 IDENTIFIER "out"
@@ -797,20 +797,20 @@ ROOT
                       R_BRACE "}"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "MultiParamHandler"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "complex"
                   WHITESPACE " "
                   EQUAL "="
                   LAMBDA_EXPR
+                    WHITESPACE " "
                     FORMAL_PARAMETERS
-                      WHITESPACE " "
                       L_PAREN "("
                       FORMAL_PARAMETER
                         MODIFIER_LIST
@@ -821,22 +821,22 @@ ROOT
                           WHITESPACE " "
                           FINAL_KW "final"
                         TYPE
+                          WHITESPACE " "
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "var"
                         WHITESPACE " "
                         IDENTIFIER "s"
                       COMMA ","
                       FORMAL_PARAMETER
+                        WHITESPACE " "
                         TYPE
-                          WHITESPACE " "
                           INT_KW "int"
                         WHITESPACE " "
                         IDENTIFIER "i"
                       COMMA ","
                       FORMAL_PARAMETER
+                        WHITESPACE " "
                         MODIFIER_LIST
-                          WHITESPACE " "
                           FINAL_KW "final"
                         TYPE
                           WHITESPACE " "
@@ -850,11 +850,11 @@ ROOT
                       WHITESPACE " "
                       L_BRACE "{"
                       EXPRESSION_STMT
+                        WHITESPACE "\n            "
                         METHOD_CALL
                           FIELD_ACCESS
                             FIELD_ACCESS
                               LITERAL
-                                WHITESPACE "\n            "
                                 IDENTIFIER "System"
                               DOT "."
                               IDENTIFIER "out"

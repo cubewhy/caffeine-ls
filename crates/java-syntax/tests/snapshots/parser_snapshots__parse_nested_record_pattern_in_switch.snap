@@ -120,13 +120,13 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               SWITCH_RULE
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   RECORD_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Box"
                     L_PAREN "("
                     RECORD_PATTERN
@@ -149,11 +149,11 @@ ROOT
                 WHITESPACE " "
                 ARROW "->"
                 EXPRESSION_STMT
+                  WHITESPACE " "
                   METHOD_CALL
                     FIELD_ACCESS
                       FIELD_ACCESS
                         LITERAL
-                          WHITESPACE " "
                           IDENTIFIER "System"
                         DOT "."
                         IDENTIFIER "out"
@@ -166,8 +166,8 @@ ROOT
                       R_PAREN ")"
                   SEMICOLON ";"
               SWITCH_RULE
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   DEFAULT_KW "default"
                 WHITESPACE " "
                 ARROW "->"

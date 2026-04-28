@@ -43,9 +43,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "Map"
           TYPE_ARGUMENTS
             LESS "<"
@@ -55,9 +55,9 @@ ROOT
                   IDENTIFIER "String"
             COMMA ","
             TYPE_ARGUMENT
+              WHITESPACE " "
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE " "
                   IDENTIFIER "List"
                 TYPE_ARGUMENTS
                   LESS "<"
@@ -68,14 +68,14 @@ ROOT
                         WHITESPACE " "
                         EXTENDS_KW "extends"
                         TYPE
+                          WHITESPACE " "
                           QUALIFIED_NAME
-                            WHITESPACE " "
                             IDENTIFIER "Number"
                   RIGHT_SHIFT ">"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "xs"
         SEMICOLON ";"
       WHITESPACE " "

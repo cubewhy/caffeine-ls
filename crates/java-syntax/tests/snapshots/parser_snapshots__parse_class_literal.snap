@@ -58,9 +58,9 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             CLASS_LITERAL
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "Test"
               DOT "."
               CLASS_KW "class"

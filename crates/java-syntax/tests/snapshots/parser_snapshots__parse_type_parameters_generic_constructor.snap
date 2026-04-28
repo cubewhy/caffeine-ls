@@ -37,8 +37,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       CONSTRUCTOR_DECL
+        WHITESPACE " "
         TYPE_PARAMETERS
-          WHITESPACE " "
           LESS "<"
           TYPE_PARAMETER
             IDENTIFIER "T"

@@ -78,14 +78,14 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "Integer"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "i"
                   WHITESPACE " "
                   EQUAL "="
@@ -100,13 +100,13 @@ ROOT
                       NUMBER_LITERAL "1"
             SEMICOLON ";"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
                 BOOLEAN_KW "boolean"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "b"
                   WHITESPACE " "
                   EQUAL "="

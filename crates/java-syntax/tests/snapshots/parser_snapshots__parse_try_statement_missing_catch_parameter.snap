@@ -80,8 +80,8 @@ ROOT
               WHITESPACE "\n        "
               CATCH_KW "catch"
               MISSING
-              BLOCK
                 WHITESPACE " "
+              BLOCK
                 L_BRACE "{"
                 R_BRACE "}"
             FINALLY_CLAUSE

@@ -51,12 +51,12 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
-          WHITESPACE "\n    "
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "MAX_SIZE"
             WHITESPACE " "
             EQUAL "="
@@ -65,13 +65,13 @@ ROOT
               NUMBER_LITERAL "100"
         SEMICOLON ";"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "String"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "DEFAULT_TYPE"
             WHITESPACE " "
             EQUAL "="

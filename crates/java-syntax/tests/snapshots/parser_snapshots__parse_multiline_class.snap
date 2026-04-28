@@ -45,12 +45,12 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
-          WHITESPACE "\n    "
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "x"
         SEMICOLON ";"
       METHOD_DECL

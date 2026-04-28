@@ -71,14 +71,14 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "Foo"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "a"
                   WHITESPACE " "
                   EQUAL "="

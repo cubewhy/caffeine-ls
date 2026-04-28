@@ -67,8 +67,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       ANNOTATION_TYPE_ELEMENT_DECL
+        WHITESPACE "\n    "
         TYPE
-          WHITESPACE "\n    "
           INT_KW "int"
         WHITESPACE " "
         IDENTIFIER "count"
@@ -81,9 +81,9 @@ ROOT
           NUMBER_LITERAL "0"
         SEMICOLON ";"
       ANNOTATION_TYPE_ELEMENT_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "String"
           DIMENSIONS
             DIMENSION
@@ -100,12 +100,12 @@ ROOT
           NUMBER_LITERAL "1"
         SEMICOLON ";"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
-          WHITESPACE "\n    "
           DOUBLE_KW "double"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "VERSION"
             WHITESPACE " "
             EQUAL "="

@@ -55,9 +55,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       ANNOTATION_TYPE_ELEMENT_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "String"
         WHITESPACE " "
         IDENTIFIER "name"
@@ -70,8 +70,8 @@ ROOT
           STRING_LITERAL "\"unknown\""
         SEMICOLON ";"
       ANNOTATION_TYPE_ELEMENT_DECL
+        WHITESPACE "\n    "
         TYPE
-          WHITESPACE "\n    "
           INT_KW "int"
         WHITESPACE " "
         IDENTIFIER "retryCount"

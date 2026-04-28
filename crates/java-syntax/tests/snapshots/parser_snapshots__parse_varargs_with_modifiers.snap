@@ -63,8 +63,8 @@ ROOT
               WHITESPACE " "
               FINAL_KW "final"
             TYPE
+              WHITESPACE " "
               QUALIFIED_NAME
-                WHITESPACE " "
                 IDENTIFIER "String"
             ELLIPSIS "..."
             WHITESPACE " "

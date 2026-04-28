@@ -74,18 +74,18 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "String"
                 DIMENSIONS
                   DIMENSION
                     L_BRACKET "["
                     R_BRACKET "]"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "strings"
             SEMICOLON ";"
           ENHANCED_FOR_STMT

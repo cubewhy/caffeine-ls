@@ -73,20 +73,20 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
                 INT_KW "int"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "max"
                   WHITESPACE " "
                   EQUAL "="
                   COND_EXPR
+                    WHITESPACE " "
                     BINARY_EXPR
                       LITERAL
-                        WHITESPACE " "
                         IDENTIFIER "num1"
                       WHITESPACE " "
                       GREATER ">"

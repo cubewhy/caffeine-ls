@@ -75,13 +75,13 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "String"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "field"
         SEMICOLON ";"
       METHOD_DECL
@@ -107,8 +107,8 @@ ROOT
                 WHITESPACE " "
                 INSTANCEOF_KW "instanceof"
                 TYPE
+                  WHITESPACE " "
                   QUALIFIED_NAME
-                    WHITESPACE " "
                     IDENTIFIER "String"
               R_PAREN ")"
             BLOCK

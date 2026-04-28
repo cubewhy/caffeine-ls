@@ -38,9 +38,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "List"
           TYPE_ARGUMENTS
             LESS "<"

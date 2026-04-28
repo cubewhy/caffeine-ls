@@ -97,8 +97,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE "\n    "
         MODIFIER_LIST
-          WHITESPACE "\n    "
           PUBLIC_KW "public"
           WHITESPACE " "
           STATIC_KW "static"
@@ -123,14 +123,14 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "Test"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "t"
                   WHITESPACE " "
                   EQUAL "="
@@ -167,11 +167,11 @@ ROOT
                   WHITESPACE " "
                   L_BRACE "{"
                   EXPRESSION_STMT
+                    WHITESPACE "\n                "
                     METHOD_CALL
                       FIELD_ACCESS
                         FIELD_ACCESS
                           LITERAL
-                            WHITESPACE "\n                "
                             IDENTIFIER "System"
                           DOT "."
                           IDENTIFIER "out"

@@ -40,14 +40,14 @@ ROOT
           WHITESPACE " "
           EXTENDS_KW "extends"
           TYPE
+            WHITESPACE " "
             QUALIFIED_NAME
-              WHITESPACE " "
               IDENTIFIER "B"
           WHITESPACE " "
           BIT_AND "&"
           TYPE
+            WHITESPACE " "
             QUALIFIED_NAME
-              WHITESPACE " "
               IDENTIFIER "C"
       GREATER ">"
     INTERFACE_BODY

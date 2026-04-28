@@ -35,8 +35,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       ANNOTATION_TYPE_ELEMENT_DECL
+        WHITESPACE " "
         TYPE
-          WHITESPACE " "
           INT_KW "int"
         WHITESPACE " "
         IDENTIFIER "value"

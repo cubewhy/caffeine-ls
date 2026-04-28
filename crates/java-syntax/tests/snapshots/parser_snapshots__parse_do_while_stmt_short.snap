@@ -76,13 +76,13 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
-                WHITESPACE "\n        "
                 INT_KW "int"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "i"
                   WHITESPACE " "
                   EQUAL "="
@@ -94,9 +94,9 @@ ROOT
             WHITESPACE "\n        "
             DO_KW "do"
             EXPRESSION_STMT
+              WHITESPACE " "
               POSTFIX_EXPR
                 LITERAL
-                  WHITESPACE " "
                   IDENTIFIER "i"
                 PLUS_PLUS "++"
               SEMICOLON ";"

@@ -91,12 +91,12 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
-              WHITESPACE "\n        "
               IDENTIFIER "var"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "a"
                   WHITESPACE " "
                   EQUAL "="
@@ -112,8 +112,8 @@ ROOT
                       WHITESPACE " "
                       L_BRACE "{"
                       SWITCH_RULE
+                        WHITESPACE "\n            "
                         SWITCH_LABEL
-                          WHITESPACE "\n            "
                           CASE_KW "case"
                           LITERAL
                             WHITESPACE " "
@@ -125,8 +125,8 @@ ROOT
                           L_BRACE "{"
                           R_BRACE "}"
                       SWITCH_RULE
+                        WHITESPACE "\n            "
                         SWITCH_LABEL
-                          WHITESPACE "\n            "
                           CASE_KW "case"
                           LITERAL
                             WHITESPACE " "

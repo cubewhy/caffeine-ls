@@ -29,8 +29,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       INSTANCE_INITIALIZER
+        WHITESPACE " "
         BLOCK
-          WHITESPACE " "
           L_BRACE "{"
           R_BRACE "}"
       WHITESPACE " "

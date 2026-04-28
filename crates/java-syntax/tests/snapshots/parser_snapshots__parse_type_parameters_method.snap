@@ -39,8 +39,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE " "
         TYPE_PARAMETERS
-          WHITESPACE " "
           LESS "<"
           TYPE_PARAMETER
             IDENTIFIER "A"

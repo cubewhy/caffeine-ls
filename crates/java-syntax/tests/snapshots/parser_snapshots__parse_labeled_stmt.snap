@@ -84,9 +84,9 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               EXPRESSION_STMT
+                WHITESPACE "\n            "
                 METHOD_CALL
                   LITERAL
-                    WHITESPACE "\n            "
                     IDENTIFIER "func"
                   ARGUMENT_LIST
                     L_PAREN "("
@@ -99,9 +99,9 @@ ROOT
             IDENTIFIER "labelNoShortIf"
             COLON ":"
             EXPRESSION_STMT
+              WHITESPACE " "
               METHOD_CALL
                 LITERAL
-                  WHITESPACE " "
                   IDENTIFIER "func"
                 ARGUMENT_LIST
                   L_PAREN "("

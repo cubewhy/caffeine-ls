@@ -38,9 +38,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "java"
             DOT "."
             IDENTIFIER "util"
@@ -54,8 +54,8 @@ ROOT
                   IDENTIFIER "String"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "xs"
         SEMICOLON ";"
       WHITESPACE " "

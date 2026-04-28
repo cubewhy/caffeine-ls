@@ -38,9 +38,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "List"
           TYPE_ARGUMENTS
             LESS "<"
@@ -51,13 +51,13 @@ ROOT
                   WHITESPACE " "
                   EXTENDS_KW "extends"
                   TYPE
+                    WHITESPACE " "
                     QUALIFIED_NAME
-                      WHITESPACE " "
                       IDENTIFIER "Number"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "xs"
         SEMICOLON ";"
       WHITESPACE " "

@@ -87,8 +87,8 @@ ROOT
               TYPE
                 INT_KW "int"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "i"
                   WHITESPACE " "
                   EQUAL "="
@@ -97,8 +97,8 @@ ROOT
                     NUMBER_LITERAL "0"
             SEMICOLON ";"
             BINARY_EXPR
+              WHITESPACE " "
               LITERAL
-                WHITESPACE " "
                 IDENTIFIER "i"
               WHITESPACE " "
               LESS "<"
@@ -107,8 +107,8 @@ ROOT
                 NUMBER_LITERAL "10"
             SEMICOLON ";"
             POSTFIX_EXPR
+              WHITESPACE " "
               LITERAL
-                WHITESPACE " "
                 IDENTIFIER "i"
               PLUS_PLUS "++"
             R_PAREN ")"

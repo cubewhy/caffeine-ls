@@ -157,8 +157,8 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               SWITCH_BLOCK_STATEMENT_GROUP
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   LITERAL
                     WHITESPACE " "
@@ -200,13 +200,13 @@ ROOT
                   BREAK_KW "break"
                   SEMICOLON ";"
               SWITCH_BLOCK_STATEMENT_GROUP
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   TYPE_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "String"
                     WHITESPACE " "
                     UNDERSCORE "_"
@@ -215,9 +215,9 @@ ROOT
                   WHITESPACE "\n            "
                   CASE_KW "case"
                   TYPE_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "String"
                     WHITESPACE " "
                     IDENTIFIER "s"
@@ -227,13 +227,13 @@ ROOT
                   BREAK_KW "break"
                   SEMICOLON ";"
               SWITCH_BLOCK_STATEMENT_GROUP
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   CASE_KW "case"
                   RECORD_PATTERN
+                    WHITESPACE " "
                     TYPE
                       QUALIFIED_NAME
-                        WHITESPACE " "
                         IDENTIFIER "Point"
                     L_PAREN "("
                     TYPE_PATTERN
@@ -243,8 +243,8 @@ ROOT
                       IDENTIFIER "x"
                     COMMA ","
                     TYPE_PATTERN
+                      WHITESPACE " "
                       TYPE
-                        WHITESPACE " "
                         INT_KW "int"
                       WHITESPACE " "
                       UNDERSCORE "_"
@@ -255,8 +255,8 @@ ROOT
                   BREAK_KW "break"
                   SEMICOLON ";"
               SWITCH_BLOCK_STATEMENT_GROUP
+                WHITESPACE "\n            "
                 SWITCH_LABEL
-                  WHITESPACE "\n            "
                   DEFAULT_KW "default"
                 COLON ":"
                 BREAK_STMT

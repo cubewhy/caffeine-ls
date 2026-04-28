@@ -54,12 +54,12 @@ ROOT
         IDENTIFIER "B"
       SEMICOLON ";"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
-          WHITESPACE " "
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "x"
         SEMICOLON ";"
       METHOD_DECL

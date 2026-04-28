@@ -147,9 +147,9 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "java"
             DOT "."
             IDENTIFIER "util"
@@ -175,10 +175,10 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           LOCAL_VARIABLE_DECLARATION_STMT
+            WHITESPACE "\n        "
             LOCAL_VARIABLE_DECLARATION
               TYPE
                 QUALIFIED_NAME
-                  WHITESPACE "\n        "
                   IDENTIFIER "java"
                   DOT "."
                   IDENTIFIER "util"
@@ -196,8 +196,8 @@ ROOT
                         IDENTIFIER "String"
                   GREATER ">"
               VARIABLE_DECLARATOR_LIST
+                WHITESPACE " "
                 VARIABLE_DECLARATOR
-                  WHITESPACE " "
                   IDENTIFIER "l"
                   WHITESPACE " "
                   EQUAL "="
@@ -215,10 +215,10 @@ ROOT
                       R_PAREN ")"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             METHOD_CALL
               FIELD_ACCESS
                 LITERAL
-                  WHITESPACE "\n        "
                   IDENTIFIER "l"
                 DOT "."
                 IDENTIFIER "add"

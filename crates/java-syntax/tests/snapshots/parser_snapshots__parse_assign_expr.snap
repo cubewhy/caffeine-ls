@@ -147,9 +147,9 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               EQUAL "="
@@ -158,9 +158,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               PLUS_EQUAL "+="
@@ -169,9 +169,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               MINUS_EQUAL "-="
@@ -180,9 +180,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               DIVIDE_EQUAL "/="
@@ -191,9 +191,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               MULTIPLE_EQUAL "*="
@@ -202,9 +202,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               OR_EQUAL "|="
@@ -213,9 +213,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               MODULO_EQUAL "%="
@@ -224,9 +224,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               AND_EQUAL "&="
@@ -235,9 +235,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               XOR_EQUAL "^="
@@ -245,9 +245,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               RIGHT_SHIFT_EQUAL ">>="
@@ -256,9 +256,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               LEFT_SHIFT_EQUAL "<<="
@@ -267,9 +267,9 @@ ROOT
                 NUMBER_LITERAL "1"
             SEMICOLON ";"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             ASSIGN_EXPR
               LITERAL
-                WHITESPACE "\n        "
                 IDENTIFIER "a"
               WHITESPACE " "
               UNSIGNED_RIGHT_SHIFT_EQUAL ">>>="

@@ -61,9 +61,9 @@ ROOT
         IDENTIFIER "x"
       COMMA ","
       FORMAL_PARAMETER
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "U"
         WHITESPACE " "
         IDENTIFIER "y"

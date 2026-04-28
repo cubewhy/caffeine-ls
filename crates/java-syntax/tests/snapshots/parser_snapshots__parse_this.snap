@@ -72,13 +72,13 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE "\n    "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE "\n    "
             IDENTIFIER "String"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "field"
         SEMICOLON ";"
       METHOD_DECL
@@ -93,10 +93,10 @@ ROOT
           WHITESPACE " "
           L_BRACE "{"
           EXPRESSION_STMT
+            WHITESPACE "\n        "
             METHOD_CALL
               FIELD_ACCESS
                 LITERAL
-                  WHITESPACE "\n        "
                   THIS_KW "this"
                 DOT "."
                 IDENTIFIER "test"

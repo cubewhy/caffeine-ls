@@ -47,8 +47,8 @@ ROOT
         FORMAL_PARAMETERS
           L_PAREN "("
           ERROR
-            ERROR
             WHITESPACE " "
+            ERROR
             L_BRACE "{"
             WHITESPACE " "
             INT_KW "int"

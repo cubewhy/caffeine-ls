@@ -31,17 +31,17 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "A"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
             MISSING
         MISSING
       INSTANCE_INITIALIZER
         BLOCK
-          WHITESPACE " "
           L_BRACE "{"
           R_BRACE "}"
       WHITESPACE " "

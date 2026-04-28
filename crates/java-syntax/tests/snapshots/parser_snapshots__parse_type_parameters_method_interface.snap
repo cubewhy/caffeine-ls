@@ -37,15 +37,15 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE " "
         TYPE_PARAMETERS
-          WHITESPACE " "
           LESS "<"
           TYPE_PARAMETER
             IDENTIFIER "T"
           GREATER ">"
         TYPE
+          WHITESPACE " "
           QUALIFIED_NAME
-            WHITESPACE " "
             IDENTIFIER "T"
         WHITESPACE " "
         IDENTIFIER "func"

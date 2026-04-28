@@ -33,16 +33,16 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
+        WHITESPACE " "
         TYPE
-          WHITESPACE " "
           INT_KW "int"
           DIMENSIONS
             DIMENSION
               L_BRACKET "["
               R_BRACKET "]"
         VARIABLE_DECLARATOR_LIST
+          WHITESPACE " "
           VARIABLE_DECLARATOR
-            WHITESPACE " "
             IDENTIFIER "a"
         SEMICOLON ";"
       WHITESPACE " "

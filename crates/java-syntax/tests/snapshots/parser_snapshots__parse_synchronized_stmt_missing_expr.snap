@@ -69,8 +69,8 @@ ROOT
       WHITESPACE " "
       L_BRACE "{"
       METHOD_DECL
+        WHITESPACE "\n    "
         MODIFIER_LIST
-          WHITESPACE "\n    "
           PUBLIC_KW "public"
           WHITESPACE " "
           STATIC_KW "static"
@@ -98,15 +98,15 @@ ROOT
             WHITESPACE "\n        "
             SYNCHRONIZED_KW "synchronized"
             MISSING
-            BLOCK
               WHITESPACE " "
+            BLOCK
               L_BRACE "{"
               EXPRESSION_STMT
+                WHITESPACE "\n            "
                 METHOD_CALL
                   FIELD_ACCESS
                     FIELD_ACCESS
                       LITERAL
-                        WHITESPACE "\n            "
                         IDENTIFIER "System"
                       DOT "."
                       IDENTIFIER "out"
