@@ -44,9 +44,9 @@ pub fn interface_extends_clause(p: &mut Parser) {
     let m = p.start();
     p.expect(EXTENDS_KW);
 
-    qualified_name(p);
+    type_(p).ok();
     while p.eat(COMMA) {
-        qualified_name(p);
+        type_(p).ok();
     }
 
     m.complete(p, INTERFACE_EXTENDS_CLAUSE);
