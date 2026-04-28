@@ -23,10 +23,13 @@ fn main() {
                         .as_deref(),
                 )
             }) else {
-                tracing::error!("Unknown file type");
+                eprintln!("Unknown file type");
                 process::exit(1);
             };
-            tree::render_tree(lang, file);
+            if let Err(e) = tree::render_tree(lang, file) {
+                eprintln!("An error has occurred: {e:#}");
+                process::exit(2);
+            }
         }
     }
 }
