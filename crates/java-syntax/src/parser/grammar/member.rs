@@ -169,6 +169,7 @@ pub fn member_decl_rest(p: &mut Parser, m: Marker) {
         p.bump(); // void
         p.expect(IDENTIFIER); // method name
         formal_parameters(p);
+        throws_clause_opt(p);
         method_body_or_semicolon(p);
 
         m.complete(p, METHOD_DECL);

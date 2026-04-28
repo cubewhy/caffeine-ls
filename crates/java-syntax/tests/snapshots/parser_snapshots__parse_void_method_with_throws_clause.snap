@@ -1,0 +1,65 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() throws Exception {}
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+THROWS_KW "throws"
+WHITESPACE " "
+IDENTIFIER "Exception"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        THROWS_CLAUSE
+          WHITESPACE " "
+          THROWS_KW "throws"
+          QUALIFIED_NAME
+            WHITESPACE " "
+            IDENTIFIER "Exception"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

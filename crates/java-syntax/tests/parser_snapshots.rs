@@ -805,3 +805,12 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_void_method_with_throws_clause,
+    indoc! {r#"
+        class Test {
+            void func() throws Exception {}
+        }
+    "#}
+);
