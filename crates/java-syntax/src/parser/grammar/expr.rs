@@ -40,20 +40,27 @@ pub fn argument_list(p: &mut Parser) {
     m.complete(p, ARGUMENT_LIST);
 }
 
+/// ArrayInitializer:
+///   { [VariableInitializerList] [,] }
+///
+/// VariableInitializerList:
+///   VariableInitializer {, VariableInitializer}
+///
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-ArrayInitializer
+#[stacksafe]
 pub fn array_initializer(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
     p.expect(L_BRACE); // {
 
     if !p.at(R_BRACE) {
-        element_value(p);
+        expression(p).ok();
 
         while p.eat(COMMA) {
             if p.at(R_BRACE) {
                 break; // trailing comma
             }
-            element_value(p);
+            expression(p).ok();
         }
     }
 
