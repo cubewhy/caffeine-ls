@@ -692,6 +692,8 @@ pub fn is_expression_start(kind: SyntaxKind) -> bool {
             | PLUS_PLUS   // ++
             | MINUS_MINUS // --
             | AT // Annotation
+            | STRING_TEMPLATE_BEGIN
+            | TEXT_BLOCK_TEMPLATE_BEGIN
     )
 }
 
