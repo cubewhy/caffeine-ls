@@ -850,3 +850,37 @@ parser_snapshot!(
         ;
     "#}
 );
+
+parser_snapshot!(
+    parse_string_template,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String str = STR."a \{func1()} b";
+                String strBlock = STR."""
+                    a
+                    \{func1()} b
+                """;
+            }
+
+            int func1() { return 0; }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_string_template_missing_processor,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String str = "a \{func1()} b";
+                String strBlock = """
+                    a
+                    \{func1()} b
+                """;
+            }
+
+            int func1() { return 0; }
+        }
+    "#}
+);

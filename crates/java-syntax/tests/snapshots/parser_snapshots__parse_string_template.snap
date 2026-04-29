@@ -1,0 +1,185 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        String str = STR."a \{func1()} b";
+        String strBlock = STR."""
+            a
+            \{func1()} b
+        """;
+    }
+
+    int func1() { return 0; }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "str"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "STR"
+DOT "."
+STRING_TEMPLATE_BEGIN "\"a \\{"
+IDENTIFIER "func1"
+L_PAREN "("
+R_PAREN ")"
+STRING_TEMPLATE_END "} b\""
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "strBlock"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "STR"
+DOT "."
+TEXT_BLOCK_TEMPLATE_BEGIN "\"\"\"\n            a\n            \\{"
+IDENTIFIER "func1"
+L_PAREN "("
+R_PAREN ")"
+TEXT_BLOCK_TEMPLATE_END "} b\n        \"\"\""
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n\n    "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "func1"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+RETURN_KW "return"
+WHITESPACE " "
+NUMBER_LITERAL "0"
+SEMICOLON ";"
+WHITESPACE " "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..199
+  CLASS_DECL@0..198
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..198
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..165
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..165
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..73
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..72
+              TYPE@39..45
+                QUALIFIED_NAME@39..45
+                  IDENTIFIER@39..45 "String"
+              VARIABLE_DECLARATOR_LIST@45..72
+                WHITESPACE@45..46 " "
+                VARIABLE_DECLARATOR@46..72
+                  IDENTIFIER@46..49 "str"
+                  WHITESPACE@49..50 " "
+                  EQUAL@50..51 "="
+                  TEMPLATE_EXPR@51..72
+                    WHITESPACE@51..52 " "
+                    LITERAL@52..55
+                      IDENTIFIER@52..55 "STR"
+                    DOT@55..56 "."
+                    TEMPLATE_ARGUMENT@56..72
+                      STRING_TEMPLATE_BEGIN@56..61 "\"a \\{"
+                      METHOD_CALL@61..68
+                        LITERAL@61..66
+                          IDENTIFIER@61..66 "func1"
+                        ARGUMENT_LIST@66..68
+                          L_PAREN@66..67 "("
+                          R_PAREN@67..68 ")"
+                      STRING_TEMPLATE_END@68..72 "} b\""
+            SEMICOLON@72..73 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@73..159
+            WHITESPACE@73..82 "\n        "
+            LOCAL_VARIABLE_DECLARATION@82..158
+              TYPE@82..88
+                QUALIFIED_NAME@82..88
+                  IDENTIFIER@82..88 "String"
+              VARIABLE_DECLARATOR_LIST@88..158
+                WHITESPACE@88..89 " "
+                VARIABLE_DECLARATOR@89..158
+                  IDENTIFIER@89..97 "strBlock"
+                  WHITESPACE@97..98 " "
+                  EQUAL@98..99 "="
+                  TEMPLATE_EXPR@99..158
+                    WHITESPACE@99..100 " "
+                    LITERAL@100..103
+                      IDENTIFIER@100..103 "STR"
+                    DOT@103..104 "."
+                    TEMPLATE_ARGUMENT@104..158
+                      TEXT_BLOCK_TEMPLATE_BEGIN@104..136 "\"\"\"\n            a\n    ..."
+                      METHOD_CALL@136..143
+                        LITERAL@136..141
+                          IDENTIFIER@136..141 "func1"
+                        ARGUMENT_LIST@141..143
+                          L_PAREN@141..142 "("
+                          R_PAREN@142..143 ")"
+                      TEXT_BLOCK_TEMPLATE_END@143..158 "} b\n        \"\"\""
+            SEMICOLON@158..159 ";"
+          WHITESPACE@159..164 "\n    "
+          R_BRACE@164..165 "}"
+      METHOD_DECL@165..196
+        WHITESPACE@165..171 "\n\n    "
+        TYPE@171..174
+          INT_KW@171..174 "int"
+        WHITESPACE@174..175 " "
+        IDENTIFIER@175..180 "func1"
+        FORMAL_PARAMETERS@180..182
+          L_PAREN@180..181 "("
+          R_PAREN@181..182 ")"
+        BLOCK@182..196
+          WHITESPACE@182..183 " "
+          L_BRACE@183..184 "{"
+          RETURN_STMT@184..194
+            WHITESPACE@184..185 " "
+            RETURN_KW@185..191 "return"
+            LITERAL@191..193
+              WHITESPACE@191..192 " "
+              NUMBER_LITERAL@192..193 "0"
+            SEMICOLON@193..194 ";"
+          WHITESPACE@194..195 " "
+          R_BRACE@195..196 "}"
+      WHITESPACE@196..197 "\n"
+      R_BRACE@197..198 "}"
+  WHITESPACE@198..199 "\n"

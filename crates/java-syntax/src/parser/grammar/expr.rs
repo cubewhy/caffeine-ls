@@ -130,6 +130,16 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             Ok(m.complete(p, LITERAL))
         }
 
+        STRING_TEMPLATE_BEGIN | TEXT_BLOCK_TEMPLATE_BEGIN => {
+            let m = p.start();
+
+            p.error_message("String template is missing a processor (e.g., 'STR.')");
+
+            template_argument(p);
+
+            Ok(m.complete(p, TEMPLATE_EXPR))
+        }
+
         IDENTIFIER | UNDERSCORE => {
             if is_lambda_lookahead(p) {
                 lambda_expression(p)
@@ -183,6 +193,47 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
         NEW_KW => new_expression(p),
         _ => Err(()),
     }
+}
+
+/// TemplateArgument:
+///   StringTemplate
+///   TextBlockTemplate
+///
+/// StringTemplate:
+///   STRING_TEMPLATE_BEGIN Expression { STRING_TEMPLATE_MID Expression } STRING_TEMPLATE_END
+///
+/// NOTE: String templates exists in Java 22 (as a preview feature) but were removed in Java 23
+///
+/// https://docs.oracle.com/javase/specs/jls/se22/preview/specs/string-templates-jls.html
+pub fn template_argument(p: &mut Parser) {
+    let m = p.start();
+
+    // STRING_TEMPLATE_BEGIN | TEXT_BLOCK_TEMPLATE_BEGIN
+    p.bump();
+
+    loop {
+        // \{ expr }
+        if expression(p).is_err() {
+            p.error_message("Expected expression inside string template");
+            recover_until(p, &[STRING_TEMPLATE_MID, STRING_TEMPLATE_END]);
+        }
+
+        match p.current() {
+            Some(STRING_TEMPLATE_MID) | Some(TEXT_BLOCK_TEMPLATE_MID) => {
+                p.bump();
+            }
+            Some(STRING_TEMPLATE_END) | Some(TEXT_BLOCK_TEMPLATE_END) => {
+                p.bump();
+                break;
+            }
+            _ => {
+                p.error_message("Expected string template MID or END");
+                break;
+            }
+        }
+    }
+
+    m.complete(p, TEMPLATE_ARGUMENT);
 }
 
 /// MethodReference:
@@ -334,8 +385,16 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2
                         p.bump();
                         left = m.complete(p, SUPER_EXPR);
+                    } else if p.at(STRING_TEMPLATE_BEGIN) || p.at(TEXT_BLOCK_TEMPLATE_BEGIN) {
+                        template_argument(p);
+                        left = m.complete(p, TEMPLATE_EXPR);
+                    } else if p.at(STRING_LITERAL) {
+                        p.bump();
+                        left = m.complete(p, TEMPLATE_EXPR);
                     } else {
-                        p.error_message("Expected identifier or 'class' after '.'");
+                        p.error_message(
+                            "Expected identifier or 'class' after '.', or template after '.'",
+                        );
                         left = m.complete(p, ERROR);
                     }
                 }
