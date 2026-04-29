@@ -60,70 +60,68 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        MODIFIER_LIST
-          PUBLIC_KW "public"
-          WHITESPACE " "
-          STATIC_KW "static"
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "main"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-              DIMENSIONS
-                DIMENSION
-                  L_BRACKET "["
-                  R_BRACKET "]"
-            WHITESPACE " "
-            IDENTIFIER "args"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          SYNCHRONIZED_STMT
-            WHITESPACE "\n        "
-            SYNCHRONIZED_KW "synchronized"
-            MISSING
-              WHITESPACE " "
-            BLOCK
-              L_BRACE "{"
-              EXPRESSION_STMT
-                WHITESPACE "\n            "
-                METHOD_CALL
-                  FIELD_ACCESS
-                    FIELD_ACCESS
-                      LITERAL
-                        IDENTIFIER "System"
-                      DOT "."
-                      IDENTIFIER "out"
-                    DOT "."
-                    IDENTIFIER "println"
-                  ARGUMENT_LIST
-                    L_PAREN "("
-                    LITERAL
-                      STRING_LITERAL "\"made it!\""
-                    R_PAREN ")"
-                SEMICOLON ";"
-              WHITESPACE "\n        "
-              R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [L_PAREN], found: Some(L_BRACE) }, pos: 15 }
+ROOT@0..143
+  CLASS_DECL@0..142
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..142
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..140
+        WHITESPACE@12..17 "\n    "
+        MODIFIER_LIST@17..30
+          PUBLIC_KW@17..23 "public"
+          WHITESPACE@23..24 " "
+          STATIC_KW@24..30 "static"
+        WHITESPACE@30..31 " "
+        VOID_KW@31..35 "void"
+        WHITESPACE@35..36 " "
+        IDENTIFIER@36..40 "main"
+        FORMAL_PARAMETERS@40..55
+          L_PAREN@40..41 "("
+          FORMAL_PARAMETER@41..54
+            TYPE@41..49
+              QUALIFIED_NAME@41..47
+                IDENTIFIER@41..47 "String"
+              DIMENSIONS@47..49
+                DIMENSION@47..49
+                  L_BRACKET@47..48 "["
+                  R_BRACKET@48..49 "]"
+            WHITESPACE@49..50 " "
+            IDENTIFIER@50..54 "args"
+          R_PAREN@54..55 ")"
+        BLOCK@55..140
+          WHITESPACE@55..56 " "
+          L_BRACE@56..57 "{"
+          SYNCHRONIZED_STMT@57..134
+            WHITESPACE@57..66 "\n        "
+            SYNCHRONIZED_KW@66..78 "synchronized"
+            MISSING@78..79
+              WHITESPACE@78..79 " "
+            BLOCK@79..134
+              L_BRACE@79..80 "{"
+              EXPRESSION_STMT@80..124
+                WHITESPACE@80..93 "\n            "
+                METHOD_CALL@93..123
+                  FIELD_ACCESS@93..111
+                    FIELD_ACCESS@93..103
+                      LITERAL@93..99
+                        IDENTIFIER@93..99 "System"
+                      DOT@99..100 "."
+                      IDENTIFIER@100..103 "out"
+                    DOT@103..104 "."
+                    IDENTIFIER@104..111 "println"
+                  ARGUMENT_LIST@111..123
+                    L_PAREN@111..112 "("
+                    LITERAL@112..122
+                      STRING_LITERAL@112..122 "\"made it!\""
+                    R_PAREN@122..123 ")"
+                SEMICOLON@123..124 ";"
+              WHITESPACE@124..133 "\n        "
+              R_BRACE@133..134 "}"
+          WHITESPACE@134..139 "\n    "
+          R_BRACE@139..140 "}"
+      WHITESPACE@140..141 "\n"
+      R_BRACE@141..142 "}"
+  WHITESPACE@142..143 "\n"

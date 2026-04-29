@@ -88,107 +88,107 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        MODIFIER_LIST
-          PUBLIC_KW "public"
-          WHITESPACE " "
-          STATIC_KW "static"
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "main"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-              DIMENSIONS
-                DIMENSION
-                  L_BRACKET "["
-                  R_BRACKET "]"
-            WHITESPACE " "
-            IDENTIFIER "args"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "Test"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "t"
-                  WHITESPACE " "
-                  EQUAL "="
-                  NEW_EXPR
-                    WHITESPACE " "
-                    NEW_KW "new"
-                    QUALIFIED_NAME
-                      WHITESPACE " "
-                      IDENTIFIER "Test"
-                    ARGUMENT_LIST
-                      L_PAREN "("
-                      R_PAREN ")"
-            SEMICOLON ";"
-          SYNCHRONIZED_STMT
-            WHITESPACE "\n        "
-            SYNCHRONIZED_KW "synchronized"
-            PARENTHESIZED_EXPR
-              L_PAREN "("
-              LITERAL
-                IDENTIFIER "t"
-              R_PAREN ")"
-            BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              SYNCHRONIZED_STMT
-                WHITESPACE "\n            "
-                SYNCHRONIZED_KW "synchronized"
-                PARENTHESIZED_EXPR
-                  L_PAREN "("
-                  LITERAL
-                    IDENTIFIER "t"
-                  R_PAREN ")"
-                BLOCK
-                  WHITESPACE " "
-                  L_BRACE "{"
-                  EXPRESSION_STMT
-                    WHITESPACE "\n                "
-                    METHOD_CALL
-                      FIELD_ACCESS
-                        FIELD_ACCESS
-                          LITERAL
-                            IDENTIFIER "System"
-                          DOT "."
-                          IDENTIFIER "out"
-                        DOT "."
-                        IDENTIFIER "println"
-                      ARGUMENT_LIST
-                        L_PAREN "("
-                        LITERAL
-                          STRING_LITERAL "\"made it!\""
-                        R_PAREN ")"
-                    SEMICOLON ";"
-                  WHITESPACE "\n            "
-                  R_BRACE "}"
-              WHITESPACE "\n        "
-              R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..223
+  CLASS_DECL@0..222
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..222
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..220
+        WHITESPACE@12..17 "\n    "
+        MODIFIER_LIST@17..30
+          PUBLIC_KW@17..23 "public"
+          WHITESPACE@23..24 " "
+          STATIC_KW@24..30 "static"
+        WHITESPACE@30..31 " "
+        VOID_KW@31..35 "void"
+        WHITESPACE@35..36 " "
+        IDENTIFIER@36..40 "main"
+        FORMAL_PARAMETERS@40..55
+          L_PAREN@40..41 "("
+          FORMAL_PARAMETER@41..54
+            TYPE@41..49
+              QUALIFIED_NAME@41..47
+                IDENTIFIER@41..47 "String"
+              DIMENSIONS@47..49
+                DIMENSION@47..49
+                  L_BRACKET@47..48 "["
+                  R_BRACKET@48..49 "]"
+            WHITESPACE@49..50 " "
+            IDENTIFIER@50..54 "args"
+          R_PAREN@54..55 ")"
+        BLOCK@55..220
+          WHITESPACE@55..56 " "
+          L_BRACE@56..57 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@57..86
+            WHITESPACE@57..66 "\n        "
+            LOCAL_VARIABLE_DECLARATION@66..85
+              TYPE@66..70
+                QUALIFIED_NAME@66..70
+                  IDENTIFIER@66..70 "Test"
+              VARIABLE_DECLARATOR_LIST@70..85
+                WHITESPACE@70..71 " "
+                VARIABLE_DECLARATOR@71..85
+                  IDENTIFIER@71..72 "t"
+                  WHITESPACE@72..73 " "
+                  EQUAL@73..74 "="
+                  NEW_EXPR@74..85
+                    WHITESPACE@74..75 " "
+                    NEW_KW@75..78 "new"
+                    QUALIFIED_NAME@78..83
+                      WHITESPACE@78..79 " "
+                      IDENTIFIER@79..83 "Test"
+                    ARGUMENT_LIST@83..85
+                      L_PAREN@83..84 "("
+                      R_PAREN@84..85 ")"
+            SEMICOLON@85..86 ";"
+          SYNCHRONIZED_STMT@86..214
+            WHITESPACE@86..95 "\n        "
+            SYNCHRONIZED_KW@95..107 "synchronized"
+            PARENTHESIZED_EXPR@107..110
+              L_PAREN@107..108 "("
+              LITERAL@108..109
+                IDENTIFIER@108..109 "t"
+              R_PAREN@109..110 ")"
+            BLOCK@110..214
+              WHITESPACE@110..111 " "
+              L_BRACE@111..112 "{"
+              SYNCHRONIZED_STMT@112..204
+                WHITESPACE@112..125 "\n            "
+                SYNCHRONIZED_KW@125..137 "synchronized"
+                PARENTHESIZED_EXPR@137..140
+                  L_PAREN@137..138 "("
+                  LITERAL@138..139
+                    IDENTIFIER@138..139 "t"
+                  R_PAREN@139..140 ")"
+                BLOCK@140..204
+                  WHITESPACE@140..141 " "
+                  L_BRACE@141..142 "{"
+                  EXPRESSION_STMT@142..190
+                    WHITESPACE@142..159 "\n                "
+                    METHOD_CALL@159..189
+                      FIELD_ACCESS@159..177
+                        FIELD_ACCESS@159..169
+                          LITERAL@159..165
+                            IDENTIFIER@159..165 "System"
+                          DOT@165..166 "."
+                          IDENTIFIER@166..169 "out"
+                        DOT@169..170 "."
+                        IDENTIFIER@170..177 "println"
+                      ARGUMENT_LIST@177..189
+                        L_PAREN@177..178 "("
+                        LITERAL@178..188
+                          STRING_LITERAL@178..188 "\"made it!\""
+                        R_PAREN@188..189 ")"
+                    SEMICOLON@189..190 ";"
+                  WHITESPACE@190..203 "\n            "
+                  R_BRACE@203..204 "}"
+              WHITESPACE@204..213 "\n        "
+              R_BRACE@213..214 "}"
+          WHITESPACE@214..219 "\n    "
+          R_BRACE@219..220 "}"
+      WHITESPACE@220..221 "\n"
+      R_BRACE@221..222 "}"
+  WHITESPACE@222..223 "\n"

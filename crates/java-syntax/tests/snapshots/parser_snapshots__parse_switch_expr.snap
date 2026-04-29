@@ -71,77 +71,77 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "a"
-                  WHITESPACE " "
-                  EQUAL "="
-                  SWITCH_EXPR
-                    WHITESPACE " "
-                    SWITCH_KW "switch"
-                    WHITESPACE " "
-                    L_PAREN "("
-                    LITERAL
-                      IDENTIFIER "expr"
-                    R_PAREN ")"
-                    SWITCH_BLOCK
-                      WHITESPACE " "
-                      L_BRACE "{"
-                      SWITCH_RULE
-                        WHITESPACE "\n            "
-                        SWITCH_LABEL
-                          CASE_KW "case"
-                          LITERAL
-                            WHITESPACE " "
-                            NUMBER_LITERAL "1"
-                        WHITESPACE " "
-                        ARROW "->"
-                        BLOCK
-                          WHITESPACE " "
-                          L_BRACE "{"
-                          R_BRACE "}"
-                      SWITCH_RULE
-                        WHITESPACE "\n            "
-                        SWITCH_LABEL
-                          CASE_KW "case"
-                          LITERAL
-                            WHITESPACE " "
-                            NUMBER_LITERAL "2"
-                        WHITESPACE " "
-                        ARROW "->"
-                        BLOCK
-                          WHITESPACE " "
-                          L_BRACE "{"
-                          R_BRACE "}"
-                      WHITESPACE "\n        "
-                      R_BRACE "}"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..132
+  CLASS_DECL@0..131
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..131
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..129
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..129
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..123
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..122
+              IDENTIFIER@39..42 "var"
+              VARIABLE_DECLARATOR_LIST@42..122
+                WHITESPACE@42..43 " "
+                VARIABLE_DECLARATOR@43..122
+                  IDENTIFIER@43..44 "a"
+                  WHITESPACE@44..45 " "
+                  EQUAL@45..46 "="
+                  SWITCH_EXPR@46..122
+                    WHITESPACE@46..47 " "
+                    SWITCH_KW@47..53 "switch"
+                    WHITESPACE@53..54 " "
+                    L_PAREN@54..55 "("
+                    LITERAL@55..59
+                      IDENTIFIER@55..59 "expr"
+                    R_PAREN@59..60 ")"
+                    SWITCH_BLOCK@60..122
+                      WHITESPACE@60..61 " "
+                      L_BRACE@61..62 "{"
+                      SWITCH_RULE@62..87
+                        WHITESPACE@62..75 "\n            "
+                        SWITCH_LABEL@75..81
+                          CASE_KW@75..79 "case"
+                          LITERAL@79..81
+                            WHITESPACE@79..80 " "
+                            NUMBER_LITERAL@80..81 "1"
+                        WHITESPACE@81..82 " "
+                        ARROW@82..84 "->"
+                        BLOCK@84..87
+                          WHITESPACE@84..85 " "
+                          L_BRACE@85..86 "{"
+                          R_BRACE@86..87 "}"
+                      SWITCH_RULE@87..112
+                        WHITESPACE@87..100 "\n            "
+                        SWITCH_LABEL@100..106
+                          CASE_KW@100..104 "case"
+                          LITERAL@104..106
+                            WHITESPACE@104..105 " "
+                            NUMBER_LITERAL@105..106 "2"
+                        WHITESPACE@106..107 " "
+                        ARROW@107..109 "->"
+                        BLOCK@109..112
+                          WHITESPACE@109..110 " "
+                          L_BRACE@110..111 "{"
+                          R_BRACE@111..112 "}"
+                      WHITESPACE@112..121 "\n        "
+                      R_BRACE@121..122 "}"
+            SEMICOLON@122..123 ";"
+          WHITESPACE@123..128 "\n    "
+          R_BRACE@128..129 "}"
+      WHITESPACE@129..130 "\n"
+      R_BRACE@130..131 "}"
+  WHITESPACE@131..132 "\n"

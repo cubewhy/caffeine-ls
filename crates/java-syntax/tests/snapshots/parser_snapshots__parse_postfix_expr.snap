@@ -42,41 +42,41 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          EXPRESSION_STMT
-            WHITESPACE "\n        "
-            POSTFIX_EXPR
-              LITERAL
-                IDENTIFIER "i"
-              PLUS_PLUS "++"
-            SEMICOLON ";"
-          EXPRESSION_STMT
-            WHITESPACE "\n        "
-            POSTFIX_EXPR
-              LITERAL
-                IDENTIFIER "i"
-              MINUS_MINUS "--"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..65
+  CLASS_DECL@0..64
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..64
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..62
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..62
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          EXPRESSION_STMT@30..43
+            WHITESPACE@30..39 "\n        "
+            POSTFIX_EXPR@39..42
+              LITERAL@39..40
+                IDENTIFIER@39..40 "i"
+              PLUS_PLUS@40..42 "++"
+            SEMICOLON@42..43 ";"
+          EXPRESSION_STMT@43..56
+            WHITESPACE@43..52 "\n        "
+            POSTFIX_EXPR@52..55
+              LITERAL@52..53
+                IDENTIFIER@52..53 "i"
+              MINUS_MINUS@53..55 "--"
+            SEMICOLON@55..56 ";"
+          WHITESPACE@56..61 "\n    "
+          R_BRACE@61..62 "}"
+      WHITESPACE@62..63 "\n"
+      R_BRACE@63..64 "}"
+  WHITESPACE@64..65 "\n"

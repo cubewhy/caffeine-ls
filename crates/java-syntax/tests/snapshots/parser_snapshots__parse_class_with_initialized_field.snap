@@ -26,27 +26,27 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          INT_KW "int"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "x"
-            WHITESPACE " "
-            EQUAL "="
-            LITERAL
-              WHITESPACE " "
-              NUMBER_LITERAL "1"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..22
+  CLASS_DECL@0..22
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..22
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..20
+        WHITESPACE@9..10 " "
+        TYPE@10..13
+          INT_KW@10..13 "int"
+        VARIABLE_DECLARATOR_LIST@13..19
+          WHITESPACE@13..14 " "
+          VARIABLE_DECLARATOR@14..19
+            IDENTIFIER@14..15 "x"
+            WHITESPACE@15..16 " "
+            EQUAL@16..17 "="
+            LITERAL@17..19
+              WHITESPACE@17..18 " "
+              NUMBER_LITERAL@18..19 "1"
+        SEMICOLON@19..20 ";"
+      WHITESPACE@20..21 " "
+      R_BRACE@21..22 "}"

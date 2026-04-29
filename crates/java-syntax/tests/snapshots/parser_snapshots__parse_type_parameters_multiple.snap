@@ -22,21 +22,21 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    TYPE_PARAMETERS
-      LESS "<"
-      TYPE_PARAMETER
-        IDENTIFIER "T"
-      COMMA ","
-      TYPE_PARAMETER
-        WHITESPACE " "
-        IDENTIFIER "U"
-      GREATER ">"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..16
+  CLASS_DECL@0..16
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    TYPE_PARAMETERS@7..13
+      LESS@7..8 "<"
+      TYPE_PARAMETER@8..9
+        IDENTIFIER@8..9 "T"
+      COMMA@9..10 ","
+      TYPE_PARAMETER@10..12
+        WHITESPACE@10..11 " "
+        IDENTIFIER@11..12 "U"
+      GREATER@12..13 ">"
+    CLASS_BODY@13..16
+      WHITESPACE@13..14 " "
+      L_BRACE@14..15 "{"
+      R_BRACE@15..16 "}"

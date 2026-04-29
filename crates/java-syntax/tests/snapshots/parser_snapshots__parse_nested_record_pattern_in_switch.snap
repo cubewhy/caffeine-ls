@@ -83,102 +83,102 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "Object"
-            WHITESPACE " "
-            IDENTIFIER "obj"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          SWITCH_STMT
-            WHITESPACE "\n        "
-            SWITCH_KW "switch"
-            WHITESPACE " "
-            L_PAREN "("
-            LITERAL
-              IDENTIFIER "obj"
-            R_PAREN ")"
-            SWITCH_BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              SWITCH_RULE
-                WHITESPACE "\n            "
-                SWITCH_LABEL
-                  CASE_KW "case"
-                  RECORD_PATTERN
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Box"
-                    L_PAREN "("
-                    RECORD_PATTERN
-                      TYPE
-                        QUALIFIED_NAME
-                          IDENTIFIER "Item"
-                      L_PAREN "("
-                      TYPE_PATTERN
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "String"
-                        WHITESPACE " "
-                        IDENTIFIER "name"
-                      R_PAREN ")"
-                    COMMA ","
-                    MATCH_ALL_PATTERN
-                      WHITESPACE " "
-                      UNDERSCORE "_"
-                    R_PAREN ")"
-                WHITESPACE " "
-                ARROW "->"
-                EXPRESSION_STMT
-                  WHITESPACE " "
-                  METHOD_CALL
-                    FIELD_ACCESS
-                      FIELD_ACCESS
-                        LITERAL
-                          IDENTIFIER "System"
-                        DOT "."
-                        IDENTIFIER "out"
-                      DOT "."
-                      IDENTIFIER "println"
-                    ARGUMENT_LIST
-                      L_PAREN "("
-                      LITERAL
-                        IDENTIFIER "name"
-                      R_PAREN ")"
-                  SEMICOLON ";"
-              SWITCH_RULE
-                WHITESPACE "\n            "
-                SWITCH_LABEL
-                  DEFAULT_KW "default"
-                WHITESPACE " "
-                ARROW "->"
-                BLOCK
-                  WHITESPACE " "
-                  L_BRACE "{"
-                  R_BRACE "}"
-              WHITESPACE "\n        "
-              R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..180
+  CLASS_DECL@0..179
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..179
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..177
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..38
+          L_PAREN@26..27 "("
+          FORMAL_PARAMETER@27..37
+            TYPE@27..33
+              QUALIFIED_NAME@27..33
+                IDENTIFIER@27..33 "Object"
+            WHITESPACE@33..34 " "
+            IDENTIFIER@34..37 "obj"
+          R_PAREN@37..38 ")"
+        BLOCK@38..177
+          WHITESPACE@38..39 " "
+          L_BRACE@39..40 "{"
+          SWITCH_STMT@40..171
+            WHITESPACE@40..49 "\n        "
+            SWITCH_KW@49..55 "switch"
+            WHITESPACE@55..56 " "
+            L_PAREN@56..57 "("
+            LITERAL@57..60
+              IDENTIFIER@57..60 "obj"
+            R_PAREN@60..61 ")"
+            SWITCH_BLOCK@61..171
+              WHITESPACE@61..62 " "
+              L_BRACE@62..63 "{"
+              SWITCH_RULE@63..135
+                WHITESPACE@63..76 "\n            "
+                SWITCH_LABEL@76..106
+                  CASE_KW@76..80 "case"
+                  RECORD_PATTERN@80..106
+                    WHITESPACE@80..81 " "
+                    TYPE@81..84
+                      QUALIFIED_NAME@81..84
+                        IDENTIFIER@81..84 "Box"
+                    L_PAREN@84..85 "("
+                    RECORD_PATTERN@85..102
+                      TYPE@85..89
+                        QUALIFIED_NAME@85..89
+                          IDENTIFIER@85..89 "Item"
+                      L_PAREN@89..90 "("
+                      TYPE_PATTERN@90..101
+                        TYPE@90..96
+                          QUALIFIED_NAME@90..96
+                            IDENTIFIER@90..96 "String"
+                        WHITESPACE@96..97 " "
+                        IDENTIFIER@97..101 "name"
+                      R_PAREN@101..102 ")"
+                    COMMA@102..103 ","
+                    MATCH_ALL_PATTERN@103..105
+                      WHITESPACE@103..104 " "
+                      UNDERSCORE@104..105 "_"
+                    R_PAREN@105..106 ")"
+                WHITESPACE@106..107 " "
+                ARROW@107..109 "->"
+                EXPRESSION_STMT@109..135
+                  WHITESPACE@109..110 " "
+                  METHOD_CALL@110..134
+                    FIELD_ACCESS@110..128
+                      FIELD_ACCESS@110..120
+                        LITERAL@110..116
+                          IDENTIFIER@110..116 "System"
+                        DOT@116..117 "."
+                        IDENTIFIER@117..120 "out"
+                      DOT@120..121 "."
+                      IDENTIFIER@121..128 "println"
+                    ARGUMENT_LIST@128..134
+                      L_PAREN@128..129 "("
+                      LITERAL@129..133
+                        IDENTIFIER@129..133 "name"
+                      R_PAREN@133..134 ")"
+                  SEMICOLON@134..135 ";"
+              SWITCH_RULE@135..161
+                WHITESPACE@135..148 "\n            "
+                SWITCH_LABEL@148..155
+                  DEFAULT_KW@148..155 "default"
+                WHITESPACE@155..156 " "
+                ARROW@156..158 "->"
+                BLOCK@158..161
+                  WHITESPACE@158..159 " "
+                  L_BRACE@159..160 "{"
+                  R_BRACE@160..161 "}"
+              WHITESPACE@161..170 "\n        "
+              R_BRACE@170..171 "}"
+          WHITESPACE@171..176 "\n    "
+          R_BRACE@176..177 "}"
+      WHITESPACE@177..178 "\n"
+      R_BRACE@178..179 "}"
+  WHITESPACE@179..180 "\n"

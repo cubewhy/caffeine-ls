@@ -117,158 +117,158 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "alConstructor"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    TYPE
-                      LITERAL
-                        IDENTIFIER "ArrayList"
-                      TYPE_ARGUMENTS
-                        LESS "<"
-                        TYPE_ARGUMENT
-                          TYPE
-                            QUALIFIED_NAME
-                              IDENTIFIER "String"
-                        GREATER ">"
-                    COLON_COLON "::"
-                    NEW_KW "new"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "stringValueOfMd"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    LITERAL
-                      IDENTIFIER "String"
-                    COLON_COLON "::"
-                    IDENTIFIER "valueOf"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "lengthOfAStringLiteral"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    LITERAL
-                      STRING_LITERAL "\"abc\""
-                    COLON_COLON "::"
-                    IDENTIFIER "length"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "arrayCreation"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    TYPE
-                      PRIMITIVE_TYPE_EXPR
-                        INT_KW "int"
-                      L_BRACKET "["
-                      R_BRACKET "]"
-                    COLON_COLON "::"
-                    NEW_KW "new"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "innerClassConstructor"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    FIELD_ACCESS
-                      LITERAL
-                        IDENTIFIER "Outer"
-                      DOT "."
-                      IDENTIFIER "Inner"
-                    COLON_COLON "::"
-                    NEW_KW "new"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              IDENTIFIER "var"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "genericClassGenericConstructor"
-                  WHITESPACE " "
-                  EQUAL "="
-                  METHOD_REFERENCE
-                    WHITESPACE " "
-                    TYPE
-                      LITERAL
-                        IDENTIFIER "Bar"
-                      TYPE_ARGUMENTS
-                        LESS "<"
-                        TYPE_ARGUMENT
-                          TYPE
-                            QUALIFIED_NAME
-                              IDENTIFIER "String"
-                        GREATER ">"
-                    COLON_COLON "::"
-                    TYPE_ARGUMENTS
-                      LESS "<"
-                      TYPE_ARGUMENT
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "Integer"
-                      GREATER ">"
-                    NEW_KW "new"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..356
+  CLASS_DECL@0..355
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..355
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..353
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..353
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..82
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..81
+              IDENTIFIER@39..42 "var"
+              VARIABLE_DECLARATOR_LIST@42..81
+                WHITESPACE@42..43 " "
+                VARIABLE_DECLARATOR@43..81
+                  IDENTIFIER@43..56 "alConstructor"
+                  WHITESPACE@56..57 " "
+                  EQUAL@57..58 "="
+                  METHOD_REFERENCE@58..81
+                    WHITESPACE@58..59 " "
+                    TYPE@59..76
+                      LITERAL@59..68
+                        IDENTIFIER@59..68 "ArrayList"
+                      TYPE_ARGUMENTS@68..76
+                        LESS@68..69 "<"
+                        TYPE_ARGUMENT@69..75
+                          TYPE@69..75
+                            QUALIFIED_NAME@69..75
+                              IDENTIFIER@69..75 "String"
+                        GREATER@75..76 ">"
+                    COLON_COLON@76..78 "::"
+                    NEW_KW@78..81 "new"
+            SEMICOLON@81..82 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@82..129
+            WHITESPACE@82..91 "\n        "
+            LOCAL_VARIABLE_DECLARATION@91..128
+              IDENTIFIER@91..94 "var"
+              VARIABLE_DECLARATOR_LIST@94..128
+                WHITESPACE@94..95 " "
+                VARIABLE_DECLARATOR@95..128
+                  IDENTIFIER@95..110 "stringValueOfMd"
+                  WHITESPACE@110..111 " "
+                  EQUAL@111..112 "="
+                  METHOD_REFERENCE@112..128
+                    WHITESPACE@112..113 " "
+                    LITERAL@113..119
+                      IDENTIFIER@113..119 "String"
+                    COLON_COLON@119..121 "::"
+                    IDENTIFIER@121..128 "valueOf"
+            SEMICOLON@128..129 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@129..181
+            WHITESPACE@129..138 "\n        "
+            LOCAL_VARIABLE_DECLARATION@138..180
+              IDENTIFIER@138..141 "var"
+              VARIABLE_DECLARATOR_LIST@141..180
+                WHITESPACE@141..142 " "
+                VARIABLE_DECLARATOR@142..180
+                  IDENTIFIER@142..164 "lengthOfAStringLiteral"
+                  WHITESPACE@164..165 " "
+                  EQUAL@165..166 "="
+                  METHOD_REFERENCE@166..180
+                    WHITESPACE@166..167 " "
+                    LITERAL@167..172
+                      STRING_LITERAL@167..172 "\"abc\""
+                    COLON_COLON@172..174 "::"
+                    IDENTIFIER@174..180 "length"
+            SEMICOLON@180..181 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@181..221
+            WHITESPACE@181..190 "\n        "
+            LOCAL_VARIABLE_DECLARATION@190..220
+              IDENTIFIER@190..193 "var"
+              VARIABLE_DECLARATOR_LIST@193..220
+                WHITESPACE@193..194 " "
+                VARIABLE_DECLARATOR@194..220
+                  IDENTIFIER@194..207 "arrayCreation"
+                  WHITESPACE@207..208 " "
+                  EQUAL@208..209 "="
+                  METHOD_REFERENCE@209..220
+                    WHITESPACE@209..210 " "
+                    TYPE@210..215
+                      PRIMITIVE_TYPE_EXPR@210..213
+                        INT_KW@210..213 "int"
+                      L_BRACKET@213..214 "["
+                      R_BRACKET@214..215 "]"
+                    COLON_COLON@215..217 "::"
+                    NEW_KW@217..220 "new"
+            SEMICOLON@220..221 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@221..275
+            WHITESPACE@221..230 "\n        "
+            LOCAL_VARIABLE_DECLARATION@230..274
+              IDENTIFIER@230..233 "var"
+              VARIABLE_DECLARATOR_LIST@233..274
+                WHITESPACE@233..234 " "
+                VARIABLE_DECLARATOR@234..274
+                  IDENTIFIER@234..255 "innerClassConstructor"
+                  WHITESPACE@255..256 " "
+                  EQUAL@256..257 "="
+                  METHOD_REFERENCE@257..274
+                    WHITESPACE@257..258 " "
+                    FIELD_ACCESS@258..269
+                      LITERAL@258..263
+                        IDENTIFIER@258..263 "Outer"
+                      DOT@263..264 "."
+                      IDENTIFIER@264..269 "Inner"
+                    COLON_COLON@269..271 "::"
+                    NEW_KW@271..274 "new"
+            SEMICOLON@274..275 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@275..347
+            WHITESPACE@275..284 "\n        "
+            LOCAL_VARIABLE_DECLARATION@284..346
+              IDENTIFIER@284..287 "var"
+              VARIABLE_DECLARATOR_LIST@287..346
+                WHITESPACE@287..288 " "
+                VARIABLE_DECLARATOR@288..346
+                  IDENTIFIER@288..318 "genericClassGenericCo ..."
+                  WHITESPACE@318..319 " "
+                  EQUAL@319..320 "="
+                  METHOD_REFERENCE@320..346
+                    WHITESPACE@320..321 " "
+                    TYPE@321..332
+                      LITERAL@321..324
+                        IDENTIFIER@321..324 "Bar"
+                      TYPE_ARGUMENTS@324..332
+                        LESS@324..325 "<"
+                        TYPE_ARGUMENT@325..331
+                          TYPE@325..331
+                            QUALIFIED_NAME@325..331
+                              IDENTIFIER@325..331 "String"
+                        GREATER@331..332 ">"
+                    COLON_COLON@332..334 "::"
+                    TYPE_ARGUMENTS@334..343
+                      LESS@334..335 "<"
+                      TYPE_ARGUMENT@335..342
+                        TYPE@335..342
+                          QUALIFIED_NAME@335..342
+                            IDENTIFIER@335..342 "Integer"
+                      GREATER@342..343 ">"
+                    NEW_KW@343..346 "new"
+            SEMICOLON@346..347 ";"
+          WHITESPACE@347..352 "\n    "
+          R_BRACE@352..353 "}"
+      WHITESPACE@353..354 "\n"
+      R_BRACE@354..355 "}"
+  WHITESPACE@355..356 "\n"

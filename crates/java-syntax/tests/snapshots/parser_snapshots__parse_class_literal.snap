@@ -38,37 +38,35 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          EXPRESSION_STMT
-            WHITESPACE "\n        "
-            CLASS_LITERAL
-              LITERAL
-                IDENTIFIER "Test"
-              DOT "."
-              CLASS_KW "class"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
-errors:
-  ParseError { kind: Message("Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed"), pos: 11 }
+ROOT@0..59
+  CLASS_DECL@0..58
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..58
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..56
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..56
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          EXPRESSION_STMT@30..50
+            WHITESPACE@30..39 "\n        "
+            CLASS_LITERAL@39..49
+              LITERAL@39..43
+                IDENTIFIER@39..43 "Test"
+              DOT@43..44 "."
+              CLASS_KW@44..49 "class"
+            SEMICOLON@49..50 ";"
+          WHITESPACE@50..55 "\n    "
+          R_BRACE@55..56 "}"
+      WHITESPACE@56..57 "\n"
+      R_BRACE@57..58 "}"
+  WHITESPACE@58..59 "\n"

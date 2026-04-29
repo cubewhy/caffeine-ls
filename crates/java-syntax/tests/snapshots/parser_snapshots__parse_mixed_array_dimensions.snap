@@ -29,34 +29,34 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          INT_KW "int"
-          DIMENSIONS
-            DIMENSION
-              L_BRACKET "["
-              R_BRACKET "]"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "a"
-          COMMA ","
-          VARIABLE_DECLARATOR
-            WHITESPACE " "
-            IDENTIFIER "b"
-            DIMENSIONS
-              DIMENSION
-                L_BRACKET "["
-                R_BRACKET "]"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..25
+  CLASS_DECL@0..25
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..25
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..23
+        WHITESPACE@9..10 " "
+        TYPE@10..15
+          INT_KW@10..13 "int"
+          DIMENSIONS@13..15
+            DIMENSION@13..15
+              L_BRACKET@13..14 "["
+              R_BRACKET@14..15 "]"
+        VARIABLE_DECLARATOR_LIST@15..22
+          WHITESPACE@15..16 " "
+          VARIABLE_DECLARATOR@16..17
+            IDENTIFIER@16..17 "a"
+          COMMA@17..18 ","
+          VARIABLE_DECLARATOR@18..22
+            WHITESPACE@18..19 " "
+            IDENTIFIER@19..20 "b"
+            DIMENSIONS@20..22
+              DIMENSION@20..22
+                L_BRACKET@20..21 "["
+                R_BRACKET@21..22 "]"
+        SEMICOLON@22..23 ";"
+      WHITESPACE@23..24 " "
+      R_BRACE@24..25 "}"

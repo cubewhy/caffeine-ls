@@ -16,12 +16,12 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  PACKAGE_DECL
-    PACKAGE_KW "package"
-    QUALIFIED_NAME
-      WHITESPACE " "
-      IDENTIFIER "a"
-      DOT "."
-      IDENTIFIER "b"
-    SEMICOLON ";"
+ROOT@0..12
+  PACKAGE_DECL@0..12
+    PACKAGE_KW@0..7 "package"
+    QUALIFIED_NAME@7..11
+      WHITESPACE@7..8 " "
+      IDENTIFIER@8..9 "a"
+      DOT@9..10 "."
+      IDENTIFIER@10..11 "b"
+    SEMICOLON@11..12 ";"

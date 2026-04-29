@@ -50,51 +50,49 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          TRY_STMT
-            WHITESPACE "\n        "
-            TRY_KW "try"
-            BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              R_BRACE "}"
-            CATCH_CLAUSE
-              WHITESPACE "\n        "
-              CATCH_KW "catch"
-              MISSING
-                WHITESPACE " "
-              BLOCK
-                L_BRACE "{"
-                R_BRACE "}"
-            FINALLY_CLAUSE
-              WHITESPACE "\n        "
-              FINALLY_KW "finally"
-              BLOCK
-                WHITESPACE " "
-                L_BRACE "{"
-                R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [L_PAREN], found: Some(L_BRACE) }, pos: 12 }
+ROOT@0..90
+  CLASS_DECL@0..89
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..89
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..87
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..87
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          TRY_STMT@30..81
+            WHITESPACE@30..39 "\n        "
+            TRY_KW@39..42 "try"
+            BLOCK@42..45
+              WHITESPACE@42..43 " "
+              L_BRACE@43..44 "{"
+              R_BRACE@44..45 "}"
+            CATCH_CLAUSE@45..62
+              WHITESPACE@45..54 "\n        "
+              CATCH_KW@54..59 "catch"
+              MISSING@59..60
+                WHITESPACE@59..60 " "
+              BLOCK@60..62
+                L_BRACE@60..61 "{"
+                R_BRACE@61..62 "}"
+            FINALLY_CLAUSE@62..81
+              WHITESPACE@62..71 "\n        "
+              FINALLY_KW@71..78 "finally"
+              BLOCK@78..81
+                WHITESPACE@78..79 " "
+                L_BRACE@79..80 "{"
+                R_BRACE@80..81 "}"
+          WHITESPACE@81..86 "\n    "
+          R_BRACE@86..87 "}"
+      WHITESPACE@87..88 "\n"
+      R_BRACE@88..89 "}"
+  WHITESPACE@89..90 "\n"

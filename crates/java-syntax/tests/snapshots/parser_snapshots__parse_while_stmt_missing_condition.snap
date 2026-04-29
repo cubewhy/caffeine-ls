@@ -43,40 +43,38 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          WHILE_STMT
-            WHITESPACE "\n        "
-            WHILE_KW "while"
-            MISSING
-              WHITESPACE " "
-            BLOCK
-              L_BRACE "{"
-              WHITESPACE "\n            "
-              LINE_COMMENT "// do something"
-              WHITESPACE "\n        "
-              R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [L_PAREN], found: Some(L_BRACE) }, pos: 9 }
+ROOT@0..90
+  CLASS_DECL@0..89
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..89
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..87
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..25
+          L_PAREN@23..24 "("
+          R_PAREN@24..25 ")"
+        BLOCK@25..87
+          WHITESPACE@25..26 " "
+          L_BRACE@26..27 "{"
+          WHILE_STMT@27..81
+            WHITESPACE@27..36 "\n        "
+            WHILE_KW@36..41 "while"
+            MISSING@41..42
+              WHITESPACE@41..42 " "
+            BLOCK@42..81
+              L_BRACE@42..43 "{"
+              WHITESPACE@43..56 "\n            "
+              LINE_COMMENT@56..71 "// do something"
+              WHITESPACE@71..80 "\n        "
+              R_BRACE@80..81 "}"
+          WHITESPACE@81..86 "\n    "
+          R_BRACE@86..87 "}"
+      WHITESPACE@87..88 "\n"
+      R_BRACE@88..89 "}"
+  WHITESPACE@89..90 "\n"

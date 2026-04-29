@@ -29,34 +29,34 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "java"
-            DOT "."
-            IDENTIFIER "util"
-            DOT "."
-            IDENTIFIER "List"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "String"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "xs"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..38
+  CLASS_DECL@0..38
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..38
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..36
+        WHITESPACE@9..10 " "
+        TYPE@10..32
+          QUALIFIED_NAME@10..24
+            IDENTIFIER@10..14 "java"
+            DOT@14..15 "."
+            IDENTIFIER@15..19 "util"
+            DOT@19..20 "."
+            IDENTIFIER@20..24 "List"
+          TYPE_ARGUMENTS@24..32
+            LESS@24..25 "<"
+            TYPE_ARGUMENT@25..31
+              TYPE@25..31
+                QUALIFIED_NAME@25..31
+                  IDENTIFIER@25..31 "String"
+            GREATER@31..32 ">"
+        VARIABLE_DECLARATOR_LIST@32..35
+          WHITESPACE@32..33 " "
+          VARIABLE_DECLARATOR@33..35
+            IDENTIFIER@33..35 "xs"
+        SEMICOLON@35..36 ";"
+      WHITESPACE@36..37 " "
+      R_BRACE@37..38 "}"

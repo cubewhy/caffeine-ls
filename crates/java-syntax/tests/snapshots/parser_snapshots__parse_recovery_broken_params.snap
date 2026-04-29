@@ -31,39 +31,34 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "f"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          ERROR
-            WHITESPACE " "
-            ERROR
-            L_BRACE "{"
-            WHITESPACE " "
-            INT_KW "int"
-            WHITESPACE " "
-            IDENTIFIER "x"
-            SEMICOLON ";"
-            WHITESPACE " "
-            R_BRACE "}"
-            WHITESPACE " "
-            R_BRACE "}"
-          MISSING
-        MISSING
-      MISSING
-errors:
-  ParseError { kind: ExpectedConstruct(Type), pos: 6 }
-  ParseError { kind: ExpectedToken { expected: [R_PAREN], found: None }, pos: 12 }
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: None }, pos: 12 }
-  ParseError { kind: ExpectedToken { expected: [R_BRACE], found: None }, pos: 12 }
+ROOT@0..30
+  CLASS_DECL@0..30
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..30
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..30
+        WHITESPACE@9..10 " "
+        VOID_KW@10..14 "void"
+        WHITESPACE@14..15 " "
+        IDENTIFIER@15..16 "f"
+        FORMAL_PARAMETERS@16..30
+          L_PAREN@16..17 "("
+          ERROR@17..30
+            WHITESPACE@17..18 " "
+            ERROR@18..18
+            L_BRACE@18..19 "{"
+            WHITESPACE@19..20 " "
+            INT_KW@20..23 "int"
+            WHITESPACE@23..24 " "
+            IDENTIFIER@24..25 "x"
+            SEMICOLON@25..26 ";"
+            WHITESPACE@26..27 " "
+            R_BRACE@27..28 "}"
+            WHITESPACE@28..29 " "
+            R_BRACE@29..30 "}"
+          MISSING@30..30
+        MISSING@30..30
+      MISSING@30..30

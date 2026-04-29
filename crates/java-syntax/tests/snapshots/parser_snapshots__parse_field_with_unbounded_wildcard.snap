@@ -25,29 +25,29 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "List"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              WILDCARD_TYPE
-                QUESTION "?"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "xs"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..23
+  CLASS_DECL@0..23
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..23
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..21
+        WHITESPACE@9..10 " "
+        TYPE@10..17
+          QUALIFIED_NAME@10..14
+            IDENTIFIER@10..14 "List"
+          TYPE_ARGUMENTS@14..17
+            LESS@14..15 "<"
+            TYPE_ARGUMENT@15..16
+              WILDCARD_TYPE@15..16
+                QUESTION@15..16 "?"
+            GREATER@16..17 ">"
+        VARIABLE_DECLARATOR_LIST@17..20
+          WHITESPACE@17..18 " "
+          VARIABLE_DECLARATOR@18..20
+            IDENTIFIER@18..20 "xs"
+        SEMICOLON@20..21 ";"
+      WHITESPACE@21..22 " "
+      R_BRACE@22..23 "}"

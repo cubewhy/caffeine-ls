@@ -57,62 +57,62 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "Complex"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          INT_KW "int"
-        WHITESPACE " "
-        IDENTIFIER "count"
-        L_PAREN "("
-        R_PAREN ")"
-        WHITESPACE " "
-        DEFAULT_KW "default"
-        LITERAL
-          WHITESPACE " "
-          NUMBER_LITERAL "0"
-        SEMICOLON ";"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-          DIMENSIONS
-            DIMENSION
-              L_BRACKET "["
-              R_BRACKET "]"
-        WHITESPACE " "
-        IDENTIFIER "tags"
-        L_PAREN "("
-        R_PAREN ")"
-        WHITESPACE " "
-        DEFAULT_KW "default"
-        LITERAL
-          WHITESPACE " "
-          NUMBER_LITERAL "1"
-        SEMICOLON ";"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          DOUBLE_KW "double"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "VERSION"
-            WHITESPACE " "
-            EQUAL "="
-            LITERAL
-              WHITESPACE " "
-              NUMBER_LITERAL "1.0"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..107
+  ANNOTATION_TYPE_DECL@0..106
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..18 "Complex"
+    ANNOTATION_TYPE_BODY@18..106
+      WHITESPACE@18..19 " "
+      L_BRACE@19..20 "{"
+      ANNOTATION_TYPE_ELEMENT_DECL@20..47
+        WHITESPACE@20..25 "\n    "
+        TYPE@25..28
+          INT_KW@25..28 "int"
+        WHITESPACE@28..29 " "
+        IDENTIFIER@29..34 "count"
+        L_PAREN@34..35 "("
+        R_PAREN@35..36 ")"
+        WHITESPACE@36..37 " "
+        DEFAULT_KW@37..44 "default"
+        LITERAL@44..46
+          WHITESPACE@44..45 " "
+          NUMBER_LITERAL@45..46 "0"
+        SEMICOLON@46..47 ";"
+      ANNOTATION_TYPE_ELEMENT_DECL@47..78
+        WHITESPACE@47..52 "\n    "
+        TYPE@52..60
+          QUALIFIED_NAME@52..58
+            IDENTIFIER@52..58 "String"
+          DIMENSIONS@58..60
+            DIMENSION@58..60
+              L_BRACKET@58..59 "["
+              R_BRACKET@59..60 "]"
+        WHITESPACE@60..61 " "
+        IDENTIFIER@61..65 "tags"
+        L_PAREN@65..66 "("
+        R_PAREN@66..67 ")"
+        WHITESPACE@67..68 " "
+        DEFAULT_KW@68..75 "default"
+        LITERAL@75..77
+          WHITESPACE@75..76 " "
+          NUMBER_LITERAL@76..77 "1"
+        SEMICOLON@77..78 ";"
+      FIELD_DECL@78..104
+        WHITESPACE@78..83 "\n    "
+        TYPE@83..89
+          DOUBLE_KW@83..89 "double"
+        VARIABLE_DECLARATOR_LIST@89..103
+          WHITESPACE@89..90 " "
+          VARIABLE_DECLARATOR@90..103
+            IDENTIFIER@90..97 "VERSION"
+            WHITESPACE@97..98 " "
+            EQUAL@98..99 "="
+            LITERAL@99..103
+              WHITESPACE@99..100 " "
+              NUMBER_LITERAL@100..103 "1.0"
+        SEMICOLON@103..104 ";"
+      WHITESPACE@104..105 "\n"
+      R_BRACE@105..106 "}"
+  WHITESPACE@106..107 "\n"

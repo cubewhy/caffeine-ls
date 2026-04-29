@@ -28,28 +28,28 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  INTERFACE_DECL
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    INTERFACE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE " "
-        MODIFIER_LIST
-          DEFAULT_KW "default"
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "f"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..35
+  INTERFACE_DECL@0..35
+    INTERFACE_KW@0..9 "interface"
+    WHITESPACE@9..10 " "
+    IDENTIFIER@10..11 "A"
+    INTERFACE_BODY@11..35
+      WHITESPACE@11..12 " "
+      L_BRACE@12..13 "{"
+      METHOD_DECL@13..33
+        WHITESPACE@13..14 " "
+        MODIFIER_LIST@14..21
+          DEFAULT_KW@14..21 "default"
+        WHITESPACE@21..22 " "
+        VOID_KW@22..26 "void"
+        WHITESPACE@26..27 " "
+        IDENTIFIER@27..28 "f"
+        FORMAL_PARAMETERS@28..30
+          L_PAREN@28..29 "("
+          R_PAREN@29..30 ")"
+        BLOCK@30..33
+          WHITESPACE@30..31 " "
+          L_BRACE@31..32 "{"
+          R_BRACE@32..33 "}"
+      WHITESPACE@33..34 " "
+      R_BRACE@34..35 "}"

@@ -22,30 +22,27 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "A"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            MISSING
-        MISSING
-      INSTANCE_INITIALIZER
-        BLOCK
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
-errors:
-  ParseError { kind: ExpectedToken { expected: [IDENTIFIER, UNDERSCORE], found: Some(L_BRACE) }, pos: 4 }
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(L_BRACE) }, pos: 4 }
+ROOT@0..16
+  CLASS_DECL@0..16
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..16
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..12
+        WHITESPACE@9..10 " "
+        TYPE@10..11
+          QUALIFIED_NAME@10..11
+            IDENTIFIER@10..11 "A"
+        VARIABLE_DECLARATOR_LIST@11..12
+          WHITESPACE@11..12 " "
+          VARIABLE_DECLARATOR@12..12
+            MISSING@12..12
+        MISSING@12..12
+      INSTANCE_INITIALIZER@12..14
+        BLOCK@12..14
+          L_BRACE@12..13 "{"
+          R_BRACE@13..14 "}"
+      WHITESPACE@14..15 " "
+      R_BRACE@15..16 "}"

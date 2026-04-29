@@ -39,41 +39,41 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          SPREAD_PARAMETER
-            MODIFIER_LIST
-              MARKER_ANNOTATION
-                AT "@"
-                QUALIFIED_NAME
-                  IDENTIFIER "Annotation"
-              WHITESPACE " "
-              FINAL_KW "final"
-            TYPE
-              WHITESPACE " "
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-            ELLIPSIS "..."
-            WHITESPACE " "
-            IDENTIFIER "args"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..63
+  CLASS_DECL@0..62
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..62
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..60
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..57
+          L_PAREN@23..24 "("
+          SPREAD_PARAMETER@24..56
+            MODIFIER_LIST@24..41
+              MARKER_ANNOTATION@24..35
+                AT@24..25 "@"
+                QUALIFIED_NAME@25..35
+                  IDENTIFIER@25..35 "Annotation"
+              WHITESPACE@35..36 " "
+              FINAL_KW@36..41 "final"
+            TYPE@41..48
+              WHITESPACE@41..42 " "
+              QUALIFIED_NAME@42..48
+                IDENTIFIER@42..48 "String"
+            ELLIPSIS@48..51 "..."
+            WHITESPACE@51..52 " "
+            IDENTIFIER@52..56 "args"
+          R_PAREN@56..57 ")"
+        BLOCK@57..60
+          WHITESPACE@57..58 " "
+          L_BRACE@58..59 "{"
+          R_BRACE@59..60 "}"
+      WHITESPACE@60..61 "\n"
+      R_BRACE@61..62 "}"
+  WHITESPACE@62..63 "\n"

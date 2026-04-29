@@ -49,52 +49,52 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "record"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "record"
-            SEMICOLON ";"
-          RECORD_DECL
-            WHITESPACE "\n        "
-            IDENTIFIER "record"
-            WHITESPACE " "
-            IDENTIFIER "record"
-            FORMAL_PARAMETERS
-              L_PAREN "("
-              R_PAREN ")"
-            RECORD_BODY
-              WHITESPACE " "
-              L_BRACE "{"
-              R_BRACE "}"
-          EMPTY_STMT
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..90
+  CLASS_DECL@0..89
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..89
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..87
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..87
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..53
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..52
+              TYPE@39..45
+                QUALIFIED_NAME@39..45
+                  IDENTIFIER@39..45 "record"
+              VARIABLE_DECLARATOR_LIST@45..52
+                WHITESPACE@45..46 " "
+                VARIABLE_DECLARATOR@46..52
+                  IDENTIFIER@46..52 "record"
+            SEMICOLON@52..53 ";"
+          RECORD_DECL@53..80
+            WHITESPACE@53..62 "\n        "
+            IDENTIFIER@62..68 "record"
+            WHITESPACE@68..69 " "
+            IDENTIFIER@69..75 "record"
+            FORMAL_PARAMETERS@75..77
+              L_PAREN@75..76 "("
+              R_PAREN@76..77 ")"
+            RECORD_BODY@77..80
+              WHITESPACE@77..78 " "
+              L_BRACE@78..79 "{"
+              R_BRACE@79..80 "}"
+          EMPTY_STMT@80..81
+            SEMICOLON@80..81 ";"
+          WHITESPACE@81..86 "\n    "
+          R_BRACE@86..87 "}"
+      WHITESPACE@87..88 "\n"
+      R_BRACE@88..89 "}"
+  WHITESPACE@89..90 "\n"

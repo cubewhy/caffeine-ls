@@ -34,49 +34,49 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "Map"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "String"
-            COMMA ","
-            TYPE_ARGUMENT
-              WHITESPACE " "
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "List"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    WILDCARD_TYPE
-                      QUESTION "?"
-                      WILDCARD_BOUNDS
-                        WHITESPACE " "
-                        EXTENDS_KW "extends"
-                        TYPE
-                          WHITESPACE " "
-                          QUALIFIED_NAME
-                            IDENTIFIER "Number"
-                  RIGHT_SHIFT ">"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "xs"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..51
+  CLASS_DECL@0..51
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..51
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..49
+        WHITESPACE@9..10 " "
+        TYPE@10..45
+          QUALIFIED_NAME@10..13
+            IDENTIFIER@10..13 "Map"
+          TYPE_ARGUMENTS@13..45
+            LESS@13..14 "<"
+            TYPE_ARGUMENT@14..20
+              TYPE@14..20
+                QUALIFIED_NAME@14..20
+                  IDENTIFIER@14..20 "String"
+            COMMA@20..21 ","
+            TYPE_ARGUMENT@21..44
+              WHITESPACE@21..22 " "
+              TYPE@22..44
+                QUALIFIED_NAME@22..26
+                  IDENTIFIER@22..26 "List"
+                TYPE_ARGUMENTS@26..44
+                  LESS@26..27 "<"
+                  TYPE_ARGUMENT@27..43
+                    WILDCARD_TYPE@27..43
+                      QUESTION@27..28 "?"
+                      WILDCARD_BOUNDS@28..43
+                        WHITESPACE@28..29 " "
+                        EXTENDS_KW@29..36 "extends"
+                        TYPE@36..43
+                          WHITESPACE@36..37 " "
+                          QUALIFIED_NAME@37..43
+                            IDENTIFIER@37..43 "Number"
+                  RIGHT_SHIFT@43..44 ">"
+            GREATER@44..45 ">"
+        VARIABLE_DECLARATOR_LIST@45..48
+          WHITESPACE@45..46 " "
+          VARIABLE_DECLARATOR@46..48
+            IDENTIFIER@46..48 "xs"
+        SEMICOLON@48..49 ";"
+      WHITESPACE@49..50 " "
+      R_BRACE@50..51 "}"

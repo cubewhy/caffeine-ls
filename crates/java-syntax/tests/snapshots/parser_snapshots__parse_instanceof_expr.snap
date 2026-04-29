@@ -66,75 +66,75 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "field"
-        SEMICOLON ";"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          IF_STMT
-            WHITESPACE "\n        "
-            IF_KW "if"
-            PARENTHESIZED_EXPR
-              WHITESPACE " "
-              L_PAREN "("
-              INSTANCEOF_EXPR
-                LITERAL
-                  IDENTIFIER "a"
-                WHITESPACE " "
-                INSTANCEOF_KW "instanceof"
-                TYPE
-                  WHITESPACE " "
-                  QUALIFIED_NAME
-                    IDENTIFIER "String"
-              R_PAREN ")"
-            BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      METHOD_DECL
-        WHITESPACE "\n\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-            WHITESPACE " "
-            IDENTIFIER "s"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..121
+  CLASS_DECL@0..120
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..120
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      FIELD_DECL@12..30
+        WHITESPACE@12..17 "\n    "
+        TYPE@17..23
+          QUALIFIED_NAME@17..23
+            IDENTIFIER@17..23 "String"
+        VARIABLE_DECLARATOR_LIST@23..29
+          WHITESPACE@23..24 " "
+          VARIABLE_DECLARATOR@24..29
+            IDENTIFIER@24..29 "field"
+        SEMICOLON@29..30 ";"
+      METHOD_DECL@30..90
+        WHITESPACE@30..35 "\n    "
+        VOID_KW@35..39 "void"
+        WHITESPACE@39..40 " "
+        IDENTIFIER@40..44 "test"
+        FORMAL_PARAMETERS@44..46
+          L_PAREN@44..45 "("
+          R_PAREN@45..46 ")"
+        BLOCK@46..90
+          WHITESPACE@46..47 " "
+          L_BRACE@47..48 "{"
+          IF_STMT@48..84
+            WHITESPACE@48..57 "\n        "
+            IF_KW@57..59 "if"
+            PARENTHESIZED_EXPR@59..81
+              WHITESPACE@59..60 " "
+              L_PAREN@60..61 "("
+              INSTANCEOF_EXPR@61..80
+                LITERAL@61..62
+                  IDENTIFIER@61..62 "a"
+                WHITESPACE@62..63 " "
+                INSTANCEOF_KW@63..73 "instanceof"
+                TYPE@73..80
+                  WHITESPACE@73..74 " "
+                  QUALIFIED_NAME@74..80
+                    IDENTIFIER@74..80 "String"
+              R_PAREN@80..81 ")"
+            BLOCK@81..84
+              WHITESPACE@81..82 " "
+              L_BRACE@82..83 "{"
+              R_BRACE@83..84 "}"
+          WHITESPACE@84..89 "\n    "
+          R_BRACE@89..90 "}"
+      METHOD_DECL@90..118
+        WHITESPACE@90..96 "\n\n    "
+        VOID_KW@96..100 "void"
+        WHITESPACE@100..101 " "
+        IDENTIFIER@101..105 "test"
+        FORMAL_PARAMETERS@105..115
+          L_PAREN@105..106 "("
+          FORMAL_PARAMETER@106..114
+            TYPE@106..112
+              QUALIFIED_NAME@106..112
+                IDENTIFIER@106..112 "String"
+            WHITESPACE@112..113 " "
+            IDENTIFIER@113..114 "s"
+          R_PAREN@114..115 ")"
+        BLOCK@115..118
+          WHITESPACE@115..116 " "
+          L_BRACE@116..117 "{"
+          R_BRACE@117..118 "}"
+      WHITESPACE@118..119 "\n"
+      R_BRACE@119..120 "}"
+  WHITESPACE@120..121 "\n"

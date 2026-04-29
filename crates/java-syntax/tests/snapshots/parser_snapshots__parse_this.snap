@@ -63,72 +63,72 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "field"
-        SEMICOLON ";"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          EXPRESSION_STMT
-            WHITESPACE "\n        "
-            METHOD_CALL
-              FIELD_ACCESS
-                LITERAL
-                  THIS_KW "this"
-                DOT "."
-                IDENTIFIER "test"
-              ARGUMENT_LIST
-                L_PAREN "("
-                FIELD_ACCESS
-                  LITERAL
-                    THIS_KW "this"
-                  DOT "."
-                  IDENTIFIER "field"
-                R_PAREN ")"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      METHOD_DECL
-        WHITESPACE "\n\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-            WHITESPACE " "
-            IDENTIFIER "s"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..116
+  CLASS_DECL@0..115
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..115
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      FIELD_DECL@12..30
+        WHITESPACE@12..17 "\n    "
+        TYPE@17..23
+          QUALIFIED_NAME@17..23
+            IDENTIFIER@17..23 "String"
+        VARIABLE_DECLARATOR_LIST@23..29
+          WHITESPACE@23..24 " "
+          VARIABLE_DECLARATOR@24..29
+            IDENTIFIER@24..29 "field"
+        SEMICOLON@29..30 ";"
+      METHOD_DECL@30..85
+        WHITESPACE@30..35 "\n    "
+        VOID_KW@35..39 "void"
+        WHITESPACE@39..40 " "
+        IDENTIFIER@40..44 "test"
+        FORMAL_PARAMETERS@44..46
+          L_PAREN@44..45 "("
+          R_PAREN@45..46 ")"
+        BLOCK@46..85
+          WHITESPACE@46..47 " "
+          L_BRACE@47..48 "{"
+          EXPRESSION_STMT@48..79
+            WHITESPACE@48..57 "\n        "
+            METHOD_CALL@57..78
+              FIELD_ACCESS@57..66
+                LITERAL@57..61
+                  THIS_KW@57..61 "this"
+                DOT@61..62 "."
+                IDENTIFIER@62..66 "test"
+              ARGUMENT_LIST@66..78
+                L_PAREN@66..67 "("
+                FIELD_ACCESS@67..77
+                  LITERAL@67..71
+                    THIS_KW@67..71 "this"
+                  DOT@71..72 "."
+                  IDENTIFIER@72..77 "field"
+                R_PAREN@77..78 ")"
+            SEMICOLON@78..79 ";"
+          WHITESPACE@79..84 "\n    "
+          R_BRACE@84..85 "}"
+      METHOD_DECL@85..113
+        WHITESPACE@85..91 "\n\n    "
+        VOID_KW@91..95 "void"
+        WHITESPACE@95..96 " "
+        IDENTIFIER@96..100 "test"
+        FORMAL_PARAMETERS@100..110
+          L_PAREN@100..101 "("
+          FORMAL_PARAMETER@101..109
+            TYPE@101..107
+              QUALIFIED_NAME@101..107
+                IDENTIFIER@101..107 "String"
+            WHITESPACE@107..108 " "
+            IDENTIFIER@108..109 "s"
+          R_PAREN@109..110 ")"
+        BLOCK@110..113
+          WHITESPACE@110..111 " "
+          L_BRACE@111..112 "{"
+          R_BRACE@112..113 "}"
+      WHITESPACE@113..114 "\n"
+      R_BRACE@114..115 "}"
+  WHITESPACE@115..116 "\n"

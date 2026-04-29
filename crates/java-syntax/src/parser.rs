@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use rowan::{GreenNode, NodeOrToken};
+use rowan::GreenNode;
 
 use crate::{
     kinds::{
@@ -55,32 +55,7 @@ impl Parse {
     }
 
     pub fn debug_dump(&self) -> String {
-        fn walk(node: rowan::SyntaxNode<Lang>, level: usize, out: &mut String) {
-            let indent = "  ".repeat(level);
-            out.push_str(&format!("{indent}{:?}\n", node.kind()));
-
-            for child in node.children_with_tokens() {
-                match child {
-                    NodeOrToken::Node(n) => walk(n, level + 1, out),
-                    NodeOrToken::Token(t) => {
-                        let indent = "  ".repeat(level + 1);
-                        out.push_str(&format!("{indent}{:?} {:?}\n", t.kind(), t.text()));
-                    }
-                }
-            }
-        }
-
-        let mut out = String::new();
-        walk(self.syntax_node(), 0, &mut out);
-
-        if !self.errors.is_empty() {
-            out.push_str("errors:\n");
-            for err in &self.errors {
-                out.push_str(&format!("  {:?}\n", err));
-            }
-        }
-
-        out
+        format!("{:#?}", self.syntax_node())
     }
 }
 

@@ -57,58 +57,58 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LABELED_STMT
-            WHITESPACE "\n        "
-            IDENTIFIER "label"
-            COLON ":"
-            BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              EXPRESSION_STMT
-                WHITESPACE "\n            "
-                METHOD_CALL
-                  LITERAL
-                    IDENTIFIER "func"
-                  ARGUMENT_LIST
-                    L_PAREN "("
-                    R_PAREN ")"
-                SEMICOLON ";"
-              WHITESPACE "\n        "
-              R_BRACE "}"
-          LABELED_STMT
-            WHITESPACE "\n\n        "
-            IDENTIFIER "labelNoShortIf"
-            COLON ":"
-            EXPRESSION_STMT
-              WHITESPACE " "
-              METHOD_CALL
-                LITERAL
-                  IDENTIFIER "func"
-                ARGUMENT_LIST
-                  L_PAREN "("
-                  R_PAREN ")"
-              SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..119
+  CLASS_DECL@0..118
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..118
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..116
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..116
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LABELED_STMT@30..77
+            WHITESPACE@30..39 "\n        "
+            IDENTIFIER@39..44 "label"
+            COLON@44..45 ":"
+            BLOCK@45..77
+              WHITESPACE@45..46 " "
+              L_BRACE@46..47 "{"
+              EXPRESSION_STMT@47..67
+                WHITESPACE@47..60 "\n            "
+                METHOD_CALL@60..66
+                  LITERAL@60..64
+                    IDENTIFIER@60..64 "func"
+                  ARGUMENT_LIST@64..66
+                    L_PAREN@64..65 "("
+                    R_PAREN@65..66 ")"
+                SEMICOLON@66..67 ";"
+              WHITESPACE@67..76 "\n        "
+              R_BRACE@76..77 "}"
+          LABELED_STMT@77..110
+            WHITESPACE@77..87 "\n\n        "
+            IDENTIFIER@87..101 "labelNoShortIf"
+            COLON@101..102 ":"
+            EXPRESSION_STMT@102..110
+              WHITESPACE@102..103 " "
+              METHOD_CALL@103..109
+                LITERAL@103..107
+                  IDENTIFIER@103..107 "func"
+                ARGUMENT_LIST@107..109
+                  L_PAREN@107..108 "("
+                  R_PAREN@108..109 ")"
+              SEMICOLON@109..110 ";"
+          WHITESPACE@110..115 "\n    "
+          R_BRACE@115..116 "}"
+      WHITESPACE@116..117 "\n"
+      R_BRACE@117..118 "}"
+  WHITESPACE@118..119 "\n"

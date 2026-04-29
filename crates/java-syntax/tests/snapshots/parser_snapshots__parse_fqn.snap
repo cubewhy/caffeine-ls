@@ -118,142 +118,142 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  PACKAGE_DECL
-    PACKAGE_KW "package"
-    QUALIFIED_NAME
-      WHITESPACE " "
-      IDENTIFIER "com"
-      DOT "."
-      IDENTIFIER "example"
-    SEMICOLON ";"
-  IMPORT_DECL
-    WHITESPACE "\n\n"
-    IMPORT_KW "import"
-    IMPORT_PATH
-      WHITESPACE " "
-      IDENTIFIER "java"
-      DOT "."
-      IDENTIFIER "util"
-      DOT "."
-      IDENTIFIER "ArrayList"
-    SEMICOLON ";"
-  CLASS_DECL
-    WHITESPACE "\n\n"
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "java"
-            DOT "."
-            IDENTIFIER "util"
-            DOT "."
-            IDENTIFIER "List"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "java"
-                  DOT "."
-                  IDENTIFIER "lang"
-                  DOT "."
-                  IDENTIFIER "String"
-            GREATER ">"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "java"
-                  DOT "."
-                  IDENTIFIER "util"
-                  DOT "."
-                  IDENTIFIER "List"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "java"
-                        DOT "."
-                        IDENTIFIER "lang"
-                        DOT "."
-                        IDENTIFIER "String"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "l"
-                  WHITESPACE " "
-                  EQUAL "="
-                  NEW_EXPR
-                    WHITESPACE " "
-                    NEW_KW "new"
-                    QUALIFIED_NAME
-                      WHITESPACE " "
-                      IDENTIFIER "ArrayList"
-                    TYPE_ARGUMENTS
-                      LESS "<"
-                      GREATER ">"
-                    ARGUMENT_LIST
-                      L_PAREN "("
-                      R_PAREN ")"
-            SEMICOLON ";"
-          EXPRESSION_STMT
-            WHITESPACE "\n        "
-            METHOD_CALL
-              FIELD_ACCESS
-                LITERAL
-                  IDENTIFIER "l"
-                DOT "."
-                IDENTIFIER "add"
-              ARGUMENT_LIST
-                L_PAREN "("
-                METHOD_CALL
-                  FIELD_ACCESS
-                    NEW_EXPR
-                      NEW_KW "new"
-                      QUALIFIED_NAME
-                        WHITESPACE " "
-                        IDENTIFIER "com"
-                        DOT "."
-                        IDENTIFIER "example"
-                        DOT "."
-                        IDENTIFIER "Test"
-                      ARGUMENT_LIST
-                        L_PAREN "("
-                        R_PAREN ")"
-                    DOT "."
-                    IDENTIFIER "toString"
-                  ARGUMENT_LIST
-                    L_PAREN "("
-                    R_PAREN ")"
-                R_PAREN ")"
-            SEMICOLON ";"
-          RETURN_STMT
-            WHITESPACE "\n\n        "
-            RETURN_KW "return"
-            LITERAL
-              WHITESPACE " "
-              IDENTIFIER "l"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..251
+  PACKAGE_DECL@0..20
+    PACKAGE_KW@0..7 "package"
+    QUALIFIED_NAME@7..19
+      WHITESPACE@7..8 " "
+      IDENTIFIER@8..11 "com"
+      DOT@11..12 "."
+      IDENTIFIER@12..19 "example"
+    SEMICOLON@19..20 ";"
+  IMPORT_DECL@20..49
+    WHITESPACE@20..22 "\n\n"
+    IMPORT_KW@22..28 "import"
+    IMPORT_PATH@28..48
+      WHITESPACE@28..29 " "
+      IDENTIFIER@29..33 "java"
+      DOT@33..34 "."
+      IDENTIFIER@34..38 "util"
+      DOT@38..39 "."
+      IDENTIFIER@39..48 "ArrayList"
+    SEMICOLON@48..49 ";"
+  CLASS_DECL@49..250
+    WHITESPACE@49..51 "\n\n"
+    CLASS_KW@51..56 "class"
+    WHITESPACE@56..57 " "
+    IDENTIFIER@57..61 "Test"
+    CLASS_BODY@61..250
+      WHITESPACE@61..62 " "
+      L_BRACE@62..63 "{"
+      METHOD_DECL@63..248
+        WHITESPACE@63..68 "\n    "
+        TYPE@68..100
+          QUALIFIED_NAME@68..82
+            IDENTIFIER@68..72 "java"
+            DOT@72..73 "."
+            IDENTIFIER@73..77 "util"
+            DOT@77..78 "."
+            IDENTIFIER@78..82 "List"
+          TYPE_ARGUMENTS@82..100
+            LESS@82..83 "<"
+            TYPE_ARGUMENT@83..99
+              TYPE@83..99
+                QUALIFIED_NAME@83..99
+                  IDENTIFIER@83..87 "java"
+                  DOT@87..88 "."
+                  IDENTIFIER@88..92 "lang"
+                  DOT@92..93 "."
+                  IDENTIFIER@93..99 "String"
+            GREATER@99..100 ">"
+        WHITESPACE@100..101 " "
+        IDENTIFIER@101..105 "test"
+        FORMAL_PARAMETERS@105..107
+          L_PAREN@105..106 "("
+          R_PAREN@106..107 ")"
+        BLOCK@107..248
+          WHITESPACE@107..108 " "
+          L_BRACE@108..109 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@109..173
+            WHITESPACE@109..118 "\n        "
+            LOCAL_VARIABLE_DECLARATION@118..172
+              TYPE@118..150
+                QUALIFIED_NAME@118..132
+                  IDENTIFIER@118..122 "java"
+                  DOT@122..123 "."
+                  IDENTIFIER@123..127 "util"
+                  DOT@127..128 "."
+                  IDENTIFIER@128..132 "List"
+                TYPE_ARGUMENTS@132..150
+                  LESS@132..133 "<"
+                  TYPE_ARGUMENT@133..149
+                    TYPE@133..149
+                      QUALIFIED_NAME@133..149
+                        IDENTIFIER@133..137 "java"
+                        DOT@137..138 "."
+                        IDENTIFIER@138..142 "lang"
+                        DOT@142..143 "."
+                        IDENTIFIER@143..149 "String"
+                  GREATER@149..150 ">"
+              VARIABLE_DECLARATOR_LIST@150..172
+                WHITESPACE@150..151 " "
+                VARIABLE_DECLARATOR@151..172
+                  IDENTIFIER@151..152 "l"
+                  WHITESPACE@152..153 " "
+                  EQUAL@153..154 "="
+                  NEW_EXPR@154..172
+                    WHITESPACE@154..155 " "
+                    NEW_KW@155..158 "new"
+                    QUALIFIED_NAME@158..168
+                      WHITESPACE@158..159 " "
+                      IDENTIFIER@159..168 "ArrayList"
+                    TYPE_ARGUMENTS@168..170
+                      LESS@168..169 "<"
+                      GREATER@169..170 ">"
+                    ARGUMENT_LIST@170..172
+                      L_PAREN@170..171 "("
+                      R_PAREN@171..172 ")"
+            SEMICOLON@172..173 ";"
+          EXPRESSION_STMT@173..223
+            WHITESPACE@173..182 "\n        "
+            METHOD_CALL@182..222
+              FIELD_ACCESS@182..187
+                LITERAL@182..183
+                  IDENTIFIER@182..183 "l"
+                DOT@183..184 "."
+                IDENTIFIER@184..187 "add"
+              ARGUMENT_LIST@187..222
+                L_PAREN@187..188 "("
+                METHOD_CALL@188..221
+                  FIELD_ACCESS@188..219
+                    NEW_EXPR@188..210
+                      NEW_KW@188..191 "new"
+                      QUALIFIED_NAME@191..208
+                        WHITESPACE@191..192 " "
+                        IDENTIFIER@192..195 "com"
+                        DOT@195..196 "."
+                        IDENTIFIER@196..203 "example"
+                        DOT@203..204 "."
+                        IDENTIFIER@204..208 "Test"
+                      ARGUMENT_LIST@208..210
+                        L_PAREN@208..209 "("
+                        R_PAREN@209..210 ")"
+                    DOT@210..211 "."
+                    IDENTIFIER@211..219 "toString"
+                  ARGUMENT_LIST@219..221
+                    L_PAREN@219..220 "("
+                    R_PAREN@220..221 ")"
+                R_PAREN@221..222 ")"
+            SEMICOLON@222..223 ";"
+          RETURN_STMT@223..242
+            WHITESPACE@223..233 "\n\n        "
+            RETURN_KW@233..239 "return"
+            LITERAL@239..241
+              WHITESPACE@239..240 " "
+              IDENTIFIER@240..241 "l"
+            SEMICOLON@241..242 ";"
+          WHITESPACE@242..247 "\n    "
+          R_BRACE@247..248 "}"
+      WHITESPACE@248..249 "\n"
+      R_BRACE@249..250 "}"
+  WHITESPACE@250..251 "\n"

@@ -18,14 +18,14 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  IMPORT_DECL
-    IMPORT_KW "import"
-    IMPORT_PATH
-      WHITESPACE " "
-      IDENTIFIER "java"
-      DOT "."
-      IDENTIFIER "util"
-      DOT "."
-      IDENTIFIER "List"
-    SEMICOLON ";"
+ROOT@0..22
+  IMPORT_DECL@0..22
+    IMPORT_KW@0..6 "import"
+    IMPORT_PATH@6..21
+      WHITESPACE@6..7 " "
+      IDENTIFIER@7..11 "java"
+      DOT@11..12 "."
+      IDENTIFIER@12..16 "util"
+      DOT@16..17 "."
+      IDENTIFIER@17..21 "List"
+    SEMICOLON@21..22 ";"

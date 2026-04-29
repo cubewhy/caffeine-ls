@@ -37,39 +37,39 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "java"
-            DOT "."
-            IDENTIFIER "util"
-            DOT "."
-            IDENTIFIER "List"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "java"
-                  DOT "."
-                  IDENTIFIER "lang"
-                  DOT "."
-                  IDENTIFIER "String"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "list"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..58
+  CLASS_DECL@0..57
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..57
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      FIELD_DECL@12..55
+        WHITESPACE@12..17 "\n    "
+        TYPE@17..49
+          QUALIFIED_NAME@17..31
+            IDENTIFIER@17..21 "java"
+            DOT@21..22 "."
+            IDENTIFIER@22..26 "util"
+            DOT@26..27 "."
+            IDENTIFIER@27..31 "List"
+          TYPE_ARGUMENTS@31..49
+            LESS@31..32 "<"
+            TYPE_ARGUMENT@32..48
+              TYPE@32..48
+                QUALIFIED_NAME@32..48
+                  IDENTIFIER@32..36 "java"
+                  DOT@36..37 "."
+                  IDENTIFIER@37..41 "lang"
+                  DOT@41..42 "."
+                  IDENTIFIER@42..48 "String"
+            GREATER@48..49 ">"
+        VARIABLE_DECLARATOR_LIST@49..54
+          WHITESPACE@49..50 " "
+          VARIABLE_DECLARATOR@50..54
+            IDENTIFIER@50..54 "list"
+        SEMICOLON@54..55 ";"
+      WHITESPACE@55..56 "\n"
+      R_BRACE@56..57 "}"
+  WHITESPACE@57..58 "\n"

@@ -25,24 +25,24 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ENUM_DECL
-    ENUM_KW "enum"
-    WHITESPACE " "
-    IDENTIFIER "E"
-    ENUM_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ENUM_CONSTANT
-        WHITESPACE " "
-        IDENTIFIER "A"
-      COMMA ","
-      ENUM_CONSTANT
-        WHITESPACE " "
-        IDENTIFIER "B"
-      COMMA ","
-      ENUM_CONSTANT
-        WHITESPACE " "
-        IDENTIFIER "C"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..18
+  ENUM_DECL@0..18
+    ENUM_KW@0..4 "enum"
+    WHITESPACE@4..5 " "
+    IDENTIFIER@5..6 "E"
+    ENUM_BODY@6..18
+      WHITESPACE@6..7 " "
+      L_BRACE@7..8 "{"
+      ENUM_CONSTANT@8..10
+        WHITESPACE@8..9 " "
+        IDENTIFIER@9..10 "A"
+      COMMA@10..11 ","
+      ENUM_CONSTANT@11..13
+        WHITESPACE@11..12 " "
+        IDENTIFIER@12..13 "B"
+      COMMA@13..14 ","
+      ENUM_CONSTANT@14..16
+        WHITESPACE@14..15 " "
+        IDENTIFIER@15..16 "C"
+      WHITESPACE@16..17 " "
+      R_BRACE@17..18 "}"

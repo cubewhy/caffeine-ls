@@ -37,42 +37,42 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ENUM_DECL
-    ENUM_KW "enum"
-    WHITESPACE " "
-    IDENTIFIER "E"
-    ENUM_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ENUM_CONSTANT
-        WHITESPACE " "
-        IDENTIFIER "A"
-      COMMA ","
-      ENUM_CONSTANT
-        WHITESPACE " "
-        IDENTIFIER "B"
-      SEMICOLON ";"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          INT_KW "int"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "x"
-        SEMICOLON ";"
-      METHOD_DECL
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "f"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..35
+  ENUM_DECL@0..35
+    ENUM_KW@0..4 "enum"
+    WHITESPACE@4..5 " "
+    IDENTIFIER@5..6 "E"
+    ENUM_BODY@6..35
+      WHITESPACE@6..7 " "
+      L_BRACE@7..8 "{"
+      ENUM_CONSTANT@8..10
+        WHITESPACE@8..9 " "
+        IDENTIFIER@9..10 "A"
+      COMMA@10..11 ","
+      ENUM_CONSTANT@11..13
+        WHITESPACE@11..12 " "
+        IDENTIFIER@12..13 "B"
+      SEMICOLON@13..14 ";"
+      FIELD_DECL@14..21
+        WHITESPACE@14..15 " "
+        TYPE@15..18
+          INT_KW@15..18 "int"
+        VARIABLE_DECLARATOR_LIST@18..20
+          WHITESPACE@18..19 " "
+          VARIABLE_DECLARATOR@19..20
+            IDENTIFIER@19..20 "x"
+        SEMICOLON@20..21 ";"
+      METHOD_DECL@21..33
+        WHITESPACE@21..22 " "
+        VOID_KW@22..26 "void"
+        WHITESPACE@26..27 " "
+        IDENTIFIER@27..28 "f"
+        FORMAL_PARAMETERS@28..30
+          L_PAREN@28..29 "("
+          R_PAREN@29..30 ")"
+        BLOCK@30..33
+          WHITESPACE@30..31 " "
+          L_BRACE@31..32 "{"
+          R_BRACE@32..33 "}"
+      WHITESPACE@33..34 " "
+      R_BRACE@34..35 "}"

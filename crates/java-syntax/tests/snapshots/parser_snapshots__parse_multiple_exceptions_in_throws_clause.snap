@@ -37,38 +37,38 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        THROWS_CLAUSE
-          WHITESPACE " "
-          THROWS_KW "throws"
-          TYPE
-            WHITESPACE " "
-            QUALIFIED_NAME
-              IDENTIFIER "IOException"
-          COMMA ","
-          TYPE
-            WHITESPACE " "
-            QUALIFIED_NAME
-              IDENTIFIER "ArrayIndexOutOfBoundsException"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..85
+  CLASS_DECL@0..84
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..84
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..82
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        THROWS_CLAUSE@28..79
+          WHITESPACE@28..29 " "
+          THROWS_KW@29..35 "throws"
+          TYPE@35..47
+            WHITESPACE@35..36 " "
+            QUALIFIED_NAME@36..47
+              IDENTIFIER@36..47 "IOException"
+          COMMA@47..48 ","
+          TYPE@48..79
+            WHITESPACE@48..49 " "
+            QUALIFIED_NAME@49..79
+              IDENTIFIER@49..79 "ArrayIndexOutOfBounds ..."
+        BLOCK@79..82
+          WHITESPACE@79..80 " "
+          L_BRACE@80..81 "{"
+          R_BRACE@81..82 "}"
+      WHITESPACE@82..83 "\n"
+      R_BRACE@83..84 "}"
+  WHITESPACE@84..85 "\n"

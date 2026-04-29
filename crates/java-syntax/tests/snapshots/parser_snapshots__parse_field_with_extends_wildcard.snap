@@ -29,36 +29,36 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "List"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              WILDCARD_TYPE
-                QUESTION "?"
-                WILDCARD_BOUNDS
-                  WHITESPACE " "
-                  EXTENDS_KW "extends"
-                  TYPE
-                    WHITESPACE " "
-                    QUALIFIED_NAME
-                      IDENTIFIER "Number"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "xs"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..38
+  CLASS_DECL@0..38
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..38
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..36
+        WHITESPACE@9..10 " "
+        TYPE@10..32
+          QUALIFIED_NAME@10..14
+            IDENTIFIER@10..14 "List"
+          TYPE_ARGUMENTS@14..32
+            LESS@14..15 "<"
+            TYPE_ARGUMENT@15..31
+              WILDCARD_TYPE@15..31
+                QUESTION@15..16 "?"
+                WILDCARD_BOUNDS@16..31
+                  WHITESPACE@16..17 " "
+                  EXTENDS_KW@17..24 "extends"
+                  TYPE@24..31
+                    WHITESPACE@24..25 " "
+                    QUALIFIED_NAME@25..31
+                      IDENTIFIER@25..31 "Number"
+            GREATER@31..32 ">"
+        VARIABLE_DECLARATOR_LIST@32..35
+          WHITESPACE@32..33 " "
+          VARIABLE_DECLARATOR@33..35
+            IDENTIFIER@33..35 "xs"
+        SEMICOLON@35..36 ";"
+      WHITESPACE@36..37 " "
+      R_BRACE@37..38 "}"

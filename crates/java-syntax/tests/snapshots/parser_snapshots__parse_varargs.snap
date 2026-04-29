@@ -34,33 +34,33 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          SPREAD_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-            ELLIPSIS "..."
-            WHITESPACE " "
-            IDENTIFIER "args"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..45
+  CLASS_DECL@0..44
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..44
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..42
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..39
+          L_PAREN@23..24 "("
+          SPREAD_PARAMETER@24..38
+            TYPE@24..30
+              QUALIFIED_NAME@24..30
+                IDENTIFIER@24..30 "String"
+            ELLIPSIS@30..33 "..."
+            WHITESPACE@33..34 " "
+            IDENTIFIER@34..38 "args"
+          R_PAREN@38..39 ")"
+        BLOCK@39..42
+          WHITESPACE@39..40 " "
+          L_BRACE@40..41 "{"
+          R_BRACE@41..42 "}"
+      WHITESPACE@42..43 "\n"
+      R_BRACE@43..44 "}"
+  WHITESPACE@44..45 "\n"

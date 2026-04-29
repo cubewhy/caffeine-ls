@@ -34,41 +34,41 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  RECORD_DECL
-    MODIFIER_LIST
-      PUBLIC_KW "public"
-    WHITESPACE " "
-    IDENTIFIER "record"
-    WHITESPACE " "
-    IDENTIFIER "R"
-    TYPE_PARAMETERS
-      LESS "<"
-      TYPE_PARAMETER
-        IDENTIFIER "T"
-      COMMA ","
-      TYPE_PARAMETER
-        WHITESPACE " "
-        IDENTIFIER "U"
-      GREATER ">"
-    FORMAL_PARAMETERS
-      L_PAREN "("
-      FORMAL_PARAMETER
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "T"
-        WHITESPACE " "
-        IDENTIFIER "x"
-      COMMA ","
-      FORMAL_PARAMETER
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "U"
-        WHITESPACE " "
-        IDENTIFIER "y"
-      R_PAREN ")"
-    RECORD_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..34
+  RECORD_DECL@0..34
+    MODIFIER_LIST@0..6
+      PUBLIC_KW@0..6 "public"
+    WHITESPACE@6..7 " "
+    IDENTIFIER@7..13 "record"
+    WHITESPACE@13..14 " "
+    IDENTIFIER@14..15 "R"
+    TYPE_PARAMETERS@15..21
+      LESS@15..16 "<"
+      TYPE_PARAMETER@16..17
+        IDENTIFIER@16..17 "T"
+      COMMA@17..18 ","
+      TYPE_PARAMETER@18..20
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..20 "U"
+      GREATER@20..21 ">"
+    FORMAL_PARAMETERS@21..31
+      L_PAREN@21..22 "("
+      FORMAL_PARAMETER@22..25
+        TYPE@22..23
+          QUALIFIED_NAME@22..23
+            IDENTIFIER@22..23 "T"
+        WHITESPACE@23..24 " "
+        IDENTIFIER@24..25 "x"
+      COMMA@25..26 ","
+      FORMAL_PARAMETER@26..30
+        WHITESPACE@26..27 " "
+        TYPE@27..28
+          QUALIFIED_NAME@27..28
+            IDENTIFIER@27..28 "U"
+        WHITESPACE@28..29 " "
+        IDENTIFIER@29..30 "y"
+      R_PAREN@30..31 ")"
+    RECORD_BODY@31..34
+      WHITESPACE@31..32 " "
+      L_BRACE@32..33 "{"
+      R_BRACE@33..34 "}"

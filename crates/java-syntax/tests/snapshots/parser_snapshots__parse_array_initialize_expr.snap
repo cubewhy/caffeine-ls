@@ -40,44 +40,44 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-          DIMENSIONS
-            DIMENSION
-              L_BRACKET "["
-              R_BRACKET "]"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "STRING_ARRAY"
-            WHITESPACE " "
-            EQUAL "="
-            ARRAY_INITIALIZER
-              WHITESPACE " "
-              L_BRACE "{"
-              LITERAL
-                STRING_LITERAL "\"a\""
-              COMMA ","
-              LITERAL
-                WHITESPACE " "
-                STRING_LITERAL "\"b\""
-              COMMA ","
-              LITERAL
-                WHITESPACE " "
-                STRING_LITERAL "\"c\""
-              R_BRACE "}"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..60
+  CLASS_DECL@0..59
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..59
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      FIELD_DECL@12..57
+        WHITESPACE@12..17 "\n    "
+        TYPE@17..25
+          QUALIFIED_NAME@17..23
+            IDENTIFIER@17..23 "String"
+          DIMENSIONS@23..25
+            DIMENSION@23..25
+              L_BRACKET@23..24 "["
+              R_BRACKET@24..25 "]"
+        VARIABLE_DECLARATOR_LIST@25..56
+          WHITESPACE@25..26 " "
+          VARIABLE_DECLARATOR@26..56
+            IDENTIFIER@26..38 "STRING_ARRAY"
+            WHITESPACE@38..39 " "
+            EQUAL@39..40 "="
+            ARRAY_INITIALIZER@40..56
+              WHITESPACE@40..41 " "
+              L_BRACE@41..42 "{"
+              LITERAL@42..45
+                STRING_LITERAL@42..45 "\"a\""
+              COMMA@45..46 ","
+              LITERAL@46..50
+                WHITESPACE@46..47 " "
+                STRING_LITERAL@47..50 "\"b\""
+              COMMA@50..51 ","
+              LITERAL@51..55
+                WHITESPACE@51..52 " "
+                STRING_LITERAL@52..55 "\"c\""
+              R_BRACE@55..56 "}"
+        SEMICOLON@56..57 ";"
+      WHITESPACE@57..58 "\n"
+      R_BRACE@58..59 "}"
+  WHITESPACE@59..60 "\n"

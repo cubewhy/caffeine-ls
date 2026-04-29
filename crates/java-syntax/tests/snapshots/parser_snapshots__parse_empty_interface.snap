@@ -16,12 +16,12 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  INTERFACE_DECL
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    INTERFACE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..14
+  INTERFACE_DECL@0..14
+    INTERFACE_KW@0..9 "interface"
+    WHITESPACE@9..10 " "
+    IDENTIFIER@10..11 "A"
+    INTERFACE_BODY@11..14
+      WHITESPACE@11..12 " "
+      L_BRACE@12..13 "{"
+      R_BRACE@13..14 "}"

@@ -51,59 +51,59 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "List"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "l"
-                  WHITESPACE " "
-                  EQUAL "="
-                  NEW_EXPR
-                    WHITESPACE " "
-                    NEW_KW "new"
-                    QUALIFIED_NAME
-                      WHITESPACE " "
-                      IDENTIFIER "ArrayList"
-                    TYPE_ARGUMENTS
-                      LESS "<"
-                      GREATER ">"
-                    ARGUMENT_LIST
-                      L_PAREN "("
-                      R_PAREN ")"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..83
+  CLASS_DECL@0..82
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..82
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..80
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..80
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..74
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..73
+              TYPE@39..51
+                QUALIFIED_NAME@39..43
+                  IDENTIFIER@39..43 "List"
+                TYPE_ARGUMENTS@43..51
+                  LESS@43..44 "<"
+                  TYPE_ARGUMENT@44..50
+                    TYPE@44..50
+                      QUALIFIED_NAME@44..50
+                        IDENTIFIER@44..50 "String"
+                  GREATER@50..51 ">"
+              VARIABLE_DECLARATOR_LIST@51..73
+                WHITESPACE@51..52 " "
+                VARIABLE_DECLARATOR@52..73
+                  IDENTIFIER@52..53 "l"
+                  WHITESPACE@53..54 " "
+                  EQUAL@54..55 "="
+                  NEW_EXPR@55..73
+                    WHITESPACE@55..56 " "
+                    NEW_KW@56..59 "new"
+                    QUALIFIED_NAME@59..69
+                      WHITESPACE@59..60 " "
+                      IDENTIFIER@60..69 "ArrayList"
+                    TYPE_ARGUMENTS@69..71
+                      LESS@69..70 "<"
+                      GREATER@70..71 ">"
+                    ARGUMENT_LIST@71..73
+                      L_PAREN@71..72 "("
+                      R_PAREN@72..73 ")"
+            SEMICOLON@73..74 ";"
+          WHITESPACE@74..79 "\n    "
+          R_BRACE@79..80 "}"
+      WHITESPACE@80..81 "\n"
+      R_BRACE@81..82 "}"
+  WHITESPACE@82..83 "\n"

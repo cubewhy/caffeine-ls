@@ -58,60 +58,60 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          TRY_STMT
-            WHITESPACE "\n        "
-            TRY_KW "try"
-            BLOCK
-              WHITESPACE " "
-              L_BRACE "{"
-              R_BRACE "}"
-            CATCH_CLAUSE
-              WHITESPACE "\n        "
-              CATCH_KW "catch"
-              WHITESPACE " "
-              L_PAREN "("
-              CATCH_FORMAL_PARAMETER
-                MODIFIER_LIST
-                  FINAL_KW "final"
-                TYPE
-                  WHITESPACE " "
-                  QUALIFIED_NAME
-                    IDENTIFIER "Exception"
-                WHITESPACE " "
-                IDENTIFIER "e"
-              R_PAREN ")"
-              BLOCK
-                WHITESPACE " "
-                L_BRACE "{"
-                R_BRACE "}"
-            FINALLY_CLAUSE
-              WHITESPACE "\n        "
-              FINALLY_KW "finally"
-              BLOCK
-                WHITESPACE " "
-                L_BRACE "{"
-                R_BRACE "}"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..110
+  CLASS_DECL@0..109
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..109
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..107
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..107
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          TRY_STMT@30..101
+            WHITESPACE@30..39 "\n        "
+            TRY_KW@39..42 "try"
+            BLOCK@42..45
+              WHITESPACE@42..43 " "
+              L_BRACE@43..44 "{"
+              R_BRACE@44..45 "}"
+            CATCH_CLAUSE@45..82
+              WHITESPACE@45..54 "\n        "
+              CATCH_KW@54..59 "catch"
+              WHITESPACE@59..60 " "
+              L_PAREN@60..61 "("
+              CATCH_FORMAL_PARAMETER@61..78
+                MODIFIER_LIST@61..66
+                  FINAL_KW@61..66 "final"
+                TYPE@66..76
+                  WHITESPACE@66..67 " "
+                  QUALIFIED_NAME@67..76
+                    IDENTIFIER@67..76 "Exception"
+                WHITESPACE@76..77 " "
+                IDENTIFIER@77..78 "e"
+              R_PAREN@78..79 ")"
+              BLOCK@79..82
+                WHITESPACE@79..80 " "
+                L_BRACE@80..81 "{"
+                R_BRACE@81..82 "}"
+            FINALLY_CLAUSE@82..101
+              WHITESPACE@82..91 "\n        "
+              FINALLY_KW@91..98 "finally"
+              BLOCK@98..101
+                WHITESPACE@98..99 " "
+                L_BRACE@99..100 "{"
+                R_BRACE@100..101 "}"
+          WHITESPACE@101..106 "\n    "
+          R_BRACE@106..107 "}"
+      WHITESPACE@107..108 "\n"
+      R_BRACE@108..109 "}"
+  WHITESPACE@109..110 "\n"

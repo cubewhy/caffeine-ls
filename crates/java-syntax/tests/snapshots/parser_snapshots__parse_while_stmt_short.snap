@@ -42,40 +42,40 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          WHILE_STMT
-            WHITESPACE "\n        "
-            WHILE_KW "while"
-            PARENTHESIZED_EXPR
-              WHITESPACE " "
-              L_PAREN "("
-              LITERAL
-                TRUE_LITERAL "true"
-              R_PAREN ")"
-            BREAK_STMT
-              WHITESPACE " "
-              BREAK_KW "break"
-              SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..64
+  CLASS_DECL@0..63
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..63
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..61
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..25
+          L_PAREN@23..24 "("
+          R_PAREN@24..25 ")"
+        BLOCK@25..61
+          WHITESPACE@25..26 " "
+          L_BRACE@26..27 "{"
+          WHILE_STMT@27..55
+            WHITESPACE@27..36 "\n        "
+            WHILE_KW@36..41 "while"
+            PARENTHESIZED_EXPR@41..48
+              WHITESPACE@41..42 " "
+              L_PAREN@42..43 "("
+              LITERAL@43..47
+                TRUE_LITERAL@43..47 "true"
+              R_PAREN@47..48 ")"
+            BREAK_STMT@48..55
+              WHITESPACE@48..49 " "
+              BREAK_KW@49..54 "break"
+              SEMICOLON@54..55 ";"
+          WHITESPACE@55..60 "\n    "
+          R_BRACE@60..61 "}"
+      WHITESPACE@61..62 "\n"
+      R_BRACE@62..63 "}"
+  WHITESPACE@63..64 "\n"

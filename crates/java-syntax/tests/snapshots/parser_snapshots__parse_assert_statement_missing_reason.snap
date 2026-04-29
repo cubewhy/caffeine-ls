@@ -39,35 +39,35 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          ASSERT_STMT
-            WHITESPACE "\n        "
-            ASSERT_KW "assert"
-            LITERAL
-              WHITESPACE " "
-              TRUE_LITERAL "true"
-            COLON ":"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..58
+  CLASS_DECL@0..57
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..57
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..55
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..25
+          L_PAREN@23..24 "("
+          R_PAREN@24..25 ")"
+        BLOCK@25..55
+          WHITESPACE@25..26 " "
+          L_BRACE@26..27 "{"
+          ASSERT_STMT@27..49
+            WHITESPACE@27..36 "\n        "
+            ASSERT_KW@36..42 "assert"
+            LITERAL@42..47
+              WHITESPACE@42..43 " "
+              TRUE_LITERAL@43..47 "true"
+            COLON@47..48 ":"
+            SEMICOLON@48..49 ";"
+          WHITESPACE@49..54 "\n    "
+          R_BRACE@54..55 "}"
+      WHITESPACE@55..56 "\n"
+      R_BRACE@56..57 "}"
+  WHITESPACE@57..58 "\n"

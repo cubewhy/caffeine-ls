@@ -350,539 +350,539 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "Consumer"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "concise"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    IDENTIFIER "s"
-                    WHITESPACE " "
-                    ARROW "->"
-                    METHOD_CALL
-                      WHITESPACE " "
-                      FIELD_ACCESS
-                        FIELD_ACCESS
-                          LITERAL
-                            IDENTIFIER "System"
-                          DOT "."
-                          IDENTIFIER "out"
-                        DOT "."
-                        IDENTIFIER "println"
-                      ARGUMENT_LIST
-                        L_PAREN "("
-                        LITERAL
-                          IDENTIFIER "s"
-                        R_PAREN ")"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "Consumer"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "unnamed"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    UNDERSCORE "_"
-                    WHITESPACE " "
-                    ARROW "->"
-                    METHOD_CALL
-                      WHITESPACE " "
-                      FIELD_ACCESS
-                        FIELD_ACCESS
-                          LITERAL
-                            IDENTIFIER "System"
-                          DOT "."
-                          IDENTIFIER "out"
-                        DOT "."
-                        IDENTIFIER "println"
-                      ARGUMENT_LIST
-                        L_PAREN "("
-                        LITERAL
-                          STRING_LITERAL "\"Ignored input\""
-                        R_PAREN ")"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "BiFunction"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  COMMA ","
-                  TYPE_ARGUMENT
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  COMMA ","
-                  TYPE_ARGUMENT
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "inferredList"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    INFERRED_PARAMETERS
-                      L_PAREN "("
-                      INFERRED_PARAMETERS
-                        IDENTIFIER "a"
-                      COMMA ","
-                      INFERRED_PARAMETERS
-                        WHITESPACE " "
-                        IDENTIFIER "b"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BINARY_EXPR
-                      WHITESPACE " "
-                      LITERAL
-                        IDENTIFIER "a"
-                      WHITESPACE " "
-                      PLUS "+"
-                      LITERAL
-                        WHITESPACE " "
-                        IDENTIFIER "b"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "BiConsumer"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  COMMA ","
-                  TYPE_ARGUMENT
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "inferredWithUnderscore"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    INFERRED_PARAMETERS
-                      L_PAREN "("
-                      INFERRED_PARAMETERS
-                        IDENTIFIER "s"
-                      COMMA ","
-                      INFERRED_PARAMETERS
-                        WHITESPACE " "
-                        UNDERSCORE "_"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    METHOD_CALL
-                      WHITESPACE " "
-                      FIELD_ACCESS
-                        FIELD_ACCESS
-                          LITERAL
-                            IDENTIFIER "System"
-                          DOT "."
-                          IDENTIFIER "out"
-                        DOT "."
-                        IDENTIFIER "println"
-                      ARGUMENT_LIST
-                        L_PAREN "("
-                        LITERAL
-                          IDENTIFIER "s"
-                        R_PAREN ")"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "BinaryOperator"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "explicit"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    FORMAL_PARAMETERS
-                      L_PAREN "("
-                      FORMAL_PARAMETER
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "Integer"
-                        WHITESPACE " "
-                        IDENTIFIER "x"
-                      COMMA ","
-                      FORMAL_PARAMETER
-                        WHITESPACE " "
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "Integer"
-                        WHITESPACE " "
-                        IDENTIFIER "y"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BINARY_EXPR
-                      WHITESPACE " "
-                      LITERAL
-                        IDENTIFIER "x"
-                      WHITESPACE " "
-                      STAR "*"
-                      LITERAL
-                        WHITESPACE " "
-                        IDENTIFIER "y"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "BinaryOperator"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "varType"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    FORMAL_PARAMETERS
-                      L_PAREN "("
-                      FORMAL_PARAMETER
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "var"
-                        WHITESPACE " "
-                        IDENTIFIER "x"
-                      COMMA ","
-                      FORMAL_PARAMETER
-                        WHITESPACE " "
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "var"
-                        WHITESPACE " "
-                        IDENTIFIER "y"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BINARY_EXPR
-                      WHITESPACE " "
-                      LITERAL
-                        IDENTIFIER "x"
-                      WHITESPACE " "
-                      PLUS "+"
-                      LITERAL
-                        WHITESPACE " "
-                        IDENTIFIER "y"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "BiFunction"
-                TYPE_ARGUMENTS
-                  LESS "<"
-                  TYPE_ARGUMENT
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  COMMA ","
-                  TYPE_ARGUMENT
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  COMMA ","
-                  TYPE_ARGUMENT
-                    WHITESPACE " "
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "String"
-                  GREATER ">"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "withModifiers"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE "\n            "
-                    FORMAL_PARAMETERS
-                      L_PAREN "("
-                      FORMAL_PARAMETER
-                        MODIFIER_LIST
-                          MARKER_ANNOTATION
-                            AT "@"
-                            QUALIFIED_NAME
-                              IDENTIFIER "NotNull"
-                          WHITESPACE " "
-                          FINAL_KW "final"
-                        TYPE
-                          WHITESPACE " "
-                          QUALIFIED_NAME
-                            IDENTIFIER "var"
-                        WHITESPACE " "
-                        IDENTIFIER "s1"
-                      COMMA ","
-                      FORMAL_PARAMETER
-                        WHITESPACE " "
-                        MODIFIER_LIST
-                          FINAL_KW "final"
-                        TYPE
-                          WHITESPACE " "
-                          QUALIFIED_NAME
-                            IDENTIFIER "String"
-                        WHITESPACE " "
-                        IDENTIFIER "s2"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BINARY_EXPR
-                      WHITESPACE " "
-                      LITERAL
-                        IDENTIFIER "s1"
-                      WHITESPACE " "
-                      PLUS "+"
-                      LITERAL
-                        WHITESPACE " "
-                        IDENTIFIER "s2"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "VarargsHandler"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "vHandler"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    FORMAL_PARAMETERS
-                      L_PAREN "("
-                      SPREAD_PARAMETER
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "String"
-                        ELLIPSIS "..."
-                        WHITESPACE " "
-                        IDENTIFIER "names"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BLOCK
-                      WHITESPACE " "
-                      L_BRACE "{"
-                      ENHANCED_FOR_STMT
-                        WHITESPACE "\n            "
-                        FOR_KW "for"
-                        WHITESPACE " "
-                        L_PAREN "("
-                        TYPE
-                          QUALIFIED_NAME
-                            IDENTIFIER "String"
-                        VARIABLE_DECLARATOR
-                          WHITESPACE " "
-                          IDENTIFIER "n"
-                        WHITESPACE " "
-                        COLON ":"
-                        LITERAL
-                          WHITESPACE " "
-                          IDENTIFIER "names"
-                        R_PAREN ")"
-                        EXPRESSION_STMT
-                          WHITESPACE " "
-                          METHOD_CALL
-                            FIELD_ACCESS
-                              FIELD_ACCESS
-                                LITERAL
-                                  IDENTIFIER "System"
-                                DOT "."
-                                IDENTIFIER "out"
-                              DOT "."
-                              IDENTIFIER "println"
-                            ARGUMENT_LIST
-                              L_PAREN "("
-                              LITERAL
-                                IDENTIFIER "n"
-                              R_PAREN ")"
-                          SEMICOLON ";"
-                      WHITESPACE "\n        "
-                      R_BRACE "}"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "MultiParamHandler"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "complex"
-                  WHITESPACE " "
-                  EQUAL "="
-                  LAMBDA_EXPR
-                    WHITESPACE " "
-                    FORMAL_PARAMETERS
-                      L_PAREN "("
-                      FORMAL_PARAMETER
-                        MODIFIER_LIST
-                          MARKER_ANNOTATION
-                            AT "@"
-                            QUALIFIED_NAME
-                              IDENTIFIER "NotNull"
-                          WHITESPACE " "
-                          FINAL_KW "final"
-                        TYPE
-                          WHITESPACE " "
-                          QUALIFIED_NAME
-                            IDENTIFIER "var"
-                        WHITESPACE " "
-                        IDENTIFIER "s"
-                      COMMA ","
-                      FORMAL_PARAMETER
-                        WHITESPACE " "
-                        TYPE
-                          INT_KW "int"
-                        WHITESPACE " "
-                        IDENTIFIER "i"
-                      COMMA ","
-                      FORMAL_PARAMETER
-                        WHITESPACE " "
-                        MODIFIER_LIST
-                          FINAL_KW "final"
-                        TYPE
-                          WHITESPACE " "
-                          DOUBLE_KW "double"
-                        WHITESPACE " "
-                        IDENTIFIER "d"
-                      R_PAREN ")"
-                    WHITESPACE " "
-                    ARROW "->"
-                    BLOCK
-                      WHITESPACE " "
-                      L_BRACE "{"
-                      EXPRESSION_STMT
-                        WHITESPACE "\n            "
-                        METHOD_CALL
-                          FIELD_ACCESS
-                            FIELD_ACCESS
-                              LITERAL
-                                IDENTIFIER "System"
-                              DOT "."
-                              IDENTIFIER "out"
-                            DOT "."
-                            IDENTIFIER "println"
-                          ARGUMENT_LIST
-                            L_PAREN "("
-                            BINARY_EXPR
-                              BINARY_EXPR
-                                LITERAL
-                                  IDENTIFIER "s"
-                                WHITESPACE " "
-                                PLUS "+"
-                                LITERAL
-                                  WHITESPACE " "
-                                  IDENTIFIER "i"
-                              WHITESPACE " "
-                              PLUS "+"
-                              LITERAL
-                                WHITESPACE " "
-                                IDENTIFIER "d"
-                            R_PAREN ")"
-                        SEMICOLON ";"
-                      WHITESPACE "\n        "
-                      R_BRACE "}"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..885
+  CLASS_DECL@0..884
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..884
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..882
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..882
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..93
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..92
+              TYPE@39..55
+                QUALIFIED_NAME@39..47
+                  IDENTIFIER@39..47 "Consumer"
+                TYPE_ARGUMENTS@47..55
+                  LESS@47..48 "<"
+                  TYPE_ARGUMENT@48..54
+                    TYPE@48..54
+                      QUALIFIED_NAME@48..54
+                        IDENTIFIER@48..54 "String"
+                  GREATER@54..55 ">"
+              VARIABLE_DECLARATOR_LIST@55..92
+                WHITESPACE@55..56 " "
+                VARIABLE_DECLARATOR@56..92
+                  IDENTIFIER@56..63 "concise"
+                  WHITESPACE@63..64 " "
+                  EQUAL@64..65 "="
+                  LAMBDA_EXPR@65..92
+                    WHITESPACE@65..66 " "
+                    IDENTIFIER@66..67 "s"
+                    WHITESPACE@67..68 " "
+                    ARROW@68..70 "->"
+                    METHOD_CALL@70..92
+                      WHITESPACE@70..71 " "
+                      FIELD_ACCESS@71..89
+                        FIELD_ACCESS@71..81
+                          LITERAL@71..77
+                            IDENTIFIER@71..77 "System"
+                          DOT@77..78 "."
+                          IDENTIFIER@78..81 "out"
+                        DOT@81..82 "."
+                        IDENTIFIER@82..89 "println"
+                      ARGUMENT_LIST@89..92
+                        L_PAREN@89..90 "("
+                        LITERAL@90..91
+                          IDENTIFIER@90..91 "s"
+                        R_PAREN@91..92 ")"
+            SEMICOLON@92..93 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@93..170
+            WHITESPACE@93..102 "\n        "
+            LOCAL_VARIABLE_DECLARATION@102..169
+              TYPE@102..118
+                QUALIFIED_NAME@102..110
+                  IDENTIFIER@102..110 "Consumer"
+                TYPE_ARGUMENTS@110..118
+                  LESS@110..111 "<"
+                  TYPE_ARGUMENT@111..117
+                    TYPE@111..117
+                      QUALIFIED_NAME@111..117
+                        IDENTIFIER@111..117 "String"
+                  GREATER@117..118 ">"
+              VARIABLE_DECLARATOR_LIST@118..169
+                WHITESPACE@118..119 " "
+                VARIABLE_DECLARATOR@119..169
+                  IDENTIFIER@119..126 "unnamed"
+                  WHITESPACE@126..127 " "
+                  EQUAL@127..128 "="
+                  LAMBDA_EXPR@128..169
+                    WHITESPACE@128..129 " "
+                    UNDERSCORE@129..130 "_"
+                    WHITESPACE@130..131 " "
+                    ARROW@131..133 "->"
+                    METHOD_CALL@133..169
+                      WHITESPACE@133..134 " "
+                      FIELD_ACCESS@134..152
+                        FIELD_ACCESS@134..144
+                          LITERAL@134..140
+                            IDENTIFIER@134..140 "System"
+                          DOT@140..141 "."
+                          IDENTIFIER@141..144 "out"
+                        DOT@144..145 "."
+                        IDENTIFIER@145..152 "println"
+                      ARGUMENT_LIST@152..169
+                        L_PAREN@152..153 "("
+                        LITERAL@153..168
+                          STRING_LITERAL@153..168 "\"Ignored input\""
+                        R_PAREN@168..169 ")"
+            SEMICOLON@169..170 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@170..248
+            WHITESPACE@170..179 "\n        "
+            LOCAL_VARIABLE_DECLARATION@179..247
+              TYPE@179..216
+                QUALIFIED_NAME@179..189
+                  IDENTIFIER@179..189 "BiFunction"
+                TYPE_ARGUMENTS@189..216
+                  LESS@189..190 "<"
+                  TYPE_ARGUMENT@190..197
+                    TYPE@190..197
+                      QUALIFIED_NAME@190..197
+                        IDENTIFIER@190..197 "Integer"
+                  COMMA@197..198 ","
+                  TYPE_ARGUMENT@198..206
+                    WHITESPACE@198..199 " "
+                    TYPE@199..206
+                      QUALIFIED_NAME@199..206
+                        IDENTIFIER@199..206 "Integer"
+                  COMMA@206..207 ","
+                  TYPE_ARGUMENT@207..215
+                    WHITESPACE@207..208 " "
+                    TYPE@208..215
+                      QUALIFIED_NAME@208..215
+                        IDENTIFIER@208..215 "Integer"
+                  GREATER@215..216 ">"
+              VARIABLE_DECLARATOR_LIST@216..247
+                WHITESPACE@216..217 " "
+                VARIABLE_DECLARATOR@217..247
+                  IDENTIFIER@217..229 "inferredList"
+                  WHITESPACE@229..230 " "
+                  EQUAL@230..231 "="
+                  LAMBDA_EXPR@231..247
+                    WHITESPACE@231..232 " "
+                    INFERRED_PARAMETERS@232..238
+                      L_PAREN@232..233 "("
+                      INFERRED_PARAMETERS@233..234
+                        IDENTIFIER@233..234 "a"
+                      COMMA@234..235 ","
+                      INFERRED_PARAMETERS@235..237
+                        WHITESPACE@235..236 " "
+                        IDENTIFIER@236..237 "b"
+                      R_PAREN@237..238 ")"
+                    WHITESPACE@238..239 " "
+                    ARROW@239..241 "->"
+                    BINARY_EXPR@241..247
+                      WHITESPACE@241..242 " "
+                      LITERAL@242..243
+                        IDENTIFIER@242..243 "a"
+                      WHITESPACE@243..244 " "
+                      PLUS@244..245 "+"
+                      LITERAL@245..247
+                        WHITESPACE@245..246 " "
+                        IDENTIFIER@246..247 "b"
+            SEMICOLON@247..248 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@248..342
+            WHITESPACE@248..257 "\n        "
+            LOCAL_VARIABLE_DECLARATION@257..341
+              TYPE@257..284
+                QUALIFIED_NAME@257..267
+                  IDENTIFIER@257..267 "BiConsumer"
+                TYPE_ARGUMENTS@267..284
+                  LESS@267..268 "<"
+                  TYPE_ARGUMENT@268..274
+                    TYPE@268..274
+                      QUALIFIED_NAME@268..274
+                        IDENTIFIER@268..274 "String"
+                  COMMA@274..275 ","
+                  TYPE_ARGUMENT@275..283
+                    WHITESPACE@275..276 " "
+                    TYPE@276..283
+                      QUALIFIED_NAME@276..283
+                        IDENTIFIER@276..283 "Integer"
+                  GREATER@283..284 ">"
+              VARIABLE_DECLARATOR_LIST@284..341
+                WHITESPACE@284..285 " "
+                VARIABLE_DECLARATOR@285..341
+                  IDENTIFIER@285..307 "inferredWithUnderscore"
+                  WHITESPACE@307..308 " "
+                  EQUAL@308..309 "="
+                  LAMBDA_EXPR@309..341
+                    WHITESPACE@309..310 " "
+                    INFERRED_PARAMETERS@310..316
+                      L_PAREN@310..311 "("
+                      INFERRED_PARAMETERS@311..312
+                        IDENTIFIER@311..312 "s"
+                      COMMA@312..313 ","
+                      INFERRED_PARAMETERS@313..315
+                        WHITESPACE@313..314 " "
+                        UNDERSCORE@314..315 "_"
+                      R_PAREN@315..316 ")"
+                    WHITESPACE@316..317 " "
+                    ARROW@317..319 "->"
+                    METHOD_CALL@319..341
+                      WHITESPACE@319..320 " "
+                      FIELD_ACCESS@320..338
+                        FIELD_ACCESS@320..330
+                          LITERAL@320..326
+                            IDENTIFIER@320..326 "System"
+                          DOT@326..327 "."
+                          IDENTIFIER@327..330 "out"
+                        DOT@330..331 "."
+                        IDENTIFIER@331..338 "println"
+                      ARGUMENT_LIST@338..341
+                        L_PAREN@338..339 "("
+                        LITERAL@339..340
+                          IDENTIFIER@339..340 "s"
+                        R_PAREN@340..341 ")"
+            SEMICOLON@341..342 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@342..418
+            WHITESPACE@342..351 "\n        "
+            LOCAL_VARIABLE_DECLARATION@351..417
+              TYPE@351..374
+                QUALIFIED_NAME@351..365
+                  IDENTIFIER@351..365 "BinaryOperator"
+                TYPE_ARGUMENTS@365..374
+                  LESS@365..366 "<"
+                  TYPE_ARGUMENT@366..373
+                    TYPE@366..373
+                      QUALIFIED_NAME@366..373
+                        IDENTIFIER@366..373 "Integer"
+                  GREATER@373..374 ">"
+              VARIABLE_DECLARATOR_LIST@374..417
+                WHITESPACE@374..375 " "
+                VARIABLE_DECLARATOR@375..417
+                  IDENTIFIER@375..383 "explicit"
+                  WHITESPACE@383..384 " "
+                  EQUAL@384..385 "="
+                  LAMBDA_EXPR@385..417
+                    WHITESPACE@385..386 " "
+                    FORMAL_PARAMETERS@386..408
+                      L_PAREN@386..387 "("
+                      FORMAL_PARAMETER@387..396
+                        TYPE@387..394
+                          QUALIFIED_NAME@387..394
+                            IDENTIFIER@387..394 "Integer"
+                        WHITESPACE@394..395 " "
+                        IDENTIFIER@395..396 "x"
+                      COMMA@396..397 ","
+                      FORMAL_PARAMETER@397..407
+                        WHITESPACE@397..398 " "
+                        TYPE@398..405
+                          QUALIFIED_NAME@398..405
+                            IDENTIFIER@398..405 "Integer"
+                        WHITESPACE@405..406 " "
+                        IDENTIFIER@406..407 "y"
+                      R_PAREN@407..408 ")"
+                    WHITESPACE@408..409 " "
+                    ARROW@409..411 "->"
+                    BINARY_EXPR@411..417
+                      WHITESPACE@411..412 " "
+                      LITERAL@412..413
+                        IDENTIFIER@412..413 "x"
+                      WHITESPACE@413..414 " "
+                      STAR@414..415 "*"
+                      LITERAL@415..417
+                        WHITESPACE@415..416 " "
+                        IDENTIFIER@416..417 "y"
+            SEMICOLON@417..418 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@418..485
+            WHITESPACE@418..427 "\n        "
+            LOCAL_VARIABLE_DECLARATION@427..484
+              TYPE@427..450
+                QUALIFIED_NAME@427..441
+                  IDENTIFIER@427..441 "BinaryOperator"
+                TYPE_ARGUMENTS@441..450
+                  LESS@441..442 "<"
+                  TYPE_ARGUMENT@442..449
+                    TYPE@442..449
+                      QUALIFIED_NAME@442..449
+                        IDENTIFIER@442..449 "Integer"
+                  GREATER@449..450 ">"
+              VARIABLE_DECLARATOR_LIST@450..484
+                WHITESPACE@450..451 " "
+                VARIABLE_DECLARATOR@451..484
+                  IDENTIFIER@451..458 "varType"
+                  WHITESPACE@458..459 " "
+                  EQUAL@459..460 "="
+                  LAMBDA_EXPR@460..484
+                    WHITESPACE@460..461 " "
+                    FORMAL_PARAMETERS@461..475
+                      L_PAREN@461..462 "("
+                      FORMAL_PARAMETER@462..467
+                        TYPE@462..465
+                          QUALIFIED_NAME@462..465
+                            IDENTIFIER@462..465 "var"
+                        WHITESPACE@465..466 " "
+                        IDENTIFIER@466..467 "x"
+                      COMMA@467..468 ","
+                      FORMAL_PARAMETER@468..474
+                        WHITESPACE@468..469 " "
+                        TYPE@469..472
+                          QUALIFIED_NAME@469..472
+                            IDENTIFIER@469..472 "var"
+                        WHITESPACE@472..473 " "
+                        IDENTIFIER@473..474 "y"
+                      R_PAREN@474..475 ")"
+                    WHITESPACE@475..476 " "
+                    ARROW@476..478 "->"
+                    BINARY_EXPR@478..484
+                      WHITESPACE@478..479 " "
+                      LITERAL@479..480
+                        IDENTIFIER@479..480 "x"
+                      WHITESPACE@480..481 " "
+                      PLUS@481..482 "+"
+                      LITERAL@482..484
+                        WHITESPACE@482..483 " "
+                        IDENTIFIER@483..484 "y"
+            SEMICOLON@484..485 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@485..609
+            WHITESPACE@485..494 "\n        "
+            LOCAL_VARIABLE_DECLARATION@494..608
+              TYPE@494..528
+                QUALIFIED_NAME@494..504
+                  IDENTIFIER@494..504 "BiFunction"
+                TYPE_ARGUMENTS@504..528
+                  LESS@504..505 "<"
+                  TYPE_ARGUMENT@505..511
+                    TYPE@505..511
+                      QUALIFIED_NAME@505..511
+                        IDENTIFIER@505..511 "String"
+                  COMMA@511..512 ","
+                  TYPE_ARGUMENT@512..519
+                    WHITESPACE@512..513 " "
+                    TYPE@513..519
+                      QUALIFIED_NAME@513..519
+                        IDENTIFIER@513..519 "String"
+                  COMMA@519..520 ","
+                  TYPE_ARGUMENT@520..527
+                    WHITESPACE@520..521 " "
+                    TYPE@521..527
+                      QUALIFIED_NAME@521..527
+                        IDENTIFIER@521..527 "String"
+                  GREATER@527..528 ">"
+              VARIABLE_DECLARATOR_LIST@528..608
+                WHITESPACE@528..529 " "
+                VARIABLE_DECLARATOR@529..608
+                  IDENTIFIER@529..542 "withModifiers"
+                  WHITESPACE@542..543 " "
+                  EQUAL@543..544 "="
+                  LAMBDA_EXPR@544..608
+                    WHITESPACE@544..557 "\n            "
+                    FORMAL_PARAMETERS@557..597
+                      L_PAREN@557..558 "("
+                      FORMAL_PARAMETER@558..579
+                        MODIFIER_LIST@558..572
+                          MARKER_ANNOTATION@558..566
+                            AT@558..559 "@"
+                            QUALIFIED_NAME@559..566
+                              IDENTIFIER@559..566 "NotNull"
+                          WHITESPACE@566..567 " "
+                          FINAL_KW@567..572 "final"
+                        TYPE@572..576
+                          WHITESPACE@572..573 " "
+                          QUALIFIED_NAME@573..576
+                            IDENTIFIER@573..576 "var"
+                        WHITESPACE@576..577 " "
+                        IDENTIFIER@577..579 "s1"
+                      COMMA@579..580 ","
+                      FORMAL_PARAMETER@580..596
+                        WHITESPACE@580..581 " "
+                        MODIFIER_LIST@581..586
+                          FINAL_KW@581..586 "final"
+                        TYPE@586..593
+                          WHITESPACE@586..587 " "
+                          QUALIFIED_NAME@587..593
+                            IDENTIFIER@587..593 "String"
+                        WHITESPACE@593..594 " "
+                        IDENTIFIER@594..596 "s2"
+                      R_PAREN@596..597 ")"
+                    WHITESPACE@597..598 " "
+                    ARROW@598..600 "->"
+                    BINARY_EXPR@600..608
+                      WHITESPACE@600..601 " "
+                      LITERAL@601..603
+                        IDENTIFIER@601..603 "s1"
+                      WHITESPACE@603..604 " "
+                      PLUS@604..605 "+"
+                      LITERAL@605..608
+                        WHITESPACE@605..606 " "
+                        IDENTIFIER@606..608 "s2"
+            SEMICOLON@608..609 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@609..735
+            WHITESPACE@609..618 "\n        "
+            LOCAL_VARIABLE_DECLARATION@618..734
+              TYPE@618..632
+                QUALIFIED_NAME@618..632
+                  IDENTIFIER@618..632 "VarargsHandler"
+              VARIABLE_DECLARATOR_LIST@632..734
+                WHITESPACE@632..633 " "
+                VARIABLE_DECLARATOR@633..734
+                  IDENTIFIER@633..641 "vHandler"
+                  WHITESPACE@641..642 " "
+                  EQUAL@642..643 "="
+                  LAMBDA_EXPR@643..734
+                    WHITESPACE@643..644 " "
+                    FORMAL_PARAMETERS@644..661
+                      L_PAREN@644..645 "("
+                      SPREAD_PARAMETER@645..660
+                        TYPE@645..651
+                          QUALIFIED_NAME@645..651
+                            IDENTIFIER@645..651 "String"
+                        ELLIPSIS@651..654 "..."
+                        WHITESPACE@654..655 " "
+                        IDENTIFIER@655..660 "names"
+                      R_PAREN@660..661 ")"
+                    WHITESPACE@661..662 " "
+                    ARROW@662..664 "->"
+                    BLOCK@664..734
+                      WHITESPACE@664..665 " "
+                      L_BRACE@665..666 "{"
+                      ENHANCED_FOR_STMT@666..724
+                        WHITESPACE@666..679 "\n            "
+                        FOR_KW@679..682 "for"
+                        WHITESPACE@682..683 " "
+                        L_PAREN@683..684 "("
+                        TYPE@684..690
+                          QUALIFIED_NAME@684..690
+                            IDENTIFIER@684..690 "String"
+                        VARIABLE_DECLARATOR@690..692
+                          WHITESPACE@690..691 " "
+                          IDENTIFIER@691..692 "n"
+                        WHITESPACE@692..693 " "
+                        COLON@693..694 ":"
+                        LITERAL@694..700
+                          WHITESPACE@694..695 " "
+                          IDENTIFIER@695..700 "names"
+                        R_PAREN@700..701 ")"
+                        EXPRESSION_STMT@701..724
+                          WHITESPACE@701..702 " "
+                          METHOD_CALL@702..723
+                            FIELD_ACCESS@702..720
+                              FIELD_ACCESS@702..712
+                                LITERAL@702..708
+                                  IDENTIFIER@702..708 "System"
+                                DOT@708..709 "."
+                                IDENTIFIER@709..712 "out"
+                              DOT@712..713 "."
+                              IDENTIFIER@713..720 "println"
+                            ARGUMENT_LIST@720..723
+                              L_PAREN@720..721 "("
+                              LITERAL@721..722
+                                IDENTIFIER@721..722 "n"
+                              R_PAREN@722..723 ")"
+                          SEMICOLON@723..724 ";"
+                      WHITESPACE@724..733 "\n        "
+                      R_BRACE@733..734 "}"
+            SEMICOLON@734..735 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@735..876
+            WHITESPACE@735..744 "\n        "
+            LOCAL_VARIABLE_DECLARATION@744..875
+              TYPE@744..761
+                QUALIFIED_NAME@744..761
+                  IDENTIFIER@744..761 "MultiParamHandler"
+              VARIABLE_DECLARATOR_LIST@761..875
+                WHITESPACE@761..762 " "
+                VARIABLE_DECLARATOR@762..875
+                  IDENTIFIER@762..769 "complex"
+                  WHITESPACE@769..770 " "
+                  EQUAL@770..771 "="
+                  LAMBDA_EXPR@771..875
+                    WHITESPACE@771..772 " "
+                    FORMAL_PARAMETERS@772..817
+                      L_PAREN@772..773 "("
+                      FORMAL_PARAMETER@773..793
+                        MODIFIER_LIST@773..787
+                          MARKER_ANNOTATION@773..781
+                            AT@773..774 "@"
+                            QUALIFIED_NAME@774..781
+                              IDENTIFIER@774..781 "NotNull"
+                          WHITESPACE@781..782 " "
+                          FINAL_KW@782..787 "final"
+                        TYPE@787..791
+                          WHITESPACE@787..788 " "
+                          QUALIFIED_NAME@788..791
+                            IDENTIFIER@788..791 "var"
+                        WHITESPACE@791..792 " "
+                        IDENTIFIER@792..793 "s"
+                      COMMA@793..794 ","
+                      FORMAL_PARAMETER@794..800
+                        WHITESPACE@794..795 " "
+                        TYPE@795..798
+                          INT_KW@795..798 "int"
+                        WHITESPACE@798..799 " "
+                        IDENTIFIER@799..800 "i"
+                      COMMA@800..801 ","
+                      FORMAL_PARAMETER@801..816
+                        WHITESPACE@801..802 " "
+                        MODIFIER_LIST@802..807
+                          FINAL_KW@802..807 "final"
+                        TYPE@807..814
+                          WHITESPACE@807..808 " "
+                          DOUBLE_KW@808..814 "double"
+                        WHITESPACE@814..815 " "
+                        IDENTIFIER@815..816 "d"
+                      R_PAREN@816..817 ")"
+                    WHITESPACE@817..818 " "
+                    ARROW@818..820 "->"
+                    BLOCK@820..875
+                      WHITESPACE@820..821 " "
+                      L_BRACE@821..822 "{"
+                      EXPRESSION_STMT@822..865
+                        WHITESPACE@822..835 "\n            "
+                        METHOD_CALL@835..864
+                          FIELD_ACCESS@835..853
+                            FIELD_ACCESS@835..845
+                              LITERAL@835..841
+                                IDENTIFIER@835..841 "System"
+                              DOT@841..842 "."
+                              IDENTIFIER@842..845 "out"
+                            DOT@845..846 "."
+                            IDENTIFIER@846..853 "println"
+                          ARGUMENT_LIST@853..864
+                            L_PAREN@853..854 "("
+                            BINARY_EXPR@854..863
+                              BINARY_EXPR@854..859
+                                LITERAL@854..855
+                                  IDENTIFIER@854..855 "s"
+                                WHITESPACE@855..856 " "
+                                PLUS@856..857 "+"
+                                LITERAL@857..859
+                                  WHITESPACE@857..858 " "
+                                  IDENTIFIER@858..859 "i"
+                              WHITESPACE@859..860 " "
+                              PLUS@860..861 "+"
+                              LITERAL@861..863
+                                WHITESPACE@861..862 " "
+                                IDENTIFIER@862..863 "d"
+                            R_PAREN@863..864 ")"
+                        SEMICOLON@864..865 ";"
+                      WHITESPACE@865..874 "\n        "
+                      R_BRACE@874..875 "}"
+            SEMICOLON@875..876 ";"
+          WHITESPACE@876..881 "\n    "
+          R_BRACE@881..882 "}"
+      WHITESPACE@882..883 "\n"
+      R_BRACE@883..884 "}"
+  WHITESPACE@884..885 "\n"

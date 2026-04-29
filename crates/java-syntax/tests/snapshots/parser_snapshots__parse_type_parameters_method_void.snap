@@ -30,31 +30,31 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE " "
-        TYPE_PARAMETERS
-          LESS "<"
-          TYPE_PARAMETER
-            IDENTIFIER "A"
-          GREATER ">"
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..30
+  CLASS_DECL@0..30
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..30
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..28
+        WHITESPACE@9..10 " "
+        TYPE_PARAMETERS@10..13
+          LESS@10..11 "<"
+          TYPE_PARAMETER@11..12
+            IDENTIFIER@11..12 "A"
+          GREATER@12..13 ">"
+        WHITESPACE@13..14 " "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..25
+          L_PAREN@23..24 "("
+          R_PAREN@24..25 ")"
+        BLOCK@25..28
+          WHITESPACE@25..26 " "
+          L_BRACE@26..27 "{"
+          R_BRACE@27..28 "}"
+      WHITESPACE@28..29 " "
+      R_BRACE@29..30 "}"

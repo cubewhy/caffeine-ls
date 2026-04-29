@@ -23,24 +23,24 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    TYPE_PARAMETERS
-      LESS "<"
-      TYPE_PARAMETER
-        IDENTIFIER "T"
-        TYPE_BOUND
-          WHITESPACE " "
-          EXTENDS_KW "extends"
-          TYPE
-            WHITESPACE " "
-            QUALIFIED_NAME
-              IDENTIFIER "Number"
-      GREATER ">"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..28
+  CLASS_DECL@0..28
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    TYPE_PARAMETERS@7..25
+      LESS@7..8 "<"
+      TYPE_PARAMETER@8..24
+        IDENTIFIER@8..9 "T"
+        TYPE_BOUND@9..24
+          WHITESPACE@9..10 " "
+          EXTENDS_KW@10..17 "extends"
+          TYPE@17..24
+            WHITESPACE@17..18 " "
+            QUALIFIED_NAME@18..24
+              IDENTIFIER@18..24 "Number"
+      GREATER@24..25 ">"
+    CLASS_BODY@25..28
+      WHITESPACE@25..26 " "
+      L_BRACE@26..27 "{"
+      R_BRACE@27..28 "}"

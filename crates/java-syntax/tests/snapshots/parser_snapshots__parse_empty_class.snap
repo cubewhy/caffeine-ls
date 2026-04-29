@@ -16,12 +16,12 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..10
+  CLASS_DECL@0..10
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..10
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      R_BRACE@9..10 "}"

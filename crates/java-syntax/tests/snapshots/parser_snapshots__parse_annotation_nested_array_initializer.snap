@@ -31,36 +31,36 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    MODIFIER_LIST
-      ANNOTATION
-        AT "@"
-        QUALIFIED_NAME
-          IDENTIFIER "A"
-        ANNOTATION_ARGUMENT_LIST
-          L_PAREN "("
-          ARRAY_INITIALIZER
-            L_BRACE "{"
-            ARRAY_INITIALIZER
-              L_BRACE "{"
-              LITERAL
-                NUMBER_LITERAL "1"
-              R_BRACE "}"
-            COMMA ","
-            ARRAY_INITIALIZER
-              WHITESPACE " "
-              L_BRACE "{"
-              LITERAL
-                NUMBER_LITERAL "2"
-              R_BRACE "}"
-            R_BRACE "}"
-          R_PAREN ")"
-    WHITESPACE " "
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "B"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..25
+  CLASS_DECL@0..25
+    MODIFIER_LIST@0..14
+      ANNOTATION@0..14
+        AT@0..1 "@"
+        QUALIFIED_NAME@1..2
+          IDENTIFIER@1..2 "A"
+        ANNOTATION_ARGUMENT_LIST@2..14
+          L_PAREN@2..3 "("
+          ARRAY_INITIALIZER@3..13
+            L_BRACE@3..4 "{"
+            ARRAY_INITIALIZER@4..7
+              L_BRACE@4..5 "{"
+              LITERAL@5..6
+                NUMBER_LITERAL@5..6 "1"
+              R_BRACE@6..7 "}"
+            COMMA@7..8 ","
+            ARRAY_INITIALIZER@8..12
+              WHITESPACE@8..9 " "
+              L_BRACE@9..10 "{"
+              LITERAL@10..11
+                NUMBER_LITERAL@10..11 "2"
+              R_BRACE@11..12 "}"
+            R_BRACE@12..13 "}"
+          R_PAREN@13..14 ")"
+    WHITESPACE@14..15 " "
+    CLASS_KW@15..20 "class"
+    WHITESPACE@20..21 " "
+    IDENTIFIER@21..22 "B"
+    CLASS_BODY@22..25
+      WHITESPACE@22..23 " "
+      L_BRACE@23..24 "{"
+      R_BRACE@24..25 "}"

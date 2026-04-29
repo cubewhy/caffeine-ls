@@ -22,20 +22,20 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      STATIC_INITIALIZER
-        WHITESPACE " "
-        STATIC_KW "static"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..21
+  CLASS_DECL@0..21
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..21
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      STATIC_INITIALIZER@9..19
+        WHITESPACE@9..10 " "
+        STATIC_KW@10..16 "static"
+        BLOCK@16..19
+          WHITESPACE@16..17 " "
+          L_BRACE@17..18 "{"
+          R_BRACE@18..19 "}"
+      WHITESPACE@19..20 " "
+      R_BRACE@20..21 "}"

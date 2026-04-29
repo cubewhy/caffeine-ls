@@ -19,17 +19,17 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    TYPE_PARAMETERS
-      LESS "<"
-      TYPE_PARAMETER
-        IDENTIFIER "T"
-      GREATER ">"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..13
+  CLASS_DECL@0..13
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    TYPE_PARAMETERS@7..10
+      LESS@7..8 "<"
+      TYPE_PARAMETER@8..9
+        IDENTIFIER@8..9 "T"
+      GREATER@9..10 ">"
+    CLASS_BODY@10..13
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      R_BRACE@12..13 "}"

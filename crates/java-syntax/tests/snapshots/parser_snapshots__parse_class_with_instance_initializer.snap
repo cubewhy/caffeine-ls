@@ -20,18 +20,18 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      INSTANCE_INITIALIZER
-        WHITESPACE " "
-        BLOCK
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..14
+  CLASS_DECL@0..14
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..14
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      INSTANCE_INITIALIZER@9..12
+        WHITESPACE@9..10 " "
+        BLOCK@10..12
+          L_BRACE@10..11 "{"
+          R_BRACE@11..12 "}"
+      WHITESPACE@12..13 " "
+      R_BRACE@13..14 "}"

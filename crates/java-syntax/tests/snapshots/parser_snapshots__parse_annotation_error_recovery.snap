@@ -40,36 +40,36 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "ErrorProne"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ERROR
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "invalid"
-        L_PAREN "("
-        INT_KW "int"
-        WHITESPACE " "
-        IDENTIFIER "x"
-        R_PAREN ")"
-        SEMICOLON ";"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        WHITESPACE " "
-        IDENTIFIER "valid"
-        L_PAREN "("
-        R_PAREN ")"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..71
+  ANNOTATION_TYPE_DECL@0..70
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..21 "ErrorProne"
+    ANNOTATION_TYPE_BODY@21..70
+      WHITESPACE@21..22 " "
+      L_BRACE@22..23 "{"
+      ERROR@23..48
+        WHITESPACE@23..28 "\n    "
+        VOID_KW@28..32 "void"
+        WHITESPACE@32..33 " "
+        IDENTIFIER@33..40 "invalid"
+        L_PAREN@40..41 "("
+        INT_KW@41..44 "int"
+        WHITESPACE@44..45 " "
+        IDENTIFIER@45..46 "x"
+        R_PAREN@46..47 ")"
+        SEMICOLON@47..48 ";"
+      ANNOTATION_TYPE_ELEMENT_DECL@48..68
+        WHITESPACE@48..53 "\n    "
+        TYPE@53..59
+          QUALIFIED_NAME@53..59
+            IDENTIFIER@53..59 "String"
+        WHITESPACE@59..60 " "
+        IDENTIFIER@60..65 "valid"
+        L_PAREN@65..66 "("
+        R_PAREN@66..67 ")"
+        SEMICOLON@67..68 ";"
+      WHITESPACE@68..69 "\n"
+      R_BRACE@69..70 "}"
+  WHITESPACE@70..71 "\n"

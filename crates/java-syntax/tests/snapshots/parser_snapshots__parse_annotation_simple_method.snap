@@ -37,34 +37,34 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "MyAnno"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        WHITESPACE " "
-        IDENTIFIER "value"
-        L_PAREN "("
-        R_PAREN ")"
-        SEMICOLON ";"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          INT_KW "int"
-        WHITESPACE " "
-        IDENTIFIER "id"
-        L_PAREN "("
-        R_PAREN ")"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..56
+  ANNOTATION_TYPE_DECL@0..55
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..17 "MyAnno"
+    ANNOTATION_TYPE_BODY@17..55
+      WHITESPACE@17..18 " "
+      L_BRACE@18..19 "{"
+      ANNOTATION_TYPE_ELEMENT_DECL@19..39
+        WHITESPACE@19..24 "\n    "
+        TYPE@24..30
+          QUALIFIED_NAME@24..30
+            IDENTIFIER@24..30 "String"
+        WHITESPACE@30..31 " "
+        IDENTIFIER@31..36 "value"
+        L_PAREN@36..37 "("
+        R_PAREN@37..38 ")"
+        SEMICOLON@38..39 ";"
+      ANNOTATION_TYPE_ELEMENT_DECL@39..53
+        WHITESPACE@39..44 "\n    "
+        TYPE@44..47
+          INT_KW@44..47 "int"
+        WHITESPACE@47..48 " "
+        IDENTIFIER@48..50 "id"
+        L_PAREN@50..51 "("
+        R_PAREN@51..52 ")"
+        SEMICOLON@52..53 ";"
+      WHITESPACE@53..54 "\n"
+      R_BRACE@54..55 "}"
+  WHITESPACE@55..56 "\n"

@@ -36,35 +36,35 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          INT_KW "int"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "x"
-        SEMICOLON ";"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "f"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..39
+  CLASS_DECL@0..38
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..38
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..20
+        WHITESPACE@9..14 "\n    "
+        TYPE@14..17
+          INT_KW@14..17 "int"
+        VARIABLE_DECLARATOR_LIST@17..19
+          WHITESPACE@17..18 " "
+          VARIABLE_DECLARATOR@18..19
+            IDENTIFIER@18..19 "x"
+        SEMICOLON@19..20 ";"
+      METHOD_DECL@20..36
+        WHITESPACE@20..25 "\n    "
+        VOID_KW@25..29 "void"
+        WHITESPACE@29..30 " "
+        IDENTIFIER@30..31 "f"
+        FORMAL_PARAMETERS@31..33
+          L_PAREN@31..32 "("
+          R_PAREN@32..33 ")"
+        BLOCK@33..36
+          WHITESPACE@33..34 " "
+          L_BRACE@34..35 "{"
+          R_BRACE@35..36 "}"
+      WHITESPACE@36..37 "\n"
+      R_BRACE@37..38 "}"
+  WHITESPACE@38..39 "\n"

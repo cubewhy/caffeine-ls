@@ -28,36 +28,36 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE " "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "Map"
-          TYPE_ARGUMENTS
-            LESS "<"
-            TYPE_ARGUMENT
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "K"
-            COMMA ","
-            TYPE_ARGUMENT
-              WHITESPACE " "
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "V"
-            GREATER ">"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "map"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..26
+  CLASS_DECL@0..26
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..26
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..24
+        WHITESPACE@9..10 " "
+        TYPE@10..19
+          QUALIFIED_NAME@10..13
+            IDENTIFIER@10..13 "Map"
+          TYPE_ARGUMENTS@13..19
+            LESS@13..14 "<"
+            TYPE_ARGUMENT@14..15
+              TYPE@14..15
+                QUALIFIED_NAME@14..15
+                  IDENTIFIER@14..15 "K"
+            COMMA@15..16 ","
+            TYPE_ARGUMENT@16..18
+              WHITESPACE@16..17 " "
+              TYPE@17..18
+                QUALIFIED_NAME@17..18
+                  IDENTIFIER@17..18 "V"
+            GREATER@18..19 ">"
+        VARIABLE_DECLARATOR_LIST@19..23
+          WHITESPACE@19..20 " "
+          VARIABLE_DECLARATOR@20..23
+            IDENTIFIER@20..23 "map"
+        SEMICOLON@23..24 ";"
+      WHITESPACE@24..25 " "
+      R_BRACE@25..26 "}"

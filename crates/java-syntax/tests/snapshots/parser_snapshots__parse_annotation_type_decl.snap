@@ -17,13 +17,13 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..15
+  ANNOTATION_TYPE_DECL@0..15
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..12 "A"
+    ANNOTATION_TYPE_BODY@12..15
+      WHITESPACE@12..13 " "
+      L_BRACE@13..14 "{"
+      R_BRACE@14..15 "}"

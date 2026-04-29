@@ -27,28 +27,28 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  RECORD_DECL
-    IDENTIFIER "record"
-    WHITESPACE " "
-    IDENTIFIER "R"
-    FORMAL_PARAMETERS
-      L_PAREN "("
-      FORMAL_PARAMETER
-        TYPE
-          INT_KW "int"
-        WHITESPACE " "
-        IDENTIFIER "x"
-      R_PAREN ")"
-    RECORD_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      COMPACT_CONSTRUCTOR_DECL
-        WHITESPACE " "
-        IDENTIFIER "R"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..24
+  RECORD_DECL@0..24
+    IDENTIFIER@0..6 "record"
+    WHITESPACE@6..7 " "
+    IDENTIFIER@7..8 "R"
+    FORMAL_PARAMETERS@8..15
+      L_PAREN@8..9 "("
+      FORMAL_PARAMETER@9..14
+        TYPE@9..12
+          INT_KW@9..12 "int"
+        WHITESPACE@12..13 " "
+        IDENTIFIER@13..14 "x"
+      R_PAREN@14..15 ")"
+    RECORD_BODY@15..24
+      WHITESPACE@15..16 " "
+      L_BRACE@16..17 "{"
+      COMPACT_CONSTRUCTOR_DECL@17..22
+        WHITESPACE@17..18 " "
+        IDENTIFIER@18..19 "R"
+        BLOCK@19..22
+          WHITESPACE@19..20 " "
+          L_BRACE@20..21 "{"
+          R_BRACE@21..22 "}"
+      WHITESPACE@22..23 " "
+      R_BRACE@23..24 "}"

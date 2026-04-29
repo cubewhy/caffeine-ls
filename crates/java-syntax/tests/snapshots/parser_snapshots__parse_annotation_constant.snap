@@ -41,44 +41,44 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "Limits"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          INT_KW "int"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "MAX_SIZE"
-            WHITESPACE " "
-            EQUAL "="
-            LITERAL
-              WHITESPACE " "
-              NUMBER_LITERAL "100"
-        SEMICOLON ";"
-      FIELD_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        VARIABLE_DECLARATOR_LIST
-          WHITESPACE " "
-          VARIABLE_DECLARATOR
-            IDENTIFIER "DEFAULT_TYPE"
-            WHITESPACE " "
-            EQUAL "="
-            LITERAL
-              WHITESPACE " "
-              STRING_LITERAL "\"JSON\""
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..80
+  ANNOTATION_TYPE_DECL@0..79
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..17 "Limits"
+    ANNOTATION_TYPE_BODY@17..79
+      WHITESPACE@17..18 " "
+      L_BRACE@18..19 "{"
+      FIELD_DECL@19..43
+        WHITESPACE@19..24 "\n    "
+        TYPE@24..27
+          INT_KW@24..27 "int"
+        VARIABLE_DECLARATOR_LIST@27..42
+          WHITESPACE@27..28 " "
+          VARIABLE_DECLARATOR@28..42
+            IDENTIFIER@28..36 "MAX_SIZE"
+            WHITESPACE@36..37 " "
+            EQUAL@37..38 "="
+            LITERAL@38..42
+              WHITESPACE@38..39 " "
+              NUMBER_LITERAL@39..42 "100"
+        SEMICOLON@42..43 ";"
+      FIELD_DECL@43..77
+        WHITESPACE@43..48 "\n    "
+        TYPE@48..54
+          QUALIFIED_NAME@48..54
+            IDENTIFIER@48..54 "String"
+        VARIABLE_DECLARATOR_LIST@54..76
+          WHITESPACE@54..55 " "
+          VARIABLE_DECLARATOR@55..76
+            IDENTIFIER@55..67 "DEFAULT_TYPE"
+            WHITESPACE@67..68 " "
+            EQUAL@68..69 "="
+            LITERAL@69..76
+              WHITESPACE@69..70 " "
+              STRING_LITERAL@70..76 "\"JSON\""
+        SEMICOLON@76..77 ";"
+      WHITESPACE@77..78 "\n"
+      R_BRACE@78..79 "}"
+  WHITESPACE@79..80 "\n"

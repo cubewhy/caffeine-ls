@@ -35,36 +35,36 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          FORMAL_PARAMETER
-            TYPE
-              QUALIFIED_NAME
-                IDENTIFIER "String"
-            WHITESPACE " "
-            IDENTIFIER "args"
-            DIMENSIONS
-              DIMENSION
-                L_BRACKET "["
-                R_BRACKET "]"
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..44
+  CLASS_DECL@0..43
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..43
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..41
+        WHITESPACE@9..14 "\n    "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..23 "func"
+        FORMAL_PARAMETERS@23..38
+          L_PAREN@23..24 "("
+          FORMAL_PARAMETER@24..37
+            TYPE@24..30
+              QUALIFIED_NAME@24..30
+                IDENTIFIER@24..30 "String"
+            WHITESPACE@30..31 " "
+            IDENTIFIER@31..35 "args"
+            DIMENSIONS@35..37
+              DIMENSION@35..37
+                L_BRACKET@35..36 "["
+                R_BRACKET@36..37 "]"
+          R_PAREN@37..38 ")"
+        BLOCK@38..41
+          WHITESPACE@38..39 " "
+          L_BRACE@39..40 "{"
+          R_BRACE@40..41 "}"
+      WHITESPACE@41..42 "\n"
+      R_BRACE@42..43 "}"
+  WHITESPACE@43..44 "\n"

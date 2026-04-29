@@ -45,44 +45,44 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  ANNOTATION_TYPE_DECL
-    AT "@"
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "Config"
-    ANNOTATION_TYPE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          QUALIFIED_NAME
-            IDENTIFIER "String"
-        WHITESPACE " "
-        IDENTIFIER "name"
-        L_PAREN "("
-        R_PAREN ")"
-        WHITESPACE " "
-        DEFAULT_KW "default"
-        LITERAL
-          WHITESPACE " "
-          STRING_LITERAL "\"unknown\""
-        SEMICOLON ";"
-      ANNOTATION_TYPE_ELEMENT_DECL
-        WHITESPACE "\n    "
-        TYPE
-          INT_KW "int"
-        WHITESPACE " "
-        IDENTIFIER "retryCount"
-        L_PAREN "("
-        R_PAREN ")"
-        WHITESPACE " "
-        DEFAULT_KW "default"
-        LITERAL
-          WHITESPACE " "
-          NUMBER_LITERAL "3"
-        SEMICOLON ";"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..91
+  ANNOTATION_TYPE_DECL@0..90
+    AT@0..1 "@"
+    INTERFACE_KW@1..10 "interface"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..17 "Config"
+    ANNOTATION_TYPE_BODY@17..90
+      WHITESPACE@17..18 " "
+      L_BRACE@18..19 "{"
+      ANNOTATION_TYPE_ELEMENT_DECL@19..56
+        WHITESPACE@19..24 "\n    "
+        TYPE@24..30
+          QUALIFIED_NAME@24..30
+            IDENTIFIER@24..30 "String"
+        WHITESPACE@30..31 " "
+        IDENTIFIER@31..35 "name"
+        L_PAREN@35..36 "("
+        R_PAREN@36..37 ")"
+        WHITESPACE@37..38 " "
+        DEFAULT_KW@38..45 "default"
+        LITERAL@45..55
+          WHITESPACE@45..46 " "
+          STRING_LITERAL@46..55 "\"unknown\""
+        SEMICOLON@55..56 ";"
+      ANNOTATION_TYPE_ELEMENT_DECL@56..88
+        WHITESPACE@56..61 "\n    "
+        TYPE@61..64
+          INT_KW@61..64 "int"
+        WHITESPACE@64..65 " "
+        IDENTIFIER@65..75 "retryCount"
+        L_PAREN@75..76 "("
+        R_PAREN@76..77 ")"
+        WHITESPACE@77..78 " "
+        DEFAULT_KW@78..85 "default"
+        LITERAL@85..87
+          WHITESPACE@85..86 " "
+          NUMBER_LITERAL@86..87 "3"
+        SEMICOLON@87..88 ";"
+      WHITESPACE@88..89 "\n"
+      R_BRACE@89..90 "}"
+  WHITESPACE@90..91 "\n"

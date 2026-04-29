@@ -24,24 +24,24 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    MODIFIER_LIST
-      PUBLIC_KW "public"
-    WHITESPACE " "
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    TYPE_PARAMETERS
-      LESS "<"
-      TYPE_PARAMETER
-        IDENTIFIER "A"
-      COMMA ","
-      TYPE_PARAMETER
-        WHITESPACE " "
-        IDENTIFIER "B"
-      GREATER ">"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      R_BRACE "}"
+ROOT@0..23
+  CLASS_DECL@0..23
+    MODIFIER_LIST@0..6
+      PUBLIC_KW@0..6 "public"
+    WHITESPACE@6..7 " "
+    CLASS_KW@7..12 "class"
+    WHITESPACE@12..13 " "
+    IDENTIFIER@13..14 "A"
+    TYPE_PARAMETERS@14..20
+      LESS@14..15 "<"
+      TYPE_PARAMETER@15..16
+        IDENTIFIER@15..16 "A"
+      COMMA@16..17 ","
+      TYPE_PARAMETER@17..19
+        WHITESPACE@17..18 " "
+        IDENTIFIER@18..19 "B"
+      GREATER@19..20 ">"
+    CLASS_BODY@20..23
+      WHITESPACE@20..21 " "
+      L_BRACE@21..22 "{"
+      R_BRACE@22..23 "}"

@@ -58,69 +58,69 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  CLASS_DECL
-    CLASS_KW "class"
-    WHITESPACE " "
-    IDENTIFIER "Test"
-    CLASS_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE "\n    "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "test"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        BLOCK
-          WHITESPACE " "
-          L_BRACE "{"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                QUALIFIED_NAME
-                  IDENTIFIER "Integer"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "i"
-                  WHITESPACE " "
-                  EQUAL "="
-                  CAST_EXPR
-                    WHITESPACE " "
-                    L_PAREN "("
-                    TYPE
-                      QUALIFIED_NAME
-                        IDENTIFIER "Integer"
-                    R_PAREN ")"
-                    LITERAL
-                      NUMBER_LITERAL "1"
-            SEMICOLON ";"
-          LOCAL_VARIABLE_DECLARATION_STMT
-            WHITESPACE "\n        "
-            LOCAL_VARIABLE_DECLARATION
-              TYPE
-                BOOLEAN_KW "boolean"
-              VARIABLE_DECLARATOR_LIST
-                WHITESPACE " "
-                VARIABLE_DECLARATOR
-                  IDENTIFIER "b"
-                  WHITESPACE " "
-                  EQUAL "="
-                  CAST_EXPR
-                    WHITESPACE " "
-                    L_PAREN "("
-                    TYPE
-                      BOOLEAN_KW "boolean"
-                    R_PAREN ")"
-                    LITERAL
-                      NUMBER_LITERAL "1"
-            SEMICOLON ";"
-          WHITESPACE "\n    "
-          R_BRACE "}"
-      WHITESPACE "\n"
-      R_BRACE "}"
-  WHITESPACE "\n"
+ROOT@0..103
+  CLASS_DECL@0..102
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..102
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..100
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..100
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..62
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..61
+              TYPE@39..46
+                QUALIFIED_NAME@39..46
+                  IDENTIFIER@39..46 "Integer"
+              VARIABLE_DECLARATOR_LIST@46..61
+                WHITESPACE@46..47 " "
+                VARIABLE_DECLARATOR@47..61
+                  IDENTIFIER@47..48 "i"
+                  WHITESPACE@48..49 " "
+                  EQUAL@49..50 "="
+                  CAST_EXPR@50..61
+                    WHITESPACE@50..51 " "
+                    L_PAREN@51..52 "("
+                    TYPE@52..59
+                      QUALIFIED_NAME@52..59
+                        IDENTIFIER@52..59 "Integer"
+                    R_PAREN@59..60 ")"
+                    LITERAL@60..61
+                      NUMBER_LITERAL@60..61 "1"
+            SEMICOLON@61..62 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@62..94
+            WHITESPACE@62..71 "\n        "
+            LOCAL_VARIABLE_DECLARATION@71..93
+              TYPE@71..78
+                BOOLEAN_KW@71..78 "boolean"
+              VARIABLE_DECLARATOR_LIST@78..93
+                WHITESPACE@78..79 " "
+                VARIABLE_DECLARATOR@79..93
+                  IDENTIFIER@79..80 "b"
+                  WHITESPACE@80..81 " "
+                  EQUAL@81..82 "="
+                  CAST_EXPR@82..93
+                    WHITESPACE@82..83 " "
+                    L_PAREN@83..84 "("
+                    TYPE@84..91
+                      BOOLEAN_KW@84..91 "boolean"
+                    R_PAREN@91..92 ")"
+                    LITERAL@92..93
+                      NUMBER_LITERAL@92..93 "1"
+            SEMICOLON@93..94 ";"
+          WHITESPACE@94..99 "\n    "
+          R_BRACE@99..100 "}"
+      WHITESPACE@100..101 "\n"
+      R_BRACE@101..102 "}"
+  WHITESPACE@102..103 "\n"

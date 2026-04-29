@@ -24,22 +24,22 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  INTERFACE_DECL
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    INTERFACE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE " "
-        VOID_KW "void"
-        WHITESPACE " "
-        IDENTIFIER "f"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..25
+  INTERFACE_DECL@0..25
+    INTERFACE_KW@0..9 "interface"
+    WHITESPACE@9..10 " "
+    IDENTIFIER@10..11 "A"
+    INTERFACE_BODY@11..25
+      WHITESPACE@11..12 " "
+      L_BRACE@12..13 "{"
+      METHOD_DECL@13..23
+        WHITESPACE@13..14 " "
+        VOID_KW@14..18 "void"
+        WHITESPACE@18..19 " "
+        IDENTIFIER@19..20 "f"
+        FORMAL_PARAMETERS@20..22
+          L_PAREN@20..21 "("
+          R_PAREN@21..22 ")"
+        SEMICOLON@22..23 ";"
+      WHITESPACE@23..24 " "
+      R_BRACE@24..25 "}"

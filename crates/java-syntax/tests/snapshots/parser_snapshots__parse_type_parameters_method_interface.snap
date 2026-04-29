@@ -28,30 +28,30 @@ LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
-ROOT
-  INTERFACE_DECL
-    INTERFACE_KW "interface"
-    WHITESPACE " "
-    IDENTIFIER "A"
-    INTERFACE_BODY
-      WHITESPACE " "
-      L_BRACE "{"
-      METHOD_DECL
-        WHITESPACE " "
-        TYPE_PARAMETERS
-          LESS "<"
-          TYPE_PARAMETER
-            IDENTIFIER "T"
-          GREATER ">"
-        TYPE
-          WHITESPACE " "
-          QUALIFIED_NAME
-            IDENTIFIER "T"
-        WHITESPACE " "
-        IDENTIFIER "func"
-        FORMAL_PARAMETERS
-          L_PAREN "("
-          R_PAREN ")"
-        SEMICOLON ";"
-      WHITESPACE " "
-      R_BRACE "}"
+ROOT@0..29
+  INTERFACE_DECL@0..29
+    INTERFACE_KW@0..9 "interface"
+    WHITESPACE@9..10 " "
+    IDENTIFIER@10..11 "A"
+    INTERFACE_BODY@11..29
+      WHITESPACE@11..12 " "
+      L_BRACE@12..13 "{"
+      METHOD_DECL@13..27
+        WHITESPACE@13..14 " "
+        TYPE_PARAMETERS@14..17
+          LESS@14..15 "<"
+          TYPE_PARAMETER@15..16
+            IDENTIFIER@15..16 "T"
+          GREATER@16..17 ">"
+        TYPE@17..19
+          WHITESPACE@17..18 " "
+          QUALIFIED_NAME@18..19
+            IDENTIFIER@18..19 "T"
+        WHITESPACE@19..20 " "
+        IDENTIFIER@20..24 "func"
+        FORMAL_PARAMETERS@24..26
+          L_PAREN@24..25 "("
+          R_PAREN@25..26 ")"
+        SEMICOLON@26..27 ";"
+      WHITESPACE@27..28 " "
+      R_BRACE@28..29 "}"
