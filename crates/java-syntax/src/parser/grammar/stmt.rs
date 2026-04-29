@@ -12,7 +12,9 @@ use crate::grammar::expr::{
     case_pattern_or_constant, expression, expression_list, is_expression_start,
 };
 use crate::grammar::modifiers::variable_modifier;
-use crate::grammar::types::{dimensions, is_primitive_type, type_};
+use crate::grammar::types::{
+    at_primitive_type, dimensions, is_primitive_type, reference_type, type_,
+};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
@@ -501,7 +503,8 @@ fn catch_clause(p: &mut Parser) {
 fn catch_formal_parameter(p: &mut Parser) {
     let m = p.start();
     variable_modifier(p);
-    type_(p).ok();
+
+    catch_type(p);
 
     p.expect(IDENTIFIER);
 
@@ -510,6 +513,26 @@ fn catch_formal_parameter(p: &mut Parser) {
     }
 
     m.complete(p, CATCH_FORMAL_PARAMETER);
+}
+
+/// CatchType:
+///   UnannClassType {| ClassType}
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-CatchType
+fn catch_type(p: &mut Parser) {
+    let m = p.start();
+
+    if reference_type(p).is_err() {
+        p.error_message("Expected a reference type");
+        m.complete(p, ERROR);
+        return;
+    }
+
+    while p.eat(BIT_OR) {
+        if reference_type(p).is_err() {
+            p.error_message("Expected reference type after '|'");
+        }
+    }
 }
 
 fn finally_clause(p: &mut Parser) {
