@@ -83,7 +83,7 @@ LEX_ERRORS:
 pub fn check_events(src: &str) -> String {
     let (tokens, lex_errors) = collect_lex(src);
     let mut p = Parser::new(tokens.clone());
-    grammar::root(&mut p);
+    grammar::partial(&mut p, java_syntax::EntryPoint::Root);
 
     format!(
         "\
@@ -107,7 +107,7 @@ PARSE_ERRORS:
 pub fn check_parser(src: &str) -> String {
     let (tokens, lex_errors) = collect_lex(src);
     let mut p = Parser::new(tokens.clone());
-    let parse = p.parse();
+    let parse = p.parse(java_syntax::EntryPoint::Root);
 
     format!(
         "\

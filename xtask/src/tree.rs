@@ -41,7 +41,7 @@ pub fn render_java_tree(content: String) -> anyhow::Result<()> {
         }
     };
 
-    let parse = Parser::new(tokens).parse();
+    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
     let res = parse.debug_dump();
     println!("{res}");
 
@@ -133,7 +133,7 @@ fn process_single_file(input_path: &Path, output_root: &Path) -> anyhow::Result<
         Err((tokens, _errors)) => tokens,
     };
 
-    let parse = Parser::new(tokens).parse();
+    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
     let errors = parse.errors();
 
     if !errors.is_empty() {
