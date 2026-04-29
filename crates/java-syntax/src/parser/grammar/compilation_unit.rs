@@ -1,12 +1,24 @@
 use crate::{
+    grammar::stmt,
     kinds::SyntaxKind::*,
     parser::{
-        Parser,
-        grammar::{decl::decl, names::qualified_name},
+        EntryPoint, Parser,
+        grammar::{decl, names::qualified_name},
     },
 };
 
-pub fn root(p: &mut Parser) {
+pub fn partial(p: &mut Parser, entry: EntryPoint) {
+    match entry {
+        EntryPoint::Root => root(p),
+        EntryPoint::Block => stmt::block(p),
+        EntryPoint::ClassBody => decl::class_body(p),
+        EntryPoint::InterfaceBody => decl::interface_body(p),
+        EntryPoint::BlockStatement => stmt::block_statement(p),
+        EntryPoint::SwitchBlock => stmt::switch_block(p),
+    }
+}
+
+fn root(p: &mut Parser) {
     // the root node
     let m = p.start();
 
@@ -21,7 +33,7 @@ fn item(p: &mut Parser) {
     match p.current() {
         Some(PACKAGE_KW) => package_decl(p),
         Some(IMPORT_KW) => import_decl(p),
-        Some(_) => decl(p),
+        Some(_) => decl::decl(p),
         None => {}
     }
 }

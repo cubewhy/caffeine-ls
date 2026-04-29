@@ -432,7 +432,7 @@ pub fn interface_decl_rest(p: &mut Parser, m: Marker) {
     m.complete(p, INTERFACE_DECL);
 }
 
-fn interface_body(p: &mut Parser) {
+pub fn interface_body(p: &mut Parser) {
     let m = p.start();
 
     p.expect(L_BRACE);

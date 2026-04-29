@@ -12,9 +12,7 @@ use crate::grammar::expr::{
     case_pattern_or_constant, expression, expression_list, is_expression_start,
 };
 use crate::grammar::modifiers::variable_modifier;
-use crate::grammar::types::{
-    at_primitive_type, dimensions, is_primitive_type, reference_type, type_,
-};
+use crate::grammar::types::{dimensions, is_primitive_type, reference_type, type_};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
@@ -46,7 +44,7 @@ pub fn block(p: &mut Parser) {
     m.complete(p, BLOCK);
 }
 
-fn block_statement(p: &mut Parser) {
+pub fn block_statement(p: &mut Parser) {
     // Local Class and Interface Declarations
     // https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3
     if p.at(CLASS_KW) {
@@ -154,7 +152,7 @@ pub fn switch_common(p: &mut Parser) -> Marker {
     m
 }
 
-fn switch_block(p: &mut Parser) {
+pub fn switch_block(p: &mut Parser) {
     let m = p.start();
 
     p.expect(L_BRACE);

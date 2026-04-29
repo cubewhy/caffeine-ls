@@ -96,6 +96,15 @@ pub enum Event<'a> {
     FinishNode,
 }
 
+pub enum EntryPoint {
+    Root,
+    Block,
+    ClassBody,
+    InterfaceBody,
+    BlockStatement,
+    SwitchBlock,
+}
+
 pub struct Parser<'a> {
     source: TokenSource<'a>,
     pub events: Vec<Event<'a>>,
@@ -113,8 +122,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self) -> Parse {
-        grammar::root(&mut self);
+    pub fn parse(mut self, entry: EntryPoint) -> Parse {
+        grammar::partial(&mut self, entry);
+
         let green_node = Sink::new(self.source.into_inner(), self.events).finish();
 
         Parse {
@@ -321,7 +331,7 @@ pub fn parse(input: &str) -> Parse {
         Ok(tokens) => tokens,
         Err((tokens, _errors)) => tokens,
     };
-    crate::parser::Parser::new(tokens).parse()
+    Parser::new(tokens).parse(EntryPoint::Root)
 }
 
 #[derive(Clone, Copy)]
