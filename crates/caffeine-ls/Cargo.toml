@@ -1,0 +1,31 @@
+[package]
+name = "caffeine-ls"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "caffine-ls"
+path = "src/bin/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+cfg-if = "1.0"
+lsp-server = { workspace = true }
+lsp-types = "0.97.0"
+mimalloc = { version = "0.1.50", default-features = false, optional = true }
+
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Threading",
+] }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = { version = "0.6.1", package = "tikv-jemallocator", optional = true }
+
+[features]
+jemalloc = ["jemallocator"]

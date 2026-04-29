@@ -1,13 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/java-syntax", "lib/rust-asm", "xtask"]
+members = ["crates/caffeine-ls", "crates/java-syntax", "lib/rust-asm", "xtask"]
 
 [workspace.dependencies]
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower-lsp = "0.20"
+lsp-server = "0.7.9"
 stacksafe = "1.0"
 smallvec = "1.15.1"
 tracing = "0.1"
