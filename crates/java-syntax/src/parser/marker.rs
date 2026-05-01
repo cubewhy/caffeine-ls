@@ -1,3 +1,5 @@
+use drop_bomb::DropBomb;
+
 use crate::{
     kinds::SyntaxKind,
     parser::{Event, Parser},
@@ -5,14 +7,19 @@ use crate::{
 
 pub struct Marker {
     pub pos: usize,
+    bomb: DropBomb,
 }
 
 impl Marker {
     pub fn new(pos: usize) -> Self {
-        Self { pos }
+        let bomb = DropBomb::new("Marker should be explicitly completed");
+
+        Self { pos, bomb }
     }
 
-    pub fn complete(self, p: &mut Parser, kind: SyntaxKind) -> CompletedMarker {
+    pub fn complete(mut self, p: &mut Parser, kind: SyntaxKind) -> CompletedMarker {
+        self.bomb.defuse();
+
         let idx = self.pos;
         match p.events[idx] {
             Event::Tombstone => {
@@ -28,7 +35,8 @@ impl Marker {
         CompletedMarker::new(self.pos, kind)
     }
 
-    pub fn abandon(self, p: &mut Parser) {
+    pub fn abandon(mut self, p: &mut Parser) {
+        self.bomb.defuse();
         let idx = self.pos;
         if !matches!(p.events[idx], Event::Tombstone) {
             unreachable!("abandon on completed marker");

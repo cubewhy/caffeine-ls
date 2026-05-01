@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+drop_bomb = "0.1.5"
 unicode_categories = { workspace = true }
 rowan = { workspace = true }
 smallvec = { workspace = true }
