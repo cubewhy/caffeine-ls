@@ -8,13 +8,18 @@ name = "caffine-ls"
 path = "src/bin/main.rs"
 
 [dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-std"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+serde_json = { workspace = true, features = ["preserve_order"] }
+serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
+ra_ap_vfs = "0.0.330"
+rayon = { workspace = true }
+itertools = "0.14.0"
 cfg-if = "1.0"
-lsp-server = { workspace = true }
-lsp-types = "0.97.0"
+tower-lsp = "0.20.0"
 mimalloc = { version = "0.1.50", default-features = false, optional = true }
 
 

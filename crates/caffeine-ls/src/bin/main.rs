@@ -2,7 +2,7 @@ use std::{fs::File, path::PathBuf};
 
 use caffeine_ls::flags::Flags;
 use clap::Parser;
-use lsp_server::Connection;
+use tower_lsp::{LspService, Server};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 const STACK_SIZE: usize = 1024 * 1024 * 8;
@@ -27,7 +27,12 @@ fn main() {
 
     setup_logging(flags.log_file).expect("Failed to setup logger");
 
-    with_extra_thread("lsp-main", run_server).expect("An error occurred on the LSP server");
+    with_extra_thread("lsp-main", async {
+        run_server()
+            .await
+            .expect("An error occurred on the LSP server");
+    })
+    .expect("Failed to create runtime");
 }
 
 #[cfg(debug_assertions)]
@@ -69,38 +74,27 @@ fn setup_logging(log_file: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn with_extra_thread(
-    thread_name: impl Into<String>,
-    f: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
-) -> anyhow::Result<()> {
-    let handle = std::thread::Builder::new()
+fn with_extra_thread<F>(thread_name: impl Into<String>, f: F) -> anyhow::Result<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .name(thread_name.into())
-        .stack_size(STACK_SIZE)
-        .spawn(f)?;
+        .thread_stack_size(STACK_SIZE)
+        .build()?;
 
-    handle
-        .join()
-        .map_err(|_| anyhow::anyhow!("Thread panicked"))?
+    Ok(rt.block_on(f))
 }
 
-fn run_server() -> anyhow::Result<()> {
-    tracing::info!("server version {} will start", caffeine_ls::version());
+async fn run_server() -> anyhow::Result<()> {
+    tracing::info!("server version {} will start", caffeine_ls::VERSION);
 
-    let (connection, io_threads) = Connection::stdio();
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
 
-    let (initialize_id, initialize_params) = match connection.initialize_start() {
-        Ok(it) => it,
-        Err(e) => {
-            if e.channel_is_disconnected() {
-                io_threads.join()?;
-            }
-            return Err(e.into());
-        }
-    };
-
-    tracing::info!("InitializeParams: {}", initialize_params);
-
-    // TODO: enter LSP mainloop
+    let (service, socket) = LspService::new(caffeine_ls::Backend::new);
+    Server::new(stdin, stdout, socket).serve(service).await;
 
     tracing::info!("server did shut down");
     Ok(())
