@@ -3,6 +3,11 @@ resolver = "3"
 members = ["crates/*", "lib/*", "xtask/"]
 
 [workspace.dependencies]
+base-db = { path = "./crates/base-db/" }
+java-syntax = { path = "./crates/java-syntax/" }
+rust-asm = { path = "./lib/rust-asm/" }
+
+vfs = { package = "ra_ap_vfs", version = "0.0.330" }
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
@@ -12,6 +17,7 @@ stacksafe = "1.0"
 smallvec = "1.15.1"
 tracing = "0.1"
 rowan = "0.16.1"
+triomphe = "0.1.15"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dashmap = "6"
 unicode_categories = "0.1"

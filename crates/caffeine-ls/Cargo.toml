@@ -12,10 +12,10 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "io-std"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+vfs.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
-ra_ap_vfs = "0.0.330"
 ra_ap_line-index = "0.0.17"
 arc-swap = "1.9.1"
 rayon = { workspace = true }

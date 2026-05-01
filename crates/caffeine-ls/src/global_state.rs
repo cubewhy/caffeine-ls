@@ -1,6 +1,6 @@
 use arc_swap::ArcSwapOption;
-use ra_ap_vfs::Vfs;
 use tokio::sync::RwLock;
+use vfs::Vfs;
 
 use crate::config::Config;
 

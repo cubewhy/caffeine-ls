@@ -1,0 +1,10 @@
+[package]
+name = "base-db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+vfs.workspace = true
+dashmap.workspace = true
+rustc-hash.workspace = true
+triomphe.workspace = true

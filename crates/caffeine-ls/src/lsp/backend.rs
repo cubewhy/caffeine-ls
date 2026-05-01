@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use ra_ap_vfs::VfsPath;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     self, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -10,6 +9,7 @@ use tower_lsp::{
     Client, LanguageServer,
     lsp_types::{InitializeParams, InitializeResult, InitializedParams},
 };
+use vfs::VfsPath;
 
 use crate::config::Config;
 use crate::global_state::GlobalState;
