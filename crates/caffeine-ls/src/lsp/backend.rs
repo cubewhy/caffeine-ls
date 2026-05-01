@@ -1,20 +1,29 @@
+use ra_ap_vfs::VfsPath;
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::{MessageType, ServerInfo};
+use tower_lsp::lsp_types::{
+    self, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    MessageType, ServerInfo,
+};
 use tower_lsp::{
     Client, LanguageServer,
     lsp_types::{InitializeParams, InitializeResult, InitializedParams},
 };
 
 use crate::config::Config;
+use crate::global_state::GlobalState;
 use crate::lsp::capabilities;
 
 pub struct Backend {
     client: Client,
+    state: GlobalState,
 }
 
 impl Backend {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            state: GlobalState::default(),
+        }
     }
 }
 
@@ -45,6 +54,10 @@ impl LanguageServer for Backend {
             client_options,
         );
 
+        let mut config_lock = self.state.config.write().await;
+        *config_lock = Some(config.clone());
+        drop(config_lock);
+
         Ok(InitializeResult {
             server_info: Some(server_info()),
             capabilities: capabilities::server_capabilities(&config),
@@ -57,6 +70,36 @@ impl LanguageServer for Backend {
             .await;
     }
 
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        tracing::info!("didOpen {}", params.text_document.uri);
+        let text = params.text_document.text;
+        let content = text.clone().into_bytes();
+
+        if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
+            let mut vfs = self.state.vfs.write().await;
+            vfs.set_file_contents(vfs_path, Some(content));
+        } else {
+            tracing::error!(
+                "Failed to convert URI to file path: {}",
+                params.text_document.uri
+            );
+        }
+    }
+
+    async fn did_change(&self, _params: DidChangeTextDocumentParams) {
+        // TODO: update file content in salsa db
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        tracing::info!("didClose {}", params.text_document.uri);
+
+        if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
+            let mut vfs = self.state.vfs.write().await;
+            vfs.set_file_contents(vfs_path, None);
+            drop(vfs);
+        }
+    }
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
@@ -67,4 +110,12 @@ fn server_info() -> ServerInfo {
         name: crate::NAME.to_string(),
         version: Some(crate::VERSION.to_string()),
     }
+}
+
+fn to_vfs_path(uri: &lsp_types::Url) -> Option<VfsPath> {
+    let path_buf = uri.to_file_path().ok()?;
+    let normalized = path_buf.canonicalize().unwrap_or(path_buf);
+    Some(VfsPath::new_real_path(
+        normalized.to_string_lossy().to_string(),
+    ))
 }

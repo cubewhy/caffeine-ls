@@ -1,6 +1,6 @@
 use tower_lsp::lsp_types::{ClientCapabilities, ClientInfo, WorkspaceFolder};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub client_capabilities: ClientCapabilities,
     pub workspace_folders: Option<Vec<WorkspaceFolder>>,
@@ -24,5 +24,5 @@ impl Config {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ClientOptions {}

@@ -16,6 +16,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
 ra_ap_vfs = "0.0.330"
+ra_ap_line-index = "0.0.17"
 rayon = { workspace = true }
 itertools = "0.14.0"
 cfg-if = "1.0"
