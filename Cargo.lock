@@ -175,6 +175,7 @@ dependencies = [
  "ra_ap_line-index",
  "ra_ap_vfs",
  "rayon",
+ "rowan",
  "serde",
  "serde_json",
  "tikv-jemallocator",

@@ -19,7 +19,7 @@ use vfs::VfsPath;
 use crate::config::Config;
 use crate::global_state::GlobalState;
 use crate::lsp::capabilities;
-use crate::lsp::worker::{Action, Job};
+use crate::lsp::worker::{Action, Job, TaskKey};
 
 pub struct Backend {
     client: Client,
@@ -100,7 +100,7 @@ impl LanguageServer for Backend {
                     .send(Job::file(
                         file_id,
                         Duration::ZERO,
-                        Action::FullParse(file_id),
+                        Action::Diagnostics(file_id),
                     ))
                     .await;
             }
@@ -168,6 +168,15 @@ impl LanguageServer for Backend {
                 }
             }
             db.set_file_text(file_id, &text);
+
+            let _ = self
+                .worker_tx
+                .send(Job::new(
+                    TaskKey::File(file_id),
+                    Duration::from_millis(300),
+                    Action::Diagnostics(file_id),
+                ))
+                .await;
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",

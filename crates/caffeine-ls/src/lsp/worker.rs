@@ -3,7 +3,7 @@ mod jobs;
 use std::{collections::HashMap, time::Duration};
 
 use tokio::{sync::mpsc::Receiver, task::JoinHandle};
-use tower_lsp::{Client, lsp_types::TextEdit};
+use tower_lsp::Client;
 use triomphe::Arc;
 
 use crate::GlobalState;
@@ -81,22 +81,14 @@ impl Job {
 }
 
 pub enum Action {
-    IncrementalParse {
-        file_id: vfs::FileId,
-        text_edit: TextEdit,
-    },
-    FullParse(vfs::FileId),
+    Diagnostics(vfs::FileId),
 }
 
 impl Action {
-    pub async fn execute(self, state: Arc<GlobalState>, _client: Client) {
+    pub async fn execute(self, state: Arc<GlobalState>, client: Client) {
         match self {
-            Action::IncrementalParse { file_id, text_edit } => {
-                jobs::incremental_parse(state, file_id, text_edit).await;
-            }
-
-            Action::FullParse(file_id) => {
-                jobs::full_parse(state, file_id).await;
+            Action::Diagnostics(file_id) => {
+                jobs::publish_diagnostics(&client, state, file_id).await;
             }
         }
     }
