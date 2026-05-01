@@ -151,7 +151,9 @@ fn requires_modifier(p: &mut Parser) {
         is_empty = false;
     }
 
-    if !is_empty {
+    if is_empty {
+        m.abandon(p);
+    } else {
         m.complete(p, MODIFIER_LIST);
     }
 }
