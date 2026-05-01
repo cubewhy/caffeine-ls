@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use ra_ap_vfs::VfsPath;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -54,13 +56,13 @@ impl LanguageServer for Backend {
             client_options,
         );
 
-        let mut config_lock = self.state.config.write().await;
-        *config_lock = Some(config.clone());
-        drop(config_lock);
+        let capabilities = capabilities::server_capabilities(&config);
+
+        self.state.config.swap(Some(Arc::new(Some(config))));
 
         Ok(InitializeResult {
             server_info: Some(server_info()),
-            capabilities: capabilities::server_capabilities(&config),
+            capabilities,
         })
     }
 
