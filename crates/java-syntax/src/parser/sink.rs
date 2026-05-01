@@ -1,20 +1,30 @@
-use rowan::{GreenNode, GreenNodeBuilder};
+use rowan::{GreenNode, GreenNodeBuilder, NodeCache};
 
 use crate::{lexer::token::Token, parser::Event};
 
 pub struct Sink<'a> {
     tokens: Vec<Token<'a>>,
     events: Vec<Event<'a>>,
-    builder: GreenNodeBuilder<'static>,
+    builder: GreenNodeBuilder<'a>,
     cursor: usize, // raw token cursor, includes trivia
 }
 
 impl<'a> Sink<'a> {
-    pub fn new(tokens: Vec<Token<'a>>, events: Vec<Event<'a>>) -> Self {
+    pub fn new(
+        tokens: Vec<Token<'a>>,
+        events: Vec<Event<'a>>,
+        cache: Option<&'a mut NodeCache>,
+    ) -> Self {
+        let builder = if let Some(cache) = cache {
+            GreenNodeBuilder::with_cache(cache)
+        } else {
+            GreenNodeBuilder::new()
+        };
+
         Self {
             tokens,
             events,
-            builder: GreenNodeBuilder::new(),
+            builder,
             cursor: 0,
         }
     }

@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use rowan::GreenNode;
+use rowan::{GreenNode, NodeCache};
 
 use crate::{
     kinds::{
@@ -126,15 +126,23 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(mut self, entry: EntryPoint) -> Parse {
+    pub fn parse_with_cache(
+        mut self,
+        entry: EntryPoint,
+        cache: Option<&'a mut NodeCache>,
+    ) -> Parse {
         grammar::partial(&mut self, entry);
 
-        let green_node = Sink::new(self.source.into_inner(), self.events).finish();
+        let green_node = Sink::new(self.source.into_inner(), self.events, cache).finish();
 
         Parse {
             green_node,
             errors: self.errors,
         }
+    }
+
+    pub fn parse(self, entry: EntryPoint) -> Parse {
+        self.parse_with_cache(entry, None)
     }
 
     pub(crate) fn checkpoint(&self) -> Checkpoint {
