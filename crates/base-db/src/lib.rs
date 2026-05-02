@@ -8,7 +8,7 @@ use rustc_hash::FxHasher;
 use salsa::{Durability, Setter};
 use triomphe::Arc;
 
-use crate::input::parse_node;
+use crate::input::{ParseResult, parse_node};
 
 #[derive(Debug, Clone)]
 pub enum LanguageId {
@@ -57,7 +57,7 @@ pub trait SourceDatabase: salsa::Database {
     );
 
     /// GreenNode of the file
-    fn green_node(&self, file_id: vfs::FileId) -> Option<GreenNode>
+    fn green_node(&self, file_id: vfs::FileId) -> Option<ParseResult<'_>>
     where
         Self: std::marker::Sized,
     {
