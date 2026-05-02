@@ -166,8 +166,6 @@ impl LanguageServer for Backend {
                 let mut vfs_write = self.state.vfs.write().await;
                 vfs_write.set_file_contents(vfs_path, Some(text.into_bytes()));
             }
-
-            self.sync_vfs_to_db().await;
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",
@@ -215,11 +213,12 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
+        self.sync_vfs_to_db().await;
         tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let file_id = {
-                let vfs = self.state.vfs.write().await;
+                let vfs = self.state.vfs.read().await;
 
                 vfs.file_id(&vfs_path).map(|(id, _)| id)
             };
@@ -247,7 +246,7 @@ impl LanguageServer for Backend {
                 DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                     related_documents: None,
                     full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                        result_id: Some("some random string".to_string()),
+                        result_id: None,
                         items: diagnostics,
                     },
                 }),
@@ -292,6 +291,7 @@ impl Backend {
                         .and_then(|(_, ext)| ext)
                         .map(LanguageId::from_extension)
                         .unwrap_or(LanguageId::Unknown);
+                    drop(vfs);
 
                     db.set_file(file_id, &updated_text, language_id);
                 }

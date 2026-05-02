@@ -34,6 +34,5 @@ pub fn collect_diagnostics(
         .collect::<Vec<_>>();
 
     // TODO: collect diagnostics from validator
-
     Ok(diagnostics)
 }
