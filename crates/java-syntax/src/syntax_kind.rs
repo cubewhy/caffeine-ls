@@ -1,5 +1,4 @@
 use derive_more::Display;
-use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 #[repr(u16)]
