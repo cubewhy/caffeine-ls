@@ -10,3 +10,5 @@ dashmap.workspace = true
 salsa.workspace = true
 rustc-hash.workspace = true
 triomphe.workspace = true
+
+java-syntax.workspace = true

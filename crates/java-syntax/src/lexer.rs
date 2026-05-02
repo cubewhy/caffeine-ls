@@ -88,7 +88,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn scan_tokens(mut self) -> Result<Vec<Token<'a>>, (Vec<Token<'a>>, Vec<LexicalError>)> {
+    pub fn scan_tokens(mut self) -> (Vec<Token<'a>>, Vec<LexicalError>) {
         // consume BOM
         if self.reader.peek() == '\u{FEFF}' {
             self.reader.advance();
@@ -110,11 +110,7 @@ impl<'a> Lexer<'a> {
                 .map(|e| LexicalError::new(LexicalErrorKind::InvalidUnicodeEscape, e.position)),
         );
 
-        if !self.errors.is_empty() {
-            Err((self.tokens, self.errors))
-        } else {
-            Ok(self.tokens)
-        }
+        (self.tokens, self.errors)
     }
 
     fn scan_next_token(&mut self) {
@@ -936,6 +932,6 @@ fn is_java_whitespace(c: char) -> bool {
     matches!(c, '\u{0020}' | '\u{0009}' | '\u{000C}' | '\n' | '\r')
 }
 
-pub fn lex(src: &str) -> Result<Vec<Token<'_>>, (Vec<Token<'_>>, Vec<LexicalError>)> {
+pub fn lex(src: &str) -> (Vec<Token<'_>>, Vec<LexicalError>) {
     Lexer::new(src).scan_tokens()
 }

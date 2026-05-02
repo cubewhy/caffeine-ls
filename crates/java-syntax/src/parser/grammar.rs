@@ -9,4 +9,4 @@ mod names;
 mod stmt;
 mod types;
 
-pub use compilation_unit::partial;
+pub use compilation_unit::root;

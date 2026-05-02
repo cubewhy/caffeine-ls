@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+rowan.workspace = true
 vfs.workspace = true
 base-db.workspace = true
 salsa.workspace = true

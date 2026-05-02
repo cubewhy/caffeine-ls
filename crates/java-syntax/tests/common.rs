@@ -3,13 +3,6 @@ use java_syntax::{Event, Lang, LexicalError, ParseError, Parser, Token, grammar,
 
 use rowan::SyntaxNode;
 
-pub fn collect_lex(src: &str) -> (Vec<Token<'_>>, Vec<LexicalError>) {
-    match lex(src) {
-        Ok(tokens) => (tokens, vec![]),
-        Err((tokens, errors)) => (tokens, errors),
-    }
-}
-
 pub fn dump_tokens(tokens: &[Token<'_>]) -> String {
     let mut out = String::new();
     for tok in tokens {
@@ -68,7 +61,7 @@ pub fn dump_parse_errors(errors: &[ParseError]) -> String {
 }
 
 pub fn check_lexer(src: &str) -> String {
-    let (tokens, lex_errors) = collect_lex(src);
+    let (tokens, lex_errors) = lex(src);
     format!(
         "\
 SOURCE:
@@ -83,9 +76,9 @@ LEX_ERRORS:
 }
 
 pub fn check_events(src: &str) -> String {
-    let (tokens, lex_errors) = collect_lex(src);
+    let (tokens, lex_errors) = lex(src);
     let mut p = Parser::new(tokens.clone());
-    grammar::partial(&mut p, java_syntax::EntryPoint::Root);
+    grammar::root(&mut p);
 
     format!(
         "\
@@ -107,9 +100,9 @@ PARSE_ERRORS:
 }
 
 pub fn check_parser(src: &str) -> String {
-    let (tokens, lex_errors) = collect_lex(src);
+    let (tokens, lex_errors) = lex(src);
     let mut p = Parser::new(tokens.clone());
-    let parse = p.parse(java_syntax::EntryPoint::Root);
+    let parse = p.parse();
 
     format!(
         "\
@@ -129,7 +122,7 @@ SYNTAX_TREE:
 }
 
 pub fn check_lexer_ok(src: &str) -> String {
-    let (tokens, lex_errors) = collect_lex(src);
+    let (tokens, lex_errors) = lex(src);
     assert!(
         lex_errors.is_empty(),
         "lexing failed unexpectedly for input:\n{src}\n\nTOKENS:\n{}LEX_ERRORS:\n{}",
@@ -151,7 +144,7 @@ LEX_ERRORS:
 }
 
 pub fn check_lexer_error(src: &str) -> String {
-    let (tokens, lex_errors) = collect_lex(src);
+    let (tokens, lex_errors) = lex(src);
     assert!(
         !lex_errors.is_empty(),
         "expected lexing to fail, but it succeeded for input:\n{src}\n\nTOKENS:\n{}",

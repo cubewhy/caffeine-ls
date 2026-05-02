@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use tokio::sync::{Mutex, MutexGuard, RwLockReadGuard};
 
 use arc_swap::ArcSwapOption;
@@ -14,7 +12,6 @@ pub struct GlobalState {
     pub config: ArcSwapOption<Option<Config>>,
     pub vfs: RwLock<Vfs>,
     pub db: Mutex<RootDatabase>,
-    pub syntax_cache: Mutex<HashMap<vfs::FileId, rowan::NodeCache>>,
 }
 
 impl GlobalState {
@@ -29,10 +26,5 @@ impl GlobalState {
 
     pub async fn lock_db(&self) -> MutexGuard<'_, RootDatabase> {
         self.db.lock().await
-    }
-
-    pub async fn drop_syntax_cache(&self, file_id: &vfs::FileId) {
-        let cache = self.syntax_cache.lock().await;
-        cache.remove(file_id);
     }
 }

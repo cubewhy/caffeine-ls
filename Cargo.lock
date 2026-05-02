@@ -124,6 +124,7 @@ name = "base-db"
 version = "0.1.0"
 dependencies = [
  "dashmap 6.1.0",
+ "java-syntax",
  "ra_ap_vfs",
  "rowan",
  "rustc-hash 2.1.2",
@@ -649,6 +650,7 @@ version = "0.0.0"
 dependencies = [
  "base-db",
  "ra_ap_vfs",
+ "rowan",
  "salsa",
  "triomphe",
 ]

@@ -31,17 +31,9 @@ pub fn render_tree(lang: ParseLanguage, file_path: PathBuf) -> anyhow::Result<()
 }
 
 pub fn render_java_tree(content: String) -> anyhow::Result<()> {
-    let tokens = match lex(&content) {
-        Ok(tokens) => tokens,
-        Err((tokens, errors)) => {
-            for err in errors {
-                println!("Lexical error: {err:?}");
-            }
-            tokens
-        }
-    };
+    let tokens = lex(&content).0;
 
-    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
+    let parse = Parser::new(tokens).parse();
     let res = parse.debug_dump();
     println!("{res}");
 
@@ -128,12 +120,9 @@ fn process_with_timeout(input_path: PathBuf, output_root: PathBuf) -> anyhow::Re
 fn process_single_file(input_path: &Path, output_root: &Path) -> anyhow::Result<()> {
     let content = fs::read_to_string(input_path)?;
 
-    let tokens = match lex(&content) {
-        Ok(tokens) => tokens,
-        Err((tokens, _errors)) => tokens,
-    };
+    let tokens = lex(&content).0;
 
-    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
+    let parse = Parser::new(tokens).parse();
     let errors = parse.errors();
 
     if !errors.is_empty() {

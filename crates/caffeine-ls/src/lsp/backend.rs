@@ -128,9 +128,9 @@ impl LanguageServer for Backend {
             drop(vfs);
 
             // get the file in salsa
-            let mut db = self.state.db_snapshot().await;
+            let db = self.state.db_snapshot().await;
             let file_text = db.file_text(file_id);
-            let file_content = file_text.text(&*db);
+            let file_content = file_text.text(&db);
 
             let mut text = file_content.to_string();
 
@@ -195,15 +195,7 @@ impl LanguageServer for Backend {
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let mut vfs = self.state.vfs.write().await;
             vfs.set_file_contents(vfs_path, None);
-
-            let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
-                // LSP client issue
-                tracing::error!("File not found in vfs: {}", params.text_document.uri);
-                return;
-            };
             drop(vfs);
-
-            self.state.drop_syntax_cache(&file_id).await;
         }
     }
 
@@ -223,23 +215,22 @@ impl Backend {
 
         let mut db = self.state.lock_db().await;
 
-        for change in changes {
-            match change.change_kind {
-                ra_ap_vfs::ChangeKind::Create | ra_ap_vfs::ChangeKind::Modify => {
-                    let bytes = vfs.file_contents(change.file_id).to_vec();
+        for (file_id, changed_file) in changes {
+            match changed_file.change {
+                vfs::Change::Create(bytes, _) | vfs::Change::Modify(bytes, _) => {
                     let updated_text = String::from_utf8(bytes).unwrap_or_default();
 
                     let language_id = vfs
-                        .file_path(change.file_id)
+                        .file_path(file_id)
                         .name_and_extension()
                         .and_then(|(_, ext)| ext)
                         .map(LanguageId::from_extension)
                         .unwrap_or(LanguageId::Unknown);
 
-                    db.set_file(change.file_id, &updated_text, language_id);
+                    db.set_file(file_id, &updated_text, language_id);
                 }
-                ra_ap_vfs::ChangeKind::Delete => {
-                    db.set_file(change.file_id, "", LanguageId::Unknown);
+                vfs::Change::Delete => {
+                    db.set_file(file_id, "", LanguageId::Unknown);
                 }
             }
         }

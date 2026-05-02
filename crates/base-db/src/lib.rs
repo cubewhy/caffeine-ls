@@ -8,6 +8,8 @@ use rustc_hash::FxHasher;
 use salsa::{Durability, Setter};
 use triomphe::Arc;
 
+use crate::input::parse_node;
+
 #[derive(Debug, Clone)]
 pub enum LanguageId {
     Java,
@@ -55,7 +57,13 @@ pub trait SourceDatabase: salsa::Database {
     );
 
     /// GreenNode of the file
-    fn green_node(&self, file_id: vfs::FileId) -> GreenNode;
+    fn green_node(&self, file_id: vfs::FileId) -> Option<GreenNode>
+    where
+        Self: std::marker::Sized,
+    {
+        let file_text = self.file_text(file_id);
+        parse_node(self, file_text)
+    }
 
     fn nonce_and_revision(&self) -> (Nonce, salsa::Revision);
 }
