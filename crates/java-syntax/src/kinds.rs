@@ -11,7 +11,9 @@ pub enum SyntaxKind {
 
     #[strum(to_string = "{")]
     L_BRACE, // {
-    #[strum(to_string = "}}")]
+
+    // https://github.com/Peternator7/strum/issues/363
+    #[strum(disabled)]
     R_BRACE, // }
 
     #[strum(to_string = "[")]
@@ -391,6 +393,15 @@ pub enum SyntaxKind {
     // The root node
     // This should be the last variant.
     ROOT,
+}
+
+impl From<SyntaxKind> for String {
+    fn from(val: SyntaxKind) -> Self {
+        match val {
+            SyntaxKind::R_BRACE => "}".to_string(),
+            _ => val.to_string(),
+        }
+    }
 }
 
 impl SyntaxKind {
