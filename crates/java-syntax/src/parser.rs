@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use rowan::{GreenNode, NodeCache};
+use rowan::{GreenNode, NodeCache, TextRange, TextSize};
 
 use crate::{
     kinds::{
@@ -195,12 +195,25 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn current_token_range(&self) -> TextRange {
+        if let Some(over) = &self.override_token {
+            return TextRange::at(over.offset, TextSize::of(over.lexeme));
+        }
+
+        if let Some(token) = self.source.nth(0) {
+            return TextRange::at(token.offset, TextSize::of(token.lexeme));
+        }
+
+        TextRange::empty(TextSize::from(0))
+    }
+
     pub(crate) fn error_message(&mut self, msg: &'static str) {
         self.error(ParseErrorKind::Message(msg));
     }
 
     pub(crate) fn error(&mut self, error_kind: ParseErrorKind) {
-        let error = ParseError::new(error_kind, self.pos());
+        let range = self.current_token_range();
+        let error = ParseError::new(error_kind, range);
 
         self.errors.push(error.clone());
         self.events.push(Event::Error(error));
@@ -273,13 +286,13 @@ impl<'a> Parser<'a> {
     pub(crate) fn split_token(
         &mut self,
         first_kind: SyntaxKind,
-        first_len: usize,
+        first_len: u32,
         rest_kind: SyntaxKind,
     ) {
         let Some(old_token) = self.source.nth(0) else {
             return;
         };
-        let (head, tail) = old_token.lexeme.split_at(first_len);
+        let (head, tail) = old_token.lexeme.split_at(first_len as usize);
 
         self.events.push(Event::AddVirtualToken {
             kind: first_kind,
@@ -289,7 +302,7 @@ impl<'a> Parser<'a> {
         self.override_token = Some(Token {
             kind: rest_kind,
             lexeme: tail,
-            offset: old_token.offset + first_len,
+            offset: old_token.offset + TextSize::new(first_len),
         });
     }
 }
@@ -331,12 +344,12 @@ macro_rules! tokenset {
 #[derive(Clone, Debug)]
 pub struct ParseError {
     pub kind: ParseErrorKind,
-    pub pos: usize,
+    pub range: TextRange,
 }
 
 impl ParseError {
-    fn new(kind: ParseErrorKind, pos: usize) -> Self {
-        Self { kind, pos }
+    fn new(kind: ParseErrorKind, range: TextRange) -> Self {
+        Self { kind, range }
     }
 }
 

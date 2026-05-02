@@ -1,10 +1,12 @@
+use rowan::TextSize;
+
 use crate::kinds::SyntaxKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'source> {
     pub kind: SyntaxKind,
     pub lexeme: &'source str,
-    pub offset: usize, // the start position of the token
+    pub offset: TextSize, // the start position of the token
 }
 
 impl<'s> Token<'s> {
@@ -12,7 +14,7 @@ impl<'s> Token<'s> {
         Self {
             kind,
             lexeme,
-            offset,
+            offset: TextSize::new(offset as u32),
         }
     }
 }
