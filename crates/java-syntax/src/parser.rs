@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use derive_more::Display;
 use rowan::{GreenNode, NodeCache, TextRange, TextSize};
 
 use crate::{
@@ -363,26 +364,26 @@ pub enum ParseErrorKind {
     Message(&'static str),
 }
 
-#[derive(Debug, Clone, strum::Display)]
+#[derive(Debug, Clone, Display)]
 pub enum ExpectedConstruct {
-    #[strum(to_string = "a declaration (e.g., class, variable, or method)")]
+    #[display("a declaration (e.g., class, variable, or method)")]
     Declaration,
-    #[strum(to_string = "a type declaration (e.g., class, interface, enum)")]
+    #[display("a type declaration (e.g., class, interface, enum)")]
     TypeDeclaration,
-    #[strum(to_string = "a class member (e.g., field or method)")]
+    #[display("a class member (e.g., field or method)")]
     MemberDeclaration,
-    #[strum(to_string = "an expression (e.g., a calculation or value)")]
+    #[display("an expression (e.g., a calculation or value)")]
     Expression,
-    #[strum(to_string = "a statement")]
+    #[display("a statement")]
     Statement,
-    #[strum(to_string = "a type")]
+    #[display("a type")]
     Type,
-    #[strum(to_string = "a try-with-resources resource")]
+    #[display("a try-with-resources resource")]
     Resource,
-    #[strum(to_string = "a qualified name (e.g., java.util.List)")]
+    #[display("a qualified name (e.g., java.util.List)")]
     QualifiedName,
-    #[strum(to_string = "a pattern matching expression")]
+    #[display("a pattern matching expression")]
     Pattern,
-    #[strum(to_string = "a module directive (e.g., requires, exports)")]
+    #[display("a module directive (e.g., requires, exports)")]
     ModuleDirective,
 }

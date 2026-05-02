@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 drop_bomb = "0.1.5"
-strum = { version = "0.28", features = ["derive"] }
+derive_more = { version = "2.1.1", features = ["display"] }
 unicode_categories = { workspace = true }
 rowan = { workspace = true }
 smallvec = { workspace = true }

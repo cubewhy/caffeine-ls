@@ -1,28 +1,29 @@
+use derive_more::Display;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, strum::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 #[repr(u16)]
 #[allow(non_camel_case_types)]
 pub enum SyntaxKind {
-    #[strum(to_string = "(")]
+    #[display("(")]
     L_PAREN, // (
-    #[strum(to_string = ")")]
+    #[display(")")]
     R_PAREN, // )
 
-    #[strum(to_string = "{")]
+    #[display("{{")]
     L_BRACE, // {
 
-    // https://github.com/Peternator7/strum/issues/363
+    #[display("}}")]
     R_BRACE, // }
 
-    #[strum(to_string = "[")]
+    #[display("[")]
     L_BRACKET, // [
-    #[strum(to_string = "]")]
+    #[display("]")]
     R_BRACKET, // ]
 
-    #[strum(to_string = "a string")]
+    #[display("a string")]
     STRING_LITERAL, // ""
-    #[strum(to_string = "a number")]
+    #[display("a number")]
     NUMBER_LITERAL, // dec, hex, oct, bin
     STRING_TEMPLATE_BEGIN,
     STRING_TEMPLATE_MID,
@@ -31,207 +32,207 @@ pub enum SyntaxKind {
     TEXT_BLOCK_TEMPLATE_MID,
     TEXT_BLOCK_TEMPLATE_END,
 
-    #[strum(to_string = "null")]
+    #[display("null")]
     NULL_LITERAL, // null
-    #[strum(to_string = "true")]
+    #[display("true")]
     TRUE_LITERAL, // true
-    #[strum(to_string = "false")]
+    #[display("false")]
     FALSE_LITERAL, // false
     CHAR_LITERAL, // ''
-    #[strum(to_string = ";")]
+    #[display(";")]
     SEMICOLON, // ;
-    #[strum(to_string = ".")]
+    #[display(".")]
     DOT, // .
-    #[strum(to_string = "@")]
+    #[display("@")]
     AT, // @
-    #[strum(to_string = "+")]
+    #[display("+")]
     PLUS, // +
-    #[strum(to_string = "-")]
+    #[display("-")]
     MINUS, // -
-    #[strum(to_string = "*")]
+    #[display("*")]
     STAR, // *
-    #[strum(to_string = "/")]
+    #[display("/")]
     SLASH, // /
-    #[strum(to_string = "<=")]
+    #[display("<=")]
     LESS_EQUAL, // <=
-    #[strum(to_string = "<")]
+    #[display("<")]
     LESS, // <
-    #[strum(to_string = ">")]
+    #[display(">")]
     GREATER, // >
-    #[strum(to_string = ">=")]
+    #[display(">=")]
     GREATER_EQUAL, // >=
-    #[strum(to_string = "==")]
+    #[display("==")]
     EQUAL_EQUAL, // ==
-    #[strum(to_string = "=")]
+    #[display("=")]
     EQUAL, // =
-    #[strum(to_string = "||")]
+    #[display("||")]
     OR, // ||
-    #[strum(to_string = "|")]
+    #[display("|")]
     BIT_OR, // |
-    #[strum(to_string = "|=")]
+    #[display("|=")]
     OR_EQUAL, // |=
-    #[strum(to_string = "&&")]
+    #[display("&&")]
     AND, // &&
-    #[strum(to_string = "&")]
+    #[display("&")]
     BIT_AND, // &
-    #[strum(to_string = "&=")]
+    #[display("&=")]
     AND_EQUAL, // &=
-    #[strum(to_string = "!")]
+    #[display("!")]
     NOT, // !
-    #[strum(to_string = "~")]
+    #[display("~")]
     TILDE, // ~
-    #[strum(to_string = "%")]
+    #[display("%")]
     MODULO, // %
-    #[strum(to_string = "^")]
+    #[display("^")]
     CARET, // ^
-    #[strum(to_string = "/=")]
+    #[display("/=")]
     DIVIDE_EQUAL, // /=
-    #[strum(to_string = "!=")]
+    #[display("!=")]
     NOT_EQUAL, // !=
-    #[strum(to_string = "*=")]
+    #[display("*=")]
     MULTIPLE_EQUAL, // *=
-    #[strum(to_string = "+=")]
+    #[display("+=")]
     PLUS_EQUAL, // +=
-    #[strum(to_string = "++")]
+    #[display("++")]
     PLUS_PLUS, // ++
-    #[strum(to_string = "-=")]
+    #[display("-=")]
     MINUS_EQUAL, // -=
-    #[strum(to_string = "--")]
+    #[display("--")]
     MINUS_MINUS, // --
-    #[strum(to_string = "^=")]
+    #[display("^=")]
     XOR_EQUAL, // ^=
-    #[strum(to_string = "%=")]
+    #[display("%=")]
     MODULO_EQUAL, // %=
-    #[strum(to_string = "<<=")]
+    #[display("<<=")]
     LEFT_SHIFT_EQUAL, // <<=
-    #[strum(to_string = ">>=")]
+    #[display(">>=")]
     RIGHT_SHIFT_EQUAL, // >>=
-    #[strum(to_string = ">>>=")]
+    #[display(">>>=")]
     UNSIGNED_RIGHT_SHIFT_EQUAL, // >>>=
-    #[strum(to_string = "<<")]
+    #[display("<<")]
     LEFT_SHIFT, // <<
-    #[strum(to_string = ">>")]
+    #[display(">>")]
     RIGHT_SHIFT, // >>
-    #[strum(to_string = ">>>")]
+    #[display(">>>")]
     UNSIGNED_RIGHT_SHIFT, // >>>
-    #[strum(to_string = ",")]
+    #[display(",")]
     COMMA, // ,
-    #[strum(to_string = "?")]
+    #[display("?")]
     QUESTION, // ?
-    #[strum(to_string = "->")]
+    #[display("->")]
     ARROW, // ->
-    #[strum(to_string = "::")]
+    #[display("::")]
     COLON_COLON, // ::
-    #[strum(to_string = ":")]
+    #[display(":")]
     COLON, // :
-    #[strum(to_string = "...")]
+    #[display("...")]
     ELLIPSIS, // ...
     TEXT_BLOCK,   // """ """
-    #[strum(to_string = "_")]
+    #[display("_")]
     UNDERSCORE, // _
 
     // Keywords
-    #[strum(to_string = "package")]
+    #[display("package")]
     PACKAGE_KW, // package
-    #[strum(to_string = "import")]
+    #[display("import")]
     IMPORT_KW, // import
-    #[strum(to_string = "class")]
+    #[display("class")]
     CLASS_KW, // class
-    #[strum(to_string = "public")]
+    #[display("public")]
     PUBLIC_KW, // public
-    #[strum(to_string = "private")]
+    #[display("private")]
     PRIVATE_KW, // private
-    #[strum(to_string = "protected")]
+    #[display("protected")]
     PROTECTED_KW, // protected
-    #[strum(to_string = "final")]
+    #[display("final")]
     FINAL_KW, // final
-    #[strum(to_string = "static")]
+    #[display("static")]
     STATIC_KW, // static
-    #[strum(to_string = "void")]
+    #[display("void")]
     VOID_KW, // void
-    #[strum(to_string = "byte")]
+    #[display("byte")]
     BYTE_KW, // byte
-    #[strum(to_string = "enum")]
+    #[display("enum")]
     ENUM_KW, // enum
-    #[strum(to_string = "interface")]
+    #[display("interface")]
     INTERFACE_KW, // interface
-    #[strum(to_string = "abstract")]
+    #[display("abstract")]
     ABSTRACT_KW, // abstract
-    #[strum(to_string = "for")]
+    #[display("for")]
     FOR_KW, // for
-    #[strum(to_string = "while")]
+    #[display("while")]
     WHILE_KW, // while
-    #[strum(to_string = "continue")]
+    #[display("continue")]
     CONTINUE_KW, // continue
-    #[strum(to_string = "break")]
+    #[display("break")]
     BREAK_KW, // break
-    #[strum(to_string = "instanceof")]
+    #[display("instanceof")]
     INSTANCEOF_KW, // instanceof
-    #[strum(to_string = "return")]
+    #[display("return")]
     RETURN_KW, // return
-    #[strum(to_string = "transient")]
+    #[display("transient")]
     TRANSIENT_KW, // transient
-    #[strum(to_string = "extends")]
+    #[display("extends")]
     EXTENDS_KW, // extends
-    #[strum(to_string = "implements")]
+    #[display("implements")]
     IMPLEMENTS_KW, // implements
-    #[strum(to_string = "new")]
+    #[display("new")]
     NEW_KW, // new
-    #[strum(to_string = "assert")]
+    #[display("assert")]
     ASSERT_KW, // assert
-    #[strum(to_string = "switch")]
+    #[display("switch")]
     SWITCH_KW, // switch
-    #[strum(to_string = "case")]
+    #[display("case")]
     CASE_KW, // case
-    #[strum(to_string = "default")]
+    #[display("default")]
     DEFAULT_KW, // default
-    #[strum(to_string = "synchronized")]
+    #[display("synchronized")]
     SYNCHRONIZED_KW, // synchronized
-    #[strum(to_string = "do")]
+    #[display("do")]
     DO_KW, // do
-    #[strum(to_string = "if")]
+    #[display("if")]
     IF_KW, // if
-    #[strum(to_string = "else")]
+    #[display("else")]
     ELSE_KW, // else
-    #[strum(to_string = "this")]
+    #[display("this")]
     THIS_KW, // this
-    #[strum(to_string = "super")]
+    #[display("super")]
     SUPER_KW, // super
-    #[strum(to_string = "volatile")]
+    #[display("volatile")]
     VOLATILE_KW, // volatile
-    #[strum(to_string = "native")]
+    #[display("native")]
     NATIVE_KW, // native
-    #[strum(to_string = "throw")]
+    #[display("throw")]
     THROW_KW, // throw
-    #[strum(to_string = "throws")]
+    #[display("throws")]
     THROWS_KW, // throws
-    #[strum(to_string = "try")]
+    #[display("try")]
     TRY_KW, // try
-    #[strum(to_string = "catch")]
+    #[display("catch")]
     CATCH_KW, // catch
-    #[strum(to_string = "finally")]
+    #[display("finally")]
     FINALLY_KW, // finally
-    #[strum(to_string = "strictfp")]
+    #[display("strictfp")]
     STRICTFP_KW, // strictfp
-    #[strum(to_string = "double")]
+    #[display("double")]
     DOUBLE_KW, // double
-    #[strum(to_string = "int")]
+    #[display("int")]
     INT_KW, // int
-    #[strum(to_string = "short")]
+    #[display("short")]
     SHORT_KW, // short
-    #[strum(to_string = "long")]
+    #[display("long")]
     LONG_KW, // long
-    #[strum(to_string = "float")]
+    #[display("float")]
     FLOAT_KW, // float
-    #[strum(to_string = "char")]
+    #[display("char")]
     CHAR_KW, // char
-    #[strum(to_string = "boolean")]
+    #[display("boolean")]
     BOOLEAN_KW, // boolean
 
     // reserved keywords
-    #[strum(to_string = "goto")]
+    #[display("goto")]
     GOTO_KW, // goto
-    #[strum(to_string = "const")]
+    #[display("const")]
     CONST_KW, // const
 
     // Trivia
@@ -243,12 +244,12 @@ pub enum SyntaxKind {
     UNKNOWN,
 
     // Internal
-    #[strum(to_string = "identifier")]
+    #[display("identifier")]
     IDENTIFIER,
     EOF,
 
     // Nodes
-    #[strum(to_string = "missing code")]
+    #[display("missing code")]
     MISSING,
     ERROR,
 
@@ -392,15 +393,6 @@ pub enum SyntaxKind {
     // The root node
     // This should be the last variant.
     ROOT,
-}
-
-impl From<SyntaxKind> for String {
-    fn from(val: SyntaxKind) -> Self {
-        match val {
-            SyntaxKind::R_BRACE => "}".to_string(),
-            _ => val.to_string(),
-        }
-    }
 }
 
 impl SyntaxKind {
