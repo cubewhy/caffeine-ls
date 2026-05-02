@@ -58,7 +58,7 @@ pub trait SourceDatabase: salsa::Database {
     );
 
     /// GreenNode of the file
-    fn green_node(&self, file_id: vfs::FileId) -> Option<ParseResult<'_>>
+    fn parse_node(&self, file_id: vfs::FileId) -> Option<ParseResult<'_>>
     where
         Self: std::marker::Sized,
     {
