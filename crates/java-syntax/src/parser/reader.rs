@@ -44,10 +44,6 @@ impl<'a> TokenSource<'a> {
         self.cursor >= self.indices.len()
     }
 
-    pub fn current_raw_index(&self) -> Option<usize> {
-        self.indices.get(self.cursor).copied()
-    }
-
     pub fn into_inner(self) -> Vec<Token<'a>> {
         self.tokens
     }
