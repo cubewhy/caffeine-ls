@@ -20,10 +20,7 @@ export function activate(context: ExtensionContext) {
   const run: Executable = {
     command,
     options: {
-      env: {
-        ...process.env,
-        RUST_LOG: "debug",
-      },
+      env: process.env,
     },
   };
 
