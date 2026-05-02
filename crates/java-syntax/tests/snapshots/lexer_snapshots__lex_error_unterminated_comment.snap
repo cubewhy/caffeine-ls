@@ -8,4 +8,4 @@ TOKENS:
 BLOCK_COMMENT "/* this block comment never ends "
 
 LEX_ERRORS:
-LexicalError { kind: UnterminatedComment, at_offset: 0 }
+LexicalError { kind: UnterminatedComment, range: 0..33 }

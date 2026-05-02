@@ -8,4 +8,4 @@ TOKENS:
 NUMBER_LITERAL "123_.45"
 
 LEX_ERRORS:
-LexicalError { kind: InvalidNumber, at_offset: 0 }
+LexicalError { kind: InvalidNumber, range: 0..4 }

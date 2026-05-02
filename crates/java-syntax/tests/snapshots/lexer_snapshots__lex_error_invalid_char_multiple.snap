@@ -8,4 +8,4 @@ TOKENS:
 CHAR_LITERAL "'abc'"
 
 LEX_ERRORS:
-LexicalError { kind: InvalidChar, at_offset: 0 }
+LexicalError { kind: InvalidChar, range: 0..5 }

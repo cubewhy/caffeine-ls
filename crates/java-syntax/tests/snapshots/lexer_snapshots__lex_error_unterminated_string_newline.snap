@@ -10,5 +10,5 @@ WHITESPACE "\n"
 IDENTIFIER "line2"
 
 LEX_ERRORS:
-LexicalError { kind: UnterminatedString, at_offset: 0 }
-LexicalError { kind: UnterminatedString, at_offset: 12 }
+LexicalError { kind: UnterminatedString, range: 0..6 }
+LexicalError { kind: UnterminatedString, range: 12..13 }

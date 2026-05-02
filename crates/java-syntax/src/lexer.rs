@@ -1,3 +1,5 @@
+use rowan::{TextRange, TextSize};
+
 use crate::{
     kinds::SyntaxKind,
     lexer::{
@@ -107,7 +109,7 @@ impl<'a> Lexer<'a> {
             self.reader
                 .errors()
                 .iter()
-                .map(|e| LexicalError::new(LexicalErrorKind::InvalidUnicodeEscape, e.position)),
+                .map(|e| LexicalError::new(LexicalErrorKind::InvalidUnicodeEscape, e.range)),
         );
 
         (self.tokens, self.errors)
@@ -890,22 +892,24 @@ impl<'a> Lexer<'a> {
     }
 
     fn report_error(&mut self, error_type: LexicalErrorKind) {
+        let start = TextSize::from(self.reader.start() as u32);
+        let end = TextSize::from(self.reader.current() as u32);
         self.errors
-            .push(LexicalError::new(error_type, self.reader.start()));
+            .push(LexicalError::new(error_type, TextRange::new(start, end)));
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct LexicalError {
     pub kind: LexicalErrorKind,
-    pub at_offset: usize,
+    pub range: TextRange,
 }
 
 impl LexicalError {
-    pub fn new(error_type: LexicalErrorKind, offset: usize) -> Self {
+    pub fn new(error_type: LexicalErrorKind, range: TextRange) -> Self {
         Self {
             kind: error_type,
-            at_offset: offset,
+            range,
         }
     }
 }

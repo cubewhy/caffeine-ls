@@ -16,5 +16,5 @@ NUMBER_LITERAL "1"
 SEMICOLON ";"
 
 LEX_ERRORS:
-LexicalError { kind: UnexpectedChar('\\'), at_offset: 4 }
-LexicalError { kind: InvalidUnicodeEscape, at_offset: 4 }
+LexicalError { kind: UnexpectedChar('\\'), range: 4..5 }
+LexicalError { kind: InvalidUnicodeEscape, range: 4..10 }

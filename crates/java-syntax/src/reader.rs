@@ -1,8 +1,10 @@
 use std::char;
 
+use rowan::{TextRange, TextSize};
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UnicodeEscapeError {
-    pub position: usize,
+    pub range: TextRange,
     pub message: String,
 }
 
@@ -14,7 +16,7 @@ enum ScanResult {
     /// sequence (missing digits, non-hex digits, or isolated surrogate).
     /// The logical character is `\` (1 raw byte); the error is recorded only
     /// when `advance()` actually consumes it.
-    InvalidEscape(String),
+    InvalidEscape(String, usize),
 }
 
 pub struct SourceReader<'a> {
@@ -68,7 +70,7 @@ impl<'a> SourceReader<'a> {
                     }
                     i += len;
                 }
-                ScanResult::InvalidEscape(_) => {
+                ScanResult::InvalidEscape(_, _) => {
                     has_escapes = true;
                     break;
                 }
@@ -87,7 +89,7 @@ impl<'a> SourceReader<'a> {
                     result.push(c);
                     i += len;
                 }
-                ScanResult::InvalidEscape(_) => {
+                ScanResult::InvalidEscape(_, _) => {
                     result.push('\\');
                     i += 1;
                 }
@@ -139,9 +141,12 @@ impl<'a> SourceReader<'a> {
                 self.current += len;
                 true
             }
-            ScanResult::InvalidEscape(msg) if expected == '\\' => {
+            ScanResult::InvalidEscape(msg, len) if expected == '\\' => {
                 self.errors.push(UnicodeEscapeError {
-                    position: self.current,
+                    range: TextRange::at(
+                        TextSize::from(self.current as u32),
+                        TextSize::from(len as u32),
+                    ),
                     message: msg,
                 });
                 self.current += 1;
@@ -178,9 +183,12 @@ impl<'a> SourceReader<'a> {
                 self.current += len;
                 c
             }
-            ScanResult::InvalidEscape(msg) => {
+            ScanResult::InvalidEscape(msg, len) => {
                 self.errors.push(UnicodeEscapeError {
-                    position: self.current,
+                    range: TextRange::at(
+                        TextSize::from(self.current as u32),
+                        TextSize::from(len as u32),
+                    ),
                     message: msg,
                 });
                 self.current += 1;
@@ -193,7 +201,7 @@ impl<'a> SourceReader<'a> {
     fn logical_char_at(&self, offset: usize) -> char {
         match self.scan_at(offset) {
             ScanResult::Char(c, _) => c,
-            ScanResult::InvalidEscape(_) => '\\',
+            ScanResult::InvalidEscape(_, _) => '\\',
         }
     }
 
@@ -201,7 +209,7 @@ impl<'a> SourceReader<'a> {
     fn logical_len_at(&self, offset: usize) -> usize {
         match self.scan_at(offset) {
             ScanResult::Char(_, len) => len,
-            ScanResult::InvalidEscape(_) => 1,
+            ScanResult::InvalidEscape(_, _) => 1,
         }
     }
 
@@ -259,29 +267,40 @@ impl<'a> SourceReader<'a> {
         let hex_end = hex_start + 4;
 
         if hex_end > bytes.len() {
-            return ScanResult::InvalidEscape(format!(
-                "Incomplete Unicode escape sequence at position {offset} \
-                 (expected 4 hex digits after '{}')",
-                &self.source[offset..i.min(self.source.len())]
-            ));
+            let err_len = bytes.len() - offset;
+            return ScanResult::InvalidEscape(
+                format!(
+                    "Incomplete Unicode escape sequence at position {offset} \
+                     (expected 4 hex digits after '{}')",
+                    &self.source[offset..i.min(self.source.len())]
+                ),
+                err_len,
+            );
         }
 
         let hex_str = &self.source[hex_start..hex_end];
+        let err_len = hex_end - offset;
         if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
-            return ScanResult::InvalidEscape(format!(
-                "Invalid Unicode escape '\\u{}' at position {offset}: \
-                 non-hex digit in escape sequence",
-                &self.source[next..hex_end]
-            ));
+            return ScanResult::InvalidEscape(
+                format!(
+                    "Invalid Unicode escape '\\u{}' at position {offset}: \
+                     non-hex digit in escape sequence",
+                    &self.source[next..hex_end]
+                ),
+                err_len,
+            );
         }
 
         let code = u32::from_str_radix(hex_str, 16).unwrap();
         match char::from_u32(code) {
-            Some(c) => ScanResult::Char(c, hex_end - offset),
-            None => ScanResult::InvalidEscape(format!(
-                "Invalid Unicode scalar value \\u{hex_str} at position {offset} \
-                 (isolated surrogate U+{code:04X})"
-            )),
+            Some(c) => ScanResult::Char(c, err_len),
+            None => ScanResult::InvalidEscape(
+                format!(
+                    "Invalid Unicode scalar value \\u{hex_str} at position {offset} \
+                     (isolated surrogate U+{code:04X})"
+                ),
+                err_len,
+            ),
         }
     }
 

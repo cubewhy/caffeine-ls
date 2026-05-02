@@ -7,4 +7,4 @@ SOURCE:
 TOKENS:
 
 LEX_ERRORS:
-LexicalError { kind: UnterminatedString, at_offset: 0 }
+LexicalError { kind: UnterminatedString, range: 0..23 }
