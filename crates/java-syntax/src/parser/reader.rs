@@ -1,4 +1,4 @@
-use crate::{kinds::SyntaxKind, lexer::token::Token};
+use crate::{lexer::token::Token, syntax_kind::SyntaxKind};
 
 pub struct TokenSource<'a> {
     tokens: Vec<Token<'a>>,

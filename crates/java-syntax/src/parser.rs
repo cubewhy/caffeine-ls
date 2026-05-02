@@ -4,7 +4,7 @@ use derive_more::Display;
 use rowan::{GreenNode, NodeCache, TextRange, TextSize};
 
 use crate::{
-    kinds::{
+    syntax_kind::{
         ContextualKeyword,
         SyntaxKind::{self, *},
     },

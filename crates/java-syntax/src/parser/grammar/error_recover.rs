@@ -1,6 +1,6 @@
 use crate::{
-    kinds::SyntaxKind::{self, *},
     parser::Parser,
+    syntax_kind::SyntaxKind::{self, *},
     tokenset,
 };
 

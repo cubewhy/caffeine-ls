@@ -1,8 +1,8 @@
 use drop_bomb::DropBomb;
 
 use crate::{
-    kinds::SyntaxKind,
     parser::{Event, Parser},
+    syntax_kind::SyntaxKind,
 };
 
 pub struct Marker {

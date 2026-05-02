@@ -1,6 +1,6 @@
 use rowan::TextSize;
 
-use crate::kinds::SyntaxKind;
+use crate::syntax_kind::SyntaxKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'source> {

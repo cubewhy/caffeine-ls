@@ -1,7 +1,6 @@
 use crate::grammar::error_recover::recover_annotation_type_parameter;
 use crate::grammar::expr::expression;
 use crate::grammar::types::{type_or_void, type_parameters_opt};
-use crate::kinds::{ContextualKeyword, SyntaxKind::*};
 use crate::parser::grammar::clauses::{throws_clause, throws_clause_opt};
 use crate::parser::grammar::decl::{
     annotation_type_decl_rest, class_decl_rest, enum_decl_rest, interface_decl_rest,
@@ -13,6 +12,7 @@ use crate::parser::grammar::stmt::{block, method_body_or_semicolon};
 use crate::parser::grammar::types::{at_type_start, formal_parameters, type_};
 use crate::parser::marker::Marker;
 use crate::parser::{ExpectedConstruct, Parser};
+use crate::syntax_kind::{ContextualKeyword, SyntaxKind::*};
 use crate::tokenset;
 
 pub fn at_member_start(p: &Parser) -> bool {

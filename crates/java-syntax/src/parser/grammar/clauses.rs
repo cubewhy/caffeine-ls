@@ -1,4 +1,4 @@
-use crate::{grammar::types::type_, kinds::SyntaxKind::*, parser::Parser};
+use crate::{grammar::types::type_, parser::Parser, syntax_kind::SyntaxKind::*};
 
 pub fn throws_clause_opt(p: &mut Parser) {
     if p.at(THROWS_KW) {

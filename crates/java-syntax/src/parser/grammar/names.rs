@@ -1,4 +1,4 @@
-use crate::{kinds::SyntaxKind::*, parser::Parser};
+use crate::{parser::Parser, syntax_kind::SyntaxKind::*};
 
 pub fn qualified_name(p: &mut Parser) {
     let m = p.start();

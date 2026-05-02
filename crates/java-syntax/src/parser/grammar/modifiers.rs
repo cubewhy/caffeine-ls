@@ -1,8 +1,8 @@
 use crate::{
     ContextualKeyword,
     grammar::expr::element_value,
-    kinds::SyntaxKind::*,
     parser::{Parser, grammar::names::qualified_name},
+    syntax_kind::SyntaxKind::*,
     tokenset,
 };
 

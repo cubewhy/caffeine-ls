@@ -5,11 +5,11 @@ use crate::{
         expr::{expression, is_expression_start},
         names::qualified_name,
     },
-    kinds::SyntaxKind::*,
     parser::{
         ExpectedConstruct, Parser,
         grammar::{error_recover::recover_parameter, modifiers::modifiers},
     },
+    syntax_kind::SyntaxKind::*,
     tokenset,
 };
 

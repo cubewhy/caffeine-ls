@@ -13,11 +13,11 @@ use crate::{
             is_formal_parameters, reference_type, type_, type_arguments, type_arguments_opt,
         },
     },
-    kinds::SyntaxKind::*,
     parser::{
         ExpectedConstruct, Parser,
         marker::{CompletedMarker, Marker},
     },
+    syntax_kind::SyntaxKind::*,
 };
 
 pub fn argument_list(p: &mut Parser) {

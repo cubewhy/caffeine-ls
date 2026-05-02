@@ -1,7 +1,7 @@
 use rowan::{TextRange, TextSize};
 
 use crate::{
-    kinds::SyntaxKind,
+    syntax_kind::SyntaxKind,
     lexer::{
         identifier::{is_java_identifier_part, is_java_identifier_start},
         token::Token,

@@ -13,9 +13,9 @@ use crate::grammar::expr::{
 };
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, is_primitive_type, reference_type, type_};
-use crate::kinds::SyntaxKind::*;
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
+use crate::syntax_kind::SyntaxKind::*;
 use crate::{ContextualKeyword, SyntaxKind, tokenset};
 
 pub fn method_body_or_semicolon(p: &mut Parser) {

@@ -1,9 +1,9 @@
 use crate::{
-    kinds::SyntaxKind::*,
     parser::{
         Parser,
         grammar::{decl, names::qualified_name},
     },
+    syntax_kind::SyntaxKind::*,
 };
 
 pub fn root(p: &mut Parser) {
