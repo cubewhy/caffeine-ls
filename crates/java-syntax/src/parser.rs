@@ -363,16 +363,26 @@ pub enum ParseErrorKind {
     Message(&'static str),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, strum::Display)]
 pub enum ExpectedConstruct {
+    #[strum(to_string = "a declaration (e.g., class, variable, or method)")]
     Declaration,
+    #[strum(to_string = "a type declaration (e.g., class, interface, enum)")]
     TypeDeclaration,
+    #[strum(to_string = "a class member (e.g., field or method)")]
     MemberDeclaration,
+    #[strum(to_string = "an expression (e.g., a calculation or value)")]
     Expression,
+    #[strum(to_string = "a statement")]
     Statement,
+    #[strum(to_string = "a type")]
     Type,
+    #[strum(to_string = "a try-with-resources resource")]
     Resource,
+    #[strum(to_string = "a qualified name (e.g., java.util.List)")]
     QualifiedName,
+    #[strum(to_string = "a pattern matching expression")]
     Pattern,
+    #[strum(to_string = "a module directive (e.g., requires, exports)")]
     ModuleDirective,
 }
