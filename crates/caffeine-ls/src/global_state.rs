@@ -30,4 +30,9 @@ impl GlobalState {
     pub async fn lock_db(&self) -> MutexGuard<'_, RootDatabase> {
         self.db.lock().await
     }
+
+    pub async fn drop_syntax_cache(&self, file_id: &vfs::FileId) {
+        let cache = self.syntax_cache.lock().await;
+        cache.remove(file_id);
+    }
 }

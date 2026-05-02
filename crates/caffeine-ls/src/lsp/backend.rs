@@ -202,6 +202,8 @@ impl LanguageServer for Backend {
                 return;
             };
             drop(vfs);
+
+            self.state.drop_syntax_cache(&file_id).await;
         }
     }
 
