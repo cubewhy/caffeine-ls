@@ -57,7 +57,7 @@ impl SyntaxError {
 
                 if expected.len() == 1 {
                     let expected_str = expected.first().unwrap().to_string();
-                    format!("Expected {expected_str}, but found {found_str}.")
+                    format!("Expected '{expected_str}', but found {found_str}.")
                 } else {
                     let expected_options = expected
                         .iter()
