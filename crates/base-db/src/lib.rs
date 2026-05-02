@@ -1,4 +1,5 @@
 mod input;
+mod syntax_error;
 
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
