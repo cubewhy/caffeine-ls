@@ -13,7 +13,6 @@ pub enum SyntaxKind {
     L_BRACE, // {
 
     // https://github.com/Peternator7/strum/issues/363
-    #[strum(disabled)]
     R_BRACE, // }
 
     #[strum(to_string = "[")]
