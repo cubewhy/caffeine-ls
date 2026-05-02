@@ -171,6 +171,11 @@ impl LanguageServer for Backend {
                 }
             }
 
+            {
+                let mut vfs_write = self.state.vfs.write().await;
+                vfs_write.set_file_contents(vfs_path, Some(text.into_bytes()));
+            }
+
             self.sync_vfs_to_db().await;
 
             let _ = self
