@@ -414,75 +414,50 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
-pub enum ContextualKeyword {
-    Record,
-    Sealed,
-    NonSealed,
-    Permits,
-    Yield,
-    Var,
-    When,
-    Module,
-    Open,
-    Requires,
-    Opens,
-    Exports,
-    Uses,
-    Provides,
-    Transitive,
-    To,
-    With,
+macro_rules! define_contextual_keywords {
+    ($($variant:ident => $string:expr),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u16)]
+        pub enum ContextualKeyword {
+            $($variant),*
+        }
+
+        impl ContextualKeyword {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $string),*
+                }
+            }
+        }
+
+        impl std::str::FromStr for ContextualKeyword {
+            type Err = ();
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                match s {
+                    $($string => Ok(Self::$variant)),*,
+                    _ => Err(()),
+                }
+            }
+        }
+    };
 }
 
-impl ContextualKeyword {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ContextualKeyword::Record => "record",
-            ContextualKeyword::Sealed => "sealed",
-            ContextualKeyword::NonSealed => "non-sealed",
-            ContextualKeyword::Permits => "permits",
-            ContextualKeyword::Yield => "yield",
-            ContextualKeyword::Var => "var",
-            ContextualKeyword::When => "when",
-            ContextualKeyword::Module => "module",
-            ContextualKeyword::Open => "open",
-            ContextualKeyword::Requires => "requires",
-            ContextualKeyword::Opens => "opens",
-            ContextualKeyword::Exports => "exports",
-            ContextualKeyword::Uses => "uses",
-            ContextualKeyword::Provides => "provides",
-            ContextualKeyword::Transitive => "transitive",
-            ContextualKeyword::To => "to",
-            ContextualKeyword::With => "with",
-        }
-    }
-}
-
-impl FromStr for ContextualKeyword {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "sealed" => Ok(Self::Sealed),
-            "non-sealed" => Ok(Self::NonSealed),
-            "yield" => Ok(Self::Yield),
-            "record" => Ok(Self::Record),
-            "var" => Ok(Self::Var),
-            "permits" => Ok(Self::Permits),
-            "when" => Ok(Self::When),
-            "module" => Ok(Self::Module),
-            "open" => Ok(Self::Open),
-            "requires" => Ok(Self::Requires),
-            "opens" => Ok(Self::Opens),
-            "exports" => Ok(Self::Exports),
-            "uses" => Ok(Self::Uses),
-            "provides" => Ok(Self::Provides),
-            "transitive" => Ok(Self::Transitive),
-            "to" => Ok(Self::To),
-            "with" => Ok(Self::With),
-            _ => Err(()),
-        }
-    }
+define_contextual_keywords! {
+    Record => "record",
+    Sealed => "sealed",
+    NonSealed => "non-sealed",
+    Permits => "permits",
+    Yield => "yield",
+    Var => "var",
+    When => "when",
+    Module => "module",
+    Open => "open",
+    Requires => "requires",
+    Opens => "opens",
+    Exports => "exports",
+    Uses => "uses",
+    Provides => "provides",
+    Transitive => "transitive",
+    To => "to",
+    With => "with",
 }
