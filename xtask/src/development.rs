@@ -39,6 +39,9 @@ pub fn run_vscode() -> anyhow::Result<()> {
 
     println!("💻 Step 4: Launching VS Code...");
 
+    sh.set_var("RUST_BACKTRACE", "1");
+    sh.set_var("CAFFEINE_LS_LOG", "debug");
+
     cmd!(sh, "code --extensionDevelopmentPath={extension_dir}").run()?;
 
     Ok(())
