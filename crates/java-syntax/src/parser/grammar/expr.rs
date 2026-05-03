@@ -104,14 +104,15 @@ fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
 
         // compare and type checking
         LESS | LESS_EQUAL | GREATER | GREATER_EQUAL | INSTANCEOF_KW => (17, 18),
+        LEFT_SHIFT | RIGHT_SHIFT | UNSIGNED_RIGHT_SHIFT => (19, 20),
 
-        PLUS | MINUS => (19, 20),
-        STAR | SLASH | MODULO => (21, 22),
+        PLUS | MINUS => (21, 22),
+        STAR | SLASH | MODULO => (23, 24),
 
-        PLUS_PLUS | MINUS_MINUS => (23, 24),
+        PLUS_PLUS | MINUS_MINUS => (25, 26),
 
         // access and invocation
-        DOT | L_PAREN | L_BRACKET | COLON_COLON => (25, 26),
+        DOT | L_PAREN | L_BRACKET | COLON_COLON => (27, 28),
 
         _ => return None,
     };
