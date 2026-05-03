@@ -122,3 +122,27 @@ lsp_test!(
         insta::assert_json_snapshot!("sanity_checks", (diag_empty, diag_garbage));
     }
 );
+
+lsp_test!(
+    test_incremental_break_and_fix,
+    r#"
+    //- /src/Main.java
+    public class Main {
+        public void m() {<|>}
+    }
+    "#,
+    |lsp| {
+        let path = "/src/Main.java";
+        lsp.open_document(path).await;
+
+        lsp.change_at_mark(path, "\n        if (true) <|>").await;
+
+        let diag_broken = lsp.pull_document_diagnostics(path).await;
+
+        lsp.change_at_mark(path, "{ }").await;
+
+        let diag_fixed = lsp.pull_document_diagnostics(path).await;
+
+        insta::assert_json_snapshot!("incremental_sync", (diag_broken, diag_fixed));
+    }
+);

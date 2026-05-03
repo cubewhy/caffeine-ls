@@ -1,0 +1,46 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+assertion_line: 146
+expression: "(diag_broken, diag_fixed)"
+---
+[
+  {
+    "kind": "full",
+    "items": [
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 18
+          },
+          "end": {
+            "line": 2,
+            "character": 19
+          }
+        },
+        "severity": 1,
+        "source": "caffeine-ls",
+        "message": "Expected an argument"
+      },
+      {
+        "range": {
+          "start": {
+            "line": 2,
+            "character": 18
+          },
+          "end": {
+            "line": 2,
+            "character": 19
+          }
+        },
+        "severity": 1,
+        "source": "caffeine-ls",
+        "message": "Expected a statement here."
+      }
+    ]
+  },
+  {
+    "kind": "full",
+    "items": []
+  }
+]
