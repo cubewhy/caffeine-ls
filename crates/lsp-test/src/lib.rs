@@ -1,6 +1,7 @@
 use crossbeam_channel::unbounded;
 use dashmap::DashMap;
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
+use std::io::Write;
 use std::{
     collections::HashMap,
     io::{BufReader, BufWriter},
@@ -74,6 +75,7 @@ impl LspHarness {
                 if msg.write(&mut writer).is_err() {
                     break;
                 }
+                let _ = writer.flush();
             }
         });
 
