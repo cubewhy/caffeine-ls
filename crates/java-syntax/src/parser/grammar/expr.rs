@@ -172,6 +172,7 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             let m = p.start();
             p.bump();
             if expr_bp(p, 25).is_err() {
+                p.error_message("Expected an expression after prefix operator");
                 m.complete(p, ERROR);
                 return Err(());
             }
@@ -183,6 +184,7 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             let m = p.start();
             p.bump();
             if expr_bp(p, 25).is_err() {
+                p.error_message("Expected an expression after unary operator");
                 m.complete(p, ERROR);
                 return Err(());
             }
@@ -192,7 +194,10 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
         L_BRACE => Ok(array_initializer(p)),
 
         NEW_KW => new_expression(p),
-        _ => Err(()),
+        _ => {
+            p.error_message("Expected an argument");
+            Err(())
+        }
     }
 }
 
@@ -361,6 +366,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.bump(); // operator
 
                     if expr_bp(p, r_bp).is_err() {
+                        p.error_message("Expected an expression after assignment operator");
                         m.complete(p, ERROR);
                         return Err(());
                     }
@@ -416,6 +422,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                         // array access
                         // expr inside []
                         if expression(p).is_err() {
+                            p.error_message("Expected an expression inside array access brackets");
                             m.complete(p, ERROR);
                             return Err(());
                         }
@@ -432,17 +439,24 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.bump(); // ?
 
                     if expression(p).is_err() {
+                        p.error_message(
+                            "Expected an expression after '?' in conditional expression",
+                        );
                         m.complete(p, ERROR);
                         return Err(());
                     }
 
                     // :
                     if !p.expect(COLON) {
+                        p.error_message("Expected ':' in conditional expression");
                         m.complete(p, ERROR);
                         return Err(());
                     }
 
                     if expr_bp(p, r_bp).is_err() {
+                        p.error_message(
+                            "Expected an expression after ':' in conditional expression",
+                        );
                         m.complete(p, ERROR);
                         return Err(());
                     }
@@ -474,6 +488,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                 _ => {
                     p.bump();
                     if expr_bp(p, r_bp).is_err() {
+                        p.error_message("Expected an expression after binary operator");
                         m.complete(p, ERROR);
                         return Err(());
                     }
@@ -620,12 +635,14 @@ fn cast_or_paren_expr(p: &mut Parser) -> Result<CompletedMarker, ()> {
         p.expect(R_PAREN);
 
         if expr_bp(p, 25).is_err() {
+            p.error_message("Expected an expression after type cast");
             m.complete(p, ERROR);
             return Err(());
         }
         Ok(m.complete(p, CAST_EXPR))
     } else {
         if expression(p).is_err() {
+            p.error_message("Expected an expression inside parentheses");
             m.complete(p, ERROR);
             return Err(());
         }
