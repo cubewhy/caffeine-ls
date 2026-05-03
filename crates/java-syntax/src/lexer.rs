@@ -1,12 +1,12 @@
 use rowan::{TextRange, TextSize};
 
 use crate::{
-    syntax_kind::SyntaxKind,
     lexer::{
         identifier::{is_java_identifier_part, is_java_identifier_start},
         token::Token,
     },
     reader::SourceReader,
+    syntax_kind::SyntaxKind,
 };
 
 pub mod identifier;
