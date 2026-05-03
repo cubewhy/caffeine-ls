@@ -1,3 +1,5 @@
+use smol_str::SmolStr;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DependencyScope {
     /// Gradle: api, Maven: compile
@@ -16,7 +18,8 @@ pub enum DependencyScope {
 pub struct Dependency {
     pub target: WorkspaceModule,
     pub scope: DependencyScope,
-    // TODO: jpms module name
+
+    pub jpms_module_name: Option<SmolStr>,
 }
 
 #[salsa::input]
@@ -29,4 +32,25 @@ pub struct WorkspaceModule {
     pub dependencies: Vec<Dependency>,
 
     pub jdk_version: u8,
+}
+
+#[salsa::input(singleton)]
+pub struct Workspace {
+    #[returns(ref)]
+    pub roots: Vec<SourceRoot>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SourceRootKind {
+    Source,
+    Library,
+}
+
+#[salsa::input]
+#[derive(Debug)]
+pub struct SourceRoot {
+    pub kind: SourceRootKind,
+
+    #[returns(ref)]
+    pub files: Vec<vfs::FileId>,
 }
