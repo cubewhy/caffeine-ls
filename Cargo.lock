@@ -172,7 +172,9 @@ dependencies = [
  "cfg-if",
  "clap",
  "ide-db",
+ "insta",
  "itertools",
+ "lsp-test",
  "mimalloc",
  "ra_ap_line-index",
  "ra_ap_vfs",
@@ -750,6 +752,7 @@ checksum = "7b4a6248eb93a4401ed2f37dfe8ea592d3cf05b7cf4f8efa867b6895af7e094e"
 dependencies = [
  "console",
  "once_cell",
+ "serde",
  "similar",
  "tempfile",
 ]
@@ -897,6 +900,7 @@ name = "lsp-test"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
+ "dashmap 6.1.0",
  "insta",
  "lsp-server",
  "serde_json",

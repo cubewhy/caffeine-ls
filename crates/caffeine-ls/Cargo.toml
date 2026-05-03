@@ -36,6 +36,10 @@ triomphe.workspace = true
 ide-db.workspace = true
 base-db.workspace = true
 
+[dev-dependencies]
+insta = { workspace = true, features = ["json"] }
+lsp-test.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_System_Diagnostics_Debug",

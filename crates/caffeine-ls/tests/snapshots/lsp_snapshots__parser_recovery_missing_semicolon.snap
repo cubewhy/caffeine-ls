@@ -1,0 +1,39 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 12
+        },
+        "end": {
+          "line": 3,
+          "character": 15
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Expected ';', but found 'int'."
+    },
+    {
+      "range": {
+        "start": {
+          "line": 4,
+          "character": 8
+        },
+        "end": {
+          "line": 4,
+          "character": 9
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Expected ';', but found '}'."
+    }
+  ]
+}

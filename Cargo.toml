@@ -7,6 +7,7 @@ base-db = { path = "./crates/base-db/" }
 ide-db = { path = "./crates/ide-db/" }
 java-syntax = { path = "./crates/java-syntax/" }
 rust-asm = { path = "./lib/rust-asm/" }
+lsp-test = { path = "./crates/lsp-test/" }
 
 vfs = { package = "ra_ap_vfs", version = "0.0.330" }
 indoc = "2.0"

@@ -1,0 +1,99 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "kind": "full",
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 16
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Unexpected character '`' found in source code."
+    },
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 33
+        },
+        "end": {
+          "line": 1,
+          "character": 34
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Unexpected character '`' found in source code."
+    },
+    {
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 17
+        },
+        "end": {
+          "line": 2,
+          "character": 21
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Invalid character literal. Did you forget a closing quote '''?"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 16
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Expected an argument"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 16
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Expected ';', but found 'UNKNOWN'."
+    },
+    {
+      "range": {
+        "start": {
+          "line": 1,
+          "character": 16
+        },
+        "end": {
+          "line": 1,
+          "character": 17
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "Expected a class member (e.g., field or method) here."
+    }
+  ]
+}

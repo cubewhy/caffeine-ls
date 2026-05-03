@@ -1,0 +1,45 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: "(diag_empty, diag_garbage)"
+---
+[
+  {
+    "kind": "full",
+    "items": []
+  },
+  {
+    "kind": "full",
+    "items": [
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 4
+          },
+          "end": {
+            "line": 0,
+            "character": 5
+          }
+        },
+        "severity": 1,
+        "source": "caffeine-ls",
+        "message": "Unexpected character '#' found in source code."
+      },
+      {
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 4
+          },
+          "end": {
+            "line": 0,
+            "character": 5
+          }
+        },
+        "severity": 1,
+        "source": "caffeine-ls",
+        "message": "Expected a declaration (e.g., class, variable, or method) here."
+      }
+    ]
+  }
+]
