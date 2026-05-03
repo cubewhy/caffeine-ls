@@ -11,6 +11,8 @@ rust-asm = { path = "./lib/rust-asm/" }
 lsp-test = { path = "./crates/lsp-test/" }
 
 vfs = { package = "ra_ap_vfs", version = "0.0.330" }
+zip = "8.6.0"
+jimage-rs = "0.0.4"
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"

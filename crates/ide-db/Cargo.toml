@@ -5,7 +5,11 @@ edition = "2024"
 publish = false
 
 [dependencies]
+parking_lot.workspace = true
+jimage-rs.workspace = true
 rowan.workspace = true
+dashmap.workspace = true
+zip.workspace = true
 vfs.workspace = true
 base-db.workspace = true
 hir.workspace = true

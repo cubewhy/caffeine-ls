@@ -1,4 +1,4 @@
-use triomphe::Arc;
+use std::sync::Arc;
 
 pub struct PathResolver {
     handlers: Vec<Arc<dyn VirtualPathHandler>>,
