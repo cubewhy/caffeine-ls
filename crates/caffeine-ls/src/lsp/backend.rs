@@ -100,9 +100,14 @@ impl LanguageServer for Backend {
         let content = text.clone().into_bytes();
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-            let mut vfs = self.state.vfs.write().await;
-            vfs.set_file_contents(vfs_path.clone(), Some(content));
-            drop(vfs);
+            let state = self.state.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut vfs = state.vfs.write();
+                vfs.set_file_contents(vfs_path.clone(), Some(content));
+                drop(vfs);
+            })
+            .await
+            .expect("Failed to spawn task");
 
             self.sync_vfs_to_db().await;
         } else {
@@ -117,7 +122,7 @@ impl LanguageServer for Backend {
         tracing::debug!("didChange {}", params.text_document.uri);
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-            let vfs = self.state.get_vfs().await;
+            let vfs = self.state.get_vfs();
 
             let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
                 // LSP client issue
@@ -128,7 +133,7 @@ impl LanguageServer for Backend {
             drop(vfs);
 
             // get the file in salsa
-            let db = self.state.db_snapshot().await;
+            let db = self.state.db_snapshot();
             let file_text = db.file_text(file_id);
             let file_content = file_text.text(&db);
 
@@ -173,7 +178,7 @@ impl LanguageServer for Backend {
             }
 
             {
-                let mut vfs_write = self.state.vfs.write().await;
+                let mut vfs_write = self.state.vfs.write();
                 vfs_write.set_file_contents(vfs_path, Some(text.into_bytes()));
             }
         } else {
@@ -199,7 +204,7 @@ impl LanguageServer for Backend {
         };
 
         {
-            let mut vfs = self.state.vfs.write().await;
+            let mut vfs = self.state.vfs.write();
 
             if let Some(text) = params.text {
                 vfs.set_file_contents(vfs_path.clone(), Some(text.into_bytes()));
@@ -213,7 +218,7 @@ impl LanguageServer for Backend {
         tracing::info!("didClose {}", params.text_document.uri);
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-            let mut vfs = self.state.vfs.write().await;
+            let mut vfs = self.state.vfs.write();
             vfs.set_file_contents(vfs_path, None);
             drop(vfs);
         }
@@ -228,7 +233,7 @@ impl LanguageServer for Backend {
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let file_id = {
-                let vfs = self.state.vfs.read().await;
+                let vfs = self.state.vfs.read();
 
                 vfs.file_id(&vfs_path).map(|(id, _)| id)
             };
@@ -237,7 +242,7 @@ impl LanguageServer for Backend {
                 return Err(Error::internal_error());
             };
 
-            let db = self.state.db_snapshot().await;
+            let db = self.state.db_snapshot();
 
             let diagnostics_result =
                 tokio::task::spawn_blocking(move || diagnostics::collect_diagnostics(db, file_id))
@@ -278,38 +283,43 @@ impl LanguageServer for Backend {
 
 impl Backend {
     async fn sync_vfs_to_db(&self) {
-        let changes = {
-            let mut vfs = self.state.vfs.write().await;
-            vfs.take_changes()
-        };
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || {
+            let changes = {
+                let mut vfs = state.vfs.write();
+                vfs.take_changes()
+            };
 
-        if changes.is_empty() {
-            return;
-        }
+            if changes.is_empty() {
+                return;
+            }
 
-        let mut db = self.state.lock_db().await;
+            let mut db = state.lock_db();
 
-        for (file_id, changed_file) in changes {
-            match changed_file.change {
-                vfs::Change::Create(bytes, _) | vfs::Change::Modify(bytes, _) => {
-                    let updated_text = String::from_utf8(bytes).unwrap_or_default();
+            for (file_id, changed_file) in changes {
+                match changed_file.change {
+                    vfs::Change::Create(bytes, _) | vfs::Change::Modify(bytes, _) => {
+                        let updated_text = String::from_utf8(bytes).unwrap_or_default();
 
-                    let vfs = self.state.vfs.read().await;
-                    let language_id = vfs
-                        .file_path(file_id)
-                        .name_and_extension()
-                        .and_then(|(_, ext)| ext)
-                        .map(LanguageId::from_extension)
-                        .unwrap_or(LanguageId::Unknown);
-                    drop(vfs);
+                        let vfs = state.vfs.read();
+                        let language_id = vfs
+                            .file_path(file_id)
+                            .name_and_extension()
+                            .and_then(|(_, ext)| ext)
+                            .map(LanguageId::from_extension)
+                            .unwrap_or(LanguageId::Unknown);
+                        drop(vfs);
 
-                    db.set_file(file_id, &updated_text, language_id);
-                }
-                vfs::Change::Delete => {
-                    db.set_file(file_id, "", LanguageId::Unknown);
+                        db.set_file(file_id, &updated_text, language_id);
+                    }
+                    vfs::Change::Delete => {
+                        db.set_file(file_id, "", LanguageId::Unknown);
+                    }
                 }
             }
-        }
+        })
+        .await
+        .expect("Failed to spawn task");
     }
 }
 
