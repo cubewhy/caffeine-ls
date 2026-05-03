@@ -28,6 +28,19 @@ impl LanguageId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceRootKind {
+    Source,
+    Library,
+}
+
+#[salsa::input]
+pub struct SourceRoot {
+    pub kind: SourceRootKind,
+    #[returns(ref)]
+    pub files: Vec<vfs::FileId>,
+}
+
 #[salsa::input(debug)]
 pub struct FileText {
     #[returns(ref)]

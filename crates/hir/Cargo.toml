@@ -1,0 +1,13 @@
+[package]
+name = "hir"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+base-db.workspace = true
+salsa.workspace = true
+smol_str.workspace = true
+vfs.workspace = true
+triomphe.workspace = true
+rust-asm.workspace = true
