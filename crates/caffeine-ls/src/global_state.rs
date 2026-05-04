@@ -477,18 +477,13 @@ impl GlobalState {
             id
         };
 
-        // 1. Take a thread-safe snapshot of the current state
-        // (Assuming AnalysisHost provides an immutable snapshot of the DB)
         let snapshot = self.analysis_host.analysis();
         let sender = self.sender.clone();
 
-        // 2. Offload the heavy calculation to the thread pool
         self.thread_pool.execute(move || {
-            // Run diagnostics on the background thread
             let unwind_safe_snapshot = AssertUnwindSafe(&snapshot);
 
             let diagnostics_result = std::panic::catch_unwind(move || {
-                // Access the inner value of the wrapper
                 let snapshot = *unwind_safe_snapshot;
                 diagnostics::collect_diagnostics(snapshot.raw_database(), file_id)
             });
@@ -505,7 +500,6 @@ impl GlobalState {
                         }),
                     );
 
-                    // 3. Send the response back through the LSP channel
                     let response = lsp_server::Response::new_ok(id, result);
                     sender.send(lsp_server::Message::Response(response)).ok();
                 }
