@@ -1,6 +1,8 @@
 pub mod config;
 pub mod flags;
 
+pub(crate) mod from_proto;
+pub(crate) mod handlers;
 pub(crate) mod project_model;
 
 mod global_state;

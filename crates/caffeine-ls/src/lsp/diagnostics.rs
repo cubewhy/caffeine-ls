@@ -2,7 +2,7 @@ use base_db::SourceDatabase;
 use ide_db::RootDatabase;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Range};
 
-use crate::lsp::convert::offset_to_position;
+use crate::from_proto::offset_to_position;
 
 pub fn collect_diagnostics(
     db: &RootDatabase,
