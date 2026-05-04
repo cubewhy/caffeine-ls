@@ -1,9 +1,4 @@
-use tower_lsp::lsp_types::{
-    DiagnosticOptions, DiagnosticRegistrationOptions, DiagnosticServerCapabilities,
-    ServerCapabilities, StaticRegistrationOptions, TextDocumentRegistrationOptions,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions,
-};
+use lsp_types::*;
 
 use crate::config::Config;
 

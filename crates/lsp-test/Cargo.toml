@@ -5,11 +5,10 @@ edition = "2024"
 publish = false
 
 [dependencies]
-tower-lsp = "0.20.0"
-tokio = { version = "1.52.1", features = ["sync", "io-util", "fs"] }
-lsp-server = "0.7.9"
+tracing.workspace = true
+lsp-server.workspace = true
+lsp-types.workspace = true
 dashmap = "6.1.0"
-tokio-util = { version = "0.7.18", features = ["io", "io-util"] }
 crossbeam-channel = "0.5.15"
 tempfile = "3.27.0"
 insta = "1.47.2"

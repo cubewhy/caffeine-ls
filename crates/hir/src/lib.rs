@@ -31,12 +31,12 @@ pub enum AnnotationValue {
         class_type: TypeRef,
         entry_name: SmolStr,
     },
-    Annotation(Annotation),
+    Annotation(AnnotationSignature),
     Array(Vec<AnnotationValue>),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct Annotation {
+pub struct AnnotationSignature {
     pub annotation_type: TypeRef,
     pub arguments: Vec<(SmolStr, AnnotationValue)>,
 }
@@ -101,18 +101,18 @@ pub enum PrimitiveType {
 pub struct TypeParameter {
     pub name: SmolStr,
     pub bounds: Vec<TypeRef>,
-    pub annotations: Vec<Annotation>,
+    pub annotations: Vec<AnnotationSignature>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct RecordComponent {
     pub name: SmolStr,
     pub component_type: TypeRef,
-    pub annotations: Vec<Annotation>,
+    pub annotations: Vec<AnnotationSignature>,
 }
 
 #[salsa::tracked]
-pub struct Class<'db> {
+pub struct ClassSignature<'db> {
     /// JVM Access Flags
     pub flags: u16,
     pub super_class: Option<TypeRef>,
@@ -122,12 +122,12 @@ pub struct Class<'db> {
     pub permitted_subclasses: Vec<TypeRef>,
     pub record_components: Vec<RecordComponent>,
 
-    pub methods: Vec<Method<'db>>,
-    pub fields: Vec<Field<'db>>,
-    pub annotations: Vec<Annotation>,
+    pub methods: Vec<MethodSignature<'db>>,
+    pub fields: Vec<FieldSignature<'db>>,
+    pub annotations: Vec<AnnotationSignature>,
 
-    pub enclosing_class: Option<Class<'db>>,
-    pub inner_classes: Vec<Class<'db>>,
+    pub enclosing_class: Option<ClassSignature<'db>>,
+    pub inner_classes: Vec<ClassSignature<'db>>,
 
     pub source_file: vfs::FileId,
 }
@@ -142,31 +142,31 @@ pub enum ClassKind {
 }
 
 #[salsa::tracked]
-pub struct Param<'db> {
+pub struct ParamSignature<'db> {
     pub flags: u16,
     pub name: Option<SmolStr>,
     pub param_type: TypeRef,
-    pub annotations: Vec<Annotation>,
+    pub annotations: Vec<AnnotationSignature>,
 }
 
 #[salsa::tracked]
-pub struct Method<'db> {
+pub struct MethodSignature<'db> {
     pub flags: u16,
     pub return_type: TypeRef,
     pub type_params: Vec<TypeParameter>,
     pub throws_list: Vec<TypeRef>,
-    pub params: Vec<Param<'db>>,
-    pub annotations: Vec<Annotation>,
+    pub params: Vec<ParamSignature<'db>>,
+    pub annotations: Vec<AnnotationSignature>,
 
     /// The default value of an annotation entry
     pub default_value: Option<AnnotationValue>,
 }
 
 #[salsa::tracked]
-pub struct Field<'db> {
+pub struct FieldSignature<'db> {
     pub flags: u16,
     pub field_type: TypeRef,
-    pub annotations: Vec<Annotation>,
+    pub annotations: Vec<AnnotationSignature>,
     pub constant_value: Option<PrimitiveValue>,
 }
 

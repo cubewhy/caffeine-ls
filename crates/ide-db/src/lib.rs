@@ -1,6 +1,5 @@
-use base_db::{Files, LanguageId, Nonce, SourceDatabase, path_resolver::PathResolver};
+use base_db::{Files, LanguageId, Nonce, SourceDatabase};
 use hir::HirDatabase;
-use parking_lot::{RwLock, RwLockReadGuard};
 use std::sync::Arc;
 
 pub mod handlers;
@@ -10,24 +9,22 @@ pub mod handlers;
 pub struct RootDatabase {
     storage: salsa::Storage<Self>,
     files: Arc<Files>,
-    vfs: Arc<RwLock<vfs::Vfs>>,
-    path_resolver: Arc<PathResolver>,
     nonce: Nonce,
 }
 
+impl Default for RootDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RootDatabase {
-    pub fn new(vfs: Arc<RwLock<vfs::Vfs>>, path_resolver: Arc<PathResolver>) -> Self {
+    pub fn new() -> Self {
         Self {
             storage: salsa::Storage::new(None),
             files: Default::default(),
             nonce: Nonce::new(),
-            path_resolver,
-            vfs,
         }
-    }
-
-    pub fn read_vfs(&self) -> RwLockReadGuard<'_, vfs::Vfs> {
-        self.vfs.read()
     }
 }
 
@@ -56,12 +53,9 @@ impl SourceDatabase for RootDatabase {
         files.set_file_with_durability(self, file_id, text, language, durability);
     }
 
-    fn read_file_bytes(&self, file_id: vfs::FileId) -> std::io::Result<Vec<u8>> {
-        let vfs = self.read_vfs();
-        let file_path = vfs.file_path(file_id).clone();
-        drop(vfs);
-
-        self.path_resolver.resolve(&file_path)
+    fn remove_file(&mut self, file_id: vfs::FileId) {
+        let files = self.files.clone();
+        files.remove_file(self, file_id);
     }
 
     fn nonce_and_revision(&self) -> (Nonce, salsa::Revision) {

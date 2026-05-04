@@ -58,7 +58,7 @@ pub trait SourceDatabase: salsa::Database {
         durability: Durability,
     );
 
-    fn read_file_bytes(&self, file_id: vfs::FileId) -> std::io::Result<Vec<u8>>;
+    fn remove_file(&mut self, file_id: vfs::FileId);
 
     /// GreenNode of the file
     fn parse_node(&self, file_id: vfs::FileId) -> Option<ParseResult<'_>>
@@ -93,7 +93,6 @@ impl Nonce {
 
 pub struct Files {
     files: Arc<DashMap<vfs::FileId, FileText, BuildHasherDefault<FxHasher>>>,
-    binary_files: Arc<DashMap<vfs::FileId, BinaryRef, BuildHasherDefault<FxHasher>>>,
 }
 
 impl Files {
@@ -155,47 +154,10 @@ impl Files {
         };
     }
 
-    pub fn binary_file_ref(&self, file_id: vfs::FileId) -> BinaryRef {
-        match self.binary_files.get(&file_id) {
-            Some(bin_ref) => *bin_ref,
-            None => {
-                panic!("Unable to fetch file text for `vfs::FileId`: {file_id:?}; this is a bug")
-            }
+    pub fn remove_file(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId) {
+        if let Some((_id, file_text)) = self.files.remove(&file_id) {
+            file_text.set_text(db).to(Arc::from(""));
         }
-    }
-
-    pub fn set_binary_file(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId, hash: u64) {
-        match self.binary_files.entry(file_id) {
-            Entry::Occupied(occ) => {
-                let input = occ.get();
-                input.set_hash(db).to(hash);
-            }
-            Entry::Vacant(vac) => {
-                let input = BinaryRef::new(db, file_id, hash);
-                vac.insert(input);
-            }
-        }
-    }
-
-    pub fn set_binary_file_with_durability(
-        &self,
-        db: &mut dyn SourceDatabase,
-        file_id: vfs::FileId,
-        hash: u64,
-        durability: salsa::Durability,
-    ) {
-        match self.binary_files.entry(file_id) {
-            Entry::Occupied(mut occupied) => {
-                let occupied = occupied.get_mut();
-                occupied.set_hash(db).with_durability(durability).to(hash);
-            }
-            Entry::Vacant(vacant) => {
-                let binary_ref = BinaryRef::builder(file_id, hash)
-                    .durability(durability)
-                    .new(db);
-                vacant.insert(binary_ref);
-            }
-        };
     }
 }
 
@@ -203,7 +165,6 @@ impl Default for Files {
     fn default() -> Self {
         Self {
             files: Arc::new(DashMap::default()),
-            binary_files: Arc::new(DashMap::default()),
         }
     }
 }

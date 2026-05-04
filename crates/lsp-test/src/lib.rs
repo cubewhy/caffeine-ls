@@ -1,20 +1,23 @@
-use crossbeam_channel::unbounded;
+use crossbeam_channel::{bounded, unbounded};
 use dashmap::DashMap;
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
-use std::io::Write;
+use lsp_types::{
+    ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
+    InitializeParams, PartialResultParams, Position, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
+    WorkDoneProgressParams, WorkspaceFolder,
+};
 use std::{
     collections::HashMap,
-    io::{BufReader, BufWriter},
+    fs,
     sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicI32, Ordering},
     },
+    thread::{self, JoinHandle},
 };
 use tempfile::TempDir;
-use tokio::{io::split, sync::mpsc};
-use tokio::{sync::oneshot, task::JoinHandle};
-use tokio_util::io::SyncIoBridge;
-use tower_lsp::{Client, LanguageServer, LspService, Server, lsp_types::*};
 
 pub mod fixture;
 pub mod macros;
@@ -22,81 +25,47 @@ pub mod macros;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct LspHarness {
-    server_handle: JoinHandle<()>,
+    server_handle: Option<JoinHandle<()>>,
     client_connection: Connection,
     next_id: AtomicI32,
     pub workspace_root: TempDir,
     config: serde_json::Value,
     client_capabilities: ClientCapabilities,
-    notification_sender: mpsc::UnboundedSender<Notification>,
-    pub notification_receiver: mpsc::UnboundedReceiver<Notification>,
-    marks: std::sync::RwLock<HashMap<String, Position>>,
-    pending_requests: Arc<DashMap<RequestId, oneshot::Sender<serde_json::Value>>>,
-    document_versions: DashMap<tower_lsp::lsp_types::Url, i32>,
+    notification_sender: crossbeam_channel::Sender<Notification>,
+    pub notification_receiver: crossbeam_channel::Receiver<Notification>,
+    marks: RwLock<HashMap<String, Position>>,
+    pending_requests: Arc<DashMap<RequestId, crossbeam_channel::Sender<serde_json::Value>>>,
+    document_versions: DashMap<Url, i32>,
 }
 
 impl LspHarness {
-    pub async fn start<F, S>(config: serde_json::Value, init_backend: F) -> Self
+    /// Starts the LSP server in a background thread using an in-memory connection.
+    /// `init_backend` is a closure that takes the server side of the `Connection`.
+    pub fn start<F>(config: serde_json::Value, init_backend: F) -> Self
     where
-        F: FnOnce(Client) -> S,
-        S: LanguageServer + Send + Sync + 'static,
+        F: FnOnce(Connection) + Send + 'static,
     {
         let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
 
-        let (client_stream, server_stream) = tokio::io::duplex(65536);
+        // Create an in-memory connection pair for the client (harness) and server
+        let (client_connection, server_connection) = Connection::memory();
 
-        let (server_rx, server_tx) = split(server_stream);
-        let (service, socket) = LspService::new(init_backend);
-
-        let server_handle = tokio::spawn(async move {
-            Server::new(server_rx, server_tx, socket)
-                .serve(service)
-                .await;
+        // Spawn the language server on a background thread
+        let server_handle = thread::spawn(move || {
+            init_backend(server_connection);
         });
 
-        let (client_rx, client_tx) = split(client_stream);
-
-        let mut reader = BufReader::new(SyncIoBridge::new(client_rx));
-        let mut writer = BufWriter::new(SyncIoBridge::new(client_tx));
-
-        let (tx_msg, client_receiver) = unbounded::<Message>();
-        let (client_sender, rx_msg) = unbounded::<Message>();
-
-        tokio::task::spawn_blocking(move || {
-            while let Ok(Some(msg)) = Message::read(&mut reader) {
-                if tx_msg.send(msg).is_err() {
-                    break;
-                }
-            }
-        });
-
-        tokio::task::spawn_blocking(move || {
-            while let Ok(msg) = rx_msg.recv() {
-                if msg.write(&mut writer).is_err() {
-                    break;
-                }
-                let _ = writer.flush();
-            }
-        });
-
-        let client_connection = Connection {
-            sender: client_sender,
-            receiver: client_receiver,
-        };
-
-        let client_capabilities = ClientCapabilities {
-            ..Default::default()
-        };
-
-        let (notif_tx, notif_rx) = mpsc::unbounded_channel();
+        let (notif_tx, notif_rx) = unbounded();
 
         let harness = Self {
-            server_handle,
+            server_handle: Some(server_handle),
             client_connection,
             next_id: AtomicI32::new(1),
             workspace_root,
             config,
-            client_capabilities,
+            client_capabilities: ClientCapabilities {
+                ..Default::default()
+            },
             notification_receiver: notif_rx,
             notification_sender: notif_tx,
             marks: Default::default(),
@@ -108,8 +77,9 @@ impl LspHarness {
         let notification_sender = harness.notification_sender.clone();
         let client_receiver = harness.client_connection.receiver.clone();
 
-        tokio::task::spawn_blocking(move || {
-            while let Ok(msg) = client_receiver.recv() {
+        // Spawn a background thread to listen to messages coming from the server
+        thread::spawn(move || {
+            for msg in client_receiver {
                 match msg {
                     Message::Response(res) => {
                         if let Some((_, tx)) = pending_requests.remove(&res.id) {
@@ -128,15 +98,16 @@ impl LspHarness {
             }
         });
 
-        harness.init().await;
+        harness.init();
 
         harness
     }
 
-    async fn init(&self) {
-        let root_uri = tower_lsp::lsp_types::Url::from_file_path(self.workspace_root.path())
+    fn init(&self) {
+        let root_uri = Url::from_file_path(self.workspace_root.path())
             .expect("Failed to convert workspace path to URI");
 
+        #[allow(deprecated)]
         let init_params = InitializeParams {
             root_uri: Some(root_uri.clone()),
             initialization_options: Some(self.config.clone()),
@@ -149,22 +120,17 @@ impl LspHarness {
                 name: "lsp-test".to_string(),
                 version: Some(VERSION.to_string()),
             }),
-
             ..Default::default()
         };
 
         let init_params =
             serde_json::to_value(init_params).expect("Failed to serialize init params");
 
-        self.request("initialize", init_params).await;
+        self.request("initialize", init_params);
         self.notify("initialized", serde_json::json!({}));
     }
 
-    pub async fn write_file(
-        &self,
-        relative_path: &str,
-        content: &str,
-    ) -> tower_lsp::lsp_types::Url {
+    pub fn write_file(&self, relative_path: &str, content: &str) -> Url {
         let relative_path = relative_path.trim_start_matches('/');
         let path = self.workspace_root.path().join(relative_path);
 
@@ -176,18 +142,14 @@ impl LspHarness {
         }
 
         if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.unwrap();
+            fs::create_dir_all(parent).expect("Failed to create parent directories");
         }
 
-        tokio::fs::write(&path, content).await.unwrap();
-        tower_lsp::lsp_types::Url::from_file_path(path).unwrap()
+        fs::write(&path, content).expect("Failed to write file");
+        Url::from_file_path(path).unwrap()
     }
 
-    pub async fn write_fixture_file(
-        &self,
-        path_str: &str,
-        content: &str,
-    ) -> tower_lsp::lsp_types::Url {
+    pub fn write_fixture_file(&self, path_str: &str, content: &str) -> Url {
         let normalized_path = path_str.trim_start_matches('/');
         let mut final_content = content.to_string();
 
@@ -203,7 +165,7 @@ impl LspHarness {
             final_content = content.replace("<|>", "");
         }
 
-        self.write_file(normalized_path, &final_content).await
+        self.write_file(normalized_path, &final_content)
     }
 
     pub fn pos(&self, path: &str) -> Position {
@@ -232,12 +194,12 @@ impl LspHarness {
             .unwrap_or_else(|| panic!("No mark <|> found to pop in path: '{}'", normalized_path))
     }
 
-    pub fn uri(&self, relative_path: &str) -> tower_lsp::lsp_types::Url {
+    pub fn uri(&self, relative_path: &str) -> Url {
         let path = self
             .workspace_root
             .path()
             .join(relative_path.trim_start_matches('/'));
-        tower_lsp::lsp_types::Url::from_file_path(path).expect("Failed to convert path to URI")
+        Url::from_file_path(path).expect("Failed to convert path to URI")
     }
 
     pub fn notify(&self, method: &str, params: serde_json::Value) {
@@ -248,11 +210,11 @@ impl LspHarness {
             .unwrap();
     }
 
-    pub async fn request(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
+    pub fn request(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
         let id = RequestId::from(self.next_id.fetch_add(1, Ordering::SeqCst));
         let req = Request::new(id.clone(), method.to_string(), params);
 
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = bounded(1);
         self.pending_requests.insert(id.clone(), tx);
 
         self.client_connection
@@ -260,17 +222,18 @@ impl LspHarness {
             .send(Message::Request(req))
             .unwrap();
 
-        rx.await.expect("Server dropped the request")
+        tracing::info!(method, "send request");
+
+        rx.recv().expect("Server dropped the request")
     }
 
-    pub async fn open_document(&self, relative_path: &str) -> tower_lsp::lsp_types::Url {
+    pub fn open_document(&self, relative_path: &str) -> Url {
         let path = self
             .workspace_root
             .path()
             .join(relative_path.trim_start_matches('/'));
 
-        let content = tokio::fs::read_to_string(&path)
-            .await
+        let content = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("Failed to read fixture file at: {:?}", path));
 
         let uri = self.uri(relative_path);
@@ -298,7 +261,7 @@ impl LspHarness {
         uri
     }
 
-    pub async fn close_document(&self, relative_path: &str) {
+    pub fn close_document(&self, relative_path: &str) {
         let uri = self.uri(relative_path);
 
         let params = DidCloseTextDocumentParams {
@@ -311,7 +274,7 @@ impl LspHarness {
         self.notify("textDocument/didClose", json_params);
     }
 
-    pub async fn change_document_incremental(&self, relative_path: &str, range: Range, text: &str) {
+    pub fn change_document_incremental(&self, relative_path: &str, range: Range, text: &str) {
         let uri = self.uri(relative_path);
 
         let mut version_entry = self.document_versions.entry(uri.clone()).or_insert(0);
@@ -331,7 +294,7 @@ impl LspHarness {
         self.notify("textDocument/didChange", json_params);
     }
 
-    pub async fn change_at_mark(&self, relative_path: &str, text: &str) {
+    pub fn change_at_mark(&self, relative_path: &str, text: &str) {
         let old_pos = self.pop_pos(relative_path);
 
         let mut final_text = text.to_string();
@@ -364,14 +327,10 @@ impl LspHarness {
             start: old_pos,
             end: old_pos,
         };
-        self.change_document_incremental(relative_path, range, &final_text)
-            .await;
+        self.change_document_incremental(relative_path, range, &final_text);
     }
 
-    pub async fn pull_document_diagnostics(
-        &self,
-        relative_path: &str,
-    ) -> tower_lsp::lsp_types::DocumentDiagnosticReport {
+    pub fn pull_document_diagnostics(&self, relative_path: &str) -> DocumentDiagnosticReport {
         let uri = self.uri(relative_path);
         let params = DocumentDiagnosticParams {
             text_document: TextDocumentIdentifier { uri },
@@ -385,22 +344,23 @@ impl LspHarness {
             },
         };
 
-        let response = self
-            .request(
-                "textDocument/diagnostic",
-                serde_json::to_value(params)
-                    .expect("failed to serialize document diagnostic params"),
-            )
-            .await;
+        let response = self.request(
+            "textDocument/diagnostic",
+            serde_json::to_value(params).expect("failed to serialize document diagnostic params"),
+        );
 
         serde_json::from_value(response).expect("Failed to deserialize diagnostic report")
     }
 
-    pub async fn shutdown(self) {
-        let _ = self.request("shutdown", serde_json::json!({})).await;
+    pub fn shutdown(mut self) {
+        let _ = self.request("shutdown", serde_json::json!({}));
         self.notify("exit", serde_json::json!({}));
 
-        self.server_handle.abort();
-        let _ = self.server_handle.await;
+        // Close the connection channel gracefully to unblock loops depending on it.
+        drop(self.client_connection.sender);
+
+        if let Some(handle) = self.server_handle.take() {
+            let _ = handle.join();
+        }
     }
 }

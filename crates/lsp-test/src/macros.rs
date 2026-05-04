@@ -3,9 +3,7 @@ macro_rules! lsp_fixture {
     ($harness:expr, $fixture:expr) => {{
         let fixtures = $crate::fixture::parse_fixtures($fixture);
         for fixture in fixtures {
-            $harness
-                .write_fixture_file(fixture.path, fixture.content)
-                .await;
+            $harness.write_fixture_file(fixture.path, fixture.content);
         }
     }};
 }
@@ -20,7 +18,7 @@ macro_rules! lsp_test {
     ) => {
         #[tokio::test]
         async fn test_case() {
-            let harness = LspHarness::start($config, $backend_init).await;
+            let harness = LspHarness::start($config, $backend_init);
             let $harness = &harness;
 
             $crate::lsp_fixture!($harness, $fixture);

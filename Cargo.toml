@@ -5,18 +5,22 @@ members = ["crates/*", "lib/*", "xtask/"]
 [workspace.dependencies]
 base-db = { path = "./crates/base-db/" }
 ide-db = { path = "./crates/ide-db/" }
+ide = { path = "./crates/ide/" }
 hir = { path = "./crates/hir/" }
 java-syntax = { path = "./crates/java-syntax/" }
 rust-asm = { path = "./lib/rust-asm/" }
 lsp-test = { path = "./crates/lsp-test/" }
 
+lsp-server = "0.7.9"
+lsp-types = { version = "=0.95.1", features = ["proposed"] }
 vfs = { package = "ra_ap_vfs", version = "0.0.330" }
+vfs-notify = { package = "ra_ap_vfs-notify", version = "0.0.330" }
+line-index = { package = "ra_ap_line-index", version = "0.0.17" }
 zip = "8.6.0"
 jimage-rs = "0.0.4"
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
-tokio = "1"
 salsa = "0.26.1"
 stacksafe = "1.0"
 smallvec = "1.15.1"

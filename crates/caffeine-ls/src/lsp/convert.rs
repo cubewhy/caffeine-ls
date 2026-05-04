@@ -1,5 +1,5 @@
+use lsp_types::{Position, Url};
 use rowan::TextSize;
-use tower_lsp::lsp_types::{Position, Url};
 use vfs::FileId;
 
 pub fn offset_to_position(text: &str, offset: TextSize) -> Position {

@@ -9,33 +9,33 @@ name = "caffeine-ls"
 path = "src/bin/main.rs"
 
 [dependencies]
-tokio = { workspace = true, features = [
-  "macros",
-  "rt-multi-thread",
-  "io-std",
-  "sync",
-  "time",
-] }
-anyhow = { workspace = true }
+anyhow.workspace = true
 rowan.workspace = true
 parking_lot.workspace = true
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+rayon.workspace = true
+lsp-server.workspace = true
+lsp-types.workspace = true
+line-index.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 serde = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
-ra_ap_line-index = "0.0.17"
+camino = "1.2.2"
+crossbeam-channel = "0.5.15"
 arc-swap = "1.9.1"
-rayon = { workspace = true }
 itertools = "0.14.0"
 cfg-if = "1.0"
-tower-lsp = "0.20.0"
+threadpool = "1.8.1"
+num_cpus = "1.17.0"
 mimalloc = { version = "0.1.50", default-features = false, optional = true }
 
 vfs.workspace = true
+vfs-notify.workspace = true
 triomphe.workspace = true
 ide-db.workspace = true
 base-db.workspace = true
+ide.workspace = true
 
 [dev-dependencies]
 insta = { workspace = true, features = ["json"] }
