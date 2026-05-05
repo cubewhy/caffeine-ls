@@ -388,6 +388,11 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-FieldAccess
                         p.bump();
                         left = m.complete(p, FIELD_ACCESS);
+                    } else if p.at(THIS_KW) {
+                        // Qualified This: TypeName.this
+                        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.4
+                        p.bump();
+                        left = m.complete(p, THIS_EXPR);
                     } else if p.at(SUPER_KW) {
                         // Qualified Super: TypeName.super
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2

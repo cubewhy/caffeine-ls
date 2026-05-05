@@ -263,6 +263,7 @@ pub enum SyntaxKind {
     NEW_EXPR,        // new Object()
     METHOD_REFERENCE,
     SUPER_EXPR,
+    THIS_EXPR,
     CAST_EXPR,
     INSTANCEOF_EXPR,
     LAMBDA_EXPR,
