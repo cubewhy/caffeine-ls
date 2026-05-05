@@ -845,6 +845,7 @@ pub enum AttributeInfo {
     RuntimeInvisibleParameterAnnotations { parameters: ParameterAnnotations },
     RuntimeVisibleTypeAnnotations { annotations: Vec<TypeAnnotation> },
     RuntimeInvisibleTypeAnnotations { annotations: Vec<TypeAnnotation> },
+    PermittedSubclasses { classes: Vec<u16> },
     Record { components: Vec<RecordComponent> },
     Unknown { name: String, info: Vec<u8> },
 }
@@ -1509,6 +1510,14 @@ fn parse_attribute(
         "RuntimeInvisibleTypeAnnotations" => {
             let annotations = parse_type_annotations(&mut reader)?;
             AttributeInfo::RuntimeInvisibleTypeAnnotations { annotations }
+        }
+        "PermittedSubclasses" => {
+            let count = reader.read_u2()? as usize;
+            let mut classes = Vec::with_capacity(count);
+            for _ in 0..count {
+                classes.push(reader.read_u2()?);
+            }
+            AttributeInfo::PermittedSubclasses { classes }
         }
         "Record" => {
             let count = reader.read_u2()? as usize;

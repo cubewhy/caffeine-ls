@@ -2630,6 +2630,15 @@ fn write_attribute(
             write_runtime_type_annotations(&mut info, annotations);
             write_attribute_with_info(out, name_index, &info);
         }
+        AttributeInfo::PermittedSubclasses { classes } => {
+            let name_index = ensure_utf8(cp, "PermittedSubclasses");
+            let mut info = Vec::new();
+            write_u2(&mut info, classes.len() as u16);
+            for class_index in classes {
+                write_u2(&mut info, *class_index);
+            }
+            write_attribute_with_info(out, name_index, &info);
+        }
         AttributeInfo::Record { components } => {
             let name_index = ensure_utf8(cp, "Record");
             let mut info = Vec::new();
@@ -2963,6 +2972,9 @@ fn collect_attribute_names(attributes: &[AttributeInfo], names: &mut Vec<String>
             }
             AttributeInfo::RuntimeInvisibleTypeAnnotations { .. } => {
                 names.push("RuntimeInvisibleTypeAnnotations".to_string())
+            }
+            AttributeInfo::PermittedSubclasses { .. } => {
+                names.push("PermittedSubclasses".to_string())
             }
             AttributeInfo::Record { .. } => names.push("Record".to_string()),
             AttributeInfo::Unknown { name, .. } => names.push(name.clone()),
