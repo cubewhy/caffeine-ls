@@ -192,3 +192,10 @@ lexer_snapshot!(
         ~1
     "#}
 );
+
+lexer_snapshot!(
+    lex_utf_surrogates,
+    indoc! {r#"
+        \uD83C\uDF51
+    "#}
+);

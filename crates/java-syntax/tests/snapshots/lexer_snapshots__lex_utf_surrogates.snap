@@ -1,0 +1,13 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+\uD83C\uDF51
+
+TOKENS:
+UNKNOWN "\\uD83C\\uDF51"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: UnexpectedChar('🍑'), range: 0..12 }
