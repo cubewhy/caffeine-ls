@@ -114,7 +114,7 @@ pub struct TypeParameter {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
-pub struct RecordComponent {
+pub struct RecordComponentData {
     pub name: SmolStr,
     pub component_type: TypeRef,
     pub annotations: Vec<AnnotationSignature>,
@@ -130,7 +130,7 @@ pub struct ClassData {
     pub type_params: Vec<TypeParameter>,
 
     pub permitted_subclasses: Vec<TypeRef>,
-    pub record_components: Vec<RecordComponent>,
+    pub record_components: Vec<RecordComponentData>,
 
     pub methods: Vec<MethodData>,
     pub fields: Vec<FieldData>,

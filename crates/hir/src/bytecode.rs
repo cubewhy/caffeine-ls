@@ -127,10 +127,40 @@ fn map_class(node: &ClassNode) -> ClassData {
             .collect(),
 
         type_params,
-        // TODO: sealed classes and record components
-        permitted_subclasses: Vec::new(),
-        record_components: Vec::new(),
+
+        permitted_subclasses: node
+            .permitted_subclasses
+            .iter()
+            .map(|s| internal_name_to_type_ref(s))
+            .collect(),
+
+        record_components: node
+            .record_components
+            .iter()
+            .map(|rc| map_record_component(rc, &node.constant_pool))
+            .collect(),
+
         annotations: map_annotations(&node.attributes, &node.constant_pool),
+    }
+}
+
+fn map_record_component(
+    node: &rust_asm::nodes::RecordComponentNode,
+    constant_pool: &[CpInfo],
+) -> crate::RecordComponentData {
+    let mut chars = node.descriptor.chars().peekable();
+    let mut component_type = parse_type_ref(&mut chars);
+
+    // Record components, like fields, can have generic signatures
+    if let Some(sig) = get_signature(&node.attributes, constant_pool) {
+        let mut parser = SigParser::new(&sig);
+        component_type = parser.parse_reference_type_signature();
+    }
+
+    crate::RecordComponentData {
+        name: SmolStr::new(&node.name),
+        component_type,
+        annotations: map_annotations(&node.attributes, constant_pool),
     }
 }
 
