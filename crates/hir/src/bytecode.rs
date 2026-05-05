@@ -277,8 +277,8 @@ fn parse_type_ref(chars: &mut std::iter::Peekable<std::str::Chars>) -> TypeRef {
             }
             TypeRef::Reference {
                 name: SmolStr::new(name.replace("/", ".")),
-                // TODO: parse generic arguments
                 // Generic arguments are parsed from the `Signature` attribute, not the descriptor
+                // so keep it empty
                 generic_args: Vec::new(),
             }
         }
