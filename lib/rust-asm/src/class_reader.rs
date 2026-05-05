@@ -776,6 +776,44 @@ impl ClassFile {
             })
             .transpose()?;
 
+        let permitted_subclasses = self
+            .attributes
+            .iter()
+            .find_map(|attr| match attr {
+                AttributeInfo::PermittedSubclasses { classes } => Some(classes),
+                _ => None,
+            })
+            .map(|classes| {
+                classes
+                    .iter()
+                    .map(|index| self.class_name(*index).map(str::to_string))
+                    .collect::<Result<Vec<_>, ClassReadError>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let record_components = self
+            .attributes
+            .iter()
+            .find_map(|attr| match attr {
+                AttributeInfo::Record { components } => Some(components),
+                _ => None,
+            })
+            .map(|components| {
+                components
+                    .iter()
+                    .map(|comp| {
+                        Ok(crate::nodes::RecordComponentNode {
+                            name: self.cp_utf8(comp.name_index)?.to_string(),
+                            descriptor: self.cp_utf8(comp.descriptor_index)?.to_string(),
+                            attributes: comp.attributes.clone(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ClassReadError>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
         Ok(crate::nodes::ClassNode {
             minor_version: self.minor_version,
             major_version: self.major_version,
@@ -793,6 +831,8 @@ impl ClassFile {
             inner_classes,
             outer_class,
             module,
+            record_components,
+            permitted_subclasses,
         })
     }
 }

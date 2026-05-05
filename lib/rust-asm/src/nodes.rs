@@ -67,35 +67,10 @@ pub struct ClassNode {
 
     /// Decoded JPMS module descriptor data for `module-info.class`, if present.
     pub module: Option<ModuleNode>,
-}
 
-impl Default for ClassNode {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+    pub permitted_subclasses: Vec<String>,
 
-impl ClassNode {
-    pub fn new() -> Self {
-        Self {
-            minor_version: 0,
-            major_version: 0,
-            access_flags: 0,
-            constant_pool: Vec::new(),
-            this_class: 0,
-            name: String::new(),
-            super_name: None,
-            source_file: None,
-            interfaces: Vec::new(),
-            interface_indices: Vec::new(),
-            fields: Vec::new(),
-            methods: Vec::new(),
-            attributes: Vec::new(),
-            inner_classes: Vec::new(),
-            outer_class: String::new(),
-            module: None,
-        }
-    }
+    pub record_components: Vec<RecordComponentNode>,
 }
 
 /// Represents an inner class entry in the `InnerClasses` attribute.
@@ -253,5 +228,17 @@ pub struct MethodNode {
     pub code_attributes: Vec<AttributeInfo>,
 
     /// Other attributes associated with this method (e.g., `Exceptions`, `Synthetic`, `Deprecated`, `Signature`).
+    pub attributes: Vec<AttributeInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordComponentNode {
+    /// The name of the record component
+    pub name: String,
+
+    /// The record component descriptor (e.g., `Ljava/lang/String;` or `I`).
+    pub descriptor: String,
+
+    /// Attributes associated with this component (e.g., `ConstantValue`, `Synthetic`, `Deprecated`, `Signature`).
     pub attributes: Vec<AttributeInfo>,
 }

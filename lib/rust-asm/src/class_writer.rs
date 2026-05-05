@@ -18,7 +18,7 @@ use crate::insn::{
 };
 use crate::nodes::{
     ClassNode, FieldNode, InnerClassNode, MethodNode, ModuleExportNode, ModuleNode, ModuleOpenNode,
-    ModuleProvideNode, ModuleRequireNode,
+    ModuleProvideNode, ModuleRequireNode, RecordComponentNode,
 };
 use crate::opcodes;
 use crate::types::Type;
@@ -103,6 +103,8 @@ pub struct ClassWriter {
     methods: Vec<MethodData>,
     attributes: Vec<AttributeInfo>,
     source_file: Option<String>,
+    permitted_subclasses: Vec<String>,
+    record_components: Vec<RecordComponentNode>,
     cp: ConstantPoolBuilder,
 }
 
@@ -125,6 +127,8 @@ impl ClassWriter {
             methods: Vec::new(),
             attributes: Vec::new(),
             source_file: None,
+            permitted_subclasses: Vec::new(),
+            record_components: Vec::new(),
             cp: ConstantPoolBuilder::new(),
         }
     }
@@ -148,6 +152,8 @@ impl ClassWriter {
             mut attributes,
             inner_classes,
             module,
+            permitted_subclasses,
+            record_components,
             ..
         } = class_node;
 
@@ -225,6 +231,13 @@ impl ClassWriter {
             attributes.extend(build_module_attributes(&mut cp, module));
         }
 
+        attributes.retain(|attr| {
+            !matches!(
+                attr,
+                AttributeInfo::PermittedSubclasses { .. } | AttributeInfo::Record { .. }
+            )
+        });
+
         Self {
             options,
             minor_version,
@@ -237,6 +250,8 @@ impl ClassWriter {
             methods: method_data,
             attributes,
             source_file,
+            permitted_subclasses,
+            record_components,
             cp,
         }
     }
@@ -349,6 +364,21 @@ impl ClassWriter {
         FieldVisitor::new(access_flags, name, descriptor, self as *mut ClassWriter)
     }
 
+    /// Adds a permitted subclass for a sealed class.
+    pub fn visit_permitted_subclass(&mut self, name: &str) -> &mut Self {
+        self.permitted_subclasses.push(name.to_string());
+        self
+    }
+
+    /// Visits a record component.
+    pub fn visit_record_component(
+        &mut self,
+        name: &str,
+        descriptor: &str,
+    ) -> RecordComponentVisitor {
+        RecordComponentVisitor::new(name, descriptor, self as *mut ClassWriter)
+    }
+
     /// Adds a custom attribute to the class.
     pub fn add_attribute(&mut self, attr: AttributeInfo) -> &mut Self {
         self.attributes.push(attr);
@@ -457,6 +487,28 @@ impl ClassWriter {
             });
         }
 
+        if !self.permitted_subclasses.is_empty() {
+            let classes = self
+                .permitted_subclasses
+                .iter()
+                .map(|name| self.cp.class(name))
+                .collect();
+            self.attributes
+                .push(AttributeInfo::PermittedSubclasses { classes });
+        }
+
+        if !self.record_components.is_empty() {
+            let mut components = Vec::new();
+            for rc in &self.record_components {
+                components.push(crate::class_reader::RecordComponent {
+                    name_index: self.cp.utf8(&rc.name),
+                    descriptor_index: self.cp.utf8(&rc.descriptor),
+                    attributes: rc.attributes.clone(),
+                });
+            }
+            self.attributes.push(AttributeInfo::Record { components });
+        }
+
         let constant_pool = self.cp.into_pool();
 
         fn cp_utf8(cp: &[CpInfo], index: u16) -> Result<&str, String> {
@@ -539,8 +591,11 @@ impl ClassWriter {
             inner_classes,
             outer_class,
             module,
+            permitted_subclasses: self.permitted_subclasses,
+            record_components: self.record_components,
         })
     }
+
     /// Generates the raw byte vector representing the .class file.
     ///
     /// This method performs all necessary computations (stack map frames, max stack size)
@@ -1138,6 +1193,64 @@ impl Drop for FieldVisitor {
         }
         self.committed = true;
         self.class_ptr = None;
+    }
+}
+
+pub struct RecordComponentVisitor {
+    name: String,
+    descriptor: String,
+    attributes: Vec<AttributeInfo>,
+    class_ptr: Option<*mut ClassWriter>,
+    committed: bool,
+}
+
+impl RecordComponentVisitor {
+    fn new(name: &str, descriptor: &str, class_ptr: *mut ClassWriter) -> Self {
+        Self {
+            name: name.to_string(),
+            descriptor: descriptor.to_string(),
+            attributes: Vec::new(),
+            class_ptr: Some(class_ptr),
+            committed: false,
+        }
+    }
+
+    pub fn add_attribute(&mut self, attr: AttributeInfo) -> &mut Self {
+        self.attributes.push(attr);
+        self
+    }
+
+    pub fn visit_end(mut self, class: &mut ClassWriter) {
+        class
+            .record_components
+            .push(crate::nodes::RecordComponentNode {
+                name: std::mem::take(&mut self.name),
+                descriptor: std::mem::take(&mut self.descriptor),
+                attributes: std::mem::take(&mut self.attributes),
+            });
+        self.committed = true;
+        self.class_ptr = None;
+    }
+}
+
+impl Drop for RecordComponentVisitor {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let Some(ptr) = self.class_ptr else {
+            return;
+        };
+        unsafe {
+            let class = &mut *ptr;
+            class
+                .record_components
+                .push(crate::nodes::RecordComponentNode {
+                    name: std::mem::take(&mut self.name),
+                    descriptor: std::mem::take(&mut self.descriptor),
+                    attributes: std::mem::take(&mut self.attributes),
+                });
+        }
     }
 }
 
