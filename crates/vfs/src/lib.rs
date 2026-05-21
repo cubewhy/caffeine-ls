@@ -93,7 +93,6 @@ impl std::ops::Deref for AbsPathBuf {
     type Target = AbsPath;
 
     fn deref(&self) -> &AbsPath {
-        // 内部必定是绝对路径，零开销转换
         unsafe { AbsPath::new_unchecked(&self.0) }
     }
 }
