@@ -277,11 +277,7 @@ impl GlobalState {
     /// Helper to send window/showMessage notifications to the client
     fn show_message(&self, typ: MessageType, message: String) {
         let params = ShowMessageParams { typ, message };
-        let notif = Notification::new(notification::ShowMessage::METHOD.to_string(), params);
-
-        if let Err(e) = self.sender.send(lsp_server::Message::Notification(notif)) {
-            tracing::error!("Failed to send ShowMessage notification: {}", e);
-        }
+        self.notify::<notification::ShowMessage>(params);
     }
 
     /// Helper to translate internal ProgressEvent into LSP $/progress notifications
