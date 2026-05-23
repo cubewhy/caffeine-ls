@@ -1,0 +1,55 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+record R(int i) {   }
+
+EDIT:
+  range: 18..19
+  text: "public R { i = 0; }"
+
+RESULT_SOURCE:
+record R(int i) { public R { i = 0; } }
+
+TREE:
+ROOT@0..39
+  RECORD_DECL@0..39
+    IDENTIFIER@0..6 "record"
+    WHITESPACE@6..7 " "
+    IDENTIFIER@7..8 "R"
+    FORMAL_PARAMETERS@8..15
+      L_PAREN@8..9 "("
+      FORMAL_PARAMETER@9..14
+        TYPE@9..12
+          INT_KW@9..12 "int"
+        WHITESPACE@12..13 " "
+        IDENTIFIER@13..14 "i"
+      R_PAREN@14..15 ")"
+    RECORD_BODY@15..39
+      WHITESPACE@15..16 " "
+      L_BRACE@16..17 "{"
+      COMPACT_CONSTRUCTOR_DECL@17..37
+        WHITESPACE@17..18 " "
+        MODIFIER_LIST@18..24
+          PUBLIC_KW@18..24 "public"
+        WHITESPACE@24..25 " "
+        IDENTIFIER@25..26 "R"
+        BLOCK@26..37
+          WHITESPACE@26..27 " "
+          L_BRACE@27..28 "{"
+          EXPRESSION_STMT@28..35
+            WHITESPACE@28..29 " "
+            ASSIGN_EXPR@29..34
+              LITERAL@29..30
+                IDENTIFIER@29..30 "i"
+              WHITESPACE@30..31 " "
+              EQUAL@31..32 "="
+              LITERAL@32..34
+                WHITESPACE@32..33 " "
+                NUMBER_LITERAL@33..34 "0"
+            SEMICOLON@34..35 ";"
+          WHITESPACE@35..36 " "
+          R_BRACE@36..37 "}"
+      WHITESPACE@37..38 " "
+      R_BRACE@38..39 "}"

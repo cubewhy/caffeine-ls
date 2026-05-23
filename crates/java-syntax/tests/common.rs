@@ -1,5 +1,9 @@
 #![allow(unused)]
-use java_syntax::{Event, Lang, LexicalError, ParseError, Parser, Token, grammar, lex, parse};
+use java_syntax::{
+    Event, Lang, LexicalError, ParseError, Parser, Token, grammar,
+    incremental::{TextEdit, apply_edit_to_node, incremental_reparse},
+    lex, parse,
+};
 
 use rowan::SyntaxNode;
 
@@ -102,7 +106,7 @@ PARSE_ERRORS:
 pub fn check_parser(src: &str) -> String {
     let (tokens, lex_errors) = lex(src);
     let mut p = Parser::new(tokens.clone());
-    let parse = p.parse();
+    let parse = p.parse(java_syntax::EntryPoint::Root);
 
     format!(
         "\
@@ -170,6 +174,40 @@ fn do_full_parse(source: &str) -> SyntaxNode<Lang> {
 
 fn dump_tree(node: &SyntaxNode<Lang>) -> String {
     format!("{:#?}", node)
+}
+
+pub fn check_incremental(marked_src: &str, new_text: &str) -> String {
+    let (base_code, start, end) = parse_edit_markers(marked_src);
+
+    let edit = TextEdit {
+        text: new_text,
+        start,
+        end,
+    };
+
+    let initial_tree = do_full_parse(&base_code);
+    let incremental_tree = incremental_reparse(&edit, initial_tree);
+
+    let full_new_text = apply_edit_to_node(&edit, &do_full_parse(&base_code));
+    let expected_tree = do_full_parse(&full_new_text);
+
+    let incremental_dump = format!("{:#?}", incremental_tree);
+    let expected_dump = format!("{:#?}", expected_tree);
+
+    assert_eq!(
+        incremental_dump, expected_dump,
+        "\nIncremental reparse produced a different tree than full parse!\n\n\
+         NEW_SOURCE:\n{}\n",
+        full_new_text
+    );
+
+    format!(
+        "SOURCE:\n{}\n\n\
+         EDIT:\n  range: {}..{}\n  text: {:?}\n\n\
+         RESULT_SOURCE:\n{}\n\n\
+         TREE:\n{}",
+        base_code, start, end, new_text, full_new_text, incremental_dump
+    )
 }
 
 pub fn parse_edit_markers(src: &str) -> (String, usize, usize) {
@@ -245,7 +283,18 @@ macro_rules! parser_snapshot {
     };
 }
 
+macro_rules! incremental_snapshot {
+    ($name:ident, $marked_src:expr, $new_text:expr $(,)?) => {
+        #[test]
+        fn $name() {
+            let out = crate::common::check_incremental($marked_src, $new_text);
+            insta::assert_snapshot!(stringify!($name), out);
+        }
+    };
+}
+
 pub(crate) use event_snapshot;
+pub(crate) use incremental_snapshot;
 pub(crate) use lexer_error_snapshot;
 pub(crate) use lexer_snapshot;
 pub(crate) use parser_snapshot;

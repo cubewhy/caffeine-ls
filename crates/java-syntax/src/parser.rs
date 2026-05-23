@@ -4,7 +4,6 @@ use derive_more::Display;
 use rowan::{GreenNode, NodeCache, TextRange, TextSize};
 
 use crate::{
-    lex,
     lexer::token::Token,
     parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
     syntax_kind::{
@@ -77,6 +76,40 @@ pub enum Event<'a> {
     FinishNode,
 }
 
+pub enum EntryPoint {
+    Root,
+    Block,
+    ClassBody,
+    InterfaceBody,
+    SwitchBlock,
+    AnnotationTypeBody,
+    EnumBody,
+    RecordBody,
+    ModuleBody,
+    ArrayInitializer,
+}
+
+impl TryFrom<SyntaxKind> for EntryPoint {
+    type Error = ();
+
+    fn try_from(value: SyntaxKind) -> Result<Self, Self::Error> {
+        match value {
+            ROOT => Ok(Self::Root),
+            BLOCK => Ok(Self::Block),
+            CLASS_BODY => Ok(Self::ClassBody),
+            INTERFACE_BODY => Ok(Self::InterfaceBody),
+            SWITCH_BLOCK => Ok(Self::SwitchBlock),
+            ANNOTATION_TYPE_BODY => Ok(Self::AnnotationTypeBody),
+            ENUM_BODY => Ok(Self::EnumBody),
+            RECORD_BODY => Ok(Self::RecordBody),
+            MODULE_BODY => Ok(Self::ModuleBody),
+            ARRAY_INITIALIZER => Ok(Self::ArrayInitializer),
+
+            _ => Err(()),
+        }
+    }
+}
+
 pub struct Parser<'a> {
     source: TokenSource<'a>,
     pub events: Vec<Event<'a>>,
@@ -96,8 +129,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_with_cache(mut self, cache: Option<&'a mut NodeCache>) -> Parse {
-        grammar::root(&mut self);
+    pub fn parse_with_cache(
+        mut self,
+        cache: Option<&'a mut NodeCache>,
+        entry: EntryPoint,
+    ) -> Parse {
+        grammar::partial(&mut self, entry);
 
         let green_node = Sink::new(self.source.into_inner(), self.events, cache).finish();
 
@@ -107,8 +144,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(self) -> Parse {
-        self.parse_with_cache(None)
+    pub fn parse(self, entry: EntryPoint) -> Parse {
+        self.parse_with_cache(None, entry)
     }
 
     pub(crate) fn checkpoint(&self) -> Checkpoint {
@@ -326,8 +363,12 @@ impl<'a> Parser<'a> {
 ///
 /// NOTE: Never call this function in production!
 pub fn parse(input: &str) -> Parse {
-    let tokens = lex(input).0;
-    Parser::new(tokens).parse()
+    parse_partial(input, EntryPoint::Root)
+}
+
+pub fn parse_partial(input: &str, entry: EntryPoint) -> Parse {
+    let (tokens, _) = crate::lex(input);
+    Parser::new(tokens).parse(entry)
 }
 
 #[derive(Clone, Copy)]

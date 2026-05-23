@@ -1,0 +1,25 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+@Deprecated class A {}
+
+EDIT:
+  range: 0..11
+  text: ""
+
+RESULT_SOURCE:
+ class A {}
+
+TREE:
+ROOT@0..11
+  WHITESPACE@0..1 " "
+  CLASS_DECL@1..11
+    CLASS_KW@1..6 "class"
+    WHITESPACE@6..7 " "
+    IDENTIFIER@7..8 "A"
+    CLASS_BODY@8..11
+      WHITESPACE@8..9 " "
+      L_BRACE@9..10 "{"
+      R_BRACE@10..11 "}"

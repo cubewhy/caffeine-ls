@@ -1,0 +1,34 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+class A {  }
+
+EDIT:
+  range: 10..10
+  text: "int x;"
+
+RESULT_SOURCE:
+class A { int x; }
+
+TREE:
+ROOT@0..18
+  CLASS_DECL@0..18
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..18
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..16
+        WHITESPACE@9..10 " "
+        TYPE@10..13
+          INT_KW@10..13 "int"
+        VARIABLE_DECLARATOR_LIST@13..15
+          WHITESPACE@13..14 " "
+          VARIABLE_DECLARATOR@14..15
+            IDENTIFIER@14..15 "x"
+        SEMICOLON@15..16 ";"
+      WHITESPACE@16..17 " "
+      R_BRACE@17..18 "}"

@@ -33,7 +33,7 @@ pub fn render_tree(lang: ParseLanguage, file_path: PathBuf) -> anyhow::Result<()
 pub fn render_java_tree(content: String) -> anyhow::Result<()> {
     let tokens = lex(&content).0;
 
-    let parse = Parser::new(tokens).parse();
+    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
     let res = parse.debug_dump();
     println!("{res}");
 
@@ -127,7 +127,7 @@ fn process_single_file(input_path: &Path, output_root: &Path) -> anyhow::Result<
 
     let tokens = lex(&content).0;
 
-    let parse = Parser::new(tokens).parse();
+    let parse = Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
     let errors = parse.errors();
 
     if !errors.is_empty() {

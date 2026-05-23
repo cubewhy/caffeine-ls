@@ -1,0 +1,39 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+class A { void m() { } }
+
+EDIT:
+  range: 21..22
+  text: " /* missing brace */ "
+
+RESULT_SOURCE:
+class A { void m() {  /* missing brace */  }
+
+TREE:
+ROOT@0..44
+  CLASS_DECL@0..44
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..44
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..44
+        WHITESPACE@9..10 " "
+        VOID_KW@10..14 "void"
+        WHITESPACE@14..15 " "
+        IDENTIFIER@15..16 "m"
+        FORMAL_PARAMETERS@16..18
+          L_PAREN@16..17 "("
+          R_PAREN@17..18 ")"
+        BLOCK@18..44
+          WHITESPACE@18..19 " "
+          L_BRACE@19..20 "{"
+          WHITESPACE@20..22 "  "
+          BLOCK_COMMENT@22..41 "/* missing brace */"
+          WHITESPACE@41..43 "  "
+          R_BRACE@43..44 "}"
+      MISSING@44..44

@@ -1,0 +1,60 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+class A { int[] arr = { 1, 2 }; }
+
+EDIT:
+  range: 24..28
+  text: "1, 2, 3, 4"
+
+RESULT_SOURCE:
+class A { int[] arr = { 1, 2, 3, 4 }; }
+
+TREE:
+ROOT@0..39
+  CLASS_DECL@0..39
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..39
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      FIELD_DECL@9..37
+        WHITESPACE@9..10 " "
+        TYPE@10..15
+          INT_KW@10..13 "int"
+          DIMENSIONS@13..15
+            DIMENSION@13..15
+              L_BRACKET@13..14 "["
+              R_BRACKET@14..15 "]"
+        VARIABLE_DECLARATOR_LIST@15..36
+          WHITESPACE@15..16 " "
+          VARIABLE_DECLARATOR@16..36
+            IDENTIFIER@16..19 "arr"
+            WHITESPACE@19..20 " "
+            EQUAL@20..21 "="
+            ARRAY_INITIALIZER@21..36
+              WHITESPACE@21..22 " "
+              L_BRACE@22..23 "{"
+              LITERAL@23..25
+                WHITESPACE@23..24 " "
+                NUMBER_LITERAL@24..25 "1"
+              COMMA@25..26 ","
+              LITERAL@26..28
+                WHITESPACE@26..27 " "
+                NUMBER_LITERAL@27..28 "2"
+              COMMA@28..29 ","
+              LITERAL@29..31
+                WHITESPACE@29..30 " "
+                NUMBER_LITERAL@30..31 "3"
+              COMMA@31..32 ","
+              LITERAL@32..34
+                WHITESPACE@32..33 " "
+                NUMBER_LITERAL@33..34 "4"
+              WHITESPACE@34..35 " "
+              R_BRACE@35..36 "}"
+        SEMICOLON@36..37 ";"
+      WHITESPACE@37..38 " "
+      R_BRACE@38..39 "}"

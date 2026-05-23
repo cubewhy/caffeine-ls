@@ -103,7 +103,7 @@ pub fn parse_java_file(text: &str, _interner: &ThreadedRodeo) -> ParseResult {
     errors.extend(lex_errors.iter().map(SyntaxError::from_java_lexer));
 
     // parse the tree
-    let output = java_syntax::Parser::new(tokens).parse();
+    let output = java_syntax::Parser::new(tokens).parse(java_syntax::EntryPoint::Root);
 
     // collect syntax errors
     for err in output.errors() {

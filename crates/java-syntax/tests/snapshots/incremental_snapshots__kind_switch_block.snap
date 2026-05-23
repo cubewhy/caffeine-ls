@@ -1,0 +1,76 @@
+---
+source: crates/java-syntax/tests/incremental_snapshots.rs
+expression: out
+---
+SOURCE:
+class A { void m(int x) { switch(x) { case 1: break; } } }
+
+EDIT:
+  range: 38..52
+  text: "case 1: break; default: return;"
+
+RESULT_SOURCE:
+class A { void m(int x) { switch(x) { case 1: break; default: return; } } }
+
+TREE:
+ROOT@0..75
+  CLASS_DECL@0..75
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..7 "A"
+    CLASS_BODY@7..75
+      WHITESPACE@7..8 " "
+      L_BRACE@8..9 "{"
+      METHOD_DECL@9..73
+        WHITESPACE@9..10 " "
+        VOID_KW@10..14 "void"
+        WHITESPACE@14..15 " "
+        IDENTIFIER@15..16 "m"
+        FORMAL_PARAMETERS@16..23
+          L_PAREN@16..17 "("
+          FORMAL_PARAMETER@17..22
+            TYPE@17..20
+              INT_KW@17..20 "int"
+            WHITESPACE@20..21 " "
+            IDENTIFIER@21..22 "x"
+          R_PAREN@22..23 ")"
+        BLOCK@23..73
+          WHITESPACE@23..24 " "
+          L_BRACE@24..25 "{"
+          SWITCH_STMT@25..71
+            WHITESPACE@25..26 " "
+            SWITCH_KW@26..32 "switch"
+            L_PAREN@32..33 "("
+            LITERAL@33..34
+              IDENTIFIER@33..34 "x"
+            R_PAREN@34..35 ")"
+            SWITCH_BLOCK@35..71
+              WHITESPACE@35..36 " "
+              L_BRACE@36..37 "{"
+              SWITCH_BLOCK_STATEMENT_GROUP@37..52
+                WHITESPACE@37..38 " "
+                SWITCH_LABEL@38..44
+                  CASE_KW@38..42 "case"
+                  LITERAL@42..44
+                    WHITESPACE@42..43 " "
+                    NUMBER_LITERAL@43..44 "1"
+                COLON@44..45 ":"
+                BREAK_STMT@45..52
+                  WHITESPACE@45..46 " "
+                  BREAK_KW@46..51 "break"
+                  SEMICOLON@51..52 ";"
+              SWITCH_BLOCK_STATEMENT_GROUP@52..69
+                WHITESPACE@52..53 " "
+                SWITCH_LABEL@53..60
+                  DEFAULT_KW@53..60 "default"
+                COLON@60..61 ":"
+                RETURN_STMT@61..69
+                  WHITESPACE@61..62 " "
+                  RETURN_KW@62..68 "return"
+                  SEMICOLON@68..69 ";"
+              WHITESPACE@69..70 " "
+              R_BRACE@70..71 "}"
+          WHITESPACE@71..72 " "
+          R_BRACE@72..73 "}"
+      WHITESPACE@73..74 " "
+      R_BRACE@74..75 "}"
