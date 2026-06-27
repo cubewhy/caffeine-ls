@@ -11,8 +11,6 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
         .map(PathBuf::from)
         .unwrap_or_else(|_| sh.current_dir());
 
-    println!("🚀 Step 1: Building Caffeine LS...");
-
     let profile = if cargo_options
         .iter()
         .any(|opt| opt == "--release" || opt == "-r")
@@ -23,8 +21,6 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
     };
 
     cmd!(sh, "cargo build -p caffeine-ls {cargo_options...}").run()?;
-
-    println!("📦 Step 2: Copying binary to extension directory...");
 
     let exe_suffix = env::consts::EXE_SUFFIX;
     let binary_name = format!("caffeine-ls{exe_suffix}");
@@ -42,7 +38,6 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
     let target_bin = bin_dir.join(&binary_name);
     sh.copy_file(source_bin, target_bin)?;
 
-    println!("⚙️ Step 3: Compiling Extension...");
     sh.change_dir(&extension_dir);
 
     if !extension_dir.join("node_modules").exists() {
@@ -51,8 +46,6 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
     }
 
     cmd!(sh, "pnpm run compile").env("CI", "true").run()?;
-
-    println!("💻 Step 4: Launching VS Code...");
 
     sh.set_var("RUST_BACKTRACE", "1");
     sh.set_var("CAFFEINE_LS_LOG", "debug");
