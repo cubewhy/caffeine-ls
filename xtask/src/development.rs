@@ -1,8 +1,10 @@
 use std::{env, path::PathBuf};
 
+use anyhow::Context;
+use which::which;
 use xshell::{Shell, cmd};
 
-pub fn run_vscode(cargo_options: Vec<String>) -> anyhow::Result<()> {
+pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow::Result<()> {
     let sh = Shell::new()?;
 
     let root_dir = env::var("CARGO_WORKSPACE_DIR")
@@ -45,17 +47,37 @@ pub fn run_vscode(cargo_options: Vec<String>) -> anyhow::Result<()> {
 
     if !extension_dir.join("node_modules").exists() {
         println!("  - Installing dependencies...");
-        cmd!(sh, "pnpm install").run()?;
+        cmd!(sh, "pnpm install").env("CI", "true").run()?;
     }
 
-    cmd!(sh, "pnpm run compile").run()?;
+    cmd!(sh, "pnpm run compile").env("CI", "true").run()?;
 
     println!("💻 Step 4: Launching VS Code...");
 
     sh.set_var("RUST_BACKTRACE", "1");
     sh.set_var("CAFFEINE_LS_LOG", "debug");
 
-    cmd!(sh, "code --extensionDevelopmentPath={extension_dir}").run()?;
+    let code_exec = code_exec
+        .and_then(|name| which(name).ok())
+        .or_else(find_code_installation)
+        .context("No VS Code executable found")?;
+
+    let extension_dir = extension_dir.to_string_lossy();
+    let extension_args = vec!["--extensionDevelopmentPath", &extension_dir];
+
+    cmd!(sh, "{code_exec}").args(&extension_args).run()?;
 
     Ok(())
+}
+
+fn find_code_installation() -> Option<PathBuf> {
+    let executables = ["code", "codium"];
+
+    for exe in executables {
+        if let Ok(path) = which(exe) {
+            return Some(path);
+        }
+    }
+
+    None
 }

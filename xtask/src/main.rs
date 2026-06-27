@@ -46,8 +46,8 @@ fn main() {
                 process::exit(2);
             }
         }
-        Cli::Vscode { slop } => {
-            if let Err(e) = development::run_vscode(slop) {
+        Cli::Vscode { code_exec, slop } => {
+            if let Err(e) = development::run_vscode(code_exec.as_deref(), slop) {
                 eprintln!("An error has occurred: {e:#}");
                 process::exit(2);
             }

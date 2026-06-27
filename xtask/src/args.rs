@@ -23,6 +23,8 @@ pub enum Cli {
     },
 
     Vscode {
+        #[arg(default_value = None)]
+        code_exec: Option<String>,
         #[arg(last = true)]
         slop: Vec<String>,
     },
