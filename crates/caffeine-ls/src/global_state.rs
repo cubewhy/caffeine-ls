@@ -1,6 +1,6 @@
 use crate::config::ConfigErrors;
-use crate::handlers;
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
+use crate::handlers::{self, on_initialized};
 use lsp_types::notification::Notification as _;
 use project_model::WorkspaceGraph;
 use std::{sync::Arc, time::Instant};
@@ -111,6 +111,9 @@ impl GlobalState {
     }
 
     pub fn run(mut self, receiver: Receiver<lsp_server::Message>) -> anyhow::Result<()> {
+        on_initialized(&mut self, InitializedParams {})
+            .inspect_err(|err| tracing::error!(?err, "Failed to init lsp"))?;
+
         loop {
             crossbeam_channel::select! {
                 recv(receiver) -> msg => {

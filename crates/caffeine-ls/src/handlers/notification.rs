@@ -6,6 +6,11 @@ use vfs::VfsPath;
 
 use crate::GlobalState;
 
+pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::Result<()> {
+    tracing::info!("lsp initialized");
+    Ok(())
+}
+
 pub fn on_exit(state: &mut GlobalState, _: ()) -> anyhow::Result<()> {
     if state.shutdown_requested {
         process::exit(0);
