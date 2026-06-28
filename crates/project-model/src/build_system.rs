@@ -1,5 +1,13 @@
-use crate::workspace::WorkspaceGraph;
+use crate::{GradleBuildSystem, gradle, workspace::WorkspaceGraph};
 use std::path::Path;
+
+#[derive(Debug, Copy, Clone)]
+pub enum BuildSystemType {
+    Gradle,
+    Maven,
+    Eclipse,
+    Idea,
+}
 
 /// Represents a tool that can resolve the workspace structure.
 pub trait BuildSystem: Send + Sync {
@@ -12,4 +20,47 @@ pub trait BuildSystem: Send + Sync {
 
     /// Executes the tool to build and return the workspace graph.
     fn sync(&self, workspace_root: &Path, java_home: &Path) -> anyhow::Result<WorkspaceGraph>;
+
+    fn system_type(&self) -> BuildSystemType;
+}
+
+pub enum ProbeResult {
+    None,
+    Single(BuildSystemType),
+    Ambiguous(Vec<BuildSystemType>),
+}
+
+pub fn probe_workspace_layout(root: &Path) -> ProbeResult {
+    // Registry of all compilation engines supported by your frontend
+    let managers: &[&dyn BuildSystem] = &[&GradleBuildSystem];
+
+    // Collect every system that detects its build files
+    let detected_systems: Vec<BuildSystemType> = managers
+        .iter()
+        .filter(|sys| sys.is_applicable(root))
+        .map(|sys| sys.system_type())
+        .collect();
+
+    match detected_systems.len() {
+        0 => ProbeResult::None,
+        1 => ProbeResult::Single(detected_systems[0]),
+        _ => ProbeResult::Ambiguous(detected_systems),
+    }
+}
+
+/// Standalone synchronization action, executed only after a choice is locked down.
+pub fn sync_specific_build_system(
+    system: BuildSystemType,
+    root: &std::path::Path,
+    java_home: &std::path::Path,
+) -> anyhow::Result<crate::WorkspaceGraph> {
+    match system {
+        BuildSystemType::Gradle => {
+            let json = gradle::import_gradle_workspace(root, java_home)?;
+            Ok(gradle::build_graph_from_json(json))
+        }
+        BuildSystemType::Maven => todo!("Implement maven extraction pipeline"),
+        BuildSystemType::Eclipse => todo!("Implement eclipse extraction pipeline"),
+        BuildSystemType::Idea => todo!("Implement idea extraction pipeline"),
+    }
 }

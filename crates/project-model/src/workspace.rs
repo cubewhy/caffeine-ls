@@ -144,13 +144,3 @@ impl WorkspaceGraph {
             .map(|(project, _)| project)
     }
 }
-
-/// Responsible for invoking external build tools (via their CLI or Tooling API, e.g., Gradle Tooling API, Maven Invoker),
-/// resolving their topological structures, and transforming them into the LSP's internal `WorkspaceGraph`.
-pub fn load_workspace_from_disk(root: &AbsPathBuf) -> anyhow::Result<WorkspaceGraph> {
-    let mut graph = WorkspaceGraph::default();
-
-    // TODO: Implement real workspace analysis and graph assembly logic
-
-    Ok(graph)
-}

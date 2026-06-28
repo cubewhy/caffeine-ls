@@ -1,6 +1,8 @@
 use std::{env::consts::EXE_SUFFIX, path::Path};
 
-use crate::{BuildSystem, WorkspaceGraph, gradle::runner::build_graph_from_json};
+use crate::{BuildSystem, BuildSystemType, WorkspaceGraph};
+
+pub use runner::{build_graph_from_json, import_gradle_workspace};
 
 mod model;
 mod runner;
@@ -26,5 +28,9 @@ impl BuildSystem for GradleBuildSystem {
         let graph = build_graph_from_json(gradle_json);
 
         Ok(graph)
+    }
+
+    fn system_type(&self) -> BuildSystemType {
+        BuildSystemType::Gradle
     }
 }
