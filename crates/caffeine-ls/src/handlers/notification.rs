@@ -4,10 +4,11 @@ use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
 use vfs::VfsPath;
 
-use crate::GlobalState;
+use crate::{GlobalState, global_state::BackgroundTaskEvent};
 
 pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::Result<()> {
-    tracing::info!("lsp initialized");
+    state.spawn_task(BackgroundTaskEvent::LoadWorkspace);
+
     Ok(())
 }
 

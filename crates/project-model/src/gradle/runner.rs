@@ -1,20 +1,19 @@
-use crate::gradle::script::LEGACY_GRADLE_INIT_SCRIPT;
-use crate::{Dependency, DependencyKind, DependencyScope, ProjectData, ProjectId, WorkspaceGraph};
-
-use super::model::GradleWorkspace;
-use super::script::GRADLE_INIT_SCRIPT;
+use crate::gradle::model::{GradleClasspathEntry, GradleWorkspace};
+use crate::{
+    ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
+    WorkspaceGraph,
+};
 use index::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 use triomphe::Arc;
 use vfs::AbsPathBuf;
 
-/// Parses a version string like "7.4.2" or "4.10.3" into (major, minor) integers.
 fn parse_gradle_version(version_str: &str) -> (u32, u32) {
     let mut parts = version_str.split('.');
     let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -30,7 +29,6 @@ fn probe_version_from_wrapper(workspace_root: &Path) -> Option<(u32, u32)> {
 
     let content = fs::read_to_string(props_path).ok()?;
     for line in content.lines() {
-        // Look for a line like: distributionUrl=https\://services.gradle.org/distributions/gradle-7.4-bin.zip
         if line.contains("distributionUrl")
             && let Some(idx) = line.find("gradle-")
         {
@@ -57,7 +55,6 @@ fn probe_version_from_cli(gradle_cmd: &str, workspace_root: &Path) -> Option<(u3
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        // Output format usually contains a dedicated line: "Gradle 7.4"
         if let Some(version_str) = line.strip_prefix("Gradle ") {
             return Some(parse_gradle_version(version_str));
         }
@@ -69,8 +66,6 @@ pub fn import_gradle_workspace(
     workspace_root: &Path,
     java_exec: &Path,
 ) -> anyhow::Result<GradleWorkspace> {
-    // TODO: IntelliJ doesn't use the wrapper script directly, use the gradle-wrapper.jar directly
-    // as a fallback
     let gradlew_path = if cfg!(windows) {
         workspace_root.join("gradlew.bat")
     } else {
@@ -80,15 +75,11 @@ pub fn import_gradle_workspace(
     let gradle_cmd = if gradlew_path.exists() {
         gradlew_path.to_string_lossy().into_owned()
     } else {
-        // no wrapper found :(
-        // Fallback to global gradle
         "gradle".to_string()
     };
 
-    // probe gradle version
     let (major_version, minor_version) = probe_version_from_wrapper(workspace_root)
         .or_else(|| probe_version_from_cli(&gradle_cmd, workspace_root))
-        // Default fallback to a modern runtime setup if detection fails completely
         .unwrap_or((7, 0));
 
     tracing::info!(
@@ -99,17 +90,16 @@ pub fn import_gradle_workspace(
 
     let selected_script = if major_version < 5 {
         tracing::debug!("Using legacy Gradle configuration script");
-        LEGACY_GRADLE_INIT_SCRIPT
+        crate::gradle::script::LEGACY_GRADLE_INIT_SCRIPT
     } else {
         tracing::debug!("Using modern Gradle configuration script");
-        GRADLE_INIT_SCRIPT
+        crate::gradle::script::GRADLE_INIT_SCRIPT
     };
 
     let mut init_script = NamedTempFile::new()?;
     init_script.write_all(selected_script.as_bytes())?;
     init_script.flush()?;
 
-    // e.g.: ./gradlew --init-script /tmp/init.gradle exportWorkspaceModel
     let output = Command::new(&gradle_cmd)
         .env("JAVA_HOME", java_exec)
         .current_dir(workspace_root)
@@ -124,7 +114,6 @@ pub fn import_gradle_workspace(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-
     let begin_marker = "WORKSPACE_MODEL_BEGIN";
     let end_marker = "WORKSPACE_MODEL_END";
 
@@ -136,7 +125,6 @@ pub fn import_gradle_workspace(
     match (json_start, json_end) {
         (Some(start), Some(end)) if start < end => {
             let json_str = stdout[start..end].trim();
-
             let workspace: GradleWorkspace = serde_json::from_str(json_str)?;
             Ok(workspace)
         }
@@ -150,102 +138,158 @@ pub fn import_gradle_workspace(
 pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
     let mut graph = WorkspaceGraph::default();
 
-    // Maps Gradle paths (e.g., ":core") to internal ProjectIds
     let mut path_to_project_id = FxHashMap::default();
-    // Maps external JAR file paths to unique LibraryIds
     let mut jar_to_library_id = FxHashMap::default();
+    let mut version_to_sdk_id = FxHashMap::default();
+    let mut next_sdk_id = 0u32;
 
-    // Pre-allocate ProjectIds and LibraryIds for everything
-    for (next_project_id, project) in workspace.projects.iter().enumerate() {
-        let project_id = ProjectId(next_project_id.try_into().unwrap());
+    // Phase 1: Allocate topology project tokens
+    for (idx, project) in workspace.projects.iter().enumerate() {
+        let project_id = ProjectId(idx as u32);
         path_to_project_id.insert(project.path.clone(), project_id);
-
-        // Collect source/test root prefixes for the VFS pass later
-        let all_roots = project
-            .source_roots
-            .iter()
-            .chain(project.test_roots.iter())
-            .chain(project.resource_roots.iter())
-            .chain(project.generated_roots.iter());
-
-        for root in all_roots {
-            if let Ok(abs_path) = AbsPathBuf::try_from(root.clone()) {
-                graph.root_to_project.insert(abs_path, project_id);
-            }
-        }
-
-        // Allocate unique LibraryIds for external JAR dependencies
-        let all_jars = project
-            .compile_classpath
-            .iter()
-            .chain(project.test_classpath.iter());
-        for jar in all_jars {
-            if jar.extension().is_some_and(|ext| ext == "jar") {
-                let lib_id = jar_to_library_id
-                    .entry(jar.clone())
-                    .or_insert_with(|| LibraryId::from_jar_path(jar).expect("unreachable"));
-
-                if let Ok(abs_jar_path) = AbsPathBuf::try_from(jar.clone()) {
-                    graph.library_paths.insert(*lib_id, abs_jar_path);
-                }
-            }
-        }
     }
 
-    // Build the explicit ProjectData and map its internal/external dependencies
+    // Phase 2: Structural translation preserving chronological classpath sorting
     for project in workspace.projects {
         let project_id = *path_to_project_id.get(&project.path).unwrap();
-        let mut dependencies = Vec::new();
+        let abs_project_dir = AbsPathBuf::try_from(project.project_dir.clone())
+            .unwrap_or_else(|_| AbsPathBuf::assert_utf8(PathBuf::from(".")));
 
-        // Map Internal Module Dependencies
-        for subproject_path in &project.module_dependencies {
-            if let Some(&target_id) = path_to_project_id.get(subproject_path) {
-                dependencies.push(Dependency {
-                    kind: DependencyKind::Internal(target_id),
-                    scope: DependencyScope::Compile, // Module dependencies are compile-scoped
-                });
+        let target_sdk = if let Some(version) = project.java_language_version {
+            let sdk_id = *version_to_sdk_id.entry(version.clone()).or_insert_with(|| {
+                let id = SdkId(next_sdk_id);
+                next_sdk_id += 1;
+
+                let sdk_data = SdkData {
+                    id,
+                    name: SmolStr::from(format!("JDK {}", version)),
+                    version: SmolStr::from(version),
+                    home_path: AbsPathBuf::assert_utf8(PathBuf::from(".")),
+                    exploded_library_paths: Vec::new(),
+                };
+                graph.sdks.insert(id, Arc::new(sdk_data));
+                id
+            });
+            Some(sdk_id)
+        } else {
+            None
+        };
+
+        let mut main_source_roots = Vec::new();
+        for root in project.source_roots {
+            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
+                main_source_roots.push(abs_path.clone());
+                graph
+                    .source_root_to_owning_set
+                    .insert(abs_path, (project_id, SourceSetKind::Main));
             }
         }
 
-        // Map External Compile Classpath JARs
-        for jar in &project.compile_classpath {
-            if let Some(lib_id) = jar_to_library_id.get(jar) {
-                dependencies.push(Dependency {
-                    kind: DependencyKind::External(*lib_id),
-                    scope: DependencyScope::Compile,
-                });
+        let mut test_source_roots = Vec::new();
+        for root in project.test_roots {
+            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
+                test_source_roots.push(abs_path.clone());
+                graph
+                    .source_root_to_owning_set
+                    .insert(abs_path, (project_id, SourceSetKind::Test));
             }
         }
 
-        // Map External Test Classpath JARs (Only if they aren't already in Compile)
-        for jar in &project.test_classpath {
-            if let Some(lib_id) = jar_to_library_id.get(jar) {
-                let already_in_compile = dependencies.iter().any(|d| {
-                    matches!(d.kind, DependencyKind::External(id) if id == *lib_id)
-                        && d.scope == DependencyScope::Compile
-                });
+        let mut main_generated_roots = Vec::new();
+        for root in project.generated_roots {
+            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
+                main_generated_roots.push(abs_path.clone());
+                graph
+                    .source_root_to_owning_set
+                    .insert(abs_path, (project_id, SourceSetKind::Main));
+            }
+        }
 
-                if !already_in_compile {
-                    dependencies.push(Dependency {
-                        kind: DependencyKind::External(*lib_id),
-                        scope: DependencyScope::Test,
-                    });
+        // Shared closure mappings that maintain original list sequence
+        let mut map_entries = |raw_entries: Vec<GradleClasspathEntry>| -> Vec<ClasspathEntry> {
+            let mut entries = Vec::new();
+
+            if let Some(sdk_id) = target_sdk {
+                entries.push(ClasspathEntry::Sdk(sdk_id));
+            }
+
+            for raw_entry in raw_entries {
+                match raw_entry {
+                    GradleClasspathEntry::Project { path, source_set } => {
+                        if let Some(&target_id) = path_to_project_id.get(&path) {
+                            let set_kind = match source_set.as_str() {
+                                "main" => SourceSetKind::Main,
+                                "test" => SourceSetKind::Test,
+                                custom => SourceSetKind::Custom(SmolStr::from(custom)),
+                            };
+                            entries.push(ClasspathEntry::Internal {
+                                project_id: target_id,
+                                source_set: set_kind,
+                            });
+                        }
+                    }
+                    GradleClasspathEntry::Jar { path } => {
+                        if path.extension().is_some_and(|ext| ext == "jar") {
+                            let lib_id =
+                                *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
+                                    LibraryId::from_jar_path(&path)
+                                        .expect("failed to hash jar path")
+                                });
+
+                            if let Ok(abs_jar_path) = AbsPathBuf::try_from(path) {
+                                graph.library_paths.insert(lib_id, abs_jar_path);
+                            }
+                            entries.push(ClasspathEntry::External(lib_id));
+                        }
+                    }
                 }
             }
+            entries
+        };
+
+        let main_compile_classpath = map_entries(project.compile_classpath);
+
+        // Setup separate test compile entries ensuring module isolation
+        let mut test_compile_classpath = Vec::new();
+        if let Some(sdk_id) = target_sdk {
+            test_compile_classpath.push(ClasspathEntry::Sdk(sdk_id));
         }
 
-        let abs_root_path =
-            AbsPathBuf::try_from(project.project_dir).unwrap_or_else(AbsPathBuf::assert_utf8);
+        // Force test contexts to look inside their paired production counterpart first
+        test_compile_classpath.push(ClasspathEntry::Internal {
+            project_id,
+            source_set: SourceSetKind::Main,
+        });
+        test_compile_classpath.extend(map_entries(project.test_classpath));
 
-        // Create a unique LibraryId for this project's own compiled output symbol-set
-        let project_library_id = LibraryId::from_project_root(abs_root_path.as_std_path());
+        let main_source_set = SourceSetData {
+            kind: SourceSetKind::Main,
+            source_roots: main_source_roots,
+            generated_source_roots: main_generated_roots,
+            compile_classpath: main_compile_classpath.clone(),
+            runtime_classpath: main_compile_classpath,
+            jpms_module_name: None,
+        };
+
+        let test_source_set = SourceSetData {
+            kind: SourceSetKind::Test,
+            source_roots: test_source_roots,
+            generated_source_roots: Vec::new(),
+            compile_classpath: test_compile_classpath.clone(),
+            runtime_classpath: test_compile_classpath,
+            jpms_module_name: None,
+        };
+
+        let mut source_sets = FxHashMap::default();
+        source_sets.insert(SourceSetKind::Main, main_source_set);
+        source_sets.insert(SourceSetKind::Test, test_source_set);
 
         let project_data = ProjectData {
             id: project_id,
             name: SmolStr::from(project.name),
-            root_path: abs_root_path,
-            library_id: project_library_id,
-            dependencies,
+            root_path: abs_project_dir,
+            target_sdk,
+            source_sets,
         };
 
         graph.projects.insert(project_id, Arc::new(project_data));

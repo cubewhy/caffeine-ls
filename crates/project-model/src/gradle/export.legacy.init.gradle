@@ -20,28 +20,34 @@ def normalizePath(def file) {
     }
 }
 
-def extractLegacyClasspath(def project, String configName) {
+def extractLegacyRichClasspath(def project, String configName) {
     def config = project.configurations.findByName(configName)
-    if (config == null) {
-        debugLog("    [WARN] Configuration '${configName}' not found.")
+    if (config == null || !config.canBeResolved) {
+        debugLog("    [WARN] Configuration '${configName}' not found or unresolvable.")
         return []
     }
 
+    def entries = []
     try {
-        if (config.canBeResolved) {
-            def files = config.resolvedConfiguration.lenientConfiguration.files
-            def paths = files.collect { normalizePath(it) }.findAll { it != null }.unique()
-            debugLog("    [SUCCESS] Resolved '${configName}' directly: ${paths.size()} files")
-            return paths
-        } else {
-            debugLog("    [INFO] '${configName}' cannot be resolved directly. Creating detached copy...")
-            def deps = config.allDependencies.toArray(new org.gradle.api.artifacts.Dependency[0])
-            def detached = project.configurations.detachedConfiguration(deps)
-            def files = detached.resolvedConfiguration.lenientConfiguration.files
-            def paths = files.collect { normalizePath(it) }.findAll { it != null }.unique()
-            debugLog("    [SUCCESS] Resolved '${configName}' via detached configuration: ${paths.size()} files")
-            return paths
+        def resolvedArtifacts = config.resolvedConfiguration.lenientConfiguration.artifacts
+        resolvedArtifacts.each { artifact ->
+            def id = artifact.id.componentIdentifier
+            def file_path = normalizePath(artifact.file)
+
+            if (id instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) {
+                entries << [
+                    type: 'project',
+                    path: id.projectPath,
+                    source_set: 'main'
+                ]
+            } else if (file_path && file_path.endsWith('.jar')) {
+                entries << [
+                    type: 'jar',
+                    path: file_path
+                ]
+            }
         }
+        return entries
     } catch (Throwable t) {
         debugLog("    [ERROR] Failed to resolve '${configName}': ${t.message}")
         return []
@@ -92,14 +98,14 @@ gradle.projectsEvaluated {
                     resourcesSource = (mainRes + testRes).unique()
                 } catch (Throwable ignored) {}
 
-                def compileCp = extractLegacyClasspath(project, 'compileClasspath')
+                def compileCp = extractLegacyRichClasspath(project, 'compileClasspath')
                 if (compileCp.isEmpty()) {
-                    compileCp = extractLegacyClasspath(project, 'compile')
+                    compileCp = extractLegacyRichClasspath(project, 'compile')
                 }
 
-                def testCp = extractLegacyClasspath(project, 'testCompileClasspath')
+                def testCp = extractLegacyRichClasspath(project, 'testCompileClasspath')
                 if (testCp.isEmpty()) {
-                    testCp = extractLegacyClasspath(project, 'testCompile')
+                    testCp = extractLegacyRichClasspath(project, 'testCompile')
                 }
 
                 def allGenerated = []
@@ -111,16 +117,6 @@ gradle.projectsEvaluated {
                                 allGenerated << path
                             }
                         }
-                    }
-                } catch (Throwable ignored) {}
-
-                def moduleDeps = []
-                try {
-                    def config = project.configurations.findByName('compileClasspath') ?: project.configurations.findByName('compile')
-                    if (config) {
-                        moduleDeps = config.allDependencies
-                            .findAll { it instanceof org.gradle.api.artifacts.ProjectDependency }
-                            .collect { it.dependencyProject.path }
                     }
                 } catch (Throwable ignored) {}
 
@@ -141,7 +137,6 @@ gradle.projectsEvaluated {
                     generated_roots: allGenerated.unique(),
                     compile_classpath: compileCp,
                     test_classpath: testCp,
-                    module_dependencies: moduleDeps.unique(),
                     java_language_version: javaLangVersion
                 ]
             }

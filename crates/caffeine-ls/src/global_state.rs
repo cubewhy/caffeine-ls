@@ -19,7 +19,8 @@ use vfs::{Vfs, VfsEvent};
 use crate::config::Config;
 
 pub enum BackgroundTaskEvent {
-    WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
+    WorkspaceLoaded(WorkspaceGraph),
+    LoadWorkspace,
     Progress(ProgressEvent),
     VfsLoaded,
     AsyncRequestCompleted {
@@ -135,7 +136,7 @@ impl GlobalState {
         }
     }
 
-    pub(crate) fn handle_request(&mut self, req: Request) {
+    fn handle_request(&mut self, req: Request) {
         let start_time = Instant::now();
         self.req_queue
             .incoming
@@ -156,7 +157,7 @@ impl GlobalState {
             .finish();
     }
 
-    pub(crate) fn handle_notification(&mut self, notif: Notification) {
+    fn handle_notification(&mut self, notif: Notification) {
         let mut dispatcher = NotificationDispatcher {
             notif: Some(notif),
             global_state: self,
@@ -199,20 +200,30 @@ impl GlobalState {
         }
     }
 
-    pub(crate) fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
+    fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
-            BackgroundTaskEvent::WorkspaceLoaded(result) => match result {
-                Ok(graph) => {
-                    tracing::info!("Workspace graph loaded successfully");
-                    self.analysis_host.set_workspace_graph(graph);
-
-                    // self.trigger_full_reparse();
-                }
-                Err(e) => {
-                    tracing::error!("Failed to load workspace: {}", e);
-                    self.show_message(MessageType::ERROR, format!("Build sync failed: {e}"));
-                }
-            },
+            BackgroundTaskEvent::WorkspaceLoaded(graph) => {
+                tracing::info!(?graph, "Workspace graph loaded successfully");
+                self.analysis_host.add_workspace(graph);
+            }
+            BackgroundTaskEvent::LoadWorkspace => {
+                self.thread_pool.execute(move || {
+                    for root in self.config.workspace_folders.iter() {
+                        let model = match project_model::load_workspace_from_disk(root) {
+                            Ok(model) => model,
+                            Err(err) => {
+                                tracing::error!(root, "Failed to load workspace: {}", e);
+                                self.show_message(
+                                    MessageType::ERROR,
+                                    format!("Build sync failed: {e}"),
+                                );
+                                return;
+                            }
+                        };
+                        self.spawn_task(BackgroundTaskEvent::WorkspaceLoaded(model));
+                    }
+                });
+            }
             BackgroundTaskEvent::Progress(progress) => {
                 self.report_progress(progress);
             }
@@ -277,6 +288,15 @@ impl GlobalState {
         self.send(req.into());
     }
 
+    pub(crate) fn spawn_task(&self, task: BackgroundTaskEvent) {
+        if let Err(e) = self.task_sender.send(task) {
+            tracing::error!(
+                ?e,
+                "Failed to spawn task, this is an internal error, please report this to developers!"
+            );
+        }
+    }
+
     /// Helper to send window/showMessage notifications to the client
     fn show_message(&self, typ: MessageType, message: String) {
         let params = ShowMessageParams { typ, message };
@@ -329,7 +349,7 @@ impl GlobalState {
             }
             vfs::loader::Message::Progress { n_done, .. } => {
                 if n_done == vfs::loader::LoadingProgress::Finished {
-                    let _ = self.task_sender.send(BackgroundTaskEvent::VfsLoaded);
+                    self.spawn_task(BackgroundTaskEvent::VfsLoaded);
                 }
             }
         }
