@@ -6,61 +6,12 @@ use crate::{
 use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
-use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 use triomphe::Arc;
 use vfs::AbsPathBuf;
-
-fn parse_gradle_version(version_str: &str) -> (u32, u32) {
-    let mut parts = version_str.split('.');
-    let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    (major, minor)
-}
-
-fn probe_version_from_wrapper(workspace_root: &Path) -> Option<(u32, u32)> {
-    let props_path = workspace_root.join("gradle/wrapper/gradle-wrapper.properties");
-    if !props_path.exists() {
-        return None;
-    }
-
-    let content = fs::read_to_string(props_path).ok()?;
-    for line in content.lines() {
-        if line.contains("distributionUrl")
-            && let Some(idx) = line.find("gradle-")
-        {
-            let version_part = &line[idx + 7..];
-            if let Some(end_idx) = version_part.find("-") {
-                let version_str = &version_part[..end_idx];
-                return Some(parse_gradle_version(version_str));
-            }
-        }
-    }
-    None
-}
-
-fn probe_version_from_cli(gradle_cmd: &str, workspace_root: &Path) -> Option<(u32, u32)> {
-    let output = Command::new(gradle_cmd)
-        .current_dir(workspace_root)
-        .arg("--version")
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(version_str) = line.strip_prefix("Gradle ") {
-            return Some(parse_gradle_version(version_str));
-        }
-    }
-    None
-}
 
 pub fn import_gradle_workspace(
     workspace_root: &Path,
