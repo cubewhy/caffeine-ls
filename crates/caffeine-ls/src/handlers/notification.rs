@@ -8,11 +8,7 @@ use crate::{GlobalState, global_state::BackgroundTaskEvent};
 
 pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::Result<()> {
     // load workspaces
-    for workspace_root in state.config.workspace_folders.iter() {
-        state.spawn_task(BackgroundTaskEvent::ProbeWorkspace {
-            root: workspace_root.clone(),
-        });
-    }
+    state.trigger_workspace_probe();
 
     Ok(())
 }
