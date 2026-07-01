@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{GradleBuildSystem, gradle, workspace::WorkspaceGraph};
+use crate::{GradleBuildSystem, MavenBuildSystem, gradle, workspace::WorkspaceGraph};
 use std::path::Path;
 
 #[derive(Debug, Copy, Clone, Serialize)]
@@ -45,7 +45,7 @@ pub enum ProbeResult {
 
 pub fn probe_workspace_layout(root: &Path) -> ProbeResult {
     // Registry of all compilation engines supported by your frontend
-    let managers: &[&dyn BuildSystem] = &[&GradleBuildSystem];
+    let managers: &[&dyn BuildSystem] = &[&GradleBuildSystem, &MavenBuildSystem];
 
     // Collect every system that detects its build files
     let detected_systems: Vec<BuildSystemType> = managers
