@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::{GradleBuildSystem, MavenBuildSystem, gradle, workspace::WorkspaceGraph};
+use crate::{GradleBuildSystem, MavenBuildSystem, workspace::WorkspaceGraph};
 use std::path::Path;
 
 #[derive(Debug, Copy, Clone, Serialize)]
@@ -18,6 +18,15 @@ impl BuildSystemType {
             BuildSystemType::Maven => "Maven",
             BuildSystemType::Eclipse => "Eclipse Classpath",
             BuildSystemType::Idea => "IDEA",
+        }
+    }
+
+    pub fn get_executor(&self) -> Box<dyn BuildSystem> {
+        match self {
+            BuildSystemType::Gradle => Box::new(GradleBuildSystem),
+            BuildSystemType::Maven => Box::new(MavenBuildSystem),
+            BuildSystemType::Eclipse => todo!(),
+            BuildSystemType::Idea => todo!(),
         }
     }
 }
@@ -66,14 +75,6 @@ pub fn sync_specific_build_system(
     system: BuildSystemType,
     root: &std::path::Path,
     java_home: &std::path::Path,
-) -> anyhow::Result<crate::WorkspaceGraph> {
-    match system {
-        BuildSystemType::Gradle => {
-            let json = gradle::import_gradle_workspace(root, java_home)?;
-            Ok(gradle::build_graph_from_json(json))
-        }
-        BuildSystemType::Maven => todo!("Implement maven extraction pipeline"),
-        BuildSystemType::Eclipse => todo!("Implement eclipse extraction pipeline"),
-        BuildSystemType::Idea => todo!("Implement idea extraction pipeline"),
-    }
+) -> anyhow::Result<WorkspaceGraph> {
+    system.get_executor().sync(root, java_home)
 }

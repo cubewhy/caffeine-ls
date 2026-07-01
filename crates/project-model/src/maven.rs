@@ -1,5 +1,9 @@
 use crate::{BuildSystem, BuildSystemType};
 
+mod model;
+mod runner;
+mod script;
+
 pub struct MavenBuildSystem;
 
 impl BuildSystem for MavenBuildSystem {
@@ -16,7 +20,16 @@ impl BuildSystem for MavenBuildSystem {
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
     ) -> anyhow::Result<crate::WorkspaceGraph> {
-        anyhow::bail!("not implemented yet")
+        let maven_workspace = runner::import_maven_workspace(workspace_root, java_home)?;
+        let workspace_graph = runner::build_graph_from_maven_json(maven_workspace);
+
+        tracing::info!(
+            "Successfully synchronized Maven workspace '{}' with {} tracked sub-projects",
+            workspace_graph.projects.len(), // Assuming projects is accessible via a map/collection len
+            workspace_graph.projects.len()
+        );
+
+        Ok(workspace_graph)
     }
 
     fn system_type(&self) -> BuildSystemType {
