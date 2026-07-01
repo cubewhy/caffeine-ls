@@ -9,6 +9,7 @@ ide-db.workspace = true
 vfs.workspace = true
 
 anyhow.workspace = true
+quick-xml = { version = "0.41.0", features = ["serialize"] }
 rustc-hash.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -1754,6 +1754,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "ide-db",
+ "quick-xml",
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",
@@ -1772,6 +1773,16 @@ checksum = "3852766467df634d74f0b2d7819bf8dc483a0eb2e3b0f50f756f9cfe8b0d18d8"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
+dependencies = [
+ "memchr",
+ "serde",
 ]
 
 [[package]]
