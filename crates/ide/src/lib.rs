@@ -1,11 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use dashmap::DashMap;
-use index::symbol::{GlobalSymbolIndex, LibraryId};
-use parking_lot::RwLock;
 use project_model::WorkspaceGraph;
-use syntax::{ClassStub, SyntaxError};
-use vfs::FileId;
+use rustc_hash::FxHashMap;
+use syntax::SyntaxError;
+use vfs::{AbsPathBuf, FileId};
 
 pub struct ParsedFile {
     pub green_node: rowan::GreenNode,
@@ -63,9 +62,7 @@ impl ParseCache {
 
 /// Snapshot of [AnalysisHost]
 pub struct Analysis {
-    pub symbol_index: Arc<GlobalSymbolIndex>,
-    pub workspace_graph: Arc<WorkspaceGraph>,
-    pub parse_cache: Arc<ParseCache>,
+    pub(crate) workspaces: Arc<FxHashMap<AbsPathBuf, WorkspaceGraph>>,
 }
 
 impl Analysis {}
@@ -73,40 +70,30 @@ impl Analysis {}
 impl std::panic::UnwindSafe for Analysis {}
 
 pub struct AnalysisHost {
-    pub(crate) symbol_index: Arc<GlobalSymbolIndex>,
-    pub(crate) workspace_graph: RwLock<Arc<WorkspaceGraph>>,
-    pub parse_cache: Arc<ParseCache>,
+    pub(crate) workspaces: Arc<FxHashMap<AbsPathBuf, WorkspaceGraph>>,
 }
 
 impl AnalysisHost {
-    pub fn new(cache_dir: &PathBuf) -> Self {
+    pub fn new(cache_dir: &Path) -> Self {
         Self {
-            symbol_index: Arc::new(GlobalSymbolIndex::new(cache_dir, 2048)),
-            workspace_graph: RwLock::new(Arc::new(WorkspaceGraph::default())),
-            parse_cache: Arc::new(ParseCache::default()),
+            workspaces: Arc::new(HashMap::default()),
         }
     }
 
     pub fn snapshot(&self) -> Analysis {
         Analysis {
-            symbol_index: self.symbol_index.clone(),
-            workspace_graph: Arc::clone(&self.workspace_graph.read()),
-            parse_cache: Arc::clone(&self.parse_cache),
+            workspaces: self.workspaces.clone(),
         }
     }
 
-    pub fn update_file(&self, workspace_id: LibraryId, file_id: FileId, stubs: Vec<ClassStub>) {
-        self.symbol_index
-            .update_workspace_file(workspace_id, file_id, stubs);
+    pub fn add_workspace(&mut self, root: AbsPathBuf, workspace: WorkspaceGraph) {
+        let workspaces = Arc::make_mut(&mut self.workspaces);
+
+        workspaces.insert(root, workspace);
     }
 
-    pub fn remove_file(&self, file_id: FileId) {
-        self.parse_cache.remove(file_id);
-        self.symbol_index.remove_file(file_id);
-    }
-
-    pub fn set_workspace_graph(&self, graph: WorkspaceGraph) {
-        let mut write_guard = self.workspace_graph.write();
-        *write_guard = Arc::new(graph);
+    pub fn remove_workspace(&mut self, root: &AbsPathBuf) {
+        let workspaces = Arc::make_mut(&mut self.workspaces);
+        workspaces.remove(root);
     }
 }

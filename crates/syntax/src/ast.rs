@@ -116,6 +116,7 @@ pub struct RecordComponentData {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub struct ClassStub {
+    // TODO: add fqn and inner_class_of
     pub name: Symbol,
     /// JVM Access Flags
     pub flags: u16,

@@ -1,12 +1,25 @@
+use serde::Serialize;
+
 use crate::{GradleBuildSystem, gradle, workspace::WorkspaceGraph};
 use std::path::Path;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize)]
 pub enum BuildSystemType {
     Gradle,
     Maven,
     Eclipse,
     Idea,
+}
+
+impl BuildSystemType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            BuildSystemType::Gradle => "Gradle",
+            BuildSystemType::Maven => "Maven",
+            BuildSystemType::Eclipse => "Eclipse Classpath",
+            BuildSystemType::Idea => "IDEA",
+        }
+    }
 }
 
 /// Represents a tool that can resolve the workspace structure.

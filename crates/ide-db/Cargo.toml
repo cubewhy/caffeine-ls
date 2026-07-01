@@ -1,5 +1,5 @@
 [package]
-name = "index"
+name = "ide-db"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -8,11 +8,12 @@ publish = false
 syntax.workspace = true
 
 dashmap.workspace = true
-vfs.workspace = true
-serde.workspace = true
-smol_str.workspace = true
-triomphe.workspace = true
+heed = "0.22.1"
+lasso.workspace = true
 lru.workspace = true
 parking_lot.workspace = true
 postcard = { workspace = true, features = ["alloc"] }
-lasso.workspace = true
+serde.workspace = true
+smol_str.workspace = true
+triomphe.workspace = true
+vfs.workspace = true

@@ -3,49 +3,49 @@ resolver = "3"
 members = ["crates/*", "lib/*", "xtask/"]
 
 [workspace.dependencies]
-ide = { path = "./crates/ide/" }
 hir = { path = "./crates/hir/" }
-index = { path = "./crates/index/" }
-syntax = { path = "./crates/syntax/" }
-semantics = { path = "./crates/semantics/" }
+ide = { path = "./crates/ide/" }
+ide-db = { path = "./crates/ide-db/" }
 java-syntax = { path = "./crates/java-syntax/" }
 kotlin-syntax = { path = "./crates/kotlin-syntax/" }
+lsp-test = { path = "./crates/lsp-test/" }
 project-model = { path = "./crates/project-model/" }
 rust-asm = { path = "./lib/rust-asm/" }
-lsp-test = { path = "./crates/lsp-test/" }
+semantics = { path = "./crates/semantics/" }
+syntax = { path = "./crates/syntax/" }
 vfs = { path = "./crates/vfs/" }
 
-lsp-server = "0.7.9"
-lsp-types = { version = "=0.95.1", features = ["proposed"] }
-line-index = { package = "ra_ap_line-index", version = "0.0.17" }
-crossbeam-channel = "0.5.15"
+anyhow = "1"
 bytes = "1.11.1"
-zip = "8.6.0"
-jimage-rs = "0.0.4"
+camino = "1.2.2"
+clap = "4"
+crossbeam-channel = "0.5.15"
+dashmap = "6"
+drop_bomb = "0.1.5"
+indexmap = "2.14.0"
+indicatif = "0.18.4"
 indoc = "2.0"
 insta = "1.47.2"
-anyhow = "1"
-unicode-general-category = "1.1.0"
-drop_bomb = "0.1.5"
-stacksafe = "1.0"
-smallvec = "1.15.1"
-tracing = "0.1"
-rowan = "0.16.1"
-triomphe = "0.1.15"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-dashmap = "6"
-rayon = "1.12"
-indicatif = "0.18.4"
-walkdir = "2.5.0"
-clap = "4"
-rustc-hash = "2.1.2"
+jimage-rs = "0.0.4"
+lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
+line-index = { package = "ra_ap_line-index", version = "0.0.17" }
+lru = "0.18.0"
+lsp-server = "0.7.9"
+lsp-types = { version = "=0.95.1", features = ["proposed"] }
 parking_lot = "0.12"
-thiserror = "2"
+postcard = "1.1.3"
+rayon = "1.12"
+rowan = "0.16.1"
+rustc-hash = "2.1.2"
 serde = "1.0"
 serde_json = "1.0"
+smallvec = "1.15.1"
 smol_str = { version = "0.3.6", features = ["serde"] }
-indexmap = "2.14.0"
-camino = "1.2.2"
-lru = "0.18.0"
-postcard = "1.1.3"
-lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
+stacksafe = "1.0"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+triomphe = "0.1.15"
+unicode-general-category = "1.1.0"
+walkdir = "2.5.0"
+zip = "8.6.0"

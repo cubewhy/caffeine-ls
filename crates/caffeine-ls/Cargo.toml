@@ -10,52 +10,59 @@ path = "src/bin/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-rowan.workspace = true
-parking_lot.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-rayon.workspace = true
+arc-swap = "1.9.1"
+bytes.workspace = true
+camino = "1.2.2"
+cfg-if = "1.0"
+clap = { workspace = true, features = ["derive"] }
+crossbeam-channel.workspace = true
+directories = "6.0"
+itertools = "0.14.0"
+jimage-rs.workspace = true
+line-index.workspace = true
 lsp-server.workspace = true
 lsp-types.workspace = true
-line-index.workspace = true
-bytes.workspace = true
-rustc-hash.workspace = true
-smol_str.workspace = true
-serde_json = { workspace = true, features = ["preserve_order"] }
-serde = { workspace = true, features = ["derive"] }
-clap = { workspace = true, features = ["derive"] }
-directories = "6.0"
-camino = "1.2.2"
-crossbeam-channel.workspace = true
-arc-swap = "1.9.1"
-itertools = "0.14.0"
-cfg-if = "1.0"
-threadpool = "1.8.1"
-num_cpus = "1.17.0"
-zip.workspace = true
-jimage-rs.workspace = true
 mimalloc = { version = "0.1.50", default-features = false, optional = true }
+num_cpus = "1.17.0"
+parking_lot.workspace = true
+rayon.workspace = true
+rowan.workspace = true
+rustc-hash.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+smol_str.workspace = true
+threadpool = "1.8.1"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 triomphe.workspace = true
+zip.workspace = true
 
-vfs.workspace = true
-ide.workspace = true
 hir.workspace = true
+ide.workspace = true
+ide-db.workspace = true
 project-model.workspace = true
-index.workspace = true
 syntax.workspace = true
+vfs.workspace = true
 
 [dev-dependencies]
 insta = { workspace = true, features = ["json"] }
 lsp-test.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-  "Win32_System_Diagnostics_Debug",
-  "Win32_System_Threading",
-] }
-
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = { version = "0.6.1", package = "tikv-jemallocator", optional = true }
+jemallocator = {
+  package = "tikv-jemallocator",
+  version = "0.6.1",
+  optional = true
+}
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = {
+  version = "0.61",
+  features = [
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Threading",
+  ]
+}
 
 [features]
 jemalloc = ["jemallocator"]

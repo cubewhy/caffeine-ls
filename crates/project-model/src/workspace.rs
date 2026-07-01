@@ -1,4 +1,4 @@
-use index::symbol::LibraryId;
+use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use triomphe::Arc;

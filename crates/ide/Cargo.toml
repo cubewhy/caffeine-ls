@@ -5,11 +5,12 @@ edition = "2024"
 publish = false
 
 [dependencies]
-index.workspace = true
-syntax.workspace = true
-semantics.workspace = true
-parking_lot.workspace = true
 dashmap.workspace = true
-rowan.workspace = true
+ide-db.workspace = true
+parking_lot.workspace = true
 project-model.workspace = true
+rowan.workspace = true
+rustc-hash.workspace = true
+semantics.workspace = true
+syntax.workspace = true
 vfs.workspace = true

@@ -7,7 +7,12 @@ use vfs::VfsPath;
 use crate::{GlobalState, global_state::BackgroundTaskEvent};
 
 pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::Result<()> {
-    state.spawn_task(BackgroundTaskEvent::LoadWorkspace);
+    // load workspaces
+    for workspace_root in state.config.workspace_folders.iter() {
+        state.spawn_task(BackgroundTaskEvent::ProbeWorkspace {
+            root: workspace_root.clone(),
+        });
+    }
 
     Ok(())
 }

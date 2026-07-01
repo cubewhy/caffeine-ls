@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::{env, fmt, path::PathBuf};
 
 use directories::ProjectDirs;
 use lsp_types::{ClientCapabilities, ClientInfo};
@@ -72,6 +72,26 @@ impl Config {
         }
 
         (self, errors, config_changed)
+    }
+
+    pub fn get_java_home(&self) -> Option<PathBuf> {
+        if let Some(java_home) = self
+            .client_config
+            .as_ref()
+            .and_then(|config| config.java_home.clone())
+        {
+            return Some(java_home);
+        }
+
+        // try to locate JAVA_HOME from env variables
+        if let Ok(java_home_var) = env::var("JAVA_HOME") {
+            let java_home = PathBuf::from(java_home_var);
+            if java_home.is_dir() {
+                return Some(java_home);
+            }
+        }
+
+        None
     }
 
     pub fn main_loop_num_threads(&self) -> usize {

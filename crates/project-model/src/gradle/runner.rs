@@ -3,7 +3,7 @@ use crate::{
     ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
     WorkspaceGraph,
 };
-use index::symbol::LibraryId;
+use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::fs;
