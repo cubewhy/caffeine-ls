@@ -1,8 +1,8 @@
-use std::process;
+use std::{collections::HashSet, process};
 
 use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
-use vfs::VfsPath;
+use vfs::{AbsPathBuf, VfsPath};
 
 use crate::{GlobalState, global_state::BackgroundTaskEvent};
 
@@ -138,4 +138,56 @@ pub fn on_did_close(
     state.handle_vfs_change();
 
     Ok(())
+}
+
+pub fn on_did_change_watched_files(
+    state: &mut GlobalState,
+    params: DidChangeWatchedFilesParams,
+) -> anyhow::Result<()> {
+    let mut roots_to_reload = HashSet::new();
+
+    for event in params.changes {
+        let Ok(path) = event.uri.to_file_path() else {
+            continue;
+        };
+        let Ok(abs_path) = AbsPathBuf::try_from(path) else {
+            continue;
+        };
+
+        if is_build_configuration_file(&abs_path)
+            && let Some(root) = state
+                .config
+                .workspace_folders
+                .iter()
+                .find(|root| abs_path.starts_with(root))
+        {
+            roots_to_reload.insert(root.clone());
+        }
+    }
+
+    for root in roots_to_reload {
+        tracing::info!(
+            ?root,
+            "Build configuration changed, re-triggering workspace probe"
+        );
+
+        state.spawn_task(BackgroundTaskEvent::ProbeWorkspace { root });
+    }
+
+    Ok(())
+}
+
+fn is_build_configuration_file(path: &AbsPathBuf) -> bool {
+    if let Some(file_name) = path.file_name() {
+        matches!(
+            file_name,
+            "build.gradle"
+                | "build.gradle.kts"
+                | "settings.gradle"
+                | "settings.gradle.kts"
+                | "pom.xml"
+        )
+    } else {
+        false
+    }
 }

@@ -191,6 +191,7 @@ impl GlobalState {
             .on::<notification::DidChangeTextDocument>(handlers::on_did_change)
             .on::<notification::DidSaveTextDocument>(handlers::on_did_save)
             .on::<notification::DidCloseTextDocument>(handlers::on_did_close)
+            .on::<notification::DidChangeWatchedFiles>(handlers::on_did_change_watched_files)
             .finish();
     }
 
@@ -331,17 +332,12 @@ impl GlobalState {
 
                 for (_, project) in graph.projects.iter() {
                     let mut include_paths = Vec::new();
-                    let mut exclude_paths = Vec::new();
-
                     // Pre-emptively exclude build artifact targets to avoid directory crawling cycles
                     // NOTE: This .unwrap will always success since root_path is already absolute
-                    exclude_paths.push(VfsPath::Physical(
-                        project.root_path.join("build").try_into().unwrap(),
-                    ));
-                    exclude_paths.push(VfsPath::Physical(
-                        project.root_path.join("target").try_into().unwrap(),
-                    ));
-
+                    let exclude_paths = vec![
+                        VfsPath::Physical(project.root_path.join("build").try_into().unwrap()),
+                        VfsPath::Physical(project.root_path.join("target").try_into().unwrap()),
+                    ];
                     for (_, source_set) in project.source_sets.iter() {
                         for root in &source_set.source_roots {
                             include_paths.push(VfsPath::Physical(root.clone()));

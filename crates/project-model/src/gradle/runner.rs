@@ -143,13 +143,13 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
     let mut version_to_sdk_id = FxHashMap::default();
     let mut next_sdk_id = 0u32;
 
-    // Phase 1: Allocate topology project tokens
+    // Allocate topology project tokens
     for (idx, project) in workspace.projects.iter().enumerate() {
         let project_id = ProjectId(idx as u32);
         path_to_project_id.insert(project.path.clone(), project_id);
     }
 
-    // Phase 2: Structural translation preserving chronological classpath sorting
+    // Structural translation preserving chronological classpath sorting
     for project in workspace.projects {
         let project_id = *path_to_project_id.get(&project.path).unwrap();
         let abs_project_dir = AbsPathBuf::try_from(project.project_dir.clone())
