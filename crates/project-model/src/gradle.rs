@@ -2,7 +2,7 @@ use std::{env::consts::EXE_SUFFIX, path::Path};
 
 use crate::{BuildSystem, BuildSystemType, WorkspaceGraph};
 
-pub use runner::{build_graph_from_json, import_gradle_workspace};
+pub use runner::build_graph_from_json;
 
 mod model;
 mod runner;
