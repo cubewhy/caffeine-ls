@@ -40,7 +40,7 @@
     ],
     "commands": [
       {
-        "command": "caffeinels.selectProjectJdk",
+        "command": "caffeine_ls.selectProjectJdk",
         "title": "Caffeine LS: Select Project JDK",
         "category": "Caffeine LS"
       }

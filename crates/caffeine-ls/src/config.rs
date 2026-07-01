@@ -146,3 +146,10 @@ impl fmt::Display for ConfigErrors {
         write!(f, "Configuration errors:\n{}", self.0.join("\n"))
     }
 }
+
+pub fn need_reload_workspace(old: &Config, new: &Config) -> bool {
+    let old_java_home = old.get_java_home();
+    let new_java_home = new.get_java_home();
+
+    old_java_home != new_java_home
+}

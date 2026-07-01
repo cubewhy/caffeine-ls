@@ -1,4 +1,4 @@
-use std::{collections::HashSet, process};
+use std::{collections::HashSet, process, sync::Arc};
 
 use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
@@ -190,4 +190,80 @@ fn is_build_configuration_file(path: &AbsPathBuf) -> bool {
     } else {
         false
     }
+}
+
+pub fn on_did_change_configuration(
+    state: &mut GlobalState,
+    params: DidChangeConfigurationParams,
+) -> anyhow::Result<()> {
+    tracing::info!("Processing didChangeConfiguration notification");
+
+    let mut full_settings = params.settings;
+
+    tracing::debug!(?full_settings, "updated config");
+
+    let mut extracted_config = match full_settings.get_mut("caffeine_ls") {
+        Some(value) if !value.is_null() => value.take(),
+        _ => {
+            tracing::info!("Section key not found or null. Falling back to flat topology parsing");
+            full_settings
+        }
+    };
+
+    let is_valid_payload =
+        serde_json::from_value::<crate::config::ClientConfig>(extracted_config.clone()).is_ok();
+
+    if !is_valid_payload {
+        tracing::warn!("Push-based payload doesn't match ClientConfig schema.");
+
+        if let Some(workspace_caps) = state.config.client_capabilities.workspace.as_ref()
+            && workspace_caps.configuration.unwrap_or(false)
+        {
+            tracing::info!(
+                "Client supports Pull Model. Dispatched dynamic configuration pull request"
+            );
+            let pull_params = lsp_types::ConfigurationParams {
+                items: vec![lsp_types::ConfigurationItem {
+                    scope_uri: None,
+                    section: Some("caffeine-ls".to_string()),
+                }],
+            };
+            state.send_request::<request::WorkspaceConfiguration>(
+                pull_params,
+                crate::global_state::OutgoingRequest::WorkspaceConfiguration,
+            );
+            return Ok(());
+        }
+
+        extracted_config = serde_json::Value::Object(serde_json::Map::new());
+    }
+
+    let mut change = crate::config::ConfigChange::default();
+    change.change_client_config(extracted_config);
+
+    let old_config = Arc::clone(&state.config);
+    let current_config = (*old_config).clone();
+
+    let (new_config, errors, config_changed) = current_config.apply_change(change);
+
+    if !errors.is_empty() {
+        state.show_message(lsp_types::MessageType::WARNING, errors.to_string());
+        state.config_errors = Some(errors);
+    } else {
+        state.config_errors = None;
+    }
+
+    if config_changed {
+        let old_java_home = old_config.get_java_home();
+        let new_java_home = new_config.get_java_home();
+
+        state.config = Arc::new(new_config);
+
+        if old_java_home != new_java_home {
+            tracing::info!("Critical configuration updated. Re-probing project models.");
+            state.trigger_workspace_probe();
+        }
+    }
+
+    Ok(())
 }

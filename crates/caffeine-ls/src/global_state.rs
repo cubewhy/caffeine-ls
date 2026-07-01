@@ -1,15 +1,14 @@
-use crate::config::ConfigErrors;
+use crate::config::{ConfigErrors, need_reload_workspace};
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
 use crate::handlers::{self, on_initialized};
 use lsp_types::notification::Notification as _;
 use project_model::WorkspaceGraph;
 use std::{sync::Arc, time::Instant};
-use syntax::LanguageId;
 use vfs::loader::NotifyHandle;
 use vfs::virtual_path::{JarHandler, JimageHandler};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ide::{Analysis, AnalysisHost, ParsedFile};
+use ide::{Analysis, AnalysisHost};
 use lsp_server::{ErrorCode, Notification, Request, Response};
 use lsp_types::*;
 use parking_lot::RwLock;
@@ -68,6 +67,7 @@ pub(crate) enum OutgoingRequest {
         root: AbsPathBuf,
         systems: Vec<project_model::BuildSystemType>,
     },
+    WorkspaceConfiguration,
 }
 
 type ReqQueue = lsp_server::ReqQueue<(String, Instant), OutgoingRequest>;
@@ -143,7 +143,7 @@ impl GlobalState {
                         lsp_server::Message::Request(req) => self.handle_request(req),
                         lsp_server::Message::Notification(notif) => self.handle_notification(notif),
                         lsp_server::Message::Response(resp) => {
-                            self.req_queue.outgoing.complete(resp.id);
+                            self.handle_response(resp);
                         }
                     }
                 }
@@ -192,7 +192,121 @@ impl GlobalState {
             .on::<notification::DidSaveTextDocument>(handlers::on_did_save)
             .on::<notification::DidCloseTextDocument>(handlers::on_did_close)
             .on::<notification::DidChangeWatchedFiles>(handlers::on_did_change_watched_files)
+            .on::<notification::DidChangeConfiguration>(handlers::on_did_change_configuration)
             .finish();
+    }
+
+    fn handle_response(&mut self, resp: Response) {
+        let Some(outgoing_req) = self.req_queue.outgoing.complete(resp.id.clone()) else {
+            tracing::warn!(?resp.id, "Received response for an unknown or untracked request");
+            return;
+        };
+
+        if let Some(err) = &resp.error {
+            tracing::error!(?resp.id, "Client returned error response: {:?}", err);
+            return;
+        }
+
+        match outgoing_req {
+            OutgoingRequest::SelectBuildSystem { root, systems } => {
+                self.handle_select_build_system_response(resp, root, systems);
+            }
+
+            OutgoingRequest::WorkspaceConfiguration => {
+                self.handle_config_response(resp);
+            }
+
+            OutgoingRequest::Generic(handler) => {
+                handler(self, resp);
+            }
+        }
+    }
+
+    fn handle_select_build_system_response(
+        &mut self,
+        resp: lsp_server::Response,
+        root: AbsPathBuf,
+        systems: Vec<project_model::BuildSystemType>,
+    ) {
+        let Some(result_json) = resp.result else {
+            tracing::warn!(
+                ?root,
+                "Build system selection dialog dismissed without choice."
+            );
+            return;
+        };
+
+        let selected_item: Option<MessageActionItem> =
+            serde_json::from_value(result_json).unwrap_or_default();
+
+        if let Some(item) = selected_item {
+            let chosen_system = systems.iter().find(|sys| sys.name() == item.title);
+
+            if let Some(system) = chosen_system {
+                tracing::info!(?root, ?system, "User selected build system explicitly.");
+
+                self.spawn_task(BackgroundTaskEvent::LoadWorkspace {
+                    root,
+                    system: *system,
+                });
+            } else {
+                tracing::error!(
+                    ?root,
+                    "Client returned an unrecognized action title: '{}'",
+                    item.title
+                );
+            }
+        } else {
+            tracing::warn!(?root, "User cancelled the build system selection prompt.");
+        }
+    }
+
+    fn handle_config_response(&mut self, resp: lsp_server::Response) {
+        tracing::info!("Received configuration response from client");
+
+        if let Some(err) = resp.error {
+            tracing::error!("Client failed to return configuration: {:?}", err);
+            return;
+        }
+
+        let Some(result) = resp.result else { return };
+
+        let mut response_values: Vec<serde_json::Value> =
+            serde_json::from_value(result).unwrap_or_default();
+        if response_values.is_empty() {
+            tracing::warn!("Empty configuration array received from client");
+            return;
+        }
+        let raw_settings = response_values.remove(0);
+
+        let mut change = crate::config::ConfigChange::default();
+        change.change_client_config(raw_settings);
+
+        let old_config = Arc::clone(&self.config);
+        let current_config = (*old_config).clone();
+
+        let (new_config, errors, config_changed) = current_config.apply_change(change);
+
+        if !errors.is_empty() {
+            tracing::warn!("{}", errors);
+            self.show_message(lsp_types::MessageType::WARNING, errors.to_string());
+            self.config_errors = Some(errors);
+        } else {
+            self.config_errors = None;
+        }
+
+        if config_changed {
+            let need_reload = need_reload_workspace(&old_config, &new_config);
+            self.config = Arc::new(new_config);
+            tracing::info!("Global state configuration updated successfully.");
+
+            if need_reload {
+                tracing::info!("Reloading workspace due config change...");
+                self.trigger_workspace_probe();
+            }
+        } else {
+            tracing::info!("Configuration received but no effective changes detected.");
+        }
     }
 
     // Helper to send response back to client
@@ -464,7 +578,7 @@ impl GlobalState {
     }
 
     /// Helper to send window/showMessage notifications to the client
-    fn show_message(&self, typ: MessageType, message: String) {
+    pub fn show_message(&self, typ: MessageType, message: String) {
         let params = ShowMessageParams { typ, message };
         self.notify::<notification::ShowMessage>(params);
     }

@@ -43,14 +43,14 @@ export function activate(context: ExtensionContext) {
   };
 
   client = new LanguageClient(
-    "caffeine-ls",
+    "caffeine_ls",
     "Caffeine LS",
     serverOptions,
     clientOptions,
   );
 
   context.subscriptions.push(
-    commands.registerCommand("caffeinels.selectProjectJdk", async () => {
+    commands.registerCommand("caffeine_ls.selectProjectJdk", async () => {
       await selectProjectJdkAction(context, client);
     }),
   );

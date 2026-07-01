@@ -5,7 +5,7 @@ import { scanForJdks } from "./jdkDetector";
 import * as vscode from "vscode";
 import path from "path";
 
-export const JDK_STATE_KEY = "caffeine.project.java_home";
+export const JDK_STATE_KEY = "caffeine_ls.project.java_home";
 
 export interface ClientConfig {
   cache_dir: string;
@@ -40,7 +40,7 @@ export function notifyLspConfigUpdate(
     // Pack the payload inside a structured 'settings' object matching LSP standards
     client.sendNotification("workspace/didChangeConfiguration", {
       settings: {
-        caffeine: config,
+        caffeine_ls: config,
       },
     });
   }
