@@ -262,6 +262,7 @@ impl GlobalState {
     }
 
     fn handle_config_response(&mut self, resp: lsp_server::Response) {
+        // FIXME: the response structure may need manual confirm on real client behaviors.
         tracing::info!("Received configuration response from client");
 
         if let Some(err) = resp.error {
