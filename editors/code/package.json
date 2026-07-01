@@ -37,6 +37,13 @@
           "kotlin"
         ]
       }
+    ],
+    "commands": [
+      {
+        "command": "caffeinels.selectProjectJdk",
+        "title": "Caffeine LS: Select Project JDK",
+        "category": "Caffeine LS"
+      }
     ]
   },
   "scripts": {
