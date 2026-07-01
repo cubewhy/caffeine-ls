@@ -70,7 +70,6 @@ fn extract_jars_from_idea_library(
     jar_paths
 }
 
-/// New: Reads .idea/misc.xml to find the central <component name="ProjectRootManager"> configuration block
 fn probe_project_jdk_version(workspace_root: &Path) -> String {
     let misc_xml_path = workspace_root.join(".idea").join("misc.xml");
     if misc_xml_path.exists()

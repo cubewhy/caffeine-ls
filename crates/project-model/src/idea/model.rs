@@ -28,7 +28,6 @@ pub struct IdeaModuleRef {
     pub file_path: String,
 }
 
-/// New: Represents the global environment settings (.idea/misc.xml)
 #[derive(Debug, Deserialize)]
 #[serde(rename = "project")]
 pub struct IdeaMiscXml {
