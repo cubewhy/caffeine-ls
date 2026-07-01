@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::{EclipseBuildSystem, GradleBuildSystem, MavenBuildSystem, workspace::WorkspaceGraph};
+use crate::{
+    EclipseBuildSystem, GradleBuildSystem, IdeaBuildSystem, MavenBuildSystem,
+    workspace::WorkspaceGraph,
+};
 use std::path::Path;
 
 #[derive(Debug, Copy, Clone, Serialize)]
@@ -17,7 +20,7 @@ impl BuildSystemType {
             BuildSystemType::Gradle => "Gradle",
             BuildSystemType::Maven => "Maven",
             BuildSystemType::Eclipse => "Eclipse Classpath",
-            BuildSystemType::Idea => "IDEA",
+            BuildSystemType::Idea => "Intellij IDEA",
         }
     }
 
@@ -26,7 +29,7 @@ impl BuildSystemType {
             BuildSystemType::Gradle => Box::new(GradleBuildSystem),
             BuildSystemType::Maven => Box::new(MavenBuildSystem),
             BuildSystemType::Eclipse => Box::new(EclipseBuildSystem),
-            BuildSystemType::Idea => todo!(),
+            BuildSystemType::Idea => Box::new(IdeaBuildSystem),
         }
     }
 }
@@ -53,11 +56,13 @@ pub enum ProbeResult {
 }
 
 pub fn probe_workspace_layout(root: &Path) -> ProbeResult {
-    // Registry of all compilation engines supported by your frontend
-    let managers: &[&dyn BuildSystem] =
-        &[&GradleBuildSystem, &MavenBuildSystem, &EclipseBuildSystem];
+    let managers: &[&dyn BuildSystem] = &[
+        &GradleBuildSystem,
+        &MavenBuildSystem,
+        &EclipseBuildSystem,
+        &IdeaBuildSystem,
+    ];
 
-    // Collect every system that detects its build files
     let detected_systems: Vec<BuildSystemType> = managers
         .iter()
         .filter(|sys| sys.is_applicable(root))
@@ -69,13 +74,4 @@ pub fn probe_workspace_layout(root: &Path) -> ProbeResult {
         1 => ProbeResult::Single(detected_systems[0]),
         _ => ProbeResult::Ambiguous(detected_systems),
     }
-}
-
-/// Standalone synchronization action, executed only after a choice is locked down.
-pub fn sync_specific_build_system(
-    system: BuildSystemType,
-    root: &std::path::Path,
-    java_home: &std::path::Path,
-) -> anyhow::Result<WorkspaceGraph> {
-    system.get_executor().sync(root, java_home)
 }

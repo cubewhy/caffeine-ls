@@ -420,11 +420,7 @@ impl GlobalState {
 
                 // Run heavy process extraction tasks out-of-process asynchronously
                 self.thread_pool.execute(move || {
-                    match project_model::sync_specific_build_system(
-                        system,
-                        root.as_std_path(),
-                        &java_home,
-                    ) {
+                    match system.get_executor().sync(root.as_std_path(), &java_home) {
                         Ok(graph) => {
                             task_sender
                                 .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
