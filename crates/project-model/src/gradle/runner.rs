@@ -78,23 +78,7 @@ pub fn import_gradle_workspace(
         "gradle".to_string()
     };
 
-    let (major_version, minor_version) = probe_version_from_wrapper(workspace_root)
-        .or_else(|| probe_version_from_cli(&gradle_cmd, workspace_root))
-        .unwrap_or((7, 0));
-
-    tracing::info!(
-        "Detected Gradle version {}.{}",
-        major_version,
-        minor_version
-    );
-
-    let selected_script = if major_version < 5 {
-        tracing::debug!("Using legacy Gradle configuration script");
-        crate::gradle::script::LEGACY_GRADLE_INIT_SCRIPT
-    } else {
-        tracing::debug!("Using modern Gradle configuration script");
-        crate::gradle::script::GRADLE_INIT_SCRIPT
-    };
+    let selected_script = crate::gradle::script::GRADLE_INIT_SCRIPT;
 
     let mut init_script = NamedTempFile::new()?;
     init_script.write_all(selected_script.as_bytes())?;
@@ -155,7 +139,13 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
         let abs_project_dir = AbsPathBuf::try_from(project.project_dir.clone())
             .unwrap_or_else(|_| AbsPathBuf::assert_utf8(PathBuf::from(".")));
 
-        let target_sdk = if let Some(version) = project.java_language_version {
+        let resolved_java_home = project
+            .java_home
+            .and_then(|path_str| AbsPathBuf::try_from(PathBuf::from(path_str)).ok());
+
+        let target_sdk = if let Some(version) = project.java_language_version
+            && let Some(sdk_home_path) = resolved_java_home
+        {
             let sdk_id = *version_to_sdk_id.entry(version.clone()).or_insert_with(|| {
                 let id = SdkId(next_sdk_id);
                 next_sdk_id += 1;
@@ -164,7 +154,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
                     id,
                     name: SmolStr::from(format!("JDK {}", version)),
                     version: SmolStr::from(version),
-                    home_path: AbsPathBuf::assert_utf8(PathBuf::from(".")),
+                    home_path: sdk_home_path,
                     exploded_library_paths: Vec::new(),
                 };
                 graph.sdks.insert(id, Arc::new(sdk_data));
@@ -172,6 +162,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
             });
             Some(sdk_id)
         } else {
+            tracing::error!("Failed to receive SDK version from Gradle");
             None
         };
 

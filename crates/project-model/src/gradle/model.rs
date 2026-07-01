@@ -23,6 +23,7 @@ pub struct GradleProject {
     pub compile_classpath: Vec<GradleClasspathEntry>,
     pub test_classpath: Vec<GradleClasspathEntry>,
     pub java_language_version: Option<String>,
+    pub java_home: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
