@@ -79,8 +79,7 @@ export async function selectProjectJdkAction(
       }));
 
       const selected = await window.showQuickPick(items, {
-        placeHolder:
-          "Select a JDK for this project (Will not modify your VCS settings)",
+        placeHolder: "Select a JDK for this project",
       });
 
       if (selected) {
