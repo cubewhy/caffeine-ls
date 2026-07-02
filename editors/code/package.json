@@ -43,6 +43,11 @@
         "command": "caffeine_ls.selectProjectJdk",
         "title": "Select Project JDK",
         "category": "Caffeine LS"
+      },
+      {
+        "command": "caffeine_ls.restart",
+        "title": "Restart Language Server",
+        "category": "Caffeine LS"
       }
     ]
   },

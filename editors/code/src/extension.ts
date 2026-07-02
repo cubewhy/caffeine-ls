@@ -55,6 +55,12 @@ export function activate(context: ExtensionContext) {
     }),
   );
 
+  context.subscriptions.push(
+    commands.registerCommand("caffeine_ls.restart", async () => {
+      client.restart();
+    }),
+  );
+
   client.start();
 }
 
