@@ -167,7 +167,10 @@ pub fn on_did_change_watched_files(
             "Build configuration changed, re-triggering workspace probe"
         );
 
-        state.spawn_task(BackgroundTaskEvent::ProbeWorkspace { root });
+        state
+            .task_sender
+            .send(BackgroundTaskEvent::ProbeWorkspace { root })
+            .ok();
     }
 
     Ok(())

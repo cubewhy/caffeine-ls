@@ -39,6 +39,10 @@ pub enum BackgroundTaskEvent {
         id: lsp_server::RequestId,
         result: Result<serde_json::Value, anyhow::Error>,
     },
+    NotifyUser {
+        typ: lsp_types::MessageType,
+        message: String,
+    },
 }
 
 pub struct ProgressEvent {
@@ -245,10 +249,12 @@ impl GlobalState {
             if let Some(system) = chosen_system {
                 tracing::info!(?root, ?system, "User selected build system explicitly.");
 
-                self.spawn_task(BackgroundTaskEvent::LoadWorkspace {
-                    root,
-                    system: *system,
-                });
+                self.task_sender
+                    .send(BackgroundTaskEvent::LoadWorkspace {
+                        root,
+                        system: *system,
+                    })
+                    .ok();
             } else {
                 tracing::error!(
                     ?root,
@@ -341,7 +347,9 @@ impl GlobalState {
     /// Call this inside your `handlers::on_initialized` callback.
     pub fn trigger_workspace_probe(&self) {
         for root in self.config.workspace_folders.iter() {
-            self.spawn_task(BackgroundTaskEvent::ProbeWorkspace { root: root.clone() });
+            self.task_sender
+                .send(BackgroundTaskEvent::ProbeWorkspace { root: root.clone() })
+                .ok();
         }
     }
 
@@ -418,7 +426,6 @@ impl GlobalState {
                     return;
                 };
 
-                // Run heavy process extraction tasks out-of-process asynchronously
                 self.thread_pool.execute(move || {
                     match system.get_executor().sync(root.as_std_path(), &java_home) {
                         Ok(graph) => {
@@ -428,6 +435,12 @@ impl GlobalState {
                         }
                         Err(err) => {
                             tracing::error!(?root, "Metadata compilation failure: {}", err);
+                            task_sender
+                                .send(BackgroundTaskEvent::NotifyUser {
+                                    typ: MessageType::ERROR,
+                                    message: format!("Failed to receive project metadata: {err}"),
+                                })
+                                .ok();
                         }
                     }
                 });
@@ -515,6 +528,7 @@ impl GlobalState {
                     self.respond_err(id, ErrorCode::InternalError, err.to_string());
                 }
             },
+            BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
         }
     }
 
@@ -563,15 +577,6 @@ impl GlobalState {
             .outgoing
             .register(R::METHOD.to_string(), params, state);
         self.send(req.into());
-    }
-
-    pub(crate) fn spawn_task(&self, task: BackgroundTaskEvent) {
-        if let Err(e) = self.task_sender.send(task) {
-            tracing::error!(
-                ?e,
-                "Failed to spawn task, this is an internal error, please report this to developers!"
-            );
-        }
     }
 
     /// Helper to send window/showMessage notifications to the client
@@ -626,7 +631,7 @@ impl GlobalState {
             }
             vfs::loader::Message::Progress { n_done, .. } => {
                 if n_done == vfs::loader::LoadingProgress::Finished {
-                    self.spawn_task(BackgroundTaskEvent::VfsLoaded);
+                    self.task_sender.send(BackgroundTaskEvent::VfsLoaded).ok();
                 }
             }
         }
