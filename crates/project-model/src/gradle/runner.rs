@@ -15,7 +15,7 @@ use vfs::AbsPathBuf;
 
 pub fn import_gradle_workspace(
     workspace_root: &Path,
-    java_exec: &Path,
+    java_home: &Path,
 ) -> anyhow::Result<GradleWorkspace> {
     let gradlew_path = if cfg!(windows) {
         workspace_root.join("gradlew.bat")
@@ -36,7 +36,7 @@ pub fn import_gradle_workspace(
     init_script.flush()?;
 
     let output = Command::new(&gradle_cmd)
-        .env("JAVA_HOME", java_exec)
+        .env("JAVA_HOME", java_home)
         .current_dir(workspace_root)
         .arg("--init-script")
         .arg(init_script.path())

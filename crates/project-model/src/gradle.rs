@@ -1,4 +1,4 @@
-use std::{env::consts::EXE_SUFFIX, path::Path};
+use std::path::Path;
 
 use crate::{BuildSystem, BuildSystemType, WorkspaceGraph};
 
@@ -22,9 +22,7 @@ impl BuildSystem for GradleBuildSystem {
     }
 
     fn sync(&self, workspace_root: &Path, java_home: &Path) -> anyhow::Result<WorkspaceGraph> {
-        let java_exec = java_home.join(format!("bin/java{}", EXE_SUFFIX));
-        let gradle_json = runner::import_gradle_workspace(workspace_root, &java_exec)?;
-
+        let gradle_json = runner::import_gradle_workspace(workspace_root, java_home)?;
         let graph = build_graph_from_json(gradle_json);
 
         Ok(graph)
