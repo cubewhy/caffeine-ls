@@ -13,4 +13,5 @@ rowan.workspace = true
 rustc-hash.workspace = true
 semantics.workspace = true
 syntax.workspace = true
+triomphe.workspace = true
 vfs.workspace = true

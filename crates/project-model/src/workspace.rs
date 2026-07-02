@@ -47,7 +47,7 @@ pub enum ClasspathEntry {
 
 /// A SourceSet is a first-class citizen in the Java LSP model.
 /// It represents the minimal boundary unit for Java compilation, indexing, and error diagnostics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceSetData {
     pub kind: SourceSetKind,
 
@@ -78,7 +78,7 @@ pub struct SourceSetData {
 }
 
 /// Represents a specific Maven/Gradle module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectData {
     pub id: ProjectId,
     pub name: SmolStr,

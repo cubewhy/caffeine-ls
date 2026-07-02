@@ -1026,6 +1026,7 @@ dependencies = [
  "rustc-hash 2.1.2",
  "semantics",
  "syntax",
+ "triomphe",
  "vfs",
 ]
 

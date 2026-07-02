@@ -6,6 +6,10 @@ use rustc_hash::FxHashMap;
 use syntax::SyntaxError;
 use vfs::{AbsPathBuf, FileId};
 
+use crate::delta::WorkspaceDelta;
+
+pub mod delta;
+
 pub struct ParsedFile {
     pub green_node: rowan::GreenNode,
     pub syntax_errors: Vec<SyntaxError>,
@@ -86,10 +90,67 @@ impl AnalysisHost {
         }
     }
 
-    pub fn add_workspace(&mut self, root: AbsPathBuf, workspace: WorkspaceGraph) {
-        let workspaces = Arc::make_mut(&mut self.workspaces);
+    /// Apply new workspace graph and track changes
+    pub fn apply_workspace_change(
+        &mut self,
+        root: AbsPathBuf,
+        new_workspace: WorkspaceGraph,
+    ) -> WorkspaceDelta {
+        let workspaces = std::sync::Arc::make_mut(&mut self.workspaces);
+        let mut delta = WorkspaceDelta::default();
 
-        workspaces.insert(root, workspace);
+        if let Some(old_workspace) = workspaces.get(&root) {
+            // find sdk diff
+            for (id, sdk) in &new_workspace.sdks {
+                if !old_workspace.sdks.contains_key(id) {
+                    delta.sdks.added.insert(*id, sdk.clone());
+                }
+            }
+            for (id, sdk) in &old_workspace.sdks {
+                if !new_workspace.sdks.contains_key(id) {
+                    delta.sdks.removed.insert(*id, sdk.clone());
+                }
+            }
+
+            // find library diff
+            for (id, path) in &new_workspace.library_paths {
+                if !old_workspace.library_paths.contains_key(id) {
+                    delta.libs.added.insert(*id, path.clone());
+                }
+            }
+            for (id, path) in &old_workspace.library_paths {
+                if !old_workspace.library_paths.contains_key(id) {
+                    delta.libs.removed.insert(*id, path.clone());
+                }
+            }
+
+            // find projects diff
+            for (id, new_project) in &new_workspace.projects {
+                if let Some(old_project) = old_workspace.projects.get(id) {
+                    // changed project
+                    if new_project != old_project {
+                        delta
+                            .projects
+                            .changed
+                            .insert(*id, (old_project.clone(), new_project.clone()));
+                    }
+                } else {
+                    delta.projects.added.insert(*id, new_project.clone());
+                }
+            }
+            for (id, data) in &old_workspace.projects {
+                if !new_workspace.projects.contains_key(id) {
+                    delta.projects.removed.insert(*id, data.clone());
+                }
+            }
+        } else {
+            delta.sdks.added = new_workspace.sdks.clone();
+            delta.libs.added = new_workspace.library_paths.clone();
+        }
+
+        workspaces.insert(root, new_workspace);
+
+        delta
     }
 
     pub fn remove_workspace(&mut self, root: &AbsPathBuf) {
