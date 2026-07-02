@@ -1,6 +1,5 @@
-use std::path::PathBuf;
-
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -8,7 +7,10 @@ pub enum GradleClasspathEntry {
     #[serde(rename = "project")]
     Project { path: String, source_set: String },
     #[serde(rename = "jar")]
-    Jar { path: PathBuf },
+    Jar {
+        path: PathBuf,
+        origin: String, // 'coordinate' or 'flat-file'
+    },
 }
 
 #[derive(Debug, Deserialize)]

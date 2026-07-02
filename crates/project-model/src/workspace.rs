@@ -1,4 +1,9 @@
-use ide_db::symbol::LibraryId;
+use std::{
+    fs,
+    hash::{DefaultHasher, Hash, Hasher},
+    path::Path,
+};
+
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use triomphe::Arc;
@@ -14,6 +19,62 @@ pub struct ProjectId(pub u32);
 /// (e.g., a legacy module using Java 8, while a new module uses Java 21).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SdkId(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LibraryId(pub u64);
+
+impl LibraryId {
+    /// Generate a unique ID for a JAR file based on its path and metadata
+    pub fn from_jar_path(path: &Path) -> std::io::Result<Self> {
+        let metadata = fs::metadata(path)?;
+        let modified = metadata.modified()?;
+
+        let mut hasher = DefaultHasher::new();
+        path.hash(&mut hasher);
+
+        format!("{:?}", modified).hash(&mut hasher);
+
+        Ok(Self(hasher.finish()))
+    }
+
+    /// Generates a unique ID for a mutable local workspace module.
+    /// Hashes ONLY the absolute path. We do not hash the modified time because
+    /// active files change constantly, and we handle those via the `ParseCache`.
+    pub fn from_project_root(path: &Path) -> Self {
+        let mut hasher = DefaultHasher::new();
+        let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        "/\\".hash(&mut hasher);
+        abs_path.hash(&mut hasher);
+
+        Self(hasher.finish())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Library {
+    pub id: LibraryId,
+    pub path: AbsPathBuf,
+    pub readonly: bool,
+}
+
+impl Library {
+    pub fn editable(lib_id: LibraryId, path: AbsPathBuf) -> Self {
+        Self {
+            id: lib_id,
+            path,
+            readonly: false,
+        }
+    }
+
+    pub fn readonly(lib_id: LibraryId, path: AbsPathBuf) -> Self {
+        Self {
+            id: lib_id,
+            path,
+            readonly: true,
+        }
+    }
+}
 
 /// Describes the type of a SourceSet.
 /// A core characteristic of Java projects is that different code scopes within the same module
@@ -110,7 +171,7 @@ pub struct SdkData {
 pub struct WorkspaceGraph {
     pub projects: FxHashMap<ProjectId, Arc<ProjectData>>,
     pub sdks: FxHashMap<SdkId, Arc<SdkData>>,
-    pub library_paths: FxHashMap<LibraryId, AbsPathBuf>,
+    pub library_paths: FxHashMap<LibraryId, Library>,
 
     /// Maps a specific source root directory (including generated sources)
     /// directly to its owning Project and specific SourceSet.

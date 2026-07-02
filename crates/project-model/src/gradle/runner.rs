@@ -1,9 +1,8 @@
 use crate::gradle::model::{GradleClasspathEntry, GradleWorkspace};
 use crate::{
-    ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
+    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
     WorkspaceGraph,
 };
-use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::io::Write;
@@ -77,6 +76,21 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
     let mut jar_to_library_id = FxHashMap::default();
     let mut version_to_sdk_id = FxHashMap::default();
     let mut next_sdk_id = 0u32;
+
+    let abs_workspace_root = workspace
+        .projects
+        .iter()
+        .find(|p| p.path == ":")
+        .map(|p| AbsPathBuf::assert_utf8(p.project_dir.clone()))
+        .unwrap_or_else(|| {
+            workspace
+                .projects
+                .first()
+                .map(|p| AbsPathBuf::assert_utf8(p.project_dir.clone()))
+                .unwrap_or_else(|| {
+                    AbsPathBuf::assert_utf8(std::env::current_dir().unwrap_or_default())
+                })
+        });
 
     // Allocate topology project tokens
     for (idx, project) in workspace.projects.iter().enumerate() {
@@ -170,16 +184,23 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
                             });
                         }
                     }
-                    GradleClasspathEntry::Jar { path } => {
+                    GradleClasspathEntry::Jar { path, origin } => {
                         if path.extension().is_some_and(|ext| ext == "jar") {
                             let lib_id =
                                 *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
-                                    LibraryId::from_jar_path(&path)
+                                    crate::LibraryId::from_jar_path(&path)
                                         .expect("failed to hash jar path")
                                 });
 
                             if let Ok(abs_jar_path) = AbsPathBuf::try_from(path) {
-                                graph.library_paths.insert(lib_id, abs_jar_path);
+                                let library = if origin == "coordinate" {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                } else if abs_jar_path.starts_with(&abs_workspace_root) {
+                                    Library::editable(lib_id, abs_jar_path)
+                                } else {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                };
+                                graph.library_paths.insert(lib_id, library);
                             }
                             entries.push(ClasspathEntry::External(lib_id));
                         }

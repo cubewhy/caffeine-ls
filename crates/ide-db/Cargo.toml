@@ -13,6 +13,7 @@ lasso.workspace = true
 lru.workspace = true
 parking_lot.workspace = true
 postcard = { workspace = true, features = ["alloc"] }
+project-model.workspace = true
 serde.workspace = true
 smol_str.workspace = true
 triomphe.workspace = true

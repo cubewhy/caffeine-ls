@@ -1,8 +1,6 @@
-use ide_db::symbol::LibraryId;
-use project_model::{ProjectData, ProjectId, SdkData, SdkId};
+use project_model::{Library, LibraryId, ProjectData, ProjectId, SdkData, SdkId};
 use rustc_hash::FxHashMap;
 use triomphe::Arc;
-use vfs::AbsPathBuf;
 
 #[derive(Debug, Clone, Default)]
 pub struct SdkDelta {
@@ -21,9 +19,9 @@ impl SdkDelta {
 #[derive(Debug, Clone, Default)]
 pub struct LibraryDelta {
     /// Added dependencies
-    pub added: FxHashMap<LibraryId, AbsPathBuf>,
+    pub added: FxHashMap<LibraryId, Library>,
     /// Removed dependencies
-    pub removed: FxHashMap<LibraryId, AbsPathBuf>,
+    pub removed: FxHashMap<LibraryId, Library>,
 }
 
 impl LibraryDelta {

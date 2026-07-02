@@ -1040,6 +1040,7 @@ dependencies = [
  "lru",
  "parking_lot",
  "postcard",
+ "project-model",
  "serde",
  "smol_str",
  "syntax",
@@ -1754,7 +1755,6 @@ name = "project-model"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "ide-db",
  "quick-xml",
  "rustc-hash 2.1.2",
  "serde",

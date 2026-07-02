@@ -10,40 +10,10 @@ use heed::{
     types::{Bytes, Str, U32},
 };
 use lasso::ThreadedRodeo;
+use project_model::LibraryId;
 use syntax::{ClassStub, Symbol};
 use triomphe::Arc;
 use vfs::FileId;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LibraryId(pub u64);
-
-impl LibraryId {
-    /// Generate a unique ID for a JAR file based on its path and metadata
-    pub fn from_jar_path(path: &Path) -> std::io::Result<Self> {
-        let metadata = fs::metadata(path)?;
-        let modified = metadata.modified()?;
-
-        let mut hasher = DefaultHasher::new();
-        path.hash(&mut hasher);
-
-        format!("{:?}", modified).hash(&mut hasher);
-
-        Ok(Self(hasher.finish()))
-    }
-
-    /// Generates a unique ID for a mutable local workspace module.
-    /// Hashes ONLY the absolute path. We do not hash the modified time because
-    /// active files change constantly, and we handle those via the `ParseCache`.
-    pub fn from_project_root(path: &Path) -> Self {
-        let mut hasher = DefaultHasher::new();
-        let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-
-        "/\\".hash(&mut hasher);
-        abs_path.hash(&mut hasher);
-
-        Self(hasher.finish())
-    }
-}
 
 // The ScopedSymbol is our universal key for both Memory and Disk
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

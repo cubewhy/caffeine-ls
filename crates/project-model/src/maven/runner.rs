@@ -1,9 +1,8 @@
 use crate::maven::model::{MavenClasspathEntry, MavenWorkspace};
 use crate::{
-    ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
+    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
     WorkspaceGraph,
 };
-use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::io::Write;
@@ -29,12 +28,10 @@ pub fn import_maven_workspace(
         "mvn".to_string()
     };
 
-    // Spin up an isolated temp file containing our model extractor
     let mut init_script = NamedTempFile::new()?;
     init_script.write_all(crate::maven::script::MAVEN_EXPORT_INIT_SCRIPT.as_bytes())?;
     init_script.flush()?;
 
-    // Sanitize path separators for cross-platform inline evaluation inside the Maven CLI context
     let escaped_script_path = init_script.path().to_string_lossy().replace('\\', "/");
     let inline_bootstrapper = format!(
         "new GroovyShell(binding).evaluate(new File('{}'))",
@@ -46,11 +43,9 @@ pub fn import_maven_workspace(
     let output = Command::new(&maven_cmd)
         .env("JAVA_HOME", java_exec)
         .current_dir(workspace_root)
-        // Ensure test-scope configurations are computed by driving up to test-compile phase
         .arg("test-compile")
         .arg("org.codehaus.gmavenplus:gmavenplus-plugin:3.0.0:execute")
         .arg(format!("-Dgmavenplus.script={}", inline_bootstrapper))
-        // Optimize speed by skipping tests and optional downstream validation tasks
         .arg("-DskipTests=true")
         .arg("-Dmaven.test.skip=false")
         .output()?;
@@ -98,6 +93,13 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
         }
     });
     let safe_abs_fallback = AbsPathBuf::assert_utf8(current_abs_dir);
+
+    let abs_workspace_root = workspace
+        .projects
+        .iter()
+        .map(|p| AbsPathBuf::assert_utf8(p.project_dir.clone()))
+        .min_by_key(|p| p.as_str().len())
+        .unwrap_or_else(|| safe_abs_fallback.clone());
 
     // Map unique multi-module coordinate strings to topology project ID tokens
     for (idx, project) in workspace.projects.iter().enumerate() {
@@ -188,16 +190,23 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
                             });
                         }
                     }
-                    MavenClasspathEntry::Jar { path } => {
+                    MavenClasspathEntry::Jar { path, origin } => {
                         if path.extension().is_some_and(|ext| ext == "jar") {
                             let lib_id =
                                 *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
-                                    LibraryId::from_jar_path(&path)
+                                    crate::LibraryId::from_jar_path(&path)
                                         .expect("failed to hash jar path")
                                 });
 
                             if let Ok(abs_jar_path) = AbsPathBuf::try_from(path) {
-                                graph.library_paths.insert(lib_id, abs_jar_path);
+                                let library = if origin == "coordinate" {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                } else if abs_jar_path.starts_with(&abs_workspace_root) {
+                                    Library::editable(lib_id, abs_jar_path)
+                                } else {
+                                    Library::readonly(lib_id, abs_jar_path)
+                                };
+                                graph.library_paths.insert(lib_id, library);
                             }
                             entries.push(ClasspathEntry::External(lib_id));
                         }

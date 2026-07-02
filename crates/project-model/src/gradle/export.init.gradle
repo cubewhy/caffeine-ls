@@ -28,7 +28,7 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
     }
 
     def entries = []
-    
+
     // Strategy 1: Modern ArtifactView (Preferred for Gradle 5.x - 9.x)
     try {
         def artifacts = config.incoming.artifactView { viewConfig -> 
@@ -46,9 +46,11 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
                     source_set: 'main'
                 ]
             } else if (filePath && filePath.endsWith('.jar')) {
+                def origin = (id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier) ? 'coordinate' : 'flat-file'
                 entries << [
                     type: 'jar',
-                    path: filePath
+                    path: filePath,
+                    origin: origin
                 ]
             }
         }
@@ -74,9 +76,11 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
                     source_set: 'main'
                 ]
             } else if (filePath && filePath.endsWith('.jar')) {
+                def origin = (id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier) ? 'coordinate' : 'flat-file'
                 entries << [
                     type: 'jar',
-                    path: filePath
+                    path: filePath,
+                    origin: origin
                 ]
             }
         }
@@ -90,18 +94,14 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
 }
 
 def getSourceSets(def project) {
-    // Try modern extension registry (Gradle 7.x - 9.x)
     try { return project.extensions.getByType(org.gradle.api.tasks.SourceSetContainer) } catch (Throwable ignored) {}
     try { return project.extensions.findByName('java')?.sourceSets } catch (Throwable ignored) {}
-    
-    // Try legacy plugin conventions (Gradle 4.x - 6.x)
     try { return project.convention.findPlugin(org.gradle.api.plugins.JavaPluginConvention)?.sourceSets } catch (Throwable ignored) {}
     try { return project.convention.getPlugin(org.gradle.api.plugins.JavaPluginConvention).sourceSets } catch (Throwable ignored) {}
     return null
 }
 
 gradle.projectsEvaluated {
-    // Standardized task name matching Rust backend's invocation target
     def taskName = 'exportWorkspaceModel'
     def task = rootProject.tasks.findByName(taskName)
     if (task == null) {
@@ -135,7 +135,6 @@ gradle.projectsEvaluated {
                     resourcesSource = (mainRes + testRes).unique()
                 } catch (Throwable ignored) {}
 
-                // Extract cross-version classpaths
                 def compileCp = extractRichClasspath(project, 'compileClasspath')
                 if (compileCp.isEmpty()) {
                     compileCp = extractRichClasspath(project, 'compile')
@@ -158,7 +157,6 @@ gradle.projectsEvaluated {
                     }
                 } catch (Throwable ignored) {}
 
-                // Resolve Java Language Version using safe fallback chain
                 def javaLangVersion = null
                 try {
                     def javaExt = project.extensions.findByName('java')
@@ -176,19 +174,16 @@ gradle.projectsEvaluated {
                     }
                 } catch (Throwable ignored) {}
 
-                // Resolve Java Home directory using safe fallback chain
                 def javaHome = normalizePath(new File(System.getProperty('java.home')))
                 try {
                     def compileJavaTask = project.tasks.findByName('compileJava')
                     if (compileJavaTask != null) {
-                        // Match against modern toolchains first (Gradle 6.7+)
                         if (compileJavaTask.respondTo('getJavaCompiler')) {
                             def compilerProvider = compileJavaTask.getJavaCompiler()
                             if (compilerProvider.isPresent()) {
                                 javaHome = normalizePath(compilerProvider.get().getMetadata().getInstallationPath().getAsFile())
                             }
                         } 
-                        // Match against legacy explicit fork options (Gradle 4.x - 6.x)
                         else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
                             javaHome = normalizePath(compileJavaTask.options.forkOptions.javaHome)
                         }

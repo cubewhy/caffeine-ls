@@ -3,10 +3,9 @@ use crate::idea::model::{
     IdeaModulesXml,
 };
 use crate::{
-    ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
+    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
     WorkspaceGraph,
 };
-use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::fs;
@@ -273,12 +272,18 @@ pub fn build_graph_from_idea(
                                     let lib_id = *jar_to_library_id
                                         .entry(jar_path.clone())
                                         .or_insert_with(|| {
-                                            LibraryId::from_jar_path(jar_path)
+                                            crate::LibraryId::from_jar_path(jar_path)
                                                 .expect("failed to hash jar path")
                                         });
                                     if let Ok(abs_jar_path) = AbsPathBuf::try_from(jar_path.clone())
                                     {
-                                        graph.library_paths.insert(lib_id, abs_jar_path);
+                                        let library =
+                                            if abs_jar_path.starts_with(&abs_workspace_root) {
+                                                Library::editable(lib_id, abs_jar_path)
+                                            } else {
+                                                Library::readonly(lib_id, abs_jar_path)
+                                            };
+                                        graph.library_paths.insert(lib_id, library);
                                     }
                                     explicit_jar_entries.push(ClasspathEntry::External(lib_id));
                                 }
@@ -296,11 +301,17 @@ pub fn build_graph_from_idea(
                                     let lib_id = *jar_to_library_id
                                         .entry(jar_path.clone())
                                         .or_insert_with(|| {
-                                            LibraryId::from_jar_path(&jar_path)
+                                            crate::LibraryId::from_jar_path(&jar_path)
                                                 .expect("failed to hash jar path")
                                         });
                                     if let Ok(abs_jar_path) = AbsPathBuf::try_from(jar_path) {
-                                        graph.library_paths.insert(lib_id, abs_jar_path);
+                                        let library =
+                                            if abs_jar_path.starts_with(&abs_workspace_root) {
+                                                Library::editable(lib_id, abs_jar_path)
+                                            } else {
+                                                Library::readonly(lib_id, abs_jar_path)
+                                            };
+                                        graph.library_paths.insert(lib_id, library);
                                     }
                                     explicit_jar_entries.push(ClasspathEntry::External(lib_id));
                                 }

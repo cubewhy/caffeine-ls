@@ -5,7 +5,6 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ide-db.workspace = true
 vfs.workspace = true
 
 anyhow.workspace = true

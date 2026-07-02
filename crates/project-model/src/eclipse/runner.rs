@@ -1,9 +1,8 @@
 use crate::eclipse::model::{EclipseClasspath, EclipseProjectDescription};
 use crate::{
-    ClasspathEntry, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
+    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
     WorkspaceGraph,
 };
-use ide_db::symbol::LibraryId;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use std::fs;
@@ -120,12 +119,17 @@ pub fn build_graph_from_eclipse(
                         *jar_to_library_id
                             .entry(target_path.clone())
                             .or_insert_with(|| {
-                                LibraryId::from_jar_path(&target_path)
+                                crate::LibraryId::from_jar_path(&target_path)
                                     .expect("failed to hash jar path")
                             });
 
                     if let Ok(abs_jar_path) = AbsPathBuf::try_from(target_path) {
-                        graph.library_paths.insert(lib_id, abs_jar_path);
+                        let library = if abs_jar_path.starts_with(&abs_workspace_root) {
+                            Library::editable(lib_id, abs_jar_path)
+                        } else {
+                            Library::readonly(lib_id, abs_jar_path)
+                        };
+                        graph.library_paths.insert(lib_id, library);
                     }
                     main_compile_classpath.push(ClasspathEntry::External(lib_id));
                 }

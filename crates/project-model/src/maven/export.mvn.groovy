@@ -40,12 +40,30 @@ def modelProjects = []
 
 reactorProjects.each { proj ->
     String projKey = "${proj.getGroupId()}:${proj.getArtifactId()}"
-    
+
+    def jarOriginMap = [:]
+    try {
+        def allArtifacts = []
+        if (proj.respondTo('getArtifacts') && proj.getArtifacts()) allArtifacts.addAll(proj.getArtifacts())
+        if (proj.respondTo('getDependencyArtifacts') && proj.getDependencyArtifacts()) allArtifacts.addAll(proj.getDependencyArtifacts())
+        if (proj.respondTo('getTestArtifacts') && proj.getTestArtifacts()) allArtifacts.addAll(proj.getTestArtifacts())
+
+        allArtifacts.each { art ->
+            def file = art.getFile()
+            if (file) {
+                String norm = normalizePath(file)
+                if (norm) {
+                    jarOriginMap[norm] = "system".equalsIgnoreCase(art.getScope()) ? 'flat-file' : 'coordinate'
+                }
+            }
+        }
+    } catch (Throwable ignored) {}
+
     // Categorize regular source directories vs compiler-generated source roots
     def sourceRoots = []
     def testRoots = []
     def generatedRoots = []
-    
+
     proj.getCompileSourceRoots().each { src ->
         String norm = normalizePath(src)
         if (norm) {
@@ -56,7 +74,7 @@ reactorProjects.each { proj ->
             }
         }
     }
-    
+
     proj.getTestCompileSourceRoots().each { src ->
         String norm = normalizePath(src)
         if (norm) {
@@ -67,7 +85,7 @@ reactorProjects.each { proj ->
             }
         }
     }
-    
+
     // Extract asset directories
     def resourceRoots = []
     proj.getResources().each { res ->
@@ -86,7 +104,7 @@ reactorProjects.each { proj ->
         proj.getCompileClasspathElements().each { elem ->
             String norm = normalizePath(elem)
             if (!norm) return
-            
+
             if (targetDirToProjectKey.containsKey(norm)) {
                 compileClasspathEntries << [
                     type: 'project',
@@ -94,7 +112,8 @@ reactorProjects.each { proj ->
                     source_set: 'main'
                 ]
             } else if (norm.endsWith('.jar')) {
-                compileClasspathEntries << [ type: 'jar', path: norm ]
+                def origin = jarOriginMap[norm] ?: 'flat-file'
+                compileClasspathEntries << [ type: 'jar', path: norm, origin: origin ]
             }
         }
     } catch (Throwable ignored) {}
@@ -105,7 +124,7 @@ reactorProjects.each { proj ->
         proj.getTestClasspathElements().each { elem ->
             String norm = normalizePath(elem)
             if (!norm) return
-            
+
             if (targetDirToProjectKey.containsKey(norm)) {
                 testClasspathEntries << [
                     type: 'project',
@@ -113,7 +132,8 @@ reactorProjects.each { proj ->
                     source_set: 'main'
                 ]
             } else if (norm.endsWith('.jar')) {
-                testClasspathEntries << [ type: 'jar', path: norm ]
+                def origin = jarOriginMap[norm] ?: 'flat-file'
+                testClasspathEntries << [ type: 'jar', path: norm, origin: origin ]
             }
         }
     } catch (Throwable ignored) {}
@@ -123,7 +143,7 @@ reactorProjects.each { proj ->
                           proj.getProperties().getProperty('java.version') ?: 
                           System.getProperty('java.version')
     if (javaLangVersion && javaLangVersion.startsWith("1.")) {
-        javaLangVersion = javaLangVersion.substring(2) // Normalize legacy "1.8" -> "8"
+        javaLangVersion = javaLangVersion.substring(2)
     }
 
     def javaHome = normalizePath(new File(System.getProperty('java.home')))

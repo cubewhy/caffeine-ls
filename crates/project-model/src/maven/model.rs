@@ -28,5 +28,8 @@ pub enum MavenClasspathEntry {
     #[serde(rename = "project")]
     Project { path: String, source_set: String },
     #[serde(rename = "jar")]
-    Jar { path: PathBuf },
+    Jar {
+        path: PathBuf,
+        origin: String, // 'coordinate' or 'flat-file'
+    },
 }

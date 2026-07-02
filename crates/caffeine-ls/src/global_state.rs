@@ -93,6 +93,7 @@ pub struct GlobalState {
     // Vfs
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
     pub(crate) vfs: Arc<RwLock<Vfs>>,
+    pub(crate) vfs_config_version: u32,
 }
 
 impl GlobalState {
@@ -133,6 +134,7 @@ impl GlobalState {
 
             loader,
             vfs: Arc::new(RwLock::new(vfs)),
+            vfs_config_version: 0,
         }
     }
 
@@ -491,21 +493,22 @@ impl GlobalState {
                 }
 
                 // Package external compiled dependencies (.jar files) into a dedicated Entry block
-                let mut external_jars = Vec::new();
-                for (_, jar_path) in graph.library_paths.iter() {
-                    external_jars.push(VfsPath::Physical(jar_path.clone()));
-                }
+                // let mut external_jars = Vec::new();
+                // for (_, jar_path) in graph.library_paths.iter() {
+                //     external_jars.push(VfsPath::Physical(jar_path.clone()));
+                // }
+                //
+                // if !external_jars.is_empty() {
+                //     // Append external libraries to the loading array
+                //     load_entries.push(vfs::loader::Entry::Files(external_jars));
+                //     // NOTE: We deliberately OMIT this index from the `watch_indices` array.
+                //     // External dependency jars inside global .gradle or .m2 caches are immutable,
+                //     // so watching them would waste valuable system kernel file handles.
+                // }
 
-                if !external_jars.is_empty() {
-                    // Append external libraries to the loading array
-                    load_entries.push(vfs::loader::Entry::Files(external_jars));
-                    // NOTE: We deliberately OMIT this index from the `watch_indices` array.
-                    // External dependency jars inside global .gradle or .m2 caches are immutable,
-                    // so watching them would waste valuable system kernel file handles.
-                }
-
+                self.vfs_config_version += 1;
                 let vfs_config = vfs::loader::Config {
-                    version: 1,
+                    version: self.vfs_config_version,
                     load: load_entries,
                     watch: watch_indices,
                 };
