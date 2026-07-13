@@ -449,12 +449,13 @@ impl GlobalState {
             }
 
             BackgroundTaskEvent::WorkspaceLoaded { graph, root } => {
-                tracing::info!(?graph, "Project configuration graph successfully loaded.");
+                tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
 
-                let _delta = self
+                let delta = self
                     .analysis_host
                     .apply_workspace_change(root, graph.clone());
 
+                tracing::info!("workspace delta: {:#?}", delta);
                 // TODO: index with delta
 
                 let mut load_entries = Vec::new();
