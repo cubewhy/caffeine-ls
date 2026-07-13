@@ -146,6 +146,7 @@ impl AnalysisHost {
         } else {
             delta.sdks.added = new_workspace.sdks.clone();
             delta.libs.added = new_workspace.library_paths.clone();
+            delta.projects.added = new_workspace.projects.clone();
         }
 
         workspaces.insert(root, new_workspace);
