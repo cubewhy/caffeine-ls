@@ -340,9 +340,7 @@ impl GlobalState {
             ErrorCode::MethodNotFound as i32,
             format!("Method not implemented: {}", method),
         );
-        if let Err(err) = self.sender.send(lsp_server::Message::Response(response)) {
-            tracing::error!("Failed to send MethodNotFound response: {}", err);
-        }
+        self.send(lsp_server::Message::Response(response));
     }
 
     /// Entry point to kick off initialization/probing workflows.
@@ -540,8 +538,9 @@ impl GlobalState {
         }
     }
 
+    #[track_caller]
     fn send(&self, msg: lsp_server::Message) {
-        self.sender.send(msg).ok();
+        self.sender.send(msg).unwrap();
     }
 
     pub(crate) fn respond_ok<R>(&mut self, id: lsp_server::RequestId, result: R)
@@ -742,9 +741,7 @@ impl GlobalState {
             lsp_server::ErrorCode::InternalError as i32,
             "Internal Server Error".to_string(),
         );
-        self.sender
-            .send(lsp_server::Message::Response(response))
-            .ok();
+        self.send(lsp_server::Message::Response(response))
     }
 
     pub fn snapshot(&self) -> GlobalStateSnapshot {
