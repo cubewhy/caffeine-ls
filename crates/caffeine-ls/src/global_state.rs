@@ -586,12 +586,6 @@ impl GlobalState {
         self.send(req.into());
     }
 
-    /// Helper to send window/showMessage notifications to the client
-    pub fn show_message(&self, typ: MessageType, message: String) {
-        let params = ShowMessageParams { typ, message };
-        self.notify::<notification::ShowMessage>(params);
-    }
-
     /// Helper to translate internal ProgressEvent into LSP $/progress notifications
     fn report_progress(&self, event: ProgressEvent) {
         let token = ProgressToken::String(event.token.clone());
