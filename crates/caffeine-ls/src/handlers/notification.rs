@@ -201,41 +201,13 @@ pub fn on_did_change_configuration(
 
     tracing::debug!(?full_settings, "updated config");
 
-    let mut extracted_config = match full_settings.get_mut("caffeine_ls") {
+    let extracted_config = match full_settings.get_mut("caffeine_ls") {
         Some(value) if !value.is_null() => value.take(),
         _ => {
             tracing::info!("Section key not found or null. Falling back to flat topology parsing");
             full_settings
         }
     };
-
-    let is_valid_payload =
-        serde_json::from_value::<crate::config::ClientConfig>(extracted_config.clone()).is_ok();
-
-    if !is_valid_payload {
-        tracing::warn!("Push-based payload doesn't match ClientConfig schema.");
-
-        if let Some(workspace_caps) = state.config.client_capabilities.workspace.as_ref()
-            && workspace_caps.configuration.unwrap_or(false)
-        {
-            tracing::info!(
-                "Client supports Pull Model. Dispatched dynamic configuration pull request"
-            );
-            let pull_params = lsp_types::ConfigurationParams {
-                items: vec![lsp_types::ConfigurationItem {
-                    scope_uri: None,
-                    section: Some("caffeine-ls".to_string()),
-                }],
-            };
-            state.send_request::<request::WorkspaceConfiguration>(
-                pull_params,
-                crate::global_state::OutgoingRequest::WorkspaceConfiguration,
-            );
-            return Ok(());
-        }
-
-        extracted_config = serde_json::Value::Object(serde_json::Map::new());
-    }
 
     let mut change = crate::config::ConfigChange::default();
     change.change_client_config(extracted_config);
