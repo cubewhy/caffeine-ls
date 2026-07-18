@@ -51,8 +51,7 @@ impl GlobalSymbolIndex {
         fs::create_dir_all(&caffeine_dir).expect("Failed to create project-local storage");
         let gitignore = caffeine_dir.join(".gitignore");
         if !gitignore.exists() {
-            fs::write(&gitignore, "*\n!.gitignore\n")
-                .expect("Failed to create .caffeine/.gitignore");
+            fs::write(&gitignore, "*\n").expect("Failed to create .caffeine/.gitignore");
         }
         let local_db_dir = caffeine_dir.join("symbols-v1");
         fs::create_dir_all(&local_db_dir).expect("Failed to create project-local storage");
@@ -318,7 +317,11 @@ mod tests {
 
         {
             let index = GlobalSymbolIndex::new(&global, &workspace);
-            index.update_workspace_file(&rodeo, "src/main/java/sample/A.java", vec![stub("sample.A")]);
+            index.update_workspace_file(
+                &rodeo,
+                "src/main/java/sample/A.java",
+                vec![stub("sample.A")],
+            );
             assert!(index.resolve_class("sample.A").is_some());
         }
 
@@ -326,7 +329,7 @@ mod tests {
         assert!(reopened.resolve_class("sample.A").is_some());
         assert_eq!(
             fs::read_to_string(workspace.join(".caffeine/.gitignore")).unwrap(),
-            "*\n!.gitignore\n"
+            "*\n"
         );
     }
 }
