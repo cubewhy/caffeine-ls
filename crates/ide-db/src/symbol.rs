@@ -1,22 +1,21 @@
 use std::{
+    collections::HashSet,
     fs,
-    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
 };
 
 use dashmap::DashMap;
 use heed::{
     Database, Env, EnvOpenOptions,
-    types::{Bytes, Str, U32},
+    types::{Bytes, Str},
 };
 use lasso::ThreadedRodeo;
 use project_model::LibraryId;
 use syntax::{ClassStub, Symbol};
 use triomphe::Arc;
-use vfs::FileId;
 
 // The ScopedSymbol is our universal key for both Memory and Disk
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedSymbol {
     pub lib_id: LibraryId,
     pub symbol: Symbol,
@@ -35,7 +34,7 @@ pub struct GlobalSymbolIndex {
 
     /// Secondary Workspace DB: Maps `FileId` (`u32`) to its defined FQNs (`Vec<String>`).
     /// Crucial for sweeping stale stubs when a file is modified or deleted.
-    workspace_file_to_fqns: Database<U32<heed::byteorder::NativeEndian>, Bytes>,
+    workspace_file_to_fqns: Database<Str, Bytes>,
 
     /// Thread-safe active mapping of read-only attached dependencies (JARs/JDK).
     /// Prevents concurrent file locking issues, especially on Windows environments.
@@ -45,10 +44,17 @@ pub struct GlobalSymbolIndex {
 impl GlobalSymbolIndex {
     /// Initializes a new high-performance JVM symbol index.
     pub fn new(global_cache_dir: impl AsRef<Path>, project_root: &Path) -> Self {
-        let global_dir = global_cache_dir.as_ref().to_path_buf();
+        let global_dir = global_cache_dir.as_ref().join("v1");
         fs::create_dir_all(&global_dir).expect("Failed to create global cache directory");
 
-        let local_db_dir = project_root.join(".caffeine");
+        let caffeine_dir = project_root.join(".caffeine");
+        fs::create_dir_all(&caffeine_dir).expect("Failed to create project-local storage");
+        let gitignore = caffeine_dir.join(".gitignore");
+        if !gitignore.exists() {
+            fs::write(&gitignore, "*\n!.gitignore\n")
+                .expect("Failed to create .caffeine/.gitignore");
+        }
+        let local_db_dir = caffeine_dir.join("symbols-v1");
         fs::create_dir_all(&local_db_dir).expect("Failed to create project-local storage");
 
         // Initialize the local mutable workspace workspace environment
@@ -86,21 +92,16 @@ impl GlobalSymbolIndex {
     /// Safely purges any previous classes that were eliminated in the latest modification.
     pub fn update_workspace_file(
         &self,
-        rodeo: &ThreadedRodeo,
-        file_id: FileId,
+        _rodeo: &ThreadedRodeo,
+        file_key: &str,
         stubs: Vec<ClassStub>,
     ) {
         let mut wtxn = self
             .workspace_env
             .write_txn()
             .expect("Failed to open write txn");
-        let raw_file_id = file_id.0;
-
         // Step 1: Clean up previous stale symbols emitted by this file
-        if let Some(old_bytes) = self
-            .workspace_file_to_fqns
-            .get(&wtxn, &raw_file_id)
-            .unwrap()
+        if let Some(old_bytes) = self.workspace_file_to_fqns.get(&wtxn, file_key).unwrap()
             && let Ok(old_fqns) = postcard::from_bytes::<Vec<String>>(old_bytes)
         {
             for old_fqn in old_fqns {
@@ -113,7 +114,7 @@ impl GlobalSymbolIndex {
         // Shortcut: If file was cleared or contains no classes, prune tracking entries entirely
         if stubs.is_empty() {
             self.workspace_file_to_fqns
-                .delete(&mut wtxn, &raw_file_id)
+                .delete(&mut wtxn, file_key)
                 .unwrap();
             wtxn.commit().unwrap();
             return;
@@ -122,7 +123,7 @@ impl GlobalSymbolIndex {
         // Step 2: Ingest the newly provided class stubs
         let mut tracking_fqns = Vec::with_capacity(stubs.len());
         for stub in stubs {
-            let fqn_str = rodeo.resolve(&stub.name);
+            let fqn_str = stub.name.as_str();
             tracking_fqns.push(fqn_str.to_string());
             let serialized_stub =
                 postcard::to_allocvec(&stub).expect("Failed to serialize ClassStub");
@@ -135,7 +136,7 @@ impl GlobalSymbolIndex {
         // Step 3: Refresh the reverse-lookup mapping index
         let serialized_tracking = postcard::to_allocvec(&tracking_fqns).unwrap();
         self.workspace_file_to_fqns
-            .put(&mut wtxn, &raw_file_id, &serialized_tracking)
+            .put(&mut wtxn, file_key, &serialized_tracking)
             .unwrap();
 
         wtxn.commit()
@@ -143,19 +144,13 @@ impl GlobalSymbolIndex {
     }
 
     /// Complete removal of a workspace source file (e.g., file unlinked or deleted).
-    pub fn remove_file(&self, file_id: FileId) {
+    pub fn remove_file(&self, file_key: &str) {
         let mut wtxn = self
             .workspace_env
             .write_txn()
             .expect("Failed to open write txn");
-        let raw_file_id = file_id.0;
-
         // Corrected from .remove() to sequential .get() and .delete() calls
-        if let Some(old_bytes) = self
-            .workspace_file_to_fqns
-            .get(&wtxn, &raw_file_id)
-            .unwrap()
-        {
+        if let Some(old_bytes) = self.workspace_file_to_fqns.get(&wtxn, file_key).unwrap() {
             if let Ok(old_fqns) = postcard::from_bytes::<Vec<String>>(old_bytes) {
                 for old_fqn in old_fqns {
                     self.workspace_fqn_to_stub
@@ -164,18 +159,22 @@ impl GlobalSymbolIndex {
                 }
             }
             self.workspace_file_to_fqns
-                .delete(&mut wtxn, &raw_file_id)
+                .delete(&mut wtxn, file_key)
                 .unwrap();
         }
         wtxn.commit()
             .expect("Failed to commit file sweeping transaction");
     }
 
+    pub fn detach_library(&self, lib_id: LibraryId) {
+        self.attached_libraries.remove(&lib_id);
+    }
+
     /// Attaches an unalterable binary archive dependency into the server session.
     /// Deploys a Shadow-Write & Atomic Move pattern to maintain absolute consistency under concurrency.
     pub fn attach_library(
         &self,
-        rodeo: &ThreadedRodeo,
+        _rodeo: &ThreadedRodeo,
         lib_id: LibraryId,
         jar_path: &Path,
         parse_factory: impl Fn(&Path) -> Vec<ClassStub>,
@@ -208,7 +207,7 @@ impl GlobalSymbolIndex {
             for stub in stubs {
                 let bytes =
                     postcard::to_allocvec(&stub).expect("Failed to serialize external stub");
-                let fqn_str = rodeo.resolve(&stub.name);
+                let fqn_str = stub.name.as_str();
                 tmp_db.put(&mut wtxn, fqn_str, &bytes).unwrap();
             }
             wtxn.commit().unwrap();
@@ -263,5 +262,71 @@ impl GlobalSymbolIndex {
         }
 
         None
+    }
+
+    pub fn resolve_class_scoped(
+        &self,
+        fqn: &str,
+        allowed_libraries: &HashSet<LibraryId>,
+    ) -> Option<Arc<ClassStub>> {
+        let local_rtxn = self.workspace_env.read_txn().ok()?;
+        if let Some(bytes) = self.workspace_fqn_to_stub.get(&local_rtxn, fqn).ok()? {
+            return postcard::from_bytes(bytes).ok().map(Arc::new);
+        }
+        drop(local_rtxn);
+
+        for library_id in allowed_libraries {
+            let Some(entry) = self.attached_libraries.get(library_id) else {
+                continue;
+            };
+            let (env, db) = entry.value();
+            let rtxn = env.read_txn().ok()?;
+            if let Some(bytes) = db.get(&rtxn, fqn).ok()? {
+                return postcard::from_bytes(bytes).ok().map(Arc::new);
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub(name: &str) -> ClassStub {
+        ClassStub {
+            name: name.into(),
+            flags: 0,
+            super_class: None,
+            interfaces: Vec::new(),
+            type_params: Vec::new(),
+            permitted_subclasses: Vec::new(),
+            record_components: Vec::new(),
+            methods: Vec::new(),
+            fields: Vec::new(),
+            annotations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn workspace_symbols_survive_restart_with_stable_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let global = temp.path().join("global");
+        let workspace = temp.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let rodeo = ThreadedRodeo::new();
+
+        {
+            let index = GlobalSymbolIndex::new(&global, &workspace);
+            index.update_workspace_file(&rodeo, "src/main/java/sample/A.java", vec![stub("sample.A")]);
+            assert!(index.resolve_class("sample.A").is_some());
+        }
+
+        let reopened = GlobalSymbolIndex::new(&global, &workspace);
+        assert!(reopened.resolve_class("sample.A").is_some());
+        assert_eq!(
+            fs::read_to_string(workspace.join(".caffeine/.gitignore")).unwrap(),
+            "*\n!.gitignore\n"
+        );
     }
 }

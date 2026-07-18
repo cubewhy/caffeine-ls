@@ -211,9 +211,16 @@ pub struct Vfs {
     id_to_path: FxHashMap<FileId, VfsPath>,
 
     overlays: FxHashMap<FileId, Arc<[u8]>>,
+    disk_contents: FxHashMap<FileId, Arc<[u8]>>,
 
     handlers: Vec<Box<dyn VirtualPathHandler>>,
     pending_events: Vec<VfsEvent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayKind {
+    Modified,
+    Saved,
 }
 
 impl Vfs {
@@ -252,14 +259,52 @@ impl Vfs {
         self.path_to_id.get(path).copied()
     }
 
-    pub fn set_overlay(&mut self, id: FileId, content: Vec<u8>) {
-        self.overlays.insert(id, Arc::from(content));
-        self.pending_events.push(VfsEvent::Modified { id });
+    pub fn set_overlay(&mut self, id: FileId, content: Vec<u8>, kind: OverlayKind) {
+        let content: Arc<[u8]> = Arc::from(content);
+        let changed = self.overlays.get(&id) != Some(&content)
+            || (kind == OverlayKind::Saved && self.disk_contents.get(&id) != Some(&content));
+        self.overlays.insert(id, Arc::clone(&content));
+        if kind == OverlayKind::Saved {
+            self.disk_contents.insert(id, content);
+        }
+        if changed {
+            self.pending_events.push(VfsEvent::Modified { id });
+        }
     }
 
     pub fn clear_overlay(&mut self, id: FileId) {
         if self.overlays.remove(&id).is_some() {
             self.pending_events.push(VfsEvent::Modified { id });
+        }
+    }
+
+    /// Updates the loader-owned copy of a file. `None` means the file was deleted.
+    pub fn set_disk_file_contents(
+        &mut self,
+        path: VfsPath,
+        content: Option<Vec<u8>>,
+    ) -> Option<FileId> {
+        match content {
+            Some(content) => {
+                let existed = self.path_to_id.contains_key(&path);
+                let id = self.alloc_file_id(path);
+                let content: Arc<[u8]> = Arc::from(content);
+                if self.disk_contents.get(&id) != Some(&content) {
+                    self.disk_contents.insert(id, content);
+                    if existed {
+                        self.pending_events.push(VfsEvent::Modified { id });
+                    }
+                }
+                Some(id)
+            }
+            None => {
+                let id = self.path_to_id.remove(&path)?;
+                self.id_to_path.remove(&id);
+                self.disk_contents.remove(&id);
+                self.overlays.remove(&id);
+                self.pending_events.push(VfsEvent::Deleted { id, path });
+                Some(id)
+            }
         }
     }
 
@@ -270,7 +315,7 @@ impl Vfs {
     pub fn set_file_contents(&mut self, path: VfsPath, content: Option<Vec<u8>>) -> FileId {
         let file_id = self.alloc_file_id(path);
         if let Some(content) = content {
-            self.set_overlay(file_id, content);
+            self.set_overlay(file_id, content, OverlayKind::Modified);
         } else {
             self.clear_overlay(file_id);
         }
@@ -279,6 +324,10 @@ impl Vfs {
 
     pub fn fetch_content(&self, id: FileId) -> std::io::Result<Arc<[u8]>> {
         if let Some(content) = self.overlays.get(&id) {
+            return Ok(content.clone());
+        }
+
+        if let Some(content) = self.disk_contents.get(&id) {
             return Ok(content.clone());
         }
 
@@ -314,5 +363,41 @@ impl Vfs {
 pub enum VfsEvent {
     Created { id: FileId, path: VfsPath },
     Modified { id: FileId },
-    Deleted { id: FileId },
+    Deleted { id: FileId, path: VfsPath },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_overlay_hides_disk_updates_until_closed() {
+        let path = VfsPath::Physical(AbsPathBuf::assert_utf8(PathBuf::from("/tmp/Test.java")));
+        let mut vfs = Vfs::new();
+        let id = vfs
+            .set_disk_file_contents(path.clone(), Some(b"disk one".to_vec()))
+            .unwrap();
+        vfs.take_events();
+        vfs.set_overlay(id, b"editor".to_vec(), OverlayKind::Modified);
+        vfs.set_disk_file_contents(path.clone(), Some(b"disk two".to_vec()));
+        assert_eq!(&*vfs.fetch_content(id).unwrap(), b"editor");
+        vfs.clear_overlay(id);
+        assert_eq!(&*vfs.fetch_content(id).unwrap(), b"disk two");
+
+        vfs.take_events();
+        vfs.set_disk_file_contents(path.clone(), None);
+        assert_eq!(vfs.take_events(), vec![VfsEvent::Deleted { id, path }]);
+        assert!(vfs.file_path(id).is_none());
+    }
+
+    #[test]
+    fn manual_save_updates_disk_baseline_immediately() {
+        let path = VfsPath::Physical(AbsPathBuf::assert_utf8(PathBuf::from("/tmp/Saved.java")));
+        let mut vfs = Vfs::new();
+        let id = vfs.alloc_file_id(path);
+        vfs.set_overlay(id, b"saved".to_vec(), OverlayKind::Saved);
+        assert_eq!(&*vfs.fetch_content(id).unwrap(), b"saved");
+        vfs.clear_overlay(id);
+        assert_eq!(&*vfs.fetch_content(id).unwrap(), b"saved");
+    }
 }

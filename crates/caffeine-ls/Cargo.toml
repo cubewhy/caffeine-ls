@@ -20,6 +20,7 @@ directories = "6.0"
 itertools = "0.14.0"
 jimage-rs.workspace = true
 line-index.workspace = true
+lasso.workspace = true
 lsp-server.workspace = true
 lsp-types.workspace = true
 mimalloc = { version = "0.1.50", default-features = false, optional = true }

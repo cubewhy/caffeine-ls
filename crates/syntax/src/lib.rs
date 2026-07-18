@@ -1,5 +1,5 @@
 pub(crate) mod ast;
-pub(crate) mod class_parser;
+pub mod class_parser;
 pub(crate) mod java_parser;
 pub(crate) mod kotlin_parser;
 

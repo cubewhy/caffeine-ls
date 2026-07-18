@@ -1,7 +1,7 @@
-use lasso::Spur;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 
-pub type Symbol = Spur;
+pub type Symbol = SmolStr;
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum TypeRef {
@@ -193,8 +193,8 @@ pub enum ClassOrModuleStub {
 impl ClassOrModuleStub {
     pub fn fqn(&self) -> Symbol {
         match self {
-            Self::Class(class_data) => class_data.name,
-            Self::Module(module_data) => module_data.name,
+            Self::Class(class_data) => class_data.name.clone(),
+            Self::Module(module_data) => module_data.name.clone(),
         }
     }
 }

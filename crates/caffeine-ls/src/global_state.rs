@@ -1,5 +1,6 @@
 use crate::config::ConfigErrors;
 use project_model::WorkspaceGraph;
+use rustc_hash::FxHashMap;
 use std::{sync::Arc, time::Instant};
 use vfs::loader::NotifyHandle;
 use vfs::virtual_path::{JarHandler, JimageHandler};
@@ -16,18 +17,22 @@ use crate::config::Config;
 pub enum BackgroundTaskEvent {
     ProbeWorkspace {
         root: AbsPathBuf,
+        generation: u64,
     },
     AmbiguousWorkspace {
         root: AbsPathBuf,
         systems: Vec<project_model::BuildSystemType>,
+        generation: u64,
     },
     LoadWorkspace {
         root: AbsPathBuf,
         system: project_model::BuildSystemType,
+        generation: u64,
     },
     WorkspaceLoaded {
         root: AbsPathBuf,
         graph: WorkspaceGraph,
+        generation: u64,
     },
     Progress(ProgressEvent),
     VfsLoaded,
@@ -66,6 +71,7 @@ pub(crate) enum OutgoingRequest {
     SelectBuildSystem {
         root: AbsPathBuf,
         systems: Vec<project_model::BuildSystemType>,
+        generation: u64,
     },
 }
 
@@ -89,6 +95,7 @@ pub struct GlobalState {
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
     pub(crate) vfs: Arc<RwLock<Vfs>>,
     pub(crate) vfs_config_version: u32,
+    pub(crate) workspace_generations: FxHashMap<AbsPathBuf, u64>,
 }
 
 impl GlobalState {
@@ -130,6 +137,7 @@ impl GlobalState {
             loader,
             vfs: Arc::new(RwLock::new(vfs)),
             vfs_config_version: 0,
+            workspace_generations: FxHashMap::default(),
         }
     }
 
@@ -228,8 +236,12 @@ impl GlobalState {
         }
 
         match outgoing_req {
-            OutgoingRequest::SelectBuildSystem { root, systems } => {
-                self.handle_select_build_system_response(resp, root, systems);
+            OutgoingRequest::SelectBuildSystem {
+                root,
+                systems,
+                generation,
+            } => {
+                self.handle_select_build_system_response(resp, root, systems, generation);
             }
 
             OutgoingRequest::Generic(handler) => {

@@ -1,6 +1,8 @@
 use lasso::ThreadedRodeo;
 
-use crate::{ParseResult, SyntaxError};
+use crate::{ClassStub, ParseResult, SyntaxError};
+use java_syntax::{Lang, SyntaxKind};
+use rowan::SyntaxNode;
 
 impl SyntaxError {
     pub(crate) fn from_java_lexer(lex_err: &java_syntax::LexicalError) -> Self {
@@ -110,13 +112,100 @@ pub fn parse_java_file(text: &str, _interner: &ThreadedRodeo) -> ParseResult {
         errors.push(SyntaxError::from_java_parser(err));
     }
 
-    errors.extend(output.errors().iter().map(SyntaxError::from_java_parser));
+    let tree = output.into_green_node();
+    let root = SyntaxNode::<Lang>::new_root(tree.clone());
+    let package = root
+        .descendants()
+        .find(|node| node.kind() == SyntaxKind::PACKAGE_DECL)
+        .map(|node| {
+            node.descendants_with_tokens()
+                .filter_map(|item| item.into_token())
+                .filter(|token| token.kind() == SyntaxKind::IDENTIFIER)
+                .map(|token| token.text().to_string())
+                .collect::<Vec<_>>()
+                .join(".")
+        })
+        .filter(|package| !package.is_empty());
 
-    // TODO: parse java stub
+    let declaration_kinds = [
+        SyntaxKind::CLASS_DECL,
+        SyntaxKind::INTERFACE_DECL,
+        SyntaxKind::ENUM_DECL,
+        SyntaxKind::RECORD_DECL,
+        SyntaxKind::ANNOTATION_TYPE_DECL,
+    ];
+    let mut stubs = Vec::new();
+    for node in root
+        .descendants()
+        .filter(|node| declaration_kinds.contains(&node.kind()))
+    {
+        let Some(simple_name) = declaration_name(&node) else {
+            continue;
+        };
+        let mut nesting = node
+            .ancestors()
+            .skip(1)
+            .filter(|ancestor| declaration_kinds.contains(&ancestor.kind()))
+            .filter_map(|ancestor| declaration_name(&ancestor))
+            .collect::<Vec<_>>();
+        nesting.reverse();
+        nesting.push(simple_name);
+        let local_name = nesting.join("$");
+        let fqn = package
+            .as_ref()
+            .map(|package| format!("{package}.{local_name}"))
+            .unwrap_or(local_name);
+        stubs.push(ClassStub {
+            name: fqn.into(),
+            flags: 0,
+            super_class: None,
+            interfaces: Vec::new(),
+            type_params: Vec::new(),
+            permitted_subclasses: Vec::new(),
+            record_components: Vec::new(),
+            methods: Vec::new(),
+            fields: Vec::new(),
+            annotations: Vec::new(),
+        });
+    }
 
     ParseResult {
-        tree: output.into_green_node(),
+        tree,
         errors,
-        stubs: vec![],
+        stubs,
+    }
+}
+
+fn declaration_name(node: &SyntaxNode<Lang>) -> Option<String> {
+    node.children_with_tokens()
+        .filter_map(|item| item.into_token())
+        .find(|token| token.kind() == SyntaxKind::IDENTIFIER)
+        .map(|token| token.text().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_stable_fqns_for_top_level_and_nested_types() {
+        let interner = ThreadedRodeo::new();
+        let parsed = parse_java_file(
+            "package com.example; public class Outer { interface Inner {} } enum Other {}",
+            &interner,
+        );
+        let names = parsed
+            .stubs
+            .into_iter()
+            .map(|stub| stub.name.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "com.example.Outer",
+                "com.example.Outer$Inner",
+                "com.example.Other"
+            ]
+        );
     }
 }

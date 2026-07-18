@@ -8,31 +8,28 @@ pub fn collect_diagnostics(
     file_id: vfs::FileId,
     text: String,
 ) -> anyhow::Result<Vec<Diagnostic>> {
-    // let Some(parse_result) = analysis.parse_cache.get_tree(file_id) else {
-    //     anyhow::bail!("file is not parsed yet");
-    // };
-    //
-    // let diagnostics = parse_result
-    //     .syntax_errors
-    //     .iter()
-    //     .map(|err| {
-    //         let lsp_range = Range {
-    //             start: offset_to_position(&text, err.range.start()),
-    //             end: offset_to_position(&text, err.range.end()),
-    //         };
-    //
-    //         Diagnostic {
-    //             range: lsp_range,
-    //             severity: Some(DiagnosticSeverity::ERROR),
-    //             source: Some(crate::NAME.to_string()),
-    //             message: err.message.clone(),
-    //             ..Default::default()
-    //         }
-    //     })
-    //     .collect::<Vec<_>>();
-    //
-    // // TODO: collect diagnostics from validator
-    // Ok(diagnostics)
+    let errors = if let Some(parsed) = analysis.parsed_file(file_id) {
+        parsed.syntax_errors.clone()
+    } else {
+        syntax::parse_file(
+            syntax::LanguageId::Java,
+            &text,
+            &lasso::ThreadedRodeo::new(),
+        )
+        .errors
+    };
 
-    Ok(vec![])
+    Ok(errors
+        .into_iter()
+        .map(|err| Diagnostic {
+            range: Range {
+                start: offset_to_position(&text, err.range.start()),
+                end: offset_to_position(&text, err.range.end()),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some(crate::NAME.to_string()),
+            message: err.message,
+            ..Default::default()
+        })
+        .collect())
 }

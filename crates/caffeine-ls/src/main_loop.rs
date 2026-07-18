@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use crossbeam_channel::Receiver;
 use ide::delta::WorkspaceDelta;
@@ -6,7 +6,7 @@ use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::{
     InitializedParams, MessageActionItem, MessageType, notification as notif, request,
 };
-use vfs::{AbsPathBuf, VfsEvent};
+use vfs::{AbsPathBuf, VfsEvent, VfsPath, loader::Directories};
 
 use crate::{
     GlobalState,
@@ -90,6 +90,7 @@ impl GlobalState {
         resp: lsp_server::Response,
         root: AbsPathBuf,
         systems: Vec<project_model::BuildSystemType>,
+        generation: u64,
     ) {
         let Some(result_json) = resp.result else {
             tracing::warn!(
@@ -112,6 +113,7 @@ impl GlobalState {
                     .send(BackgroundTaskEvent::LoadWorkspace {
                         root,
                         system: *system,
+                        generation,
                     })
                     .ok();
             } else {
@@ -177,7 +179,7 @@ impl GlobalState {
 
     fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
-            BackgroundTaskEvent::ProbeWorkspace { root } => {
+            BackgroundTaskEvent::ProbeWorkspace { root, generation } => {
                 let task_sender = self.task_sender.clone();
 
                 // Perform fast, non-blocking file detection on the worker thread pool
@@ -185,7 +187,11 @@ impl GlobalState {
                     match project_model::probe_workspace_layout(root.as_std_path()) {
                         project_model::ProbeResult::Single(system) => {
                             task_sender
-                                .send(BackgroundTaskEvent::LoadWorkspace { root, system })
+                                .send(BackgroundTaskEvent::LoadWorkspace {
+                                    root,
+                                    system,
+                                    generation,
+                                })
                                 .ok();
                         }
                         project_model::ProbeResult::Ambiguous(systems) => {
@@ -197,7 +203,11 @@ impl GlobalState {
                                 "Ambiguous build configurations discovered."
                             );
                             task_sender
-                                .send(BackgroundTaskEvent::AmbiguousWorkspace { root, systems })
+                                .send(BackgroundTaskEvent::AmbiguousWorkspace {
+                                    root,
+                                    systems,
+                                    generation,
+                                })
                                 .ok();
                         }
                         project_model::ProbeResult::None => {
@@ -207,7 +217,14 @@ impl GlobalState {
                 });
             }
 
-            BackgroundTaskEvent::AmbiguousWorkspace { root, systems } => {
+            BackgroundTaskEvent::AmbiguousWorkspace {
+                root,
+                systems,
+                generation,
+            } => {
+                if self.workspace_generations.get(&root) != Some(&generation) {
+                    return;
+                }
                 let actions: Vec<MessageActionItem> = systems
                     .iter()
                     .map(|sys| MessageActionItem {
@@ -223,11 +240,22 @@ impl GlobalState {
                         root.as_str()
                     ),
                     Some(actions),
-                    OutgoingRequest::SelectBuildSystem { root, systems },
+                    OutgoingRequest::SelectBuildSystem {
+                        root,
+                        systems,
+                        generation,
+                    },
                 );
             }
 
-            BackgroundTaskEvent::LoadWorkspace { root, system } => {
+            BackgroundTaskEvent::LoadWorkspace {
+                root,
+                system,
+                generation,
+            } => {
+                if self.workspace_generations.get(&root) != Some(&generation) {
+                    return;
+                }
                 let progress_token = format!("sync-{}", root.as_str());
                 self.report_progress(ProgressEvent {
                     token: progress_token.clone(),
@@ -248,7 +276,11 @@ impl GlobalState {
                     match system.get_executor().sync(root.as_std_path(), &java_home) {
                         Ok(graph) => {
                             task_sender
-                                .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
+                                .send(BackgroundTaskEvent::WorkspaceLoaded {
+                                    graph,
+                                    root,
+                                    generation,
+                                })
                                 .ok();
                         }
                         Err(err) => {
@@ -264,14 +296,32 @@ impl GlobalState {
                 });
             }
 
-            BackgroundTaskEvent::WorkspaceLoaded { graph, root } => {
+            BackgroundTaskEvent::WorkspaceLoaded {
+                graph,
+                root,
+                generation,
+            } => {
+                if self.workspace_generations.get(&root) != Some(&generation) {
+                    tracing::debug!(?root, generation, "Ignoring stale workspace sync");
+                    return;
+                }
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
 
                 let delta = self
                     .analysis_host
-                    .apply_workspace_change(root, graph.clone());
+                    .apply_workspace_change(root.clone(), graph.clone());
 
-                self.import_workspace(delta);
+                self.import_workspace(root.clone(), delta);
+
+                self.report_progress(ProgressEvent {
+                    token: format!("sync-{}", root.as_str()),
+                    title: "Workspace indexing".to_string(),
+                    message: Some(
+                        "Project model loaded; indexing continues in background".to_string(),
+                    ),
+                    percentage: Some(100),
+                    state: ProgressState::End,
+                });
             }
 
             BackgroundTaskEvent::Progress(progress) => {
@@ -294,37 +344,156 @@ impl GlobalState {
         }
     }
 
-    fn import_workspace(&mut self, delta: WorkspaceDelta) {
+    fn import_workspace(&mut self, root: AbsPathBuf, delta: WorkspaceDelta) {
         if delta.is_empty() {
             tracing::info!("Skipping workspace import due empty workspace delta");
             return;
         }
 
-        // TODO: import workspace
+        if let Some((_, index)) = self.analysis_host.index_for_path(&root) {
+            for (library_id, _) in delta.libs.removed {
+                index.symbols.detach_library(library_id);
+            }
+            for (library_id, library) in delta.libs.added {
+                let index = Arc::clone(&index);
+                let interner = self.analysis_host.interner();
+                self.thread_pool.execute(move || {
+                    index.symbols.attach_library(
+                        &interner,
+                        library_id,
+                        library.path.as_std_path(),
+                        |path| crate::indexing::parse_jar(path, &interner),
+                    );
+                });
+            }
+            for (_, sdk) in delta.sdks.removed {
+                if let Some((_, library_id)) = index.sdk_libraries.remove(&sdk.id) {
+                    index.symbols.detach_library(library_id);
+                }
+            }
+            for (_, sdk) in delta.sdks.added {
+                let artifact_path = sdk.home_path.join("lib/modules");
+                let artifact_path = if artifact_path.exists() {
+                    artifact_path
+                } else {
+                    sdk.home_path.join("lib/rt.jar")
+                };
+                let Ok(library_id) =
+                    project_model::LibraryId::from_jar_path(artifact_path.as_std_path())
+                else {
+                    continue;
+                };
+                let index = Arc::clone(&index);
+                index.sdk_libraries.insert(sdk.id, library_id);
+                let interner = self.analysis_host.interner();
+                let home = sdk.home_path.clone();
+                self.thread_pool.execute(move || {
+                    index.symbols.attach_library(
+                        &interner,
+                        library_id,
+                        artifact_path.as_std_path(),
+                        |_| crate::indexing::parse_jdk(home.as_std_path(), &interner),
+                    );
+                });
+            }
+        }
+
+        // build vfs config
+        let mut vfs_config = vfs::loader::Config {
+            version: self.vfs_config_version,
+            load: Vec::new(),
+            watch: Vec::new(),
+        };
+
+        self.vfs_config_version += 1;
+
+        for workspace in self.analysis_host.workspaces().values() {
+            for project in workspace.projects.values() {
+                for source_set in project.source_sets.values() {
+                    let mut include = Vec::new();
+                    include.extend(
+                        source_set
+                            .source_roots
+                            .iter()
+                            .cloned()
+                            .map(vfs::VfsPath::Physical),
+                    );
+                    include.extend(
+                        source_set
+                            .generated_source_roots
+                            .iter()
+                            .cloned()
+                            .map(vfs::VfsPath::Physical),
+                    );
+                    if include.is_empty() {
+                        continue;
+                    }
+                    let entry_index = vfs_config.load.len();
+                    vfs_config
+                        .load
+                        .push(vfs::loader::Entry::Directories(Directories {
+                            extensions: vec!["java".into(), "kt".into(), "kts".into()],
+                            include,
+                            exclude: Vec::new(),
+                        }));
+                    vfs_config.watch.push(entry_index);
+                }
+            }
+        }
+
+        self.loader.handle.set_config(vfs_config);
     }
 
     /// Entry point to kick off initialization/probing workflows.
     /// Call this inside your `handlers::on_initialized` callback.
-    pub fn trigger_workspace_probe(&self) {
-        for root in self.config.workspace_folders.iter() {
-            self.task_sender
-                .send(BackgroundTaskEvent::ProbeWorkspace { root: root.clone() })
-                .ok();
+    pub fn trigger_workspace_probe(&mut self) {
+        let roots = self.config.workspace_folders.clone();
+        for root in roots {
+            self.trigger_workspace_probe_for(root);
         }
+    }
+
+    pub fn trigger_workspace_probe_for(&mut self, root: AbsPathBuf) {
+        let generation = self.workspace_generations.entry(root.clone()).or_insert(0);
+        *generation += 1;
+        self.task_sender
+            .send(BackgroundTaskEvent::ProbeWorkspace {
+                root,
+                generation: *generation,
+            })
+            .ok();
     }
 
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {
         match task {
-            vfs::loader::Message::Loaded { files } | vfs::loader::Message::Changed { files } => {
+            vfs::loader::Message::Loaded {
+                files,
+                config_version,
+            }
+            | vfs::loader::Message::Changed {
+                files,
+                config_version,
+            } => {
+                if config_version + 1 != self.vfs_config_version {
+                    tracing::debug!(config_version, "Ignoring stale VFS loader result");
+                    return;
+                }
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
-                        vfs.set_file_contents(path, contents);
+                        vfs.set_disk_file_contents(path, contents);
                     }
                 }
                 self.handle_vfs_change();
             }
-            vfs::loader::Message::Progress { n_done, .. } => {
+            vfs::loader::Message::Progress {
+                n_done,
+                config_version,
+                ..
+            } => {
+                if config_version + 1 != self.vfs_config_version {
+                    return;
+                }
                 if n_done == vfs::loader::LoadingProgress::Finished {
                     self.task_sender.send(BackgroundTaskEvent::VfsLoaded).ok();
                 }
@@ -340,22 +509,73 @@ impl GlobalState {
             return;
         }
 
-        // let mut tasks_to_spawn = Vec::new();
-
         for event in events {
             match event {
-                VfsEvent::Created { id, .. } | VfsEvent::Modified { id } => {
-                    // let new_rev = self.analysis_host.parse_cache.bump_revision(id);
-                    // tasks_to_spawn.push((id, new_rev));
+                VfsEvent::Created { id, path } => {
+                    self.schedule_source_index(&vfs, id, path);
                 }
-                VfsEvent::Deleted { id } => {
-                    // self.analysis_host.remove_file(id);
+                VfsEvent::Modified { id } => {
+                    if let Some(path) = vfs.file_path(id).cloned() {
+                        self.schedule_source_index(&vfs, id, path);
+                    }
+                }
+                VfsEvent::Deleted { id, path } => {
+                    let parse_cache = self.analysis_host.parse_cache();
+                    parse_cache.remove(id);
+                    if let VfsPath::Physical(path) = path
+                        && let Some((root, index)) = self.analysis_host.index_for_path(&path)
+                        && let Ok(relative) = path.strip_prefix(&root)
+                    {
+                        let key = relative.as_str();
+                        index.lexical.remove_file(id);
+                        index.symbols.remove_file(key);
+                    }
                 }
             };
         }
+    }
 
-        // if !tasks_to_spawn.is_empty() {
-        // self.spawn_parsing_task(tasks_to_spawn);
-        // }
+    fn schedule_source_index(&self, vfs: &vfs::Vfs, id: vfs::FileId, path: VfsPath) {
+        let VfsPath::Physical(path) = path else {
+            return;
+        };
+        let Some(language) = path.extension().and_then(syntax::LanguageId::from_ext) else {
+            return;
+        };
+        let Some((root, index)) = self.analysis_host.index_for_path(&path) else {
+            return;
+        };
+        let Ok(relative) = path.strip_prefix(&root) else {
+            return;
+        };
+        let file_key = relative.as_str().to_string();
+        let Ok(content) = vfs.fetch_content(id) else {
+            return;
+        };
+        let text = String::from_utf8_lossy(&content).to_string();
+        let parse_cache = self.analysis_host.parse_cache();
+        let revision = parse_cache.bump_revision(id);
+        let interner = self.analysis_host.interner();
+
+        self.thread_pool.execute(move || {
+            let parsed = syntax::parse_file(language, &text, &interner);
+            if parse_cache.is_cancelled(id, revision) {
+                return;
+            }
+
+            let tokens = text
+                .split(|character: char| !character.is_alphanumeric() && character != '_')
+                .filter(|token| !token.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<HashSet<_>>();
+            index.lexical.update_file_tokens(id, tokens);
+            index
+                .symbols
+                .update_workspace_file(&interner, &file_key, parsed.stubs);
+            parse_cache.update(
+                id,
+                ide::ParsedFile::new(revision, parsed.tree, parsed.errors),
+            );
+        });
     }
 }

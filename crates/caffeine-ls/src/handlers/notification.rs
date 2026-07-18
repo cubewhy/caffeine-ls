@@ -2,9 +2,9 @@ use std::{collections::HashSet, process, sync::Arc};
 
 use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
-use vfs::{AbsPathBuf, VfsPath};
+use vfs::{AbsPathBuf, OverlayKind, VfsPath};
 
-use crate::{GlobalState, global_state::BackgroundTaskEvent};
+use crate::GlobalState;
 
 pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::Result<()> {
     // load workspaces
@@ -41,7 +41,10 @@ pub fn on_did_open(
     let content = text.clone().into_bytes();
 
     let vfs_uri = VfsPath::from(&params.text_document.uri);
-    state.vfs.write().set_file_contents(vfs_uri, Some(content));
+    let mut vfs = state.vfs.write();
+    let id = vfs.alloc_file_id(vfs_uri);
+    vfs.set_overlay(id, content, OverlayKind::Modified);
+    drop(vfs);
     state.handle_vfs_change();
 
     Ok(())
@@ -96,10 +99,10 @@ pub fn on_did_change(
         }
     }
 
-    state
-        .vfs
-        .write()
-        .set_file_contents(path, Some(text.into_bytes()));
+    let mut vfs = state.vfs.write();
+    let id = vfs.alloc_file_id(path);
+    vfs.set_overlay(id, text.into_bytes(), OverlayKind::Modified);
+    drop(vfs);
 
     state.handle_vfs_change();
 
@@ -112,12 +115,25 @@ pub fn on_did_save(
 ) -> anyhow::Result<()> {
     tracing::info!("didSave {}", params.text_document.uri);
 
-    if let Some(text) = params.text {
-        let path = VfsPath::from(&params.text_document.uri);
-        state
-            .vfs
-            .write()
-            .set_file_contents(path, Some(text.into_bytes()));
+    let path = VfsPath::from(&params.text_document.uri);
+    let save_includes_text = params.text.is_some();
+    let saved_contents = match params.text {
+        Some(text) => Some(text.into_bytes()),
+        None => match &path {
+            VfsPath::Physical(path) => state.loader.handle.load_sync(path.as_std_path()),
+            VfsPath::Virtual(_) => None,
+        },
+    };
+
+    if let Some(contents) = saved_contents {
+        let mut vfs = state.vfs.write();
+        if save_includes_text {
+            let id = vfs.alloc_file_id(path);
+            vfs.set_overlay(id, contents, OverlayKind::Saved);
+        } else {
+            vfs.set_disk_file_contents(path, Some(contents));
+        }
+        drop(vfs);
         state.handle_vfs_change();
     }
 
@@ -130,7 +146,11 @@ pub fn on_did_close(
 ) -> anyhow::Result<()> {
     tracing::info!("didClose {}", params.text_document.uri);
     let path = VfsPath::from(&params.text_document.uri);
-    state.vfs.write().set_file_contents(path, None);
+    let mut vfs = state.vfs.write();
+    if let Some(id) = vfs.file_id(&path) {
+        vfs.clear_overlay(id);
+    }
+    drop(vfs);
     state.handle_vfs_change();
 
     Ok(())
@@ -167,10 +187,7 @@ pub fn on_did_change_watched_files(
             "Build configuration changed, re-triggering workspace probe"
         );
 
-        state
-            .task_sender
-            .send(BackgroundTaskEvent::ProbeWorkspace { root })
-            .ok();
+        state.trigger_workspace_probe_for(root);
     }
 
     Ok(())

@@ -31,10 +31,12 @@ pub enum Message {
     /// The handle loaded the following files' content for the first time.
     Loaded {
         files: Vec<(VfsPath, Option<Vec<u8>>)>,
+        config_version: u32,
     },
     /// The handle loaded the following files' content.
     Changed {
         files: Vec<(VfsPath, Option<Vec<u8>>)>,
+        config_version: u32,
     },
 }
 

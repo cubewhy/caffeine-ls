@@ -51,7 +51,7 @@ impl LibraryId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Library {
     pub id: LibraryId,
     pub path: AbsPathBuf,
@@ -155,7 +155,7 @@ pub struct ProjectData {
 }
 
 /// Represents the configuration and metadata of a JDK.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdkData {
     pub id: SdkId,
     pub name: SmolStr,
