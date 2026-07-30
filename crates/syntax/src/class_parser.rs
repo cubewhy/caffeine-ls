@@ -27,10 +27,6 @@ impl<'a> ClassParser<'a> {
         Self { interner }
     }
 
-    fn symbol(&self, value: impl AsRef<str>) -> crate::Symbol {
-        value.as_ref().into()
-    }
-
     pub fn parse_cafebabe(&self, bytes: &[u8]) -> anyhow::Result<ClassOrModuleStub> {
         let node = ClassReader::new(bytes)
             .to_class_node()
@@ -50,41 +46,55 @@ impl<'a> ClassParser<'a> {
 
     fn internal_name_to_type_ref(&self, name: &str) -> TypeRef {
         TypeRef::Reference {
-            name: self.symbol(name.replace("/", ".")),
+            name: self.interner.get_or_intern(name.replace("/", ".")),
             generic_args: Vec::new(),
         }
     }
 
     fn map_module(&self, node: &ModuleNode) -> ModuleStub {
         ModuleStub {
-            name: self.symbol(node.name.replace('/', ".")),
+            name: self.interner.get_or_intern(&node.name),
             flags: node.access_flags,
-            version: node.version.as_deref().map(|v| self.symbol(v)),
+            version: node
+                .version
+                .as_deref()
+                .map(|v| self.interner.get_or_intern(v)),
             requires: node
                 .requires
                 .iter()
                 .map(|req| ModuleRequires {
-                    module_name: self.symbol(&req.module),
+                    module_name: self.interner.get_or_intern(&req.module),
                     flags: req.access_flags,
-                    compiled_version: req.version.as_deref().map(|v| self.symbol(v)),
+                    compiled_version: req
+                        .version
+                        .as_deref()
+                        .map(|v| self.interner.get_or_intern(v)),
                 })
                 .collect(),
             exports: node
                 .exports
                 .iter()
                 .map(|exp| ModuleExports {
-                    package_name: self.symbol(&exp.package),
+                    package_name: self.interner.get_or_intern(&exp.package),
                     flags: exp.access_flags,
-                    to_modules: exp.modules.iter().map(|m| self.symbol(m)).collect(),
+                    to_modules: exp
+                        .modules
+                        .iter()
+                        .map(|m| self.interner.get_or_intern(m))
+                        .collect(),
                 })
                 .collect(),
             opens: node
                 .opens
                 .iter()
                 .map(|op| ModuleOpens {
-                    package_name: self.symbol(&op.package),
+                    package_name: self.interner.get_or_intern(&op.package),
                     flags: op.access_flags,
-                    to_modules: op.modules.iter().map(|m| self.symbol(m)).collect(),
+                    to_modules: op
+                        .modules
+                        .iter()
+                        .map(|m| self.interner.get_or_intern(m))
+                        .collect(),
                 })
                 .collect(),
             uses: node
@@ -128,7 +138,7 @@ impl<'a> ClassParser<'a> {
         }
 
         ClassStub {
-            name: self.symbol(node.name.replace('/', ".")),
+            name: self.interner.get_or_intern(&node.name),
             flags: node.access_flags,
             super_class,
             interfaces,
@@ -176,7 +186,7 @@ impl<'a> ClassParser<'a> {
         }
 
         RecordComponentData {
-            name: self.symbol(&node.name),
+            name: self.interner.get_or_intern(&node.name),
             component_type,
             annotations: self.map_annotations(&node.attributes, constant_pool),
         }
@@ -205,7 +215,7 @@ impl<'a> ClassParser<'a> {
                     }
                     CpInfo::String { string_index } => constant_pool
                         .resolve_utf8(*string_index)
-                        .map(|s| AnnotationValue::String(self.symbol(s))),
+                        .map(|s| AnnotationValue::String(self.interner.get_or_intern(s))),
                     _ => None,
                 }
             } else {
@@ -252,7 +262,7 @@ impl<'a> ClassParser<'a> {
                 if method_param.name_index != 0
                     && let Some(name) = constant_pool.resolve_utf8(method_param.name_index)
                 {
-                    param.name = Some(self.symbol(name));
+                    param.name = Some(self.interner.get_or_intern(name));
                 }
             }
         }
@@ -271,7 +281,7 @@ impl<'a> ClassParser<'a> {
                     .find(|lv| lv.index == local_var_index && lv.start_pc == 0)
                 && let Some(name) = constant_pool.resolve_utf8(local_var.name_index)
             {
-                param.name = Some(self.symbol(name));
+                param.name = Some(self.interner.get_or_intern(name));
             }
             match &param.param_type {
                 TypeRef::Primitive(PrimitiveType::Double)
@@ -286,7 +296,7 @@ impl<'a> ClassParser<'a> {
 
         MethodStub {
             flags: node.access_flags,
-            name: self.symbol(&node.name),
+            name: self.interner.get_or_intern(&node.name),
             return_type,
             params,
             throws_list,
@@ -317,7 +327,7 @@ impl<'a> ClassParser<'a> {
                     name.push(c);
                 }
                 TypeRef::Reference {
-                    name: self.symbol(name.replace("/", ".")),
+                    name: self.interner.get_or_intern(name.replace("/", ".")),
                     generic_args: Vec::new(),
                 }
             }
@@ -387,7 +397,7 @@ impl<'a> ClassParser<'a> {
             .element_value_pairs
             .iter()
             .map(|pair| {
-                let name = self.symbol(
+                let name = self.interner.get_or_intern(
                     cp.resolve_utf8(pair.element_name_index)
                         .unwrap_or("<missing_name>"),
                 );
@@ -436,9 +446,10 @@ impl<'a> ClassParser<'a> {
                         cp.get_int(index).unwrap_or(0) != 0,
                     )),
                     's' => AnnotationValue::String(
-                        self.symbol(cp.resolve_utf8(index).unwrap_or("<missing_string>")),
+                        self.interner
+                            .get_or_intern(cp.resolve_utf8(index).unwrap_or("<missing_string>")),
                     ),
-                    _ => AnnotationValue::String(self.symbol("<unknown_tag>")),
+                    _ => AnnotationValue::String(self.interner.get_or_intern("<unknown_tag>")),
                 }
             }
             ElementValue::EnumConstValue {
@@ -457,7 +468,7 @@ impl<'a> ClassParser<'a> {
 
                 AnnotationValue::Enum {
                     class_type,
-                    entry_name: self.symbol(const_name),
+                    entry_name: self.interner.get_or_intern(const_name),
                 }
             }
             ElementValue::ClassInfoIndex { class_info_index } => {

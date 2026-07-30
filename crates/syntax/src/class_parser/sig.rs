@@ -5,22 +5,21 @@ use rust_asm::{
     class_reader::AttributeInfo,
     constant_pool::{ConstantPoolExt, CpInfo},
 };
+use smol_str::SmolStr;
 
 use crate::ast::{PrimitiveType, TypeParameter, TypeRef};
 
 pub struct SigParser<'a> {
     chars: Peekable<std::str::Chars<'a>>,
+    interner: &'a ThreadedRodeo,
 }
 
 impl<'a> SigParser<'a> {
-    pub fn new(sig: &'a str, _interner: &ThreadedRodeo) -> Self {
+    pub fn new(sig: &'a str, interner: &'a ThreadedRodeo) -> Self {
         Self {
             chars: sig.chars().peekable(),
+            interner,
         }
-    }
-
-    fn symbol(&self, value: impl AsRef<str>) -> crate::Symbol {
-        value.as_ref().into()
     }
 
     fn consume(&mut self) -> Option<char> {
@@ -58,7 +57,7 @@ impl<'a> SigParser<'a> {
                     bounds.push(self.parse_reference_type_signature());
                 }
                 params.push(TypeParameter {
-                    name: self.symbol(name),
+                    name: self.interner.get_or_intern(name),
                     bounds,
                     annotations: Vec::new(),
                 });
@@ -124,7 +123,7 @@ impl<'a> SigParser<'a> {
                     name.push(self.consume().unwrap());
                 }
                 TypeRef::Reference {
-                    name: self.symbol(name),
+                    name: self.interner.get_or_intern(name),
                     generic_args: Vec::new(),
                 }
             }
@@ -150,7 +149,7 @@ impl<'a> SigParser<'a> {
                     }
                 }
                 TypeRef::Reference {
-                    name: self.symbol(name.replace("/", ".")),
+                    name: self.interner.get_or_intern(name.replace("/", ".")),
                     generic_args,
                 }
             }
@@ -167,7 +166,7 @@ impl<'a> SigParser<'a> {
             Some('*') => {
                 self.consume();
                 TypeRef::Reference {
-                    name: self.symbol("?"),
+                    name: self.interner.get_or_intern_static("?"),
                     generic_args: Vec::new(),
                 }
             }

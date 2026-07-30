@@ -18,6 +18,3 @@ serde.workspace = true
 smol_str.workspace = true
 triomphe.workspace = true
 vfs.workspace = true
-
-[dev-dependencies]
-tempfile = "3"

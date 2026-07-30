@@ -227,7 +227,6 @@ dependencies = [
  "insta",
  "itertools",
  "jimage-rs",
- "lasso",
  "lsp-server",
  "lsp-test",
  "lsp-types",
@@ -1021,14 +1020,12 @@ version = "0.0.0"
 dependencies = [
  "dashmap",
  "ide-db",
- "lasso",
  "parking_lot",
  "project-model",
  "rowan",
  "rustc-hash 2.1.2",
  "semantics",
  "syntax",
- "tempfile",
  "triomphe",
  "vfs",
 ]
@@ -1047,7 +1044,6 @@ dependencies = [
  "serde",
  "smol_str",
  "syntax",
- "tempfile",
  "triomphe",
  "vfs",
 ]
@@ -2529,7 +2525,6 @@ dependencies = [
  "rustc-hash 2.1.2",
  "tracing",
  "url",
- "walkdir",
  "zip",
 ]
 
