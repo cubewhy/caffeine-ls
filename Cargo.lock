@@ -827,6 +827,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "dashmap",
+ "hir-expand",
  "indexmap",
  "ra_ap_vfs",
  "rust-asm",

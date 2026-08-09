@@ -6,11 +6,12 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-indexmap.workspace = true
 dashmap.workspace = true
-rustc-hash.workspace = true
-smol_str.workspace = true
-vfs.workspace = true
-triomphe.workspace = true
-serde.workspace = true
+hir-expand.workspace = true
+indexmap.workspace = true
 rust-asm.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+smol_str.workspace = true
+triomphe.workspace = true
+vfs.workspace = true
