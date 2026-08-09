@@ -110,13 +110,12 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
     // Convert raw deserialized data structures into native compiler memory layouts
     for project in workspace.projects {
         let project_id = *path_to_project_id.get(&project.path).unwrap();
-        let abs_project_dir = AbsPathBuf::try_from(project.project_dir.clone())
-            .unwrap_or_else(|_| safe_abs_fallback.clone());
+        let abs_project_dir = AbsPathBuf::assert_utf8(project.project_dir.clone());
 
         let resolved_java_home = project
             .java_home
-            .and_then(|path_str| AbsPathBuf::try_from(PathBuf::from(path_str)).ok())
-            .unwrap_or_else(|| safe_abs_fallback.clone());
+            .map(|path_str| AbsPathBuf::assert_utf8(PathBuf::from(path_str)))
+            .unwrap();
 
         let target_sdk = if let Some(version) = project.java_language_version {
             let sdk_id = *version_to_sdk_id.entry(version.clone()).or_insert_with(|| {
@@ -140,32 +139,29 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
 
         let mut main_source_roots = Vec::new();
         for root in project.source_roots {
-            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
-                main_source_roots.push(abs_path.clone());
-                graph
-                    .source_root_to_owning_set
-                    .insert(abs_path, (project_id, SourceSetKind::Main));
-            }
+            let abs_path = AbsPathBuf::assert_utf8(root);
+            main_source_roots.push(abs_path.clone());
+            graph
+                .source_root_to_owning_set
+                .insert(abs_path, (project_id, SourceSetKind::Main));
         }
 
         let mut test_source_roots = Vec::new();
         for root in project.test_roots {
-            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
-                test_source_roots.push(abs_path.clone());
-                graph
-                    .source_root_to_owning_set
-                    .insert(abs_path, (project_id, SourceSetKind::Test));
-            }
+            let abs_path = AbsPathBuf::assert_utf8(root);
+            test_source_roots.push(abs_path.clone());
+            graph
+                .source_root_to_owning_set
+                .insert(abs_path, (project_id, SourceSetKind::Test));
         }
 
         let mut main_generated_roots = Vec::new();
         for root in project.generated_roots {
-            if let Ok(abs_path) = AbsPathBuf::try_from(root) {
-                main_generated_roots.push(abs_path.clone());
-                graph
-                    .source_root_to_owning_set
-                    .insert(abs_path, (project_id, SourceSetKind::Main));
-            }
+            let abs_path = AbsPathBuf::assert_utf8(root);
+            main_generated_roots.push(abs_path.clone());
+            graph
+                .source_root_to_owning_set
+                .insert(abs_path, (project_id, SourceSetKind::Main));
         }
 
         let mut map_entries = |raw_entries: Vec<MavenClasspathEntry>| -> Vec<ClasspathEntry> {
@@ -198,16 +194,15 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
                                         .expect("failed to hash jar path")
                                 });
 
-                            if let Ok(abs_jar_path) = AbsPathBuf::try_from(path) {
-                                let library = if origin == "coordinate" {
-                                    Library::readonly(lib_id, abs_jar_path)
-                                } else if abs_jar_path.starts_with(&abs_workspace_root) {
-                                    Library::editable(lib_id, abs_jar_path)
-                                } else {
-                                    Library::readonly(lib_id, abs_jar_path)
-                                };
-                                graph.library_paths.insert(lib_id, library);
-                            }
+                            let abs_jar_path = AbsPathBuf::assert_utf8(path);
+                            let library = if origin == "coordinate" {
+                                Library::readonly(lib_id, abs_jar_path)
+                            } else if abs_jar_path.starts_with(&abs_workspace_root) {
+                                Library::editable(lib_id, abs_jar_path)
+                            } else {
+                                Library::readonly(lib_id, abs_jar_path)
+                            };
+                            graph.library_paths.insert(lib_id, library);
                             entries.push(ClasspathEntry::External(lib_id));
                         }
                     }

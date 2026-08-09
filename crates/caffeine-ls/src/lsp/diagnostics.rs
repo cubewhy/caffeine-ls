@@ -1,12 +1,11 @@
 use ide::Analysis;
-use lsp_types::{Diagnostic, DiagnosticSeverity, Range};
-
-use crate::from_proto::offset_to_position;
+use lsp_types::Diagnostic;
+use triomphe::Arc;
 
 pub fn collect_diagnostics(
     analysis: Analysis,
     file_id: vfs::FileId,
-    text: String,
+    text: Arc<str>,
 ) -> anyhow::Result<Vec<Diagnostic>> {
     // let Some(parse_result) = analysis.parse_cache.get_tree(file_id) else {
     //     anyhow::bail!("file is not parsed yet");
@@ -33,6 +32,5 @@ pub fn collect_diagnostics(
     //
     // // TODO: collect diagnostics from validator
     // Ok(diagnostics)
-
     Ok(vec![])
 }

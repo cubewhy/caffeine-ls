@@ -4,9 +4,9 @@ use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::{
     ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
-    InitializeParams, PartialResultParams, Position, Range, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, Url, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams, WorkspaceFolder,
+    InitializeParams, PartialResultParams, Position, Range, TextDocumentContentChangePartial,
+    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
+    WorkDoneProgressParams, WorkspaceFolder, WorkspaceFoldersInitializeParams,
 };
 use std::{
     collections::HashMap,
@@ -35,7 +35,7 @@ pub struct LspHarness {
     pub notification_receiver: crossbeam_channel::Receiver<Notification>,
     marks: RwLock<HashMap<String, Position>>,
     pending_requests: Arc<DashMap<RequestId, crossbeam_channel::Sender<serde_json::Value>>>,
-    document_versions: DashMap<Url, i32>,
+    document_versions: DashMap<Uri, i32>,
 }
 
 impl LspHarness {
@@ -104,7 +104,7 @@ impl LspHarness {
     }
 
     fn init(&self) {
-        let root_uri = Url::from_file_path(self.workspace_root.path())
+        let root_uri = Uri::from_file_path(self.workspace_root.path())
             .expect("Failed to convert workspace path to URI");
 
         #[allow(deprecated)]
@@ -112,10 +112,13 @@ impl LspHarness {
             root_uri: Some(root_uri.clone()),
             initialization_options: Some(self.config.clone()),
             capabilities: self.client_capabilities.clone(),
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: "test_workspace".to_string(),
-            }]),
+            workspace_folders_initialize_params: WorkspaceFoldersInitializeParams::new(Some(
+                vec![WorkspaceFolder {
+                    uri: root_uri,
+                    name: "test_workspace".to_string(),
+                }]
+                .into(),
+            )),
             client_info: Some(ClientInfo {
                 name: "lsp-test".to_string(),
                 version: Some(VERSION.to_string()),
@@ -130,7 +133,7 @@ impl LspHarness {
         self.notify("initialized", serde_json::json!({}));
     }
 
-    pub fn write_file(&self, relative_path: &str, content: &str) -> Url {
+    pub fn write_file(&self, relative_path: &str, content: &str) -> Uri {
         let relative_path = relative_path.trim_start_matches('/');
         let path = self.workspace_root.path().join(relative_path);
 
@@ -146,10 +149,10 @@ impl LspHarness {
         }
 
         fs::write(&path, content).expect("Failed to write file");
-        Url::from_file_path(path).unwrap()
+        Uri::from_file_path(path).unwrap()
     }
 
-    pub fn write_fixture_file(&self, path_str: &str, content: &str) -> Url {
+    pub fn write_fixture_file(&self, path_str: &str, content: &str) -> Uri {
         let normalized_path = path_str.trim_start_matches('/');
         let mut final_content = content.to_string();
 
@@ -194,12 +197,12 @@ impl LspHarness {
             .unwrap_or_else(|| panic!("No mark <|> found to pop in path: '{}'", normalized_path))
     }
 
-    pub fn uri(&self, relative_path: &str) -> Url {
+    pub fn uri(&self, relative_path: &str) -> Uri {
         let path = self
             .workspace_root
             .path()
             .join(relative_path.trim_start_matches('/'));
-        Url::from_file_path(path).expect("Failed to convert path to URI")
+        Uri::from_file_path(path).expect("Failed to convert path to URI")
     }
 
     pub fn notify(&self, method: &str, params: serde_json::Value) {
@@ -228,7 +231,7 @@ impl LspHarness {
         rx.recv().expect("Server dropped the request")
     }
 
-    pub fn open_document(&self, relative_path: &str) -> Url {
+    pub fn open_document(&self, relative_path: &str) -> Uri {
         let path = self
             .workspace_root
             .path()
@@ -248,7 +251,7 @@ impl LspHarness {
         let params = DidOpenTextDocumentParams {
             text_document: TextDocumentItem {
                 uri: uri.clone(),
-                language_id: language_id.to_string(),
+                language_id: language_id.into(),
                 version: 0,
                 text: content,
             },
@@ -282,13 +285,20 @@ impl LspHarness {
         *version_entry += 1;
         let version = *version_entry;
 
+        #[allow(deprecated)]
         let params = DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier { uri, version },
-            content_changes: vec![TextDocumentContentChangeEvent {
-                range: Some(range),
-                range_length: None,
-                text: text.to_string(),
-            }],
+            text_document: VersionedTextDocumentIdentifier::new(
+                version,
+                TextDocumentIdentifier::new(uri),
+            ),
+            content_changes: vec![
+                TextDocumentContentChangePartial {
+                    range,
+                    range_length: None,
+                    text: text.to_string(),
+                }
+                .into(),
+            ],
         };
 
         let json_params = serde_json::to_value(params).expect("Failed to serialize");

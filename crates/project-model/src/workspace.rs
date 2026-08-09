@@ -179,29 +179,23 @@ pub struct WorkspaceGraph {
     pub source_root_to_owning_set: FxHashMap<AbsPathBuf, (ProjectId, SourceSetKind)>,
 }
 
-impl WorkspaceGraph {
-    /// Precisely resolves which project and which source set (`Main` or `Test`) a file belongs to.
-    /// This determines which dependencies the file can see in the LSP, and whether test framework calls are permitted.
-    pub fn resolve_source_set_for_path(
-        &self,
-        file_path: &AbsPathBuf,
-    ) -> Option<(Arc<ProjectData>, SourceSetKind)> {
-        // Walk up the directory tree to match an exactly registered Source Root
-        for ancestor in file_path.ancestors() {
-            if let Ok(abs_ancestor) = AbsPathBuf::try_from(ancestor.to_path_buf())
-                && let Some((project_id, source_set_kind)) =
-                    self.source_root_to_owning_set.get(&abs_ancestor)
-                && let Some(project) = self.projects.get(project_id)
-            {
-                return Some((project.clone(), source_set_kind.clone()));
-            }
-        }
-        None
-    }
-
-    /// Backward compatibility interface: resolves only the `Project` the file belongs to.
-    pub fn resolve_project_for_path(&self, file_path: &AbsPathBuf) -> Option<Arc<ProjectData>> {
-        self.resolve_source_set_for_path(file_path)
-            .map(|(project, _)| project)
-    }
-}
+// impl WorkspaceGraph {
+//     /// Precisely resolves which project and which source set (`Main` or `Test`) a file belongs to.
+//     /// This determines which dependencies the file can see in the LSP, and whether test framework calls are permitted.
+//     pub fn resolve_source_set_for_path(
+//         &self,
+//         file_path: &AbsPathBuf,
+//     ) -> Option<(Arc<ProjectData>, SourceSetKind)> {
+//         // Walk up the directory tree to match an exactly registered Source Root
+//         for ancestor in file_path.ancestors() {
+//             if let Ok(abs_ancestor) = AbsPathBuf::try_from(ancestor.to_path_buf())
+//                 && let Some((project_id, source_set_kind)) =
+//                     self.source_root_to_owning_set.get(&abs_ancestor)
+//                 && let Some(project) = self.projects.get(project_id)
+//             {
+//                 return Some((project.clone(), source_set_kind.clone()));
+//             }
+//         }
+//         None
+//     }
+// }

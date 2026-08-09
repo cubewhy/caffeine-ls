@@ -1,12 +1,14 @@
 use std::{sync::Arc, time::Instant};
 
 use crossbeam_channel::Receiver;
-use ide::delta::WorkspaceDelta;
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::{
-    InitializedParams, MessageActionItem, MessageType, notification as notif, request,
+    CancelNotification, DidChangeConfigurationNotification, DidChangeTextDocumentNotification,
+    DidChangeWatchedFilesNotification, DidCloseTextDocumentNotification,
+    DidOpenTextDocumentNotification, DidSaveTextDocumentNotification, DocumentDiagnosticRequest,
+    ExitNotification, InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
 };
-use vfs::{AbsPathBuf, VfsEvent};
+use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
@@ -58,11 +60,11 @@ impl GlobalState {
         };
 
         dispatcher
-            .on::<request::Shutdown>(|s, _| {
+            .on::<ShutdownRequest>(|s, _| {
                 s.shutdown_requested = true;
                 Ok(())
             })
-            .on_async::<request::DocumentDiagnosticRequest>(handlers::on_diagnostic)
+            .on_async::<DocumentDiagnosticRequest>(handlers::on_diagnostic)
             // Add more requests here
             .finish();
     }
@@ -74,14 +76,14 @@ impl GlobalState {
         };
 
         dispatcher
-            .on::<notif::Exit>(handlers::on_exit)
-            .on::<notif::Cancel>(handlers::on_cancel)
-            .on::<notif::DidOpenTextDocument>(handlers::on_did_open)
-            .on::<notif::DidChangeTextDocument>(handlers::on_did_change)
-            .on::<notif::DidSaveTextDocument>(handlers::on_did_save)
-            .on::<notif::DidCloseTextDocument>(handlers::on_did_close)
-            .on::<notif::DidChangeWatchedFiles>(handlers::on_did_change_watched_files)
-            .on::<notif::DidChangeConfiguration>(handlers::on_did_change_configuration)
+            .on::<ExitNotification>(handlers::on_exit)
+            .on::<CancelNotification>(handlers::on_cancel)
+            .on::<DidOpenTextDocumentNotification>(handlers::on_did_open)
+            .on::<DidChangeTextDocumentNotification>(handlers::on_did_change)
+            .on::<DidSaveTextDocumentNotification>(handlers::on_did_save)
+            .on::<DidCloseTextDocumentNotification>(handlers::on_did_close)
+            .on::<DidChangeWatchedFilesNotification>(handlers::on_did_change_watched_files)
+            .on::<DidChangeConfigurationNotification>(handlers::on_did_change_configuration)
             .finish();
     }
 
@@ -155,7 +157,7 @@ impl GlobalState {
 
         if !errors.is_empty() {
             tracing::warn!("{}", errors);
-            self.show_message(lsp_types::MessageType::WARNING, errors.to_string());
+            self.show_message(lsp_types::MessageType::Warning, errors.to_string());
             self.config_errors = Some(errors);
         } else {
             self.config_errors = None;
@@ -182,7 +184,7 @@ impl GlobalState {
 
                 // Perform fast, non-blocking file detection on the worker thread pool
                 self.thread_pool.execute(move || {
-                    match project_model::probe_workspace_layout(root.as_std_path()) {
+                    match project_model::probe_workspace_layout(root.as_ref()) {
                         project_model::ProbeResult::Single(system) => {
                             task_sender
                                 .send(BackgroundTaskEvent::LoadWorkspace { root, system })
@@ -217,7 +219,7 @@ impl GlobalState {
                     .collect();
 
                 self.show_message_request(
-                    MessageType::WARNING,
+                    MessageType::Warning,
                     format!(
                         "Multiple build systems detected at '{}'. Please select one:",
                         root.as_str()
@@ -239,13 +241,13 @@ impl GlobalState {
 
                 let task_sender = self.task_sender.clone();
                 let Some(java_home) = self.config.get_java_home() else {
-                    self.show_message(MessageType::ERROR, "No JDK found".to_string());
+                    self.show_message(MessageType::Error, "No JDK found".to_string());
                     tracing::error!("No JDK found in JAVA_HOME");
                     return;
                 };
 
                 self.thread_pool.execute(move || {
-                    match system.get_executor().sync(root.as_std_path(), &java_home) {
+                    match system.get_executor().sync(root.as_ref(), &java_home) {
                         Ok(graph) => {
                             task_sender
                                 .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
@@ -255,7 +257,7 @@ impl GlobalState {
                             tracing::error!(?root, "Metadata compilation failure: {}", err);
                             task_sender
                                 .send(BackgroundTaskEvent::NotifyUser {
-                                    typ: MessageType::ERROR,
+                                    typ: MessageType::Error,
                                     message: format!("Failed to receive project metadata: {err}"),
                                 })
                                 .ok();
@@ -266,12 +268,6 @@ impl GlobalState {
 
             BackgroundTaskEvent::WorkspaceLoaded { graph, root } => {
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
-
-                let delta = self
-                    .analysis_host
-                    .apply_workspace_change(root, graph.clone());
-
-                self.import_workspace(delta);
             }
 
             BackgroundTaskEvent::Progress(progress) => {
@@ -294,15 +290,6 @@ impl GlobalState {
         }
     }
 
-    fn import_workspace(&mut self, delta: WorkspaceDelta) {
-        if delta.is_empty() {
-            tracing::info!("Skipping workspace import due empty workspace delta");
-            return;
-        }
-
-        // TODO: import workspace
-    }
-
     /// Entry point to kick off initialization/probing workflows.
     /// Call this inside your `handlers::on_initialized` callback.
     pub fn trigger_workspace_probe(&self) {
@@ -319,7 +306,7 @@ impl GlobalState {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
-                        vfs.set_file_contents(path, contents);
+                        vfs.set_file_contents(path.into(), contents);
                     }
                 }
                 self.handle_vfs_change();
@@ -334,25 +321,15 @@ impl GlobalState {
 
     pub fn handle_vfs_change(&mut self) {
         let mut vfs = self.vfs.write();
-        let events = vfs.take_events();
+        let changes = vfs.take_changes();
 
-        if events.is_empty() {
+        if changes.is_empty() {
             return;
         }
 
         // let mut tasks_to_spawn = Vec::new();
 
-        for event in events {
-            match event {
-                VfsEvent::Created { id, .. } | VfsEvent::Modified { id } => {
-                    // let new_rev = self.analysis_host.parse_cache.bump_revision(id);
-                    // tasks_to_spawn.push((id, new_rev));
-                }
-                VfsEvent::Deleted { id } => {
-                    // self.analysis_host.remove_file(id);
-                }
-            };
-        }
+        for (file_id, changed_file) in changes {}
 
         // if !tasks_to_spawn.is_empty() {
         // self.spawn_parsing_task(tasks_to_spawn);

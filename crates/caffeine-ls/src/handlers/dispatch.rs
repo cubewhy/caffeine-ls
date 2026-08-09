@@ -18,7 +18,7 @@ impl<'a> RequestDispatcher<'a> {
         f: fn(&mut GlobalState, R::Params) -> anyhow::Result<R::Result>,
     ) -> &mut Self
     where
-        R: lsp_types::request::Request,
+        R: lsp_types::Request,
         R::Params: DeserializeOwned + serde::Serialize,
         R::Result: serde::Serialize,
     {
@@ -39,7 +39,7 @@ impl<'a> RequestDispatcher<'a> {
         worker: fn(GlobalStateSnapshot, R::Params) -> anyhow::Result<R::Result>,
     ) -> &mut Self
     where
-        R: lsp_types::request::Request,
+        R: lsp_types::Request,
         R::Params: DeserializeOwned + Send + 'static,
         R::Result: serde::Serialize + Send + 'static,
     {
@@ -65,11 +65,11 @@ impl<'a> RequestDispatcher<'a> {
 
     fn parse<R>(&mut self) -> Option<(lsp_server::RequestId, R::Params)>
     where
-        R: lsp_types::request::Request,
+        R: lsp_types::Request,
         R::Params: DeserializeOwned,
     {
         let req = self.req.as_ref()?;
-        if req.method != R::METHOD {
+        if req.method != R::METHOD.as_str() {
             return None;
         }
         let req = self.req.take().unwrap();
@@ -105,7 +105,7 @@ impl<'a> NotificationDispatcher<'a> {
         f: fn(&mut GlobalState, N::Params) -> anyhow::Result<()>,
     ) -> &mut Self
     where
-        N: lsp_types::notification::Notification,
+        N: lsp_types::Notification,
         N::Params: DeserializeOwned,
     {
         let params = match self.parse::<N>() {
@@ -121,11 +121,11 @@ impl<'a> NotificationDispatcher<'a> {
 
     fn parse<N>(&mut self) -> Option<N::Params>
     where
-        N: lsp_types::notification::Notification,
+        N: lsp_types::Notification,
         N::Params: DeserializeOwned,
     {
         let notif = self.notif.as_ref()?;
-        if notif.method != N::METHOD {
+        if notif.method != N::METHOD.as_str() {
             return None;
         }
         let notif = self.notif.take().unwrap();

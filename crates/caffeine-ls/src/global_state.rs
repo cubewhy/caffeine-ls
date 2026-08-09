@@ -1,8 +1,6 @@
-use crate::config::ConfigErrors;
+use crate::{config::ConfigErrors, mem_docs::MemDocs};
 use project_model::WorkspaceGraph;
 use std::{sync::Arc, time::Instant};
-use vfs::loader::NotifyHandle;
-use vfs::virtual_path::{JarHandler, JimageHandler};
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use ide::{Analysis, AnalysisHost};
@@ -82,6 +80,7 @@ pub struct GlobalState {
     pub(crate) config: Arc<Config>,
     pub(crate) config_errors: Option<ConfigErrors>,
     pub(crate) analysis_host: AnalysisHost,
+    pub(crate) mem_docs: MemDocs,
 
     pub(crate) shutdown_requested: bool,
 
@@ -97,16 +96,12 @@ impl GlobalState {
 
         let thread_pool = threadpool::ThreadPool::new(num_cpus::get());
 
-        let mut vfs = Vfs::new();
-        vfs.register_handler(JarHandler::default());
-        vfs.register_handler(JimageHandler::default());
+        let vfs = Vfs::default();
 
         let loader = {
-            let (sender, receiver) = unbounded();
-            let handle: NotifyHandle = vfs::loader::Handle::spawn(sender);
-
+            let (sender, receiver) = unbounded::<vfs::loader::Message>();
+            let handle: vfs_notify::NotifyHandle = vfs::loader::Handle::spawn(sender);
             let handle = Box::new(handle) as Box<dyn vfs::loader::Handle>;
-
             Handle { handle, receiver }
         };
 
@@ -123,7 +118,8 @@ impl GlobalState {
             config: Arc::new(config),
             config_errors: None,
 
-            analysis_host: AnalysisHost::new(&cache_dir),
+            analysis_host: AnalysisHost::new(),
+            mem_docs: MemDocs::default(),
 
             shutdown_requested: false,
 
@@ -139,7 +135,7 @@ impl GlobalState {
         id: lsp_server::RequestId,
         result: anyhow::Result<R::Result>,
     ) where
-        R: lsp_types::request::Request,
+        R: lsp_types::Request,
         R::Result: serde::Serialize,
     {
         match result {
@@ -189,7 +185,7 @@ impl GlobalState {
 
     pub(crate) fn notify<N>(&self, params: N::Params)
     where
-        N: lsp_types::notification::Notification,
+        N: lsp_types::Notification,
     {
         let notif = lsp_server::Notification::new(N::METHOD.to_string(), params);
         self.send(notif.into());
@@ -197,7 +193,7 @@ impl GlobalState {
 
     pub(crate) fn send_request<R>(&mut self, params: R::Params, state: OutgoingRequest)
     where
-        R: lsp_types::request::Request,
+        R: lsp_types::Request,
     {
         let req = self
             .req_queue

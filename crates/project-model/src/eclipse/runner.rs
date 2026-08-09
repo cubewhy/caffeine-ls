@@ -42,13 +42,9 @@ pub fn build_graph_from_eclipse(
     let project_id = ProjectId(0);
     let mut jar_to_library_id = FxHashMap::default();
 
-    let abs_workspace_root =
-        AbsPathBuf::try_from(workspace_root.to_path_buf()).unwrap_or_else(|_| {
-            AbsPathBuf::assert_utf8(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
-        });
+    let abs_workspace_root = AbsPathBuf::assert_utf8(workspace_root.to_path_buf());
 
-    let resolved_java_home = AbsPathBuf::try_from(java_home.to_path_buf())
-        .unwrap_or_else(|_| abs_workspace_root.clone());
+    let resolved_java_home = AbsPathBuf::assert_utf8(java_home.to_path_buf());
 
     let mut source_roots: Vec<AbsPathBuf> = Vec::new();
     let mut test_roots: Vec<AbsPathBuf> = Vec::new();
@@ -123,14 +119,13 @@ pub fn build_graph_from_eclipse(
                                     .expect("failed to hash jar path")
                             });
 
-                    if let Ok(abs_jar_path) = AbsPathBuf::try_from(target_path) {
-                        let library = if abs_jar_path.starts_with(&abs_workspace_root) {
-                            Library::editable(lib_id, abs_jar_path)
-                        } else {
-                            Library::readonly(lib_id, abs_jar_path)
-                        };
-                        graph.library_paths.insert(lib_id, library);
-                    }
+                    let abs_jar_path = AbsPathBuf::assert_utf8(target_path);
+                    let library = if abs_jar_path.starts_with(&abs_workspace_root) {
+                        Library::editable(lib_id, abs_jar_path)
+                    } else {
+                        Library::readonly(lib_id, abs_jar_path)
+                    };
+                    graph.library_paths.insert(lib_id, library);
                     main_compile_classpath.push(ClasspathEntry::External(lib_id));
                 }
             }

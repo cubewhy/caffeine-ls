@@ -3,7 +3,8 @@ pub mod flags;
 
 pub(crate) mod from_proto;
 pub(crate) mod handlers;
-// pub(crate) mod jdk;
+pub(crate) mod line_index;
+pub(crate) mod mem_docs;
 
 mod global_state;
 mod lsp;

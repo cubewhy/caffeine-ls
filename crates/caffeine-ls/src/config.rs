@@ -1,8 +1,11 @@
 use std::{env, fmt, path::PathBuf};
 
 use directories::ProjectDirs;
-use lsp_types::{ClientCapabilities, ClientInfo};
+use ide_db::line_index::WideEncoding;
+use lsp_types::{ClientCapabilities, ClientInfo, PositionEncodingKind};
 use vfs::AbsPathBuf;
+
+use crate::line_index::PositionEncoding;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -96,6 +99,28 @@ impl Config {
 
     pub fn main_loop_num_threads(&self) -> usize {
         rayon::current_num_threads()
+    }
+
+    pub fn negotiated_encoding(&self) -> PositionEncoding {
+        let supported_encodings = self
+            .client_capabilities
+            .general
+            .as_ref()
+            .and_then(|caps| caps.position_encodings.as_ref());
+
+        if let Some(encodings) = supported_encodings {
+            for enc in encodings {
+                if enc == &PositionEncodingKind::UTF8 {
+                    return PositionEncoding::Utf8;
+                } else if enc == &PositionEncodingKind::UTF16 {
+                    return PositionEncoding::Wide(WideEncoding::Utf16);
+                } else if enc == &PositionEncodingKind::UTF32 {
+                    return PositionEncoding::Wide(WideEncoding::Utf32);
+                }
+            }
+        }
+
+        PositionEncoding::Wide(WideEncoding::Utf16)
     }
 }
 

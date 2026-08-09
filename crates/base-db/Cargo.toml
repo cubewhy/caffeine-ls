@@ -1,13 +1,13 @@
 [package]
-name = "ide-db"
+name = "base-db"
 version = "0.0.0"
 edition = "2024"
 publish = false
 
 [dependencies]
-base-db.workspace = true
-line-index.workspace = true
+dashmap.workspace = true
 rowan.workspace = true
+rustc-hash.workspace = true
 salsa.workspace = true
 triomphe.workspace = true
 vfs.workspace = true

@@ -1,12 +1,11 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::sync::Arc;
 
 use dashmap::DashMap;
-use project_model::WorkspaceGraph;
-use rustc_hash::FxHashMap;
+use ide_db::RootDatabase;
 use syntax::SyntaxError;
-use vfs::{AbsPathBuf, FileId};
+use vfs::FileId;
 
-use crate::delta::WorkspaceDelta;
+pub use ide_db::line_index::{LineCol, LineIndex};
 
 pub mod delta;
 
@@ -66,96 +65,45 @@ impl ParseCache {
 
 /// Snapshot of [AnalysisHost]
 pub struct Analysis {
-    pub(crate) workspaces: Arc<FxHashMap<AbsPathBuf, WorkspaceGraph>>,
+    db: RootDatabase,
 }
 
-impl Analysis {}
+impl Analysis {
+    pub fn raw_database(&self) -> &RootDatabase {
+        &self.db
+    }
+}
 
 impl std::panic::UnwindSafe for Analysis {}
 
 pub struct AnalysisHost {
-    pub(crate) workspaces: Arc<FxHashMap<AbsPathBuf, WorkspaceGraph>>,
+    db: RootDatabase,
 }
 
 impl AnalysisHost {
-    pub fn new(cache_dir: &Path) -> Self {
+    pub fn new() -> Self {
         Self {
-            workspaces: Arc::new(HashMap::default()),
+            db: RootDatabase::new(),
         }
     }
 
     pub fn snapshot(&self) -> Analysis {
         Analysis {
-            workspaces: self.workspaces.clone(),
+            db: self.db.clone(),
         }
     }
 
-    /// Apply new workspace graph and track changes
-    pub fn apply_workspace_change(
-        &mut self,
-        root: AbsPathBuf,
-        new_workspace: WorkspaceGraph,
-    ) -> WorkspaceDelta {
-        let workspaces = std::sync::Arc::make_mut(&mut self.workspaces);
-        let mut delta = WorkspaceDelta::default();
-
-        if let Some(old_workspace) = workspaces.get(&root) {
-            // find sdk diff
-            for (id, sdk) in &new_workspace.sdks {
-                if !old_workspace.sdks.contains_key(id) {
-                    delta.sdks.added.insert(*id, sdk.clone());
-                }
-            }
-            for (id, sdk) in &old_workspace.sdks {
-                if !new_workspace.sdks.contains_key(id) {
-                    delta.sdks.removed.insert(*id, sdk.clone());
-                }
-            }
-
-            // find library diff
-            for (id, path) in &new_workspace.library_paths {
-                if !old_workspace.library_paths.contains_key(id) {
-                    delta.libs.added.insert(*id, path.clone());
-                }
-            }
-            for (id, path) in &old_workspace.library_paths {
-                if !old_workspace.library_paths.contains_key(id) {
-                    delta.libs.removed.insert(*id, path.clone());
-                }
-            }
-
-            // find projects diff
-            for (id, new_project) in &new_workspace.projects {
-                if let Some(old_project) = old_workspace.projects.get(id) {
-                    // changed project
-                    if new_project != old_project {
-                        delta
-                            .projects
-                            .changed
-                            .insert(*id, (old_project.clone(), new_project.clone()));
-                    }
-                } else {
-                    delta.projects.added.insert(*id, new_project.clone());
-                }
-            }
-            for (id, data) in &old_workspace.projects {
-                if !new_workspace.projects.contains_key(id) {
-                    delta.projects.removed.insert(*id, data.clone());
-                }
-            }
-        } else {
-            delta.sdks.added = new_workspace.sdks.clone();
-            delta.libs.added = new_workspace.library_paths.clone();
-            delta.projects.added = new_workspace.projects.clone();
-        }
-
-        workspaces.insert(root, new_workspace);
-
-        delta
+    pub fn raw_database(&self) -> &RootDatabase {
+        &self.db
     }
 
-    pub fn remove_workspace(&mut self, root: &AbsPathBuf) {
-        let workspaces = Arc::make_mut(&mut self.workspaces);
-        workspaces.remove(root);
+    pub fn raw_database_mut(&mut self) -> &mut RootDatabase {
+        &mut self.db
+    }
+}
+
+impl Default for AnalysisHost {
+    fn default() -> Self {
+        Self::new()
     }
 }

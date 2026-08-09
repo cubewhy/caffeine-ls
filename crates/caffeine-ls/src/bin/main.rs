@@ -8,6 +8,9 @@ use caffeine_ls::{
 use camino::Utf8PathBuf;
 use clap::Parser;
 use lsp_server::Connection;
+use lsp_types::{
+    Notification, ShowMessageNotification, WorkspaceFolders, WorkspaceFoldersInitializeParams,
+};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 use vfs::AbsPathBuf;
 
@@ -107,27 +110,12 @@ fn run_server() -> anyhow::Result<()> {
     #[allow(deprecated)]
     let lsp_types::InitializeParams {
         root_uri,
-        mut capabilities,
-        workspace_folders,
+        capabilities,
+        workspace_folders_initialize_params: WorkspaceFoldersInitializeParams { workspace_folders },
         initialization_options,
         client_info,
         ..
     } = from_json::<lsp_types::InitializeParams>("InitializeParams", &initialize_params)?;
-
-    // lsp-types has a typo in the `/capabilities/workspace/diagnostics` field, its typoed as `diagnostic`
-    if let Some(val) = initialize_params.pointer("/capabilities/workspace/diagnostics")
-        && let Ok(diag_caps) = from_json::<lsp_types::DiagnosticWorkspaceClientCapabilities>(
-            "DiagnosticWorkspaceClientCapabilities",
-            val,
-        )
-    {
-        tracing::info!("Patching lsp-types workspace diagnostics capabilities: {diag_caps:#?}");
-        capabilities
-            .workspace
-            .get_or_insert_default()
-            .diagnostic
-            .get_or_insert(diag_caps);
-    }
 
     let root_path = match root_uri
         .and_then(|it| it.to_file_path().ok())
@@ -150,6 +138,11 @@ fn run_server() -> anyhow::Result<()> {
         );
     }
 
+    let workspace_folders = match workspace_folders {
+        Some(WorkspaceFolders::WorkspaceFolderList(folders)) => Some(folders),
+        _ => None,
+    };
+
     let workspace_roots = workspace_folders
         .map(|workspaces| {
             workspaces
@@ -171,14 +164,11 @@ fn run_server() -> anyhow::Result<()> {
         (config, error_sink, _) = config.apply_change(change);
 
         if !error_sink.is_empty() {
-            use lsp_types::{
-                MessageType, ShowMessageParams,
-                notification::{Notification, ShowMessage},
-            };
+            use lsp_types::{MessageType, ShowMessageParams};
             let not = lsp_server::Notification::new(
-                ShowMessage::METHOD.to_owned(),
+                ShowMessageNotification::METHOD.to_string(),
                 ShowMessageParams {
-                    typ: MessageType::WARNING,
+                    kind: MessageType::Warning,
                     message: error_sink.to_string(),
                 },
             );
@@ -197,7 +187,6 @@ fn run_server() -> anyhow::Result<()> {
             name: caffeine_ls::NAME.to_string(),
             version: Some(caffeine_ls::VERSION.to_string()),
         }),
-        offset_encoding: None,
     };
 
     let initialize_result = serde_json::to_value(initialize_result).unwrap();
