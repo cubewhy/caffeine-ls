@@ -7,6 +7,7 @@ base-db = { path = "./crates/base-db/" }
 hir = { path = "./crates/hir/" }
 ide = { path = "./crates/ide/" }
 ide-db = { path = "./crates/ide-db/" }
+ide-diagnostics = { path = "./crates/ide-diagnostics/" }
 java-syntax = { path = "./crates/java-syntax/" }
 kotlin-syntax = { path = "./crates/kotlin-syntax/" }
 lsp-test = { path = "./crates/lsp-test/" }
