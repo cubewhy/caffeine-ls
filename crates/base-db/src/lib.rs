@@ -1,5 +1,7 @@
+mod change;
 mod input;
 
+pub use change::FileChange;
 pub use input::{DepsMap, SourceRoot, SourceRootId};
 pub use salsa;
 
@@ -9,7 +11,7 @@ use vfs::{AnchoredPath, FileId};
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
 use dashmap::{DashMap, Entry};
-use rustc_hash::FxHasher;
+use rustc_hash::{FxHashSet, FxHasher};
 use salsa::{Durability, Setter};
 use triomphe::Arc;
 
@@ -236,4 +238,12 @@ pub struct SourceRootInput {
 #[salsa::input(debug)]
 pub struct FileSourceRootInput {
     pub source_root_id: SourceRootId,
+}
+
+/// The set of "local" (that is, from the current workspace) roots.
+/// Files in local roots are assumed to change frequently.
+#[salsa::input(singleton, debug)]
+pub struct LocalRoots {
+    #[returns(ref)]
+    pub roots: FxHashSet<SourceRootId>,
 }

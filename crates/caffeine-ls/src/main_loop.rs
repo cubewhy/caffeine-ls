@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
 use crossbeam_channel::Receiver;
+use ide_db::base_db::FileChange;
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::{
     CancelNotification, DidChangeConfigurationNotification, DidChangeTextDocumentNotification,
@@ -47,6 +48,8 @@ impl GlobalState {
                     self.handle_background_task(task?);
                 }
             }
+
+            self.process_changes();
         }
     }
 
@@ -309,7 +312,7 @@ impl GlobalState {
                         vfs.set_file_contents(path.into(), contents);
                     }
                 }
-                self.handle_vfs_change();
+                self.process_changes();
             }
             vfs::loader::Message::Progress { n_done, .. } => {
                 if n_done == vfs::loader::LoadingProgress::Finished {
@@ -319,20 +322,23 @@ impl GlobalState {
         }
     }
 
-    pub fn handle_vfs_change(&mut self) {
+    fn process_changes(&mut self) {
+        let mut change = FileChange::default();
+
         let mut vfs = self.vfs.write();
-        let changes = vfs.take_changes();
+        let vfs_changes = vfs.take_changes();
 
-        if changes.is_empty() {
-            return;
+        if !vfs_changes.is_empty() {
+            for (file_id, changed_file) in vfs_changes {
+                let new_text = match changed_file.change {
+                    vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
+                        String::from_utf8(items).ok()
+                    }
+                    vfs::Change::Delete => None,
+                };
+                change.change_file(file_id, new_text);
+            }
         }
-
-        // let mut tasks_to_spawn = Vec::new();
-
-        for (file_id, changed_file) in changes {}
-
-        // if !tasks_to_spawn.is_empty() {
-        // self.spawn_parsing_task(tasks_to_spawn);
-        // }
+        self.analysis_host.apply_change(change);
     }
 }

@@ -135,6 +135,7 @@ dependencies = [
  "rowan",
  "rustc-hash 2.1.2",
  "salsa",
+ "tracing",
  "triomphe",
 ]
 
