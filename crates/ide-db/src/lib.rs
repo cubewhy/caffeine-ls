@@ -2,6 +2,7 @@ use std::fmt;
 
 pub use ::line_index;
 pub use base_db;
+use hir::hir_expand::files::FileRangeWrapper;
 
 use base_db::{
     DepsMap, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase, SourceRoot, SourceRootId,
@@ -11,6 +12,8 @@ use line_index::LineIndex;
 use salsa::Durability;
 use triomphe::Arc;
 use vfs::FileId;
+
+pub type FileRange = FileRangeWrapper<FileId>;
 
 #[salsa::db]
 pub struct RootDatabase {
@@ -141,4 +144,12 @@ pub fn line_index(db: &dyn SourceDatabase, file_id: FileId) -> &Arc<LineIndex> {
         Arc::new(LineIndex::new(text))
     }
     line_index(db, InternedFileId::new(db, file_id))
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Severity {
+    Error,
+    Warning,
+    WeakWarning,
+    Allow,
 }

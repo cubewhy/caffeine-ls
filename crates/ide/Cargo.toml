@@ -6,8 +6,8 @@ publish = false
 
 [dependencies]
 dashmap.workspace = true
-hir.workspace = true
 ide-db.workspace = true
+ide-diagnostics.workspace = true
 parking_lot.workspace = true
 project-model.workspace = true
 rowan.workspace = true

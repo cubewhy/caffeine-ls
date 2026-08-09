@@ -6,6 +6,8 @@ use ide_db::{
 };
 
 pub use ide_db::line_index::{LineCol, LineIndex};
+use ide_diagnostics::Diagnostic;
+use vfs::FileId;
 
 pub mod delta;
 
@@ -77,5 +79,9 @@ impl Analysis {
         F: FnOnce(&RootDatabase) -> T + std::panic::UnwindSafe,
     {
         Cancelled::catch(AssertUnwindSafe(|| f(&self.db)))
+    }
+
+    pub fn syntax_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id))
     }
 }

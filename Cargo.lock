@@ -840,6 +840,9 @@ dependencies = [
 [[package]]
 name = "hir-expand"
 version = "0.0.0"
+dependencies = [
+ "rowan",
+]
 
 [[package]]
 name = "hmac"
@@ -952,8 +955,8 @@ name = "ide"
 version = "0.0.0"
 dependencies = [
  "dashmap",
- "hir",
  "ide-db",
+ "ide-diagnostics",
  "parking_lot",
  "project-model",
  "ra_ap_vfs",
@@ -968,6 +971,7 @@ name = "ide-db"
 version = "0.0.0"
 dependencies = [
  "base-db",
+ "hir",
  "line-index",
  "ra_ap_vfs",
  "rowan",
@@ -980,6 +984,7 @@ name = "ide-diagnostics"
 version = "0.0.0"
 dependencies = [
  "ide-db",
+ "ra_ap_vfs",
 ]
 
 [[package]]

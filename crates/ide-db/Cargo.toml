@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 base-db.workspace = true
+hir.workspace = true
 line-index.workspace = true
 rowan.workspace = true
 salsa.workspace = true
