@@ -837,6 +837,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hir-expand"
+version = "0.0.0"
+
+[[package]]
 name = "hmac"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -973,6 +977,9 @@ dependencies = [
 [[package]]
 name = "ide-diagnostics"
 version = "0.0.0"
+dependencies = [
+ "ide-db",
+]
 
 [[package]]
 name = "idna"
