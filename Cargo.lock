@@ -947,6 +947,7 @@ name = "ide"
 version = "0.0.0"
 dependencies = [
  "dashmap",
+ "hir",
  "ide-db",
  "parking_lot",
  "project-model",
