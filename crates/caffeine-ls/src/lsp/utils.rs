@@ -8,9 +8,10 @@ use lsp_types::{
 use triomphe::Arc;
 
 use crate::{
-    GlobalState, from_proto,
+    GlobalState,
     global_state::{OutgoingRequest, ProgressEvent, ProgressState},
     line_index::{LineEndings, LineIndex, PositionEncoding},
+    lsp::from_proto,
 };
 
 pub(crate) fn apply_document_changes(

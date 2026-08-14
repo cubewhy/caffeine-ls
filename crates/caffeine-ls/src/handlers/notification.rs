@@ -5,9 +5,11 @@ use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
-    from_proto::{self, abs_path},
     global_state::BackgroundTaskEvent,
-    lsp::utils::apply_document_changes,
+    lsp::{
+        from_proto::{self, abs_path},
+        utils::apply_document_changes,
+    },
     mem_docs::DocumentData,
 };
 
