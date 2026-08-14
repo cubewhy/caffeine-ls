@@ -322,14 +322,6 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Lex and parse a syntax tree
-///
-/// NOTE: Never call this function in production!
-pub fn parse(input: &str) -> Parse {
-    let tokens = lex(input).0;
-    Parser::new(tokens).parse()
-}
-
 #[derive(Clone, Copy)]
 pub struct TokenSet {
     bits: [u64; 4],

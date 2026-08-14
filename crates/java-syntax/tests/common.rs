@@ -1,5 +1,5 @@
 #![allow(unused)]
-use java_syntax::{Event, Lang, LexicalError, ParseError, Parser, Token, grammar, lex, parse};
+use java_syntax::{Event, Lang, LexicalError, ParseError, Parser, Token, grammar, lex};
 
 use rowan::SyntaxNode;
 
@@ -162,10 +162,6 @@ LEX_ERRORS:
         dump_tokens(&tokens),
         dump_lex_errors(&lex_errors),
     )
-}
-
-fn do_full_parse(source: &str) -> SyntaxNode<Lang> {
-    parse(source).into_syntax_node()
 }
 
 fn dump_tree(node: &SyntaxNode<Lang>) -> String {
