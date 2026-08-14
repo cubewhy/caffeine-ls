@@ -93,30 +93,3 @@ impl SyntaxError {
         }
     }
 }
-
-pub fn parse_java_file(text: &str, _interner: &ThreadedRodeo) -> ParseResult {
-    let (tokens, lex_errors) = java_syntax::lex(text);
-
-    let mut errors = Vec::with_capacity(lex_errors.len());
-
-    // collect lexer errors
-    errors.extend(lex_errors.iter().map(SyntaxError::from_java_lexer));
-
-    // parse the tree
-    let output = java_syntax::Parser::new(tokens).parse();
-
-    // collect syntax errors
-    for err in output.errors() {
-        errors.push(SyntaxError::from_java_parser(err));
-    }
-
-    errors.extend(output.errors().iter().map(SyntaxError::from_java_parser));
-
-    // TODO: parse java stub
-
-    ParseResult {
-        tree: output.into_green_node(),
-        errors,
-        stubs: vec![],
-    }
-}

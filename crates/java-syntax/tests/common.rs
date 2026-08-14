@@ -102,7 +102,7 @@ PARSE_ERRORS:
 pub fn check_parser(src: &str) -> String {
     let (tokens, lex_errors) = lex(src);
     let mut p = Parser::new(tokens.clone());
-    let parse = p.parse();
+    let (green, _err) = p.parse();
 
     format!(
         "\
@@ -117,7 +117,7 @@ SYNTAX_TREE:
 ",
         dump_tokens(&tokens),
         dump_lex_errors(&lex_errors),
-        dump_tree(&parse.into_syntax_node()),
+        dump_tree(&SyntaxNode::new_root(green)),
     )
 }
 

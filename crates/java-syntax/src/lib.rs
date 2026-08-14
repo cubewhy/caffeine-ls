@@ -6,4 +6,32 @@ pub(crate) mod syntax_kind;
 
 pub use lexer::{Lexer, LexicalError, LexicalErrorKind, lex, token::Token};
 pub use parser::{Event, Lang, Parse, ParseError, ParseErrorKind, Parser, grammar};
+use rowan::SyntaxNode;
 pub use syntax_kind::{ContextualKeyword, SyntaxKind};
+
+use crate::syntax_error::SyntaxError;
+
+#[derive(Debug, Clone)]
+pub struct SourceFile {
+    pub syntax_node: SyntaxNode<Lang>,
+}
+
+impl SourceFile {
+    pub fn parse(text: &str) -> Parse<SourceFile> {
+        // lex stage
+        let (tokens, lex_errors) = lex(text);
+
+        // parse stage
+        let parser = Parser::new(tokens);
+        let (green, parse_errors) = parser.parse();
+
+        // collect errors
+        let errors: Vec<SyntaxError> = lex_errors
+            .into_iter()
+            .map(|e| e.into())
+            .chain(parse_errors.into_iter().map(|e| e.into()))
+            .collect();
+
+        Parse::new(green, errors)
+    }
+}

@@ -7,6 +7,7 @@ use crate::{
     lex,
     lexer::token::Token,
     parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
+    syntax_error::SyntaxError,
     syntax_kind::{
         ContextualKeyword,
         SyntaxKind::{self, *},
@@ -33,13 +34,21 @@ impl rowan::Language for Lang {
     }
 }
 
-pub struct Parse {
+pub struct Parse<T = ()> {
     green_node: GreenNode,
-    #[allow(unused)]
-    errors: Vec<ParseError>,
+    errors: Vec<SyntaxError>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl Parse {
+impl<T> Parse<T> {
+    pub(crate) fn new(green_node: GreenNode, errors: Vec<SyntaxError>) -> Self {
+        Self {
+            green_node,
+            errors,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
     pub fn syntax_node(&self) -> rowan::SyntaxNode<Lang> {
         rowan::SyntaxNode::new_root(self.green_node.clone())
     }
@@ -48,11 +57,11 @@ impl Parse {
         rowan::SyntaxNode::new_root(self.green_node)
     }
 
-    pub fn into_green_node(self) -> rowan::GreenNode {
-        self.green_node
+    pub fn green(&self) -> &rowan::GreenNode {
+        &self.green_node
     }
 
-    pub fn errors(&self) -> &[ParseError] {
+    pub fn errors(&self) -> &[SyntaxError] {
         &self.errors
     }
 
@@ -96,19 +105,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_with_cache(mut self, cache: Option<&'a mut NodeCache>) -> Parse {
+    pub fn parse(mut self) -> (GreenNode, Vec<ParseError>) {
         grammar::root(&mut self);
 
-        let green_node = Sink::new(self.source.into_inner(), self.events, cache).finish();
+        let green_node = Sink::new(self.source.into_inner(), self.events, None).finish();
 
-        Parse {
-            green_node,
-            errors: self.errors,
-        }
-    }
-
-    pub fn parse(self) -> Parse {
-        self.parse_with_cache(None)
+        (green_node, self.errors)
     }
 
     pub(crate) fn checkpoint(&self) -> Checkpoint {

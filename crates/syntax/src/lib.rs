@@ -10,7 +10,7 @@ pub use ast::*;
 use lasso::ThreadedRodeo;
 use rowan::{GreenNode, TextRange};
 
-use crate::{java_parser::parse_java_file, kotlin_parser::parse_kotlin_file};
+use crate::kotlin_parser::parse_kotlin_file;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageId {
@@ -65,11 +65,4 @@ pub struct ParseResult {
     pub errors: Vec<SyntaxError>,
 
     pub stubs: Vec<ClassStub>,
-}
-
-pub fn parse_file(language: LanguageId, text: &str, interner: &ThreadedRodeo) -> ParseResult {
-    match language {
-        LanguageId::Java => parse_java_file(text, interner),
-        LanguageId::Kotlin => parse_kotlin_file(text, interner),
-    }
 }
