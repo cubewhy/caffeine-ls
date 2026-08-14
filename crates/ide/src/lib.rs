@@ -6,7 +6,7 @@ use ide_db::{
 };
 
 pub use ide_db::line_index::{LineCol, LineIndex};
-use ide_diagnostics::Diagnostic;
+pub use ide_diagnostics::Diagnostic;
 use vfs::FileId;
 
 pub mod delta;
