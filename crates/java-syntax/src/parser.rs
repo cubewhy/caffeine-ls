@@ -409,7 +409,7 @@ impl ParseError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParseErrorKind {
     ExpectedToken {
         expected: Vec<SyntaxKind>,
@@ -423,7 +423,7 @@ pub enum ParseErrorKind {
     Message(&'static str),
 }
 
-#[derive(Debug, Clone, Display)]
+#[derive(Debug, Clone, Display, PartialEq, Eq)]
 pub enum ExpectedConstruct {
     #[display("a declaration (e.g., class, variable, or method)")]
     Declaration,

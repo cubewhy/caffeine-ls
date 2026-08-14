@@ -23,7 +23,7 @@ impl From<LexicalError> for SyntaxError {
     }
 }
 
-impl From<ParseErrorKind> for SyntaxError {
+impl From<ParseError> for SyntaxError {
     fn from(value: ParseError) -> Self {
         Self {
             kind: SyntaxErrorKind::Parser(value.kind),

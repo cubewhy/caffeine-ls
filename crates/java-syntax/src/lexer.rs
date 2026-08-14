@@ -926,7 +926,7 @@ impl LexicalError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexicalErrorKind {
     UnexpectedChar(char),
     UnterminatedString,
