@@ -1,10 +1,9 @@
 use std::str::FromStr;
 
 use derive_more::Display;
-use rowan::{GreenNode, NodeCache, TextRange, TextSize};
+use rowan::{GreenNode, TextRange, TextSize};
 
 use crate::{
-    lex,
     lexer::token::Token,
     parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
     syntax_error::SyntaxError,
