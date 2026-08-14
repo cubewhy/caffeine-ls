@@ -3,10 +3,15 @@ use std::panic::AssertUnwindSafe;
 use ide_db::{
     RootDatabase,
     base_db::{FileChange, salsa::Cancelled},
+    line_index,
 };
 
-pub use ide_db::line_index::{LineCol, LineIndex};
+pub use ide_db::{
+    Severity,
+    line_index::{LineCol, LineIndex},
+};
 pub use ide_diagnostics::Diagnostic;
+use triomphe::Arc;
 use vfs::FileId;
 
 pub mod delta;
@@ -63,7 +68,7 @@ impl Analysis {
 
     /// Performs an operation on the database that may be canceled.
     ///
-    /// rust-analyzer needs to be able to answer semantic questions about the
+    /// LSP needs to be able to answer semantic questions about the
     /// code while the code is being modified. A common problem is that a
     /// long-running query is being calculated when a new change arrives.
     ///
@@ -83,5 +88,11 @@ impl Analysis {
 
     pub fn syntax_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
         self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id))
+    }
+
+    /// Gets the file's `LineIndex`: data structure to convert between absolute
+    /// offsets and line/column representation.
+    pub fn file_line_index(&self, file_id: FileId) -> Cancellable<Arc<LineIndex>> {
+        self.with_db(|db| line_index(db, file_id).clone())
     }
 }

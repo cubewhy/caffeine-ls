@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::time::Instant;
 
 use crossbeam_channel::Receiver;
 use ide_db::base_db::FileChange;
@@ -9,6 +9,7 @@ use lsp_types::{
     DidOpenTextDocumentNotification, DidSaveTextDocumentNotification, DocumentDiagnosticRequest,
     ExitNotification, InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
 };
+use triomphe::Arc;
 use vfs::AbsPathBuf;
 
 use crate::{
@@ -19,6 +20,7 @@ use crate::{
         self,
         dispatch::{NotificationDispatcher, RequestDispatcher},
     },
+    line_index::LineEndings,
 };
 
 pub fn main_loop(config: Config, connection: Connection) -> anyhow::Result<()> {
@@ -309,7 +311,7 @@ impl GlobalState {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
-                        vfs.set_file_contents(path.into(), contents);
+                        vfs.0.set_file_contents(path.into(), contents);
                     }
                 }
                 self.process_changes();
@@ -326,15 +328,23 @@ impl GlobalState {
         let mut change = FileChange::default();
 
         let mut vfs = self.vfs.write();
+        let (vfs, line_endings_map) = &mut *vfs;
         let vfs_changes = vfs.take_changes();
 
         if !vfs_changes.is_empty() {
             for (file_id, changed_file) in vfs_changes {
                 let new_text = match changed_file.change {
                     vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
-                        String::from_utf8(items).ok()
+                        String::from_utf8(items).ok().map(|text| {
+                            let (normalized_text, line_endings) = LineEndings::normalize(text);
+                            line_endings_map.insert(file_id, line_endings);
+                            normalized_text
+                        })
                     }
-                    vfs::Change::Delete => None,
+                    vfs::Change::Delete => {
+                        line_endings_map.remove(&file_id);
+                        None
+                    }
                 };
                 change.change_file(file_id, new_text);
             }

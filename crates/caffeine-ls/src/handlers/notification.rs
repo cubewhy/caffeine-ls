@@ -1,4 +1,5 @@
-use std::{collections::HashSet, process, sync::Arc};
+use std::{collections::HashSet, process};
+use triomphe::Arc;
 
 use lsp_types::*;
 use vfs::AbsPathBuf;
@@ -61,7 +62,7 @@ pub fn on_did_open(
         }
 
         let contents = params.text_document.text.into_bytes();
-        state.vfs.write().set_file_contents(path, Some(contents));
+        state.vfs.write().0.set_file_contents(path, Some(contents));
     }
 
     Ok(())
@@ -96,6 +97,7 @@ pub(crate) fn on_did_change(
             state
                 .vfs
                 .write()
+                .0
                 .set_file_contents(path, Some(new_contents));
         }
     }

@@ -1,9 +1,6 @@
-use crate::{from_proto::vfs_path, global_state::GlobalStateSnapshot};
+use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics};
 
-use ide_db::base_db::SourceDatabase;
 use lsp_types::*;
-
-use crate::lsp::diagnostics;
 
 pub fn on_diagnostic(
     state: GlobalStateSnapshot,
@@ -11,20 +8,14 @@ pub fn on_diagnostic(
 ) -> anyhow::Result<DocumentDiagnosticReport> {
     tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
 
-    if let Ok(vfs_path) = vfs_path(&params.text_document.uri) {
-        let (file_id, text) = {
-            let vfs = state.vfs.read();
-            let Some((file_id, _)) = vfs.file_id(&vfs_path) else {
-                anyhow::bail!("failed to get file id from vfs path: {vfs_path:?}");
-            };
-            let db = state.analysis.raw_database();
-            let file_text = db.file_text(file_id);
-            let text = file_text.text(db).clone();
-            (file_id, text)
-        };
-
-        // TODO: call state.analysis.collect_diagnostics
-        let diagnostics = diagnostics::collect_diagnostics(state.analysis, file_id, text)?;
+    if let Ok(Some(file_id)) = state.url_to_file_id(&params.text_document.uri) {
+        let line_index = state.file_line_index(file_id)?;
+        let diagnostics = state
+            .analysis
+            .syntax_diagnostics(file_id)?
+            .into_iter()
+            .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
+            .collect();
 
         Ok(RelatedFullDocumentDiagnosticReport {
             related_documents: None,

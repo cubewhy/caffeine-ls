@@ -1,13 +1,21 @@
-use crate::{config::ConfigErrors, mem_docs::MemDocs};
+use crate::{
+    config::ConfigErrors,
+    line_index::{LineEndings, LineIndex},
+    lsp::from_proto,
+    mem_docs::MemDocs,
+};
+use lsp_types::Uri;
 use project_model::WorkspaceGraph;
-use std::{sync::Arc, time::Instant};
+use rustc_hash::FxHashMap;
+use std::time::Instant;
+use triomphe::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ide::{Analysis, AnalysisHost};
+use ide::{Analysis, AnalysisHost, Cancellable};
 use lsp_server::{ErrorCode, Response};
-use parking_lot::RwLock;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
-use vfs::{AbsPathBuf, Vfs};
+use vfs::{AbsPathBuf, FileId, VfsPath};
 
 use crate::config::Config;
 
@@ -86,7 +94,7 @@ pub struct GlobalState {
 
     // Vfs
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
-    pub(crate) vfs: Arc<RwLock<Vfs>>,
+    pub(crate) vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
     pub(crate) vfs_config_version: u32,
 }
 
@@ -95,8 +103,6 @@ impl GlobalState {
         let (task_sender, task_receiver) = unbounded();
 
         let thread_pool = threadpool::ThreadPool::new(num_cpus::get());
-
-        let vfs = Vfs::default();
 
         let loader = {
             let (sender, receiver) = unbounded::<vfs::loader::Message>();
@@ -124,7 +130,7 @@ impl GlobalState {
             shutdown_requested: false,
 
             loader,
-            vfs: Arc::new(RwLock::new(vfs)),
+            vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
         }
     }
@@ -248,6 +254,7 @@ impl GlobalState {
             config: Arc::clone(&self.config),
             analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
+            mem_docs: self.mem_docs.clone(),
         }
     }
 
@@ -261,5 +268,48 @@ impl GlobalState {
 pub struct GlobalStateSnapshot {
     pub(crate) config: Arc<Config>,
     pub(crate) analysis: Analysis,
-    pub(crate) vfs: Arc<RwLock<Vfs>>,
+    mem_docs: MemDocs,
+    vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
+}
+
+impl GlobalStateSnapshot {
+    fn vfs_read(&self) -> MappedRwLockReadGuard<'_, vfs::Vfs> {
+        RwLockReadGuard::map(self.vfs.read(), |(it, _)| it)
+    }
+
+    /// Returns `None` if the file was excluded.
+    pub(crate) fn url_to_file_id(&self, url: &Uri) -> anyhow::Result<Option<FileId>> {
+        url_to_file_id(&self.vfs_read(), url)
+    }
+
+    pub(crate) fn file_line_index(&self, file_id: FileId) -> Cancellable<LineIndex> {
+        let endings = self.vfs.read().1[&file_id];
+        let index = self.analysis.file_line_index(file_id)?;
+        let res = LineIndex {
+            index,
+            endings,
+            encoding: self.config.negotiated_encoding(),
+        };
+        Ok(res)
+    }
+}
+
+/// Returns `None` if the file was excluded.
+pub(crate) fn url_to_file_id(vfs: &vfs::Vfs, url: &Uri) -> anyhow::Result<Option<FileId>> {
+    let path = from_proto::vfs_path(url)?;
+    vfs_path_to_file_id(vfs, &path)
+}
+
+/// Returns `None` if the file was excluded.
+pub(crate) fn vfs_path_to_file_id(
+    vfs: &vfs::Vfs,
+    vfs_path: &VfsPath,
+) -> anyhow::Result<Option<FileId>> {
+    let (file_id, excluded) = vfs
+        .file_id(vfs_path)
+        .ok_or_else(|| anyhow::format_err!("file not found: {vfs_path}"))?;
+    match excluded {
+        vfs::FileExcluded::Yes => Ok(None),
+        vfs::FileExcluded::No => Ok(Some(file_id)),
+    }
 }
