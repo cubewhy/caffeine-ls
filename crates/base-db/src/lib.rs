@@ -2,7 +2,7 @@ mod change;
 mod input;
 
 pub use change::FileChange;
-pub use input::{DepsMap, SourceRoot, SourceRootId};
+pub use input::{DepsMap, LanguageKind, SourceRoot, SourceRootId};
 pub use salsa;
 
 use rowan::TextSize;
@@ -160,6 +160,16 @@ impl Files {
             }
         };
     }
+
+    pub fn file_language_kind(
+        &self,
+        db: &dyn SourceDatabase,
+        file_id: vfs::FileId,
+    ) -> Option<LanguageKind> {
+        let path = self.path_for_file(db, file_id)?;
+
+        Some(LanguageKind::from_path(&path.to_string()))
+    }
 }
 
 #[salsa::db]
@@ -202,6 +212,8 @@ pub trait SourceDatabase: salsa::Database {
         let source_root = self.source_root(*source_root.source_root_id(self));
         source_root.source_root(self).resolve_path(path)
     }
+
+    fn file_language_kind(&self, file_id: vfs::FileId) -> Option<LanguageKind>;
 
     #[doc(hidden)]
     fn deps_map(&self) -> Arc<DepsMap>;
