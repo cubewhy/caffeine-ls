@@ -69,6 +69,12 @@ impl<T> Parse<T> {
     }
 }
 
+impl<T> From<Parse<T>> for (GreenNode, Vec<SyntaxError>) {
+    fn from(val: Parse<T>) -> Self {
+        (val.green_node, val.errors)
+    }
+}
+
 pub enum Event<'a> {
     Tombstone,
     AddToken,
