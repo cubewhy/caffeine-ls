@@ -17,6 +17,8 @@ pub fn on_diagnostic(
             .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
             .collect();
 
+        tracing::debug!(?diagnostics, "finished collecting diagnostics");
+
         Ok(RelatedFullDocumentDiagnosticReport {
             related_documents: None,
             full_document_diagnostic_report: FullDocumentDiagnosticReport {
