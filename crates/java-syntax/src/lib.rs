@@ -4,12 +4,12 @@ pub(crate) mod reader;
 pub(crate) mod syntax_error;
 pub(crate) mod syntax_kind;
 
+pub use crate::syntax_error::SyntaxError;
 pub use lexer::{Lexer, LexicalError, LexicalErrorKind, lex, token::Token};
 pub use parser::{Event, Lang, Parse, ParseError, ParseErrorKind, Parser, grammar};
-use rowan::SyntaxNode;
 pub use syntax_kind::{ContextualKeyword, SyntaxKind};
 
-use crate::syntax_error::SyntaxError;
+use rowan::SyntaxNode;
 
 #[derive(Debug, Clone)]
 pub struct SourceFile {
