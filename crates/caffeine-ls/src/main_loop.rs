@@ -165,26 +165,47 @@ impl GlobalState {
                     token: progress_token.clone(),
                     title: format!("Syncing Project Layout ({:?})", system),
                     message: Some("Extracting build graph metadata...".to_string()),
-                    percentage: Some(15),
+                    percentage: None,
                     state: ProgressState::Begin,
                 });
 
                 let task_sender = self.task_sender.clone();
                 let Some(java_home) = self.config.get_java_home() else {
+                    self.report_progress(ProgressEvent {
+                        token: progress_token,
+                        title: String::new(),
+                        message: None,
+                        percentage: None,
+                        state: ProgressState::End,
+                    });
                     self.show_message(MessageType::Error, "No JDK found".to_string());
                     tracing::error!("No JDK found in JAVA_HOME");
                     return;
                 };
 
                 self.thread_pool.execute(move || {
+                    let finish_progress = || {
+                        task_sender
+                            .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                                token: progress_token.clone(),
+                                title: String::new(),
+                                message: None,
+                                percentage: None,
+                                state: ProgressState::End,
+                            }))
+                            .ok();
+                    };
+
                     match system.get_executor().sync(root.as_ref(), &java_home) {
                         Ok(graph) => {
+                            finish_progress();
                             task_sender
                                 .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
                                 .ok();
                         }
                         Err(err) => {
                             tracing::error!(?root, "Metadata compilation failure: {}", err);
+                            finish_progress();
                             task_sender
                                 .send(BackgroundTaskEvent::NotifyUser {
                                     typ: MessageType::Error,
@@ -320,14 +341,14 @@ impl GlobalState {
 
         self.file_set_config = Some(file_set_config);
         self.apply_source_roots();
-        self.register_libraries(&graph);
+        self.register_libraries(&graph, &root);
         self.refresh_diagnostics();
     }
 
     /// Registers the JDK and classpath jars from the workspace graph with the
     /// stub index, then warms the indexes up on a background thread so the
     /// first type query does not pay the full JDK parse cost.
-    fn register_libraries(&mut self, graph: &project_model::WorkspaceGraph) {
+    fn register_libraries(&mut self, graph: &project_model::WorkspaceGraph, root: &AbsPathBuf) {
         let mut libraries: Vec<(HirLibraryId, LibraryKind, AbsPathBuf)> = Vec::new();
 
         // JDKs: prefer the modular layout (`lib/modules`), fall back to the
@@ -379,14 +400,47 @@ impl GlobalState {
             return;
         }
 
+        let token = format!("index-{}", root.as_str());
+        let total = ids.len() as u32;
+        self.report_progress(ProgressEvent {
+            token: token.clone(),
+            title: "Indexing libraries".to_string(),
+            message: Some(format!("Indexing {total} libraries...")),
+            percentage: Some(0),
+            state: ProgressState::Begin,
+        });
+
+        let task_sender = self.task_sender.clone();
         let snapshot = self.analysis_host.snapshot();
         self.thread_pool.execute(move || {
-            for id in ids {
+            for (idx, id) in ids.iter().enumerate() {
                 let db = snapshot.raw_database();
                 let _ = Cancelled::catch(AssertUnwindSafe(|| {
-                    hir::warmup_library(db, id);
+                    hir::warmup_library(db, *id);
                 }));
+
+                let done = idx + 1;
+                let percentage = (done as f64 / total as f64 * 100.0) as u32;
+                task_sender
+                    .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                        token: token.clone(),
+                        title: String::new(),
+                        message: Some(format!("Indexed {done}/{total} libraries")),
+                        percentage: Some(percentage),
+                        state: ProgressState::Report,
+                    }))
+                    .ok();
             }
+
+            task_sender
+                .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                    token,
+                    title: String::new(),
+                    message: Some("Indexing complete".to_string()),
+                    percentage: Some(100),
+                    state: ProgressState::End,
+                }))
+                .ok();
         });
     }
 
@@ -436,14 +490,57 @@ impl GlobalState {
                 self.process_changes();
             }
             vfs::loader::Message::Progress {
+                n_total,
                 n_done,
                 config_version,
                 ..
             } => {
-                if n_done == vfs::loader::LoadingProgress::Finished
-                    && config_version == self.vfs_config_version
-                {
-                    self.task_sender.send(BackgroundTaskEvent::VfsLoaded).ok();
+                if config_version != self.vfs_config_version {
+                    return;
+                }
+
+                let token = format!("scan-{config_version}");
+                match n_done {
+                    vfs::loader::LoadingProgress::Started => {
+                        self.scan_config_version = Some(config_version);
+                        self.report_progress(ProgressEvent {
+                            token,
+                            title: "Scanning workspace files".to_string(),
+                            message: None,
+                            percentage: Some(0),
+                            state: ProgressState::Begin,
+                        });
+                    }
+                    vfs::loader::LoadingProgress::Progress(done) => {
+                        if self.scan_config_version != Some(config_version) {
+                            return;
+                        }
+                        let percentage = if n_total == 0 {
+                            0
+                        } else {
+                            (done as f64 / n_total as f64 * 100.0) as u32
+                        };
+                        self.report_progress(ProgressEvent {
+                            token,
+                            title: String::new(),
+                            message: Some(format!("{done}/{n_total} directories")),
+                            percentage: Some(percentage),
+                            state: ProgressState::Report,
+                        });
+                    }
+                    vfs::loader::LoadingProgress::Finished => {
+                        if self.scan_config_version == Some(config_version) {
+                            self.report_progress(ProgressEvent {
+                                token,
+                                title: String::new(),
+                                message: Some("Scan complete".to_string()),
+                                percentage: Some(100),
+                                state: ProgressState::End,
+                            });
+                            self.scan_config_version = None;
+                        }
+                        self.task_sender.send(BackgroundTaskEvent::VfsLoaded).ok();
+                    }
                 }
             }
         }

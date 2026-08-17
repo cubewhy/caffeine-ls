@@ -96,6 +96,10 @@ pub struct GlobalState {
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
     pub(crate) vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
     pub(crate) vfs_config_version: u32,
+    /// Tracks the loader config version whose VFS scan progress is currently
+    /// being reported to the client, so stale `Message::Progress` updates from
+    /// a previous (reload) config are ignored.
+    pub(crate) scan_config_version: Option<u32>,
     /// Partitions the vfs into source roots. `None` until a workspace has been loaded.
     pub(crate) file_set_config: Option<vfs::file_set::FileSetConfig>,
     /// Gitignore-aware matchers for the loaded source roots, used to filter
@@ -135,6 +139,7 @@ impl GlobalState {
             loader,
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
+            scan_config_version: None,
             file_set_config: None,
             source_root_matchers: Vec::new(),
         }

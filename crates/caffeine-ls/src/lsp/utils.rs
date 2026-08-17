@@ -98,6 +98,17 @@ impl GlobalState {
 
     /// Helper to translate internal ProgressEvent into LSP $/progress notifications
     pub(crate) fn report_progress(&self, event: ProgressEvent) {
+        if !self
+            .config
+            .client_capabilities
+            .window
+            .as_ref()
+            .and_then(|w| w.work_done_progress)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         let token = ProgressToken::String(event.token.clone());
 
         let work_done = match event.state {
