@@ -8,9 +8,10 @@ publish = false
 vfs.workspace = true
 
 anyhow.workspace = true
+crossbeam-channel.workspace = true
 quick-xml = { version = "0.41.0", features = ["serialize"] }
 rustc-hash.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 smol_str.workspace = true
 tempfile = "3.27.0"

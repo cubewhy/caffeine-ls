@@ -28,10 +28,16 @@ impl BuildSystem for IdeaBuildSystem {
         false
     }
 
+    fn support_logging(&self) -> bool {
+        false
+    }
+
     fn sync(
         &self,
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
+        _log_file: Option<&std::path::Path>,
+        _on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
         tracing::info!(
             "Starting semantic sync for IntelliJ IDEA project layout at: {}",

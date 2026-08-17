@@ -1,7 +1,7 @@
 use crate::gradle::model::{GradleClasspathEntry, GradleWorkspace};
 use crate::{
     ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    WorkspaceGraph,
+    SyncError, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -15,6 +15,8 @@ use vfs::AbsPathBuf;
 pub fn import_gradle_workspace(
     workspace_root: &Path,
     java_home: &Path,
+    log_file: Option<&Path>,
+    on_output: &mut (dyn FnMut(String) + Send),
 ) -> anyhow::Result<GradleWorkspace> {
     let gradlew_path = if cfg!(windows) {
         workspace_root.join("gradlew.bat")
@@ -34,38 +36,45 @@ pub fn import_gradle_workspace(
     init_script.write_all(selected_script.as_bytes())?;
     init_script.flush()?;
 
-    let output = Command::new(&gradle_cmd)
+    let mut command = Command::new(&gradle_cmd);
+    command
         .env("JAVA_HOME", java_home)
         .current_dir(workspace_root)
         .arg("--init-script")
         .arg(init_script.path())
-        .arg("exportWorkspaceModel")
-        .output()?;
+        .arg("exportWorkspaceModel");
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Gradle execution failed:\n{}", stderr);
+    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+
+    if !outcome.status.success() {
+        return Err(SyncError {
+            message: format!(
+                "Gradle execution failed (exit code {})",
+                outcome.status.code().unwrap_or(-1)
+            ),
+            tail: outcome.tail,
+        }
+        .into());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let begin_marker = "WORKSPACE_MODEL_BEGIN";
-    let end_marker = "WORKSPACE_MODEL_END";
+    if outcome.model_truncated {
+        return Err(SyncError {
+            message: "Gradle workspace model JSON exceeded the size limit".to_string(),
+            tail: outcome.tail,
+        }
+        .into());
+    }
 
-    let json_start = stdout
-        .find(begin_marker)
-        .map(|idx| idx + begin_marker.len());
-    let json_end = stdout.find(end_marker);
-
-    match (json_start, json_end) {
-        (Some(start), Some(end)) if start < end => {
-            let json_str = stdout[start..end].trim();
-            let workspace: GradleWorkspace = serde_json::from_str(json_str)?;
+    match outcome.model_json {
+        Some(json_str) => {
+            let workspace: GradleWorkspace = serde_json::from_str(json_str.trim())?;
             Ok(workspace)
         }
-        _ => {
-            tracing::error!("Raw Gradle Output:\n{}", stdout);
-            anyhow::bail!("Failed to locate structural JSON markers in Gradle output.");
+        None => Err(SyncError {
+            message: "Failed to locate structural JSON markers in Gradle output.".to_string(),
+            tail: outcome.tail,
         }
+        .into()),
     }
 }
 

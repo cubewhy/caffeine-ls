@@ -21,8 +21,19 @@ impl BuildSystem for GradleBuildSystem {
             || workspace_root.join("settings.gradle").exists()
     }
 
-    fn sync(&self, workspace_root: &Path, java_home: &Path) -> anyhow::Result<WorkspaceGraph> {
-        let gradle_json = runner::import_gradle_workspace(workspace_root, java_home)?;
+    fn support_logging(&self) -> bool {
+        true
+    }
+
+    fn sync(
+        &self,
+        workspace_root: &Path,
+        java_home: &Path,
+        log_file: Option<&Path>,
+        on_output: &mut (dyn FnMut(String) + Send),
+    ) -> anyhow::Result<WorkspaceGraph> {
+        let gradle_json =
+            runner::import_gradle_workspace(workspace_root, java_home, log_file, on_output)?;
         let graph = build_graph_from_json(gradle_json);
 
         Ok(graph)

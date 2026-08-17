@@ -35,6 +35,10 @@ pub enum BackgroundTaskEvent {
         root: AbsPathBuf,
         graph: WorkspaceGraph,
     },
+    SyncFailed {
+        message: String,
+        log_file: Option<std::path::PathBuf>,
+    },
     Progress(ProgressEvent),
     VfsLoaded,
     AsyncRequestCompleted {
@@ -75,6 +79,9 @@ pub(crate) enum OutgoingRequest {
     },
     CreateProgress {
         token: String,
+    },
+    OpenBuildToolLog {
+        log_file: std::path::PathBuf,
     },
 }
 
@@ -268,6 +275,14 @@ impl GlobalState {
                     return;
                 }
                 self.handle_select_build_system_response(resp, root, systems);
+            }
+
+            OutgoingRequest::OpenBuildToolLog { log_file } => {
+                if let Some(err) = &resp.error {
+                    tracing::error!(?resp.id, "Client returned error response: {:?}", err);
+                    return;
+                }
+                self.handle_open_build_tool_log_response(resp, log_file);
             }
 
             OutgoingRequest::Generic(handler) => {

@@ -1,10 +1,32 @@
+use std::{
+    collections::VecDeque,
+    fmt,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    process::{Command, ExitStatus, Stdio},
+};
+
 use serde::Serialize;
 
 use crate::{
     EclipseBuildSystem, GradleBuildSystem, IdeaBuildSystem, MavenBuildSystem,
     workspace::WorkspaceGraph,
 };
-use std::path::Path;
+
+/// Marker lines delimiting the structural workspace model JSON printed by the
+/// build tool init scripts.
+pub const WORKSPACE_MODEL_BEGIN: &str = "WORKSPACE_MODEL_BEGIN";
+pub const WORKSPACE_MODEL_END: &str = "WORKSPACE_MODEL_END";
+
+/// Maximum number of tail lines kept in memory for error messages. The full
+/// output is streamed to a log file instead.
+const TAIL_MAX_LINES: usize = 20;
+
+/// Hard cap on the in-memory model JSON size. Realistic workspace models are
+/// far smaller; anything larger is treated as a failure rather than risking
+/// unbounded memory usage.
+const MODEL_JSON_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Serialize)]
 pub enum BuildSystemType {
@@ -34,6 +56,163 @@ impl BuildSystemType {
     }
 }
 
+/// The result of streaming a build tool to completion. No unbounded output is
+/// retained: lines are written straight to the log file, and only a bounded
+/// tail plus the model JSON are kept in memory.
+pub struct CommandOutcome {
+    pub status: ExitStatus,
+    /// Bounded tail of the merged stdout/stderr output, for error messages.
+    pub tail: String,
+    /// The workspace model JSON captured between the `WORKSPACE_MODEL_BEGIN`
+    /// and `WORKSPACE_MODEL_END` markers (stdout only), if found.
+    pub model_json: Option<String>,
+    /// Whether the model JSON exceeded [`MODEL_JSON_MAX_BYTES`] and was
+    /// truncated; callers should treat this as a sync failure.
+    pub model_truncated: bool,
+}
+
+/// Runs `command` with stdout/stderr piped, streaming each merged line to
+/// `log_file` and invoking `on_output` for every line as it arrives (serially,
+/// from a single thread).
+pub fn run_command_streaming(
+    command: &mut Command,
+    log_file: Option<&Path>,
+    on_output: &mut (dyn FnMut(String) + Send),
+) -> anyhow::Result<CommandOutcome> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout = child.stdout.take().expect("stdout was piped for streaming");
+    let stderr = child.stderr.take().expect("stderr was piped for streaming");
+
+    let (stdout_tx, stdout_rx) = crossbeam_channel::bounded::<String>(128);
+    let (stderr_tx, stderr_rx) = crossbeam_channel::bounded::<String>(128);
+
+    let stdout_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            let line = line.unwrap_or_default();
+            if stdout_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            let line = line.unwrap_or_default();
+            if stderr_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut writer: Option<std::io::BufWriter<File>> = match log_file {
+        Some(log_file) => {
+            if let Some(parent) = log_file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            Some(std::io::BufWriter::new(File::create(log_file)?))
+        }
+        None => None,
+    };
+
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(TAIL_MAX_LINES);
+    let mut model_json: Option<String> = None;
+    let mut capturing_model = false;
+    let mut model_truncated = false;
+
+    let mut stdout_done = false;
+    let mut stderr_done = false;
+
+    while !(stdout_done && stderr_done) {
+        crossbeam_channel::select! {
+            recv(stdout_rx) -> line => match line {
+                Ok(line) => {
+                    if let Some(writer) = writer.as_mut() {
+                        writer.write_all(line.as_bytes())?;
+                        writer.write_all(b"\n")?;
+                    }
+                    tail.push_back(line.clone());
+                    if tail.len() > TAIL_MAX_LINES {
+                        tail.pop_front();
+                    }
+                    on_output(line.clone());
+
+                    // Model markers are printed on stdout only. The marker
+                    // lines themselves are excluded from the captured JSON.
+                    if capturing_model {
+                        if line.contains(WORKSPACE_MODEL_END) {
+                            capturing_model = false;
+                        } else if !model_truncated {
+                            let buf = model_json
+                                .as_mut()
+                                .expect("model capture buffer exists while capturing");
+                            buf.push_str(&line);
+                            buf.push('\n');
+                            if buf.len() > MODEL_JSON_MAX_BYTES {
+                                model_truncated = true;
+                            }
+                        }
+                    } else if line.contains(WORKSPACE_MODEL_BEGIN) {
+                        capturing_model = true;
+                        model_json = Some(String::new());
+                    }
+                }
+                Err(_) => stdout_done = true,
+            },
+            recv(stderr_rx) -> line => match line {
+                Ok(line) => {
+                    if let Some(writer) = writer.as_mut() {
+                        writer.write_all(line.as_bytes())?;
+                        writer.write_all(b"\n")?;
+                    }
+                    tail.push_back(line.clone());
+                    if tail.len() > TAIL_MAX_LINES {
+                        tail.pop_front();
+                    }
+                    on_output(line);
+                }
+                Err(_) => stderr_done = true,
+            },
+        }
+    }
+
+    if let Some(writer) = writer.as_mut() {
+        writer.flush()?;
+    }
+    drop(writer);
+    stdout_thread.join().ok();
+    stderr_thread.join().ok();
+    let status = child.wait()?;
+
+    Ok(CommandOutcome {
+        status,
+        tail: tail.into_iter().collect::<Vec<_>>().join("\n"),
+        model_json,
+        model_truncated,
+    })
+}
+
+/// A build tool failure carrying a bounded tail of the tool's output so the
+/// caller can include a snippet in error messages. The full log lives on disk.
+#[derive(Debug)]
+pub struct SyncError {
+    pub message: String,
+    pub tail: String,
+}
+
+impl fmt::Display for SyncError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for SyncError {}
+
 /// Represents a tool that can resolve the workspace structure.
 pub trait BuildSystem: Send + Sync {
     /// The name of the build system (e.g., "Gradle", "Maven")
@@ -43,8 +222,20 @@ pub trait BuildSystem: Send + Sync {
     /// (e.g., by looking for build.gradle or pom.xml)
     fn is_applicable(&self, workspace_root: &Path) -> bool;
 
+    /// Whether this build system runs an external tool whose output can be
+    /// captured and logged.
+    fn support_logging(&self) -> bool;
+
     /// Executes the tool to build and return the workspace graph.
-    fn sync(&self, workspace_root: &Path, java_home: &Path) -> anyhow::Result<WorkspaceGraph>;
+    /// `on_output` is invoked for every line the build tool prints, and the
+    /// full (merged) output is streamed to `log_file` if provided.
+    fn sync(
+        &self,
+        workspace_root: &Path,
+        java_home: &Path,
+        log_file: Option<&Path>,
+        on_output: &mut (dyn FnMut(String) + Send),
+    ) -> anyhow::Result<WorkspaceGraph>;
 
     fn system_type(&self) -> BuildSystemType;
 }
@@ -73,5 +264,97 @@ pub fn probe_workspace_layout(root: &Path) -> ProbeResult {
         0 => ProbeResult::None,
         1 => ProbeResult::Single(detected_systems[0]),
         _ => ProbeResult::Ambiguous(detected_systems),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_streaming_merges_streams_and_extracts_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_file = dir.path().join("build-tool.log");
+
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(
+            "echo out-one; echo err-one 1>&2; \
+             echo WORKSPACE_MODEL_BEGIN; \
+             echo '{\"workspace_name\":\"fake\",\"projects\":[]}'; \
+             echo WORKSPACE_MODEL_END; \
+             echo out-two",
+        );
+
+        let mut received = Vec::new();
+        let outcome = run_command_streaming(&mut command, Some(&log_file), &mut |line| {
+            received.push(line)
+        })
+        .unwrap();
+
+        assert!(outcome.status.success());
+        assert!(!outcome.model_truncated);
+        assert_eq!(
+            outcome.model_json.as_deref(),
+            Some("{\"workspace_name\":\"fake\",\"projects\":[]}\n")
+        );
+        assert!(outcome.tail.contains("out-two"));
+
+        let written = std::fs::read_to_string(&log_file).unwrap();
+        for expected in [
+            "out-one",
+            "err-one",
+            "WORKSPACE_MODEL_BEGIN",
+            "WORKSPACE_MODEL_END",
+            "out-two",
+        ] {
+            assert!(written.contains(expected), "missing {expected} in log file");
+        }
+
+        // Cross-stream interleaving is timing dependent, so only the
+        // per-stream order is guaranteed; every line must arrive exactly once.
+        assert_eq!(received.len(), 6, "received: {received:?}");
+        for expected in [
+            "out-one",
+            "err-one",
+            "WORKSPACE_MODEL_BEGIN",
+            "{\"workspace_name\":\"fake\",\"projects\":[]}",
+            "WORKSPACE_MODEL_END",
+            "out-two",
+        ] {
+            assert!(
+                received.iter().any(|line| line == expected),
+                "missing {expected} in {received:?}"
+            );
+        }
+        assert!(
+            received.iter().position(|l| l == "out-one")
+                < received.iter().position(|l| l == "out-two")
+        );
+        assert!(
+            received.iter().position(|l| l == "WORKSPACE_MODEL_BEGIN")
+                < received
+                    .iter()
+                    .position(|l| l == "{\"workspace_name\":\"fake\",\"projects\":[]}")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_streaming_without_log_file_still_reports_lines() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("echo out-one; echo err-one 1>&2");
+
+        let mut received = Vec::new();
+        let outcome =
+            run_command_streaming(&mut command, None, &mut |line| received.push(line)).unwrap();
+
+        assert!(outcome.status.success());
+        assert_eq!(outcome.model_json, None);
+        assert_eq!(received.len(), 2, "received: {received:?}");
+        assert!(received.contains(&"out-one".to_string()));
+        assert!(received.contains(&"err-one".to_string()));
+        assert!(outcome.tail.contains("out-one"));
+        assert!(outcome.tail.contains("err-one"));
     }
 }

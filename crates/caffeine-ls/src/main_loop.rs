@@ -2,7 +2,7 @@ use std::{
     panic::AssertUnwindSafe,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use camino::Utf8PathBuf;
@@ -11,7 +11,7 @@ use hir::{LibraryId as HirLibraryId, LibraryKind};
 use ide_db::base_db::{FileChange, SourceRoot, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
-use project_model::ClasspathEntry;
+use project_model::{ClasspathEntry, SyncError};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashSet;
 use triomphe::Arc;
@@ -27,6 +27,15 @@ use crate::{
     },
     line_index::LineEndings,
 };
+
+const OPEN_BUILD_TOOL_LOG_ACTION: &str = "Open Build Tool Log";
+
+/// Minimum interval between consecutive progress bar flashes of build tool
+/// output lines.
+const BUILD_TOOL_FLASH_INTERVAL: Duration = Duration::from_millis(150);
+
+/// Maximum length of a build tool line flashed in the progress bar.
+const BUILD_TOOL_FLASH_MAX_LEN: usize = 200;
 
 pub fn main_loop(config: Config, connection: Connection) -> anyhow::Result<()> {
     tracing::info!("initial config: {:#?}", config);
@@ -142,6 +151,123 @@ impl GlobalState {
         }
     }
 
+    /// Handles the client's answer to the "Open Build Tool Log" action shown
+    /// after a failed sync, opening the saved log file in the editor.
+    pub(crate) fn handle_open_build_tool_log_response(
+        &mut self,
+        resp: lsp_server::Response,
+        log_file: PathBuf,
+    ) {
+        let Some(result_json) = resp.result else {
+            tracing::warn!("Build tool log dialog dismissed without choice.");
+            return;
+        };
+
+        let selected_item: Option<MessageActionItem> =
+            serde_json::from_value(result_json).unwrap_or_default();
+
+        let Some(item) = selected_item else {
+            tracing::warn!("User cancelled the build tool log prompt.");
+            return;
+        };
+
+        if item.title != OPEN_BUILD_TOOL_LOG_ACTION {
+            tracing::warn!(
+                "Client returned an unrecognized action title: '{}'",
+                item.title
+            );
+            return;
+        }
+
+        let Ok(uri) = Uri::from_file_path(&log_file) else {
+            tracing::error!(?log_file, "Failed to build URI for build tool log file");
+            return;
+        };
+
+        let show_document_supported = self
+            .config
+            .client_capabilities
+            .window
+            .as_ref()
+            .and_then(|w| w.show_document.as_ref())
+            .map(|caps| caps.support)
+            .unwrap_or(false);
+
+        if show_document_supported {
+            self.send_request::<ShowDocumentRequest>(
+                ShowDocumentParams {
+                    uri,
+                    external: None,
+                    take_focus: Some(true),
+                    selection: None,
+                },
+                OutgoingRequest::Generic(|_, _| {}),
+            );
+        } else {
+            self.show_message(
+                MessageType::Info,
+                format!("Build tool log saved to: {}", log_file.display()),
+            );
+        }
+    }
+
+    /// Called when a build tool backed workspace sync failed: offers the user
+    /// a button to open the streamed build tool log (only when the tool
+    /// produced output).
+    fn handle_sync_failed(&mut self, message: String, log_file: Option<PathBuf>) {
+        let log_file = match log_file {
+            Some(log_file) => {
+                let has_output = std::fs::metadata(&log_file)
+                    .map(|meta| meta.len() > 0)
+                    .unwrap_or(false);
+
+                if !has_output {
+                    let _ = std::fs::remove_file(&log_file);
+                    None
+                } else {
+                    Some(log_file)
+                }
+            }
+            None => None,
+        };
+
+        let Some(log_file) = log_file else {
+            self.show_message(MessageType::Error, message);
+            return;
+        };
+
+        let actions = vec![MessageActionItem {
+            title: OPEN_BUILD_TOOL_LOG_ACTION.to_string(),
+            properties: std::collections::HashMap::new(),
+        }];
+
+        self.show_message_request(
+            MessageType::Error,
+            message,
+            Some(actions),
+            OutgoingRequest::OpenBuildToolLog { log_file },
+        );
+    }
+
+    /// Path of the log file the build tool output is streamed into, living in
+    /// the cache dir's `logs` folder.
+    fn build_tool_log_path(
+        &self,
+        root: &AbsPathBuf,
+        system: project_model::BuildSystemType,
+    ) -> PathBuf {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        root.as_str().hash(&mut hasher);
+        let hash = hasher.finish();
+
+        self.config.get_cache_dir().join("logs").join(format!(
+            "build-tool-{}-{hash:x}.log",
+            system.name().to_lowercase()
+        ))
+    }
+
     fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
             BackgroundTaskEvent::ProbeWorkspace { root } => {
@@ -194,6 +320,11 @@ impl GlobalState {
                     return;
                 };
 
+                let log_file = system
+                    .get_executor()
+                    .support_logging()
+                    .then(|| self.build_tool_log_path(&root, system));
+
                 self.thread_pool.execute(move || {
                     let finish_progress = || {
                         task_sender
@@ -207,22 +338,131 @@ impl GlobalState {
                             .ok();
                     };
 
-                    match system.get_executor().sync(root.as_ref(), &java_home) {
+                    let system_name = system.name();
+                    let mut in_model = false;
+                    let mut last_flash: Option<Instant> = None;
+                    let mut pending_flash: Option<String> = None;
+
+                    let mut on_output = |line: String| {
+                        let is_marker = line.contains("WORKSPACE_MODEL_BEGIN")
+                            || line.contains("WORKSPACE_MODEL_END");
+
+                        if is_marker || in_model {
+                            tracing::debug!("[{system_name}] {line}");
+                        } else {
+                            tracing::info!("[{system_name}] {line}");
+                        }
+
+                        if line.contains("WORKSPACE_MODEL_BEGIN") {
+                            in_model = true;
+                        }
+                        if line.contains("WORKSPACE_MODEL_END") {
+                            in_model = false;
+                        }
+
+                        // Flash non-noise lines in the progress bar, throttled
+                        // to avoid flooding the client. The last pending line
+                        // is flushed once the sync finishes.
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || is_marker || in_model {
+                            return;
+                        }
+
+                        let message = if trimmed.chars().count() > BUILD_TOOL_FLASH_MAX_LEN {
+                            let mut capped: String =
+                                trimmed.chars().take(BUILD_TOOL_FLASH_MAX_LEN).collect();
+                            capped.push('…');
+                            capped
+                        } else {
+                            trimmed.to_string()
+                        };
+                        pending_flash = Some(message.clone());
+
+                        let now = Instant::now();
+                        if let Some(last) = last_flash
+                            && now.duration_since(last) < BUILD_TOOL_FLASH_INTERVAL
+                        {
+                            return;
+                        }
+                        last_flash = Some(now);
+
+                        task_sender
+                            .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                                token: progress_token.clone(),
+                                title: String::new(),
+                                message: Some(message),
+                                percentage: None,
+                                state: ProgressState::Report,
+                            }))
+                            .ok();
+                        pending_flash = None;
+                    };
+
+                    let sync_result = system.get_executor().sync(
+                        root.as_ref(),
+                        &java_home,
+                        log_file.as_deref(),
+                        &mut on_output,
+                    );
+
+                    let mut flush_pending_flash = || {
+                        if let Some(message) = pending_flash.take() {
+                            task_sender
+                                .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                                    token: progress_token.clone(),
+                                    title: String::new(),
+                                    message: Some(message),
+                                    percentage: None,
+                                    state: ProgressState::Report,
+                                }))
+                                .ok();
+                        }
+                    };
+
+                    match sync_result {
                         Ok(graph) => {
+                            flush_pending_flash();
                             finish_progress();
+                            if let Some(log_file) = &log_file {
+                                let _ = std::fs::remove_file(log_file);
+                            }
                             task_sender
                                 .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
                                 .ok();
                         }
                         Err(err) => {
                             tracing::error!(?root, "Metadata compilation failure: {}", err);
+                            flush_pending_flash();
                             finish_progress();
-                            task_sender
-                                .send(BackgroundTaskEvent::NotifyUser {
-                                    typ: MessageType::Error,
-                                    message: format!("Failed to receive project metadata: {err}"),
-                                })
-                                .ok();
+
+                            match err.downcast::<SyncError>() {
+                                Ok(sync_err) => {
+                                    let message = if sync_err.tail.trim().is_empty() {
+                                        format!("Failed to receive project metadata: {sync_err}")
+                                    } else {
+                                        format!(
+                                            "Failed to receive project metadata: {sync_err}\n\n{}",
+                                            sync_err.tail
+                                        )
+                                    };
+                                    task_sender
+                                        .send(BackgroundTaskEvent::SyncFailed { message, log_file })
+                                        .ok();
+                                }
+                                Err(err) => {
+                                    if let Some(log_file) = &log_file {
+                                        let _ = std::fs::remove_file(log_file);
+                                    }
+                                    task_sender
+                                        .send(BackgroundTaskEvent::NotifyUser {
+                                            typ: MessageType::Error,
+                                            message: format!(
+                                                "Failed to receive project metadata: {err}"
+                                            ),
+                                        })
+                                        .ok();
+                                }
+                            }
                         }
                     }
                 });
@@ -232,6 +472,10 @@ impl GlobalState {
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
 
                 self.apply_loaded_graph(graph, root);
+            }
+
+            BackgroundTaskEvent::SyncFailed { message, log_file } => {
+                self.handle_sync_failed(message, log_file);
             }
 
             BackgroundTaskEvent::Progress(progress) => {

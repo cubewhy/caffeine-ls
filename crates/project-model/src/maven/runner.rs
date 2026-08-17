@@ -1,7 +1,7 @@
 use crate::maven::model::{MavenClasspathEntry, MavenWorkspace};
 use crate::{
     ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    WorkspaceGraph,
+    SyncError, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -15,6 +15,8 @@ use vfs::AbsPathBuf;
 pub fn import_maven_workspace(
     workspace_root: &Path,
     java_exec: &Path,
+    log_file: Option<&Path>,
+    on_output: &mut (dyn FnMut(String) + Send),
 ) -> anyhow::Result<MavenWorkspace> {
     let mvnw_path = if cfg!(windows) {
         workspace_root.join("mvnw.cmd")
@@ -40,40 +42,48 @@ pub fn import_maven_workspace(
 
     tracing::info!("Executing Maven workspace structure exploration pipeline");
 
-    let output = Command::new(&maven_cmd)
+    let mut command = Command::new(&maven_cmd);
+    command
         .env("JAVA_HOME", java_exec)
         .current_dir(workspace_root)
         .arg("test-compile")
         .arg("org.codehaus.gmavenplus:gmavenplus-plugin:3.0.0:execute")
         .arg(format!("-Dgmavenplus.script={}", inline_bootstrapper))
         .arg("-DskipTests=true")
-        .arg("-Dmaven.test.skip=false")
-        .output()?;
+        .arg("-Dmaven.test.skip=false");
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Maven build graph extraction failed:\n{}", stderr);
+    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+
+    if !outcome.status.success() {
+        return Err(SyncError {
+            message: format!(
+                "Maven build graph extraction failed (exit code {})",
+                outcome.status.code().unwrap_or(-1)
+            ),
+            tail: outcome.tail,
+        }
+        .into());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let begin_marker = "WORKSPACE_MODEL_BEGIN";
-    let end_marker = "WORKSPACE_MODEL_END";
+    if outcome.model_truncated {
+        return Err(SyncError {
+            message: "Maven workspace model JSON exceeded the size limit".to_string(),
+            tail: outcome.tail,
+        }
+        .into());
+    }
 
-    let json_start = stdout
-        .find(begin_marker)
-        .map(|idx| idx + begin_marker.len());
-    let json_end = stdout.find(end_marker);
-
-    match (json_start, json_end) {
-        (Some(start), Some(end)) if start < end => {
-            let json_str = stdout[start..end].trim();
-            let workspace: MavenWorkspace = serde_json::from_str(json_str)?;
+    match outcome.model_json {
+        Some(json_str) => {
+            let workspace: MavenWorkspace = serde_json::from_str(json_str.trim())?;
             Ok(workspace)
         }
-        _ => {
-            tracing::error!("Raw Maven Extraction Output:\n{}", stdout);
-            anyhow::bail!("Failed to locate structural JSON boundaries within Maven outputs.");
+        None => Err(SyncError {
+            message: "Failed to locate structural JSON boundaries within Maven outputs."
+                .to_string(),
+            tail: outcome.tail,
         }
+        .into()),
     }
 }
 

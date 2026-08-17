@@ -14,10 +14,16 @@ impl BuildSystem for EclipseBuildSystem {
         workspace_root.join(".project").exists() && workspace_root.join(".classpath").exists()
     }
 
+    fn support_logging(&self) -> bool {
+        false
+    }
+
     fn sync(
         &self,
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
+        _log_file: Option<&std::path::Path>,
+        _on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
         tracing::info!(
             "Starting workspace sync for Eclipse project at: {}",

@@ -15,12 +15,19 @@ impl BuildSystem for MavenBuildSystem {
         workspace_root.join("pom.xml").exists()
     }
 
+    fn support_logging(&self) -> bool {
+        true
+    }
+
     fn sync(
         &self,
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
+        log_file: Option<&std::path::Path>,
+        on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<crate::WorkspaceGraph> {
-        let maven_workspace = runner::import_maven_workspace(workspace_root, java_home)?;
+        let maven_workspace =
+            runner::import_maven_workspace(workspace_root, java_home, log_file, on_output)?;
         let workspace_graph = runner::build_graph_from_maven_json(maven_workspace);
 
         tracing::info!(
