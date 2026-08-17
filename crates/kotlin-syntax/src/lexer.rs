@@ -1021,7 +1021,7 @@ impl LexicalError {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexicalErrorKind {
     UnterminatedBlockComment,
     UnterminatedString,
@@ -1037,6 +1037,41 @@ pub enum LexicalErrorKind {
     IllegalUnderscore,     // For trailing underscores or underscores next to . or e
     MissingExponentDigits, // For 1e or 1e+
     MissingNumericDigits,  // For 0x or 0b without digits
+}
+
+impl LexicalErrorKind {
+    pub fn desc(&self) -> String {
+        match self {
+            LexicalErrorKind::UnterminatedBlockComment => "unterminated block comment".to_string(),
+            LexicalErrorKind::UnterminatedString => "unterminated string literal".to_string(),
+            LexicalErrorKind::EmptyCharLiteral => "empty character literal".to_string(),
+            LexicalErrorKind::UnterminatedCharLiteral => {
+                "unterminated character literal".to_string()
+            }
+            LexicalErrorKind::TooManyCharsInCharLiteral => {
+                "too many characters in character literal".to_string()
+            }
+            LexicalErrorKind::UnsupportedEscapeSequence => {
+                "unsupported escape sequence".to_string()
+            }
+            LexicalErrorKind::EmptyIdentifier => "empty identifier".to_string(),
+            LexicalErrorKind::UnterminatedIdentifier => "unterminated identifier".to_string(),
+            LexicalErrorKind::UnexpectedChar(c) => format!("unexpected character '{c}'"),
+            LexicalErrorKind::LeadingZerosNotAllowed => {
+                "leading zeros are not allowed in integer literals".to_string()
+            }
+            LexicalErrorKind::WrongLongSuffixCase => {
+                "wrong case for 'L' suffix in long literal".to_string()
+            }
+            LexicalErrorKind::IllegalUnderscore => {
+                "illegal underscore in numeric literal".to_string()
+            }
+            LexicalErrorKind::MissingExponentDigits => "missing digits after exponent".to_string(),
+            LexicalErrorKind::MissingNumericDigits => {
+                "missing digits in numeric literal".to_string()
+            }
+        }
+    }
 }
 
 pub fn lex(src: &str) -> (Vec<Token<'_>>, Vec<LexicalError>) {

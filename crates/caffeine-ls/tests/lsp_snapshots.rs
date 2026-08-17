@@ -258,6 +258,22 @@ lsp_test!(
 );
 
 lsp_test!(
+    test_kotlin_syntax_diagnostics,
+    r#"
+    //- /src/Main.kt
+    fun main() {
+        val s = "unterminated
+    }
+    "#,
+    |lsp| {
+        lsp.open_document("/src/Main.kt");
+        let diagnostics = lsp.pull_document_diagnostics("/src/Main.kt");
+
+        insta::assert_json_snapshot!("kotlin_syntax_diagnostics", diagnostics);
+    }
+);
+
+lsp_test!(
     test_incremental_break_and_fix,
     r#"
     //- /src/Main.java

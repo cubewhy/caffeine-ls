@@ -140,6 +140,16 @@ impl SyntaxKind {
             Self::WHITESPACE | Self::LINE_COMMENT | Self::BLOCK_COMMENT | Self::KDOC
         )
     }
+
+    pub fn to_quoted_string(self) -> String {
+        let text = format!("{self:?}");
+
+        if text.chars().any(|c| c.is_ascii_alphanumeric()) {
+            text
+        } else {
+            format!("'{text}'")
+        }
+    }
 }
 
 impl From<SyntaxKind> for rowan::SyntaxKind {

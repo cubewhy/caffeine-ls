@@ -7,6 +7,7 @@ use crate::{
     SyntaxKind::{self, *},
     Token,
     parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
+    syntax_error::SyntaxError,
     syntax_kind::ContextualKeyword,
 };
 
@@ -31,12 +32,21 @@ impl rowan::Language for Lang {
     }
 }
 
-pub struct Parse {
+pub struct Parse<T = ()> {
     green_node: GreenNode,
-    errors: Vec<ParseError>,
+    errors: Vec<SyntaxError>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl Parse {
+impl<T> Parse<T> {
+    pub(crate) fn new(green_node: GreenNode, errors: Vec<SyntaxError>) -> Self {
+        Self {
+            green_node,
+            errors,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
     pub fn into_syntax_node(self) -> rowan::SyntaxNode<Lang> {
         rowan::SyntaxNode::new_root(self.green_node)
     }
@@ -45,8 +55,14 @@ impl Parse {
         self.green_node
     }
 
-    pub fn errors(&self) -> &[ParseError] {
+    pub fn errors(&self) -> &[SyntaxError] {
         &self.errors
+    }
+}
+
+impl<T> From<Parse<T>> for (GreenNode, Vec<SyntaxError>) {
+    fn from(val: Parse<T>) -> Self {
+        (val.green_node, val.errors)
     }
 }
 
@@ -90,10 +106,10 @@ impl<'a> Parser<'a> {
 
         let green_node = Sink::new(self.source.into_inner(), self.events, cache).finish();
 
-        Parse {
+        Parse::new(
             green_node,
-            errors: self.errors,
-        }
+            self.errors.into_iter().map(Into::into).collect(),
+        )
     }
 
     pub fn parse(self) -> Parse {
@@ -323,7 +339,7 @@ impl ParseError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParseErrorKind {
     ExpectedToken {
         expected: Vec<SyntaxKind>,
@@ -337,7 +353,40 @@ pub enum ParseErrorKind {
     Message(&'static str),
 }
 
-#[derive(Debug, Clone, Display)]
+impl ParseErrorKind {
+    pub fn desc(&self) -> String {
+        match self {
+            ParseErrorKind::ExpectedToken { expected, found } => {
+                let expected_str = expected
+                    .iter()
+                    .map(|k| k.to_quoted_string())
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+
+                let found_str = match found {
+                    Some(f) => f.to_quoted_string(),
+                    None => "end of file".to_string(),
+                };
+
+                format!("expected {expected_str}, found {found_str}")
+            }
+            ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
+                let found_str = match found {
+                    Some(f) => f.to_quoted_string(),
+                    None => "end of file".to_string(),
+                };
+
+                format!("expected keyword '{}', found {found_str}", keyword.as_str())
+            }
+            ParseErrorKind::ExpectedConstruct(construct) => {
+                format!("expected {construct}")
+            }
+            ParseErrorKind::Message(msg) => msg.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Display, PartialEq, Eq)]
 pub enum ExpectedConstruct {
     #[display("a declaration (e.g., class, variable, or method)")]
     Declaration,

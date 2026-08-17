@@ -1011,6 +1011,7 @@ version = "0.0.0"
 dependencies = [
  "ide-db",
  "ra_ap_vfs",
+ "rowan",
  "syntax",
  "tracing",
 ]

@@ -257,7 +257,7 @@ impl LspHarness {
 
         let language_id = match path.extension().and_then(|ext| ext.to_str()) {
             Some("java") => "java",
-            Some("kotlin") => "kotlin",
+            Some("kotlin") | Some("kt") => "kotlin",
             _ => "plaintext",
         };
 
