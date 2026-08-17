@@ -98,6 +98,9 @@ pub struct GlobalState {
     pub(crate) vfs_config_version: u32,
     /// Partitions the vfs into source roots. `None` until a workspace has been loaded.
     pub(crate) file_set_config: Option<vfs::file_set::FileSetConfig>,
+    /// Gitignore-aware matchers for the loaded source roots, used to filter
+    /// out ignored files delivered by the loader.
+    pub(crate) source_root_matchers: Vec<(AbsPathBuf, ignore::IncrementalIgnore)>,
 }
 
 impl GlobalState {
@@ -133,6 +136,7 @@ impl GlobalState {
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
             file_set_config: None,
+            source_root_matchers: Vec::new(),
         }
     }
 

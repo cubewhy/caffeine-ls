@@ -29,6 +29,7 @@ indexmap = "2.14.0"
 indicatif = "0.18.4"
 indoc = "2.0"
 insta = "1.47.2"
+ignore = "0.4"
 jimage-rs = "0.0.4"
 lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
 line-index = "0.1.2"

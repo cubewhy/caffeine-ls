@@ -17,6 +17,7 @@ cfg-if = "1.0"
 clap = { workspace = true, features = ["derive"] }
 crossbeam-channel.workspace = true
 directories = "6.0"
+ignore.workspace = true
 itertools = "0.14.0"
 jimage-rs.workspace = true
 lsp-server.workspace = true
@@ -35,6 +36,7 @@ threadpool = "1.8.1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 triomphe.workspace = true
+walkdir.workspace = true
 zip.workspace = true
 
 hir.workspace = true
@@ -48,6 +50,7 @@ vfs-notify.workspace = true
 [dev-dependencies]
 insta = { workspace = true, features = ["json"] }
 lsp-test.workspace = true
+tempfile = "3.27.0"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 jemallocator = {

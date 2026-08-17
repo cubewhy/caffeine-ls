@@ -1,5 +1,6 @@
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 
+use camino::Utf8PathBuf;
 use crossbeam_channel::Receiver;
 use ide_db::base_db::{FileChange, SourceRoot};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
@@ -9,6 +10,7 @@ use lsp_types::{
     DidOpenTextDocumentNotification, DidSaveTextDocumentNotification, DocumentDiagnosticRequest,
     ExitNotification, InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
 };
+use rustc_hash::FxHashSet;
 use triomphe::Arc;
 use vfs::AbsPathBuf;
 
@@ -22,19 +24,6 @@ use crate::{
     },
     line_index::LineEndings,
 };
-
-/// Directories that are never interesting to load into the vfs, relative to a
-/// workspace folder.
-const EXCLUDED_DIRECTORIES: &[&str] = &[
-    "target",
-    "build",
-    "out",
-    "bin",
-    ".gradle",
-    ".idea",
-    ".git",
-    "node_modules",
-];
 
 pub fn main_loop(config: Config, connection: Connection) -> anyhow::Result<()> {
     tracing::info!("initial config: {:#?}", config);
@@ -354,18 +343,23 @@ impl GlobalState {
         );
         let file_set_config = builder.build();
 
-        // Load and watch the source roots declared by the build system.
+        // Load and watch the source roots declared by the build system,
+        // skipping paths that gitignore rules exclude.
         self.vfs_config_version += 1;
+        let mut matchers = Vec::new();
         let entries: Vec<vfs::loader::Entry> = source_roots
             .iter()
             .map(|source_root| {
+                let mut builder = ignore::WalkBuilder::new(source_root);
+                builder.standard_filters(true).require_git(false);
+                if let Some(matcher) = builder.build_matchers().into_iter().next() {
+                    matchers.push((source_root.clone(), matcher));
+                }
+
                 vfs::loader::Entry::Directories(vfs::loader::Directories {
                     extensions: vec!["java".into(), "kt".into(), "kts".into()],
                     include: vec![source_root.clone()],
-                    exclude: EXCLUDED_DIRECTORIES
-                        .iter()
-                        .map(|dir| source_root.join(dir))
-                        .collect(),
+                    exclude: collect_ignored_paths(source_root),
                 })
             })
             .collect();
@@ -375,6 +369,7 @@ impl GlobalState {
             load: entries,
             watch,
         });
+        self.source_root_matchers = matchers;
 
         self.file_set_config = Some(file_set_config);
         self.apply_source_roots();
@@ -407,6 +402,19 @@ impl GlobalState {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
+                        // Drop files that gitignore rules exclude; the loader's
+                        // exclude list only covers directories.
+                        let ignored = self
+                            .source_root_matchers
+                            .iter_mut()
+                            .find_map(|(root, matcher)| {
+                                let rel = path.as_path().strip_prefix(root.as_path())?;
+                                Some(matcher.matched(rel, false).is_ignore())
+                            })
+                            .unwrap_or(false);
+                        if ignored {
+                            continue;
+                        }
                         vfs.0.set_file_contents(path.into(), contents);
                     }
                 }
@@ -464,5 +472,95 @@ impl GlobalState {
         }
 
         self.analysis_host.apply_change(change);
+    }
+}
+
+/// Returns the paths under `root` that gitignore (and hidden-file) rules
+/// exclude. The vfs loader uses these to skip them while walking.
+fn collect_ignored_paths(root: &AbsPathBuf) -> Vec<AbsPathBuf> {
+    let allowed: FxHashSet<PathBuf> = ignore::WalkBuilder::new(root)
+        .standard_filters(true)
+        .require_git(false)
+        .build()
+        .flatten()
+        .map(|entry| entry.into_path())
+        .collect();
+
+    fn to_abs_path(path: PathBuf) -> Option<AbsPathBuf> {
+        Utf8PathBuf::from_path_buf(path)
+            .ok()
+            .and_then(|path| AbsPathBuf::try_from(path).ok())
+    }
+
+    let mut ignored_dirs: Vec<AbsPathBuf> = Vec::new();
+    let mut ignored_files: Vec<AbsPathBuf> = Vec::new();
+
+    // Ignored directories are pruned from the walkdir iteration, so record
+    // them in the filter itself.
+    let ignored_dirs_cell = std::cell::RefCell::new(&mut ignored_dirs);
+    let walk = walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() > 0 && entry.file_type().is_dir() && !allowed.contains(entry.path()) {
+                if let Some(abs_path) = to_abs_path(entry.path().to_path_buf()) {
+                    ignored_dirs_cell.borrow_mut().push(abs_path);
+                }
+                return false;
+            }
+            true
+        });
+
+    for entry in walk.flatten() {
+        if entry.depth() == 0 || allowed.contains(entry.path()) {
+            continue;
+        }
+        if let Some(abs_path) = to_abs_path(entry.into_path()) {
+            ignored_files.push(abs_path);
+        }
+    }
+
+    ignored_dirs.extend(ignored_files);
+    ignored_dirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_ignored_paths;
+    use vfs::AbsPathBuf;
+
+    #[test]
+    fn collect_ignored_paths_respects_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::create_dir_all(dir.path().join("ignored_dir")).unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join(".gitignore"),
+            "target/\nignored_dir/\n*.log\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("ignored_dir/a.java"), "").unwrap();
+        std::fs::write(dir.path().join("src/Main.java"), "").unwrap();
+        std::fs::write(dir.path().join("src/debug.log"), "").unwrap();
+
+        let root = AbsPathBuf::assert_utf8(dir.path().to_path_buf());
+        let ignored = collect_ignored_paths(&root);
+
+        let mut ignored: Vec<String> = ignored
+            .iter()
+            .map(|path| path.as_str().to_owned())
+            .collect();
+        ignored.sort();
+
+        let mut expected = vec![
+            root.join(".gitignore").as_str().to_owned(),
+            root.join("ignored_dir").as_str().to_owned(),
+            root.join("src/debug.log").as_str().to_owned(),
+            root.join("target").as_str().to_owned(),
+        ];
+        expected.sort();
+
+        assert_eq!(ignored, expected);
     }
 }
