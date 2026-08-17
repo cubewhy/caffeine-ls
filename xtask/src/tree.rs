@@ -8,7 +8,7 @@ use std::{
 };
 
 use indicatif::{ProgressBar, ProgressStyle};
-use java_syntax::{Parser, SourceFile, lex};
+use java_syntax::SourceFile;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use walkdir::WalkDir;
 

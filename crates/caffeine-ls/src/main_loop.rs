@@ -6,12 +6,11 @@ use ide_db::base_db::{FileChange, SourceRoot};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
 use rustc_hash::FxHashSet;
-use triomphe::Arc;
 use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
-    config::{Config, need_reload_workspace},
+    config::Config,
     global_state::{BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState},
     handlers::{
         self,
