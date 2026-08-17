@@ -1,4 +1,9 @@
-use std::{panic::AssertUnwindSafe, path::PathBuf, time::Instant};
+use std::{
+    panic::AssertUnwindSafe,
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
+};
 
 use camino::Utf8PathBuf;
 use crossbeam_channel::Receiver;
@@ -7,7 +12,9 @@ use ide_db::base_db::{FileChange, SourceRoot, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
 use project_model::ClasspathEntry;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashSet;
+use triomphe::Arc;
 use vfs::AbsPathBuf;
 
 use crate::{
@@ -405,7 +412,7 @@ impl GlobalState {
         }
 
         let token = format!("index-{}", root.as_str());
-        let total = ids.len() as u32;
+        let total = ids.len();
         self.report_progress(ProgressEvent {
             token: token.clone(),
             title: "Indexing libraries".to_string(),
@@ -416,15 +423,25 @@ impl GlobalState {
 
         let task_sender = self.task_sender.clone();
         let snapshot = self.analysis_host.snapshot();
-        self.thread_pool.execute(move || {
-            for (idx, id) in ids.iter().enumerate() {
+        let done_count = Arc::new(AtomicUsize::new(0));
+
+        for &id in ids.iter() {
+            let task_sender = task_sender.clone();
+            let token = token.clone();
+            let done_count = Arc::clone(&done_count);
+
+            let snapshot = snapshot.clone();
+
+            self.thread_pool.execute(move || {
                 let db = snapshot.raw_database();
+
                 let _ = Cancelled::catch(AssertUnwindSafe(|| {
-                    hir::warmup_library(db, *id);
+                    hir::warmup_library(db, id);
                 }));
 
-                let done = idx + 1;
+                let done = done_count.fetch_add(1, Ordering::SeqCst) + 1;
                 let percentage = (done as f64 / total as f64 * 100.0) as u32;
+
                 task_sender
                     .send(BackgroundTaskEvent::Progress(ProgressEvent {
                         token: token.clone(),
@@ -434,18 +451,20 @@ impl GlobalState {
                         state: ProgressState::Report,
                     }))
                     .ok();
-            }
 
-            task_sender
-                .send(BackgroundTaskEvent::Progress(ProgressEvent {
-                    token,
-                    title: String::new(),
-                    message: Some("Indexing complete".to_string()),
-                    percentage: Some(100),
-                    state: ProgressState::End,
-                }))
-                .ok();
-        });
+                if done == total {
+                    task_sender
+                        .send(BackgroundTaskEvent::Progress(ProgressEvent {
+                            token,
+                            title: String::new(),
+                            message: Some("Indexing complete".to_string()),
+                            percentage: Some(100),
+                            state: ProgressState::End,
+                        }))
+                        .ok();
+                }
+            });
+        }
     }
 
     /// Rebuilds the database source roots by partitioning the current vfs with

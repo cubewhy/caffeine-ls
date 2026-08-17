@@ -56,6 +56,7 @@ impl Default for AnalysisHost {
 }
 
 /// Snapshot of [AnalysisHost]
+#[derive(Clone)]
 pub struct Analysis {
     db: RootDatabase,
 }
