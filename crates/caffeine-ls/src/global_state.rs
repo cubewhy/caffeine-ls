@@ -103,6 +103,7 @@ pub struct GlobalState {
     pub(crate) mem_docs: MemDocs,
 
     pub(crate) shutdown_requested: bool,
+    pub(crate) exit_requested: bool,
 
     // Vfs
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
@@ -150,6 +151,7 @@ impl GlobalState {
             mem_docs: MemDocs::default(),
 
             shutdown_requested: false,
+            exit_requested: false,
 
             loader,
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),

@@ -50,6 +50,10 @@ impl GlobalState {
             }
 
             self.process_changes();
+
+            if self.exit_requested {
+                break Ok(());
+            }
         }
     }
 

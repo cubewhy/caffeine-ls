@@ -22,11 +22,12 @@ pub fn on_initialized(state: &mut GlobalState, _: InitializedParams) -> anyhow::
 }
 
 pub fn on_exit(state: &mut GlobalState, _: ()) -> anyhow::Result<()> {
-    if state.shutdown_requested {
-        process::exit(0);
-    } else {
-        process::exit(1);
+    if !state.shutdown_requested {
+        panic!("bad client! shutdown request not received.");
     }
+    state.exit_requested = true;
+
+    Ok(())
 }
 
 pub fn on_cancel(state: &mut GlobalState, params: CancelParams) -> anyhow::Result<()> {
