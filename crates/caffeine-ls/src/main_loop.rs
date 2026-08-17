@@ -4,13 +4,7 @@ use camino::Utf8PathBuf;
 use crossbeam_channel::Receiver;
 use ide_db::base_db::{FileChange, SourceRoot};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
-use lsp_types::{
-    CancelNotification, DiagnosticRefreshRequest, DidChangeConfigurationNotification,
-    DidChangeTextDocumentNotification, DidChangeWatchedFilesNotification,
-    DidCloseTextDocumentNotification, DidOpenTextDocumentNotification,
-    DidSaveTextDocumentNotification, DocumentDiagnosticRequest, ExitNotification,
-    InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
-};
+use lsp_types::*;
 use rustc_hash::FxHashSet;
 use triomphe::Arc;
 use vfs::AbsPathBuf;
