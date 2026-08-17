@@ -408,6 +408,16 @@ impl SyntaxKind {
                 | Self::JAVADOC_LINE
         )
     }
+
+    pub fn to_quoted_string(self) -> String {
+        let text = self.to_string();
+
+        if text.chars().any(|c| c.is_ascii_alphabetic()) {
+            text
+        } else {
+            format!("'{text}'")
+        }
+    }
 }
 
 impl From<SyntaxKind> for rowan::SyntaxKind {

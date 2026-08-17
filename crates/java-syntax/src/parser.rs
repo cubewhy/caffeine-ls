@@ -381,6 +381,43 @@ pub enum ParseErrorKind {
     Message(&'static str),
 }
 
+impl ParseErrorKind {
+    pub fn desc(&self) -> String {
+        match self {
+            ParseErrorKind::ExpectedToken { expected, found } => {
+                let expected_str = expected
+                    .iter()
+                    .map(|k| k.to_quoted_string())
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+
+                let found_str = match found {
+                    Some(f) => f.to_quoted_string(),
+                    None => "end of file".to_string(),
+                };
+
+                format!("expected {}, found {}", expected_str, found_str)
+            }
+            ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
+                let found_str = match found {
+                    Some(f) => f.to_quoted_string(),
+                    None => "end of file".to_string(),
+                };
+
+                format!(
+                    "expected keyword '{}', found {}",
+                    keyword.as_str(),
+                    found_str
+                )
+            }
+            ParseErrorKind::ExpectedConstruct(construct) => {
+                format!("expected {}", construct)
+            }
+            ParseErrorKind::Message(msg) => msg.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Display, PartialEq, Eq)]
 pub enum ExpectedConstruct {
     #[display("a declaration (e.g., class, variable, or method)")]

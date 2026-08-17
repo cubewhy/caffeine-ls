@@ -17,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "unexpected character '`'"
     },
     {
       "range": {
@@ -32,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "unexpected character '`'"
     },
     {
       "range": {
@@ -47,7 +47,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "invalid character"
     },
     {
       "range": {
@@ -62,7 +62,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "Expected an argument"
     },
     {
       "range": {
@@ -77,7 +77,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "expected ';', found UNKNOWN"
     },
     {
       "range": {
@@ -92,7 +92,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "WIP"
+      "message": "expected a class member (e.g., field or method)"
     }
   ],
   "kind": "full"

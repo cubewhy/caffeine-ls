@@ -8,6 +8,15 @@ pub enum SyntaxErrorKind {
     Parser(ParseErrorKind),
 }
 
+impl SyntaxErrorKind {
+    pub fn desc(&self) -> String {
+        match self {
+            SyntaxErrorKind::Lexer(err) => err.desc(),
+            SyntaxErrorKind::Parser(err) => err.desc(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxError {
     pub kind: SyntaxErrorKind,

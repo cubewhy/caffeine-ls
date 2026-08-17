@@ -39,7 +39,7 @@ pub fn syntax_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic>
 fn to_diagnostic(file_id: FileId, syntax_err: syntax::java::SyntaxError) -> Diagnostic {
     let range = FileRange::new(file_id, syntax_err.range);
     Diagnostic {
-        message: "WIP".to_string(),
+        message: syntax_err.kind.desc(),
         range,
         severity: Severity::Error,
         unused: false,

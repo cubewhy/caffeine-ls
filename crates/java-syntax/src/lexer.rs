@@ -941,6 +941,24 @@ pub enum LexicalErrorKind {
     UnterminatedTemplate,
 }
 
+impl LexicalErrorKind {
+    pub fn desc(&self) -> String {
+        match self {
+            LexicalErrorKind::UnexpectedChar(c) => format!("unexpected character '{}'", c),
+            LexicalErrorKind::UnterminatedString => "unterminated string literal".to_string(),
+            LexicalErrorKind::UnterminatedComment => "unterminated comment".to_string(),
+            LexicalErrorKind::InvalidChar => "invalid character".to_string(),
+            LexicalErrorKind::IllegalTextBlockOpen => "illegal text block opening".to_string(),
+            LexicalErrorKind::UnterminatedTextBlock => "unterminated text block".to_string(),
+            LexicalErrorKind::InvalidNumber => "invalid number format".to_string(),
+            LexicalErrorKind::InvalidUnicodeEscape => "invalid unicode escape sequence".to_string(),
+            LexicalErrorKind::UnterminatedChar => "unterminated character literal".to_string(),
+            LexicalErrorKind::InvalidEscapeSequence => "invalid escape sequence".to_string(),
+            LexicalErrorKind::UnterminatedTemplate => "unterminated template".to_string(),
+        }
+    }
+}
+
 /// Determinate a char is java whitespace
 /// https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.6
 fn is_java_whitespace(c: char) -> bool {
