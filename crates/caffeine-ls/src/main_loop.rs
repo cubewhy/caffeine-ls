@@ -5,10 +5,11 @@ use crossbeam_channel::Receiver;
 use ide_db::base_db::{FileChange, SourceRoot};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::{
-    CancelNotification, DidChangeConfigurationNotification, DidChangeTextDocumentNotification,
-    DidChangeWatchedFilesNotification, DidCloseTextDocumentNotification,
-    DidOpenTextDocumentNotification, DidSaveTextDocumentNotification, DocumentDiagnosticRequest,
-    ExitNotification, InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
+    CancelNotification, DiagnosticRefreshRequest, DidChangeConfigurationNotification,
+    DidChangeTextDocumentNotification, DidChangeWatchedFilesNotification,
+    DidCloseTextDocumentNotification, DidOpenTextDocumentNotification,
+    DidSaveTextDocumentNotification, DocumentDiagnosticRequest, ExitNotification,
+    InitializedParams, MessageActionItem, MessageType, ShutdownRequest,
 };
 use rustc_hash::FxHashSet;
 use triomphe::Arc;
@@ -373,6 +374,7 @@ impl GlobalState {
 
         self.file_set_config = Some(file_set_config);
         self.apply_source_roots();
+        self.send_request::<DiagnosticRefreshRequest>((), OutgoingRequest::Generic(|_, _| {}));
     }
 
     /// Rebuilds the database source roots by partitioning the current vfs with
