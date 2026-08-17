@@ -318,7 +318,7 @@ impl GlobalState {
 
         self.file_set_config = Some(file_set_config);
         self.apply_source_roots();
-        self.send_request::<DiagnosticRefreshRequest>((), OutgoingRequest::Generic(|_, _| {}));
+        self.refresh_diagnostics();
     }
 
     /// Rebuilds the database source roots by partitioning the current vfs with

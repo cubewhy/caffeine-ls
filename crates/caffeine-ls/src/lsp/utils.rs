@@ -1,10 +1,6 @@
 use std::{mem, ops::Range};
 
-use lsp_types::{
-    MessageActionItem, MessageType, ProgressNotification, ProgressParams, ProgressToken,
-    ShowMessageNotification, ShowMessageParams, ShowMessageRequest, ShowMessageRequestParams,
-    WorkDoneProgressBegin, WorkDoneProgressEnd, WorkDoneProgressReport,
-};
+use lsp_types::*;
 use triomphe::Arc;
 
 use crate::{
@@ -130,5 +126,19 @@ impl GlobalState {
         };
 
         self.notify::<ProgressNotification>(params);
+    }
+
+    pub(crate) fn refresh_diagnostics(&mut self) {
+        if self
+            .config
+            .client_capabilities
+            .workspace
+            .as_ref()
+            .and_then(|w| w.diagnostics.as_ref())
+            .and_then(|d| d.refresh_support)
+            .unwrap_or(false)
+        {
+            self.send_request::<DiagnosticRefreshRequest>((), OutgoingRequest::Generic(|_, _| {}));
+        }
     }
 }
