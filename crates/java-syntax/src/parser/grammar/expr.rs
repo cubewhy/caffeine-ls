@@ -780,6 +780,16 @@ pub fn is_pattern(p: &mut Parser) -> bool {
 pub fn case_pattern_or_constant(p: &mut Parser) {
     if is_pattern(p) {
         pattern(p);
+    } else if is_lambda_lookahead(p) {
+        if p.at(IDENTIFIER) || p.at(UNDERSCORE) {
+            let m = p.start();
+            p.bump();
+            m.complete(p, LITERAL);
+        } else if p.at(L_PAREN) {
+            let _ = cast_or_paren_expr(p);
+        } else {
+            expression(p).ok();
+        }
     } else {
         expression(p).ok();
     }

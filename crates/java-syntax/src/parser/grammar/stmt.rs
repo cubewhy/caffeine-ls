@@ -213,8 +213,10 @@ fn switch_rule(p: &mut Parser) {
     match p.current() {
         Some(L_BRACE) => block(p),
         Some(THROW_KW) => throw_statement(p),
-        // NOTE: expression_statement() will handle the trailing semicolon
-        _ => expression_statement(p),
+        _ => {
+            let _ = expression(p);
+            p.expect(SEMICOLON);
+        }
     }
 
     m.complete(p, SWITCH_RULE);
