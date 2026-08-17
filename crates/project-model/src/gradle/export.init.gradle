@@ -1,5 +1,6 @@
 // Supported Range: Gradle 4.x - 9.x+
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 
 boolean isDebugEnabled() {
     return System.getProperty('CAFFEINE_LS_GRADLE_DEBUG') == '1' || System.getenv('CAFFEINE_LS_GRADLE_DEBUG') == '1'
@@ -102,6 +103,114 @@ def getSourceSets(def project) {
 }
 
 gradle.projectsEvaluated {
+    // Each project exports its own model from a task registered in that
+    // project, so configuration resolution happens at execution time AND in
+    // the declaring project. Gradle 9 forbids both configuration-time
+    // resolution and cross-project resolution under parallel execution
+    // ("attempted without an exclusive lock"), which previously produced
+    // empty classpaths.
+    rootProject.allprojects.each { project ->
+        project.tasks.register('exportProjectWorkspaceModel') {
+            group = 'caffeine-ls'
+            def outputFile = new File(project.buildDir, 'caffeine-ls/workspace-model.json')
+            doLast {
+                debugLog(">>> Analyzing project: ${project.path}")
+
+                def sourceSets = getSourceSets(project)
+                def mainSet = null
+                def testSet = null
+                try {
+                    mainSet = sourceSets?.findByName('main')
+                    testSet = sourceSets?.findByName('test')
+                } catch (Throwable ignored) {}
+
+                def mainSource = []
+                try { mainSource = mainSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
+                def testSource = []
+                try { testSource = testSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
+
+                def resourcesSource = []
+                try {
+                    def mainRes = mainSet?.resources?.srcDirs?.collect { normalizePath(it) } ?: []
+                    def testRes = testSet?.resources?.srcDirs?.collect { normalizePath(it) } ?: []
+                    resourcesSource = (mainRes + testRes).unique()
+                } catch (Throwable ignored) {}
+
+                def compileCp = extractRichClasspath(project, 'compileClasspath')
+                if (compileCp.isEmpty()) {
+                    compileCp = extractRichClasspath(project, 'compile')
+                }
+
+                def testCp = extractRichClasspath(project, 'testCompileClasspath')
+                if (testCp.isEmpty()) {
+                    testCp = extractRichClasspath(project, 'testCompile')
+                }
+
+                def allGenerated = []
+                try {
+                    sourceSets?.each { ss ->
+                        ss.allSource.srcDirs.each { dir ->
+                            def path = normalizePath(dir)
+                            if (path && (path.contains('/generated/') || path.contains('build/generated'))) {
+                                allGenerated << path
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) {}
+
+                def javaLangVersion = null
+                try {
+                    def javaExt = project.extensions.findByName('java')
+                    if (javaExt != null && javaExt.hasProperty('sourceCompatibility')) {
+                        javaLangVersion = javaExt.sourceCompatibility.toString()
+                    }
+                    if (javaLangVersion == null) {
+                        def convention = project.convention.findPlugin(org.gradle.api.plugins.JavaPluginConvention)
+                        if (convention != null) {
+                            javaLangVersion = convention.sourceCompatibility?.toString()
+                        }
+                    }
+                    if (javaLangVersion == null && project.hasProperty('sourceCompatibility')) {
+                        javaLangVersion = project.sourceCompatibility.toString()
+                    }
+                } catch (Throwable ignored) {}
+
+                def javaHome = normalizePath(new File(System.getProperty('java.home')))
+                try {
+                    def compileJavaTask = project.tasks.findByName('compileJava')
+                    if (compileJavaTask != null) {
+                        if (compileJavaTask.respondTo('getJavaCompiler')) {
+                            def compilerProvider = compileJavaTask.getJavaCompiler()
+                            if (compilerProvider.isPresent()) {
+                                javaHome = normalizePath(compilerProvider.get().getMetadata().getInstallationPath().getAsFile())
+                            }
+                        }
+                        else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
+                            javaHome = normalizePath(compileJavaTask.options.forkOptions.javaHome)
+                        }
+                    }
+                } catch (Throwable ignored) {}
+
+                def model = [
+                    path: project.path,
+                    name: project.name,
+                    project_dir: normalizePath(project.projectDir),
+                    source_roots: mainSource,
+                    test_roots: testSource,
+                    resource_roots: resourcesSource,
+                    generated_roots: allGenerated.unique(),
+                    compile_classpath: compileCp,
+                    test_classpath: testCp,
+                    java_language_version: javaLangVersion,
+                    java_home: javaHome
+                ]
+
+                outputFile.parentFile.mkdirs()
+                outputFile.text = JsonOutput.toJson(model)
+            }
+        }
+    }
+
     def taskName = 'exportWorkspaceModel'
     def task = rootProject.tasks.findByName(taskName)
     if (task == null) {
@@ -109,110 +218,20 @@ gradle.projectsEvaluated {
         task.group = 'caffeine-ls'
     }
 
-    // Build the full workspace model during the configuration phase so the
-    // task action below only captures plain, serializable data. The Gradle
-    // configuration cache cannot serialize Gradle script objects (Script,
-    // Project, Gradle) referenced from a task action at execution time, so
-    // anything rootProject-related must be resolved here instead.
-    def model = [
-        workspace_name: rootProject.name,
-        projects: rootProject.allprojects.collect { project ->
-            debugLog(">>> Analyzing project: ${project.path}")
+    task.dependsOn rootProject.allprojects.collect { project ->
+        project.tasks.named('exportProjectWorkspaceModel')
+    }
 
-            def sourceSets = getSourceSets(project)
-            def mainSet = null
-            def testSet = null
-            try {
-                mainSet = sourceSets?.findByName('main')
-                testSet = sourceSets?.findByName('test')
-            } catch (Throwable ignored) {}
-
-            def mainSource = []
-            try { mainSource = mainSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
-            def testSource = []
-            try { testSource = testSet?.java?.srcDirs?.collect { normalizePath(it) } ?: [] } catch (Throwable ignored) {}
-
-            def resourcesSource = []
-            try {
-                def mainRes = mainSet?.resources?.srcDirs?.collect { normalizePath(it) } ?: []
-                def testRes = testSet?.resources?.srcDirs?.collect { normalizePath(it) } ?: []
-                resourcesSource = (mainRes + testRes).unique()
-            } catch (Throwable ignored) {}
-
-            def compileCp = extractRichClasspath(project, 'compileClasspath')
-            if (compileCp.isEmpty()) {
-                compileCp = extractRichClasspath(project, 'compile')
-            }
-
-            def testCp = extractRichClasspath(project, 'testCompileClasspath')
-            if (testCp.isEmpty()) {
-                testCp = extractRichClasspath(project, 'testCompile')
-            }
-
-            def allGenerated = []
-            try {
-                sourceSets?.each { ss ->
-                    ss.allSource.srcDirs.each { dir ->
-                        def path = normalizePath(dir)
-                        if (path && (path.contains('/generated/') || path.contains('build/generated'))) {
-                            allGenerated << path
-                        }
-                    }
-                }
-            } catch (Throwable ignored) {}
-
-            def javaLangVersion = null
-            try {
-                def javaExt = project.extensions.findByName('java')
-                if (javaExt != null && javaExt.hasProperty('sourceCompatibility')) {
-                    javaLangVersion = javaExt.sourceCompatibility.toString()
-                }
-                if (javaLangVersion == null) {
-                    def convention = project.convention.findPlugin(org.gradle.api.plugins.JavaPluginConvention)
-                    if (convention != null) {
-                        javaLangVersion = convention.sourceCompatibility?.toString()
-                    }
-                }
-                if (javaLangVersion == null && project.hasProperty('sourceCompatibility')) {
-                    javaLangVersion = project.sourceCompatibility.toString()
-                }
-            } catch (Throwable ignored) {}
-
-            def javaHome = normalizePath(new File(System.getProperty('java.home')))
-            try {
-                def compileJavaTask = project.tasks.findByName('compileJava')
-                if (compileJavaTask != null) {
-                    if (compileJavaTask.respondTo('getJavaCompiler')) {
-                        def compilerProvider = compileJavaTask.getJavaCompiler()
-                        if (compilerProvider.isPresent()) {
-                            javaHome = normalizePath(compilerProvider.get().getMetadata().getInstallationPath().getAsFile())
-                        }
-                    }
-                    else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
-                        javaHome = normalizePath(compileJavaTask.options.forkOptions.javaHome)
-                    }
-                }
-            } catch (Throwable ignored) {}
-
-            return [
-                path: project.path,
-                name: project.name,
-                project_dir: normalizePath(project.projectDir),
-                source_roots: mainSource,
-                test_roots: testSource,
-                resource_roots: resourcesSource,
-                generated_roots: allGenerated.unique(),
-                compile_classpath: compileCp,
-                test_classpath: testCp,
-                java_language_version: javaLangVersion,
-                java_home: javaHome
-            ]
-        }
-    ]
-
+    // Merge the per-project model files. Reading plain JSON files keeps this
+    // action free of Project/Configuration references, which the
+    // configuration cache could not serialize anyway.
     task.doLast {
+        def projects = rootProject.allprojects.collect { project ->
+            def modelFile = new File(project.buildDir, 'caffeine-ls/workspace-model.json')
+            new JsonSlurper().parseText(modelFile.text)
+        }
         println('WORKSPACE_MODEL_BEGIN')
-        println(JsonOutput.toJson(model))
+        println(JsonOutput.toJson([workspace_name: rootProject.name, projects: projects]))
         println('WORKSPACE_MODEL_END')
     }
 }

@@ -40,6 +40,11 @@ pub fn import_gradle_workspace(
     command
         .env("JAVA_HOME", java_home)
         .current_dir(workspace_root)
+        // The export tasks reference Project objects in their actions, which
+        // the configuration cache cannot serialize; disable it so builds with
+        // a strict configuration cache don't fail. A system property is used
+        // instead of `--no-configuration-cache` for Gradle 4.x - 6.x support.
+        .arg("-Dorg.gradle.configuration-cache=false")
         .arg("--init-script")
         .arg(init_script.path())
         .arg("exportWorkspaceModel");
