@@ -22,7 +22,7 @@ expression: "(diag_empty, diag_garbage)"
         },
         "severity": 1,
         "source": "caffeine-ls",
-        "message": "WIP"
+        "message": "Unexpected character '#' found in source code."
       },
       {
         "range": {
@@ -37,7 +37,7 @@ expression: "(diag_empty, diag_garbage)"
         },
         "severity": 1,
         "source": "caffeine-ls",
-        "message": "WIP"
+        "message": "Expected a declaration (e.g., class, variable, or method) here."
       }
     ],
     "kind": "full"

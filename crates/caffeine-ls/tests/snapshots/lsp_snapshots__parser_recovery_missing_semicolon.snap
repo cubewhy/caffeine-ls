@@ -17,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected ';', found int"
+      "message": "Expected ';', but found 'int'."
     },
     {
       "range": {
@@ -32,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected ';', found '}'"
+      "message": "Expected ';', but found '}'."
     }
   ],
   "kind": "full"

@@ -6,6 +6,5 @@ edition = "2024"
 [dependencies]
 ide-db.workspace = true
 rowan.workspace = true
-syntax.workspace = true
 tracing.workspace = true
 vfs.workspace = true

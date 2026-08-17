@@ -4,38 +4,7 @@ expression: "(diag_broken, diag_fixed)"
 ---
 [
   {
-    "items": [
-      {
-        "range": {
-          "start": {
-            "line": 2,
-            "character": 18
-          },
-          "end": {
-            "line": 2,
-            "character": 19
-          }
-        },
-        "severity": 1,
-        "source": "caffeine-ls",
-        "message": "WIP"
-      },
-      {
-        "range": {
-          "start": {
-            "line": 2,
-            "character": 18
-          },
-          "end": {
-            "line": 2,
-            "character": 19
-          }
-        },
-        "severity": 1,
-        "source": "caffeine-ls",
-        "message": "WIP"
-      }
-    ],
+    "items": [],
     "kind": "full"
   },
   {

@@ -17,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "unexpected character '`'"
+      "message": "Unexpected character '`' found in source code."
     },
     {
       "range": {
@@ -32,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "unexpected character '`'"
+      "message": "Unexpected character '`' found in source code."
     },
     {
       "range": {
@@ -47,7 +47,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "invalid character"
+      "message": "Invalid character literal. Did you forget a closing quote '''?"
     },
     {
       "range": {
@@ -77,7 +77,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected ';', found UNKNOWN"
+      "message": "Expected ';', but found 'UNKNOWN'."
     },
     {
       "range": {
@@ -92,7 +92,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected a class member (e.g., field or method)"
+      "message": "Expected a class member (e.g., field or method) here."
     }
   ],
   "kind": "full"

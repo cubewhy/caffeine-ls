@@ -17,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected a type"
+      "message": "Expected a type here."
     },
     {
       "range": {
@@ -32,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected '}', found EOF"
+      "message": "Expected '}', but found 'EOF'."
     },
     {
       "range": {
@@ -47,7 +47,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "expected '}', found EOF"
+      "message": "Expected '}', but found 'EOF'."
     }
   ],
   "kind": "full"

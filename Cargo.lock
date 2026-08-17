@@ -135,6 +135,7 @@ dependencies = [
  "rowan",
  "rustc-hash 2.1.2",
  "salsa",
+ "syntax",
  "tracing",
  "triomphe",
 ]
@@ -1012,7 +1013,6 @@ dependencies = [
  "ide-db",
  "ra_ap_vfs",
  "rowan",
- "syntax",
  "tracing",
 ]
 

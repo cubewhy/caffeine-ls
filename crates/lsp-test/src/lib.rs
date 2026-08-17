@@ -368,12 +368,22 @@ impl LspHarness {
             },
         };
 
-        let response = self.request(
-            "textDocument/diagnostic",
-            serde_json::to_value(params).expect("failed to serialize document diagnostic params"),
-        );
+        let json_params =
+            serde_json::to_value(params).expect("failed to serialize document diagnostic params");
 
-        serde_json::from_value(response).expect("Failed to deserialize diagnostic report")
+        // The server may cancel a diagnostics request while a write is
+        // pending (salsa raises `Cancelled` when the database is modified
+        // mid-query). Real clients retry the pull diagnostics request, so
+        // retry here until the server answers.
+        for _ in 0..100 {
+            let response = self.request("textDocument/diagnostic", json_params.clone());
+            if let Ok(report) = serde_json::from_value(response) {
+                return report;
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        panic!("Failed to deserialize diagnostic report after retries")
     }
 
     pub fn shutdown(mut self) {

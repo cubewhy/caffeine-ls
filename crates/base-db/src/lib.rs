@@ -1,9 +1,12 @@
 mod change;
 mod input;
+mod parse;
 
 pub use change::FileChange;
-pub use input::{DepsMap, LanguageKind, SourceRoot, SourceRootId};
+pub use input::{DepsMap, SourceRoot, SourceRootId};
+pub use parse::parse;
 pub use salsa;
+pub use syntax::LanguageKind;
 
 use rowan::TextSize;
 use vfs::{AnchoredPath, FileId};
