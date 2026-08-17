@@ -17,7 +17,7 @@ use lasso::ThreadedRodeo;
 use rayon::prelude::*;
 use syntax::{
     class_parser::ClassParser,
-    stub::{ClassOrModuleStub, TypeRef as SyntaxTypeRef},
+    stub::{ClassOrModuleStub, Symbol, TypeRef as SyntaxTypeRef},
 };
 use zip::ZipArchive;
 
@@ -32,11 +32,11 @@ use crate::{
 pub struct StubRecord {
     pub fqn: String,
     pub package: String,
-    pub stub: ClassOrModuleStub,
+    pub stub: ClassOrModuleStub<Symbol>,
 }
 
 impl StubRecord {
-    fn new(interner: &ThreadedRodeo, stub: ClassOrModuleStub) -> Self {
+    fn new(interner: &ThreadedRodeo, stub: ClassOrModuleStub<Symbol>) -> Self {
         let fqn = interner.resolve(&stub.fqn()).to_owned();
         let package = fqn
             .rsplit_once('.')
@@ -164,7 +164,7 @@ fn build(
                 entries.push(ClassEntry {
                     fqn,
                     package,
-                    kind: crate::stubs::ClassKind::from_flags(class.flags),
+                    kind: crate::stubs::ClassKind::from_flags(class.flags, class.is_record),
                     flags: class.flags,
                     super_class: class.super_class.as_ref().and_then(|t| match t {
                         SyntaxTypeRef::Reference { name, .. } => Some(*name),
@@ -179,8 +179,7 @@ fn build(
                         })
                         .collect(),
                 });
-                let fqn_idx = table.intern_str(&record.fqn);
-                let disk = table.class(&class, fqn_idx);
+                let disk = table.class(&class);
                 disk_entries.push(disk_entry(&mut table, entries.last().unwrap()));
                 disk_records.push(DiskClassOrModuleRecord::Class(disk));
             }
@@ -480,7 +479,7 @@ mod tests {
 
         // Tier-2: load the full class record with members.
         let record = index.class_record(&interner, entry_idx).unwrap();
-        let crate::stubs::ClassOrModule::Class(class) = record.as_ref() else {
+        let crate::stubs::ClassOrModuleStub::Class(class) = record.as_ref() else {
             panic!("expected a class record");
         };
         assert_eq!(class.fqn, fqn);
@@ -494,7 +493,7 @@ mod tests {
         let (cached_idx, cached_entry) = cached.lookup_fqn(fqn).unwrap();
         assert_eq!(cached_entry.fqn, fqn);
         let cached_record = cached.class_record(&interner, cached_idx).unwrap();
-        let crate::stubs::ClassOrModule::Class(class) = cached_record.as_ref() else {
+        let crate::stubs::ClassOrModuleStub::Class(class) = cached_record.as_ref() else {
             panic!("expected a class record");
         };
         assert_eq!(class.methods.len(), 2);

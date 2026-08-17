@@ -222,11 +222,11 @@ pub fn read_record_bytes(path: &Path, offset: u64) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::stubs::{
-        ClassData, ClassKind, ClassOrModule, DiskClassRecord, DiskModuleRecord, MethodData,
-        ModuleData, PrimitiveType, TypeRef,
+        ClassKind, ClassOrModuleStub, ClassStub, DiskClassRecord, DiskModuleRecord, MethodStub,
+        ModuleStub, PrimitiveType, TypeRef,
     };
 
-    type ClassOrModuleU32 = ClassOrModule<u32>;
+    type ClassOrModuleU32 = ClassOrModuleStub<u32>;
 
     #[test]
     fn names_round_trip() {
@@ -260,11 +260,11 @@ mod tests {
     fn stubs_random_access() {
         let dir = tempfile_dir();
         let path = dir.path().join("test.stubs");
-        let record_a = ClassOrModuleU32::Class(ClassData {
+        let record_a = ClassOrModuleU32::Class(ClassStub {
             fqn: 0,
             name: 1,
             flags: 0x0021,
-            kind: ClassKind::Class,
+            is_record: false,
             super_class: None,
             interfaces: Vec::new(),
             type_params: Vec::new(),
@@ -274,7 +274,7 @@ mod tests {
             record_components: Vec::new(),
             annotations: Vec::new(),
         });
-        let record_b = ClassOrModuleU32::Module(ModuleData {
+        let record_b = ClassOrModuleU32::Module(ModuleStub {
             name: 2,
             flags: 0x8000,
             version: None,
@@ -313,18 +313,18 @@ mod tests {
     #[test]
     fn disk_type_serde_round_trip() {
         // DiskClassRecord serializes/deserializes with postcard.
-        let record: DiskClassRecord = ClassData {
+        let record: DiskClassRecord = ClassStub {
             fqn: 0,
             name: 1,
             flags: 0x0021,
-            kind: ClassKind::Class,
+            is_record: false,
             super_class: None,
             interfaces: vec![TypeRef::Reference {
                 name: 2,
                 generic_args: vec![TypeRef::Primitive(PrimitiveType::Int)],
             }],
             type_params: Vec::new(),
-            methods: vec![MethodData {
+            methods: vec![MethodStub {
                 flags: 0,
                 name: 3,
                 return_type: TypeRef::Primitive(PrimitiveType::Void),
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn module_serde_round_trip() {
-        let record: DiskModuleRecord = ModuleData {
+        let record: DiskModuleRecord = ModuleStub {
             name: 0,
             flags: 0x8000,
             version: Some(1),

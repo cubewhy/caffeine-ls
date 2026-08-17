@@ -266,7 +266,7 @@ mod tests {
 
         // Tier-2: full member stubs.
         let record = hir::class_record(&db, &resolved).unwrap();
-        let hir::stubs::ClassOrModule::Class(class) = record.as_ref() else {
+        let hir::stubs::ClassOrModuleStub::Class(class) = record.as_ref() else {
             panic!("expected a class record");
         };
         assert_eq!(class.methods.len(), 2);

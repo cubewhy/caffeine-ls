@@ -13,6 +13,7 @@ pub use db::{
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use stubs::{
-    ClassData, ClassKind, ClassOrModule, ClassOrModuleRecord, ClassRecord, FieldData, MethodData,
-    ModuleData, ModuleRecord, ParamData, PrimitiveType, PrimitiveValue, Symbol, TypeRef,
+    ClassKind, ClassOrModuleRecord, ClassOrModuleStub, ClassRecord, ClassStub, FieldStub,
+    MethodStub, ModuleRecord, ModuleStub, ParamData, PrimitiveType, PrimitiveValue, Symbol,
+    TypeRef,
 };

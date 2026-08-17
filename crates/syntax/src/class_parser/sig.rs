@@ -6,7 +6,15 @@ use rust_asm::{
     constant_pool::{ConstantPoolExt, CpInfo},
 };
 
-use crate::stub::{PrimitiveType, TypeParameter, TypeRef};
+use crate::stub::{PrimitiveType, Symbol, TypeParameter, TypeRef};
+
+/// `(type_params, param_types, return_type, throws)`.
+type MethodSignature = (
+    Vec<TypeParameter<Symbol>>,
+    Vec<TypeRef<Symbol>>,
+    TypeRef<Symbol>,
+    Vec<TypeRef<Symbol>>,
+);
 
 pub struct SigParser<'a> {
     chars: Peekable<std::str::Chars<'a>>,
@@ -30,7 +38,7 @@ impl<'a> SigParser<'a> {
     }
 
     /// Parses: `< T:Ljava/lang/Object; U::Ljava/lang/Runnable; >`
-    pub fn parse_type_parameters(&mut self) -> Vec<TypeParameter> {
+    pub fn parse_type_parameters(&mut self) -> Vec<TypeParameter<Symbol>> {
         let mut params = Vec::new();
         if self.peek() == Some('<') {
             self.consume(); // '<'
@@ -66,7 +74,7 @@ impl<'a> SigParser<'a> {
         params
     }
 
-    fn parse_type_signature(&mut self) -> TypeRef {
+    fn parse_type_signature(&mut self) -> TypeRef<Symbol> {
         match self.peek() {
             Some('B') => {
                 self.consume();
@@ -109,7 +117,7 @@ impl<'a> SigParser<'a> {
         }
     }
 
-    pub fn parse_reference_type_signature(&mut self) -> TypeRef {
+    pub fn parse_reference_type_signature(&mut self) -> TypeRef<Symbol> {
         match self.peek() {
             Some('T') => {
                 self.consume(); // 'T'
@@ -160,7 +168,7 @@ impl<'a> SigParser<'a> {
         }
     }
 
-    fn parse_type_argument(&mut self) -> TypeRef {
+    fn parse_type_argument(&mut self) -> TypeRef<Symbol> {
         match self.peek() {
             Some('*') => {
                 self.consume();
@@ -177,7 +185,13 @@ impl<'a> SigParser<'a> {
         }
     }
 
-    pub fn parse_class_signature(&mut self) -> (Vec<TypeParameter>, TypeRef, Vec<TypeRef>) {
+    pub fn parse_class_signature(
+        &mut self,
+    ) -> (
+        Vec<TypeParameter<Symbol>>,
+        TypeRef<Symbol>,
+        Vec<TypeRef<Symbol>>,
+    ) {
         let type_params = self.parse_type_parameters();
         let super_class = self.parse_reference_type_signature();
         let mut interfaces = Vec::new();
@@ -187,9 +201,7 @@ impl<'a> SigParser<'a> {
         (type_params, super_class, interfaces)
     }
 
-    pub fn parse_method_signature(
-        &mut self,
-    ) -> (Vec<TypeParameter>, Vec<TypeRef>, TypeRef, Vec<TypeRef>) {
+    pub fn parse_method_signature(&mut self) -> MethodSignature {
         let type_params = self.parse_type_parameters();
         let mut param_types = Vec::new();
         if self.peek() == Some('(') {

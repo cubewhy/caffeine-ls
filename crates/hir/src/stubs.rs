@@ -1,225 +1,35 @@
 //! Compact, serializable declaration stubs for JVM classes.
 //!
-//! All data types are generic over the name representation `N`:
+//! The stub data types themselves are defined generically over the name
+//! representation `N` in [`syntax::stub`] and re-exported here. This module
+//! adds the conversions between the two instantiations:
 //!
 //! * `N = [`Symbol`]` (a [`lasso::Spur`] into a session-wide interner) is the
 //!   in-memory representation;
 //! * `N = u32` (an index into a per-library string table) is the on-disk
 //!   representation used by the persistent cache.
 //!
-//! The stub IR is the "item tree" of caffeine-ls (see rust-analyzer's
-//! `item_tree`): it stores declarations (classes, members and type
-//! references) but no bodies and no source locations, keeping the memory
-//! footprint small. Member-level data is only kept for classes that are
-//! actually requested (see [`crate::index::LibraryIndex`]).
+//! Member-level data is only kept for classes that are actually requested
+//! (see [`crate::index::LibraryIndex`]).
 
-use lasso::{Spur, ThreadedRodeo};
-use rust_asm::constants::{ACC_ANNOTATION, ACC_ENUM, ACC_INTERFACE};
+use lasso::ThreadedRodeo;
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
-use std::hash::Hash;
 
-pub type Symbol = Spur;
-
-pub use syntax::stub::{PrimitiveType, PrimitiveValue};
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum ClassKind {
-    Class,
-    Interface,
-    Enum,
-    Record,
-    Annotation,
-}
-
-impl ClassKind {
-    /// Classifies a class by its JVM access flags.
-    pub fn from_flags(flags: u16) -> ClassKind {
-        if flags & ACC_INTERFACE != 0 {
-            if flags & ACC_ANNOTATION != 0 {
-                ClassKind::Annotation
-            } else {
-                ClassKind::Interface
-            }
-        } else if flags & ACC_ENUM != 0 {
-            ClassKind::Enum
-        } else {
-            ClassKind::Class
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum TypeRef<N> {
-    Primitive(PrimitiveType),
-    Reference {
-        /// The dot FQN of the reference type.
-        name: N,
-        generic_args: Vec<TypeRef<N>>,
-    },
-    Wildcard {
-        bound: Option<Box<TypeBound<N>>>,
-    },
-    TypeVariable(N),
-    Array(Box<TypeRef<N>>),
-    Error,
-}
-
-impl<N> TypeRef<N> {
-    /// The referenced class name, if this is a (possibly generic) reference
-    /// type.
-    pub fn as_reference_name(&self) -> Option<&N> {
-        match self {
-            TypeRef::Reference { name, .. } => Some(name),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum TypeBound<N> {
-    /// `extends`
-    Upper(TypeRef<N>),
-    /// `super`
-    Lower(TypeRef<N>),
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct TypeParameter<N> {
-    pub name: N,
-    pub bounds: Vec<TypeRef<N>>,
-    pub annotations: Vec<AnnotationSig<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct AnnotationSig<N> {
-    pub annotation_type: TypeRef<N>,
-    pub arguments: Vec<(N, AnnotationValue<N>)>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum AnnotationValue<N> {
-    String(N),
-    Primitive(PrimitiveValue),
-    Class(TypeRef<N>),
-    Enum {
-        class_type: TypeRef<N>,
-        entry_name: N,
-    },
-    Annotation(AnnotationSig<N>),
-    Array(Vec<AnnotationValue<N>>),
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ParamData<N> {
-    pub flags: u16,
-    pub name: Option<N>,
-    pub param_type: TypeRef<N>,
-    pub annotations: Vec<AnnotationSig<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct MethodData<N> {
-    pub flags: u16,
-    pub name: N,
-    pub return_type: TypeRef<N>,
-    pub type_params: Vec<TypeParameter<N>>,
-    pub throws_list: Vec<TypeRef<N>>,
-    pub params: Vec<ParamData<N>>,
-    pub annotations: Vec<AnnotationSig<N>>,
-
-    /// The default value of an annotation entry.
-    pub default_value: Option<AnnotationValue<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct FieldData<N> {
-    pub flags: u16,
-    pub field_type: TypeRef<N>,
-    pub annotations: Vec<AnnotationSig<N>>,
-    pub constant_value: Option<AnnotationValue<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct RecordComponentData<N> {
-    pub name: N,
-    pub component_type: TypeRef<N>,
-    pub annotations: Vec<AnnotationSig<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ClassData<N> {
-    /// The fully qualified name (e.g. `java.lang.String`).
-    pub fqn: N,
-    /// The simple name (or `Outer$Inner` for nested classes).
-    pub name: N,
-    /// JVM access flags.
-    pub flags: u16,
-    pub kind: ClassKind,
-    pub super_class: Option<TypeRef<N>>,
-    pub interfaces: Vec<TypeRef<N>>,
-    pub type_params: Vec<TypeParameter<N>>,
-    pub methods: Vec<MethodData<N>>,
-    pub fields: Vec<FieldData<N>>,
-    pub permitted_subclasses: Vec<TypeRef<N>>,
-    pub record_components: Vec<RecordComponentData<N>>,
-    pub annotations: Vec<AnnotationSig<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ModuleRequires<N> {
-    pub module_name: N,
-    pub flags: u16,
-    pub compiled_version: Option<N>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ModuleExports<N> {
-    pub package_name: N,
-    pub flags: u16,
-    pub to_modules: Vec<N>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ModuleOpens<N> {
-    pub package_name: N,
-    pub flags: u16,
-    pub to_modules: Vec<N>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ModuleProvides<N> {
-    pub service_interface: TypeRef<N>,
-    pub with_implementations: Vec<TypeRef<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub struct ModuleData<N> {
-    pub name: N,
-    pub flags: u16,
-    pub version: Option<N>,
-    pub requires: Vec<ModuleRequires<N>>,
-    pub exports: Vec<ModuleExports<N>>,
-    pub opens: Vec<ModuleOpens<N>>,
-    pub uses: Vec<TypeRef<N>>,
-    pub provides: Vec<ModuleProvides<N>>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum ClassOrModule<N> {
-    Class(ClassData<N>),
-    Module(ModuleData<N>),
-}
+pub use syntax::stub::{
+    AnnotationSig, AnnotationValue, ClassKind, ClassOrModuleStub, ClassStub, FieldStub, MethodStub,
+    ModuleExports, ModuleOpens, ModuleProvides, ModuleRequires, ModuleStub, ParamData,
+    PrimitiveType, PrimitiveValue, RecordComponentData, Symbol, TypeBound, TypeParameter, TypeRef,
+};
 
 /// In-memory instantiations.
-pub type ClassRecord = ClassData<Symbol>;
-pub type ModuleRecord = ModuleData<Symbol>;
-pub type ClassOrModuleRecord = ClassOrModule<Symbol>;
+pub type ClassRecord = ClassStub<Symbol>;
+pub type ModuleRecord = ModuleStub<Symbol>;
+pub type ClassOrModuleRecord = ClassOrModuleStub<Symbol>;
 
 /// On-disk instantiations (string-table indices).
-pub type DiskClassRecord = ClassData<u32>;
-pub type DiskModuleRecord = ModuleData<u32>;
-pub type DiskClassOrModuleRecord = ClassOrModule<u32>;
+pub type DiskClassRecord = ClassStub<u32>;
+pub type DiskModuleRecord = ModuleStub<u32>;
+pub type DiskClassOrModuleRecord = ClassOrModuleStub<u32>;
 
 /// Builds the per-library string table while converting the
 /// [`Symbol`]-based stubs produced by `syntax::ClassParser` into the
@@ -267,30 +77,30 @@ impl<'a> StubStringTable<'a> {
         idx
     }
 
-    pub fn type_ref(&mut self, t: &AstTypeRef) -> TypeRef<u32> {
+    pub fn type_ref(&mut self, t: &TypeRef<Symbol>) -> TypeRef<u32> {
         match t {
-            AstTypeRef::Primitive(p) => TypeRef::Primitive(*p),
-            AstTypeRef::Reference { name, generic_args } => TypeRef::Reference {
+            TypeRef::Primitive(p) => TypeRef::Primitive(*p),
+            TypeRef::Reference { name, generic_args } => TypeRef::Reference {
                 name: self.symbol(*name),
                 generic_args: generic_args.iter().map(|arg| self.type_ref(arg)).collect(),
             },
-            AstTypeRef::Wildcard { bound } => TypeRef::Wildcard {
+            TypeRef::Wildcard { bound } => TypeRef::Wildcard {
                 bound: bound.as_ref().map(|b| Box::new(self.type_bound(b))),
             },
-            AstTypeRef::TypeVariable(v) => TypeRef::TypeVariable(self.symbol(*v)),
-            AstTypeRef::Array(inner) => TypeRef::Array(Box::new(self.type_ref(inner))),
-            AstTypeRef::Error => TypeRef::Error,
+            TypeRef::TypeVariable(v) => TypeRef::TypeVariable(self.symbol(*v)),
+            TypeRef::Array(inner) => TypeRef::Array(Box::new(self.type_ref(inner))),
+            TypeRef::Error => TypeRef::Error,
         }
     }
 
-    pub fn type_bound(&mut self, b: &AstTypeBound) -> TypeBound<u32> {
+    pub fn type_bound(&mut self, b: &TypeBound<Symbol>) -> TypeBound<u32> {
         match b {
-            AstTypeBound::Upper(t) => TypeBound::Upper(self.type_ref(t)),
-            AstTypeBound::Lower(t) => TypeBound::Lower(self.type_ref(t)),
+            TypeBound::Upper(t) => TypeBound::Upper(self.type_ref(t)),
+            TypeBound::Lower(t) => TypeBound::Lower(self.type_ref(t)),
         }
     }
 
-    pub fn type_parameter(&mut self, p: &AstTypeParameter) -> TypeParameter<u32> {
+    pub fn type_parameter(&mut self, p: &TypeParameter<Symbol>) -> TypeParameter<u32> {
         TypeParameter {
             name: self.symbol(p.name),
             bounds: p.bounds.iter().map(|b| self.type_ref(b)).collect(),
@@ -298,7 +108,7 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn annotation(&mut self, a: &AstAnnotationSig) -> AnnotationSig<u32> {
+    pub fn annotation(&mut self, a: &AnnotationSig<Symbol>) -> AnnotationSig<u32> {
         AnnotationSig {
             annotation_type: self.type_ref(&a.annotation_type),
             arguments: a
@@ -309,20 +119,20 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn annotation_value(&mut self, v: &AstAnnotationValue) -> AnnotationValue<u32> {
+    pub fn annotation_value(&mut self, v: &AnnotationValue<Symbol>) -> AnnotationValue<u32> {
         match v {
-            AstAnnotationValue::String(s) => AnnotationValue::String(self.symbol(*s)),
-            AstAnnotationValue::Primitive(p) => AnnotationValue::Primitive(*p),
-            AstAnnotationValue::Class(t) => AnnotationValue::Class(self.type_ref(t)),
-            AstAnnotationValue::Enum {
+            AnnotationValue::String(s) => AnnotationValue::String(self.symbol(*s)),
+            AnnotationValue::Primitive(p) => AnnotationValue::Primitive(*p),
+            AnnotationValue::Class(t) => AnnotationValue::Class(self.type_ref(t)),
+            AnnotationValue::Enum {
                 class_type,
                 entry_name,
             } => AnnotationValue::Enum {
                 class_type: self.type_ref(class_type),
                 entry_name: self.symbol(*entry_name),
             },
-            AstAnnotationValue::Annotation(a) => AnnotationValue::Annotation(self.annotation(a)),
-            AstAnnotationValue::Array(values) => AnnotationValue::Array(
+            AnnotationValue::Annotation(a) => AnnotationValue::Annotation(self.annotation(a)),
+            AnnotationValue::Array(values) => AnnotationValue::Array(
                 values
                     .iter()
                     .map(|value| self.annotation_value(value))
@@ -331,7 +141,7 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn param(&mut self, p: &AstParamData) -> ParamData<u32> {
+    pub fn param(&mut self, p: &ParamData<Symbol>) -> ParamData<u32> {
         ParamData {
             flags: p.flags,
             name: p.name.map(|n| self.symbol(n)),
@@ -340,8 +150,8 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn method(&mut self, m: &AstMethodStub) -> MethodData<u32> {
-        MethodData {
+    pub fn method(&mut self, m: &MethodStub<Symbol>) -> MethodStub<u32> {
+        MethodStub {
             flags: m.flags,
             name: self.symbol(m.name),
             return_type: self.type_ref(&m.return_type),
@@ -357,8 +167,8 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn field(&mut self, f: &AstFieldStub) -> FieldData<u32> {
-        FieldData {
+    pub fn field(&mut self, f: &FieldStub<Symbol>) -> FieldStub<u32> {
+        FieldStub {
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -366,7 +176,10 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn record_component(&mut self, r: &AstRecordComponentData) -> RecordComponentData<u32> {
+    pub fn record_component(
+        &mut self,
+        r: &RecordComponentData<Symbol>,
+    ) -> RecordComponentData<u32> {
         RecordComponentData {
             name: self.symbol(r.name),
             component_type: self.type_ref(&r.component_type),
@@ -375,12 +188,12 @@ impl<'a> StubStringTable<'a> {
     }
 
     /// Converts a class stub, attaching its fully qualified name.
-    pub fn class(&mut self, c: &AstClassStub, fqn: u32) -> ClassData<u32> {
-        ClassData {
-            fqn,
+    pub fn class(&mut self, c: &ClassStub<Symbol>) -> ClassStub<u32> {
+        ClassStub {
+            fqn: self.symbol(c.fqn),
             name: self.symbol(c.name),
             flags: c.flags,
-            kind: ClassKind::from_flags(c.flags),
+            is_record: c.is_record,
             super_class: c.super_class.as_ref().map(|t| self.type_ref(t)),
             interfaces: c.interfaces.iter().map(|t| self.type_ref(t)).collect(),
             type_params: c
@@ -404,8 +217,8 @@ impl<'a> StubStringTable<'a> {
         }
     }
 
-    pub fn module(&mut self, m: &AstModuleStub) -> ModuleData<u32> {
-        ModuleData {
+    pub fn module(&mut self, m: &ModuleStub<Symbol>) -> ModuleStub<u32> {
+        ModuleStub {
             name: self.symbol(m.name),
             flags: m.flags,
             version: m.version.map(|v| self.symbol(v)),
@@ -542,8 +355,8 @@ impl<'a> DiskResolver<'a> {
         }
     }
 
-    pub fn method(&self, m: &MethodData<u32>) -> MethodData<Symbol> {
-        MethodData {
+    pub fn method(&self, m: &MethodStub<u32>) -> MethodStub<Symbol> {
+        MethodStub {
             flags: m.flags,
             name: self.symbol(m.name),
             return_type: self.type_ref(&m.return_type),
@@ -559,8 +372,8 @@ impl<'a> DiskResolver<'a> {
         }
     }
 
-    pub fn field(&self, f: &FieldData<u32>) -> FieldData<Symbol> {
-        FieldData {
+    pub fn field(&self, f: &FieldStub<u32>) -> FieldStub<Symbol> {
+        FieldStub {
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -576,12 +389,12 @@ impl<'a> DiskResolver<'a> {
         }
     }
 
-    pub fn class(&self, c: &ClassData<u32>) -> ClassData<Symbol> {
-        ClassData {
+    pub fn class(&self, c: &ClassStub<u32>) -> ClassStub<Symbol> {
+        ClassStub {
             fqn: self.symbol(c.fqn),
             name: self.symbol(c.name),
             flags: c.flags,
-            kind: c.kind,
+            is_record: c.is_record,
             super_class: c.super_class.as_ref().map(|t| self.type_ref(t)),
             interfaces: c.interfaces.iter().map(|t| self.type_ref(t)).collect(),
             type_params: c
@@ -605,8 +418,8 @@ impl<'a> DiskResolver<'a> {
         }
     }
 
-    pub fn module(&self, m: &ModuleData<u32>) -> ModuleData<Symbol> {
-        ModuleData {
+    pub fn module(&self, m: &ModuleStub<u32>) -> ModuleStub<Symbol> {
+        ModuleStub {
             name: self.symbol(m.name),
             flags: m.flags,
             version: m.version.map(|v| self.symbol(v)),
@@ -653,75 +466,62 @@ impl<'a> DiskResolver<'a> {
         }
     }
 
-    pub fn class_or_module(&self, c: &ClassOrModule<u32>) -> ClassOrModule<Symbol> {
+    pub fn class_or_module(&self, c: &ClassOrModuleStub<u32>) -> ClassOrModuleStub<Symbol> {
         match c {
-            ClassOrModule::Class(class) => ClassOrModule::Class(self.class(class)),
-            ClassOrModule::Module(module) => ClassOrModule::Module(self.module(module)),
+            ClassOrModuleStub::Class(class) => ClassOrModuleStub::Class(self.class(class)),
+            ClassOrModuleStub::Module(module) => ClassOrModuleStub::Module(self.module(module)),
         }
     }
 }
 
-// Aliases for the `syntax::stub` types produced by `syntax::ClassParser`.
-use syntax::stub::{
-    AnnotationSig as AstAnnotationSig, AnnotationValue as AstAnnotationValue,
-    ClassStub as AstClassStub, FieldStub as AstFieldStub, MethodStub as AstMethodStub,
-    ModuleStub as AstModuleStub, ParamData as AstParamData,
-    RecordComponentData as AstRecordComponentData, TypeBound as AstTypeBound,
-    TypeParameter as AstTypeParameter, TypeRef as AstTypeRef,
-};
-
 #[cfg(test)]
 mod tests {
     use lasso::ThreadedRodeo;
-    use syntax::stub::{
-        AnnotationSig as AstAnnotationSig, AnnotationValue as AstAnnotationValue,
-        ClassStub as AstClassStub, FieldStub as AstFieldStub, MethodStub as AstMethodStub,
-        PrimitiveType as AstPrimitiveType, PrimitiveValue as AstPrimitiveValue,
-        TypeParameter as AstTypeParameter, TypeRef as AstTypeRef,
-    };
 
     use super::*;
 
-    fn class_stub(interner: &ThreadedRodeo) -> AstClassStub {
-        AstClassStub {
+    fn class_stub(interner: &ThreadedRodeo) -> ClassStub<Symbol> {
+        ClassStub {
+            fqn: interner.get_or_intern("java.lang.String"),
             name: interner.get_or_intern("String"),
             flags: 0x0021, // ACC_PUBLIC | ACC_SUPER
-            super_class: Some(AstTypeRef::Reference {
+            is_record: false,
+            super_class: Some(TypeRef::Reference {
                 name: interner.get_or_intern("java.lang.Object"),
                 generic_args: Vec::new(),
             }),
-            interfaces: vec![AstTypeRef::Reference {
+            interfaces: vec![TypeRef::Reference {
                 name: interner.get_or_intern("java.lang.CharSequence"),
                 generic_args: Vec::new(),
             }],
-            type_params: vec![AstTypeParameter {
+            type_params: vec![TypeParameter {
                 name: interner.get_or_intern("T"),
                 bounds: Vec::new(),
                 annotations: Vec::new(),
             }],
             permitted_subclasses: Vec::new(),
             record_components: Vec::new(),
-            methods: vec![AstMethodStub {
+            methods: vec![MethodStub {
                 flags: 0x0001, // ACC_PUBLIC
                 name: interner.get_or_intern("length"),
-                return_type: AstTypeRef::Primitive(AstPrimitiveType::Int),
+                return_type: TypeRef::Primitive(PrimitiveType::Int),
                 type_params: Vec::new(),
                 throws_list: Vec::new(),
                 params: Vec::new(),
                 annotations: Vec::new(),
                 default_value: None,
             }],
-            fields: vec![AstFieldStub {
+            fields: vec![FieldStub {
                 flags: 0x0001,
-                field_type: AstTypeRef::Reference {
+                field_type: TypeRef::Reference {
                     name: interner.get_or_intern("int"),
                     generic_args: Vec::new(),
                 },
                 annotations: Vec::new(),
-                constant_value: Some(AstAnnotationValue::Primitive(AstPrimitiveValue::Int(42))),
+                constant_value: Some(AnnotationValue::Primitive(PrimitiveValue::Int(42))),
             }],
-            annotations: vec![AstAnnotationSig {
-                annotation_type: AstTypeRef::Reference {
+            annotations: vec![AnnotationSig {
+                annotation_type: TypeRef::Reference {
                     name: interner.get_or_intern("java.lang.Deprecated"),
                     generic_args: Vec::new(),
                 },
@@ -737,8 +537,7 @@ mod tests {
         let fqn = interner.get_or_intern("java.lang.String");
 
         let mut table = StubStringTable::new(&interner);
-        let fqn_idx = table.symbol(fqn);
-        let disk = table.class(&stub, fqn_idx);
+        let disk = table.class(&stub);
 
         // All symbols in the stub must have been added to the string table.
         let strings = table.into_strings();
@@ -751,7 +550,7 @@ mod tests {
         let back: ClassRecord = resolver.class(&disk);
         assert_eq!(back.fqn, fqn);
         assert_eq!(back.name, stub.name);
-        assert_eq!(back.kind, ClassKind::Class);
+        assert_eq!(back.is_record, stub.is_record);
         assert_eq!(
             back.super_class
                 .as_ref()
@@ -784,9 +583,11 @@ mod tests {
 
     #[test]
     fn class_kind_from_flags() {
-        assert_eq!(ClassKind::from_flags(0x0200), ClassKind::Interface);
-        assert_eq!(ClassKind::from_flags(0x2200), ClassKind::Annotation); // interface | annotation
-        assert_eq!(ClassKind::from_flags(0x4000), ClassKind::Enum);
-        assert_eq!(ClassKind::from_flags(0x0021), ClassKind::Class);
+        assert_eq!(ClassKind::from_flags(0x0200, false), ClassKind::Interface);
+        assert_eq!(ClassKind::from_flags(0x2200, false), ClassKind::Annotation); // interface | annotation
+        assert_eq!(ClassKind::from_flags(0x4000, false), ClassKind::Enum);
+        assert_eq!(ClassKind::from_flags(0x0021, false), ClassKind::Class);
+        assert_eq!(ClassKind::from_flags(0x0031, true), ClassKind::Record); // final class + Record attribute
+        assert_eq!(ClassKind::from_flags(0x0200, true), ClassKind::Interface); // interface wins over record
     }
 }

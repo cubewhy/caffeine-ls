@@ -12,7 +12,7 @@ use crate::{
     stub::{
         AnnotationSig, AnnotationValue, ClassOrModuleStub, ClassStub, FieldStub, MethodStub,
         ModuleExports, ModuleOpens, ModuleProvides, ModuleRequires, ModuleStub, ParamData,
-        PrimitiveType, PrimitiveValue, RecordComponentData, TypeRef,
+        PrimitiveType, PrimitiveValue, RecordComponentData, Symbol, TypeRef,
     },
 };
 
@@ -27,7 +27,7 @@ impl<'a> ClassParser<'a> {
         Self { interner }
     }
 
-    pub fn parse_cafebabe(&self, bytes: &[u8]) -> anyhow::Result<ClassOrModuleStub> {
+    pub fn parse_cafebabe(&self, bytes: &[u8]) -> anyhow::Result<ClassOrModuleStub<Symbol>> {
         let node = ClassReader::new(bytes)
             .to_class_node()
             .context("Failed to parse class")?;
@@ -44,14 +44,14 @@ impl<'a> ClassParser<'a> {
         Ok(model)
     }
 
-    fn internal_name_to_type_ref(&self, name: &str) -> TypeRef {
+    fn internal_name_to_type_ref(&self, name: &str) -> TypeRef<Symbol> {
         TypeRef::Reference {
             name: self.interner.get_or_intern(name.replace("/", ".")),
             generic_args: Vec::new(),
         }
     }
 
-    fn map_module(&self, node: &ModuleNode) -> ModuleStub {
+    fn map_module(&self, node: &ModuleNode) -> ModuleStub<Symbol> {
         ModuleStub {
             name: self.interner.get_or_intern(&node.name),
             flags: node.access_flags,
@@ -117,13 +117,13 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    fn map_class(&self, node: &ClassNode) -> ClassStub {
+    fn map_class(&self, node: &ClassNode) -> ClassStub<Symbol> {
         let mut type_params = Vec::new();
         let mut super_class = node
             .super_name
             .as_deref()
             .map(|name| self.internal_name_to_type_ref(name));
-        let mut interfaces: Vec<TypeRef> = node
+        let mut interfaces: Vec<TypeRef<Symbol>> = node
             .interfaces
             .iter()
             .map(|i| self.internal_name_to_type_ref(i))
@@ -137,9 +137,21 @@ impl<'a> ClassParser<'a> {
             interfaces = ifs;
         }
 
+        let fqn_str = node.name.replace('/', ".");
+        let simple_name = fqn_str
+            .rsplit_once('.')
+            .map(|(_, simple)| simple)
+            .unwrap_or(&fqn_str);
+        let is_record = node
+            .attributes
+            .iter()
+            .any(|attr| matches!(attr, AttributeInfo::Record { .. }));
+
         ClassStub {
-            name: self.interner.get_or_intern(node.name.replace('/', ".")),
+            fqn: self.interner.get_or_intern(&fqn_str),
+            name: self.interner.get_or_intern(simple_name),
             flags: node.access_flags,
+            is_record,
             super_class,
             interfaces,
 
@@ -176,7 +188,7 @@ impl<'a> ClassParser<'a> {
         &self,
         node: &rust_asm::nodes::RecordComponentNode,
         constant_pool: &[CpInfo],
-    ) -> RecordComponentData {
+    ) -> RecordComponentData<Symbol> {
         let mut chars = node.descriptor.chars().peekable();
         let mut component_type = self.parse_type_ref(&mut chars);
 
@@ -192,7 +204,7 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    fn map_field(&self, node: &FieldNode, constant_pool: &[CpInfo]) -> FieldStub {
+    fn map_field(&self, node: &FieldNode, constant_pool: &[CpInfo]) -> FieldStub<Symbol> {
         let mut chars = node.descriptor.chars().peekable();
         let mut field_type = self.parse_type_ref(&mut chars);
 
@@ -231,10 +243,10 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    fn map_method(&self, node: &MethodNode, constant_pool: &[CpInfo]) -> MethodStub {
+    fn map_method(&self, node: &MethodNode, constant_pool: &[CpInfo]) -> MethodStub<Symbol> {
         let (mut params, mut return_type) = self.parse_method_descriptor(&node.descriptor);
         let mut type_params = Vec::new();
-        let mut throws_list: Vec<TypeRef> = node
+        let mut throws_list: Vec<TypeRef<Symbol>> = node
             .exceptions
             .iter()
             .map(|e| self.internal_name_to_type_ref(e))
@@ -306,7 +318,7 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    fn parse_type_ref(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> TypeRef {
+    fn parse_type_ref(&self, chars: &mut std::iter::Peekable<std::str::Chars>) -> TypeRef<Symbol> {
         match chars.next() {
             Some('B') => TypeRef::Primitive(PrimitiveType::Byte),
             Some('C') => TypeRef::Primitive(PrimitiveType::Char),
@@ -336,7 +348,7 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    fn parse_method_descriptor(&self, desc: &str) -> (Vec<ParamData>, TypeRef) {
+    fn parse_method_descriptor(&self, desc: &str) -> (Vec<ParamData<Symbol>>, TypeRef<Symbol>) {
         let mut chars = desc.chars().peekable();
         let mut params = Vec::new();
 
@@ -368,7 +380,7 @@ impl<'a> ClassParser<'a> {
         &self,
         attributes: &[AttributeInfo],
         constant_pool: &[CpInfo],
-    ) -> Vec<AnnotationSig> {
+    ) -> Vec<AnnotationSig<Symbol>> {
         let mut signatures = Vec::new();
 
         for attr in attributes {
@@ -385,7 +397,7 @@ impl<'a> ClassParser<'a> {
         signatures
     }
 
-    pub fn map_annotation(&self, anno: &Annotation, cp: &[CpInfo]) -> AnnotationSig {
+    pub fn map_annotation(&self, anno: &Annotation, cp: &[CpInfo]) -> AnnotationSig<Symbol> {
         let type_descriptor = cp
             .resolve_utf8(anno.type_descriptor_index)
             .unwrap_or("<missing_annotation_type>");
@@ -412,7 +424,11 @@ impl<'a> ClassParser<'a> {
         }
     }
 
-    pub fn map_element_value(&self, value: &ElementValue, cp: &[CpInfo]) -> AnnotationValue {
+    pub fn map_element_value(
+        &self,
+        value: &ElementValue,
+        cp: &[CpInfo],
+    ) -> AnnotationValue<Symbol> {
         match value {
             ElementValue::ConstValueIndex {
                 tag,
