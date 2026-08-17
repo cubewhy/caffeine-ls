@@ -12,16 +12,23 @@ pub struct Diagnostic {
     pub unused: bool,
 }
 
-pub fn syntax_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
+pub fn syntax_diagnostics(
+    db: &RootDatabase,
+    file_id: FileId,
+    fallback_language_kind: LanguageKind,
+) -> Vec<Diagnostic> {
     // TODO: caching, kotlin support
-    let Some(language_kind) = db
+    // Before the workspace is loaded the file is not part of any source root,
+    // so `file_language_kind` can't resolve the language. Fall back to the
+    // kind inferred from the file path to keep basic syntax diagnostics.
+    let language_kind = db
         .file_language_kind(file_id)
         .filter(|&kind| kind != LanguageKind::Unknown)
-    else {
+        .unwrap_or(fallback_language_kind);
+    if language_kind == LanguageKind::Unknown {
         tracing::warn!("unsupported language");
-        // unsupported language
         return vec![];
-    };
+    }
     let file_text = db.file_text(file_id);
     let text = file_text.text(db);
     let parse = match language_kind {
@@ -43,5 +50,26 @@ fn to_diagnostic(file_id: FileId, syntax_err: syntax::java::SyntaxError) -> Diag
         range,
         severity: Severity::Error,
         unused: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn syntax_diagnostics_work_without_source_roots() {
+        let mut db = RootDatabase::new();
+        let file_id = vfs::FileId::from_raw(0);
+        db.set_file_text(
+            file_id,
+            "public class Main {\n    public void m() {\n        int a = 1\n    }\n}",
+        );
+
+        let with_fallback = syntax_diagnostics(&db, file_id, LanguageKind::Java);
+        assert!(!with_fallback.is_empty());
+
+        let without_fallback = syntax_diagnostics(&db, file_id, LanguageKind::Unknown);
+        assert!(without_fallback.is_empty());
     }
 }

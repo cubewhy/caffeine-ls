@@ -8,6 +8,7 @@ use ide_db::{
 
 pub use ide_db::{
     Severity,
+    base_db::LanguageKind,
     line_index::{LineCol, LineIndex},
 };
 pub use ide_diagnostics::Diagnostic;
@@ -86,8 +87,12 @@ impl Analysis {
         Cancelled::catch(AssertUnwindSafe(|| f(&self.db)))
     }
 
-    pub fn syntax_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id))
+    pub fn syntax_diagnostics(
+        &self,
+        file_id: FileId,
+        fallback_language_kind: LanguageKind,
+    ) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id, fallback_language_kind))
     }
 
     /// Gets the file's `LineIndex`: data structure to convert between absolute

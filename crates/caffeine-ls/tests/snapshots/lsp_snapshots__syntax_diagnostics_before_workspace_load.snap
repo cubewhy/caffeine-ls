@@ -1,0 +1,24 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 4
+        },
+        "end": {
+          "line": 3,
+          "character": 5
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "expected ';', found '}'"
+    }
+  ],
+  "kind": "full"
+}

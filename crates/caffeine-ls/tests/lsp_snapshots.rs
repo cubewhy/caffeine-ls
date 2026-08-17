@@ -34,102 +34,106 @@ static SETUP: LazyLock<()> = LazyLock::new(|| {
 });
 
 fn create_lsp() -> LspHarness {
+    create_lsp_with_setup(|_| {})
+}
+
+fn create_lsp_with_setup(setup: impl FnOnce(&std::path::Path)) -> LspHarness {
     LazyLock::force(&SETUP);
     let client_config = json!({});
 
-    LspHarness::start(client_config, |connection| {
-        let (initialize_id, initialize_params) = connection.initialize_start().unwrap();
+    LspHarness::start_with_setup(client_config, setup, run_server)
+}
 
-        tracing::info!("InitializeParams: {}", initialize_params);
-        #[allow(deprecated)]
-        let lsp_types::InitializeParams {
-            root_uri,
-            mut capabilities,
-            workspace_folders_initialize_params:
-                WorkspaceFoldersInitializeParams { workspace_folders },
-            initialization_options,
-            client_info,
-            ..
-        } = from_json::<lsp_types::InitializeParams>("InitializeParams", &initialize_params)
-            .unwrap();
+fn run_server(connection: lsp_server::Connection) {
+    let (initialize_id, initialize_params) = connection.initialize_start().unwrap();
 
-        let root_path = root_uri
-            .and_then(|it| it.to_file_path().ok())
-            .map(patch_path_prefix)
-            .and_then(|it| Utf8PathBuf::from_path_buf(it).ok())
-            .and_then(|it| AbsPathBuf::try_from(it).ok())
-            .unwrap();
+    tracing::info!("InitializeParams: {}", initialize_params);
+    #[allow(deprecated)]
+    let lsp_types::InitializeParams {
+        root_uri,
+        capabilities,
+        workspace_folders_initialize_params: WorkspaceFoldersInitializeParams { workspace_folders },
+        initialization_options,
+        client_info,
+        ..
+    } = from_json::<lsp_types::InitializeParams>("InitializeParams", &initialize_params).unwrap();
 
-        if let Some(client_info) = &client_info {
-            tracing::info!(
-                "Client '{}' {}",
-                client_info.name,
-                client_info.version.as_deref().unwrap_or_default()
+    let root_path = root_uri
+        .and_then(|it| it.to_file_path().ok())
+        .map(patch_path_prefix)
+        .and_then(|it| Utf8PathBuf::from_path_buf(it).ok())
+        .and_then(|it| AbsPathBuf::try_from(it).ok())
+        .unwrap();
+
+    if let Some(client_info) = &client_info {
+        tracing::info!(
+            "Client '{}' {}",
+            client_info.name,
+            client_info.version.as_deref().unwrap_or_default()
+        );
+    }
+
+    let workspace_folders = match workspace_folders {
+        Some(WorkspaceFolders::WorkspaceFolderList(folders)) => Some(folders),
+        _ => None,
+    };
+
+    let workspace_roots = workspace_folders
+        .map(|workspaces| {
+            workspaces
+                .into_iter()
+                .filter_map(|it| it.uri.to_file_path().ok())
+                .map(patch_path_prefix)
+                .filter_map(|it| Utf8PathBuf::from_path_buf(it).ok())
+                .filter_map(|it| AbsPathBuf::try_from(it).ok())
+                .collect::<Vec<_>>()
+        })
+        .filter(|workspaces| !workspaces.is_empty())
+        .unwrap_or_else(|| vec![root_path.clone()]);
+    let mut config = Config::new(capabilities, workspace_roots, client_info, None);
+    if let Some(json) = initialization_options {
+        let mut change = ConfigChange::default();
+
+        change.change_client_config(json);
+
+        let error_sink: ConfigErrors;
+        (config, error_sink, _) = config.apply_change(change);
+
+        if !error_sink.is_empty() {
+            use lsp_types::{MessageType, ShowMessageParams};
+            let not = lsp_server::Notification::new(
+                ShowMessageNotification::METHOD.to_string(),
+                ShowMessageParams {
+                    kind: MessageType::Warning,
+                    message: error_sink.to_string(),
+                },
             );
+            connection
+                .sender
+                .send(lsp_server::Message::Notification(not))
+                .unwrap();
         }
+    }
 
-        let workspace_folders = match workspace_folders {
-            Some(WorkspaceFolders::WorkspaceFolderList(folders)) => Some(folders),
-            _ => None,
-        };
+    let server_capabilities = caffeine_ls::server_capabilities(&config);
 
-        let workspace_roots = workspace_folders
-            .map(|workspaces| {
-                workspaces
-                    .into_iter()
-                    .filter_map(|it| it.uri.to_file_path().ok())
-                    .map(patch_path_prefix)
-                    .filter_map(|it| Utf8PathBuf::from_path_buf(it).ok())
-                    .filter_map(|it| AbsPathBuf::try_from(it).ok())
-                    .collect::<Vec<_>>()
-            })
-            .filter(|workspaces| !workspaces.is_empty())
-            .unwrap_or_else(|| vec![root_path.clone()]);
-        let mut config = Config::new(capabilities, workspace_roots, client_info, None);
-        if let Some(json) = initialization_options {
-            let mut change = ConfigChange::default();
+    let initialize_result = lsp_types::InitializeResult {
+        capabilities: server_capabilities,
+        server_info: Some(lsp_types::ServerInfo {
+            name: caffeine_ls::NAME.to_string(),
+            version: Some(caffeine_ls::VERSION.to_string()),
+        }),
+    };
 
-            change.change_client_config(json);
+    let initialize_result = serde_json::to_value(initialize_result).unwrap();
 
-            let error_sink: ConfigErrors;
-            (config, error_sink, _) = config.apply_change(change);
+    connection
+        .initialize_finish(initialize_id, initialize_result)
+        .expect("Failed to finish initialization");
 
-            if !error_sink.is_empty() {
-                use lsp_types::{MessageType, ShowMessageParams};
-                let not = lsp_server::Notification::new(
-                    ShowMessageNotification::METHOD.to_string(),
-                    ShowMessageParams {
-                        kind: MessageType::Warning,
-                        message: error_sink.to_string(),
-                    },
-                );
-                connection
-                    .sender
-                    .send(lsp_server::Message::Notification(not))
-                    .unwrap();
-            }
-        }
+    caffeine_ls::main_loop(config, connection).unwrap();
 
-        let server_capabilities = caffeine_ls::server_capabilities(&config);
-
-        let initialize_result = lsp_types::InitializeResult {
-            capabilities: server_capabilities,
-            server_info: Some(lsp_types::ServerInfo {
-                name: caffeine_ls::NAME.to_string(),
-                version: Some(caffeine_ls::VERSION.to_string()),
-            }),
-        };
-
-        let initialize_result = serde_json::to_value(initialize_result).unwrap();
-
-        connection
-            .initialize_finish(initialize_id, initialize_result)
-            .expect("Failed to finish initialization");
-
-        caffeine_ls::main_loop(config, connection).unwrap();
-
-        tracing::info!("server did shut down");
-    })
+    tracing::info!("server did shut down");
 }
 
 fn patch_path_prefix(path: PathBuf) -> PathBuf {
@@ -276,3 +280,24 @@ lsp_test!(
         insta::assert_json_snapshot!("incremental_sync", (diag_broken, diag_fixed));
     }
 );
+
+#[test]
+fn test_syntax_diagnostics_before_workspace_load() {
+    let lsp = create_lsp_with_setup(|root| {
+        // Two build systems make the probe ambiguous, so the workspace is
+        // never fully loaded.
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+    });
+
+    lsp.write_file(
+        "src/Main.java",
+        "public class Main {\n    public void m() {\n        int a = 1\n    }\n}",
+    );
+    lsp.open_document("/src/Main.java");
+    let diagnostics = lsp.pull_document_diagnostics("/src/Main.java");
+
+    insta::assert_json_snapshot!("syntax_diagnostics_before_workspace_load", diagnostics);
+
+    lsp.shutdown();
+}

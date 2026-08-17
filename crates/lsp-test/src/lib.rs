@@ -45,7 +45,20 @@ impl LspHarness {
     where
         F: FnOnce(Connection) + Send + 'static,
     {
+        Self::start_with_setup(config, |_| {}, init_backend)
+    }
+
+    /// Like [`Self::start`], but runs `setup` on the workspace root before the
+    /// server is initialized, allowing tests to control what the initial
+    /// workspace probe sees.
+    pub fn start_with_setup<F, S>(config: serde_json::Value, setup: S, init_backend: F) -> Self
+    where
+        F: FnOnce(Connection) + Send + 'static,
+        S: FnOnce(&std::path::Path),
+    {
         let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
+
+        setup(workspace_root.path());
 
         // Create an in-memory connection pair for the client (harness) and server
         let (client_connection, server_connection) = Connection::memory();
