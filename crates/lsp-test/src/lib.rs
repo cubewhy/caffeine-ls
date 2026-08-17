@@ -116,6 +116,89 @@ impl LspHarness {
         harness
     }
 
+    /// Like [`Self::start_with_setup`], but advertises `workDoneProgress`
+    /// support and answers `window/workDoneProgress/create` requests, so tests
+    /// can observe `$/progress` notifications from the server.
+    pub fn start_with_setup_progress<F, S>(
+        config: serde_json::Value,
+        setup: S,
+        init_backend: F,
+    ) -> Self
+    where
+        F: FnOnce(Connection) + Send + 'static,
+        S: FnOnce(&std::path::Path),
+    {
+        let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
+
+        setup(workspace_root.path());
+
+        // Create an in-memory connection pair for the client (harness) and server
+        let (client_connection, server_connection) = Connection::memory();
+
+        // Spawn the language server on a background thread
+        let server_handle = thread::spawn(move || {
+            init_backend(server_connection);
+        });
+
+        let (notif_tx, notif_rx) = unbounded();
+
+        let harness = Self {
+            server_handle: Some(server_handle),
+            client_connection,
+            next_id: AtomicI32::new(1),
+            workspace_root,
+            config,
+            client_capabilities: ClientCapabilities {
+                window: Some(lsp_types::WindowClientCapabilities {
+                    work_done_progress: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            notification_receiver: notif_rx,
+            notification_sender: notif_tx,
+            marks: Default::default(),
+            pending_requests: Default::default(),
+            document_versions: Default::default(),
+        };
+
+        let pending_requests = harness.pending_requests.clone();
+        let notification_sender = harness.notification_sender.clone();
+        let client_receiver = harness.client_connection.receiver.clone();
+        let client_sender = harness.client_connection.sender.clone();
+
+        // Spawn a background thread to listen to messages coming from the server
+        thread::spawn(move || {
+            for msg in client_receiver {
+                match msg {
+                    Message::Response(res) => {
+                        if let Some((_, tx)) = pending_requests.remove(&res.id) {
+                            let _ = tx.send(res.result.unwrap_or_default());
+                        }
+                    }
+                    Message::Notification(notif) => {
+                        if let Err(e) = notification_sender.send(notif) {
+                            eprintln!("Failed to send notification: {}", e);
+                        }
+                    }
+                    Message::Request(req) => {
+                        if req.method == "window/workDoneProgress/create" {
+                            let _ = client_sender.send(Message::Response(
+                                lsp_server::Response::new_ok(req.id, serde_json::Value::Null),
+                            ));
+                        } else {
+                            eprintln!("Received request from server: {}", req.method);
+                        }
+                    }
+                }
+            }
+        });
+
+        harness.init();
+
+        harness
+    }
+
     fn init(&self) {
         let root_uri = Uri::from_file_path(self.workspace_root.path())
             .expect("Failed to convert workspace path to URI");

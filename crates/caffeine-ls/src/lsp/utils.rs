@@ -5,7 +5,7 @@ use triomphe::Arc;
 
 use crate::{
     GlobalState,
-    global_state::{OutgoingRequest, ProgressEvent, ProgressState},
+    global_state::{OutgoingRequest, ProgressEvent, ProgressState, ProgressTokenState},
     line_index::{LineEndings, LineIndex, PositionEncoding},
     lsp::from_proto,
 };
@@ -96,8 +96,12 @@ impl GlobalState {
         self.send_request::<ShowMessageRequest>(params, state);
     }
 
-    /// Helper to translate internal ProgressEvent into LSP $/progress notifications
-    pub(crate) fn report_progress(&self, event: ProgressEvent) {
+    /// Helper to translate internal ProgressEvent into LSP $/progress notifications.
+    ///
+    /// Clients only deliver progress for tokens they were asked to create via
+    /// `window/workDoneProgress/create`, so a `Begin` triggers that handshake
+    /// and all events are buffered until the client acknowledges the token.
+    pub(crate) fn report_progress(&mut self, event: ProgressEvent) {
         if !self
             .config
             .client_capabilities
@@ -109,6 +113,71 @@ impl GlobalState {
             return;
         }
 
+        match event.state {
+            ProgressState::Begin => {
+                let token = event.token.clone();
+                // A token still marked active means a previous cycle never
+                // ended; close it before asking the client to create a fresh
+                // one with the same id.
+                if matches!(
+                    self.progress_tokens.get(&token),
+                    Some(ProgressTokenState::Active)
+                ) {
+                    self.report_progress_impl(ProgressEvent {
+                        token: token.clone(),
+                        title: String::new(),
+                        message: None,
+                        percentage: None,
+                        state: ProgressState::End,
+                    });
+                    self.progress_tokens.remove(&token);
+                }
+
+                self.progress_tokens
+                    .insert(token.clone(), ProgressTokenState::Creating(vec![event]));
+                let params = WorkDoneProgressCreateParams {
+                    token: ProgressToken::String(token.clone()),
+                };
+                self.send_request::<WorkDoneProgressCreateRequest>(
+                    params,
+                    OutgoingRequest::CreateProgress { token },
+                );
+            }
+            ProgressState::Report | ProgressState::End => {
+                let token = event.token.clone();
+                let is_end = matches!(event.state, ProgressState::End);
+                let buffered = match self.progress_tokens.get_mut(&token) {
+                    Some(ProgressTokenState::Creating(buf)) => {
+                        buf.push(event);
+                        true
+                    }
+                    _ => {
+                        self.report_progress_impl(event);
+                        false
+                    }
+                };
+                if is_end && !buffered {
+                    self.progress_tokens.remove(&token);
+                }
+            }
+        }
+    }
+
+    /// Flushes events buffered while a `window/workDoneProgress/create` request
+    /// was in flight, once the client acknowledges the token.
+    pub(crate) fn flush_progress(&mut self, token: &str) {
+        if let Some(ProgressTokenState::Creating(events)) = self.progress_tokens.remove(token) {
+            for event in events {
+                self.report_progress_impl(event);
+            }
+            self.progress_tokens
+                .insert(token.to_string(), ProgressTokenState::Active);
+        }
+    }
+
+    /// Emits a single `$/progress` notification. Assumes the token has already
+    /// been created on the client.
+    fn report_progress_impl(&self, event: ProgressEvent) {
         let token = ProgressToken::String(event.token.clone());
 
         let work_done = match event.state {

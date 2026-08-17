@@ -73,6 +73,18 @@ pub(crate) enum OutgoingRequest {
         root: AbsPathBuf,
         systems: Vec<project_model::BuildSystemType>,
     },
+    CreateProgress {
+        token: String,
+    },
+}
+
+/// Lifecycle of a `$/progress` token on the client side.
+pub(crate) enum ProgressTokenState {
+    /// A `window/workDoneProgress/create` request is in flight; events for
+    /// this token are buffered until the client acknowledges it.
+    Creating(Vec<ProgressEvent>),
+    /// The client acknowledged the token; progress flows straight through.
+    Active,
 }
 
 type ReqQueue = lsp_server::ReqQueue<(String, Instant), OutgoingRequest>;
@@ -100,6 +112,9 @@ pub struct GlobalState {
     /// being reported to the client, so stale `Message::Progress` updates from
     /// a previous (reload) config are ignored.
     pub(crate) scan_config_version: Option<u32>,
+    /// Lifecycle state of `$/progress` tokens awaiting (or acknowledged by)
+    /// the client's `window/workDoneProgress/create` handshake.
+    pub(crate) progress_tokens: FxHashMap<String, ProgressTokenState>,
     /// Partitions the vfs into source roots. `None` until a workspace has been loaded.
     pub(crate) file_set_config: Option<vfs::file_set::FileSetConfig>,
     /// Gitignore-aware matchers for the loaded source roots, used to filter
@@ -140,6 +155,7 @@ impl GlobalState {
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
             scan_config_version: None,
+            progress_tokens: FxHashMap::default(),
             file_set_config: None,
             source_root_matchers: Vec::new(),
         }
@@ -234,17 +250,29 @@ impl GlobalState {
             return;
         };
 
-        if let Some(err) = &resp.error {
-            tracing::error!(?resp.id, "Client returned error response: {:?}", err);
-            return;
-        }
-
         match outgoing_req {
+            OutgoingRequest::CreateProgress { token } => {
+                if let Some(err) = &resp.error {
+                    tracing::warn!(?resp.id, "Client rejected progress token {token}: {err:?}");
+                    self.progress_tokens.remove(&token);
+                } else {
+                    self.flush_progress(&token);
+                }
+            }
+
             OutgoingRequest::SelectBuildSystem { root, systems } => {
+                if let Some(err) = &resp.error {
+                    tracing::error!(?resp.id, "Client returned error response: {:?}", err);
+                    return;
+                }
                 self.handle_select_build_system_response(resp, root, systems);
             }
 
             OutgoingRequest::Generic(handler) => {
+                if let Some(err) = &resp.error {
+                    tracing::error!(?resp.id, "Client returned error response: {:?}", err);
+                    return;
+                }
                 handler(self, resp);
             }
         }

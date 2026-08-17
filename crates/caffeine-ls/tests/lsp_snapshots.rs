@@ -44,6 +44,13 @@ fn create_lsp_with_setup(setup: impl FnOnce(&std::path::Path)) -> LspHarness {
     LspHarness::start_with_setup(client_config, setup, run_server)
 }
 
+fn create_lsp_with_progress() -> LspHarness {
+    LazyLock::force(&SETUP);
+    let client_config = json!({});
+
+    LspHarness::start_with_setup_progress(client_config, |_| {}, run_server)
+}
+
 fn run_server(connection: lsp_server::Connection) {
     let (initialize_id, initialize_params) = connection.initialize_start().unwrap();
 
@@ -296,6 +303,64 @@ lsp_test!(
         insta::assert_json_snapshot!("incremental_sync", (diag_broken, diag_fixed));
     }
 );
+
+#[test]
+fn test_workspace_load_reports_progress() {
+    let lsp = create_lsp_with_progress();
+
+    // The temp workspace has no build system, so only the VFS scan phase
+    // runs; it must surface as `$/progress` begin/end pairs (which clients
+    // only deliver after the `window/workDoneProgress/create` handshake).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut began = std::collections::HashSet::new();
+    let mut ended = std::collections::HashSet::new();
+
+    while std::time::Instant::now() < deadline {
+        match lsp
+            .notification_receiver
+            .recv_timeout(std::time::Duration::from_millis(100))
+        {
+            Ok(notif) if notif.method == "$/progress" => {
+                let kind = notif
+                    .params
+                    .get("value")
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|k| k.as_str());
+                let token = notif
+                    .params
+                    .get("token")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                match kind {
+                    Some("begin") => {
+                        began.insert(token);
+                    }
+                    Some("end") => {
+                        ended.insert(token);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+
+        if !began.is_empty() && !ended.is_empty() {
+            break;
+        }
+    }
+
+    assert!(
+        !began.is_empty(),
+        "server never reported a $/progress begin for workspace loading"
+    );
+    assert!(
+        !ended.is_empty(),
+        "server never reported a $/progress end for workspace loading"
+    );
+
+    lsp.shutdown();
+}
 
 #[test]
 fn test_syntax_diagnostics_before_workspace_load() {
