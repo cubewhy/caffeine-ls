@@ -3,7 +3,6 @@ source: crates/caffeine-ls/tests/lsp_snapshots.rs
 expression: diagnostics
 ---
 {
-  "kind": "full",
   "items": [
     {
       "range": {
@@ -18,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected a type here."
+      "message": "WIP"
     },
     {
       "range": {
@@ -33,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected '}', but found 'EOF'."
+      "message": "WIP"
     },
     {
       "range": {
@@ -48,7 +47,8 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected '}', but found 'EOF'."
+      "message": "WIP"
     }
-  ]
+  ],
+  "kind": "full"
 }

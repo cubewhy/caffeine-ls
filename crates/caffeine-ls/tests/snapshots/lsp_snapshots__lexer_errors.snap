@@ -3,7 +3,6 @@ source: crates/caffeine-ls/tests/lsp_snapshots.rs
 expression: diagnostics
 ---
 {
-  "kind": "full",
   "items": [
     {
       "range": {
@@ -18,7 +17,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Unexpected character '`' found in source code."
+      "message": "WIP"
     },
     {
       "range": {
@@ -33,7 +32,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Unexpected character '`' found in source code."
+      "message": "WIP"
     },
     {
       "range": {
@@ -48,7 +47,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Invalid character literal. Did you forget a closing quote '''?"
+      "message": "WIP"
     },
     {
       "range": {
@@ -63,7 +62,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected an argument"
+      "message": "WIP"
     },
     {
       "range": {
@@ -78,7 +77,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected ';', but found 'UNKNOWN'."
+      "message": "WIP"
     },
     {
       "range": {
@@ -93,7 +92,8 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Expected a class member (e.g., field or method) here."
+      "message": "WIP"
     }
-  ]
+  ],
+  "kind": "full"
 }

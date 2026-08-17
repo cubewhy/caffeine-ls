@@ -52,7 +52,14 @@ impl FileChange {
 
                 db.set_source_root_with_durability(root_id, Arc::new(root), Durability::LOW);
             }
-            LocalRoots::get(db).set_roots(db).to(local_roots);
+            match LocalRoots::try_get(db) {
+                Some(singleton) => {
+                    singleton.set_roots(db).to(local_roots);
+                }
+                None => {
+                    LocalRoots::new(db, local_roots);
+                }
+            }
         }
 
         for (file_id, text) in self.files_changed {

@@ -34,6 +34,8 @@ impl<'a> RequestDispatcher<'a> {
         self
     }
 
+    /// Dispatches a request to a handler on the thread pool. Currently unused,
+    /// but kept as the building block for future expensive (async) requests.
     pub(crate) fn on_async<R>(
         &mut self,
         worker: fn(GlobalStateSnapshot, R::Params) -> anyhow::Result<R::Result>,

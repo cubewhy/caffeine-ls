@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crossbeam_channel::Receiver;
-use ide_db::base_db::FileChange;
+use ide_db::base_db::{FileChange, SourceRoot};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::{
     CancelNotification, DidChangeConfigurationNotification, DidChangeTextDocumentNotification,
@@ -22,6 +22,19 @@ use crate::{
     },
     line_index::LineEndings,
 };
+
+/// Directories that are never interesting to load into the vfs, relative to a
+/// workspace folder.
+const EXCLUDED_DIRECTORIES: &[&str] = &[
+    "target",
+    "build",
+    "out",
+    "bin",
+    ".gradle",
+    ".idea",
+    ".git",
+    "node_modules",
+];
 
 pub fn main_loop(config: Config, connection: Connection) -> anyhow::Result<()> {
     tracing::info!("initial config: {:#?}", config);
@@ -185,33 +198,9 @@ impl GlobalState {
     fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
             BackgroundTaskEvent::ProbeWorkspace { root } => {
-                let task_sender = self.task_sender.clone();
-
-                // Perform fast, non-blocking file detection on the worker thread pool
-                self.thread_pool.execute(move || {
-                    match project_model::probe_workspace_layout(root.as_ref()) {
-                        project_model::ProbeResult::Single(system) => {
-                            task_sender
-                                .send(BackgroundTaskEvent::LoadWorkspace { root, system })
-                                .ok();
-                        }
-                        project_model::ProbeResult::Ambiguous(systems) => {
-                            // Convert the decoupled enum choices directly into an interactive
-                            // LSP UI selection prompt on the main server actor loop
-                            tracing::warn!(
-                                ?root,
-                                ?systems,
-                                "Ambiguous build configurations discovered."
-                            );
-                            task_sender
-                                .send(BackgroundTaskEvent::AmbiguousWorkspace { root, systems })
-                                .ok();
-                        }
-                        project_model::ProbeResult::None => {
-                            tracing::error!(?root, "No supported Java project structures found.");
-                        }
-                    }
-                });
+                // The probe only checks the existence of a handful of build files,
+                // so it's cheap enough to run on the main thread.
+                self.probe_workspace(root);
             }
 
             BackgroundTaskEvent::AmbiguousWorkspace { root, systems } => {
@@ -273,6 +262,8 @@ impl GlobalState {
 
             BackgroundTaskEvent::WorkspaceLoaded { graph, root } => {
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
+
+                self.apply_loaded_graph(graph, root);
             }
 
             BackgroundTaskEvent::Progress(progress) => {
@@ -297,12 +288,117 @@ impl GlobalState {
 
     /// Entry point to kick off initialization/probing workflows.
     /// Call this inside your `handlers::on_initialized` callback.
-    pub fn trigger_workspace_probe(&self) {
-        for root in self.config.workspace_folders.iter() {
-            self.task_sender
-                .send(BackgroundTaskEvent::ProbeWorkspace { root: root.clone() })
-                .ok();
+    pub fn trigger_workspace_probe(&mut self) {
+        for root in self.config.workspace_folders.clone() {
+            self.probe_workspace(root);
         }
+    }
+
+    /// Probes a workspace root for a supported build system and dispatches the
+    /// follow-up work. Runs on the main thread: the probe is just a few cheap
+    /// `exists()` checks, and the `None` fallback needs to apply its source
+    /// roots synchronously so that requests racing with initialization see a
+    /// fully populated database.
+    fn probe_workspace(&mut self, root: AbsPathBuf) {
+        match project_model::probe_workspace_layout(root.as_ref()) {
+            project_model::ProbeResult::Single(system) => {
+                self.task_sender
+                    .send(BackgroundTaskEvent::LoadWorkspace { root, system })
+                    .ok();
+            }
+            project_model::ProbeResult::Ambiguous(systems) => {
+                tracing::warn!(
+                    ?root,
+                    ?systems,
+                    "Ambiguous build configurations discovered."
+                );
+                self.task_sender
+                    .send(BackgroundTaskEvent::AmbiguousWorkspace { root, systems })
+                    .ok();
+            }
+            project_model::ProbeResult::None => {
+                tracing::info!(
+                    ?root,
+                    "No build system detected, treating workspace root as a plain source root"
+                );
+                self.apply_loaded_graph(project_model::WorkspaceGraph::plain(root.clone()), root);
+            }
+        }
+    }
+
+    /// Turns a loaded [`project_model::WorkspaceGraph`] into database source
+    /// roots and configures the vfs loader with the source roots declared by
+    /// the build system.
+    fn apply_loaded_graph(&mut self, graph: project_model::WorkspaceGraph, root: AbsPathBuf) {
+        tracing::info!(?root, "Applying workspace source roots and loader config");
+
+        let mut source_roots: Vec<AbsPathBuf> = Vec::new();
+
+        for project in graph.projects.values() {
+            for source_set in project.source_sets.values() {
+                source_roots.extend(source_set.source_roots.iter().cloned());
+                source_roots.extend(source_set.generated_source_roots.iter().cloned());
+            }
+        }
+
+        source_roots.sort();
+        source_roots.dedup();
+
+        let mut builder = vfs::file_set::FileSetConfig::builder();
+        builder.add_file_set(
+            source_roots
+                .iter()
+                .cloned()
+                .map(vfs::VfsPath::from)
+                .collect(),
+        );
+        let file_set_config = builder.build();
+
+        // Load and watch the source roots declared by the build system.
+        self.vfs_config_version += 1;
+        let entries: Vec<vfs::loader::Entry> = source_roots
+            .iter()
+            .map(|source_root| {
+                vfs::loader::Entry::Directories(vfs::loader::Directories {
+                    extensions: vec!["java".into(), "kt".into(), "kts".into()],
+                    include: vec![source_root.clone()],
+                    exclude: EXCLUDED_DIRECTORIES
+                        .iter()
+                        .map(|dir| source_root.join(dir))
+                        .collect(),
+                })
+            })
+            .collect();
+        let watch = (0..entries.len()).collect();
+        self.loader.handle.set_config(vfs::loader::Config {
+            version: self.vfs_config_version,
+            load: entries,
+            watch,
+        });
+
+        self.file_set_config = Some(file_set_config);
+        self.apply_source_roots();
+    }
+
+    /// Rebuilds the database source roots by partitioning the current vfs with
+    /// [`Self::file_set_config`].
+    fn apply_source_roots(&mut self) {
+        let mut change = FileChange::default();
+        change.set_roots(self.partition_source_roots());
+        self.analysis_host.apply_change(change);
+    }
+
+    fn partition_source_roots(&self) -> Vec<SourceRoot> {
+        let file_set_config = match &self.file_set_config {
+            Some(config) => config,
+            None => return Vec::new(),
+        };
+
+        let vfs = self.vfs.read();
+        let mut file_sets = file_set_config.partition(&vfs.0);
+        // The last set is the catch-all for files outside any source root.
+        file_sets.pop();
+        file_sets.into_iter().map(SourceRoot::new).collect()
     }
 
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {
@@ -316,8 +412,14 @@ impl GlobalState {
                 }
                 self.process_changes();
             }
-            vfs::loader::Message::Progress { n_done, .. } => {
-                if n_done == vfs::loader::LoadingProgress::Finished {
+            vfs::loader::Message::Progress {
+                n_done,
+                config_version,
+                ..
+            } => {
+                if n_done == vfs::loader::LoadingProgress::Finished
+                    && config_version == self.vfs_config_version
+                {
                     self.task_sender.send(BackgroundTaskEvent::VfsLoaded).ok();
                 }
             }
@@ -327,28 +429,40 @@ impl GlobalState {
     fn process_changes(&mut self) {
         let mut change = FileChange::default();
 
-        let mut vfs = self.vfs.write();
-        let (vfs, line_endings_map) = &mut *vfs;
-        let vfs_changes = vfs.take_changes();
+        let vfs_changed = {
+            let mut vfs = self.vfs.write();
+            let (vfs, line_endings_map) = &mut *vfs;
+            let vfs_changes = vfs.take_changes();
 
-        if !vfs_changes.is_empty() {
-            for (file_id, changed_file) in vfs_changes {
-                let new_text = match changed_file.change {
-                    vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
-                        String::from_utf8(items).ok().map(|text| {
-                            let (normalized_text, line_endings) = LineEndings::normalize(text);
-                            line_endings_map.insert(file_id, line_endings);
-                            normalized_text
-                        })
-                    }
-                    vfs::Change::Delete => {
-                        line_endings_map.remove(&file_id);
-                        None
-                    }
-                };
-                change.change_file(file_id, new_text);
+            if !vfs_changes.is_empty() {
+                for (file_id, changed_file) in vfs_changes {
+                    let new_text = match changed_file.change {
+                        vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
+                            String::from_utf8(items).ok().map(|text| {
+                                let (normalized_text, line_endings) = LineEndings::normalize(text);
+                                line_endings_map.insert(file_id, line_endings);
+                                normalized_text
+                            })
+                        }
+                        vfs::Change::Delete => {
+                            line_endings_map.remove(&file_id);
+                            None
+                        }
+                    };
+                    change.change_file(file_id, new_text);
+                }
+                true
+            } else {
+                false
             }
+        };
+
+        // Files were added to or removed from the vfs, so the source roots need
+        // to be rebuilt to keep `file_language_kind` working.
+        if vfs_changed && self.file_set_config.is_some() {
+            change.set_roots(self.partition_source_roots());
         }
+
         self.analysis_host.apply_change(change);
     }
 }

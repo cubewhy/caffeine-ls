@@ -179,6 +179,38 @@ pub struct WorkspaceGraph {
     pub source_root_to_owning_set: FxHashMap<AbsPathBuf, (ProjectId, SourceSetKind)>,
 }
 
+impl WorkspaceGraph {
+    /// Builds a minimal graph for a workspace without any supported build
+    /// system: the workspace root itself is treated as a single source root.
+    pub fn plain(root: AbsPathBuf) -> Self {
+        let mut graph = WorkspaceGraph::default();
+
+        let project = ProjectData {
+            id: ProjectId(0),
+            name: SmolStr::from("workspace"),
+            root_path: root.clone(),
+            target_sdk: None,
+            source_sets: FxHashMap::from_iter([(
+                SourceSetKind::Main,
+                SourceSetData {
+                    kind: SourceSetKind::Main,
+                    source_roots: vec![root.clone()],
+                    generated_source_roots: Vec::new(),
+                    compile_classpath: Vec::new(),
+                    runtime_classpath: Vec::new(),
+                    jpms_module_name: None,
+                },
+            )]),
+        };
+        graph.projects.insert(ProjectId(0), Arc::new(project));
+        graph
+            .source_root_to_owning_set
+            .insert(root, (ProjectId(0), SourceSetKind::Main));
+
+        graph
+    }
+}
+
 // impl WorkspaceGraph {
 //     /// Precisely resolves which project and which source set (`Main` or `Test`) a file belongs to.
 //     /// This determines which dependencies the file can see in the LSP, and whether test framework calls are permitted.

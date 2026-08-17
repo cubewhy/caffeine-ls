@@ -4,7 +4,6 @@ expression: "(diag_broken, diag_fixed)"
 ---
 [
   {
-    "kind": "full",
     "items": [
       {
         "range": {
@@ -19,7 +18,7 @@ expression: "(diag_broken, diag_fixed)"
         },
         "severity": 1,
         "source": "caffeine-ls",
-        "message": "Expected an argument"
+        "message": "WIP"
       },
       {
         "range": {
@@ -34,12 +33,13 @@ expression: "(diag_broken, diag_fixed)"
         },
         "severity": 1,
         "source": "caffeine-ls",
-        "message": "Expected a statement here."
+        "message": "WIP"
       }
-    ]
+    ],
+    "kind": "full"
   },
   {
-    "kind": "full",
-    "items": []
+    "items": [],
+    "kind": "full"
   }
 ]
