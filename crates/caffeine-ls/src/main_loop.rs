@@ -130,55 +130,6 @@ impl GlobalState {
         }
     }
 
-    fn handle_config_response(&mut self, resp: lsp_server::Response) {
-        // FIXME: the response structure may need manual confirm on real client behaviors.
-        tracing::info!("Received configuration response from client");
-
-        if let Some(err) = resp.error {
-            tracing::error!("Client failed to return configuration: {:?}", err);
-            return;
-        }
-
-        let Some(result) = resp.result else { return };
-
-        let mut response_values: Vec<serde_json::Value> =
-            serde_json::from_value(result).unwrap_or_default();
-        if response_values.is_empty() {
-            tracing::warn!("Empty configuration array received from client");
-            return;
-        }
-        let raw_settings = response_values.remove(0);
-
-        let mut change = crate::config::ConfigChange::default();
-        change.change_client_config(raw_settings);
-
-        let old_config = Arc::clone(&self.config);
-        let current_config = (*old_config).clone();
-
-        let (new_config, errors, config_changed) = current_config.apply_change(change);
-
-        if !errors.is_empty() {
-            tracing::warn!("{}", errors);
-            self.show_message(lsp_types::MessageType::Warning, errors.to_string());
-            self.config_errors = Some(errors);
-        } else {
-            self.config_errors = None;
-        }
-
-        if config_changed {
-            let need_reload = need_reload_workspace(&old_config, &new_config);
-            self.config = Arc::new(new_config);
-            tracing::info!("Global state configuration updated successfully.");
-
-            if need_reload {
-                tracing::info!("Reloading workspace due config change...");
-                self.trigger_workspace_probe();
-            }
-        } else {
-            tracing::info!("Configuration received but no effective changes detected.");
-        }
-    }
-
     fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
             BackgroundTaskEvent::ProbeWorkspace { root } => {
