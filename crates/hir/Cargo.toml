@@ -6,12 +6,24 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
+base-db.workspace = true
+camino.workspace = true
 dashmap.workspace = true
 hir-expand.workspace = true
-indexmap.workspace = true
+jimage-rs.workspace = true
+lasso.workspace = true
+lru.workspace = true
+parking_lot.workspace = true
+postcard.workspace = true
+rayon.workspace = true
 rust-asm.workspace = true
 rustc-hash.workspace = true
+salsa.workspace = true
 serde.workspace = true
-smol_str.workspace = true
-triomphe.workspace = true
+syntax.workspace = true
+tracing.workspace = true
 vfs.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

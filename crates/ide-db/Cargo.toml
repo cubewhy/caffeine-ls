@@ -12,3 +12,8 @@ rowan.workspace = true
 salsa.workspace = true
 triomphe.workspace = true
 vfs.workspace = true
+
+[dev-dependencies]
+camino.workspace = true
+tempfile = "3"
+zip.workspace = true

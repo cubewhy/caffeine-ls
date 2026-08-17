@@ -115,7 +115,7 @@ pub fn build_graph_from_eclipse(
                         *jar_to_library_id
                             .entry(target_path.clone())
                             .or_insert_with(|| {
-                                crate::LibraryId::from_jar_path(&target_path)
+                                crate::LibraryId::from_file_path(&target_path)
                                     .expect("failed to hash jar path")
                             });
 

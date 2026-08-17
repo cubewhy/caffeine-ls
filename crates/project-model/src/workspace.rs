@@ -24,8 +24,8 @@ pub struct SdkId(pub u32);
 pub struct LibraryId(pub u64);
 
 impl LibraryId {
-    /// Generate a unique ID for a JAR file based on its path and metadata
-    pub fn from_jar_path(path: &Path) -> std::io::Result<Self> {
+    /// Generate a unique ID for a file based on its path and metadata
+    pub fn from_file_path(path: &Path) -> std::io::Result<Self> {
         let metadata = fs::metadata(path)?;
         let modified = metadata.modified()?;
 

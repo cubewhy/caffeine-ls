@@ -8,12 +8,12 @@ use rust_asm::{
 };
 
 use crate::{
-    ast::{
+    class_parser::sig::{SigParser, get_signature},
+    stub::{
         AnnotationSig, AnnotationValue, ClassOrModuleStub, ClassStub, FieldStub, MethodStub,
         ModuleExports, ModuleOpens, ModuleProvides, ModuleRequires, ModuleStub, ParamData,
         PrimitiveType, PrimitiveValue, RecordComponentData, TypeRef,
     },
-    class_parser::sig::{SigParser, get_signature},
 };
 
 mod sig;
@@ -138,7 +138,7 @@ impl<'a> ClassParser<'a> {
         }
 
         ClassStub {
-            name: self.interner.get_or_intern(&node.name),
+            name: self.interner.get_or_intern(node.name.replace('/', ".")),
             flags: node.access_flags,
             super_class,
             interfaces,

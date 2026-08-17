@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 rowan.workspace = true
 lasso.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["derive"] }
 rust-asm.workspace = true
 anyhow.workspace = true
 smol_str.workspace = true

@@ -270,7 +270,7 @@ pub fn build_graph_from_idea(
                                     let lib_id = *jar_to_library_id
                                         .entry(jar_path.clone())
                                         .or_insert_with(|| {
-                                            crate::LibraryId::from_jar_path(jar_path)
+                                            crate::LibraryId::from_file_path(jar_path)
                                                 .expect("failed to hash jar path")
                                         });
                                     let abs_jar_path =
@@ -297,7 +297,7 @@ pub fn build_graph_from_idea(
                                     let lib_id = *jar_to_library_id
                                         .entry(jar_path.clone())
                                         .or_insert_with(|| {
-                                            crate::LibraryId::from_jar_path(&jar_path)
+                                            crate::LibraryId::from_file_path(&jar_path)
                                                 .expect("failed to hash jar path")
                                         });
                                     let abs_jar_path = AbsPathBuf::assert_utf8(jar_path);

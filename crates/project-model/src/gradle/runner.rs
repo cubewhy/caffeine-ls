@@ -184,7 +184,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
                         if path.extension().is_some_and(|ext| ext == "jar") {
                             let lib_id =
                                 *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
-                                    crate::LibraryId::from_jar_path(&path)
+                                    crate::LibraryId::from_file_path(&path)
                                         .expect("failed to hash jar path")
                                 });
 

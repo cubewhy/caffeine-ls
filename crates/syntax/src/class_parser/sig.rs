@@ -5,9 +5,8 @@ use rust_asm::{
     class_reader::AttributeInfo,
     constant_pool::{ConstantPoolExt, CpInfo},
 };
-use smol_str::SmolStr;
 
-use crate::ast::{PrimitiveType, TypeParameter, TypeRef};
+use crate::stub::{PrimitiveType, TypeParameter, TypeRef};
 
 pub struct SigParser<'a> {
     chars: Peekable<std::str::Chars<'a>>,

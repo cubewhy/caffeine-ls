@@ -1,10 +1,12 @@
-use std::{path::PathBuf, time::Instant};
+use std::{panic::AssertUnwindSafe, path::PathBuf, time::Instant};
 
 use camino::Utf8PathBuf;
 use crossbeam_channel::Receiver;
-use ide_db::base_db::{FileChange, SourceRoot};
+use hir::{LibraryId as HirLibraryId, LibraryKind};
+use ide_db::base_db::{FileChange, SourceRoot, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
+use project_model::ClasspathEntry;
 use rustc_hash::FxHashSet;
 use vfs::AbsPathBuf;
 
@@ -318,7 +320,74 @@ impl GlobalState {
 
         self.file_set_config = Some(file_set_config);
         self.apply_source_roots();
+        self.register_libraries(&graph);
         self.refresh_diagnostics();
+    }
+
+    /// Registers the JDK and classpath jars from the workspace graph with the
+    /// stub index, then warms the indexes up on a background thread so the
+    /// first type query does not pay the full JDK parse cost.
+    fn register_libraries(&mut self, graph: &project_model::WorkspaceGraph) {
+        let mut libraries: Vec<(HirLibraryId, LibraryKind, AbsPathBuf)> = Vec::new();
+
+        // JDKs: prefer the modular layout (`lib/modules`), fall back to the
+        // legacy `lib/rt.jar`.
+        for sdk in graph.sdks.values() {
+            let modules = sdk.home_path.join("lib").join("modules");
+            let rt_jar = sdk.home_path.join("lib").join("rt.jar");
+            let (path, kind) =
+                if std::fs::metadata(std::path::Path::new(modules.as_path().as_str())).is_ok() {
+                    (modules, LibraryKind::Jimage)
+                } else {
+                    (rt_jar, LibraryKind::Jar)
+                };
+            if std::fs::metadata(std::path::Path::new(path.as_path().as_str())).is_ok()
+                && let Ok(id) = project_model::LibraryId::from_file_path(path.as_path().as_ref())
+            {
+                libraries.push((HirLibraryId(id.0), kind, path));
+            }
+        }
+
+        // Classpath jars referenced by any source set.
+        for project in graph.projects.values() {
+            for source_set in project.source_sets.values() {
+                for entry in &source_set.compile_classpath {
+                    if let ClasspathEntry::External(lib_id) = entry
+                        && let Some(lib) = graph.library_paths.get(lib_id)
+                    {
+                        libraries.push((
+                            HirLibraryId(lib_id.0),
+                            LibraryKind::Jar,
+                            lib.path.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Deduplicate: the same jar may be referenced from many source sets.
+        libraries.sort_by_key(|(id, _, _)| id.0);
+        libraries.dedup_by_key(|(id, _, _)| id.0);
+
+        let db = self.analysis_host.raw_database_mut();
+        for (id, kind, path) in &libraries {
+            hir::register_library(db, *id, *kind, path.as_str().into());
+        }
+
+        let ids: Vec<HirLibraryId> = libraries.into_iter().map(|(id, _, _)| id).collect();
+        if ids.is_empty() {
+            return;
+        }
+
+        let snapshot = self.analysis_host.snapshot();
+        self.thread_pool.execute(move || {
+            for id in ids {
+                let db = snapshot.raw_database();
+                let _ = Cancelled::catch(AssertUnwindSafe(|| {
+                    hir::warmup_library(db, id);
+                }));
+            }
+        });
     }
 
     /// Rebuilds the database source roots by partitioning the current vfs with
