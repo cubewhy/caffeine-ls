@@ -738,6 +738,12 @@ impl GlobalState {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
+                        // Open documents are maintained by the client via
+                        // didChange, so the loader's on-disk copy is stale and
+                        // must not overwrite the in-memory text.
+                        if self.mem_docs.contains(&path.clone().into()) {
+                            continue;
+                        }
                         // Drop files that gitignore rules exclude; the loader's
                         // exclude list only covers directories.
                         let ignored = self
