@@ -143,23 +143,22 @@ ROOT@0..221
                     IDENTIFIER@88..89 "s"
                 WHITESPACE@89..90 " "
                 ARROW@90..92 "->"
-                EXPRESSION_STMT@92..115
+                METHOD_CALL@92..114
                   WHITESPACE@92..93 " "
-                  METHOD_CALL@93..114
-                    FIELD_ACCESS@93..111
-                      FIELD_ACCESS@93..103
-                        LITERAL@93..99
-                          IDENTIFIER@93..99 "System"
-                        DOT@99..100 "."
-                        IDENTIFIER@100..103 "out"
-                      DOT@103..104 "."
-                      IDENTIFIER@104..111 "println"
-                    ARGUMENT_LIST@111..114
-                      L_PAREN@111..112 "("
-                      LITERAL@112..113
-                        IDENTIFIER@112..113 "s"
-                      R_PAREN@113..114 ")"
-                  SEMICOLON@114..115 ";"
+                  FIELD_ACCESS@93..111
+                    FIELD_ACCESS@93..103
+                      LITERAL@93..99
+                        IDENTIFIER@93..99 "System"
+                      DOT@99..100 "."
+                      IDENTIFIER@100..103 "out"
+                    DOT@103..104 "."
+                    IDENTIFIER@104..111 "println"
+                  ARGUMENT_LIST@111..114
+                    L_PAREN@111..112 "("
+                    LITERAL@112..113
+                      IDENTIFIER@112..113 "s"
+                    R_PAREN@113..114 ")"
+                SEMICOLON@114..115 ";"
               SWITCH_RULE@115..176
                 WHITESPACE@115..128 "\n            "
                 SWITCH_LABEL@128..142
@@ -173,23 +172,22 @@ ROOT@0..221
                     UNDERSCORE@141..142 "_"
                 WHITESPACE@142..143 " "
                 ARROW@143..145 "->"
-                EXPRESSION_STMT@145..176
+                METHOD_CALL@145..175
                   WHITESPACE@145..146 " "
-                  METHOD_CALL@146..175
-                    FIELD_ACCESS@146..164
-                      FIELD_ACCESS@146..156
-                        LITERAL@146..152
-                          IDENTIFIER@146..152 "System"
-                        DOT@152..153 "."
-                        IDENTIFIER@153..156 "out"
-                      DOT@156..157 "."
-                      IDENTIFIER@157..164 "println"
-                    ARGUMENT_LIST@164..175
-                      L_PAREN@164..165 "("
-                      LITERAL@165..174
-                        STRING_LITERAL@165..174 "\"Integer\""
-                      R_PAREN@174..175 ")"
-                  SEMICOLON@175..176 ";"
+                  FIELD_ACCESS@146..164
+                    FIELD_ACCESS@146..156
+                      LITERAL@146..152
+                        IDENTIFIER@146..152 "System"
+                      DOT@152..153 "."
+                      IDENTIFIER@153..156 "out"
+                    DOT@156..157 "."
+                    IDENTIFIER@157..164 "println"
+                  ARGUMENT_LIST@164..175
+                    L_PAREN@164..165 "("
+                    LITERAL@165..174
+                      STRING_LITERAL@165..174 "\"Integer\""
+                    R_PAREN@174..175 ")"
+                SEMICOLON@175..176 ";"
               SWITCH_RULE@176..202
                 WHITESPACE@176..189 "\n            "
                 SWITCH_LABEL@189..196
