@@ -975,11 +975,19 @@ name = "hir-ty"
 version = "0.0.0"
 dependencies = [
  "base-db",
+ "camino",
+ "hir",
  "hir-def",
  "hir-expand",
+ "insta",
+ "ra_ap_vfs",
+ "rowan",
+ "rustc-hash 2.1.2",
  "salsa",
- "smol_str",
  "syntax",
+ "tempfile",
+ "triomphe",
+ "zip",
 ]
 
 [[package]]
@@ -1113,6 +1121,7 @@ dependencies = [
  "hir",
  "hir-def",
  "hir-expand",
+ "hir-ty",
  "line-index",
  "ra_ap_vfs",
  "rowan",

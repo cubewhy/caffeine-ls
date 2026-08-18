@@ -1,0 +1,7 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+List<String> <: List: true
+List <: List<String>: false
+List<String> <: List<String>: true

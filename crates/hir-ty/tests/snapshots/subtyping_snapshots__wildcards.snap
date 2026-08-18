@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+List<Integer> <: List<?>: true
+List<Integer> <: List<? extends Number>: true
+List<Object> <: List<? extends Number>: false
+List<Integer> <: List<? super Integer>: true
+List<Integer> <: List<? super Number>: false

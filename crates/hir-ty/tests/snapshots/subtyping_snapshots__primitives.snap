@@ -1,0 +1,6 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+int <: int: true
+int <: long: false

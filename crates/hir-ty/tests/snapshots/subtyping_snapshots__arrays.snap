@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+String[] <: Object[]: true
+Object[] <: String[]: false
+String[] <: Integer[]: false
+String[] <: Object: true
+String[] <: Cloneable: true
+String[] <: Serializable: true

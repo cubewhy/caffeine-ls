@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/ty_snapshots.rs
+expression: out
+---
+--- Map<String, ? extends byte[]> ---
+DISPLAY: java.util.Map<java.lang.String, ? extends byte[]>
+ERASURE: java.util.Map
+FLAGS: reference
+ELEMENT: <none>

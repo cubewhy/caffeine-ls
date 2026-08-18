@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/resolve_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+class Box {
+    String concat(String a, int b) { return a; }
+    void nothing() {}
+}
+
+RESOLVED:
+method concat: java.lang.String(java.lang.String, int)
+method nothing: void()

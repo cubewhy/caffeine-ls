@@ -1,0 +1,11 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+String <: Object: true
+String <: CharSequence: true
+Object <: String: false
+ArrayList <: List: true
+ArrayList <: Collection: true
+ArrayList <: Object: true
+List <: ArrayList: false

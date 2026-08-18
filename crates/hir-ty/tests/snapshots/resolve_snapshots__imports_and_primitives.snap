@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/resolve_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+import java.util.List;
+import java.util.*;
+class Box {
+    String name;
+    List<String> items;
+    ArrayList<Integer> nums;
+    int count;
+}
+
+RESOLVED:
+field name: java.lang.String
+field items: java.util.List<java.lang.String>
+field nums: java.util.ArrayList<java.lang.Integer>
+field count: int

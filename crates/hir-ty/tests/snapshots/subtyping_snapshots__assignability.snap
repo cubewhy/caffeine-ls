@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+int -> int: true
+int -> long: true
+byte -> int: true
+char -> long: true
+long -> float: true
+float -> double: true
+long -> int: false
+double -> float: false
+String -> Object: true
+ArrayList -> List: true
+Object -> String: false
+List -> ArrayList: false

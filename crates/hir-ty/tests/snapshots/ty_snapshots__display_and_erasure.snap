@@ -1,0 +1,69 @@
+---
+source: crates/hir-ty/tests/ty_snapshots.rs
+expression: out
+---
+--- int ---
+DISPLAY: int
+ERASURE: int
+FLAGS: primitive
+ELEMENT: <none>
+
+--- void ---
+DISPLAY: void
+ERASURE: void
+FLAGS: void
+ELEMENT: <none>
+
+--- java.lang.String ---
+DISPLAY: java.lang.String
+ERASURE: java.lang.String
+FLAGS: reference
+ELEMENT: <none>
+
+--- java.util.List<java.lang.String> ---
+DISPLAY: java.util.List<java.lang.String>
+ERASURE: java.util.List
+FLAGS: reference
+ELEMENT: <none>
+
+--- java.util.Map<java.lang.String, java.lang.Integer> ---
+DISPLAY: java.util.Map<java.lang.String, java.lang.Integer>
+ERASURE: java.util.Map
+FLAGS: reference
+ELEMENT: <none>
+
+--- java.lang.String[] ---
+DISPLAY: java.lang.String[]
+ERASURE: java.lang.String[]
+FLAGS: array
+ELEMENT: java.lang.String
+
+--- int[][] ---
+DISPLAY: int[][]
+ERASURE: int[][]
+FLAGS: array
+ELEMENT: int[]
+
+--- java.util.List<java.lang.String>[] ---
+DISPLAY: java.util.List<java.lang.String>[]
+ERASURE: java.util.List[]
+FLAGS: array
+ELEMENT: java.util.List<java.lang.String>
+
+--- T ---
+DISPLAY: T
+ERASURE: java.lang.Object
+FLAGS: type-var
+ELEMENT: <none>
+
+--- java.lang.Object ---
+DISPLAY: java.lang.Object
+ERASURE: java.lang.Object
+FLAGS: reference object
+ELEMENT: <none>
+
+--- <error> ---
+DISPLAY: <error>
+ERASURE: <error>
+FLAGS: error
+ELEMENT: <none>

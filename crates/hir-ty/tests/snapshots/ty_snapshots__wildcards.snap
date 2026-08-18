@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/ty_snapshots.rs
+expression: out
+---
+--- ? ---
+DISPLAY: ?
+ERASURE: ?
+FLAGS: wildcard
+ELEMENT: <none>
+
+--- ? extends java.lang.Number ---
+DISPLAY: ? extends java.lang.Number
+ERASURE: ? extends java.lang.Number
+FLAGS: wildcard
+ELEMENT: <none>
+
+--- ? super java.lang.Integer ---
+DISPLAY: ? super java.lang.Integer
+ERASURE: ? super java.lang.Integer
+FLAGS: wildcard
+ELEMENT: <none>

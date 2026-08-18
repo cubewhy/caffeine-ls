@@ -6,8 +6,21 @@ publish = false
 
 [dependencies]
 base-db.workspace = true
-hir-def.workspace = true
+hir.workspace = true
 hir-expand.workspace = true
+rustc-hash.workspace = true
 salsa.workspace = true
-smol_str.workspace = true
 syntax.workspace = true
+vfs.workspace = true
+
+[dev-dependencies]
+base-db.workspace = true
+camino.workspace = true
+hir-def.workspace = true
+insta.workspace = true
+rustc-hash.workspace = true
+rowan.workspace = true
+tempfile = "3"
+triomphe.workspace = true
+vfs.workspace = true
+zip.workspace = true
