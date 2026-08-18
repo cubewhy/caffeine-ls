@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/method_access_snapshots.rs
+expression: out
+---
+A.stat: com.example.A.stat() -> void [args: ]
+A.pub: com.example.A.pub() -> void [args: ]
+I.istat: <none> [args: ]
+I.inst: com.example.I.inst() -> void [args: ]
+D.istat: <none> [args: ]
+D.inst: com.example.I.inst() -> void [args: ]

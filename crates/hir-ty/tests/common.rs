@@ -279,6 +279,9 @@ pub struct ClassSpec<'a> {
     pub fields: &'a [(&'a str, &'a str)],
     pub methods: &'a [(&'a str, &'a str)],
     pub method_sigs: &'a [&'a str],
+    /// The access flags of each method, parallel to `methods`; an empty slice
+    /// means `ACC_PUBLIC` for every method.
+    pub method_access: &'a [u16],
     pub sig: Option<&'a str>,
 }
 
@@ -306,6 +309,7 @@ pub fn class_sig(
         fields: &[],
         methods: &[],
         method_sigs: &[],
+        method_access: &[],
         sig,
     }
 }
@@ -327,6 +331,30 @@ pub fn class_with_methods(
         fields: &[],
         methods,
         method_sigs,
+        method_access: &[],
+        sig: None,
+    }
+}
+
+/// Like [`class_with_methods`], with explicit per-method access flags
+/// (parallel to `methods`).
+pub fn class_with_methods_access(
+    fqn: &'static str,
+    super_class: Option<&'static str>,
+    interfaces: &'static [&'static str],
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+    method_access: &'static [u16],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class,
+        interfaces,
+        access: 0x0021, // ACC_PUBLIC | ACC_SUPER
+        fields: &[],
+        methods,
+        method_sigs,
+        method_access,
         sig: None,
     }
 }
@@ -353,6 +381,7 @@ pub fn interface_sig(
         fields: &[],
         methods: &[],
         method_sigs: &[],
+        method_access: &[],
         sig,
     }
 }
@@ -374,6 +403,7 @@ pub fn interface_with_methods(
         fields: &[],
         methods,
         method_sigs,
+        method_access: &[],
         sig,
     }
 }
@@ -553,7 +583,8 @@ fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
             attr.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
             attr
         };
-        out.extend_from_slice(&0x0001u16.to_be_bytes()); // ACC_PUBLIC
+        let method_access = spec.method_access.get(i).copied().unwrap_or(0x0001); // ACC_PUBLIC
+        out.extend_from_slice(&method_access.to_be_bytes());
         out.extend_from_slice(&name.to_be_bytes());
         out.extend_from_slice(&desc.to_be_bytes());
         if attributes.is_empty() {
@@ -890,7 +921,14 @@ pub fn check_source_methods(
         let receiver = build_receiver(&db);
         let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
         let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args);
+        let picked = hir_ty::pick_method(
+            &db,
+            &scope,
+            &receiver,
+            name,
+            &args,
+            &hir_ty::InvocationContext::unconstrained(),
+        );
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),
@@ -947,7 +985,94 @@ pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> Strin
             let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
             let arg_types: Vec<String> =
                 args.iter().map(|ty| ty.display(&db).to_string()).collect();
-            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args);
+            let picked = hir_ty::pick_method(
+                &db,
+                &scope,
+                &receiver,
+                name,
+                &args,
+                &hir_ty::InvocationContext::unconstrained(),
+            );
+            let rendered = match picked {
+                Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
+                None => "<none>".to_owned(),
+            };
+            format!("{label}: {rendered} [args: {}]", arg_types.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Renders the source files and the resolved method call for each
+/// `(label, receiver, name, args)` sample like [`check_source_methods`], but
+/// resolving under `ctx`.
+pub fn check_source_methods_ctx(
+    files: &[(&str, &str)],
+    samples: &[(&str, TyBuilder, &str, &[TyBuilder])],
+    ctx: &hir_ty::InvocationContext,
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    let source_set = register_source_set(&mut db, &fixture, files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    lines.push("METHODS:".to_owned());
+    for (label, build_receiver, name, arg_builders) in samples {
+        let receiver = build_receiver(&db);
+        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
+        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx);
+        let rendered = match picked {
+            Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
+            None => "<none>".to_owned(),
+        };
+        lines.push(format!(
+            "{label}: {rendered} [args: {}]",
+            arg_types.join(", ")
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Renders the resolved method call for each `(label, receiver, name, args)`
+/// sample against a library built from `classes`, resolved under `ctx`. The
+/// classes must include `java.lang.Object`.
+pub fn check_methods_lib_ctx(
+    classes: &[ClassSpec<'static>],
+    samples: &[(&str, TyBuilder, &str, &[TyBuilder])],
+    ctx: &hir_ty::InvocationContext,
+) -> String {
+    let _dir = tempfile::TempDir::new().unwrap();
+    let base = camino::Utf8PathBuf::from_path_buf(_dir.path().join("lib")).unwrap();
+    std::fs::create_dir_all(&base).unwrap();
+    let jar = base.join("lib.jar");
+    build_jar(&jar, classes);
+    let lib = hir::LibraryId::from_file_path(jar.as_std_path()).unwrap();
+    let mut db = TestDatabase::new();
+    let mut data = hir::ProjectGraphData::default();
+    data.libraries.insert(
+        lib,
+        hir::LibraryInfo::new(
+            hir::LibraryKind::Jar,
+            AbsPathBuf::assert_utf8(jar.as_std_path().to_owned()),
+        ),
+    );
+    data.jdk_libraries.push(lib);
+    hir::set_project_graph(&mut db, data);
+    let scope = hir::ResolutionScope::Classpath(vec![lib]);
+
+    samples
+        .iter()
+        .map(|(label, build_receiver, name, arg_builders)| {
+            let receiver = build_receiver(&db);
+            let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
+            let arg_types: Vec<String> =
+                args.iter().map(|ty| ty.display(&db).to_string()).collect();
+            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx);
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
                 None => "<none>".to_owned(),

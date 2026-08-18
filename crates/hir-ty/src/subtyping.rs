@@ -59,7 +59,19 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) ->
 /// Memoized per (scope, type). See [`supertypes`].
 #[salsa::tracked(returns(clone))]
 pub(crate) fn supertypes_query(db: &dyn TyDatabase, scope: ScopeId, ty: TyData) -> Vec<Ty> {
-    let ty = Ty { id: ty };
+    supertypes_impl(db, &scope.kind(db).to_scope(), &Ty { id: ty })
+}
+
+/// The non-memoized form of [`supertypes`], usable with types that carry
+/// inference variables ([`TyKind::InferenceVar`], JLS §18.1.1) — such types
+/// must never reach the memoized tracked query, and the invocation type
+/// inference ([§18.5.2]) needs the direct supertype walk of a parameterized
+/// class whose type arguments are still being solved.
+pub(crate) fn supertypes_impl(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Vec<Ty> {
     match ty.kind(db) {
         TyKind::Reference { name, args } => {
             let Some(resolved) = resolve_name(db, scope, name) else {
@@ -182,8 +194,12 @@ fn source_supertypes(db: &dyn TyDatabase, source: hir::SourceClass, args: &[Ty])
 
 /// Resolves `name` against the classes of `scope`, honoring classpath order:
 /// a source set's own classes, then its classpath entries.
-fn resolve_name(db: &dyn TyDatabase, scope: ScopeId, name: &Name) -> Option<hir::Resolved> {
-    hir::fqn_resolve(db, &scope.kind(db).to_scope(), name.as_str())
+fn resolve_name(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    name: &Name,
+) -> Option<hir::Resolved> {
+    hir::fqn_resolve(db, scope, name.as_str())
 }
 
 /// Whether `sub` is a subtype of `sup`
@@ -411,6 +427,28 @@ pub fn is_assignable(
             unboxed == *dst || widening_primitive(unboxed, *dst)
         }
         _ => false,
+    }
+}
+
+/// Whether `arg` is convertible to `param` by a strict invocation conversion
+/// ([JLS §5.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.3)):
+/// identity, widening primitive
+/// ([§5.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2))
+/// or widening reference
+/// ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)).
+/// Unlike assignment conversion there is no boxing or unboxing.
+pub(crate) fn strict_conversion(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    arg: &Ty,
+    param: &Ty,
+) -> bool {
+    if arg == param {
+        return true;
+    }
+    match (arg.kind(db), param.kind(db)) {
+        (TyKind::Primitive(src), TyKind::Primitive(dst)) => widening_primitive(*src, *dst),
+        _ => is_subtype(db, scope, arg, param),
     }
 }
 

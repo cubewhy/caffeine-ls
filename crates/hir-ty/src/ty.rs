@@ -64,6 +64,13 @@ pub enum TyKind {
     /// A wildcard type argument `?`, `? extends T` or `? super T`
     /// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)).
     Wildcard(Option<Box<WildcardBound>>),
+    /// An inference variable ([JLS §18.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.1.1)),
+    /// created fresh per method invocation type inference ([JLS §18.5.2]) from
+    /// the session-wide id counter ([`HirState::next_infer_var`]). Ids are
+    /// unique for the database's lifetime, so no two invocations ever share an
+    /// inference variable. Such types exist only inside a single `pick_method`
+    /// call and must never reach the memoized subtype/supertype queries.
+    InferenceVar(u64),
     /// An unresolved or malformed type (a compile-time error per
     /// [JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)).
     Error,
@@ -126,6 +133,14 @@ impl Ty {
         Self::new(db, TyKind::Wildcard(bound))
     }
 
+    /// A fresh inference variable ([JLS §18.1.1]), unique for the session.
+    pub fn infer_var(db: &dyn TyDatabase) -> Self {
+        let mut next = db.hir_state().next_infer_var.lock().unwrap();
+        let id = *next;
+        *next += 1;
+        Self::new(db, TyKind::InferenceVar(id))
+    }
+
     pub fn error(db: &dyn TyDatabase) -> Self {
         Self::new(db, TyKind::Error)
     }
@@ -157,6 +172,32 @@ impl Ty {
 
     pub fn is_wildcard(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Wildcard(_))
+    }
+
+    /// Whether this is exactly an inference variable ([JLS §18.1.1]).
+    pub fn is_infer_var(&self, db: &dyn TyDatabase) -> bool {
+        matches!(self.kind(db), TyKind::InferenceVar(_))
+    }
+
+    /// The id of this inference variable, if it is one.
+    pub fn as_infer_var(&self, db: &dyn TyDatabase) -> Option<u64> {
+        match self.kind(db) {
+            TyKind::InferenceVar(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Whether any nested type argument is an inference variable.
+    pub fn contains_infer_var(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::InferenceVar(_) => true,
+            TyKind::Reference { args, .. } => args.iter().any(|arg| arg.contains_infer_var(db)),
+            TyKind::Array(inner) => inner.contains_infer_var(db),
+            TyKind::Wildcard(bound) => bound
+                .as_deref()
+                .is_some_and(|b| b.ty.contains_infer_var(db)),
+            _ => false,
+        }
     }
 
     pub fn is_error(&self, db: &dyn TyDatabase) -> bool {
@@ -221,6 +262,62 @@ impl Ty {
                     })
                 }),
             ),
+            TyKind::InferenceVar(_) => *self,
+        }
+    }
+
+    /// Replaces every inference variable ([`TyKind::InferenceVar`]) whose id is
+    /// in `subst` with its instantiation. Used to apply the resolved
+    /// substitution of invocation type inference
+    /// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4))
+    /// to the formal and return types of a generic method.
+    pub fn substitute_infer(&self, db: &dyn TyDatabase, subst: &FxHashMap<u64, Ty>) -> Ty {
+        match self.kind(db) {
+            TyKind::InferenceVar(id) => subst.get(id).copied().unwrap_or(*self),
+            TyKind::Reference { name, args } => Ty::reference(
+                db,
+                name.clone(),
+                args.iter()
+                    .map(|arg| arg.substitute_infer(db, subst))
+                    .collect(),
+            ),
+            TyKind::Array(inner) => Ty::array(db, inner.substitute_infer(db, subst)),
+            TyKind::Wildcard(bound) => Ty::wildcard(
+                db,
+                bound.as_deref().map(|b| {
+                    Box::new(WildcardBound {
+                        kind: b.kind,
+                        ty: b.ty.substitute_infer(db, subst),
+                    })
+                }),
+            ),
+            _ => *self,
+        }
+    }
+
+    /// Replaces every inference variable ([`TyKind::InferenceVar`]) with
+    /// `java.lang.Object`, erasing the still-unresolved unknowns of an
+    /// inference table. Used by the estimate pass of bound set resolution
+    /// ([JLS §18.4]) to break cyclic dependencies between variables.
+    pub fn erase_infer_vars(&self, db: &dyn TyDatabase) -> Ty {
+        match self.kind(db) {
+            TyKind::InferenceVar(_) => Ty::reference(db, "java.lang.Object", Vec::new()),
+            TyKind::Reference { name, args } => Ty::reference(
+                db,
+                name.clone(),
+                args.iter().map(|arg| arg.erase_infer_vars(db)).collect(),
+            ),
+            TyKind::Array(inner) => Ty::array(db, inner.erase_infer_vars(db)),
+            TyKind::Wildcard(bound) => Ty::wildcard(
+                db,
+                bound.as_deref().map(|b| {
+                    Box::new(WildcardBound {
+                        kind: b.kind,
+                        ty: b.ty.erase_infer_vars(db),
+                    })
+                }),
+            ),
+            _ => *self,
         }
     }
 
@@ -284,6 +381,7 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 Ok(())
             }
+            TyKind::InferenceVar(id) => write!(f, "?{id}"),
             TyKind::Error => f.write_str("<error>"),
         }
     }
@@ -381,4 +479,43 @@ pub fn ty_from_type_ref<N>(
 /// verbatim).
 pub fn ty_from_source(db: &dyn TyDatabase, tyref: &TypeRef<Name>) -> Ty {
     ty_from_type_ref(db, tyref, &mut |n| n.clone())
+}
+
+/// The next capture-variable name: capture variables are ordinary type
+/// variables ([`TyKind::TypeVar`]) interning by name, so distinct captures
+/// must not share a name.
+static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Capture conversion ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10)):
+/// replaces the wildcard type arguments of `ty` with fresh type variables,
+/// so the member set of a wildcard-parameterized receiver sees a concrete
+/// instantiation. `? extends T` becomes the fresh variable `CAP#<n>` bounded
+/// by `T`; an unbounded `?` becomes `CAP#<n>` bounded by `Object`. `? super T`
+/// is kept as-is — the captured lower bound is not modelled (an approximation,
+/// see the crate docs). Applied to the receiver before the member set walk of
+/// [`crate::method::member_set`], and only there: the capture variables never
+/// reach the memoized subtype queries.
+pub(crate) fn capture(db: &dyn TyDatabase, ty: Ty) -> Ty {
+    let fresh = |bound: Ty| {
+        let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ty::type_var(
+            db,
+            Name::new(&format!("CAP#{id}")),
+            vec![capture(db, bound)],
+        )
+    };
+    match ty.kind(db) {
+        TyKind::Reference { name, args } => Ty::reference(
+            db,
+            name.clone(),
+            args.iter().map(|arg| capture(db, *arg)).collect(),
+        ),
+        TyKind::Array(inner) => Ty::array(db, capture(db, **inner)),
+        TyKind::Wildcard(Some(bound)) => match bound.kind {
+            BoundKind::Upper => fresh(bound.ty),
+            BoundKind::Lower => ty,
+        },
+        TyKind::Wildcard(None) => fresh(Ty::reference(db, "java.lang.Object", Vec::new())),
+        _ => ty,
+    }
 }

@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Util.java:
+package com.example;
+class Util {
+    static <T> T identity(T t) { return t; }
+    static <T> T[] makeArray(T t) { return null; }
+    static <A, B> Pair<A, B> pair(A a, B b) { return null; }
+    static <T> T max(T a, T b) { return null; }
+    static <T> T first(java.util.List<? extends T> l) { return null; }
+    static <T> T pick(java.util.List<?> l) { return null; }
+    static <T> void put(java.util.List<? super T> l, T t) {}
+    static <T> T[] varargs(T... ts) { return null; }
+    static <T> T take(T t) { return null; }
+    static <T extends java.lang.String> T take(T t) { return null; }
+    static <T extends Named> T asNamed(T t) { return null; }
+}
+class Pair<L, R> {
+    L left;
+    R right;
+    Pair(L left, R right) { this.left = left; this.right = right; }
+    static <L, R> Pair<L, R> of(L left, R right) { return null; }
+}
+interface Named {}
+class Person implements Named {}
+
+METHODS:
+identity(String): com.example.Util.identity(java.lang.String) -> java.lang.String [args: java.lang.String]
+identity(int): com.example.Util.identity(java.lang.Integer) -> java.lang.Integer [args: int]
+makeArray(String): com.example.Util.makeArray(java.lang.String) -> java.lang.String[] [args: java.lang.String]
+pair(String, Integer): com.example.Util.pair(java.lang.String, java.lang.Integer) -> com.example.Pair<java.lang.String, java.lang.Integer> [args: java.lang.String, java.lang.Integer]
+max(String, String): com.example.Util.max(java.lang.String, java.lang.String) -> java.lang.String [args: java.lang.String, java.lang.String]
+max(String, Integer): com.example.Util.max(java.lang.Object, java.lang.Object) -> java.lang.Object [args: java.lang.String, java.lang.Integer]
+first(List<String>): com.example.Util.first(java.util.List<? extends java.lang.String>) -> java.lang.String [args: java.util.List<java.lang.String>]
+pick(List<String>): com.example.Util.pick(java.util.List<?>) -> java.lang.Object [args: java.util.List<java.lang.String>]
+put(List<String>, String): com.example.Util.put(java.util.List<? super java.lang.String>, java.lang.String) -> void [args: java.util.List<java.lang.String>, java.lang.String]
+varargs(String): com.example.Util.varargs(java.lang.String[]) -> java.lang.String[] [args: java.lang.String]
+varargs(String, String): com.example.Util.varargs(java.lang.String[]) -> java.lang.String[] [args: java.lang.String, java.lang.String]
+varargs(): com.example.Util.varargs(java.lang.Object[]) -> java.lang.Object[] [args: ]
+take(String): com.example.Util.take(java.lang.String) -> java.lang.String [args: java.lang.String]
+asNamed(Person): com.example.Util.asNamed(com.example.Person) -> com.example.Person [args: com.example.Person]
+asNamed(String): <none> [args: java.lang.String]
+Pair.of(String, Integer): com.example.Pair.of(java.lang.String, java.lang.Integer) -> com.example.Pair<java.lang.String, java.lang.Integer> [args: java.lang.String, java.lang.Integer]

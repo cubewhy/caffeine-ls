@@ -75,6 +75,12 @@ pub struct LibraryState {
 pub struct HirState {
     pub interner: ThreadedRodeo,
     pub libraries: DashMap<LibraryId, LibraryState>,
+    /// Monotonic id source for inference variables
+    /// ([JLS §18.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.1.1))
+    /// created during method invocation type inference ([JLS §18.5.2]). Each
+    /// distinct id maps to one [`crate::stubs::Symbol`]-free [`Ty`] in `hir-ty`,
+    /// unique for the session so no two inference variables ever collide.
+    pub next_infer_var: std::sync::Mutex<u64>,
 }
 
 #[salsa::db]

@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/method_access_snapshots.rs
+expression: out
+---
+A.pub: com.example.A.pub() -> void [args: ]
+A.pro: com.example.A.pro() -> void [args: ]
+A.pkg: com.example.A.pkg() -> void [args: ]
+A.priv: <none> [args: ]
+A.stat: com.example.A.stat() -> void [args: ]

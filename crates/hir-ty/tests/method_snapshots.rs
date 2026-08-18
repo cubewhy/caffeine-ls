@@ -51,7 +51,8 @@ snapshot! {
             ("List<Integer>", l(&db, vec![integer(&db)]), "add"),
         ] {
             let mut lines = vec![format!("{label}.{name}")];
-            for method in member_set(&db, &scope, &receiver, name) {
+            let ctx = hir_ty::InvocationContext::unconstrained();
+            for method in member_set(&db, &scope, &receiver, name, &ctx) {
                 lines.push(format!("  {} -> {}", method.display(&db), method.ret.display(&db)));
             }
             out.push(lines.join("\n"));

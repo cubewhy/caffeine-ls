@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/method_access_snapshots.rs
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+class A {
+    public void pub() {}
+    protected void pro() {}
+    void pkg() {}
+    private void priv() {}
+    public static void stat() {}
+}
+class B extends A {}
+
+FILE /src/org/other/C.java:
+package org.other;
+class C extends com.example.A {}
+
+METHODS:
+A.pub: com.example.A.pub() -> void [args: ]
+A.pro: <none> [args: ]
+A.pkg: <none> [args: ]
+A.priv: <none> [args: ]
+A.stat: com.example.A.stat() -> void [args: ]
