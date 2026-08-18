@@ -7,40 +7,46 @@ mod common;
 use hir_ty::{BoundKind, Ty, WildcardBound};
 use syntax::stub::PrimitiveType;
 
-use crate::common::{Relation, check_relations, check_supertypes};
+use crate::common::{Relation, TestDatabase, check_relations, check_supertypes};
 
-fn r(name: &str) -> Ty {
-    Ty::reference(name, Vec::new())
+fn r(db: &TestDatabase, name: &str) -> Ty {
+    Ty::reference(db, name, Vec::new())
 }
 
-fn l(args: Vec<Ty>) -> Ty {
-    Ty::reference("java.util.List", args)
+fn l(db: &TestDatabase, args: Vec<Ty>) -> Ty {
+    Ty::reference(db, "java.util.List", args)
 }
 
-fn extends(ty: Ty) -> Ty {
-    Ty::wildcard(Some(Box::new(WildcardBound {
-        kind: BoundKind::Upper,
-        ty,
-    })))
+fn extends(db: &TestDatabase, ty: Ty) -> Ty {
+    Ty::wildcard(
+        db,
+        Some(Box::new(WildcardBound {
+            kind: BoundKind::Upper,
+            ty,
+        })),
+    )
 }
 
-fn super_of(ty: Ty) -> Ty {
-    Ty::wildcard(Some(Box::new(WildcardBound {
-        kind: BoundKind::Lower,
-        ty,
-    })))
+fn super_of(db: &TestDatabase, ty: Ty) -> Ty {
+    Ty::wildcard(
+        db,
+        Some(Box::new(WildcardBound {
+            kind: BoundKind::Lower,
+            ty,
+        })),
+    )
 }
 
 snapshot! {
     class_hierarchy,
     check_relations(&[
-        ("String <: Object", r("java.lang.String"), r("java.lang.Object"), Relation::Subtype),
-        ("String <: CharSequence", r("java.lang.String"), r("java.lang.CharSequence"), Relation::Subtype),
-        ("Object <: String", r("java.lang.Object"), r("java.lang.String"), Relation::Subtype),
-        ("ArrayList <: List", r("java.util.ArrayList"), r("java.util.List"), Relation::Subtype),
-        ("ArrayList <: Collection", r("java.util.ArrayList"), r("java.util.Collection"), Relation::Subtype),
-        ("ArrayList <: Object", r("java.util.ArrayList"), r("java.lang.Object"), Relation::Subtype),
-        ("List <: ArrayList", r("java.util.List"), r("java.util.ArrayList"), Relation::Subtype),
+        ("String <: Object", |db| r(db, "java.lang.String"), |db| r(db, "java.lang.Object"), Relation::Subtype),
+        ("String <: CharSequence", |db| r(db, "java.lang.String"), |db| r(db, "java.lang.CharSequence"), Relation::Subtype),
+        ("Object <: String", |db| r(db, "java.lang.Object"), |db| r(db, "java.lang.String"), Relation::Subtype),
+        ("ArrayList <: List", |db| r(db, "java.util.ArrayList"), |db| r(db, "java.util.List"), Relation::Subtype),
+        ("ArrayList <: Collection", |db| r(db, "java.util.ArrayList"), |db| r(db, "java.util.Collection"), Relation::Subtype),
+        ("ArrayList <: Object", |db| r(db, "java.util.ArrayList"), |db| r(db, "java.lang.Object"), Relation::Subtype),
+        ("List <: ArrayList", |db| r(db, "java.util.List"), |db| r(db, "java.util.ArrayList"), Relation::Subtype),
     ]),
 }
 
@@ -57,12 +63,12 @@ snapshot! {
 snapshot! {
     arrays,
     check_relations(&[
-        ("String[] <: Object[]", Ty::array(r("java.lang.String")), Ty::array(r("java.lang.Object")), Relation::Subtype),
-        ("Object[] <: String[]", Ty::array(r("java.lang.Object")), Ty::array(r("java.lang.String")), Relation::Subtype),
-        ("String[] <: Integer[]", Ty::array(r("java.lang.String")), Ty::array(r("java.lang.Integer")), Relation::Subtype),
-        ("String[] <: Object", Ty::array(r("java.lang.String")), r("java.lang.Object"), Relation::Subtype),
-        ("String[] <: Cloneable", Ty::array(r("java.lang.String")), r("java.lang.Cloneable"), Relation::Subtype),
-        ("String[] <: Serializable", Ty::array(r("java.lang.String")), r("java.io.Serializable"), Relation::Subtype),
+        ("String[] <: Object[]", |db| Ty::array(db, r(db, "java.lang.String")), |db| Ty::array(db, r(db, "java.lang.Object")), Relation::Subtype),
+        ("Object[] <: String[]", |db| Ty::array(db, r(db, "java.lang.Object")), |db| Ty::array(db, r(db, "java.lang.String")), Relation::Subtype),
+        ("String[] <: Integer[]", |db| Ty::array(db, r(db, "java.lang.String")), |db| Ty::array(db, r(db, "java.lang.Integer")), Relation::Subtype),
+        ("String[] <: Object", |db| Ty::array(db, r(db, "java.lang.String")), |db| r(db, "java.lang.Object"), Relation::Subtype),
+        ("String[] <: Cloneable", |db| Ty::array(db, r(db, "java.lang.String")), |db| r(db, "java.lang.Cloneable"), Relation::Subtype),
+        ("String[] <: Serializable", |db| Ty::array(db, r(db, "java.lang.String")), |db| r(db, "java.io.Serializable"), Relation::Subtype),
     ]),
 }
 
@@ -71,14 +77,14 @@ snapshot! {
     check_relations(&[
         (
             "int <: int",
-            Ty::primitive(PrimitiveType::Int),
-            Ty::primitive(PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Int),
             Relation::Subtype,
         ),
         (
             "int <: long",
-            Ty::primitive(PrimitiveType::Int),
-            Ty::primitive(PrimitiveType::Long),
+            |db| Ty::primitive(db, PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Long),
             Relation::Subtype,
         ),
     ]),
@@ -87,38 +93,38 @@ snapshot! {
 snapshot! {
     raw_and_parameterized,
     check_relations(&[
-        ("List<String> <: List", l(vec![r("java.lang.String")]), l(vec![]), Relation::Subtype),
-        ("List <: List<String>", l(vec![]), l(vec![r("java.lang.String")]), Relation::Subtype),
-        ("List<String> <: List<String>", l(vec![r("java.lang.String")]), l(vec![r("java.lang.String")]), Relation::Subtype),
+        ("List<String> <: List", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![]), Relation::Subtype),
+        ("List <: List<String>", |db| l(db, vec![]), |db| l(db, vec![r(db, "java.lang.String")]), Relation::Subtype),
+        ("List<String> <: List<String>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![r(db, "java.lang.String")]), Relation::Subtype),
     ]),
 }
 
 snapshot! {
     wildcards,
     check_relations(&[
-        ("List<Integer> <: List<?>", l(vec![r("java.lang.Integer")]), l(vec![Ty::wildcard(None)]), Relation::Subtype),
+        ("List<Integer> <: List<?>", |db| l(db, vec![r(db, "java.lang.Integer")]), |db| l(db, vec![Ty::wildcard(db, None)]), Relation::Subtype),
         (
             "List<Integer> <: List<? extends Number>",
-            l(vec![r("java.lang.Integer")]),
-            l(vec![extends(r("java.lang.Number"))]),
+            |db| l(db, vec![r(db, "java.lang.Integer")]),
+            |db| l(db, vec![extends(db, r(db, "java.lang.Number"))]),
             Relation::Subtype,
         ),
         (
             "List<Object> <: List<? extends Number>",
-            l(vec![r("java.lang.Object")]),
-            l(vec![extends(r("java.lang.Number"))]),
+            |db| l(db, vec![r(db, "java.lang.Object")]),
+            |db| l(db, vec![extends(db, r(db, "java.lang.Number"))]),
             Relation::Subtype,
         ),
         (
             "List<Integer> <: List<? super Integer>",
-            l(vec![r("java.lang.Integer")]),
-            l(vec![super_of(r("java.lang.Integer"))]),
+            |db| l(db, vec![r(db, "java.lang.Integer")]),
+            |db| l(db, vec![super_of(db, r(db, "java.lang.Integer"))]),
             Relation::Subtype,
         ),
         (
             "List<Integer> <: List<? super Number>",
-            l(vec![r("java.lang.Integer")]),
-            l(vec![super_of(r("java.lang.Number"))]),
+            |db| l(db, vec![r(db, "java.lang.Integer")]),
+            |db| l(db, vec![super_of(db, r(db, "java.lang.Number"))]),
             Relation::Subtype,
         ),
     ]),
@@ -129,55 +135,55 @@ snapshot! {
     check_relations(&[
         (
             "int -> int",
-            Ty::primitive(PrimitiveType::Int),
-            Ty::primitive(PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Int),
             Relation::Assignable,
         ),
         (
             "int -> long",
-            Ty::primitive(PrimitiveType::Int),
-            Ty::primitive(PrimitiveType::Long),
+            |db| Ty::primitive(db, PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Long),
             Relation::Assignable,
         ),
         (
             "byte -> int",
-            Ty::primitive(PrimitiveType::Byte),
-            Ty::primitive(PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Byte),
+            |db| Ty::primitive(db, PrimitiveType::Int),
             Relation::Assignable,
         ),
         (
             "char -> long",
-            Ty::primitive(PrimitiveType::Char),
-            Ty::primitive(PrimitiveType::Long),
+            |db| Ty::primitive(db, PrimitiveType::Char),
+            |db| Ty::primitive(db, PrimitiveType::Long),
             Relation::Assignable,
         ),
         (
             "long -> float",
-            Ty::primitive(PrimitiveType::Long),
-            Ty::primitive(PrimitiveType::Float),
+            |db| Ty::primitive(db, PrimitiveType::Long),
+            |db| Ty::primitive(db, PrimitiveType::Float),
             Relation::Assignable,
         ),
         (
             "float -> double",
-            Ty::primitive(PrimitiveType::Float),
-            Ty::primitive(PrimitiveType::Double),
+            |db| Ty::primitive(db, PrimitiveType::Float),
+            |db| Ty::primitive(db, PrimitiveType::Double),
             Relation::Assignable,
         ),
         (
             "long -> int",
-            Ty::primitive(PrimitiveType::Long),
-            Ty::primitive(PrimitiveType::Int),
+            |db| Ty::primitive(db, PrimitiveType::Long),
+            |db| Ty::primitive(db, PrimitiveType::Int),
             Relation::Assignable,
         ),
         (
             "double -> float",
-            Ty::primitive(PrimitiveType::Double),
-            Ty::primitive(PrimitiveType::Float),
+            |db| Ty::primitive(db, PrimitiveType::Double),
+            |db| Ty::primitive(db, PrimitiveType::Float),
             Relation::Assignable,
         ),
-        ("String -> Object", r("java.lang.String"), r("java.lang.Object"), Relation::Assignable),
-        ("ArrayList -> List", r("java.util.ArrayList"), r("java.util.List"), Relation::Assignable),
-        ("Object -> String", r("java.lang.Object"), r("java.lang.String"), Relation::Assignable),
-        ("List -> ArrayList", r("java.util.List"), r("java.util.ArrayList"), Relation::Assignable),
+        ("String -> Object", |db| r(db, "java.lang.String"), |db| r(db, "java.lang.Object"), Relation::Assignable),
+        ("ArrayList -> List", |db| r(db, "java.util.ArrayList"), |db| r(db, "java.util.List"), Relation::Assignable),
+        ("Object -> String", |db| r(db, "java.lang.Object"), |db| r(db, "java.lang.String"), Relation::Assignable),
+        ("List -> ArrayList", |db| r(db, "java.util.List"), |db| r(db, "java.util.ArrayList"), Relation::Assignable),
     ]),
 }

@@ -52,4 +52,4 @@ pub use resolve::{
     Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,
 };
 pub use subtyping::{is_assignable, is_subtype, supertypes};
-pub use ty::{BoundKind, Ty, TyKind, WildcardBound, ty_from_source};
+pub use ty::{BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, ty_from_source};

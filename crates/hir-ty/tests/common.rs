@@ -13,7 +13,7 @@ use base_db::{
 };
 use hir::{HirDatabase, HirState, LibraryId, LibraryKind};
 use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
-use hir_ty::{Ty, is_assignable, is_subtype, supertypes};
+use hir_ty::{Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
 use triomphe::Arc as Arc3;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -425,6 +425,10 @@ pub enum Relation {
     Assignable,
 }
 
+/// Builds a [`Ty`] against a database. [`Ty`] values are interned, so a
+/// builder closure keeps the construction close to where the database lives.
+pub type TyBuilder = for<'a> fn(&'a TestDatabase) -> Ty;
+
 macro_rules! snapshot {
     ($name:ident, $check:expr $(,)?) => {
         #[test]
@@ -452,18 +456,18 @@ pub fn check_resolve_src(src: &str) -> String {
         match data {
             ItemData::Field(field) => {
                 let ty = hir_ty::item_ty(&db, file_id, id);
-                lines.push(format!("field {}: {ty}", field.name));
+                lines.push(format!("field {}: {}", field.name, ty.display(&db)));
             }
             ItemData::Method(method) => {
                 let ret = hir_ty::item_ty(&db, file_id, id);
                 let ret = if method.sig.ret.is_none() {
                     "<none>".to_owned()
                 } else {
-                    ret.to_string()
+                    ret.display(&db).to_string()
                 };
                 let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
                     .iter()
-                    .map(|ty| ty.to_string())
+                    .map(|ty| ty.display(&db).to_string())
                     .collect();
                 lines.push(format!(
                     "method {}: {ret}({})",
@@ -479,18 +483,21 @@ pub fn check_resolve_src(src: &str) -> String {
 
 /// Renders each [`Ty`] sample with its display, erasure, classification flags
 /// and array element type.
-pub fn check_ty_model(samples: &[(&str, Ty)]) -> String {
+pub fn check_ty_model(samples: &[(&str, TyBuilder)]) -> String {
+    let db = TestDatabase::new();
     samples
         .iter()
-        .map(|(label, ty)| {
+        .map(|(label, build)| {
+            let ty = build(&db);
             let element = ty
-                .element()
-                .map(ToString::to_string)
+                .element(&db)
+                .map(|e| e.display(&db).to_string())
                 .unwrap_or_else(|| "<none>".to_owned());
             format!(
-                "--- {label} ---\nDISPLAY: {ty}\nERASURE: {}\nFLAGS: {}\nELEMENT: {element}\n",
-                ty.erasure(),
-                type_flags(ty),
+                "--- {label} ---\nDISPLAY: {}\nERASURE: {}\nFLAGS: {}\nELEMENT: {element}\n",
+                ty.display(&db),
+                ty.erasure(&db).display(&db),
+                type_flags(&db, &ty),
             )
         })
         .collect::<Vec<_>>()
@@ -498,7 +505,7 @@ pub fn check_ty_model(samples: &[(&str, Ty)]) -> String {
 }
 
 /// Renders the result of [`Relation`] for each `(sub, sup)` sample.
-pub fn check_relations(samples: &[(&str, Ty, Ty, Relation)]) -> String {
+pub fn check_relations(samples: &[(&str, TyBuilder, TyBuilder, Relation)]) -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     register_jdk(&mut db, &fixture);
@@ -506,10 +513,12 @@ pub fn check_relations(samples: &[(&str, Ty, Ty, Relation)]) -> String {
 
     samples
         .iter()
-        .map(|(label, sub, sup, relation)| {
+        .map(|(label, build_sub, build_sup, relation)| {
+            let sub = build_sub(&db);
+            let sup = build_sup(&db);
             let result = match relation {
-                Relation::Subtype => is_subtype(&db, &scope, sub, sup),
-                Relation::Assignable => is_assignable(&db, &scope, sub, sup),
+                Relation::Subtype => is_subtype(&db, &scope, &sub, &sup),
+                Relation::Assignable => is_assignable(&db, &scope, &sub, &sup),
             };
             format!("{label}: {result}")
         })
@@ -527,10 +536,10 @@ pub fn check_supertypes(samples: &[&str]) -> String {
     samples
         .iter()
         .map(|name| {
-            let ty = Ty::reference(*name, Vec::new());
+            let ty = Ty::reference(&db, *name, Vec::new());
             let supers: Vec<String> = supertypes(&db, &scope, &ty)
                 .iter()
-                .map(ToString::to_string)
+                .map(|ty| ty.display(&db).to_string())
                 .collect();
             format!("{name} -> {}", supers.join(", "))
         })
@@ -539,30 +548,30 @@ pub fn check_supertypes(samples: &[&str]) -> String {
 }
 
 /// The enabled classification flags of a [`Ty`].
-fn type_flags(ty: &Ty) -> String {
+fn type_flags(db: &dyn TyDatabase, ty: &Ty) -> String {
     let mut out = Vec::new();
-    if ty.is_void() {
+    if ty.is_void(db) {
         out.push("void");
     }
-    if ty.is_primitive() {
+    if ty.is_primitive(db) {
         out.push("primitive");
     }
-    if ty.is_reference() {
+    if ty.is_reference(db) {
         out.push("reference");
     }
-    if ty.is_type_var() {
+    if ty.is_type_var(db) {
         out.push("type-var");
     }
-    if ty.is_array() {
+    if ty.is_array(db) {
         out.push("array");
     }
-    if ty.is_wildcard() {
+    if ty.is_wildcard(db) {
         out.push("wildcard");
     }
-    if ty.is_error() {
+    if ty.is_error(db) {
         out.push("error");
     }
-    if ty.is_object() {
+    if ty.is_object(db) {
         out.push("object");
     }
     if out.is_empty() {

@@ -121,7 +121,7 @@ pub fn resolve_type_ref(
     tyref: &TypeRef<Name>,
 ) -> Ty {
     match tyref {
-        TypeRef::Primitive(p) => Ty::primitive(*p),
+        TypeRef::Primitive(p) => Ty::primitive(db, *p),
         TypeRef::Reference { name, generic_args } => {
             let args = generic_args
                 .iter()
@@ -129,24 +129,27 @@ pub fn resolve_type_ref(
                 .collect();
             if resolver.type_params.iter().any(|tp| tp == name) {
                 // A type parameter in scope wins over any type named the same.
-                Ty::type_var(name.clone())
+                Ty::type_var(db, name.clone())
             } else {
-                Ty::reference(resolve_reference_name(db, scope, resolver, name), args)
+                Ty::reference(db, resolve_reference_name(db, scope, resolver, name), args)
             }
         }
-        TypeRef::Wildcard { bound } => Ty::wildcard(bound.as_deref().map(|b| match b {
-            TypeBound::Upper(t) => Box::new(WildcardBound {
-                kind: BoundKind::Upper,
-                ty: resolve_type_ref(db, scope, resolver, t),
+        TypeRef::Wildcard { bound } => Ty::wildcard(
+            db,
+            bound.as_deref().map(|b| match b {
+                TypeBound::Upper(t) => Box::new(WildcardBound {
+                    kind: BoundKind::Upper,
+                    ty: resolve_type_ref(db, scope, resolver, t),
+                }),
+                TypeBound::Lower(t) => Box::new(WildcardBound {
+                    kind: BoundKind::Lower,
+                    ty: resolve_type_ref(db, scope, resolver, t),
+                }),
             }),
-            TypeBound::Lower(t) => Box::new(WildcardBound {
-                kind: BoundKind::Lower,
-                ty: resolve_type_ref(db, scope, resolver, t),
-            }),
-        })),
-        TypeRef::TypeVariable(v) => Ty::type_var(v.clone()),
-        TypeRef::Array(inner) => Ty::array(resolve_type_ref(db, scope, resolver, inner)),
-        TypeRef::Error => Ty::error(),
+        ),
+        TypeRef::TypeVariable(v) => Ty::type_var(db, v.clone()),
+        TypeRef::Array(inner) => Ty::array(db, resolve_type_ref(db, scope, resolver, inner)),
+        TypeRef::Error => Ty::error(db),
     }
 }
 
@@ -253,20 +256,20 @@ pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionSc
 /// method, or the type of a class/interface/enum/record/annotation
 /// declaration. Memoized per (file, item) by the tracked query in [`crate::db`].
 pub fn item_ty(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Ty {
-    crate::db::item_ty_query(db, crate::db::ItemKey::new(db, file_id, item_id)).clone()
+    crate::db::item_ty_query(db, crate::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// The parameter types of a method or constructor, in declaration order.
 /// Memoized per (file, item) by the tracked query in [`crate::db`].
 pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
-    crate::db::method_params_query(db, crate::db::ItemKey::new(db, file_id, item_id)).clone()
+    crate::db::method_params_query(db, crate::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// Lowers a library [`TypeRef<Symbol>`] to a [`Ty`]. Library names are
 /// already fully qualified, so only the interner lookup is needed.
 pub fn ty_from_library(db: &dyn TyDatabase, tyref: &TypeRef<hir::Symbol>) -> Ty {
     let interner = &db.hir_state().interner;
-    ty_from_type_ref(tyref, &mut |symbol| Name::new(interner.resolve(symbol)))
+    ty_from_type_ref(db, tyref, &mut |symbol| Name::new(interner.resolve(symbol)))
 }
 
 pub(crate) fn item_data(tree: &ItemTree, item_id: ItemId) -> Option<&ItemData> {

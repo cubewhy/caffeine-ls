@@ -41,6 +41,36 @@ pub struct ItemKey {
     pub item: ItemId,
 }
 
+/// The set of libraries a type query may see: the interned analogue of
+/// [`hir::ResolutionScope`]. Interned (rather than passed as a plain value) so
+/// it can key the memoized subtype/supertype queries in [`crate::subtyping`].
+#[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
+pub struct ScopeId {
+    pub kind: ScopeKind,
+}
+
+/// The interned form of [`hir::ResolutionScope`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ScopeKind {
+    /// A workspace source set: its ordered classpath.
+    SourceSet(hir::SourceSetId),
+    /// An explicit, ordered library list (tests / synthetic scopes).
+    Classpath(Vec<hir::LibraryId>),
+    /// Only the JDK built-ins (jimage / rt.jar).
+    JdkBuiltins,
+}
+
+impl ScopeKind {
+    /// The interning data for a [`hir::ResolutionScope`].
+    pub fn from_scope(scope: &hir::ResolutionScope<'_>) -> Self {
+        match scope {
+            hir::ResolutionScope::SourceSet(source_set) => ScopeKind::SourceSet(source_set.clone()),
+            hir::ResolutionScope::Classpath(libraries) => ScopeKind::Classpath(libraries.to_vec()),
+            hir::ResolutionScope::JdkBuiltins => ScopeKind::JdkBuiltins,
+        }
+    }
+}
+
 /// The type parameters in scope at every item of `file`
 /// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)),
 /// computed in a single tree walk per file and memoized. Invalidated together
@@ -55,13 +85,13 @@ fn type_params_map_query(db: &dyn TyDatabase, file: FileText) -> Arc<FxHashMap<I
 /// The declared type of `item` in `file`, memoized per (file, item). The
 /// resolution scope is derived from the file ([`scope_for_file`]); see
 /// [`resolve::item_ty`].
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(crate) fn item_ty_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> Ty {
     let file_id = key.file(db);
     let item_id = key.item(db);
     let tree = hir::file_item_tree(db, file_id);
     let Some(data) = item_data(&tree, item_id) else {
-        return Ty::error();
+        return Ty::error(db);
     };
     let scope = scope_for_file(db, file_id);
     let type_params = type_params_map_query(db, db.file_text(file_id));
@@ -77,19 +107,19 @@ pub(crate) fn item_ty_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> 
         ItemData::Field(field) => resolve_type_ref(db, &scope, &resolver, &field.ty),
         ItemData::Method(method) => match &method.sig.ret {
             Some(ret) => resolve_type_ref(db, &scope, &resolver, ret),
-            None => Ty::error(), // constructors have no declared return type
+            None => Ty::error(db), // constructors have no declared return type
         },
         ItemData::Class(data) | ItemData::Interface(data) => reference(&data.name),
         ItemData::Enum(data) => reference(&data.name),
         ItemData::Record(data) => reference(&data.name),
         ItemData::Annotation(data) => reference(&data.name),
-        _ => Ty::error(),
+        _ => Ty::error(db),
     }
 }
 
 /// The parameter types of a method or constructor of `item` in `file`,
 /// memoized per (file, item). See [`resolve::method_params`].
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(crate) fn method_params_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> Vec<Ty> {
     let file_id = key.file(db);
     let item_id = key.item(db);
