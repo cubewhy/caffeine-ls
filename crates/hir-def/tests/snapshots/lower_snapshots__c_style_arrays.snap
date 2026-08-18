@@ -1,0 +1,20 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    int a[];
+    String args[];
+    void m(int b[]) {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..69
+  field a: int[] @21..24
+  field args: String[] @37..43
+  method m(int[] b) -> void @44..67

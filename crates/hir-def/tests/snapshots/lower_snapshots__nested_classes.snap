@@ -1,0 +1,27 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Outer {
+    static class StaticNested {
+        int x;
+    }
+
+    class Inner {
+    }
+
+    interface Iface {
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Outer @1..123
+  class StaticNested [static] @14..67
+    field x: int @59..60
+  class Inner @67..92
+  interface Iface @92..121

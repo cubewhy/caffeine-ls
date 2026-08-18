@@ -1,0 +1,22 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    <T> T map(T t, java.util.function.Function<T, T> f) { return t; }
+    void m(Map<String, List<? extends Number>> x) {}
+    String[][] matrix;
+    Class<?> clazz;
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..180
+  method <T> map(T t, java.util.function.Function<T, T> f) -> T @12..82
+  method m(Map<String, List<? extends Number>> x) -> void @82..135
+  field matrix: String[][] @151..157
+  field clazz: Class<?> @172..177

@@ -915,6 +915,7 @@ dependencies = [
  "base-db",
  "camino",
  "dashmap",
+ "hir-def",
  "hir-expand",
  "jimage-rs",
  "lasso",
@@ -938,10 +939,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "hir-def"
+version = "0.0.0"
+dependencies = [
+ "base-db",
+ "hir-expand",
+ "indoc",
+ "insta",
+ "java-syntax",
+ "kotlin-syntax",
+ "ra_ap_vfs",
+ "rowan",
+ "rustc-hash 2.1.2",
+ "salsa",
+ "smol_str",
+ "syntax",
+ "tempfile",
+]
+
+[[package]]
 name = "hir-expand"
 version = "0.0.0"
 dependencies = [
+ "base-db",
+ "ra_ap_vfs",
  "rowan",
+ "rustc-hash 2.1.2",
+ "salsa",
+ "smol_str",
+ "syntax",
+]
+
+[[package]]
+name = "hir-ty"
+version = "0.0.0"
+dependencies = [
+ "base-db",
+ "hir-def",
+ "hir-expand",
+ "salsa",
+ "smol_str",
+ "syntax",
 ]
 
 [[package]]
@@ -1073,6 +1111,8 @@ dependencies = [
  "base-db",
  "camino",
  "hir",
+ "hir-def",
+ "hir-expand",
  "line-index",
  "ra_ap_vfs",
  "rowan",

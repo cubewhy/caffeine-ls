@@ -1,0 +1,14 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+sealed class Shape {
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Shape [sealed] @1..23

@@ -1,0 +1,21 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+
+import java.util.List;
+import java.util.*;
+import static java.lang.Math.max;
+import static java.util.Collections.*;
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java) package com.example
+import java.util.List; @21..45
+import java.util.*; @45..65
+import static java.lang.Math.max; @65..99
+import static java.util.Collections.*; @99..138

@@ -166,6 +166,8 @@ pub struct TypeParameter<N> {
 pub struct RecordComponentData<N> {
     pub name: N,
     pub component_type: TypeRef<N>,
+    /// Whether the component was declared varargs (`String... names`).
+    pub varargs: bool,
     pub annotations: Vec<AnnotationSig<N>>,
 }
 

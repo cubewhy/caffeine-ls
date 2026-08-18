@@ -10,9 +10,9 @@ pub mod stubs;
 
 pub use db::{
     HirDatabase, HirState, LibraryId, LibraryKind, ProjectGraph, ResolutionScope, ResolvedClass,
-    class_record, classpath, classpath_libraries, fqn_resolve, jdk_builtin_libraries,
-    library_name_index, module_record, project_graph, registered_libraries, resolve_in_libraries,
-    set_project_graph, source_set_for_file, super_types, warmup_library,
+    class_record, classpath, classpath_libraries, file_item_tree, fqn_resolve,
+    jdk_builtin_libraries, library_name_index, module_record, project_graph, registered_libraries,
+    resolve_in_libraries, set_project_graph, source_set_for_file, super_types, warmup_library,
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use modules::{

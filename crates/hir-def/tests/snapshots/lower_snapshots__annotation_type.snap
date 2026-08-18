@@ -1,0 +1,21 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@Target(ElementType.TYPE)
+public @interface Tag {
+    String name() default "default";
+    int[] sizes() default {1, 2, 3};
+    Class<?> type();
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+@interface Tag [public] @1..147
+  method name() -> String default @76..86 @50..87
+  method sizes() -> int[] default @113..123 @87..124
+  method type() -> Class<?> @124..145

@@ -1,0 +1,24 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+public interface Shape {
+    int SIDES = 4;
+    void draw();
+    default void outline() {}
+    static Shape empty() { return null; }
+    private void helper() {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+interface Shape [public] @1..164
+  field SIDES: int initializer @41..43 @34..43
+  method draw() -> void @44..61
+  method outline() -> void [default] @61..91
+  method empty() -> Shape [static] @91..133
+  method helper() -> void [private] @133..162

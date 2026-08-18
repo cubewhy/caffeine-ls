@@ -76,8 +76,16 @@ pub struct HirState {
 }
 
 #[salsa::db]
-pub trait HirDatabase: SourceDatabase {
+pub trait HirDatabase: SourceDatabase + hir_def::db::DefDatabase {
     fn hir_state(&self) -> &HirState;
+}
+
+/// The lowered item tree of a source file (see `hir_def::file_item_tree`).
+pub fn file_item_tree(
+    db: &dyn HirDatabase,
+    file_id: FileId,
+) -> Arc<hir_expand::item_tree::ItemTree> {
+    hir_def::file_item_tree(db, file_id)
 }
 
 /// Applies a workspace project graph, replacing the previous one. Libraries

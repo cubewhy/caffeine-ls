@@ -9,6 +9,7 @@ anyhow.workspace = true
 base-db.workspace = true
 camino.workspace = true
 dashmap.workspace = true
+hir-def.workspace = true
 hir-expand.workspace = true
 jimage-rs.workspace = true
 lasso.workspace = true

@@ -201,6 +201,7 @@ impl<'a> ClassParser<'a> {
         RecordComponentData {
             name: self.interner.get_or_intern(&node.name),
             component_type,
+            varargs: false,
             annotations: self.map_annotations(&node.attributes, constant_pool),
         }
     }

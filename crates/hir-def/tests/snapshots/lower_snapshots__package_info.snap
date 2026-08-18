@@ -1,0 +1,13 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+@Deprecated
+package com.example;
+
+PARSE_ERRORS:
+Expected a declaration (e.g., class, variable, or method) here. @13..20
+ITEM_TREE:
+file (java) package com.example

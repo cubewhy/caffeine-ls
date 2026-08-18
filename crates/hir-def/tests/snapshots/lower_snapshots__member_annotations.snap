@@ -1,0 +1,17 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    @Deprecated @SuppressWarnings("all")
+    void m(@NonNull String s) {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..88
+  method m(String s) -> void @12..86

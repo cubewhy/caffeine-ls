@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    strictfp void strict() {}
+}
+
+PARSE_ERRORS:
+Expected a class member (e.g., field or method) here. @17..25
+Expected a declaration (e.g., class, variable, or method) here. @43..44
+ITEM_TREE:
+file (java)
+class Foo @1..42

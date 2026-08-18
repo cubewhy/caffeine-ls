@@ -1,0 +1,20 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m( {
+    }
+}
+
+PARSE_ERRORS:
+Expected a type here. @25..26
+Expected ')', but found 'EOF'. @35..35
+Expected ';', but found 'EOF'. @35..35
+Expected '}', but found 'EOF'. @35..35
+ITEM_TREE:
+file (java)
+class Foo @1..35
+  method m() -> void @12..35

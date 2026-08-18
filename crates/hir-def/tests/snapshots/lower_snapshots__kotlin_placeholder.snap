@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Greeter {
+    fun greet(name: String): String {
+        return "hi"
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (kotlin)

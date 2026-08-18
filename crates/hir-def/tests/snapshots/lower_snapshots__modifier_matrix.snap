@@ -1,0 +1,24 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+public abstract class AbstractThing {
+    public static final int CONST = 1;
+    private volatile boolean ready;
+    protected transient Object cache;
+    synchronized native void sync();
+    @Deprecated public void legacy() {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class AbstractThing [public abstract] @1..230
+  field CONST: int [public static final] initializer @74..76 @67..76
+  field ready: boolean [private volatile] @107..112
+  field cache: Object [protected transient] @145..150
+  method sync() -> void [native synchronized] @151..188
+  method legacy() -> void [public] @188..228

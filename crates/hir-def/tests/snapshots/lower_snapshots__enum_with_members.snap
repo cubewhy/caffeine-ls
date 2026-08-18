@@ -1,0 +1,33 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+public enum Color {
+    RED,
+    GREEN(255, 0, 0),
+    BLUE {
+        void extra() {}
+    };
+
+    private final int r;
+    private final int g;
+
+    Color() {}
+    Color(int r, int g) {}
+
+    int mix() { return 0; }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+enum Color [public] @1..218
+  constant RED @20..28
+  constant GREEN arguments @39..50 @29..50
+  constant BLUE @51..92
+  constructor Color() @144..160
+  constructor Color(int r, int g) @160..187
+  method mix() -> int @187..216

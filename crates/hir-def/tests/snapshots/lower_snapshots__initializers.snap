@@ -1,0 +1,30 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    static {
+        System.out.println("static");
+    }
+    {
+        System.out.println("instance");
+    }
+    int x = 42;
+    int a = 1, b = 2, c;
+    int y = a + b * 2;
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..187
+  static block @12..69
+  instance block @69..121
+  field x: int initializer @133..136 @130..136
+  field a: int initializer @149..151 @146..151
+  field b: int initializer @156..158 @152..158
+  field c: int @159..161
+  field y: int initializer @174..184 @171..184

@@ -1,0 +1,20 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+public record Point(int x, int y) implements Comparable<Point> {
+    public Point {
+    }
+
+    int sum() { return x + y; }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+record Point(int x, int y) implements Comparable<Point> [public] @1..125
+  constructor Point() [public] @65..90
+  method sum() -> int @90..123

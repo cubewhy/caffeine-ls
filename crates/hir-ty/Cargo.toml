@@ -1,14 +1,13 @@
 [package]
-name = "hir-expand"
+name = "hir-ty"
 version = "0.0.0"
 edition = "2024"
 publish = false
 
 [dependencies]
 base-db.workspace = true
-rowan.workspace = true
-rustc-hash.workspace = true
+hir-def.workspace = true
+hir-expand.workspace = true
 salsa.workspace = true
 smol_str.workspace = true
 syntax.workspace = true
-vfs.workspace = true

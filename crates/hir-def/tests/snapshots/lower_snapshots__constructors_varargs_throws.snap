@@ -1,0 +1,20 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Point {
+    Point() {}
+    Point(int x, int y) {}
+    Point(int... coords) throws IllegalArgumentException {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Point @1..118
+  constructor Point() @14..29
+  constructor Point(int x, int y) @29..56
+  constructor Point(int... coords) throws IllegalArgumentException @56..116

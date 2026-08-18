@@ -1,0 +1,10 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)

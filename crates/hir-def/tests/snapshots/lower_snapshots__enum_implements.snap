@@ -1,0 +1,23 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+enum Op implements Runnable {
+    ADD,
+    SUB {
+        public void run() {}
+    };
+    public void run() {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+enum Op @1..112
+  implements Runnable
+  constant ADD @30..38
+  constant SUB @39..84
+  method run() -> void [public] @85..110

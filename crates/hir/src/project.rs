@@ -98,7 +98,9 @@ mod tests {
     use zip::write::{SimpleFileOptions, ZipWriter};
 
     use super::*;
-    use crate::db::{ResolutionScope, fqn_resolve, set_project_graph, source_set_for_file};
+    use crate::db::{
+        ResolutionScope, file_item_tree, fqn_resolve, set_project_graph, source_set_for_file,
+    };
     use crate::{HirDatabase, HirState, LibraryKind};
 
     /// Minimal salsa database implementing [`HirDatabase`] plus the source
@@ -195,6 +197,12 @@ mod tests {
             &self.hir_state
         }
     }
+
+    #[salsa::db]
+    impl hir_expand::db::DefDatabase for TestDatabase {}
+
+    #[salsa::db]
+    impl hir_def::db::DefDatabase for TestDatabase {}
 
     /// Hand-encodes a minimal class file for `fqn` (slash-separated, e.g.
     /// `com/example/Greeter`) with an `<init>` method, a `greet` method and a
@@ -441,5 +449,54 @@ mod tests {
 
         assert_eq!(source_set_for_file(&db, file_id), Some(ss.clone()));
         assert_eq!(source_set_for_file(&db, FileId::from_raw(999)), None);
+    }
+
+    #[test]
+    fn item_tree_is_keyed_by_file_text_and_invalidates_on_edit() {
+        let file_id = FileId::from_raw(7);
+        let path = VfsPath::from(AbsPathBuf::assert_utf8(
+            "/src/main/java/com/example/A.java".into(),
+        ));
+
+        let mut file_set = FileSet::default();
+        file_set.insert(file_id, path);
+        let root = SourceRoot::new(file_set);
+
+        let mut change = FileChange::default();
+        change.set_roots(vec![root]);
+        change.change_file(
+            file_id,
+            Some("package com.example;\npublic class A {\n    int x;\n}\n".to_owned()),
+        );
+
+        let mut db = TestDatabase::new();
+        change.apply(&mut db);
+
+        let tree = file_item_tree(&db, file_id);
+        let rendered = hir_expand::pretty::pretty_print(&tree);
+        assert!(rendered.contains("class A [public]"), "{rendered}");
+        assert!(rendered.contains("field x: int"), "{rendered}");
+        assert!(rendered.contains("package com.example"), "{rendered}");
+
+        // Edit the file: the item tree must reflect the new content.
+        let mut edit = FileChange::default();
+        edit.change_file(
+            file_id,
+            Some("package com.example;\nclass B {}\n".to_owned()),
+        );
+        edit.apply(&mut db);
+
+        let tree = file_item_tree(&db, file_id);
+        let rendered = hir_expand::pretty::pretty_print(&tree);
+        assert!(rendered.contains("class B"), "{rendered}");
+        assert!(!rendered.contains("field x: int"), "{rendered}");
+
+        // A file without a mapped path lowers to an empty tree instead of
+        // failing (unknown language).
+        let other_id = FileId::from_raw(8);
+        let mut change = FileChange::default();
+        change.change_file(other_id, Some("class Z {}\n".to_owned()));
+        change.apply(&mut db);
+        let _ = file_item_tree(&db, other_id);
     }
 }

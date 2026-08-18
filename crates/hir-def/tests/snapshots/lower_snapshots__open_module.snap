@@ -1,0 +1,16 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+open module com.example.reflect {
+    exports com.example.api;
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+module com.example.reflect [open] @1..65
+  exports com.example.api

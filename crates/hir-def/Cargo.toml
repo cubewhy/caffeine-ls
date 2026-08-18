@@ -1,14 +1,22 @@
 [package]
-name = "hir-expand"
+name = "hir-def"
 version = "0.0.0"
 edition = "2024"
 publish = false
 
 [dependencies]
 base-db.workspace = true
+hir-expand.workspace = true
+java-syntax.workspace = true
+kotlin-syntax.workspace = true
 rowan.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
 smol_str.workspace = true
 syntax.workspace = true
 vfs.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+insta.workspace = true
+tempfile = "3"

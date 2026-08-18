@@ -1,0 +1,32 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+module com.example.foo {
+    requires java.base;
+    requires transitive java.sql;
+    requires static lombok;
+    exports com.example.foo.api;
+    exports com.example.foo.internal to com.example.bar, com.example.baz;
+    opens com.example.foo.spi;
+    opens com.example.foo.util to com.example.qux;
+    uses com.example.foo.spi.Plugin;
+    provides com.example.foo.spi.Plugin with com.example.foo.impl.DefaultPlugin, com.example.foo.impl.OtherPlugin;
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+module com.example.foo @1..454
+  requires java.base
+  requires transitive java.sql
+  requires static lombok
+  exports com.example.foo.api
+  exports com.example.foo.internal to com.example.bar, com.example.baz
+  opens com.example.foo.spi
+  opens com.example.foo.util to com.example.qux
+  uses com.example.foo.spi.Plugin
+  provides com.example.foo.spi.Plugin with com.example.foo.impl.DefaultPlugin, com.example.foo.impl.OtherPlugin

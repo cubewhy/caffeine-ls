@@ -183,6 +183,7 @@ impl<'a> StubStringTable<'a> {
         RecordComponentData {
             name: self.symbol(r.name),
             component_type: self.type_ref(&r.component_type),
+            varargs: r.varargs,
             annotations: r.annotations.iter().map(|a| self.annotation(a)).collect(),
         }
     }
@@ -385,6 +386,7 @@ impl<'a> DiskResolver<'a> {
         RecordComponentData {
             name: self.symbol(r.name),
             component_type: self.type_ref(&r.component_type),
+            varargs: r.varargs,
             annotations: r.annotations.iter().map(|a| self.annotation(a)).collect(),
         }
     }

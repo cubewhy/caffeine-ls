@@ -1,0 +1,14 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+record Pair<T extends Comparable<T>>(T first, T second, String... rest) {
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+record Pair<T extends Comparable<T>>(T first, T second, String... rest) @1..76

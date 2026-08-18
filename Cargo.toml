@@ -5,7 +5,9 @@ members = ["crates/*", "lib/*", "xtask/"]
 [workspace.dependencies]
 base-db = { path = "./crates/base-db/" }
 hir = { path = "./crates/hir/" }
+hir-def = { path = "./crates/hir-def/" }
 hir-expand = { path = "./crates/hir-expand/" }
+hir-ty = { path = "./crates/hir-ty/" }
 ide = { path = "./crates/ide/" }
 ide-db = { path = "./crates/ide-db/" }
 ide-diagnostics = { path = "./crates/ide-diagnostics/" }

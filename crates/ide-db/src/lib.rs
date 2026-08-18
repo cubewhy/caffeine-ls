@@ -148,6 +148,12 @@ impl HirDatabase for RootDatabase {
     }
 }
 
+#[salsa::db]
+impl hir_expand::db::DefDatabase for RootDatabase {}
+
+#[salsa::db]
+impl hir_def::db::DefDatabase for RootDatabase {}
+
 pub fn line_index(db: &dyn SourceDatabase, file_id: FileId) -> &Arc<LineIndex> {
     #[salsa::interned]
     pub struct InternedFileId {

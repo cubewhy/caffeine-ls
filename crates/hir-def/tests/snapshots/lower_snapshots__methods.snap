@@ -1,0 +1,24 @@
+---
+source: crates/hir-def/tests/lower_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    int x;
+    void m() {}
+    abstract void abstractMethod();
+    static String s() { return ""; }
+    private void privateMethod() {}
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..150
+  field x: int @21..22
+  method m() -> void @23..39
+  method abstractMethod() -> void [abstract] @39..75
+  method s() -> String [static] @75..112
+  method privateMethod() -> void [private] @112..148
