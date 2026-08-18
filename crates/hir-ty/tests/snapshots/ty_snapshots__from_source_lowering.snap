@@ -5,5 +5,6 @@ expression: out
 --- Map<String, ? extends byte[]> ---
 DISPLAY: java.util.Map<java.lang.String, ? extends byte[]>
 ERASURE: java.util.Map
+BOUNDS: <none>
 FLAGS: reference
 ELEMENT: <none>

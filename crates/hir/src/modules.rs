@@ -18,8 +18,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     db::{
-        HirDatabase, LibraryId, ProjectGraph, ResolutionScope, classpath_libraries, fqn_resolve,
-        library_name_index, module_record,
+        HirDatabase, LibraryId, ProjectGraph, ResolutionScope, Resolved, classpath_libraries,
+        fqn_resolve, library_name_index, module_record,
     },
     project::SourceSetId,
     stubs::{ClassOrModuleStub, ModuleStub, Symbol},
@@ -208,10 +208,14 @@ pub fn module_descriptor(
 /// within a resolution scope.
 pub fn module_for_class(
     db: &dyn HirDatabase,
-    scope: &ResolutionScope<'_>,
+    scope: &ResolutionScope,
     fqn: &str,
 ) -> Option<ModuleDescriptor> {
     let resolved = fqn_resolve(db, scope, fqn)?;
+    let resolved = match resolved {
+        Resolved::Library(resolved) => resolved,
+        Resolved::Source(_) => return None,
+    };
     let module = resolved.entry.module?;
     let stub = module_descriptor(db, resolved.library, module)?;
     Some(ModuleDescriptor {

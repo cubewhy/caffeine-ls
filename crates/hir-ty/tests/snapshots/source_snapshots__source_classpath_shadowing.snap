@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/source_snapshots.rs
+expression: out
+---
+FILE /src/main/java/com/example/App.java:
+package com.example;
+class App {
+    Box b;
+}
+
+FILE /src/main/java/com/example/Box.java:
+package com.example;
+class Box implements java.io.Serializable {}
+
+RELATIONS:
+App.field-is-Source-Box: true
+Source-Box <: Serializable: true

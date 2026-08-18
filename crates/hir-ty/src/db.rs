@@ -16,7 +16,7 @@ use hir_expand::{
     name::Name,
 };
 use rustc_hash::FxHashMap;
-use syntax::stub::TypeRef;
+use syntax::stub::{TypeParameter, TypeRef};
 use vfs::FileId;
 
 use crate::{
@@ -62,11 +62,20 @@ pub enum ScopeKind {
 
 impl ScopeKind {
     /// The interning data for a [`hir::ResolutionScope`].
-    pub fn from_scope(scope: &hir::ResolutionScope<'_>) -> Self {
+    pub fn from_scope(scope: &hir::ResolutionScope) -> Self {
         match scope {
             hir::ResolutionScope::SourceSet(source_set) => ScopeKind::SourceSet(source_set.clone()),
-            hir::ResolutionScope::Classpath(libraries) => ScopeKind::Classpath(libraries.to_vec()),
+            hir::ResolutionScope::Classpath(libraries) => ScopeKind::Classpath(libraries.clone()),
             hir::ResolutionScope::JdkBuiltins => ScopeKind::JdkBuiltins,
+        }
+    }
+
+    /// The [`hir::ResolutionScope`] this kind was interned from.
+    pub fn to_scope(&self) -> hir::ResolutionScope {
+        match self {
+            ScopeKind::SourceSet(source_set) => hir::ResolutionScope::SourceSet(source_set.clone()),
+            ScopeKind::Classpath(libraries) => hir::ResolutionScope::Classpath(libraries.clone()),
+            ScopeKind::JdkBuiltins => hir::ResolutionScope::JdkBuiltins,
         }
     }
 }
@@ -76,7 +85,10 @@ impl ScopeKind {
 /// computed in a single tree walk per file and memoized. Invalidated together
 /// with the file's item tree when the file text changes.
 #[salsa::tracked(returns(ref))]
-fn type_params_map_query(db: &dyn TyDatabase, file: FileText) -> Arc<FxHashMap<ItemId, Vec<Name>>> {
+pub(crate) fn type_params_map_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashMap<ItemId, Vec<TypeParameter<Name>>>> {
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
     Arc::new(resolve::type_params_map(&tree))

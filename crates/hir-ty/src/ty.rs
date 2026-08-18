@@ -20,6 +20,7 @@
 use std::fmt;
 
 use hir_expand::name::Name;
+use rustc_hash::FxHashMap;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use crate::db::TyDatabase;
@@ -52,8 +53,12 @@ pub enum TyKind {
     /// [§4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5),
     /// [§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)).
     Reference { name: Name, args: Vec<Ty> },
-    /// A type variable ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
-    TypeVar(Name),
+    /// A type variable ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
+    /// with its declared bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
+    /// `bounds` is empty for unbounded type variables and for re-entrant
+    /// (recursive) references — the cycle guard in [`crate::resolve`] erases
+    /// bounds on re-entry so interning terminates.
+    TypeVar { name: Name, bounds: Vec<Ty> },
     /// An array type ([JLS §10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.1)).
     Array(Box<Ty>),
     /// A wildcard type argument `?`, `? extends T` or `? super T`
@@ -103,8 +108,14 @@ impl Ty {
         )
     }
 
-    pub fn type_var(db: &dyn TyDatabase, name: impl Into<Name>) -> Self {
-        Self::new(db, TyKind::TypeVar(name.into()))
+    pub fn type_var(db: &dyn TyDatabase, name: impl Into<Name>, bounds: Vec<Ty>) -> Self {
+        Self::new(
+            db,
+            TyKind::TypeVar {
+                name: name.into(),
+                bounds,
+            },
+        )
     }
 
     pub fn array(db: &dyn TyDatabase, inner: Ty) -> Self {
@@ -137,7 +148,7 @@ impl Ty {
     }
 
     pub fn is_type_var(&self, db: &dyn TyDatabase) -> bool {
-        matches!(self.kind(db), TyKind::TypeVar(_))
+        matches!(self.kind(db), TyKind::TypeVar { .. })
     }
 
     pub fn is_array(&self, db: &dyn TyDatabase) -> bool {
@@ -177,15 +188,54 @@ impl Ty {
         }
     }
 
+    /// The declared bounds of this type variable
+    /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
+    /// or an empty slice for non-type-variable types.
+    pub fn bounds<'a>(&self, db: &'a dyn TyDatabase) -> &'a [Ty] {
+        match self.kind(db) {
+            TyKind::TypeVar { bounds, .. } => bounds,
+            _ => &[],
+        }
+    }
+
+    /// Replaces every type variable named in `binding` with its type argument.
+    /// Used to instantiate the supertypes of a parameterized type
+    /// ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)):
+    /// the classfile signature of `ArrayList<E>` declares `extends AbstractList<E>`,
+    /// and substituting `E → String` gives `AbstractList<String>`.
+    pub fn substitute(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
+        match self.kind(db) {
+            TyKind::Void | TyKind::Primitive(_) | TyKind::Error => *self,
+            TyKind::TypeVar { name, .. } => binding.get(name).copied().unwrap_or(*self),
+            TyKind::Reference { name, args } => {
+                let args: Vec<Ty> = args.iter().map(|arg| arg.substitute(db, binding)).collect();
+                Ty::reference(db, name.clone(), args)
+            }
+            TyKind::Array(inner) => Ty::array(db, inner.substitute(db, binding)),
+            TyKind::Wildcard(bound) => Ty::wildcard(
+                db,
+                bound.as_deref().map(|b| {
+                    Box::new(WildcardBound {
+                        kind: b.kind,
+                        ty: b.ty.substitute(db, binding),
+                    })
+                }),
+            ),
+        }
+    }
+
     /// The erasure of this type ([JLS §4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6)):
     /// type arguments are dropped and a type variable erases to its leftmost
-    /// bound, or `java.lang.Object` when no bound is known. [`Ty`] does not
-    /// carry declared bounds, so the bound is approximated by `Object`.
+    /// bound, or `java.lang.Object` when it has no bounds
+    /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
     pub fn erasure(&self, db: &dyn TyDatabase) -> Ty {
         match self.kind(db) {
             TyKind::Reference { name, .. } => Ty::reference(db, name.clone(), Vec::new()),
             TyKind::Array(inner) => Ty::array(db, inner.erasure(db)),
-            TyKind::TypeVar(_) => Ty::reference(db, "java.lang.Object", Vec::new()),
+            TyKind::TypeVar { bounds, .. } => bounds
+                .first()
+                .map(|bound| bound.erasure(db))
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new())),
             other => Self::new(db, other.clone()),
         }
     }
@@ -222,7 +272,7 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 Ok(())
             }
-            TyKind::TypeVar(v) => f.write_str(v.as_str()),
+            TyKind::TypeVar { name, .. } => f.write_str(name.as_str()),
             TyKind::Array(inner) => write!(f, "{}[]", inner.display(self.db)),
             TyKind::Wildcard(bound) => {
                 f.write_str("?")?;
@@ -251,6 +301,39 @@ pub(crate) fn primitive_name(p: PrimitiveType) -> &'static str {
         PrimitiveType::Char => "char",
         PrimitiveType::Short => "short",
         PrimitiveType::Void => "void",
+    }
+}
+
+/// The reference type a primitive boxes to ([JLS §5.1.7], table 5.1-D).
+pub(crate) fn boxed_type(p: PrimitiveType) -> &'static str {
+    match p {
+        PrimitiveType::Boolean => "java.lang.Boolean",
+        PrimitiveType::Byte => "java.lang.Byte",
+        PrimitiveType::Short => "java.lang.Short",
+        PrimitiveType::Char => "java.lang.Character",
+        PrimitiveType::Int => "java.lang.Integer",
+        PrimitiveType::Long => "java.lang.Long",
+        PrimitiveType::Float => "java.lang.Float",
+        PrimitiveType::Double => "java.lang.Double",
+        PrimitiveType::Void => "java.lang.Void",
+    }
+}
+
+/// The primitive a reference type unboxes to ([JLS §5.1.8], reverse of
+/// [`boxed_type`]), or `None` for non-boxed reference types.
+pub(crate) fn unboxed_primitive(fqn: &str) -> Option<PrimitiveType> {
+    use PrimitiveType::*;
+    match fqn {
+        "java.lang.Boolean" => Some(Boolean),
+        "java.lang.Byte" => Some(Byte),
+        "java.lang.Short" => Some(Short),
+        "java.lang.Character" => Some(Char),
+        "java.lang.Integer" => Some(Int),
+        "java.lang.Long" => Some(Long),
+        "java.lang.Float" => Some(Float),
+        "java.lang.Double" => Some(Double),
+        "java.lang.Void" => Some(Void),
+        _ => None,
     }
 }
 
@@ -288,7 +371,7 @@ pub fn ty_from_type_ref<N>(
                 }),
             }),
         ),
-        TypeRef::TypeVariable(v) => Ty::type_var(db, name(v)),
+        TypeRef::TypeVariable(v) => Ty::type_var(db, name(v), Vec::new()),
         TypeRef::Array(inner) => Ty::array(db, ty_from_type_ref(db, inner, name)),
         TypeRef::Error => Ty::error(db),
     }

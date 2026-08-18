@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+T<:Number <: Number: true
+T<:Number <: Object: true
+T<:ArrayList <: List: true
+T<:none <: Object: true
+T<:Number <: String: false
+T<:U<:Number <: Number: true
+T<:Number <: U<:Number: false
+T<:Number <: Object[]: false

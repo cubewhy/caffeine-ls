@@ -5,17 +5,20 @@ expression: out
 --- ? ---
 DISPLAY: ?
 ERASURE: ?
+BOUNDS: <none>
 FLAGS: wildcard
 ELEMENT: <none>
 
 --- ? extends java.lang.Number ---
 DISPLAY: ? extends java.lang.Number
 ERASURE: ? extends java.lang.Number
+BOUNDS: <none>
 FLAGS: wildcard
 ELEMENT: <none>
 
 --- ? super java.lang.Integer ---
 DISPLAY: ? super java.lang.Integer
 ERASURE: ? super java.lang.Integer
+BOUNDS: <none>
 FLAGS: wildcard
 ELEMENT: <none>

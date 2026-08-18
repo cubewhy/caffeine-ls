@@ -1,0 +1,41 @@
+---
+source: crates/hir-ty/tests/source_snapshots.rs
+expression: out
+---
+FILE /src/main/java/com/example/A.java:
+package com.example;
+class A {}
+
+FILE /src/main/java/com/example/B.java:
+package com.example;
+class B extends A {}
+
+FILE /src/main/java/com/example/I.java:
+package com.example;
+interface I {}
+
+FILE /src/main/java/com/example/C.java:
+package com.example;
+class C extends A implements I, java.io.Serializable {}
+
+FILE /src/main/java/com/example/Box.java:
+package com.example;
+class Box<T> implements java.util.List<T> {}
+
+FILE /src/main/java/com/example/E.java:
+package com.example;
+enum E { X, Y }
+
+RELATIONS:
+B <: A: true
+B <: Object: true
+A <: B: false
+C <: I: true
+C <: Serializable: true
+C <: A[]: false
+Box<String> <: List<String>: true
+Box<String> <: Collection<String>: true
+Box<String> <: List<Integer>: false
+Box<String> <: List<?>: true
+E <: Enum: true
+B <: I: false

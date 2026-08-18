@@ -5,65 +5,90 @@ expression: out
 --- int ---
 DISPLAY: int
 ERASURE: int
+BOUNDS: <none>
 FLAGS: primitive
 ELEMENT: <none>
 
 --- void ---
 DISPLAY: void
 ERASURE: void
+BOUNDS: <none>
 FLAGS: void
 ELEMENT: <none>
 
 --- java.lang.String ---
 DISPLAY: java.lang.String
 ERASURE: java.lang.String
+BOUNDS: <none>
 FLAGS: reference
 ELEMENT: <none>
 
 --- java.util.List<java.lang.String> ---
 DISPLAY: java.util.List<java.lang.String>
 ERASURE: java.util.List
+BOUNDS: <none>
 FLAGS: reference
 ELEMENT: <none>
 
 --- java.util.Map<java.lang.String, java.lang.Integer> ---
 DISPLAY: java.util.Map<java.lang.String, java.lang.Integer>
 ERASURE: java.util.Map
+BOUNDS: <none>
 FLAGS: reference
 ELEMENT: <none>
 
 --- java.lang.String[] ---
 DISPLAY: java.lang.String[]
 ERASURE: java.lang.String[]
+BOUNDS: <none>
 FLAGS: array
 ELEMENT: java.lang.String
 
 --- int[][] ---
 DISPLAY: int[][]
 ERASURE: int[][]
+BOUNDS: <none>
 FLAGS: array
 ELEMENT: int[]
 
 --- java.util.List<java.lang.String>[] ---
 DISPLAY: java.util.List<java.lang.String>[]
 ERASURE: java.util.List[]
+BOUNDS: <none>
 FLAGS: array
 ELEMENT: java.util.List<java.lang.String>
 
 --- T ---
 DISPLAY: T
 ERASURE: java.lang.Object
+BOUNDS: <none>
+FLAGS: type-var
+ELEMENT: <none>
+
+--- T extends java.lang.Number ---
+DISPLAY: T
+ERASURE: java.lang.Number
+BOUNDS: java.lang.Number
+FLAGS: type-var
+ELEMENT: <none>
+
+--- T extends java.lang.Number & java.io.Serializable ---
+DISPLAY: T
+ERASURE: java.lang.Number
+BOUNDS: java.lang.Number & java.io.Serializable
 FLAGS: type-var
 ELEMENT: <none>
 
 --- java.lang.Object ---
 DISPLAY: java.lang.Object
 ERASURE: java.lang.Object
+BOUNDS: <none>
 FLAGS: reference object
 ELEMENT: <none>
 
 --- <error> ---
 DISPLAY: <error>
 ERASURE: <error>
+BOUNDS: <none>
 FLAGS: error
 ELEMENT: <none>

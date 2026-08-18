@@ -5,7 +5,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_resolve_src;
+use crate::common::{check_bounds_resolve_src, check_resolve_src};
 
 snapshot! {
     imports_and_primitives,
@@ -85,6 +85,44 @@ class Util {}
 class Box {
     Util helper;
     MissingType missing;
+}
+"#,
+    ),
+}
+
+snapshot! {
+    type_variable_bounds,
+    check_bounds_resolve_src(
+        r#"
+package com.example;
+class Box<T extends Number> {
+    T value;
+    <U extends T> U convert(U u) { return u; }
+    java.util.List<T extends java.lang.String> broken;
+}
+"#,
+    ),
+}
+
+snapshot! {
+    recursive_bound,
+    check_bounds_resolve_src(
+        r#"
+package com.example;
+class Box<T extends Comparable<T>> {
+    T value;
+}
+"#,
+    ),
+}
+
+snapshot! {
+    multiple_bounds,
+    check_bounds_resolve_src(
+        r#"
+package com.example;
+class Box<T extends Number & java.io.Serializable> {
+    T value;
 }
 "#,
     ),

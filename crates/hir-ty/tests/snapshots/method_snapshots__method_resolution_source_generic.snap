@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/method_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+class Box<T> {
+    void put(T value) {}
+    T get() { return null; }
+}
+class Animal {
+    String sound() { return null; }
+}
+class Dog extends Animal {}
+
+METHODS:
+Box<String>.put(String): com.example.Box.put(java.lang.String) -> void [args: java.lang.String]
+Box<String>.put(Object): <none> [args: java.lang.Object]
+Box<String>.put(Integer): <none> [args: java.lang.Integer]
+Box<String>.get(): com.example.Box.get() -> java.lang.String [args: ]
+Dog.sound(): com.example.Animal.sound() -> java.lang.String [args: ]
+Dog.nope(): <none> [args: ]

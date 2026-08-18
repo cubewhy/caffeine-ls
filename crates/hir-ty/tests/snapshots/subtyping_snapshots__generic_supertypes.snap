@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+List<String> -> java.lang.Object, java.util.Collection<java.lang.String>
+List<?> -> java.lang.Object, java.util.Collection<?>
+List<? extends Number> -> java.lang.Object, java.util.Collection<? extends java.lang.Number>
+ArrayList<Integer> -> java.util.AbstractList<java.lang.Integer>, java.util.List<java.lang.Integer>, java.lang.Cloneable, java.io.Serializable
+Collection<Object> ->

@@ -3,6 +3,6 @@ source: crates/hir-ty/tests/subtyping_snapshots.rs
 expression: out
 ---
 java.util.ArrayList -> java.util.AbstractList, java.util.List, java.lang.Cloneable, java.io.Serializable
-java.util.List -> java.util.Collection
+java.util.List -> java.lang.Object, java.util.Collection
 java.lang.String -> java.lang.Object, java.lang.CharSequence
 java.lang.Object ->

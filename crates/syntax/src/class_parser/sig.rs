@@ -6,7 +6,7 @@ use rust_asm::{
     constant_pool::{ConstantPoolExt, CpInfo},
 };
 
-use crate::stub::{PrimitiveType, Symbol, TypeParameter, TypeRef};
+use crate::stub::{PrimitiveType, Symbol, TypeBound, TypeParameter, TypeRef};
 
 /// `(type_params, param_types, return_type, throws)`.
 type MethodSignature = (
@@ -129,10 +129,7 @@ impl<'a> SigParser<'a> {
                     }
                     name.push(self.consume().unwrap());
                 }
-                TypeRef::Reference {
-                    name: self.interner.get_or_intern(name),
-                    generic_args: Vec::new(),
-                }
+                TypeRef::TypeVariable(self.interner.get_or_intern(name))
             }
             Some('L') => {
                 self.consume(); // 'L'
@@ -172,14 +169,23 @@ impl<'a> SigParser<'a> {
         match self.peek() {
             Some('*') => {
                 self.consume();
-                TypeRef::Reference {
-                    name: self.interner.get_or_intern_static("?"),
-                    generic_args: Vec::new(),
+                TypeRef::Wildcard { bound: None }
+            }
+            Some('+') => {
+                self.consume(); // '? extends'
+                TypeRef::Wildcard {
+                    bound: Some(Box::new(TypeBound::Upper(
+                        self.parse_reference_type_signature(),
+                    ))),
                 }
             }
-            Some('+') | Some('-') => {
-                self.consume(); // Handle Wildcard upper ('+') and lower ('-') bound by passing boundary
-                self.parse_reference_type_signature()
+            Some('-') => {
+                self.consume(); // '? super'
+                TypeRef::Wildcard {
+                    bound: Some(Box::new(TypeBound::Lower(
+                        self.parse_reference_type_signature(),
+                    ))),
+                }
             }
             _ => self.parse_reference_type_signature(),
         }

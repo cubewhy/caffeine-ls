@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+List<String> <: List<? extends Object>: true
+List<String> <: List<? extends CharSequence>: true
+List<String> <: List<? extends Number>: false
+List<String> <: List<? super String>: true
+List<CharSequence> <: List<? super String>: true
+List<String> <: List<? super Object>: false
+List<? extends String> <: List<? extends Object>: true
+List<? extends Object> <: List<? extends String>: false
+List<? extends String> <: List<? super Object>: false
+List<? super Object> <: List<? super String>: true
+List<? super String> <: List<? super Object>: false
+List<? super String> <: List<? extends Object>: true
+List<? super String> <: List<? extends CharSequence>: false
+List<? extends String> <: List<String>: false
+List<? super String> <: List<String>: false
+List<Integer> <: List<? super Number>: false
+List<String> <: List<? super CharSequence>: false

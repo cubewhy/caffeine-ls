@@ -38,7 +38,22 @@ snapshot! {
             "java.util.List<java.lang.String>[]",
             |db| Ty::array(db, r(db, "java.util.List", vec![r(db, "java.lang.String", vec![])])),
         ),
-        ("T", |db| Ty::type_var(db, "T")),
+        ("T", |db| Ty::type_var(db, "T", vec![])),
+        (
+            "T extends java.lang.Number",
+            |db| Ty::type_var(db, "T", vec![r(db, "java.lang.Number", vec![])]),
+        ),
+        (
+            "T extends java.lang.Number & java.io.Serializable",
+            |db| Ty::type_var(
+                db,
+                "T",
+                vec![
+                    r(db, "java.lang.Number", vec![]),
+                    r(db, "java.io.Serializable", vec![]),
+                ],
+            ),
+        ),
         ("java.lang.Object", |db| r(db, "java.lang.Object", vec![])),
         ("<error>", |db| Ty::error(db)),
     ]),

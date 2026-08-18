@@ -26,7 +26,7 @@ use hir_expand::{
     item_tree::{ImportItem, ItemData, ItemId, ItemTree},
     name::Name,
 };
-use syntax::stub::{TypeBound, TypeRef};
+use syntax::stub::{TypeBound, TypeParameter, TypeRef};
 
 use crate::{
     db::TyDatabase,
@@ -39,7 +39,7 @@ use crate::{
 pub struct Resolver {
     package: Option<Name>,
     imports: Vec<ImportItem>,
-    type_params: Vec<Name>,
+    type_params: Vec<TypeParameter<Name>>,
 }
 
 impl Resolver {
@@ -48,7 +48,7 @@ impl Resolver {
     /// [`type_params_map`].
     pub fn new(
         tree: &ItemTree,
-        type_params: &FxHashMap<ItemId, Vec<Name>>,
+        type_params: &FxHashMap<ItemId, Vec<TypeParameter<Name>>>,
         item_id: ItemId,
     ) -> Self {
         Self {
@@ -66,33 +66,34 @@ impl Resolver {
         &self.imports
     }
 
-    pub fn type_params(&self) -> &[Name] {
+    pub fn type_params(&self) -> &[TypeParameter<Name>] {
         &self.type_params
     }
 }
 
-/// The type parameters in scope at every item of `tree`: those of every
-/// enclosing type declaration plus, for methods, the method's own parameters
-/// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)).
+/// The type parameters in scope at every item of `tree` ([JLS §6.3]):
+/// those of every enclosing type declaration plus, for methods, the method's
+/// own parameters, with their declared bounds
+/// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
 /// Computed in a single tree walk so each item's scope is a map lookup.
-pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<Name>> {
+pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<TypeParameter<Name>>> {
     fn collect(
         tree: &ItemTree,
         id: ItemId,
-        outer: &[Name],
-        map: &mut FxHashMap<ItemId, Vec<Name>>,
+        outer: &[TypeParameter<Name>],
+        map: &mut FxHashMap<ItemId, Vec<TypeParameter<Name>>>,
     ) {
         let data = tree.data(id);
         let mut own = outer.to_vec();
         match data {
             ItemData::Class(d) | ItemData::Interface(d) => {
-                own.extend(d.type_params.iter().map(|tp| tp.name.clone()));
+                own.extend(d.type_params.iter().cloned());
             }
             ItemData::Record(d) => {
-                own.extend(d.type_params.iter().map(|tp| tp.name.clone()));
+                own.extend(d.type_params.iter().cloned());
             }
             ItemData::Method(m) => {
-                own.extend(m.sig.type_params.iter().map(|tp| tp.name.clone()));
+                own.extend(m.sig.type_params.iter().cloned());
             }
             _ => {}
         }
@@ -116,20 +117,47 @@ pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<Name>> {
 /// most qualified candidate so the [`Ty`] stays displayable.
 pub fn resolve_type_ref(
     db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope<'_>,
+    scope: &hir::ResolutionScope,
     resolver: &Resolver,
     tyref: &TypeRef<Name>,
+) -> Ty {
+    resolve_type_ref_impl(db, scope, resolver, tyref, &mut Vec::new())
+}
+
+/// The recursion-guarded form of [`resolve_type_ref`]. `resolving` is the
+/// stack of type parameters currently having their bounds resolved; a
+/// re-entrant reference to one of them ([JLS §4.4] recursion such as
+/// `T extends Comparable<T>`) yields the type variable without bounds so
+/// interning terminates.
+fn resolve_type_ref_impl(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    tyref: &TypeRef<Name>,
+    resolving: &mut Vec<Name>,
 ) -> Ty {
     match tyref {
         TypeRef::Primitive(p) => Ty::primitive(db, *p),
         TypeRef::Reference { name, generic_args } => {
             let args = generic_args
                 .iter()
-                .map(|arg| resolve_type_ref(db, scope, resolver, arg))
+                .map(|arg| resolve_type_ref_impl(db, scope, resolver, arg, resolving))
                 .collect();
-            if resolver.type_params.iter().any(|tp| tp == name) {
+            if let Some(tp) = resolver.type_params.iter().find(|tp| tp.name == *name) {
                 // A type parameter in scope wins over any type named the same.
-                Ty::type_var(db, name.clone())
+                let bounds = if resolving.iter().any(|n| n == name) {
+                    Vec::new()
+                } else {
+                    resolving.push(name.clone());
+                    let bounds = tp
+                        .bounds
+                        .iter()
+                        .map(|bound| resolve_type_ref_impl(db, scope, resolver, bound, resolving))
+                        .collect();
+                    resolving.pop();
+                    bounds
+                };
+                Ty::type_var(db, name.clone(), bounds)
             } else {
                 Ty::reference(db, resolve_reference_name(db, scope, resolver, name), args)
             }
@@ -139,16 +167,19 @@ pub fn resolve_type_ref(
             bound.as_deref().map(|b| match b {
                 TypeBound::Upper(t) => Box::new(WildcardBound {
                     kind: BoundKind::Upper,
-                    ty: resolve_type_ref(db, scope, resolver, t),
+                    ty: resolve_type_ref_impl(db, scope, resolver, t, resolving),
                 }),
                 TypeBound::Lower(t) => Box::new(WildcardBound {
                     kind: BoundKind::Lower,
-                    ty: resolve_type_ref(db, scope, resolver, t),
+                    ty: resolve_type_ref_impl(db, scope, resolver, t, resolving),
                 }),
             }),
         ),
-        TypeRef::TypeVariable(v) => Ty::type_var(db, v.clone()),
-        TypeRef::Array(inner) => Ty::array(db, resolve_type_ref(db, scope, resolver, inner)),
+        TypeRef::TypeVariable(v) => Ty::type_var(db, v.clone(), Vec::new()),
+        TypeRef::Array(inner) => Ty::array(
+            db,
+            resolve_type_ref_impl(db, scope, resolver, inner, resolving),
+        ),
         TypeRef::Error => Ty::error(db),
     }
 }
@@ -165,7 +196,7 @@ pub fn resolve_type_ref(
 /// remains usable for display and later resolution.
 fn resolve_reference_name(
     db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope<'_>,
+    scope: &hir::ResolutionScope,
     resolver: &Resolver,
     name: &Name,
 ) -> Name {
@@ -245,7 +276,7 @@ fn join(prefix: &Name, suffix: &str) -> Name {
 
 /// The resolution scope of a source file: its source set, or the JDK
 /// built-ins when the file is not mapped to a source root.
-pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionScope<'static> {
+pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionScope {
     match hir::source_set_for_file(db, file_id) {
         Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
         None => hir::ResolutionScope::JdkBuiltins,

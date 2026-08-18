@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/resolve_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+class Box<T extends Comparable<T>> {
+    T value;
+}
+
+RESOLVED:
+field value: T | bounds: com.example.Comparable<T> | erasure: com.example.Comparable

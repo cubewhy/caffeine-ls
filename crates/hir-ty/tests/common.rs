@@ -177,6 +177,54 @@ pub fn register_jdk(db: &mut TestDatabase, fixture: &JdkFixture) {
     hir::set_project_graph(db, data);
 }
 
+/// Registers a source set owning a single source root with `files` (path →
+/// text), the JDK fixture as a classpath library. Returns the source set id.
+/// The root becomes `SourceRootId(0)` (the first root applied).
+pub fn register_source_set(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    files: &[(&str, &str)],
+) -> hir::SourceSetId {
+    let mut file_set = FileSet::default();
+    for (i, (path, _)) in files.iter().enumerate() {
+        file_set.insert(
+            FileId::from_raw((i + 1) as u32),
+            VfsPath::from(AbsPathBuf::assert_utf8((*path).into())),
+        );
+    }
+    let root = SourceRoot::new(file_set);
+    let mut change = FileChange::default();
+    change.set_roots(vec![root]);
+    for (i, (_, text)) in files.iter().enumerate() {
+        change.change_file(FileId::from_raw((i + 1) as u32), Some((*text).to_owned()));
+    }
+    change.apply(db);
+
+    let source_set = hir::SourceSetId {
+        project: hir::ProjectId(0),
+        kind: hir::SourceSetKind::Main,
+    };
+    let mut data = hir::ProjectGraphData::default();
+    data.libraries.insert(
+        fixture.lib,
+        hir::LibraryInfo::new(
+            LibraryKind::Jar,
+            AbsPathBuf::assert_utf8(fixture.jar.as_std_path().to_owned()),
+        ),
+    );
+    data.jdk_libraries.push(fixture.lib);
+    data.source_sets.insert(
+        source_set.clone(),
+        Arc::new(hir::Classpath {
+            entries: vec![hir::ClasspathEntry::Library(fixture.lib)],
+        }),
+    );
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), source_set.clone());
+    hir::set_project_graph(db, data);
+    source_set
+}
+
 /// Every `(ItemId, &ItemData)` in the tree, parents before children.
 pub fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     fn walk<'a>(tree: &'a ItemTree, id: ItemId, out: &mut Vec<(ItemId, &'a ItemData)>) {
@@ -216,7 +264,13 @@ pub fn find_method(tree: &ItemTree, name: &str) -> Option<ItemId> {
 // -- classfile encoding ------------------------------------------------------
 
 /// A hand-encoded classfile description. Names are slash-separated FQNs;
-/// descriptors are JVM field/method descriptors.
+/// descriptors are JVM field/method descriptors. `sig` is the class-level
+/// `Signature` attribute ([JVMS §4.7.9.1]) if present, e.g.
+/// `<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;`.
+/// `method_sigs` is the method-level `Signature` attribute of each method
+/// (empty string for none), which overrides the descriptor with type
+/// variables — e.g. `List.add` has descriptor `(Ljava/lang/Object;)Z` but
+/// signature `(TE;)Z`.
 pub struct ClassSpec<'a> {
     pub fqn: &'a str,
     pub super_class: Option<&'a str>,
@@ -224,12 +278,25 @@ pub struct ClassSpec<'a> {
     pub access: u16,
     pub fields: &'a [(&'a str, &'a str)],
     pub methods: &'a [(&'a str, &'a str)],
+    pub method_sigs: &'a [&'a str],
+    pub sig: Option<&'a str>,
 }
 
 pub fn class(
     fqn: &'static str,
     super_class: Option<&'static str>,
     interfaces: &'static [&'static str],
+) -> ClassSpec<'static> {
+    class_sig(fqn, super_class, interfaces, None)
+}
+
+/// Like [`class`], but carrying a class-level `Signature` attribute so the
+/// supertypes are parameterized.
+pub fn class_sig(
+    fqn: &'static str,
+    super_class: Option<&'static str>,
+    interfaces: &'static [&'static str],
+    sig: Option<&'static str>,
 ) -> ClassSpec<'static> {
     ClassSpec {
         fqn,
@@ -238,28 +305,76 @@ pub fn class(
         access: 0x0021, // ACC_PUBLIC | ACC_SUPER
         fields: &[],
         methods: &[],
+        method_sigs: &[],
+        sig,
+    }
+}
+
+/// A class with methods, each `(name, descriptor)` plus its method-level
+/// `Signature` attribute (empty string for none).
+pub fn class_with_methods(
+    fqn: &'static str,
+    super_class: Option<&'static str>,
+    interfaces: &'static [&'static str],
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class,
+        interfaces,
+        access: 0x0021, // ACC_PUBLIC | ACC_SUPER
+        fields: &[],
+        methods,
+        method_sigs,
+        sig: None,
     }
 }
 
 pub fn interface(fqn: &'static str) -> ClassSpec<'static> {
-    ClassSpec {
-        fqn,
-        super_class: None,
-        interfaces: &[],
-        access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
-        fields: &[],
-        methods: &[],
-    }
+    interface_sig(fqn, &[], None)
 }
 
 pub fn interface_ext(fqn: &'static str, interfaces: &'static [&'static str]) -> ClassSpec<'static> {
+    interface_sig(fqn, interfaces, None)
+}
+
+/// Like [`interface_ext`], but carrying a class-level `Signature` attribute.
+pub fn interface_sig(
+    fqn: &'static str,
+    interfaces: &'static [&'static str],
+    sig: Option<&'static str>,
+) -> ClassSpec<'static> {
     ClassSpec {
         fqn,
         super_class: None,
         interfaces,
-        access: 0x0601,
+        access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
         fields: &[],
         methods: &[],
+        method_sigs: &[],
+        sig,
+    }
+}
+
+/// An interface with methods, each `(name, descriptor)` plus its method-level
+/// `Signature` attribute (empty string for none).
+pub fn interface_with_methods(
+    fqn: &'static str,
+    interfaces: &'static [&'static str],
+    sig: Option<&'static str>,
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class: None,
+        interfaces,
+        access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+        fields: &[],
+        methods,
+        method_sigs,
+        sig,
     }
 }
 
@@ -278,13 +393,26 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
         interface("java/util/Collection"),
-        interface_ext("java/util/List", &["java/util/Collection"]),
-        class(
+        interface_with_methods(
+            "java/util/List",
+            &["java/util/Collection"],
+            Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),
+            &[
+                ("add", "(Ljava/lang/Object;)Z"),
+                ("get", "(I)Ljava/lang/Object;"),
+                ("size", "()I"),
+                ("isEmpty", "()Z"),
+                ("subList", "(II)Ljava/util/List;"),
+            ],
+            &["(TE;)Z", "(I)TE;", "", "", "(II)Ljava/util/List<TE;>;"],
+        ),
+        class_sig(
             "java/util/AbstractList",
             Some("java/lang/Object"),
             &["java/util/List"],
+            Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/List<TE;>;"),
         ),
-        class(
+        class_sig(
             "java/util/ArrayList",
             Some("java/util/AbstractList"),
             &[
@@ -292,6 +420,10 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "java/lang/Cloneable",
                 "java/io/Serializable",
             ],
+            Some(
+                "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;\
+                 Ljava/lang/Cloneable;Ljava/io/Serializable;",
+            ),
         ),
     ]
 }
@@ -367,6 +499,23 @@ fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
         .iter()
         .map(|(name, desc)| (pool.utf8(name), pool.utf8(desc)))
         .collect();
+    let sig_name = spec.sig.map(|_| pool.utf8("Signature"));
+    let sig_index = spec.sig.map(|sig| pool.utf8(sig));
+    // Method-level `Signature` attributes must be pooled before the constant
+    // pool is flushed into the output below.
+    let method_sigs: Vec<(u16, u16)> = spec
+        .methods
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let sig = spec.method_sigs.get(i).copied().unwrap_or("");
+            if sig.is_empty() {
+                (0, 0)
+            } else {
+                (pool.utf8("Signature"), pool.utf8(sig))
+            }
+        })
+        .collect();
 
     let mut out = Vec::new();
     out.extend_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]);
@@ -392,14 +541,38 @@ fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
     }
 
     out.extend_from_slice(&(methods.len() as u16).to_be_bytes());
-    for (name, desc) in methods {
+    for (i, (name, desc)) in methods.iter().enumerate() {
+        let (sig_name, sig_index) = method_sigs[i];
+        let attributes = if sig_name == 0 {
+            Vec::new()
+        } else {
+            let mut attr = Vec::new();
+            attr.extend_from_slice(&1u16.to_be_bytes()); // attributes_count
+            attr.extend_from_slice(&sig_name.to_be_bytes()); // attribute_name_index
+            attr.extend_from_slice(&2u32.to_be_bytes()); // attribute_length
+            attr.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
+            attr
+        };
         out.extend_from_slice(&0x0001u16.to_be_bytes()); // ACC_PUBLIC
         out.extend_from_slice(&name.to_be_bytes());
         out.extend_from_slice(&desc.to_be_bytes());
-        out.extend_from_slice(&0u16.to_be_bytes()); // attributes
+        if attributes.is_empty() {
+            out.extend_from_slice(&0u16.to_be_bytes()); // attributes
+        } else {
+            out.extend_from_slice(&attributes);
+        }
     }
 
-    out.extend_from_slice(&0u16.to_be_bytes()); // class attributes
+    // class attributes: an optional `Signature` attribute (JVMS §4.7.9.1).
+    match (sig_name, sig_index) {
+        (Some(sig_name), Some(sig_index)) => {
+            out.extend_from_slice(&1u16.to_be_bytes()); // attributes_count
+            out.extend_from_slice(&sig_name.to_be_bytes()); // attribute_name_index
+            out.extend_from_slice(&2u32.to_be_bytes()); // attribute_length
+            out.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
+        }
+        _ => out.extend_from_slice(&0u16.to_be_bytes()), // class attributes
+    }
     out
 }
 
@@ -481,6 +654,65 @@ pub fn check_resolve_src(src: &str) -> String {
     lines.join("\n")
 }
 
+/// Renders the resolved declared types of a source file like
+/// [`check_resolve_src`], but for every type-var position also prints the
+/// declared bounds ([JLS §4.4]) and the erasure ([§4.6]).
+pub fn check_bounds_resolve_src(src: &str) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_jdk(&mut db, &fixture);
+    let file_id = FileId::from_raw(1);
+    add_source(&mut db, file_id, "/src/com/example/Box.java", src);
+    let tree = hir::file_item_tree(&db, file_id);
+
+    let render = |ty: &Ty| {
+        let bounds: Vec<String> = ty
+            .bounds(&db)
+            .iter()
+            .map(|b| b.display(&db).to_string())
+            .collect();
+        format!(
+            "{} | bounds: {} | erasure: {}",
+            ty.display(&db),
+            if bounds.is_empty() {
+                "<none>".to_owned()
+            } else {
+                bounds.join(", ")
+            },
+            ty.erasure(&db).display(&db),
+        )
+    };
+
+    let mut lines = vec![format!("SOURCE:\n{src}"), "RESOLVED:".to_owned()];
+    for (id, data) in all_items(&tree) {
+        match data {
+            ItemData::Field(field) => {
+                let ty = hir_ty::item_ty(&db, file_id, id);
+                lines.push(format!("field {}: {}", field.name, render(&ty)));
+            }
+            ItemData::Method(method) => {
+                let ret = hir_ty::item_ty(&db, file_id, id);
+                let ret = if method.sig.ret.is_none() {
+                    "<none>".to_owned()
+                } else {
+                    render(&ret)
+                };
+                let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
+                    .iter()
+                    .map(render)
+                    .collect();
+                lines.push(format!(
+                    "method {}: {ret}({})",
+                    method.name,
+                    params.join(", ")
+                ));
+            }
+            _ => {}
+        }
+    }
+    lines.join("\n")
+}
+
 /// Renders each [`Ty`] sample with its display, erasure, classification flags
 /// and array element type.
 pub fn check_ty_model(samples: &[(&str, TyBuilder)]) -> String {
@@ -493,10 +725,20 @@ pub fn check_ty_model(samples: &[(&str, TyBuilder)]) -> String {
                 .element(&db)
                 .map(|e| e.display(&db).to_string())
                 .unwrap_or_else(|| "<none>".to_owned());
+            let bounds: Vec<String> = ty
+                .bounds(&db)
+                .iter()
+                .map(|b| b.display(&db).to_string())
+                .collect();
             format!(
-                "--- {label} ---\nDISPLAY: {}\nERASURE: {}\nFLAGS: {}\nELEMENT: {element}\n",
+                "--- {label} ---\nDISPLAY: {}\nERASURE: {}\nBOUNDS: {}\nFLAGS: {}\nELEMENT: {element}\n",
                 ty.display(&db),
                 ty.erasure(&db).display(&db),
+                if bounds.is_empty() {
+                    "<none>".to_owned()
+                } else {
+                    bounds.join(" & ")
+                },
                 type_flags(&db, &ty),
             )
         })
@@ -509,7 +751,7 @@ pub fn check_relations(samples: &[(&str, TyBuilder, TyBuilder, Relation)]) -> St
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     register_jdk(&mut db, &fixture);
-    let scope = hir::ResolutionScope::Classpath(&[fixture.lib]);
+    let scope = hir::ResolutionScope::Classpath(vec![fixture.lib]);
 
     samples
         .iter()
@@ -526,12 +768,12 @@ pub fn check_relations(samples: &[(&str, TyBuilder, TyBuilder, Relation)]) -> St
         .join("\n")
 }
 
-/// Renders the direct supertypes of each FQN sample.
+/// Renders the direct supertypes of each FQN sample (raw type).
 pub fn check_supertypes(samples: &[&str]) -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     register_jdk(&mut db, &fixture);
-    let scope = hir::ResolutionScope::Classpath(&[fixture.lib]);
+    let scope = hir::ResolutionScope::Classpath(vec![fixture.lib]);
 
     samples
         .iter()
@@ -542,6 +784,27 @@ pub fn check_supertypes(samples: &[&str]) -> String {
                 .map(|ty| ty.display(&db).to_string())
                 .collect();
             format!("{name} -> {}", supers.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Renders the direct supertypes of each [`Ty`] sample (raw or parameterized).
+pub fn check_supertypes_of(samples: &[(&str, TyBuilder)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_jdk(&mut db, &fixture);
+    let scope = hir::ResolutionScope::Classpath(vec![fixture.lib]);
+
+    samples
+        .iter()
+        .map(|(label, build)| {
+            let ty = build(&db);
+            let supers: Vec<String> = supertypes(&db, &scope, &ty)
+                .iter()
+                .map(|ty| ty.display(&db).to_string())
+                .collect();
+            format!("{label} -> {}", supers.join(", "))
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -579,4 +842,118 @@ fn type_flags(db: &dyn TyDatabase, ty: &Ty) -> String {
     } else {
         out.join(" ")
     }
+}
+
+/// Renders the source files and the direct supertypes ([JLS §4.10.2]) of each
+/// `"fqn"` sample (raw and parameterized) resolved against the source set's
+/// own classes. `files` is `(path, text)`; FQNs refer to the classes declared
+/// in them.
+pub fn check_source_supertypes(files: &[(&str, &str)], samples: &[(&str, TyBuilder)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    let source_set = register_source_set(&mut db, &fixture, files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    lines.push("SUPERTYPES:".to_owned());
+    for (label, build) in samples {
+        let ty = build(&db);
+        let supers: Vec<String> = supertypes(&db, &scope, &ty)
+            .iter()
+            .map(|ty| ty.display(&db).to_string())
+            .collect();
+        lines.push(format!("{label} -> {}", supers.join(", ")));
+    }
+    lines.join("\n")
+}
+
+/// Renders the source files and the resolved method call for each
+/// `(label, receiver, name, args)` sample, resolved against the source set.
+pub fn check_source_methods(
+    files: &[(&str, &str)],
+    samples: &[(&str, TyBuilder, &str, &[TyBuilder])],
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    let source_set = register_source_set(&mut db, &fixture, files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    lines.push("METHODS:".to_owned());
+    for (label, build_receiver, name, arg_builders) in samples {
+        let receiver = build_receiver(&db);
+        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
+        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args);
+        let rendered = match picked {
+            Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
+            None => "<none>".to_owned(),
+        };
+        lines.push(format!(
+            "{label}: {rendered} [args: {}]",
+            arg_types.join(", ")
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Renders the source files and the result of [`Relation`] for each
+/// `(sub, sup)` sample resolved against the source set.
+pub fn check_source_relations(
+    files: &[(&str, &str)],
+    samples: &[(&str, TyBuilder, TyBuilder, Relation)],
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    let source_set = register_source_set(&mut db, &fixture, files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    lines.push("RELATIONS:".to_owned());
+    for (label, build_sub, build_sup, relation) in samples {
+        let sub = build_sub(&db);
+        let sup = build_sup(&db);
+        let result = match relation {
+            Relation::Subtype => is_subtype(&db, &scope, &sub, &sup),
+            Relation::Assignable => is_assignable(&db, &scope, &sub, &sup),
+        };
+        lines.push(format!("{label}: {result}"));
+    }
+    lines.join("\n")
+}
+
+/// Renders the resolved method call for each `(label, receiver, name, args)`
+/// sample, against the JDK fixture. The receiver and the arguments are
+/// [`TyBuilder`]s rendered after resolution.
+pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_jdk(&mut db, &fixture);
+    let scope = hir::ResolutionScope::Classpath(vec![fixture.lib]);
+
+    samples
+        .iter()
+        .map(|(label, build_receiver, name, arg_builders)| {
+            let receiver = build_receiver(&db);
+            let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
+            let arg_types: Vec<String> =
+                args.iter().map(|ty| ty.display(&db).to_string()).collect();
+            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args);
+            let rendered = match picked {
+                Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
+                None => "<none>".to_owned(),
+            };
+            format!("{label}: {rendered} [args: {}]", arg_types.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

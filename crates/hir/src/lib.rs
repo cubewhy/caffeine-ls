@@ -9,10 +9,11 @@ pub mod project;
 pub mod stubs;
 
 pub use db::{
-    HirDatabase, HirState, LibraryId, LibraryKind, ProjectGraph, ResolutionScope, ResolvedClass,
-    class_record, classpath, classpath_libraries, file_item_tree, fqn_resolve,
-    jdk_builtin_libraries, library_name_index, module_record, project_graph, registered_libraries,
-    resolve_in_libraries, set_project_graph, source_set_for_file, super_types, warmup_library,
+    ClassGenericInfo, HirDatabase, HirState, LibraryId, LibraryKind, ProjectGraph, ResolutionScope,
+    Resolved, ResolvedClass, SourceClass, class_generic_info, class_record, classpath,
+    classpath_libraries, file_item_tree, fqn_resolve, jdk_builtin_libraries, library_name_index,
+    module_record, project_graph, registered_libraries, resolve_in_libraries, set_project_graph,
+    source_class_fqn, source_set_for_file, super_types, warmup_library,
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use modules::{
@@ -21,6 +22,7 @@ pub use modules::{
     module_graph_for_source_set, modules_for_package, readable_modules, required_modules,
 };
 pub use project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId};
+pub use project_model::{ProjectId, SourceSetKind};
 pub use stubs::{
     ClassKind, ClassOrModuleRecord, ClassOrModuleStub, ClassRecord, ClassStub, FieldStub,
     MethodStub, ModuleRecord, ModuleStub, ParamData, PrimitiveType, PrimitiveValue, Symbol,

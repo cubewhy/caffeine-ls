@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/resolve_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+class Box<T extends Number> {
+    T value;
+    <U extends T> U convert(U u) { return u; }
+    java.util.List<T extends java.lang.String> broken;
+}
+
+RESOLVED:
+field value: T | bounds: java.lang.Number | erasure: java.lang.Number
+method convert: U | bounds: T | erasure: java.lang.Number(U | bounds: T | erasure: java.lang.Number)

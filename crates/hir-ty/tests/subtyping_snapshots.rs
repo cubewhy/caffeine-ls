@@ -7,7 +7,9 @@ mod common;
 use hir_ty::{BoundKind, Ty, WildcardBound};
 use syntax::stub::PrimitiveType;
 
-use crate::common::{Relation, TestDatabase, check_relations, check_supertypes};
+use crate::common::{
+    Relation, TestDatabase, check_relations, check_supertypes, check_supertypes_of,
+};
 
 fn r(db: &TestDatabase, name: &str) -> Ty {
     Ty::reference(db, name, Vec::new())
@@ -37,6 +39,24 @@ fn super_of(db: &TestDatabase, ty: Ty) -> Ty {
     )
 }
 
+fn bounded(db: &TestDatabase, name: &str, bounds: Vec<Ty>) -> Ty {
+    Ty::type_var(db, name, bounds)
+}
+
+snapshot! {
+    type_variable_bounds,
+    check_relations(&[
+        ("T<:Number <: Number", |db| bounded(db, "T", vec![r(db, "java.lang.Number")]), |db| r(db, "java.lang.Number"), Relation::Subtype),
+        ("T<:Number <: Object", |db| bounded(db, "T", vec![r(db, "java.lang.Number")]), |db| r(db, "java.lang.Object"), Relation::Subtype),
+        ("T<:ArrayList <: List", |db| bounded(db, "T", vec![r(db, "java.util.ArrayList")]), |db| r(db, "java.util.List"), Relation::Subtype),
+        ("T<:none <: Object", |db| bounded(db, "T", vec![]), |db| r(db, "java.lang.Object"), Relation::Subtype),
+        ("T<:Number <: String", |db| bounded(db, "T", vec![r(db, "java.lang.Number")]), |db| r(db, "java.lang.String"), Relation::Subtype),
+        ("T<:U<:Number <: Number", |db| bounded(db, "T", vec![bounded(db, "U", vec![r(db, "java.lang.Number")])]), |db| r(db, "java.lang.Number"), Relation::Subtype),
+        ("T<:Number <: U<:Number", |db| bounded(db, "T", vec![r(db, "java.lang.Number")]), |db| bounded(db, "U", vec![r(db, "java.lang.Number")]), Relation::Subtype),
+        ("T<:Number <: Object[]", |db| bounded(db, "T", vec![r(db, "java.lang.Number")]), |db| Ty::array(db, r(db, "java.lang.Object")), Relation::Subtype),
+    ]),
+}
+
 snapshot! {
     class_hierarchy,
     check_relations(&[
@@ -57,6 +77,42 @@ snapshot! {
         "java.util.List",
         "java.lang.String",
         "java.lang.Object",
+    ]),
+}
+
+snapshot! {
+    generic_supertypes,
+    check_supertypes_of(&[
+        ("List<String>", |db| l(db, vec![r(db, "java.lang.String")])),
+        ("List<?>", |db| l(db, vec![Ty::wildcard(db, None)])),
+        (
+            "List<? extends Number>",
+            |db| l(db, vec![extends(db, r(db, "java.lang.Number"))]),
+        ),
+        ("ArrayList<Integer>", |db| Ty::reference(
+            db,
+            "java.util.ArrayList",
+            vec![r(db, "java.lang.Integer")],
+        )),
+        ("Collection<Object>", |db| Ty::reference(
+            db,
+            "java.util.Collection",
+            vec![r(db, "java.lang.Object")],
+        )),
+    ]),
+}
+
+snapshot! {
+    generic_parameterized,
+    check_relations(&[
+        ("List<String> <: Collection<String>", |db| l(db, vec![r(db, "java.lang.String")]), |db| Ty::reference(db, "java.util.Collection", vec![r(db, "java.lang.String")]), Relation::Subtype),
+        ("List<String> <: Collection<Integer>", |db| l(db, vec![r(db, "java.lang.String")]), |db| Ty::reference(db, "java.util.Collection", vec![r(db, "java.lang.Integer")]), Relation::Subtype),
+        ("ArrayList<Integer> <: List<Integer>", |db| Ty::reference(db, "java.util.ArrayList", vec![r(db, "java.lang.Integer")]), |db| l(db, vec![r(db, "java.lang.Integer")]), Relation::Subtype),
+        ("ArrayList<String> <: AbstractList<String>", |db| Ty::reference(db, "java.util.ArrayList", vec![r(db, "java.lang.String")]), |db| Ty::reference(db, "java.util.AbstractList", vec![r(db, "java.lang.String")]), Relation::Subtype),
+        ("ArrayList<Integer> <: List<?>", |db| Ty::reference(db, "java.util.ArrayList", vec![r(db, "java.lang.Integer")]), |db| l(db, vec![Ty::wildcard(db, None)]), Relation::Subtype),
+        ("List<String> <: Collection<? extends String>", |db| l(db, vec![r(db, "java.lang.String")]), |db| Ty::reference(db, "java.util.Collection", vec![extends(db, r(db, "java.lang.String"))]), Relation::Subtype),
+        ("List<Integer> <: Collection<? extends Number>", |db| l(db, vec![r(db, "java.lang.Integer")]), |db| Ty::reference(db, "java.util.Collection", vec![extends(db, r(db, "java.lang.Number"))]), Relation::Subtype),
+        ("List<String> <: Collection<? extends Number>", |db| l(db, vec![r(db, "java.lang.String")]), |db| Ty::reference(db, "java.util.Collection", vec![extends(db, r(db, "java.lang.Number"))]), Relation::Subtype),
     ]),
 }
 
@@ -185,5 +241,46 @@ snapshot! {
         ("ArrayList -> List", |db| r(db, "java.util.ArrayList"), |db| r(db, "java.util.List"), Relation::Assignable),
         ("Object -> String", |db| r(db, "java.lang.Object"), |db| r(db, "java.lang.String"), Relation::Assignable),
         ("List -> ArrayList", |db| r(db, "java.util.List"), |db| r(db, "java.util.ArrayList"), Relation::Assignable),
+    ]),
+}
+
+snapshot! {
+    boxing_unboxing,
+    check_relations(&[
+        ("int -> Integer", |db| Ty::primitive(db, PrimitiveType::Int), |db| r(db, "java.lang.Integer"), Relation::Assignable),
+        ("int -> Number", |db| Ty::primitive(db, PrimitiveType::Int), |db| r(db, "java.lang.Number"), Relation::Assignable),
+        ("int -> Long", |db| Ty::primitive(db, PrimitiveType::Int), |db| r(db, "java.lang.Long"), Relation::Assignable),
+        ("long -> Integer", |db| Ty::primitive(db, PrimitiveType::Long), |db| r(db, "java.lang.Integer"), Relation::Assignable),
+        ("char -> Number", |db| Ty::primitive(db, PrimitiveType::Char), |db| r(db, "java.lang.Number"), Relation::Assignable),
+        ("Integer -> int", |db| r(db, "java.lang.Integer"), |db| Ty::primitive(db, PrimitiveType::Int), Relation::Assignable),
+        ("Integer -> long", |db| r(db, "java.lang.Integer"), |db| Ty::primitive(db, PrimitiveType::Long), Relation::Assignable),
+        ("Integer -> double", |db| r(db, "java.lang.Integer"), |db| Ty::primitive(db, PrimitiveType::Double), Relation::Assignable),
+        ("Number -> int", |db| r(db, "java.lang.Number"), |db| Ty::primitive(db, PrimitiveType::Int), Relation::Assignable),
+        ("String -> int", |db| r(db, "java.lang.String"), |db| Ty::primitive(db, PrimitiveType::Int), Relation::Assignable),
+        ("int -> Object", |db| Ty::primitive(db, PrimitiveType::Int), |db| r(db, "java.lang.Object"), Relation::Assignable),
+        ("String -> int", |db| r(db, "java.lang.String"), |db| Ty::primitive(db, PrimitiveType::Int), Relation::Assignable),
+    ]),
+}
+
+snapshot! {
+    wildcard_capture,
+    check_relations(&[
+        ("List<String> <: List<? extends Object>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![extends(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<String> <: List<? extends CharSequence>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![extends(db, r(db, "java.lang.CharSequence"))]), Relation::Subtype),
+        ("List<String> <: List<? extends Number>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![extends(db, r(db, "java.lang.Number"))]), Relation::Subtype),
+        ("List<String> <: List<? super String>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), Relation::Subtype),
+        ("List<CharSequence> <: List<? super String>", |db| l(db, vec![r(db, "java.lang.CharSequence")]), |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), Relation::Subtype),
+        ("List<String> <: List<? super Object>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![super_of(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<? extends String> <: List<? extends Object>", |db| l(db, vec![extends(db, r(db, "java.lang.String"))]), |db| l(db, vec![extends(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<? extends Object> <: List<? extends String>", |db| l(db, vec![extends(db, r(db, "java.lang.Object"))]), |db| l(db, vec![extends(db, r(db, "java.lang.String"))]), Relation::Subtype),
+        ("List<? extends String> <: List<? super Object>", |db| l(db, vec![extends(db, r(db, "java.lang.String"))]), |db| l(db, vec![super_of(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<? super Object> <: List<? super String>", |db| l(db, vec![super_of(db, r(db, "java.lang.Object"))]), |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), Relation::Subtype),
+        ("List<? super String> <: List<? super Object>", |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), |db| l(db, vec![super_of(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<? super String> <: List<? extends Object>", |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), |db| l(db, vec![extends(db, r(db, "java.lang.Object"))]), Relation::Subtype),
+        ("List<? super String> <: List<? extends CharSequence>", |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), |db| l(db, vec![extends(db, r(db, "java.lang.CharSequence"))]), Relation::Subtype),
+        ("List<? extends String> <: List<String>", |db| l(db, vec![extends(db, r(db, "java.lang.String"))]), |db| l(db, vec![r(db, "java.lang.String")]), Relation::Subtype),
+        ("List<? super String> <: List<String>", |db| l(db, vec![super_of(db, r(db, "java.lang.String"))]), |db| l(db, vec![r(db, "java.lang.String")]), Relation::Subtype),
+        ("List<Integer> <: List<? super Number>", |db| l(db, vec![r(db, "java.lang.Integer")]), |db| l(db, vec![super_of(db, r(db, "java.lang.Number"))]), Relation::Subtype),
+        ("List<String> <: List<? super CharSequence>", |db| l(db, vec![r(db, "java.lang.String")]), |db| l(db, vec![super_of(db, r(db, "java.lang.CharSequence"))]), Relation::Subtype),
     ]),
 }

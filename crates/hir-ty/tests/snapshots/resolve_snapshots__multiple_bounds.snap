@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/resolve_snapshots.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+class Box<T extends Number & java.io.Serializable> {
+    T value;
+}
+
+RESOLVED:
+field value: T | bounds: java.lang.Number, java.io.Serializable | erasure: java.lang.Number

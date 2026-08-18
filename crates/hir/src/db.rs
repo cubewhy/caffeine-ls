@@ -13,11 +13,13 @@
 use std::sync::Arc;
 
 use base_db::{
-    SourceDatabase, SourceRootId,
+    FileText, SourceDatabase, SourceRootId, SourceRootInput,
     salsa::{self, Setter as _},
 };
 use camino::Utf8PathBuf;
 use dashmap::DashMap;
+use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
+use hir_expand::name::Name;
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
 use rustc_hash::FxHashMap;
@@ -26,8 +28,8 @@ use vfs::FileId;
 use crate::{
     index::{ClassEntry, LibraryIndex, NameIndex},
     loader,
-    project::{Classpath, LibraryInfo, ProjectGraphData, SourceSetId},
-    stubs::{ClassOrModuleRecord, Symbol},
+    project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId},
+    stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
 };
 pub use project_model::LibraryId;
 
@@ -254,31 +256,78 @@ pub struct ResolvedClass {
     pub entry: ClassEntry,
 }
 
+/// A class resolved to a specific source declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceClass {
+    pub file: FileId,
+    pub item: hir_expand::item_tree::ItemId,
+}
+
+/// A class resolved either to a library entry or to a source declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolved {
+    Library(ResolvedClass),
+    Source(SourceClass),
+}
+
+impl Resolved {
+    /// The fully qualified name of the resolved class.
+    pub fn fqn(&self, db: &dyn HirDatabase) -> String {
+        match self {
+            Resolved::Library(class) => {
+                db.hir_state().interner.resolve(&class.entry.fqn).to_owned()
+            }
+            Resolved::Source(_) => String::new(),
+        }
+    }
+}
+
 /// The set of libraries a resolution query may see.
-#[derive(Debug, Clone)]
-pub enum ResolutionScope<'a> {
-    /// A workspace source set: its ordered classpath.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionScope {
+    /// A workspace source set: its own classes plus its ordered classpath.
     SourceSet(SourceSetId),
     /// An explicit, ordered library list (tests / synthetic scopes).
-    Classpath(&'a [LibraryId]),
+    Classpath(Vec<LibraryId>),
     /// Only the JDK built-ins (jimage / rt.jar). Used for files that are not
     /// yet mapped to a source set.
     JdkBuiltins,
 }
 
 /// Resolves a fully qualified class name within a scope, honoring classpath
-/// order: the first library containing the name wins.
-pub fn fqn_resolve(
-    db: &dyn HirDatabase,
-    scope: &ResolutionScope<'_>,
-    fqn: &str,
-) -> Option<ResolvedClass> {
-    let libraries: Vec<LibraryId> = match scope {
-        ResolutionScope::SourceSet(source_set) => classpath_libraries(db, source_set.clone()),
-        ResolutionScope::Classpath(libraries) => libraries.to_vec(),
-        ResolutionScope::JdkBuiltins => jdk_builtin_libraries(db),
-    };
-    resolve_in_libraries(db, &libraries, fqn)
+/// order: a source set's own classes, then its classpath entries (internal
+/// source sets, then libraries), each entry in order.
+pub fn fqn_resolve(db: &dyn HirDatabase, scope: &ResolutionScope, fqn: &str) -> Option<Resolved> {
+    match scope {
+        ResolutionScope::SourceSet(source_set) => {
+            if let Some(resolved) = source_resolve(db, source_set, fqn) {
+                return Some(resolved);
+            }
+            for entry in &classpath(db, source_set.clone()).entries {
+                match entry {
+                    ClasspathEntry::SourceSet(internal) => {
+                        if let Some(resolved) = source_resolve(db, internal, fqn) {
+                            return Some(resolved);
+                        }
+                    }
+                    ClasspathEntry::Library(library) => {
+                        if let Some(resolved) =
+                            resolve_in_libraries(db, std::slice::from_ref(library), fqn)
+                        {
+                            return Some(Resolved::Library(resolved));
+                        }
+                    }
+                }
+            }
+            None
+        }
+        ResolutionScope::Classpath(libraries) => {
+            resolve_in_libraries(db, libraries, fqn).map(Resolved::Library)
+        }
+        ResolutionScope::JdkBuiltins => {
+            resolve_in_libraries(db, &jdk_builtin_libraries(db), fqn).map(Resolved::Library)
+        }
+    }
 }
 
 /// Resolves a fully qualified class name against an ordered library list.
@@ -301,14 +350,154 @@ pub fn resolve_in_libraries(
     None
 }
 
-/// The direct super class and interfaces of a class, as FQN symbols.
-pub fn super_types(_db: &dyn HirDatabase, resolved: &ResolvedClass) -> Vec<Symbol> {
-    let mut out = Vec::new();
-    if let Some(super_class) = resolved.entry.super_class {
-        out.push(super_class);
+/// The fully qualified names ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
+/// of the class-like declarations in `file`: the package name, then each
+/// enclosing simple name joined by `.`. Keyed on the interned [`FileText`] so
+/// edits invalidate the FQN set of exactly the changed file.
+#[salsa::tracked(returns(ref))]
+fn file_classes_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<(Name, ItemId)>> {
+    let file_id = *file.file_id(db);
+    let tree = file_item_tree(db, file_id);
+    Arc::new(file_classes(&tree))
+}
+
+fn file_classes(tree: &ItemTree) -> Vec<(Name, ItemId)> {
+    fn collect(tree: &ItemTree, id: ItemId, prefix: Option<&Name>, out: &mut Vec<(Name, ItemId)>) {
+        let data = tree.data(id);
+        let simple = match data {
+            ItemData::Class(d) | ItemData::Interface(d) => Some(&d.name),
+            ItemData::Enum(d) => Some(&d.name),
+            ItemData::Record(d) => Some(&d.name),
+            ItemData::Annotation(d) => Some(&d.name),
+            _ => None,
+        };
+        if let Some(simple) = simple {
+            let fqn = match prefix {
+                Some(prefix) => join_name(prefix, simple.as_str()),
+                None => match &tree.package {
+                    Some(package) => join_name(package, simple.as_str()),
+                    None => simple.clone(),
+                },
+            };
+            out.push((fqn.clone(), id));
+            for &child in data.body() {
+                collect(tree, child, Some(&fqn), out);
+            }
+        } else {
+            for &child in data.body() {
+                collect(tree, child, prefix, out);
+            }
+        }
     }
-    out.extend(resolved.entry.interfaces.iter().copied());
+    let mut out = Vec::new();
+    for &top in &tree.top {
+        collect(tree, top, None, &mut out);
+    }
     out
+}
+
+fn join_name(prefix: &Name, suffix: &str) -> Name {
+    let mut text = String::with_capacity(prefix.as_str().len() + 1 + suffix.len());
+    text.push_str(prefix.as_str());
+    text.push('.');
+    text.push_str(suffix);
+    Name::new(&text)
+}
+
+/// The class FQNs of every file in a source root, keyed by name. Tracked on
+/// the interned [`SourceRootInput`] so file-set changes invalidate it.
+#[salsa::tracked(returns(ref))]
+fn source_root_classes_query(
+    db: &dyn HirDatabase,
+    root: SourceRootInput,
+) -> Arc<Vec<(Name, FileId, ItemId)>> {
+    let source_root = root.source_root(db);
+    let mut out = Vec::new();
+    for file in source_root.iter() {
+        for (name, item) in file_classes_query(db, db.file_text(file)).iter() {
+            out.push((name.clone(), file, *item));
+        }
+    }
+    Arc::new(out)
+}
+
+/// Resolves `fqn` against the classes of `source_set`'s own source roots.
+fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> Option<Resolved> {
+    let graph = ProjectGraph::try_get(db)?;
+    let name = Name::new(fqn);
+    for (root, owner) in graph.source_root_to_source_set(db) {
+        if owner == source_set {
+            let classes = source_root_classes_query(db, db.source_root(*root));
+            if let Some((_, file, item)) = classes.iter().find(|(n, _, _)| n == &name) {
+                return Some(Resolved::Source(SourceClass {
+                    file: *file,
+                    item: *item,
+                }));
+            }
+        }
+    }
+    None
+}
+
+/// The fully qualified name
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
+/// of a source class declaration.
+pub fn source_class_fqn(db: &dyn HirDatabase, file: FileId, item: ItemId) -> Option<Name> {
+    let classes = file_classes_query(db, db.file_text(file));
+    classes
+        .iter()
+        .find(|(_, id)| *id == item)
+        .map(|(name, _)| name.clone())
+}
+
+/// The direct super class and interfaces of a class, as FQN symbols. Source
+/// classes are handled by `hir-ty` against the item tree; this returns the
+/// empty set for them.
+pub fn super_types(_db: &dyn HirDatabase, resolved: &Resolved) -> Vec<Symbol> {
+    match resolved {
+        Resolved::Library(resolved) => {
+            let mut out = Vec::new();
+            if let Some(super_class) = resolved.entry.super_class {
+                out.push(super_class);
+            }
+            out.extend(resolved.entry.interfaces.iter().copied());
+            out
+        }
+        Resolved::Source(_) => Vec::new(),
+    }
+}
+
+/// The generic signature of a class as written in its classfile `Signature`
+/// attribute ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1)):
+/// the declared type parameters plus the superclass and interfaces with their
+/// type arguments. Unlike [`super_types`] this carries the type arguments, so
+/// parameterized subtyping ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2))
+/// can substitute them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassGenericInfo {
+    pub type_params: Vec<TypeParameter<Symbol>>,
+    pub super_class: Option<TypeRef<Symbol>>,
+    pub interfaces: Vec<TypeRef<Symbol>>,
+}
+
+/// The generic signature of a resolved class, from its tier-2 class record.
+/// `None` when the tier-2 record is unavailable (in-memory-only index) or the
+/// class carries no `Signature` attribute. Source classes carry no classfile
+/// signature, so `None` is returned for them.
+pub fn class_generic_info(db: &dyn HirDatabase, resolved: &Resolved) -> Option<ClassGenericInfo> {
+    let resolved = match resolved {
+        Resolved::Library(resolved) => resolved,
+        Resolved::Source(_) => return None,
+    };
+    let record = class_record(db, resolved)?;
+    let ClassOrModuleStub::Class(class) = record.as_ref() else {
+        return None;
+    };
+    Some(ClassGenericInfo {
+        type_params: class.type_params.clone(),
+        super_class: class.super_class.clone(),
+        interfaces: class.interfaces.clone(),
+    })
 }
 
 /// Tier-2 access: the full member stubs of a class.

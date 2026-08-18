@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/subtyping_snapshots.rs
+expression: out
+---
+List<String> <: Collection<String>: true
+List<String> <: Collection<Integer>: false
+ArrayList<Integer> <: List<Integer>: true
+ArrayList<String> <: AbstractList<String>: true
+ArrayList<Integer> <: List<?>: true
+List<String> <: Collection<? extends String>: true
+List<Integer> <: Collection<? extends Number>: true
+List<String> <: Collection<? extends Number>: false

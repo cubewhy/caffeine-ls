@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/method_snapshots.rs
+expression: out
+---
+List<String>.add
+  java.util.List.add(java.lang.String) -> boolean
+List<String>.get
+  java.util.List.get(int) -> java.lang.String
+List<String>.subList
+  java.util.List.subList(int, int) -> java.util.List<java.lang.String>
+ArrayList<String>.add
+  java.util.List.add(java.lang.String) -> boolean
+List<Integer>.add
+  java.util.List.add(java.lang.Integer) -> boolean

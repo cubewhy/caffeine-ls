@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/method_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Util.java:
+package com.example;
+class Util {
+    static String pick(Object o) { return null; }
+    static String pick(String s) { return null; }
+    static int box(Integer i) { return 0; }
+    static int box(int i) { return 0; }
+    static int add(int a, int b) { return 0; }
+    static int add(int... xs) { return 0; }
+    static String spread(String... xs) { return null; }
+    static <T> T identity(T value) { return value; }
+    static String miss(int... xs) { return null; }
+}
+
+METHODS:
+Util.pick(String): com.example.Util.pick(java.lang.String) -> java.lang.String [args: java.lang.String]
+Util.pick(Integer): com.example.Util.pick(java.lang.Object) -> java.lang.String [args: java.lang.Integer]
+Util.pick(Object): com.example.Util.pick(java.lang.Object) -> java.lang.String [args: java.lang.Object]
+Util.box(int): com.example.Util.box(int) -> int [args: int]
+Util.box(Integer): com.example.Util.box(java.lang.Integer) -> int [args: java.lang.Integer]
+Util.add(1,2): com.example.Util.add(int, int) -> int [args: int, int]
+Util.add(1,2,3): com.example.Util.add(int[]) -> int [args: int, int, int]
+Util.spread(): com.example.Util.spread(java.lang.String[]) -> java.lang.String [args: ]
+Util.spread(a,b): com.example.Util.spread(java.lang.String[]) -> java.lang.String [args: java.lang.String, java.lang.String]
+Util.spread(a,b,c): com.example.Util.spread(java.lang.String[]) -> java.lang.String [args: java.lang.String, java.lang.String, java.lang.String]
+Util.identity(String): com.example.Util.identity(java.lang.Object) -> java.lang.Object [args: java.lang.String]
+Util.identity(int): com.example.Util.identity(java.lang.Object) -> java.lang.Object [args: int]
+Util.miss(): com.example.Util.miss(int[]) -> java.lang.String [args: ]
+Util.nope(): <none> [args: ]

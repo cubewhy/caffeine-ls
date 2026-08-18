@@ -41,8 +41,8 @@ pub struct Classpath {
 
 impl Classpath {
     /// The libraries of this classpath, in classpath order. Internal source
-    /// set entries are carried in the model but are not resolvable yet (they
-    /// need a source-based index).
+    /// set entries are resolved through the source index (see
+    /// [`crate::db::fqn_resolve`]) and are not returned here.
     pub fn libraries(&self) -> impl Iterator<Item = LibraryId> + '_ {
         self.entries.iter().filter_map(|entry| match entry {
             ClasspathEntry::Library(library) => Some(*library),
@@ -55,9 +55,9 @@ impl Classpath {
 pub enum ClasspathEntry {
     /// An external jar or a JDK jimage, backed by the stub index.
     Library(LibraryId),
-    /// Another workspace source set (an internal project dependency). Kept in
-    /// the model for ordering and visibility semantics; resolution from source
-    /// is a follow-up.
+    /// Another workspace source set (an internal project dependency). Resolved
+    /// through the source index in classpath order (see
+    /// [`crate::db::fqn_resolve`]).
     SourceSet(SourceSetId),
 }
 
@@ -99,7 +99,8 @@ mod tests {
 
     use super::*;
     use crate::db::{
-        ResolutionScope, file_item_tree, fqn_resolve, set_project_graph, source_set_for_file,
+        ResolutionScope, Resolved, file_item_tree, fqn_resolve, set_project_graph,
+        source_set_for_file,
     };
     use crate::{HirDatabase, HirState, LibraryKind};
 
@@ -304,19 +305,28 @@ mod tests {
 
         let a_first = fqn_resolve(
             &db,
-            &ResolutionScope::Classpath(&[lib_a, lib_b]),
+            &ResolutionScope::Classpath(vec![lib_a, lib_b]),
             "com.example.Greeter",
         );
         let b_first = fqn_resolve(
             &db,
-            &ResolutionScope::Classpath(&[lib_b, lib_a]),
+            &ResolutionScope::Classpath(vec![lib_b, lib_a]),
             "com.example.Greeter",
         );
 
-        assert_eq!(a_first.as_ref().map(|r| r.library), Some(lib_a));
-        assert_eq!(b_first.as_ref().map(|r| r.library), Some(lib_b));
+        let library_of = |resolved: &Resolved| match resolved {
+            Resolved::Library(r) => Some(r.library),
+            Resolved::Source(_) => None,
+        };
+        assert_eq!(a_first.as_ref().and_then(library_of), Some(lib_a));
+        assert_eq!(b_first.as_ref().and_then(library_of), Some(lib_b));
         assert!(
-            fqn_resolve(&db, &ResolutionScope::Classpath(&[]), "com.example.Greeter").is_none()
+            fqn_resolve(
+                &db,
+                &ResolutionScope::Classpath(Vec::new()),
+                "com.example.Greeter"
+            )
+            .is_none()
         );
     }
 

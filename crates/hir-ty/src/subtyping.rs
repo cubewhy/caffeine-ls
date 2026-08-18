@@ -23,21 +23,21 @@
 //!
 //! Boxing/unboxing
 //! ([§5.1.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.7),
-//! [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
-//! capture conversion
-//! ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10))
-//! and full parameterized-type subtyping
-//! ([§4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)
-//! with type-argument substitution) are not modelled yet.
+//! [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8))
+//! and capture conversion
+//! ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10),
+//! via the §4.5.1 contains relation) are modelled for assignment conversion
+//! and parameterized-type arguments.
 
-use rustc_hash::FxHashSet;
-use syntax::stub::PrimitiveType;
+use rustc_hash::{FxHashMap, FxHashSet};
+use syntax::stub::{PrimitiveType, TypeParameter, TypeRef};
 
-use hir_expand::name::Name;
+use hir_expand::{item_tree::ItemData, name::Name};
 
 use crate::{
     db::{ScopeId, ScopeKind, TyDatabase},
-    ty::{BoundKind, Ty, TyData, TyKind},
+    resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
+    ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type, unboxed_primitive},
 };
 
 /// The direct supertypes of `ty`
@@ -51,7 +51,7 @@ use crate::{
 ///
 /// Types outside the resolvable hierarchy (source classes, type variables,
 /// primitives) yield no supertypes.
-pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope<'_>, ty: &Ty) -> Vec<Ty> {
+pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) -> Vec<Ty> {
     let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
     supertypes_query(db, scope, ty.id)
 }
@@ -61,15 +61,50 @@ pub fn supertypes(db: &dyn TyDatabase, scope: &hir::ResolutionScope<'_>, ty: &Ty
 pub(crate) fn supertypes_query(db: &dyn TyDatabase, scope: ScopeId, ty: TyData) -> Vec<Ty> {
     let ty = Ty { id: ty };
     match ty.kind(db) {
-        TyKind::Reference { name, .. } => {
+        TyKind::Reference { name, args } => {
             let Some(resolved) = resolve_name(db, scope, name) else {
                 return Vec::new();
             };
-            let interner = &db.hir_state().interner;
-            hir::super_types(db, &resolved)
-                .into_iter()
-                .map(|fqn| Ty::reference(db, Name::new(interner.resolve(&fqn)), Vec::new()))
-                .collect()
+            match resolved {
+                hir::Resolved::Library(resolved) => {
+                    if !args.is_empty()
+                        && let Some(info) =
+                            hir::class_generic_info(db, &hir::Resolved::Library(resolved.clone()))
+                    {
+                        // §4.10.2 with type-argument substitution: bind the class's
+                        // declared type parameters to the actual arguments and
+                        // substitute into the superclass/interfaces from the
+                        // classfile `Signature` attribute.
+                        let interner = &db.hir_state().interner;
+                        let binding: FxHashMap<Name, Ty> = info
+                            .type_params
+                            .iter()
+                            .map(|tp| Name::new(interner.resolve(&tp.name)))
+                            .zip(args.iter().copied())
+                            .collect();
+                        let instantiate = |tyref: &hir::TypeRef<hir::Symbol>| {
+                            crate::resolve::ty_from_library(db, tyref).substitute(db, &binding)
+                        };
+                        let mut out = Vec::new();
+                        if let Some(super_class) = &info.super_class {
+                            out.push(instantiate(super_class));
+                        }
+                        out.extend(info.interfaces.iter().map(instantiate));
+                        out
+                    } else {
+                        // Erasure-style fallback (raw types per §4.8, or tier-2 data
+                        // unavailable): tier-1 classfile data carries no arguments.
+                        let interner = &db.hir_state().interner;
+                        hir::super_types(db, &hir::Resolved::Library(resolved))
+                            .into_iter()
+                            .map(|fqn| {
+                                Ty::reference(db, Name::new(interner.resolve(&fqn)), Vec::new())
+                            })
+                            .collect()
+                    }
+                }
+                hir::Resolved::Source(source) => source_supertypes(db, source, args),
+            }
         }
         TyKind::Array(_) => vec![
             Ty::reference(db, "java.lang.Object", Vec::new()),
@@ -80,25 +115,80 @@ pub(crate) fn supertypes_query(db: &dyn TyDatabase, scope: ScopeId, ty: TyData) 
     }
 }
 
-/// Resolves `name` against the libraries of `scope`, honoring classpath
-/// order (the first library containing the name wins).
-fn resolve_name(db: &dyn TyDatabase, scope: ScopeId, name: &Name) -> Option<hir::ResolvedClass> {
-    let libraries: Vec<hir::LibraryId> = match scope.kind(db) {
-        ScopeKind::SourceSet(source_set) => hir::classpath_libraries(db, source_set.clone()),
-        ScopeKind::Classpath(libraries) => libraries.clone(),
-        ScopeKind::JdkBuiltins => hir::jdk_builtin_libraries(db),
+/// The direct supertypes of a source class, resolved against its own file's
+/// scope ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)).
+/// When the class declares type parameters and `args` are present, the
+/// parameters are bound to the arguments and substituted into the
+/// superclass/interfaces; otherwise they are resolved raw. Enums, records and
+/// annotations gain their implicit superclass (`java.lang.Enum`,
+/// `java.lang.Record`, `java.lang.annotation.Annotation`).
+fn source_supertypes(db: &dyn TyDatabase, source: hir::SourceClass, args: &[Ty]) -> Vec<Ty> {
+    let tree = hir::file_item_tree(db, source.file);
+    let Some(data) = item_data(&tree, source.item) else {
+        return Vec::new();
     };
-    hir::resolve_in_libraries(db, &libraries, name.as_str())
+    let scope = scope_for_file(db, source.file);
+    let type_params = crate::db::type_params_map_query(db, db.file_text(source.file));
+    let resolver = Resolver::new(&tree, type_params, source.item);
+    let implicit = |fqn: &str| TypeRef::Reference {
+        name: Name::new(fqn),
+        generic_args: Vec::new(),
+    };
+    let (super_class, interfaces): (Option<TypeRef<Name>>, Vec<TypeRef<Name>>) = match data {
+        // A class (other than `java.lang.Object`) has exactly one direct
+        // superclass; the implicit one is `java.lang.Object` (§8.1.4).
+        ItemData::Class(d) => (
+            Some(
+                d.super_class
+                    .clone()
+                    .unwrap_or_else(|| implicit("java.lang.Object")),
+            ),
+            d.interfaces.clone(),
+        ),
+        ItemData::Interface(d) => (None, d.interfaces.clone()),
+        ItemData::Record(d) => (Some(implicit("java.lang.Record")), d.interfaces.clone()),
+        ItemData::Enum(d) => (Some(implicit("java.lang.Enum")), d.interfaces.clone()),
+        ItemData::Annotation(_) => (
+            Some(implicit("java.lang.annotation.Annotation")),
+            Vec::new(),
+        ),
+        _ => return Vec::new(),
+    };
+    let declared: &[TypeParameter<Name>] = match data {
+        ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
+        ItemData::Record(d) => &d.type_params,
+        _ => &[],
+    };
+    let instantiate = |tyref: &TypeRef<Name>| {
+        let resolved = resolve_type_ref(db, &scope, &resolver, tyref);
+        if args.is_empty() {
+            resolved
+        } else {
+            let binding: FxHashMap<Name, Ty> = declared
+                .iter()
+                .map(|tp| tp.name.clone())
+                .zip(args.iter().copied())
+                .collect();
+            resolved.substitute(db, &binding)
+        }
+    };
+    let mut out = Vec::new();
+    if let Some(super_class) = &super_class {
+        out.push(instantiate(super_class));
+    }
+    out.extend(interfaces.iter().map(instantiate));
+    out
+}
+
+/// Resolves `name` against the classes of `scope`, honoring classpath order:
+/// a source set's own classes, then its classpath entries.
+fn resolve_name(db: &dyn TyDatabase, scope: ScopeId, name: &Name) -> Option<hir::Resolved> {
+    hir::fqn_resolve(db, &scope.kind(db).to_scope(), name.as_str())
 }
 
 /// Whether `sub` is a subtype of `sup`
 /// ([JLS §4.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10)).
-pub fn is_subtype(
-    db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope<'_>,
-    sub: &Ty,
-    sup: &Ty,
-) -> bool {
+pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, sup: &Ty) -> bool {
     let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
     is_subtype_query(db, scope, sub.id, sup.id)
 }
@@ -130,11 +220,53 @@ pub(crate) fn is_subtype_query(
             name.as_str(),
             "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
         ),
+        // §4.10.2: a type variable is a subtype of its declared bounds.
+        (TyKind::TypeVar { .. }, TyKind::Reference { .. })
+        | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
             reference_subtype(db, scope, sub, sup)
         }
         _ => false,
     }
+}
+
+/// Whether the type variable `sub` is a subtype of `sup`
+/// ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)):
+/// every type variable is a subtype of `Object`, and of whatever its declared
+/// bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
+/// are subtypes of, walking the bound chain (`<T extends U, U extends Number>`
+/// gives `T <: Number`).
+fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bool {
+    if sup.is_object(db) {
+        return true;
+    }
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![sub];
+    while let Some(current) = stack.pop() {
+        let TyKind::TypeVar { name, bounds } = current.kind(db) else {
+            continue;
+        };
+        if !visited.insert(name) {
+            continue;
+        }
+        for bound in bounds {
+            if bound == &sup {
+                return true;
+            }
+            match bound.kind(db) {
+                // A reference bound reaches `sup` through its supertype closure.
+                TyKind::Reference { .. } => {
+                    if is_subtype_query(db, scope, bound.id, sup.id) {
+                        return true;
+                    }
+                }
+                // A type-var bound keeps unwinding the bound chain.
+                TyKind::TypeVar { .. } => stack.push(*bound),
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Reference subtyping: identical erasure (§4.10.2) or membership in the
@@ -189,26 +321,70 @@ fn params_ok(db: &dyn TyDatabase, scope: ScopeId, sub_args: &[Ty], sup_args: &[T
 }
 
 fn arg_ok(db: &dyn TyDatabase, scope: ScopeId, sub: &Ty, sup: &Ty) -> bool {
-    match sup.kind(db) {
-        // `?` accepts any type argument.
-        TyKind::Wildcard(None) => true,
-        TyKind::Wildcard(Some(bound)) => match bound.kind {
+    match (sub.kind(db), sup.kind(db)) {
+        // `?` accepts any type argument (§4.5.1: `? extends T <= ?` and
+        // `? super T <= ?`).
+        (_, TyKind::Wildcard(None)) => true,
+        // A wildcard against a bounded wildcard: the contains relation
+        // (§4.5.1) drives parameterized subtyping between wildcard arguments
+        // (§4.10.2).
+        (TyKind::Wildcard(Some(sub_bound)), TyKind::Wildcard(Some(sup_bound))) => {
+            wildcard_contains(db, scope, sub_bound, sup_bound)
+        }
+        // A wildcard source against a concrete parameter is never a subtype:
+        // after capture conversion (§5.1.10) the captured type variable is
+        // distinct from the concrete argument (§4.10.2 invariance), so
+        // `List<? extends A> <: List<B>` does not hold.
+        (TyKind::Wildcard(_), _) => false,
+        // A concrete argument against a bounded wildcard parameter (§4.5.1):
+        // `T <= ? extends S` iff `T <: S`; `T <= ? super S` iff `S <: T`.
+        (_, TyKind::Wildcard(Some(bound))) => match bound.kind {
             BoundKind::Upper => is_subtype_query(db, scope, sub.id, bound.ty.id),
             BoundKind::Lower => is_subtype_query(db, scope, bound.ty.id, sub.id),
         },
+        // Invariance (§4.10.2): `G<T> <: G<T'>` iff `T = T'`.
         _ => sub == sup,
+    }
+}
+
+/// The wildcard "contains" relation
+/// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)),
+/// as sets of types: `? extends A` denotes `{ X : X <: A }` and `? super A`
+/// denotes `{ X : A <: X }`, and the source argument must be contained in the
+/// parameter argument. The only mixed-upper/lower rule is
+/// `? super T <= ? extends Object`, so `(Upper, Lower)` never holds and
+/// `(Lower, Upper)` holds only when the upper bound is `Object`.
+fn wildcard_contains(
+    db: &dyn TyDatabase,
+    scope: ScopeId,
+    sub: &WildcardBound,
+    sup: &WildcardBound,
+) -> bool {
+    match (sub.kind, sup.kind) {
+        // `? extends A <= ? extends B` iff `A <: B`.
+        (BoundKind::Upper, BoundKind::Upper) => is_subtype_query(db, scope, sub.ty.id, sup.ty.id),
+        // `? super A <= ? super B` iff `B <: A`.
+        (BoundKind::Lower, BoundKind::Lower) => is_subtype_query(db, scope, sup.ty.id, sub.ty.id),
+        // `? extends A <= ? super B` is never provable (§4.5.1).
+        (BoundKind::Upper, BoundKind::Lower) => false,
+        // `? super A <= ? extends B` iff `B` is `Object` (§4.5.1).
+        (BoundKind::Lower, BoundKind::Upper) => sup.ty.is_object(db),
     }
 }
 
 /// Whether `src` is assignable to `dst` by assignment conversion
 /// ([JLS §5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2)):
 /// identity, primitive widening
-/// ([§5.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2))
-/// and reference widening
-/// ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)).
+/// ([§5.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2)),
+/// reference widening
+/// ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)),
+/// boxing ([§5.1.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.7),
+/// optionally followed by a widening reference conversion) and unboxing
+/// ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8),
+/// optionally followed by a widening primitive conversion).
 pub fn is_assignable(
     db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope<'_>,
+    scope: &hir::ResolutionScope,
     src: &Ty,
     dst: &Ty,
 ) -> bool {
@@ -218,13 +394,29 @@ pub fn is_assignable(
     match (src.kind(db), dst.kind(db)) {
         (TyKind::Primitive(src), TyKind::Primitive(dst)) => widening_primitive(*src, *dst),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => is_subtype(db, scope, src, dst),
+        // Boxing (§5.1.7): a primitive is assignable to its boxed type, or to
+        // any reference supertype of it (a widening reference conversion §5.1.5
+        // after boxing).
+        (TyKind::Primitive(src), TyKind::Reference { .. }) => {
+            let boxed = Ty::reference(db, boxed_type(*src), Vec::new());
+            is_subtype(db, scope, &boxed, dst)
+        }
+        // Unboxing (§5.1.8): a boxed reference is assignable to the primitive
+        // it unboxes to, or to a wider primitive (a widening primitive
+        // conversion §5.1.2 after unboxing).
+        (TyKind::Reference { name, .. }, TyKind::Primitive(dst)) => {
+            let Some(unboxed) = unboxed_primitive(name.as_str()) else {
+                return false;
+            };
+            unboxed == *dst || widening_primitive(unboxed, *dst)
+        }
         _ => false,
     }
 }
 
 /// Primitive widening conversion, the transitions of
 /// [JLS table 5.1-B](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2).
-fn widening_primitive(src: PrimitiveType, dst: PrimitiveType) -> bool {
+pub(crate) fn widening_primitive(src: PrimitiveType, dst: PrimitiveType) -> bool {
     use PrimitiveType::*;
     matches!(
         (src, dst),

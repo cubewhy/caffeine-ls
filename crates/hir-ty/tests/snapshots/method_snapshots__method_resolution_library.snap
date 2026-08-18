@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/method_snapshots.rs
+expression: out
+---
+List<String>.add(String): java.util.List.add(java.lang.String) -> boolean [args: java.lang.String]
+List<String>.add(Object): <none> [args: java.lang.Object]
+List<String>.add(Integer): <none> [args: java.lang.Integer]
+List<Integer>.add(Integer): java.util.List.add(java.lang.Integer) -> boolean [args: java.lang.Integer]
+List<String>.get(int): java.util.List.get(int) -> java.lang.String [args: int]
+List<String>.size(): java.util.List.size() -> int [args: ]
+List<String>.subList(int,int): java.util.List.subList(int, int) -> java.util.List<java.lang.String> [args: int, int]
+List<String>.subList(String): <none> [args: java.lang.String]
+ArrayList<String>.add(String): java.util.List.add(java.lang.String) -> boolean [args: java.lang.String]
+ArrayList<String>.add(Integer): <none> [args: java.lang.Integer]
+String.toString(): <none> [args: ]
+int.parseInt(): <none> [args: ]
