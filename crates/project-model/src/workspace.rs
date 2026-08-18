@@ -11,7 +11,7 @@ use vfs::AbsPathBuf;
 
 /// Uniquely identifies an independent module in the workspace
 /// (e.g., a Maven Submodule or a Gradle Subproject).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectId(pub u32);
 
 /// Uniquely identifies a JDK / Runtime SDK environment.
@@ -22,6 +22,12 @@ pub struct SdkId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LibraryId(pub u64);
+
+impl std::fmt::Display for LibraryId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
 
 impl LibraryId {
     /// Generate a unique ID for a file based on its path and metadata
@@ -79,7 +85,7 @@ impl Library {
 /// Describes the type of a SourceSet.
 /// A core characteristic of Java projects is that different code scopes within the same module
 /// (e.g., production code vs. test code) have completely isolated classpaths and visibilities.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SourceSetKind {
     /// Production source code (corresponds to Maven/Gradle `main`).
     Main,
@@ -87,6 +93,16 @@ pub enum SourceSetKind {
     Test,
     /// Custom source sets (e.g., Gradle's `integrationTest` or `site`).
     Custom(SmolStr),
+}
+
+impl std::fmt::Display for SourceSetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceSetKind::Main => write!(f, "main"),
+            SourceSetKind::Test => write!(f, "test"),
+            SourceSetKind::Custom(name) => write!(f, "{name}"),
+        }
+    }
 }
 
 /// Describes a precisely resolved classpath entry.

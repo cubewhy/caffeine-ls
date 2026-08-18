@@ -15,15 +15,19 @@ lasso.workspace = true
 lru.workspace = true
 parking_lot.workspace = true
 postcard.workspace = true
+project-model.workspace = true
 rayon.workspace = true
 rust-asm.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
 serde.workspace = true
+smol_str.workspace = true
 syntax.workspace = true
 tracing.workspace = true
 vfs.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+rowan.workspace = true
 tempfile = "3"
+triomphe.workspace = true

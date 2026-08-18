@@ -7,13 +7,13 @@ use std::{
 
 use camino::Utf8PathBuf;
 use crossbeam_channel::Receiver;
-use hir::{LibraryId as HirLibraryId, LibraryKind};
-use ide_db::base_db::{FileChange, SourceRoot, salsa::Cancelled};
+use hir::{Classpath, ClasspathEntry as HirClasspathEntry, LibraryInfo, LibraryKind, SourceSetId};
+use ide_db::base_db::{FileChange, SourceRoot, SourceRootId, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
 use vfs::AbsPathBuf;
 
@@ -544,26 +544,46 @@ impl GlobalState {
     fn apply_loaded_graph(&mut self, graph: project_model::WorkspaceGraph, root: AbsPathBuf) {
         tracing::info!(?root, "Applying workspace source roots and loader config");
 
-        let mut source_roots: Vec<AbsPathBuf> = Vec::new();
-
+        // Group source roots by source set, in a deterministic order (project
+        // id, then source set kind). This order is shared by the vfs partition
+        // (one `SourceRoot` per source set) and the `ProjectGraph` map, so the
+        // `SourceRootId(i)` assigned by `FileChange::apply` (vector order)
+        // lines up with `source_sets[i]`.
+        let mut source_sets: Vec<(SourceSetId, Vec<AbsPathBuf>)> = Vec::new();
+        let mut seen: FxHashSet<SourceSetId> = FxHashSet::default();
         for project in graph.projects.values() {
-            for source_set in project.source_sets.values() {
-                source_roots.extend(source_set.source_roots.iter().cloned());
-                source_roots.extend(source_set.generated_source_roots.iter().cloned());
+            for (kind, source_set) in &project.source_sets {
+                let id = SourceSetId {
+                    project: project.id,
+                    kind: kind.clone(),
+                };
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                let mut roots = Vec::new();
+                roots.extend(source_set.source_roots.iter().cloned());
+                roots.extend(source_set.generated_source_roots.iter().cloned());
+                source_sets.push((id, roots));
             }
         }
+        source_sets.sort_by_key(|(id, _)| id.clone());
+        let source_set_ids: Vec<SourceSetId> =
+            source_sets.iter().map(|(id, _)| id.clone()).collect();
 
+        let mut source_roots: Vec<AbsPathBuf> = Vec::new();
+        for (_, roots) in &source_sets {
+            source_roots.extend(roots.iter().cloned());
+        }
         source_roots.sort();
         source_roots.dedup();
 
+        // One FileSet per source set, so each source set becomes its own
+        // `SourceRoot` and `file → SourceRootId → SourceSetId` is a pure salsa
+        // lookup.
         let mut builder = vfs::file_set::FileSetConfig::builder();
-        builder.add_file_set(
-            source_roots
-                .iter()
-                .cloned()
-                .map(vfs::VfsPath::from)
-                .collect(),
-        );
+        for (_, roots) in &source_sets {
+            builder.add_file_set(roots.iter().cloned().map(vfs::VfsPath::from).collect());
+        }
         let file_set_config = builder.build();
 
         // Load and watch the source roots declared by the build system,
@@ -595,16 +615,40 @@ impl GlobalState {
         self.source_root_matchers = matchers;
 
         self.file_set_config = Some(file_set_config);
-        self.apply_source_roots();
-        self.register_libraries(&graph, &root);
+
+        let roots = self.partition_source_roots();
+        let mut project_graph = self.build_project_graph(&graph, &source_set_ids);
+        for (idx, source_set) in source_sets.iter().enumerate() {
+            project_graph
+                .source_root_to_source_set
+                .insert(SourceRootId(idx as u32), source_set.0.clone());
+        }
+        let db = self.analysis_host.raw_database_mut();
+        hir::set_project_graph(db, project_graph);
+
+        // Applying roots must happen after the ProjectGraph registration so
+        // the per-source-set SourceRootIds match `source_root_to_source_set`.
+        let mut change = FileChange::default();
+        change.set_roots(roots);
+        self.analysis_host.apply_change(change);
+
+        self.warmup_libraries(&root);
         self.refresh_diagnostics();
     }
 
-    /// Registers the JDK and classpath jars from the workspace graph with the
-    /// stub index, then warms the indexes up on a background thread so the
-    /// first type query does not pay the full JDK parse cost.
-    fn register_libraries(&mut self, graph: &project_model::WorkspaceGraph, root: &AbsPathBuf) {
-        let mut libraries: Vec<(HirLibraryId, LibraryKind, AbsPathBuf)> = Vec::new();
+    /// Builds the classpath-aware project model from the workspace graph:
+    /// every reachable library, the JDK built-ins, and each source set's
+    /// ordered compile classpath.
+    fn build_project_graph(
+        &self,
+        graph: &project_model::WorkspaceGraph,
+        source_set_ids: &[SourceSetId],
+    ) -> hir::ProjectGraphData {
+        let mut data = hir::ProjectGraphData::default();
+
+        // SDK → the concrete jimage/rt.jar library id.
+        let mut sdk_library: FxHashMap<project_model::SdkId, project_model::LibraryId> =
+            FxHashMap::default();
 
         // JDKs: prefer the modular layout (`lib/modules`), fall back to the
         // legacy `lib/rt.jar`.
@@ -620,7 +664,13 @@ impl GlobalState {
             if std::fs::metadata(std::path::Path::new(path.as_path().as_str())).is_ok()
                 && let Ok(id) = project_model::LibraryId::from_file_path(path.as_path().as_ref())
             {
-                libraries.push((HirLibraryId(id.0), kind, path));
+                data.libraries
+                    .entry(id)
+                    .or_insert_with(|| LibraryInfo::new(kind, path.clone()));
+                if !data.jdk_libraries.contains(&id) {
+                    data.jdk_libraries.push(id);
+                }
+                sdk_library.insert(sdk.id, id);
             }
         }
 
@@ -631,26 +681,59 @@ impl GlobalState {
                     if let ClasspathEntry::External(lib_id) = entry
                         && let Some(lib) = graph.library_paths.get(lib_id)
                     {
-                        libraries.push((
-                            HirLibraryId(lib_id.0),
-                            LibraryKind::Jar,
-                            lib.path.clone(),
-                        ));
+                        data.libraries.entry(*lib_id).or_insert_with(|| {
+                            LibraryInfo::new(LibraryKind::Jar, lib.path.clone())
+                        });
                     }
                 }
             }
         }
 
-        // Deduplicate: the same jar may be referenced from many source sets.
-        libraries.sort_by_key(|(id, _, _)| id.0);
-        libraries.dedup_by_key(|(id, _, _)| id.0);
-
-        let db = self.analysis_host.raw_database_mut();
-        for (id, kind, path) in &libraries {
-            hir::register_library(db, *id, *kind, path.as_str().into());
+        // Per-source-set ordered classpaths. The order is preserved verbatim
+        // from the build tool so that FQN resolution honors shadowing.
+        for source_set_id in source_set_ids {
+            let Some(project) = graph.projects.get(&source_set_id.project) else {
+                continue;
+            };
+            let Some(source_set) = project.source_sets.get(&source_set_id.kind) else {
+                continue;
+            };
+            let mut entries = Vec::new();
+            for entry in &source_set.compile_classpath {
+                match entry {
+                    ClasspathEntry::Internal {
+                        project_id,
+                        source_set: kind,
+                    } => {
+                        entries.push(HirClasspathEntry::SourceSet(SourceSetId {
+                            project: *project_id,
+                            kind: kind.clone(),
+                        }));
+                    }
+                    ClasspathEntry::External(lib_id) => {
+                        entries.push(HirClasspathEntry::Library(*lib_id));
+                    }
+                    ClasspathEntry::Sdk(sdk_id) => {
+                        if let Some(&id) = sdk_library.get(sdk_id) {
+                            entries.push(HirClasspathEntry::Library(id));
+                        }
+                    }
+                }
+            }
+            data.source_sets.insert(
+                source_set_id.clone(),
+                std::sync::Arc::new(Classpath { entries }),
+            );
         }
 
-        let ids: Vec<HirLibraryId> = libraries.into_iter().map(|(id, _, _)| id).collect();
+        data
+    }
+
+    /// Warms the stub indexes of every registered library up on a background
+    /// thread so the first type query does not pay the full JDK parse cost.
+    fn warmup_libraries(&mut self, root: &AbsPathBuf) {
+        let db = self.analysis_host.raw_database();
+        let ids: Vec<hir::LibraryId> = hir::registered_libraries(db);
         if ids.is_empty() {
             return;
         }
@@ -713,12 +796,6 @@ impl GlobalState {
 
     /// Rebuilds the database source roots by partitioning the current vfs with
     /// [`Self::file_set_config`].
-    fn apply_source_roots(&mut self) {
-        let mut change = FileChange::default();
-        change.set_roots(self.partition_source_roots());
-        self.analysis_host.apply_change(change);
-    }
-
     fn partition_source_roots(&self) -> Vec<SourceRoot> {
         let file_set_config = match &self.file_set_config {
             Some(config) => config,

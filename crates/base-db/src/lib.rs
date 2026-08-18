@@ -130,6 +130,20 @@ impl Files {
         *file_source_root
     }
 
+    /// Non-panicking variant of [`Files::file_source_root`]: the source root
+    /// of `id`, or `None` when the file does not belong to any root (e.g. a
+    /// file opened before the workspace is loaded).
+    pub fn file_source_root_id(
+        &self,
+        db: &dyn SourceDatabase,
+        id: vfs::FileId,
+    ) -> Option<SourceRootId> {
+        self.file_source_roots
+            .get(&id)
+            .map(|entry| *entry)
+            .map(|input| *input.source_root_id(db))
+    }
+
     fn path_for_file(&self, db: &dyn SourceDatabase, id: vfs::FileId) -> Option<vfs::VfsPath> {
         for source_root in &*self.source_roots {
             let source_root = *source_root.value();
@@ -193,6 +207,11 @@ pub trait SourceDatabase: salsa::Database {
     fn source_root(&self, id: SourceRootId) -> SourceRootInput;
 
     fn file_source_root(&self, id: vfs::FileId) -> FileSourceRootInput;
+
+    /// The source root of `file_id`, if it belongs to any source root.
+    /// Unlike [`Self::file_source_root`] this never panics, so it is safe to
+    /// call for files outside the workspace.
+    fn source_root_for_file(&self, file_id: vfs::FileId) -> Option<SourceRootId>;
 
     fn set_file_source_root_with_durability(
         &mut self,

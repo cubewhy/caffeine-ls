@@ -104,6 +104,10 @@ impl SourceDatabase for RootDatabase {
         self.files.file_source_root(self, id)
     }
 
+    fn source_root_for_file(&self, id: vfs::FileId) -> Option<SourceRootId> {
+        self.files.file_source_root_id(self, id)
+    }
+
     fn set_file_source_root_with_durability(
         &mut self,
         id: vfs::FileId,

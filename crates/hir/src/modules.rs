@@ -4,7 +4,7 @@
 //! modular jars contribute their single `module-info.class`, and the JDK
 //! jimage contributes one descriptor per module. This module turns those
 //! descriptors into first-class salsa queries (per-library module graphs)
-//! plus a workspace-wide aggregate module path and readability/visibility
+//! plus a source-set-scoped aggregate module path and readability/visibility
 //! helpers.
 //!
 //! Sources without a `module-info.java` behave as the *unnamed module*
@@ -18,9 +18,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     db::{
-        HirDatabase, LibraryId, RegisteredLibraries, fqn_resolve, library_name_index,
-        module_record, registered_libraries,
+        HirDatabase, LibraryId, ProjectGraph, ResolutionScope, classpath_libraries, fqn_resolve,
+        library_name_index, module_record,
     },
+    project::SourceSetId,
     stubs::{ClassOrModuleStub, ModuleStub, Symbol},
 };
 
@@ -108,7 +109,9 @@ impl ModuleGraph {
     }
 }
 
-/// The workspace-wide aggregate module path.
+/// The aggregate module path of a source set: module name → descriptor (the
+/// first declaration on the classpath wins), plus package → owning module
+/// descriptors.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct WorkspaceModuleGraph {
     /// module name → descriptor. The first declaration wins; duplicates are
@@ -135,7 +138,7 @@ impl WorkspaceModuleGraph {
         self.modules.iter()
     }
 
-    /// The modules owning `package` across the whole workspace.
+    /// The modules owning `package` on this module path.
     pub fn modules_for_package(&self, package: Symbol) -> &[ModuleDescriptor] {
         self.package_to_modules
             .get(&package)
@@ -155,7 +158,7 @@ fn module_index(db: &dyn HirDatabase, library: LibraryId, name: Symbol) -> Optio
 #[salsa::tracked(returns(ref))]
 fn module_graph_query(
     db: &dyn HirDatabase,
-    _registered: RegisteredLibraries,
+    _project_graph: ProjectGraph,
     library: LibraryId,
 ) -> Arc<ModuleGraph> {
     let names = library_name_index(db, library);
@@ -187,9 +190,9 @@ fn module_graph_query(
 
 /// The module graph of a registered library.
 pub fn module_graph(db: &dyn HirDatabase, library: LibraryId) -> Arc<ModuleGraph> {
-    let registered = RegisteredLibraries::try_get(db)
-        .unwrap_or_else(|| panic!("no libraries registered; this is a bug"));
-    module_graph_query(db, registered, library).clone()
+    let project_graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    module_graph_query(db, project_graph, library).clone()
 }
 
 /// The full descriptor of `module` in `library`, if it exists.
@@ -201,9 +204,14 @@ pub fn module_descriptor(
     module_graph(db, library).module(module).cloned()
 }
 
-/// Resolves a fully qualified class name to its owning module descriptor.
-pub fn module_for_class(db: &dyn HirDatabase, fqn: &str) -> Option<ModuleDescriptor> {
-    let resolved = fqn_resolve(db, fqn)?;
+/// Resolves a fully qualified class name to its owning module descriptor,
+/// within a resolution scope.
+pub fn module_for_class(
+    db: &dyn HirDatabase,
+    scope: &ResolutionScope<'_>,
+    fqn: &str,
+) -> Option<ModuleDescriptor> {
+    let resolved = fqn_resolve(db, scope, fqn)?;
     let module = resolved.entry.module?;
     let stub = module_descriptor(db, resolved.library, module)?;
     Some(ModuleDescriptor {
@@ -259,15 +267,47 @@ pub fn required_modules(module: &ModuleStub<Symbol>) -> Vec<Symbol> {
     module.requires.iter().map(|r| r.module_name).collect()
 }
 
-/// The workspace module path: every module declared by any registered
-/// library, keyed by name. First declaration wins; a duplicate module name
-/// in a second library is logged and ignored.
+/// The aggregate module path of a source set: every JPMS module declared by a
+/// library on the source set's classpath, plus the package → module mapping.
+/// Deduplicates repeated libraries (same id on a classpath) while preserving
+/// classpath order.
 #[salsa::tracked(returns(ref))]
-fn workspace_module_graph_query(db: &dyn HirDatabase) -> Arc<WorkspaceModuleGraph> {
+fn source_set_module_graph_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    source_set: SourceSetId,
+) -> Arc<WorkspaceModuleGraph> {
+    Arc::new(workspace_module_graph_for_libraries(
+        db,
+        &classpath_libraries(db, source_set),
+    ))
+}
+
+/// The module path of a source set (its classpath-scoped module graph).
+pub fn module_graph_for_source_set(
+    db: &dyn HirDatabase,
+    source_set: SourceSetId,
+) -> Arc<WorkspaceModuleGraph> {
+    let project_graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    source_set_module_graph_query(db, project_graph, source_set).clone()
+}
+
+/// Builds the aggregate module path over an ordered library list. First
+/// declaration of a module name wins; a duplicate in a later library is
+/// logged and ignored.
+fn workspace_module_graph_for_libraries(
+    db: &dyn HirDatabase,
+    libraries: &[LibraryId],
+) -> WorkspaceModuleGraph {
     let mut modules: FxHashMap<Symbol, ModuleDescriptor> = FxHashMap::default();
     let mut package_to_modules: FxHashMap<Symbol, Vec<ModuleDescriptor>> = FxHashMap::default();
+    let mut seen: FxHashSet<LibraryId> = FxHashSet::default();
 
-    for library in registered_libraries(db) {
+    for &library in libraries {
+        if !seen.insert(library) {
+            continue;
+        }
         let graph = module_graph(db, library);
         for (name, stub) in graph.iter() {
             let name = *name;
@@ -304,20 +344,10 @@ fn workspace_module_graph_query(db: &dyn HirDatabase) -> Arc<WorkspaceModuleGrap
         }
     }
 
-    Arc::new(WorkspaceModuleGraph {
+    WorkspaceModuleGraph {
         modules,
         package_to_modules,
-    })
-}
-
-/// The workspace-wide module path.
-pub fn workspace_module_graph(db: &dyn HirDatabase) -> Arc<WorkspaceModuleGraph> {
-    workspace_module_graph_query(db).clone()
-}
-
-/// Resolves a module by name across the whole workspace.
-pub fn resolve_module(db: &dyn HirDatabase, name: Symbol) -> Option<ModuleDescriptor> {
-    workspace_module_graph(db).module(name).cloned()
+    }
 }
 
 /// The modules readable from `from`, honoring `requires transitive`
