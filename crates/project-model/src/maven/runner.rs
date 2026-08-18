@@ -1,14 +1,13 @@
 use crate::maven::model::{MavenClasspathEntry, MavenWorkspace};
+use crate::maven::sidecar::{self, SIDECAR_ARTIFACT, SIDECAR_GROUP, SIDECAR_VERSION};
 use crate::{
-    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    SyncError, WorkspaceGraph,
+    ClasspathEntry, CommandOutcome, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData,
+    SourceSetKind, SyncError, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::NamedTempFile;
 use triomphe::Arc;
 use vfs::AbsPathBuf;
 
@@ -30,41 +29,62 @@ pub fn import_maven_workspace(
         "mvn".to_string()
     };
 
-    let mut init_script = NamedTempFile::new()?;
-    init_script.write_all(crate::maven::script::MAVEN_EXPORT_INIT_SCRIPT.as_bytes())?;
-    init_script.flush()?;
-
-    let escaped_script_path = init_script.path().to_string_lossy().replace('\\', "/");
-    let inline_bootstrapper = format!(
-        "new GroovyShell(binding).evaluate(new File('{}'))",
-        escaped_script_path
-    );
+    // Extract the embedded sidecar plugin to a tempdir and expose it to Maven
+    // as a file:// plugin repository, so the plugin resolves without touching
+    // the user's local repository.
+    let sidecar_dir = sidecar::ensure_extracted()?;
+    let settings_file = sidecar_dir.join("settings.xml");
 
     tracing::info!("Executing Maven workspace structure exploration pipeline");
 
-    let mut command = Command::new(&maven_cmd);
-    command
-        .env("JAVA_HOME", java_exec)
-        .current_dir(workspace_root)
-        .arg("test-compile")
-        .arg("org.codehaus.gmavenplus:gmavenplus-plugin:3.0.0:execute")
-        .arg(format!("-Dgmavenplus.script={}", inline_bootstrapper))
-        .arg("-DskipTests=true")
-        .arg("-Dmaven.test.skip=false");
+    let goal = format!("{SIDECAR_GROUP}:{SIDECAR_ARTIFACT}:{SIDECAR_VERSION}:export-model");
 
+    let build_command = |args: &[&str]| {
+        let mut command = Command::new(&maven_cmd);
+        command
+            .env("JAVA_HOME", java_exec)
+            .current_dir(workspace_root)
+            .arg("-s")
+            .arg(&settings_file)
+            .args(args)
+            .arg(&goal)
+            .arg("-DskipTests=true")
+            .arg("-Dmaven.test.skip=false");
+        command
+    };
+
+    // The primary run compiles the reactor so that inter-module dependencies
+    // resolve. Projects with compile errors fail here; retry without the
+    // lifecycle phase, because the model only needs the resolved project
+    // metadata, not compiled output.
+    let mut command = build_command(&["test-compile"]);
     let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    if outcome.status.success() {
+        return maven_workspace_from_outcome(outcome);
+    }
 
+    let primary_failure = outcome;
+    tracing::warn!(
+        "Maven test-compile failed (exit code {}); retrying the export goal without compilation",
+        primary_failure.status.code().unwrap_or(-1)
+    );
+    let mut command = build_command(&[]);
+    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
     if !outcome.status.success() {
         return Err(SyncError {
             message: format!(
                 "Maven build graph extraction failed (exit code {})",
-                outcome.status.code().unwrap_or(-1)
+                primary_failure.status.code().unwrap_or(-1)
             ),
-            tail: outcome.tail,
+            tail: primary_failure.tail,
         }
         .into());
     }
 
+    maven_workspace_from_outcome(outcome)
+}
+
+fn maven_workspace_from_outcome(outcome: CommandOutcome) -> anyhow::Result<MavenWorkspace> {
     if outcome.model_truncated {
         return Err(SyncError {
             message: "Maven workspace model JSON exceeded the size limit".to_string(),

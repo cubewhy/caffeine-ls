@@ -2,7 +2,7 @@ use crate::{BuildSystem, BuildSystemType};
 
 mod model;
 mod runner;
-mod script;
+mod sidecar;
 
 pub struct MavenBuildSystem;
 

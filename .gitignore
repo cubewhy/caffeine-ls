@@ -5,3 +5,5 @@ node_modules
 editors/code/resources/decompilers
 editors/code/bin
 .cache
+crates/project-model/src/maven/sidecar/.gradle/
+crates/project-model/src/maven/sidecar/build/
