@@ -10,6 +10,13 @@ The development of the LSP is in very early stage, please contribute!
 
 ## Development
 
+### Requirements
+
+- Rust toolchain
+- JDK 1.8+
+
+### Run VSCode Extension
+
 Run the VSCode extension development host with the following command
 
 ```sh
