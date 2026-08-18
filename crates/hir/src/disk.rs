@@ -59,6 +59,8 @@ pub struct DiskClassEntry {
     pub flags: u16,
     pub super_class: Option<u32>,
     pub interfaces: Vec<u32>,
+    /// JPMS module owning this class (string-table index), if modular.
+    pub module: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -244,6 +246,7 @@ mod tests {
                 flags: 0x0021,
                 super_class: Some(2),
                 interfaces: Vec::new(),
+                module: Some(1),
             }],
             modules: Vec::new(),
             offsets: vec![8],

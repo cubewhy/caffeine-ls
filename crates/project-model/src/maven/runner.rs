@@ -259,7 +259,6 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
             generated_source_roots: main_generated_roots,
             compile_classpath: main_compile_classpath.clone(),
             runtime_classpath: main_compile_classpath,
-            jpms_module_name: None,
         };
 
         let test_source_set = SourceSetData {
@@ -268,7 +267,6 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
             generated_source_roots: Vec::new(),
             compile_classpath: test_compile_classpath.clone(),
             runtime_classpath: test_compile_classpath,
-            jpms_module_name: None,
         };
 
         let mut source_sets = FxHashMap::default();

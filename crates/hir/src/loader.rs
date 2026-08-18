@@ -32,6 +32,10 @@ use crate::{
 pub struct StubRecord {
     pub fqn: String,
     pub package: String,
+    /// The JPMS module owning the declaration, if the containing archive is
+    /// modular. `None` for classpath (unnamed module) declarations and for
+    /// module descriptors themselves.
+    pub module: Option<Symbol>,
     pub stub: ClassOrModuleStub<Symbol>,
 }
 
@@ -42,7 +46,12 @@ impl StubRecord {
             .rsplit_once('.')
             .map(|(package, _)| package.to_owned())
             .unwrap_or_default();
-        Self { fqn, package, stub }
+        Self {
+            fqn,
+            package,
+            module: None,
+            stub,
+        }
     }
 }
 
@@ -88,7 +97,29 @@ pub fn parse_jar(
     if failed > 0 {
         tracing::warn!(%failed, archive = %archive, "failed to parse class files");
     }
-    Ok(records)
+    Ok(tag_jar_module(interner, records))
+}
+
+/// Associates every class of a modular jar with its module (JLS: the module
+/// consists of all packages contained in the jar). Non-modular jars keep
+/// `module = None`, which corresponds to the unnamed module.
+fn tag_jar_module(interner: &ThreadedRodeo, records: Vec<StubRecord>) -> Vec<StubRecord> {
+    let Some(module_name) = records.iter().find_map(|record| match &record.stub {
+        ClassOrModuleStub::Module(module) => Some(module.name),
+        _ => None,
+    }) else {
+        return records;
+    };
+    let module_name = interner.get_or_intern(interner.resolve(&module_name));
+    records
+        .into_iter()
+        .map(|mut record| {
+            if matches!(record.stub, ClassOrModuleStub::Class(_)) {
+                record.module = Some(module_name);
+            }
+            record
+        })
+        .collect()
 }
 
 /// Parses all classes of a JDK jimage archive.
@@ -114,7 +145,13 @@ pub fn parse_jimage(
             let lookup = format!("/{module}/{path}");
             let bytes = jimage.find_resource(&lookup).ok().flatten()?;
             match ClassParser::new(interner).parse_cafebabe(&bytes) {
-                Ok(stub) => Some(StubRecord::new(interner, stub)),
+                Ok(stub) => {
+                    let mut record = StubRecord::new(interner, stub);
+                    if matches!(record.stub, ClassOrModuleStub::Class(_)) {
+                        record.module = Some(interner.get_or_intern(&module));
+                    }
+                    Some(record)
+                }
                 Err(_) => {
                     failed.fetch_add(1, Ordering::Relaxed);
                     None
@@ -153,7 +190,8 @@ fn build(
     let mut table = StubStringTable::new(interner);
     let mut entries = Vec::new();
     let mut modules = Vec::new();
-    let mut disk_records = Vec::with_capacity(records.len());
+    let mut disk_class_records = Vec::with_capacity(records.len());
+    let mut disk_module_records = Vec::new();
     let mut disk_entries = Vec::with_capacity(records.len());
 
     for record in records {
@@ -178,10 +216,11 @@ fn build(
                             _ => None,
                         })
                         .collect(),
+                    module: record.module,
                 });
                 let disk = table.class(&class);
                 disk_entries.push(disk_entry(&mut table, entries.last().unwrap()));
-                disk_records.push(DiskClassOrModuleRecord::Class(disk));
+                disk_class_records.push(DiskClassOrModuleRecord::Class(disk));
             }
             ClassOrModuleStub::Module(module) => {
                 modules.push(ModuleEntry {
@@ -190,10 +229,16 @@ fn build(
                     version: module.version,
                 });
                 let disk = table.module(&module);
-                disk_records.push(DiskClassOrModuleRecord::Module(disk));
+                disk_module_records.push(DiskClassOrModuleRecord::Module(disk));
             }
         }
     }
+
+    // Disk records must be partitioned (all classes, then all modules) so the
+    // offsets table indexes module record `i` at `offsets[entries.len() + i]`
+    // (see `LibraryIndex::module_record`).
+    let mut disk_records = disk_class_records;
+    disk_records.extend(disk_module_records);
 
     let mut disk_modules = Vec::with_capacity(modules.len());
     for module in &modules {
@@ -222,6 +267,7 @@ fn disk_entry(table: &mut StubStringTable<'_>, entry: &ClassEntry) -> DiskClassE
         flags: entry.flags,
         super_class: entry.super_class.map(|s| table.symbol(s)),
         interfaces: entry.interfaces.iter().map(|&s| table.symbol(s)).collect(),
+        module: entry.module.map(|m| table.symbol(m)),
     }
 }
 
@@ -322,6 +368,7 @@ pub fn load_from_cache(
             flags: entry.flags,
             super_class: entry.super_class.map(symbol),
             interfaces: entry.interfaces.iter().map(|&i| symbol(i)).collect(),
+            module: entry.module.map(symbol),
         });
     }
     let mut modules = Vec::with_capacity(blob.modules.len());
@@ -349,12 +396,16 @@ pub fn load_from_cache(
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
+    use std::sync::Arc;
 
     use camino::Utf8PathBuf;
+    use rust_asm::class_writer::ClassWriter;
+    use rust_asm::constants::*;
     use zip::write::{SimpleFileOptions, ZipWriter};
 
     use super::*;
     use crate::db::{LibraryId, LibraryKind};
+    use crate::disk::StubsWriter;
 
     const NOOP: fn() = || {};
 
@@ -541,6 +592,115 @@ mod tests {
         let interner = ThreadedRodeo::default();
         let records = parse_jar(&jar_path, &interner, &NOOP).unwrap();
         assert!(records.is_empty());
+    }
+
+    /// Builds a modular jar: a `module-info.class` declaring module
+    /// `com.example.app` (requiring `java.base`, exporting `com/example/api`)
+    /// plus the `com/example/Greeter` class.
+    fn modular_jar_bytes() -> Vec<u8> {
+        let mut zip_buffer = Vec::new();
+        let cursor = std::io::Cursor::new(&mut zip_buffer);
+        let mut zip = ZipWriter::new(cursor);
+        let options = SimpleFileOptions::default();
+
+        let mut writer = ClassWriter::new(0);
+        writer.visit(V9, 0, ACC_MODULE, "module-info", None, &[]);
+        let mut module = writer.visit_module("com.example.app", 0, None);
+        module.visit_require("java.base", ACC_MANDATED, None);
+        module.visit_export("com/example/api", 0, &[]);
+        module.visit_end(&mut writer);
+        let module_bytes = writer.to_bytes().expect("module-info should encode");
+
+        zip.start_file("module-info.class", options).unwrap();
+        zip.write_all(&module_bytes).unwrap();
+        zip.start_file("com/example/Greeter.class", options)
+            .unwrap();
+        zip.write_all(&greeter_class_bytes()).unwrap();
+        zip.finish().unwrap();
+        zip_buffer
+    }
+
+    #[test]
+    fn modular_jar_tags_classes_and_indexes_module() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("modular.jar")).unwrap();
+        std::fs::write(jar_path.as_std_path(), modular_jar_bytes()).unwrap();
+
+        let interner = ThreadedRodeo::default();
+        let records = parse_jar(&jar_path, &interner, &NOOP).unwrap();
+
+        let module_name = interner.get_or_intern("com.example.app");
+        let greeter = records
+            .iter()
+            .find(|r| r.fqn == "com.example.Greeter")
+            .expect("greeter should be parsed");
+        assert_eq!(greeter.module, Some(module_name));
+
+        // The module descriptor is retained as a Module stub.
+        assert!(records.iter().any(|r| matches!(
+            &r.stub,
+            ClassOrModuleStub::Module(m)
+                if interner.resolve(&m.name) == "com.example.app" && m.requires.len() == 1
+        )));
+
+        // Full pipeline: build the index + stubs, then read the module
+        // record back through the (class_count-offset) tier-2 lookup.
+        let (names, blob, disk_records) = build(records, &interner);
+        assert_eq!(names.modules().len(), 1);
+        assert_eq!(names.class_count(), 1);
+
+        let stubs_path = dir.path().join("modular.stubs");
+        let mut writer = StubsWriter::create(&stubs_path).unwrap();
+        for record in &disk_records {
+            writer.push(record).unwrap();
+        }
+        let offsets = writer.finish().unwrap();
+        assert_eq!(offsets.len(), 2);
+
+        let index = LibraryIndex::new(
+            LibraryId(0xfeed),
+            LibraryKind::Jar,
+            jar_path.clone(),
+            Arc::new(names),
+            Arc::new(blob.strings),
+            Arc::new(offsets),
+            stubs_path,
+        );
+
+        let (module_idx, entry) = index
+            .names
+            .module(interner.get_or_intern("com.example.app"))
+            .unwrap();
+        assert_eq!(interner.resolve(&entry.name), "com.example.app");
+        let record = index.module_record(&interner, module_idx).unwrap();
+        let ClassOrModuleStub::Module(module) = record.as_ref() else {
+            panic!("expected a module record");
+        };
+        assert_eq!(interner.resolve(&module.name), "com.example.app");
+        assert_eq!(
+            interner.resolve(&module.requires[0].module_name),
+            "java.base"
+        );
+        assert_eq!(
+            interner.resolve(&module.exports[0].package_name),
+            "com.example.api"
+        );
+        assert!(module.exports[0].to_modules.is_empty());
+    }
+
+    #[test]
+    fn non_modular_jar_has_unnamed_module_classes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("plain.jar")).unwrap();
+        build_jar(&jar_path);
+
+        let interner = ThreadedRodeo::default();
+        let records = parse_jar(&jar_path, &interner, &NOOP).unwrap();
+        let greeter = records
+            .iter()
+            .find(|r| r.fqn == "com.example.Greeter")
+            .expect("greeter should be parsed");
+        assert_eq!(greeter.module, None);
     }
 
     #[test]

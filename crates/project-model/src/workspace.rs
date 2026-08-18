@@ -131,11 +131,6 @@ pub struct SourceSetData {
     /// The full classpath required to run this source set (corresponds to Gradle's `runtimeClasspath` / Maven's `runtime`).
     /// Used to support LSP-initiated actions like Debug/Run tests.
     pub runtime_classpath: Vec<ClasspathEntry>,
-
-    /// If this source set defines a JPMS (Java 9+ Module System) module, this field records
-    /// its module name (the name declared in `module-info.java`).
-    /// Used to enforce strict module visibility checks (`exports` / `requires`).
-    pub jpms_module_name: Option<SmolStr>,
 }
 
 /// Represents a specific Maven/Gradle module.
@@ -198,7 +193,6 @@ impl WorkspaceGraph {
                     generated_source_roots: Vec::new(),
                     compile_classpath: Vec::new(),
                     runtime_classpath: Vec::new(),
-                    jpms_module_name: None,
                 },
             )]),
         };

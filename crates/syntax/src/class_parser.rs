@@ -52,6 +52,7 @@ impl<'a> ClassParser<'a> {
     }
 
     fn map_module(&self, node: &ModuleNode) -> ModuleStub<Symbol> {
+        let dotted = |name: &str| self.interner.get_or_intern(name.replace('/', "."));
         ModuleStub {
             name: self.interner.get_or_intern(&node.name),
             flags: node.access_flags,
@@ -75,7 +76,7 @@ impl<'a> ClassParser<'a> {
                 .exports
                 .iter()
                 .map(|exp| ModuleExports {
-                    package_name: self.interner.get_or_intern(&exp.package),
+                    package_name: dotted(&exp.package),
                     flags: exp.access_flags,
                     to_modules: exp
                         .modules
@@ -88,7 +89,7 @@ impl<'a> ClassParser<'a> {
                 .opens
                 .iter()
                 .map(|op| ModuleOpens {
-                    package_name: self.interner.get_or_intern(&op.package),
+                    package_name: dotted(&op.package),
                     flags: op.access_flags,
                     to_modules: op
                         .modules

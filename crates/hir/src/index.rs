@@ -34,6 +34,9 @@ pub struct ClassEntry {
     pub flags: u16,
     pub super_class: Option<Symbol>,
     pub interfaces: Vec<Symbol>,
+    /// The JPMS module owning this class, if the containing archive is
+    /// modular (`module-info.class` present) or a JDK jimage.
+    pub module: Option<Symbol>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,6 +253,7 @@ mod tests {
                 flags: 0x0021,
                 super_class: Some(symbol(&interner, "java.lang.Object")),
                 interfaces: vec![symbol(&interner, "java.lang.CharSequence")],
+                module: Some(symbol(&interner, "java.base")),
             },
             ClassEntry {
                 fqn: symbol(&interner, "java.util.List"),
@@ -258,6 +262,7 @@ mod tests {
                 flags: 0x0601,
                 super_class: None,
                 interfaces: Vec::new(),
+                module: Some(symbol(&interner, "java.base")),
             },
         ];
         let index = NameIndex::new(entries, Vec::new());
