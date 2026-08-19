@@ -13,7 +13,7 @@ The development of the LSP is in very early stage, please contribute!
 ### Requirements
 
 - Rust toolchain
-- JDK 1.8+
+- JDK 1.8+ (25 recommended) for building the sidecar
 
 ### Run VSCode Extension
 
