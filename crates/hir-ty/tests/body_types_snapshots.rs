@@ -59,6 +59,81 @@ class Body {
 );
 
 snapshot!(
+    boxing_numeric_promotion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int boxing(java.lang.Integer i, java.lang.Long l, java.lang.Character c) {
+        int a = i + 1;
+        int b = i - i;
+        int d = -i;
+        long e = i + l;
+        int f = i + c;
+        boolean big = i > l;
+        int cond = true ? i : i;
+        long mix = true ? i : l;
+        return a + b + d + f;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    for_each_iterable,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    int forEach(List<String> xs, java.lang.Iterable<Integer> ys, String[] as, int[] ns) {
+        int sum = 0;
+        for (String x : xs) {
+            sum += x.length();
+        }
+        for (Integer y : ys) {
+            sum += y;
+        }
+        for (String a : as) {
+            sum += a.length();
+        }
+        for (int n : ns) {
+            sum += n;
+        }
+        return sum;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    new_array_initializer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int[] newArray() {
+        int[] a = new int[] { 1, 2, 3 };
+        String[] b = new String[] { \"x\", \"y\" };
+        int[][] c = new int[][] { { 1 }, { 2, 3 } };
+        int[] d = new int[3];
+        return a;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
     locals_and_fields,
     check_body_types(&[(
         "/src/com/example/Body.java",

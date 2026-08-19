@@ -154,7 +154,7 @@ class C extends com.example.A {}
 ];
 
 fn source_access(ctx: InvocationContext) -> String {
-    check_source_methods_ctx(ACCESS_SRC, &SAMPLES, &ctx)
+    check_source_methods_ctx(ACCESS_SRC, &SAMPLES, Some(&ctx))
 }
 
 snapshot! {

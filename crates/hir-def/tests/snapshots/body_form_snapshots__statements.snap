@@ -81,17 +81,17 @@ body:
     step: e37
     s27: block
       s26: expr e40: assign += e38 e39
-  s31: for-each l5 in e41
+  s31: for-each l5 in e43
     s30: block
-      s29: expr e44: assign += e42 e43
-  s32: switch e45
-  s33: switch e46
+      s29: expr e46: assign += e44 e45
+  s32: switch e47
+  s33: switch e48
   s34: return none
 body:
   param l6: int x
-  s37: if e47
-    s35: throw e48
-  s38: return e51
+  s37: if e49
+    s35: throw e50
+  s38: return e53
   l0: int a
   l1: long b
   l2: long c

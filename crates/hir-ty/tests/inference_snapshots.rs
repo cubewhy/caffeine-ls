@@ -168,5 +168,5 @@ fn inference_samples() -> &'static [Sample] {
 
 snapshot! {
     generic_invocation,
-    check_source_methods_ctx(GENERIC_SRC, inference_samples(), &hir_ty::InvocationContext::unconstrained()),
+    check_source_methods_ctx(GENERIC_SRC, inference_samples(), None),
 }

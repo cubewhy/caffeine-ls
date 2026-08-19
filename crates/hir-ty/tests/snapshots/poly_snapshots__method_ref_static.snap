@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void refs() {
+        Function<String, Integer> f = String::length;
+    }
+}
+
+method refs(): void
+  locals: l0: java.util.function.Function<java.lang.String, java.lang.Integer>
+  exprs: e1: java.util.function.Function<java.lang.String, java.lang.Integer>

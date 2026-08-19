@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
+
+class Poly {
+    void lambdas() {
+        Function<String, Integer> f = s -> s.length();
+        Predicate<String> p = s -> s.length() > 0;
+        Supplier<Long> getter = () -> 42L;
+    }
+}
+
+method lambdas(): void
+  locals: l0: java.util.function.Function<java.lang.String, java.lang.Integer> | l1: java.util.function.Predicate<java.lang.String> | l2: java.util.function.Supplier<java.lang.Long>
+  exprs: e0: java.lang.String | e1: int | e2: java.util.function.Function<java.lang.String, java.lang.Integer> | e3: java.lang.String | e4: int | e5: int | e6: boolean | e7: java.util.function.Predicate<java.lang.String> | e8: long | e9: java.util.function.Supplier<java.lang.Long>

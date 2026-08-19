@@ -679,14 +679,33 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
-        ExprData::NewArray { ty, dims } => out.push_str(&format!(
-            "{id}: new-array {}[{}]",
-            render_type(ty),
-            dims.iter()
-                .map(|d| d.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        ExprData::NewArray {
+            ty,
+            dims,
+            initializer,
+        } => {
+            let mut text = format!("{id}: new-array {}", render_type(ty));
+            if !dims.is_empty() {
+                text.push_str(&format!(
+                    "[{}]",
+                    dims.iter()
+                        .map(|d| d.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if let Some(elems) = initializer {
+                text.push_str(&format!(
+                    " = {{{}}}",
+                    elems
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            out.push_str(&text);
+        }
         ExprData::ArrayInit(elems) => out.push_str(&format!(
             "{id}: array-init {{{}}}",
             elems

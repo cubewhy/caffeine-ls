@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Supplier;
+
+class Box {
+    Box() {}
+}
+
+class Poly {
+    void ctorRef() {
+        Supplier<Box> s = Box::new;
+    }
+}
+
+method Box(): <init>
+  locals: 
+  exprs: 
+method ctorRef(): void
+  locals: l0: java.util.function.Supplier<com.example.Box>
+  exprs: e1: java.util.function.Supplier<com.example.Box>

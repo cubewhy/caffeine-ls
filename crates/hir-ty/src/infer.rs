@@ -12,7 +12,8 @@
 //! The types are computed bottom-up ([§15.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.1)):
 //! every expression's type is a function of its operands. Numeric binary
 //! expressions follow binary numeric promotion
-//! ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2)),
+//! ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2),
+//! unboxing a boxed reference operand via [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
 //! unary expressions unary numeric promotion
 //! ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)),
 //! and conditional and array-initializer expressions follow the conditional
@@ -30,7 +31,8 @@ use std::sync::Arc;
 
 use hir_expand::{
     body::{
-        BinaryOp, BodyId, BodyTree, ExprData, ExprId, Literal, LocalId, StmtData, StmtId, UnaryOp,
+        BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, StmtData,
+        StmtId, UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -42,9 +44,12 @@ use vfs::FileId;
 use crate::{
     db::{TyDatabase, enclosing_class_query, type_params_map_query},
     inference::least_upper_bound,
-    method::{FieldData, InvocationContext, access_context, pick_field, pick_method},
+    method::{
+        FieldData, InvocationContext, PolyArg, access_context, member_set, pick_field, pick_method,
+        single_abstract_method,
+    },
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
-    ty::{Ty, TyKind},
+    ty::{Ty, TyKind, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -108,6 +113,7 @@ pub(crate) fn body_types_impl(
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
         scopes: vec![FxHashMap::default()],
+        lambda_params: Vec::new(),
         target: None,
     };
     for &param in &tree.bodies.body(body_id).params {
@@ -137,6 +143,11 @@ struct InferCtx<'a> {
     locals: FxHashMap<LocalId, Ty>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.
     scopes: Vec<FxHashMap<Name, LocalId>>,
+    /// The lambda parameter scopes in effect ([JLS §6.3], [§15.27.2]): a
+    /// lambda's parameters are in scope throughout its body, shadowed by any
+    /// locals declared inside. The lambda expression itself carries no
+    /// [`LocalId`]s, so these are tracked separately from [`Self::scopes`].
+    lambda_params: Vec<FxHashMap<Name, Ty>>,
     /// The expected type of the expression currently being inferred — set
     /// where the context fixes the type: a declaration initializer, an
     /// assignment right-hand side, or a return statement.
@@ -217,10 +228,20 @@ impl<'a> InferCtx<'a> {
             // class.
             ExprData::New { ty, args } => self.new_expr(ty, &args),
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
-            // deep as there are dimensions).
-            ExprData::NewArray { ty, dims } => {
+            // deep as there are dimensions); an array creation initializer
+            // (§10.6) fills the element expressions.
+            ExprData::NewArray {
+                ty,
+                dims,
+                initializer,
+            } => {
                 for &dim in &dims {
                     let _ = self.infer_expr(dim);
+                }
+                if let Some(elems) = initializer {
+                    for elem in elems {
+                        let _ = self.infer_expr(elem);
+                    }
                 }
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
                 let mut result = inner;
@@ -268,17 +289,42 @@ impl<'a> InferCtx<'a> {
                 self.primitive(PrimitiveType::Boolean)
             }
             // §15.25: a conditional expression's type follows the rules of
-            // §15.25.2/§15.25.3 (identity, numeric promotion, then lub).
+            // §15.25.2/§15.25.3 (identity, numeric promotion, then lub). When
+            // the target is a functional interface and both arms are poly
+            // (lambdas/method refs), the conditional is itself a poly
+            // expression with the target type ([§15.25.2]): the target is
+            // propagated into the arms so they are typed against it.
             ExprData::Conditional { cond, then, els } => {
                 let _ = self.infer_expr(cond);
-                let then_ty = self.infer_expr(then);
-                let els_ty = self.infer_expr(els);
-                self.conditional_type(then_ty, els_ty)
+                let cond_is_poly = expr_is_poly(&self.tree, then) && expr_is_poly(&self.tree, els);
+                if cond_is_poly
+                    && self.target.is_some_and(|target| {
+                        crate::method::single_abstract_method(self.db, &self.scope, &target)
+                            .is_some()
+                    })
+                {
+                    // §15.25.2: a conditional whose arms are poly expressions
+                    // is a poly expression with the target type.
+                    let _ = self.infer_expr(then);
+                    let _ = self.infer_expr(els);
+                    self.target.expect("target checked above")
+                } else {
+                    let then_ty = self.infer_expr(then);
+                    let els_ty = self.infer_expr(els);
+                    self.conditional_type(then_ty, els_ty)
+                }
             }
             // §15.27/§15.13: lambdas and method references are poly
-            // expressions; their type comes from the target functional
-            // interface, which is not available in isolation.
-            ExprData::Lambda { .. } | ExprData::MethodRef { .. } => self.error(),
+            // expressions ([§15.27.2], [§15.13.2]); their type is the target
+            // functional interface ([§15.27.3]), which comes from the context
+            // (a declaration initializer, an assignment, a return, or a method
+            // invocation's resolved formal).
+            ExprData::Lambda { params, body } => self.lambda_type(&params, body),
+            ExprData::MethodRef {
+                qualifier,
+                type_name,
+                name,
+            } => self.method_ref_type(qualifier, type_name.as_ref(), &name),
             // §15.28: a switch expression's type is derived from its arm result
             // types.
             ExprData::Switch { scrutinee, arms } => {
@@ -322,6 +368,12 @@ impl<'a> InferCtx<'a> {
                 .get(&local)
                 .copied()
                 .unwrap_or_else(|| self.error());
+        }
+        // A lambda parameter shadows the enclosing class's fields ([§6.3]).
+        for scope in self.lambda_params.iter().rev() {
+            if let Some(ty) = scope.get(&name) {
+                return *ty;
+            }
         }
         if let Some(field) = self.pick_field_of(self.enclosing_class, name.as_str()) {
             return field.ty;
@@ -420,7 +472,22 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        let arg_tys: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
+        // §15.27.3/§15.13.2: a lambda or method reference argument is a poly
+        // expression; its type is the resolved formal parameter of the chosen
+        // candidate, so it is deferred to [`Self::type_poly_args`].
+        let mut poly_args: FxHashMap<usize, ExprId> = FxHashMap::default();
+        let arg_tys: Vec<PolyArg> = args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                if expr_is_poly(&self.tree, *arg) {
+                    poly_args.insert(i, *arg);
+                    PolyArg::Poly(*arg, poly_arity(&self.tree, *arg))
+                } else {
+                    PolyArg::Concrete(self.infer_expr(*arg))
+                }
+            })
+            .collect();
         let receiver_ty = match receiver {
             Some(receiver) => {
                 // `Type.method(...)` — a static invocation whose receiver
@@ -446,8 +513,24 @@ impl<'a> InferCtx<'a> {
             &self.access,
             target,
         ) {
-            Some(method) => method.ret,
-            None => self.error(),
+            Some(method) => {
+                // §18.5.2.2: the resolved formal parameters are the target
+                // types of the poly arguments — the lambda or method
+                // reference is a value of the functional interface it is
+                // assigned to.
+                for (i, expr) in poly_args {
+                    if let Some(formal) = method.params.get(i) {
+                        let _ = self.with_target(Some(*formal), |this| this.infer_expr(expr));
+                    }
+                }
+                method.ret
+            }
+            None => {
+                for expr in poly_args.into_values() {
+                    let _ = self.infer_expr(expr);
+                }
+                self.error()
+            }
         }
     }
 
@@ -456,7 +539,10 @@ impl<'a> InferCtx<'a> {
     /// are checked; source constructors are named after the class, library
     /// constructors are `<init>`.
     fn new_expr(&mut self, ty: TypeRef<Name>, args: &[ExprId]) -> Ty {
-        let arg_tys: Vec<Ty> = args.iter().map(|arg| self.infer_expr(*arg)).collect();
+        let arg_tys: Vec<PolyArg> = args
+            .iter()
+            .map(|arg| PolyArg::Concrete(self.infer_expr(*arg)))
+            .collect();
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
@@ -477,6 +563,121 @@ impl<'a> InferCtx<'a> {
         class_ty
     }
 
+    /// The type of a lambda expression ([JLS §15.27.2]): the target
+    /// functional interface ([§15.27.3], [JLS §18.5.2.4]). The lambda's
+    /// parameters are typed from the single abstract method of the target
+    /// ([JLS §9.8]) and its body is inferred against the SAM's return type —
+    /// a return statement inside a lambda body returns from the lambda, not
+    /// from the enclosing method.
+    fn lambda_type(&mut self, params: &[(Name, Option<TypeRef<Name>>)], body: LambdaBody) -> Ty {
+        let Some(target) = self.target else {
+            return self.error();
+        };
+        let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
+            return self.error();
+        };
+        if sam.params.len() != params.len() {
+            return self.error();
+        }
+        self.lambda_params.push(FxHashMap::default());
+        for ((name, declared), formal) in params.iter().zip(&sam.params) {
+            let ty = match declared {
+                Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
+                None => *formal,
+            };
+            self.lambda_params
+                .last_mut()
+                .expect("lambda param scope pushed")
+                .insert(name.clone(), ty);
+        }
+        let saved_ret = self.enclosing_ret;
+        self.enclosing_ret = Some(sam.ret);
+        match body {
+            // §15.27.2: an expression lambda's body is a poly expression
+            // whose target is the SAM's return type.
+            LambdaBody::Expr(expr) => {
+                let _ = self.with_target(Some(sam.ret), |this| this.infer_expr(expr));
+            }
+            LambdaBody::Block(stmt) => self.infer_stmt(stmt),
+        }
+        self.enclosing_ret = saved_ret;
+        self.lambda_params.pop();
+        target
+    }
+
+    /// The type of a method reference ([JLS §15.13.2]): the target functional
+    /// interface. The referenced method is resolved against the SAM's
+    /// parameters ([§15.13.3]) so the qualifier is inferred.
+    fn method_ref_type(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&TypeRef<Name>>,
+        name: &Name,
+    ) -> Ty {
+        let Some(target) = self.target else {
+            return self.error();
+        };
+        let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
+            return self.error();
+        };
+        self.resolve_method_ref(qualifier, type_name, name, &sam.params);
+        target
+    }
+
+    /// Resolves the method or constructor referenced by
+    /// `Type::name`, `Type::new` or `expr::name` against the single abstract
+    /// method's parameters ([JLS §15.13.3]): a static reference takes the
+    /// SAM's parameters as its own, an instance reference takes the SAM's
+    /// first parameter as the receiver.
+    fn resolve_method_ref(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&TypeRef<Name>>,
+        name: &Name,
+        sam_params: &[Ty],
+    ) {
+        let ref_ty = match (type_name, qualifier) {
+            (Some(tyref), _) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
+            // `Type::name` — a qualifier that is a bare name resolving to a
+            // type is a type qualifier ([§15.13.1]); otherwise it is an
+            // instance qualifier, inferred as an expression.
+            (None, Some(expr)) => {
+                if let ExprData::Var(name) = self.tree.expr(expr).clone()
+                    && let Some(ty) = self.type_name_ty(&name)
+                {
+                    ty
+                } else {
+                    self.infer_expr(expr)
+                }
+            }
+            _ => return,
+        };
+        let TyKind::Reference { name: fqn, .. } = ref_ty.kind(self.db) else {
+            return;
+        };
+        // §15.13.1: `Type::new` is a constructor reference; the constructor
+        // is named `<init>` for library classes ([JVMS §4.2]).
+        let candidate_name = if name.as_str() == "new" {
+            match hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) {
+                Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
+                _ => simple_name(fqn.as_str()),
+            }
+        } else {
+            name.as_str().to_owned()
+        };
+        let methods = member_set(self.db, &self.scope, &ref_ty, &candidate_name, &self.access);
+        for method in &methods {
+            let expected = if method.is_static {
+                sam_params.len()
+            } else {
+                sam_params.len().saturating_sub(1)
+            };
+            if method.params.len() == expected {
+                break;
+            }
+        }
+    }
+
     fn unary(&mut self, op: UnaryOp, expr: ExprId) -> Ty {
         let inner = self.infer_expr(expr);
         match op {
@@ -492,16 +693,26 @@ impl<'a> InferCtx<'a> {
     /// The type of a conditional expression over two operands, following the
     /// rules of [§15.25.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25.2)
     /// and [§15.25.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25.3):
-    /// identical types and primitive types use identity / binary numeric
-    /// promotion, the null type yields the reference operand, and reference
-    /// types fall back to the least upper bound
-    /// ([§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)).
+    /// identical types keep their type, operands convertible to a numeric type
+    /// (primitive or boxed, [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8))
+    /// follow binary numeric promotion ([§5.6.2]), the null type yields the
+    /// reference operand, and reference types fall back to the least upper
+    /// bound ([§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)).
     fn conditional_type(&self, then_ty: Ty, els_ty: Ty) -> Ty {
         if then_ty == els_ty {
             return then_ty;
         }
-        if then_ty.is_primitive(self.db) && els_ty.is_primitive(self.db) {
-            return self.binary_numeric_promotion(then_ty, els_ty);
+        // §15.25.2: both operands convertible to a numeric type — a primitive
+        // or a boxed reference operand, unboxed (§5.1.8) — apply binary
+        // numeric promotion.
+        let numeric = |ty: Ty| match ty.kind(self.db) {
+            TyKind::Primitive(p) => Some(*p),
+            TyKind::Reference { name, .. } => unboxed_primitive(name.as_str()),
+            _ => None,
+        };
+        if let (Some(l), Some(r)) = (numeric(then_ty), numeric(els_ty)) {
+            return self
+                .binary_numeric_promotion(Ty::primitive(self.db, l), Ty::primitive(self.db, r));
         }
         if then_ty.is_null(self.db) && els_ty.is_reference(self.db) {
             return els_ty;
@@ -513,14 +724,21 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Unary numeric promotion ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)):
-    /// `byte`, `short` and `char` promote to `int`; everything else keeps its
-    /// type.
+    /// a boxed operand is first unboxed ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
+    /// then `byte`, `short` and `char` promote to `int`; everything else keeps
+    /// its type.
     fn unary_promotion(&self, ty: Ty) -> Ty {
         match ty.kind(self.db) {
             TyKind::Primitive(PrimitiveType::Byte | PrimitiveType::Short | PrimitiveType::Char) => {
                 self.primitive(PrimitiveType::Int)
             }
             TyKind::Primitive(_) => ty,
+            // A boxed primitive operand is unboxed before the promotion
+            // applies (§5.6.1, §5.1.8): `-Integer` is `int`, `~Long` is `long`.
+            TyKind::Reference { name, .. } => match unboxed_primitive(name.as_str()) {
+                Some(p) => self.unary_promotion(Ty::primitive(self.db, p)),
+                None => self.error(),
+            },
             _ => self.error(),
         }
     }
@@ -570,8 +788,11 @@ impl<'a> InferCtx<'a> {
 
     /// Binary numeric promotion ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2)):
     /// the promoted type is the "widest" of the two operand types; `byte`,
-    /// `short` and `char` promote to `int`. Boxing of reference operands is
-    /// not modelled.
+    /// `short` and `char` promote to `int`. A boxed reference operand is first
+    /// unboxed ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
+    /// so `Integer + Integer` and `int + Integer` both promote to `int`
+    /// ([§5.6.2]). A non-numeric reference operand cannot be unboxed and makes
+    /// the expression ill-typed.
     fn binary_numeric_promotion(&self, lhs: Ty, rhs: Ty) -> Ty {
         let promote = |ty: Ty| match ty.kind(self.db) {
             TyKind::Primitive(
@@ -583,29 +804,37 @@ impl<'a> InferCtx<'a> {
             TyKind::Primitive(PrimitiveType::Long) => Some(PrimitiveType::Long),
             TyKind::Primitive(PrimitiveType::Float) => Some(PrimitiveType::Float),
             TyKind::Primitive(PrimitiveType::Double) => Some(PrimitiveType::Double),
+            // A boxed primitive operand is unboxed before the promotion
+            // applies (§5.6.2, §5.1.8).
+            TyKind::Reference { name, .. } => unboxed_primitive(name.as_str()),
             _ => None,
         };
-        match (promote(lhs), promote(rhs)) {
+        let (lhs, rhs) = (promote(lhs), promote(rhs));
+        let promoted = match (lhs, rhs) {
             (Some(PrimitiveType::Double), _) | (_, Some(PrimitiveType::Double)) => {
-                self.primitive(PrimitiveType::Double)
+                PrimitiveType::Double
             }
             (Some(PrimitiveType::Float), _) | (_, Some(PrimitiveType::Float)) => {
-                self.primitive(PrimitiveType::Float)
+                PrimitiveType::Float
             }
-            (Some(PrimitiveType::Long), _) | (_, Some(PrimitiveType::Long)) => {
-                self.primitive(PrimitiveType::Long)
-            }
-            (Some(PrimitiveType::Int), _) | (_, Some(PrimitiveType::Int)) => {
-                self.primitive(PrimitiveType::Int)
-            }
-            _ => self.error(),
+            (Some(PrimitiveType::Long), _) | (_, Some(PrimitiveType::Long)) => PrimitiveType::Long,
+            (Some(PrimitiveType::Int), _) | (_, Some(PrimitiveType::Int)) => PrimitiveType::Int,
+            _ => return self.error(),
+        };
+        // §5.6.2: an operand that did not promote — a reference type that
+        // cannot be unboxed, or a non-numeric type — makes the expression
+        // ill-typed even when the other operand promotes.
+        if lhs.is_none() || rhs.is_none() {
+            return self.error();
         }
+        self.primitive(promoted)
     }
 
     /// The element type of a for-each iterable
     /// ([§14.14.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2)):
-    /// the element type for arrays; an `Iterable<T>` element for references.
-    /// Only arrays are modelled for now.
+    /// the element type for arrays; for a reference type, the `T` of an
+    /// `Iterable<T>` — the `E` of the `Iterator<E>` returned by `iterator()`
+    /// ([§14.14.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2.1)).
     fn element_type(&self, iterable: Ty) -> Ty {
         if iterable.is_array(self.db) {
             return iterable
@@ -613,7 +842,33 @@ impl<'a> InferCtx<'a> {
                 .copied()
                 .unwrap_or_else(|| self.error());
         }
-        self.error()
+        // §14.14.2.1: the expression must be `Iterable<T>`; the loop variable
+        // takes `T`, the element type of the `Iterator<E>` that `iterator()`
+        // returns.
+        let iterator = match pick_method(
+            self.db,
+            &self.scope,
+            &iterable,
+            "iterator",
+            &[],
+            &self.access,
+            None,
+        ) {
+            Some(method) => method.ret,
+            None => return self.error(),
+        };
+        match pick_method(
+            self.db,
+            &self.scope,
+            &iterator,
+            "next",
+            &[],
+            &self.access,
+            None,
+        ) {
+            Some(method) => method.ret,
+            None => self.error(),
+        }
     }
 
     fn declare_local(&mut self, id: LocalId) {
@@ -787,5 +1042,34 @@ fn simple_name(fqn: &str) -> String {
     match fqn.rfind(['$', '.']) {
         Some(i) => fqn[i + 1..].to_owned(),
         None => fqn.to_owned(),
+    }
+}
+
+/// Whether `expr` is a poly expression ([JLS §15.2]): a lambda or method
+/// reference, or a parenthesized or conditional expression whose arms are
+/// poly. Such an expression has no standalone type; its type is the target
+/// functional interface ([JLS §15.27.3]).
+fn expr_is_poly(tree: &BodyTree, id: ExprId) -> bool {
+    match tree.expr(id).clone() {
+        ExprData::Lambda { .. } | ExprData::MethodRef { .. } => true,
+        ExprData::Paren(inner) => expr_is_poly(tree, inner),
+        ExprData::Conditional { then, els, .. } => {
+            expr_is_poly(tree, then) && expr_is_poly(tree, els)
+        }
+        _ => false,
+    }
+}
+
+/// The parameter count of a lambda argument ([§15.12.2.2]), used to check the
+/// applicability of an overload candidate against the lambda's arity. A method
+/// reference is not arity-checkable without resolving it, so it is `None`.
+fn poly_arity(tree: &BodyTree, id: ExprId) -> Option<usize> {
+    match tree.expr(id).clone() {
+        ExprData::Lambda { params, .. } => Some(params.len()),
+        ExprData::Paren(inner) => poly_arity(tree, inner),
+        ExprData::Conditional { then, els, .. } => {
+            poly_arity(tree, then).filter(|n| poly_arity(tree, els) == Some(*n))
+        }
+        _ => None,
     }
 }

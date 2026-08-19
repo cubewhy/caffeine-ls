@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    int forEach(List<String> xs, java.lang.Iterable<Integer> ys, String[] as, int[] ns) {
+        int sum = 0;
+        for (String x : xs) {
+            sum += x.length();
+        }
+        for (Integer y : ys) {
+            sum += y;
+        }
+        for (String a : as) {
+            sum += a.length();
+        }
+        for (int n : ns) {
+            sum += n;
+        }
+        return sum;
+    }
+}
+
+method forEach(java.util.List<java.lang.String>, java.lang.Iterable<java.lang.Integer>, java.lang.String[], int[]): int
+  locals: l0: java.util.List<java.lang.String> | l1: java.lang.Iterable<java.lang.Integer> | l2: java.lang.String[] | l3: int[] | l4: int | l5: java.lang.String | l6: java.lang.Integer | l7: java.lang.String | l8: int
+  exprs: e0: int | e1: java.util.List<java.lang.String> | e2: int | e3: java.lang.String | e4: int | e5: int | e6: java.lang.Iterable<java.lang.Integer> | e7: int | e8: java.lang.Integer | e9: int | e10: java.lang.String[] | e11: int | e12: java.lang.String | e13: int | e14: int | e15: int[] | e16: int | e17: int | e18: int | e19: int

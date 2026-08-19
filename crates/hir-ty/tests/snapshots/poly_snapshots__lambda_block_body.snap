@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.lang.Runnable;
+
+class Poly {
+    void block() {
+        Runnable r = () -> {
+            String s = "hi";
+        };
+    }
+}
+
+method block(): void
+  locals: l0: java.lang.Runnable | l1: java.lang.String
+  exprs: e0: java.lang.String | e1: java.lang.Runnable

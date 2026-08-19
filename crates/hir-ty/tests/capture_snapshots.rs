@@ -173,11 +173,19 @@ fn check_capture_method() -> String {
             }),
         ),
     );
-    let ctx = hir_ty::InvocationContext::unconstrained();
+    let ctx = hir_ty::InvocationContext::external(&scope);
 
     let call = |arg_name: &str| {
         let arg = r(&db, arg_name);
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, "add", &[arg], &ctx, None);
+        let picked = hir_ty::pick_method(
+            &db,
+            &scope,
+            &receiver,
+            "add",
+            &[hir_ty::PolyArg::Concrete(arg)],
+            &ctx,
+            None,
+        );
         match picked {
             Some(method) => {
                 let params: Vec<String> = method.params.iter().map(|ty| render(&db, ty)).collect();

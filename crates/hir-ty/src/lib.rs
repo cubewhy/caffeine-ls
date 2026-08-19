@@ -33,19 +33,31 @@
 //!   ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27),
 //!   [§15.13](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13))
 //!   whose type comes from the target functional interface, so they infer to
-//!   `error` in isolation. Boxing is not modelled in binary numeric promotion
-//!   ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2));
-//!   the element type of a for-each loop is modelled for arrays but not for
-//!   `Iterable` ([§14.14.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2)).
-//!   The initializer of `new T[] {...}` is not lowered into the body IR.
+//!   `error` in isolation. Boxing in binary numeric promotion
+//!   ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2))
+//!   is modelled: a boxed reference operand is unboxed
+//!   ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8))
+//!   before the promoted type is computed. For-each loops over an `Iterable`
+//!   ([§14.14.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2))
+//!   bind the loop variable to the element type of the iterable, resolved
+//!   through its `iterator()` method ([§14.14.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2.1));
+//!   arrays resolve the element type directly. An array creation initializer
+//!   `new T[] { ... }`
+//!   ([§15.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10.1))
+//!   is lowered into the body IR with its element expressions, and the created
+//!   array has type `T[]`.
 //! * Access control
 //!   ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
 //!   is enforced from the [`method::InvocationContext`]. For source call sites
 //!   [`method::access_context`] derives the enclosing class and package from
 //!   the call site ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
 //!   so the corresponding restrictions are enforced rather than treated
-//!   permissively; a `None` context field (library/test callers) remains
-//!   permissive.
+//!   permissively; a `None` context field remains permissive, and the test-
+//!   harness probes use [`method::InvocationContext::external`] (a caller
+//!   outside the resolved scope, which sees only `public` members) or derive
+//!   the context of a source item. The member set of a name
+//!   ([`method::member_set`]) and the access context of a call site
+//!   ([`db::access_context_key_query`]) are memoized salsa queries.
 //!
 //! All JLS references use the Java SE 26 edition
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
@@ -63,7 +75,8 @@ pub use infer::{BodyTypes, body_types};
 pub use inference::least_upper_bound;
 pub use method::{
     Access, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,
-    MethodTypeParam, access_context, member_set, pick_field, pick_method,
+    MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
+    pick_method, single_abstract_method,
 };
 pub use resolve::{
     Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,

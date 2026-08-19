@@ -856,32 +856,72 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             ty = TypeRef::Array(Box::new(ty));
         }
     }
-    ExprData::NewArray { ty, dims }
+    // An array creation initializer ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6),
+    // [§15.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10.1)):
+    // `new Type[] { a, b }` carries its element expressions. Array creation
+    // expressions with dims have no initializer.
+    let initializer = node
+        .children()
+        .find(|c| c.kind() == ARRAY_INITIALIZER)
+        .map(|init| {
+            init.children()
+                .filter(|c| is_expr_kind(c.kind()))
+                .map(|c| expr(ctx, owner, &c))
+                .collect()
+        });
+    ExprData::NewArray {
+        ty,
+        dims,
+        initializer,
+    }
 }
 
 fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     use J::*;
     let mut params: Vec<(Name, Option<TypeRef<Name>>)> = Vec::new();
-    for c in node.children() {
-        match c.kind() {
-            FORMAL_PARAMETER | SPREAD_PARAMETER => {
-                let name = first_identifier(&c).unwrap_or_else(missing_name);
-                let ty = c
-                    .children()
-                    .find(|t| t.kind() == TYPE)
-                    .map(|t| super::type_from(&t));
-                params.push((name, ty));
+    // A single-parameter lambda `x -> body` lowers the parameter as a bare
+    // identifier token ([JLS §15.27.1]); the other forms are parenthesized
+    // node children (`FORMAL_PARAMETERS` for typed parameters,
+    // `INFERRED_PARAMETERS` for `(a, b)`, each parameter nested one level
+    // deep).
+    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<TypeRef<Name>>) {
+        let name = first_identifier(c).unwrap_or_else(missing_name);
+        let ty = c
+            .children()
+            .find(|t| t.kind() == TYPE)
+            .map(|t| super::type_from(&t));
+        (name, ty)
+    }
+    fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<(Name, Option<TypeRef<Name>>)>) {
+        for t in c.children_with_tokens() {
+            match t {
+                rowan::NodeOrToken::Token(token) => {
+                    if token_is(&token, J::IDENTIFIER) || token_is(&token, J::UNDERSCORE) {
+                        out.push((Name::new(token.text()), None));
+                    }
+                }
+                rowan::NodeOrToken::Node(node) => inferred_params(&node, out),
             }
-            INFERRED_PARAMETERS => {
-                for token in c
-                    .children_with_tokens()
-                    .filter_map(|e| e.as_token().cloned())
-                    .filter(|t| token_is(t, J::IDENTIFIER))
-                {
+        }
+    }
+    for c in node.children_with_tokens() {
+        match c {
+            rowan::NodeOrToken::Token(token) => {
+                if token.kind() == IDENTIFIER || token.kind() == UNDERSCORE {
                     params.push((Name::new(token.text()), None));
                 }
             }
-            _ => {}
+            rowan::NodeOrToken::Node(c) => match c.kind() {
+                FORMAL_PARAMETERS => {
+                    for p in c.children() {
+                        if p.kind() == FORMAL_PARAMETER || p.kind() == SPREAD_PARAMETER {
+                            params.push(param_of(&p));
+                        }
+                    }
+                }
+                INFERRED_PARAMETERS => inferred_params(&c, &mut params),
+                _ => {}
+            },
         }
     }
     let body = if let Some(b) = node.children().find(|c| c.kind() == BLOCK) {

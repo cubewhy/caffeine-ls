@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void assign(Function<String, Integer> f) {
+        f = s -> s.length();
+        f = s -> 0;
+    }
+}
+
+method assign(java.util.function.Function<java.lang.String, java.lang.Integer>): void
+  locals: l0: java.util.function.Function<java.lang.String, java.lang.Integer>
+  exprs: e0: java.util.function.Function<java.lang.String, java.lang.Integer> | e1: java.lang.String | e2: int | e3: java.util.function.Function<java.lang.String, java.lang.Integer> | e4: java.util.function.Function<java.lang.String, java.lang.Integer> | e5: java.util.function.Function<java.lang.String, java.lang.Integer> | e6: int | e7: java.util.function.Function<java.lang.String, java.lang.Integer> | e8: java.util.function.Function<java.lang.String, java.lang.Integer>

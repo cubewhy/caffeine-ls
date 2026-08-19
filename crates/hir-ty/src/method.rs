@@ -40,8 +40,8 @@ use hir_expand::{item_tree::ItemData, item_tree::ItemId, name::Name};
 
 use crate::{
     db::{
-        ItemKey, ScopeId, ScopeKind, TyDatabase, enclosing_class_query, item_ty_query,
-        method_params_query, type_params_map_query,
+        ContextKey, ItemKey, ScopeId, ScopeKind, TyDatabase, access_context_key_query,
+        item_ty_query, method_params_query, type_params_map_query,
     },
     inference::{Constraint, Inference, InvocationPhase},
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file, ty_from_library},
@@ -55,7 +55,7 @@ use crate::{
 /// (`super.m` or `TypeName.super.m`), or a virtual invocation (via an
 /// expression). The mode restricts which members are candidates
 /// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InvocationMode {
     /// `TypeName.m(...)`: only static members are candidates.
     Static,
@@ -75,7 +75,7 @@ pub enum InvocationMode {
 /// `None` context fields are treated permissively: a missing access
 /// restriction does not filter candidates out. Source call sites obtain a
 /// fully constrained context with [`access_context`];
-/// [`InvocationContext::unconstrained`] performs no mode or access filtering.
+/// [`InvocationContext::external`] models a library-only probe call site.
 #[derive(Debug, Clone)]
 pub struct InvocationContext {
     /// The invocation mode.
@@ -91,12 +91,36 @@ pub struct InvocationContext {
 }
 
 impl InvocationContext {
-    /// A permissive default: a virtual invocation with no access filtering.
-    pub fn unconstrained() -> Self {
+    /// The access control of a probe call site that resides outside `scope` —
+    /// a library-only caller that is not a member of any of the resolved
+    /// classes. It is affected by access control: it is neither a subclass of,
+    /// nor in the package of, any `scope` class, so only `public` members are
+    /// candidates ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
+    /// Source call sites use [`access_context`] instead.
+    pub fn external(_scope: &hir::ResolutionScope) -> Self {
         Self {
             mode: InvocationMode::Virtual,
-            enclosing_class: None,
-            package: None,
+            // A fully qualified name that is not a subclass of anything in
+            // `scope`, and not a member of any of its classes (§6.6.1).
+            enclosing_class: Some("library.probe.Caller".to_owned()),
+            // The unnamed package: package and `protected` members of named
+            // packages are not accessible (§6.6.1).
+            package: Some(String::new()),
+        }
+    }
+
+    /// The context interned as `key` ([`ContextKey`]).
+    pub fn from_key(db: &dyn TyDatabase, key: ContextKey) -> InvocationContext {
+        InvocationContext {
+            mode: *key.mode(db),
+            enclosing_class: key
+                .enclosing_class(db)
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
+            package: key
+                .package(db)
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
         }
     }
 }
@@ -110,18 +134,8 @@ impl InvocationContext {
 /// is assumed; items outside any class yield `None` for both fields (treated
 /// permissively by [`is_accessible`]).
 pub fn access_context(db: &dyn TyDatabase, file: FileId, item: ItemId) -> InvocationContext {
-    let enclosing_class = enclosing_class_query(db, db.file_text(file))
-        .get(&item)
-        .map(|name| name.as_str().to_owned());
-    let package = hir::file_item_tree(db, file)
-        .package
-        .as_ref()
-        .map(|name| name.as_str().to_owned());
-    InvocationContext {
-        mode: InvocationMode::Virtual,
-        enclosing_class,
-        package,
-    }
+    let key = access_context_key_query(db, ItemKey::new(db, file, item));
+    InvocationContext::from_key(db, key)
 }
 
 /// The access of a member ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
@@ -193,6 +207,13 @@ pub struct MethodData {
     pub varargs: bool,
     /// Whether the method is static.
     pub is_static: bool,
+    /// Whether the method is abstract
+    /// ([JLS §8.4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.3)):
+    /// the ACC_ABSTRACT flag of the classfile
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
+    /// or the `abstract` modifier of the source. The single abstract method of
+    /// a functional interface ([JLS §9.8]) is found from these.
+    pub abstract_: bool,
     /// The access of the method
     /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
     pub access: Access,
@@ -258,8 +279,42 @@ impl std::fmt::Display for MethodDisplay<'_> {
 /// For a type variable receiver the declared bounds
 /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
 /// are searched instead. Primitive and array receivers yield only the array
-/// supertypes' methods.
+/// supertypes' methods. Memoized per (scope, receiver, name, context).
 pub fn member_set(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &str,
+    ctx: &InvocationContext,
+) -> Vec<MethodData> {
+    let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
+    let ctx = ContextKey::from_invocation(db, ctx);
+    member_set_query(db, scope, receiver.id, Name::new(name), ctx)
+}
+
+/// Memoized per (scope, receiver, name, context). See [`member_set`]. The
+/// receiver and context are interned ids ([`TyData`], [`ContextKey`]), so
+/// repeated member sets at the same call site hit the query cache instead of
+/// re-walking the class hierarchy.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn member_set_query<'db>(
+    db: &'db dyn TyDatabase,
+    scope: ScopeId,
+    receiver: TyData,
+    name: Name,
+    ctx: ContextKey,
+) -> Vec<MethodData> {
+    member_set_impl(
+        db,
+        &scope.kind(db).to_scope(),
+        &Ty { id: receiver },
+        name.as_str(),
+        &InvocationContext::from_key(db, ctx),
+    )
+}
+
+/// The non-memoized form of [`member_set`].
+fn member_set_impl(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     receiver: &Ty,
@@ -288,6 +343,120 @@ pub fn member_set(
         }
     }
     out
+}
+
+/// The abstract methods of the interface `ty` and its superinterfaces
+/// ([JLS §9.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.2),
+/// [§9.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.8)):
+/// used to find the single abstract method that a lambda or method reference
+/// is a value of the functional interface for. Memoized per (scope, type).
+pub fn abstract_methods(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Vec<MethodData> {
+    let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
+    abstract_methods_query(db, scope, ty.id)
+}
+
+/// Memoized per (scope, type). See [`abstract_methods`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn abstract_methods_query(
+    db: &dyn TyDatabase,
+    scope: ScopeId,
+    ty: TyData,
+) -> Vec<MethodData> {
+    abstract_methods_impl(db, &scope.kind(db).to_scope(), &Ty { id: ty })
+}
+
+/// The non-memoized form of [`abstract_methods`].
+fn abstract_methods_impl(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Vec<MethodData> {
+    let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
+    let ty = capture_conversion(db, *ty);
+    let mut stack = vec![ty];
+    let mut seen: FxHashSet<TyData> = FxHashSet::default();
+    let mut out = Vec::new();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t.id) {
+            continue;
+        }
+        let TyKind::Reference { name, args } = t.kind(db) else {
+            continue;
+        };
+        let Some(resolved) = hir::fqn_resolve(db, scope, name.as_str()) else {
+            continue;
+        };
+        let args = args.clone();
+        match resolved {
+            hir::Resolved::Library(class) => {
+                let Some(record) = hir::class_record(db, &class) else {
+                    continue;
+                };
+                let hir::ClassOrModuleStub::Class(stub) = record.as_ref() else {
+                    continue;
+                };
+                let interner = &db.hir_state().interner;
+                for method in &stub.methods {
+                    if method.flags & 0x0400 == 0 {
+                        continue;
+                    }
+                    let name = interner.resolve(&method.name);
+                    out.extend(
+                        library_class_methods(db, class.clone(), args.clone(), name)
+                            .into_iter()
+                            .filter(|m| m.abstract_),
+                    );
+                }
+            }
+            hir::Resolved::Source(source) => {
+                let tree = hir::file_item_tree(db, source.file);
+                let Some(ItemData::Interface(class)) = item_data(&tree, source.item) else {
+                    continue;
+                };
+                for &item in &class.body {
+                    let Some(ItemData::Method(method)) = item_data(&tree, item) else {
+                        continue;
+                    };
+                    if !method.modifiers.abstract_ {
+                        continue;
+                    }
+                    let name = method.name.as_str().to_owned();
+                    out.extend(
+                        source_class_methods(db, source, args.clone(), &name)
+                            .into_iter()
+                            .filter(|m| m.abstract_),
+                    );
+                }
+            }
+        }
+        for parent in supertypes_query(db, scope_id, t.id) {
+            stack.push(parent);
+        }
+    }
+    out
+}
+
+/// The single abstract method of the functional interface `ty`
+/// ([JLS §9.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.8)):
+/// the unique abstract method of the interface, disregarding those that
+/// override `Object` members (`equals`, `hashCode`, `toString`). `None` when
+/// `ty` is not a functional interface.
+pub fn single_abstract_method(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<MethodData> {
+    let mut methods = abstract_methods(db, scope, ty);
+    methods.retain(|m| !matches!(m.name.as_str(), "equals" | "hashCode" | "toString"));
+    if methods.len() == 1 {
+        methods.pop()
+    } else {
+        None
+    }
 }
 
 /// The methods of a single class or interface, instantiated with `ty`'s type
@@ -390,6 +559,7 @@ fn library_class_methods(
             throws: method.throws_list.iter().map(instantiate).collect(),
             varargs: method.flags & 0x0080 != 0,   // ACC_VARARGS
             is_static: method.flags & 0x0008 != 0, // ACC_STATIC
+            abstract_: method.flags & 0x0400 != 0, // ACC_ABSTRACT
             access: Access::from_flags(method.flags),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -492,6 +662,7 @@ fn source_class_methods(
             throws,
             varargs,
             is_static: method.modifiers.static_,
+            abstract_: method.modifiers.abstract_,
             access: access_of(&method.modifiers),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -596,6 +767,32 @@ fn member_accessible(
     }
 }
 
+/// An actual argument of a method invocation: either a concrete type, or a
+/// poly expression — a lambda or method reference ([JLS §15.27.3],
+/// [§15.13.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.2)) —
+/// whose type is the target functional interface of the applicable candidate
+/// ([JLS §18.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2)).
+/// A poly argument does not constrain the invocation type inference; once the
+/// candidate is resolved the caller types it against the resolved formal
+/// parameter. The lambda's parameter count ([§15.12.2.2/§15.12.2.3]) is
+/// carried along so an overload candidate whose functional interface does not
+/// fit the lambda is not applicable.
+#[derive(Debug, Clone)]
+pub enum PolyArg {
+    /// An argument with a concrete standalone type.
+    Concrete(Ty),
+    /// A poly argument — the lambda or method reference expression. The second
+    /// element is the lambda's parameter count; a method reference is not
+    /// arity-checkable without resolving the referenced method, so it is `None`.
+    Poly(hir_expand::body::ExprId, Option<usize>),
+}
+
+impl From<Ty> for PolyArg {
+    fn from(ty: Ty) -> Self {
+        PolyArg::Concrete(ty)
+    }
+}
+
 /// Instantiates `method` to its invocation type
 /// ([JLS §15.12.2.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.6))
 /// for a call with `args` in `phase`, running the method invocation type
@@ -611,7 +808,7 @@ fn instantiate(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     method: &MethodData,
-    args: &[Ty],
+    args: &[PolyArg],
     phase: InvocationPhase,
     varargs: bool,
     target: Option<Ty>,
@@ -654,16 +851,41 @@ fn instantiate(
         }
     }
 
+    // §15.12.2.2/§15.12.2.3: a lambda is compatible with a function type only
+    // when the parameter list has the same arity as the single abstract
+    // method ([§15.27.3]). A candidate whose functional interface does not
+    // fit a lambda argument is not applicable; a method reference contributes
+    // no arity check here (it is resolved against the SAM after selection).
+    for (formal, arg) in formals.iter().zip(args) {
+        if let PolyArg::Poly(_, Some(arity)) = arg
+            && let Some(sam) = single_abstract_method(db, scope, formal)
+            && sam.params.len() != *arity
+        {
+            return None;
+        }
+    }
+
     // In the loose phase (and for variable-arity invocation, §15.12.2.4)
     // primitive arguments are boxed, so `⟨int → α⟩` yields the boxed lower
-    // bound.
-    let args: Vec<Ty> = match phase {
-        InvocationPhase::Strict => args.to_vec(),
+    // bound. A poly argument (a lambda or method reference) is not boxed: its
+    // type is the target functional interface, and it contributes no
+    // constraint (§15.12.2.2/§15.12.2.3, §18.5.2.2).
+    let args: Vec<Option<Ty>> = match phase {
+        InvocationPhase::Strict => args
+            .iter()
+            .map(|arg| match arg {
+                PolyArg::Concrete(ty) => Some(*ty),
+                PolyArg::Poly(_, _) => None,
+            })
+            .collect(),
         InvocationPhase::Loose => args
             .iter()
-            .map(|arg| match arg.kind(db) {
-                TyKind::Primitive(p) => Ty::reference(db, boxed_type(*p), Vec::new()),
-                _ => *arg,
+            .map(|arg| match arg {
+                PolyArg::Concrete(ty) => Some(match ty.kind(db) {
+                    TyKind::Primitive(p) => Ty::reference(db, boxed_type(*p), Vec::new()),
+                    _ => *ty,
+                }),
+                PolyArg::Poly(_, _) => None,
             })
             .collect(),
     };
@@ -675,18 +897,22 @@ fn instantiate(
         }
         let (fixed, last) = formals.split_at(formals.len() - 1);
         for (formal, arg) in fixed.iter().zip(&args) {
-            constraints.push(Constraint::Sub(*arg, *formal));
+            if let Some(arg) = arg {
+                constraints.push(Constraint::Sub(*arg, *formal));
+            }
         }
         let rest = &args[fixed.len()..];
         if !rest.is_empty() {
-            if rest.len() == 1 && rest[0].is_array(db) {
+            if rest.len() == 1 && rest[0].is_some_and(|t| t.is_array(db)) {
                 // A single trailing actual of the array type is used as-is.
-                constraints.push(Constraint::Sub(rest[0], last[0]));
+                if let Some(arg) = rest[0] {
+                    constraints.push(Constraint::Sub(arg, last[0]));
+                }
             } else {
                 // Otherwise the trailing actuals are packed into the array: each
                 // is related to the element type.
                 let element = last[0].element(db)?;
-                for arg in rest {
+                for arg in rest.iter().flatten() {
                     constraints.push(Constraint::Sub(*arg, *element));
                 }
             }
@@ -696,15 +922,21 @@ fn instantiate(
             return None;
         }
         for (formal, arg) in formals.iter().zip(&args) {
-            constraints.push(Constraint::Sub(*arg, *formal));
+            if let Some(arg) = arg {
+                constraints.push(Constraint::Sub(*arg, *formal));
+            }
         }
     }
 
     // §18.5.2.4 (resolution): when the invocation is a poly expression with an
     // expected type, the constraint ⟨R → T⟩ is incorporated with the
     // argument constraints, so the inference variables are bounded by the
-    // target type as well.
-    if let Some(target) = target {
+    // target type as well. Only a generic method can have a poly invocation
+    // ([JLS §15.12.2.6]): a non-generic method's return type is fixed, so a
+    // mismatched target must not reject an otherwise-applicable invocation.
+    if let Some(target) = target
+        && !method.type_params.is_empty()
+    {
         let invocation_ret = method.ret.substitute(db, &subst);
         constraints.push(Constraint::Sub(invocation_ret, target));
     }
@@ -733,6 +965,7 @@ fn instantiate(
         throws,
         varargs: method.varargs,
         is_static: method.is_static,
+        abstract_: method.abstract_,
         access: method.access,
         declaring_package: method.declaring_package.clone(),
         declaring_top_level: method.declaring_top_level.clone(),
@@ -861,7 +1094,7 @@ pub fn pick_method(
     scope: &hir::ResolutionScope,
     receiver: &Ty,
     name: &str,
-    args: &[Ty],
+    args: &[PolyArg],
     ctx: &InvocationContext,
     target: Option<Ty>,
 ) -> Option<MethodData> {

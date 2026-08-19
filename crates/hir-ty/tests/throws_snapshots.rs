@@ -72,16 +72,24 @@ fn check_throws() -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     let source_set = register_source_set(&mut db, &fixture, UTIL_SRC);
-    let scope = hir::ResolutionScope::SourceSet(source_set);
-    let ctx = hir_ty::InvocationContext::unconstrained();
+    let scope = hir::ResolutionScope::SourceSet(source_set.clone());
+    let ctx = common::source_context(&db, source_set);
 
     throws_samples()
         .iter()
         .map(|(label, build_receiver, name, arg_builders)| {
             let receiver = build_receiver(&db);
-            let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-            let arg_types: Vec<String> =
-                args.iter().map(|ty| ty.display(&db).to_string()).collect();
+            let args: Vec<hir_ty::PolyArg> = arg_builders
+                .iter()
+                .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+                .collect();
+            let arg_types: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                    hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                })
+                .collect();
             let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx, None);
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),

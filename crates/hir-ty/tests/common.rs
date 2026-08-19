@@ -241,6 +241,27 @@ pub fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     out
 }
 
+/// The access context ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
+/// of a probe call site placed inside the first top-level class of the first
+/// source file of `source_set`: the caller is a member of that class and in
+/// its package, so package-private and `protected` members of the source set's
+/// classes are accessible as from within its own file
+/// ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+/// Falls back to an external probe
+/// ([`InvocationContext::external`]) when the source set owns no classes.
+pub fn source_context(
+    db: &TestDatabase,
+    source_set: hir::SourceSetId,
+) -> hir_ty::InvocationContext {
+    // `register_source_set` maps the first source file to `FileId(1)`.
+    let file = FileId::from_raw(1);
+    let tree = hir::file_item_tree(db, file);
+    match tree.top.first().copied() {
+        Some(item) => hir_ty::access_context(db, file, item),
+        None => hir_ty::InvocationContext::external(&hir::ResolutionScope::SourceSet(source_set)),
+    }
+}
+
 /// The id of the first field named `name`, if any.
 pub fn find_field(tree: &ItemTree, name: &str) -> Option<ItemId> {
     all_items(tree)
@@ -408,6 +429,28 @@ pub fn interface_with_methods(
     }
 }
 
+/// A functional interface: an interface whose methods are all
+/// `ACC_PUBLIC | ACC_ABSTRACT` ([JLS §9.8]), so it has a single abstract
+/// method for lambda and method-reference compatibility.
+pub fn functional_interface(
+    fqn: &'static str,
+    sig: &'static str,
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class: None,
+        interfaces: &[],
+        access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+        fields: &[],
+        methods,
+        method_sigs,
+        method_access: &[0x0401u16; 8],
+        sig: Some(sig),
+    }
+}
+
 /// The small JDK subset the tests resolve and subtype against.
 pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
     vec![
@@ -423,6 +466,37 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         ),
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         class("java/lang/Integer", Some("java/lang/Number"), &[]),
+        class("java/lang/Long", Some("java/lang/Number"), &[]),
+        class("java/lang/Short", Some("java/lang/Number"), &[]),
+        class("java/lang/Byte", Some("java/lang/Number"), &[]),
+        class("java/lang/Float", Some("java/lang/Number"), &[]),
+        class("java/lang/Double", Some("java/lang/Number"), &[]),
+        class("java/lang/Character", Some("java/lang/Object"), &[]),
+        class("java/lang/Boolean", Some("java/lang/Object"), &[]),
+        functional_interface(
+            "java/lang/Runnable",
+            "Ljava/lang/Object;",
+            &[("run", "()V")],
+            &[""],
+        ),
+        functional_interface(
+            "java/util/function/Function",
+            "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("apply", "(Ljava/lang/Object;)Ljava/lang/Object;")],
+            &["(TT;)TR;"],
+        ),
+        functional_interface(
+            "java/util/function/Predicate",
+            "<T:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("test", "(Ljava/lang/Object;)Z")],
+            &["(TT;)Z"],
+        ),
+        functional_interface(
+            "java/util/function/Supplier",
+            "<T:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("get", "()Ljava/lang/Object;")],
+            &["()TT;"],
+        ),
         class("java/lang/Exception", Some("java/lang/Object"), &[]),
         class(
             "java/lang/RuntimeException",
@@ -432,7 +506,27 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         class("java/io/IOException", Some("java/lang/Exception"), &[]),
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
-        interface("java/util/Collection"),
+        interface_with_methods(
+            "java/lang/Iterable",
+            &[],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+            &[("iterator", "()Ljava/util/Iterator;")],
+            &["()Ljava/util/Iterator<TT;>;"],
+        ),
+        interface_with_methods(
+            "java/util/Iterator",
+            &[],
+            Some("<E:Ljava/lang/Object;>Ljava/lang/Object;"),
+            &[("next", "()Ljava/lang/Object;"), ("hasNext", "()Z")],
+            &["()TE;", ""],
+        ),
+        interface_with_methods(
+            "java/util/Collection",
+            &["java/lang/Iterable"],
+            Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/lang/Iterable<TE;>;"),
+            &[("iterator", "()Ljava/util/Iterator;")],
+            &["()Ljava/util/Iterator<TE;>;"],
+        ),
         interface_with_methods(
             "java/util/List",
             &["java/util/Collection"],
@@ -443,8 +537,16 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 ("size", "()I"),
                 ("isEmpty", "()Z"),
                 ("subList", "(II)Ljava/util/List;"),
+                ("iterator", "()Ljava/util/Iterator;"),
             ],
-            &["(TE;)Z", "(I)TE;", "", "", "(II)Ljava/util/List<TE;>;"],
+            &[
+                "(TE;)Z",
+                "(I)TE;",
+                "",
+                "",
+                "(II)Ljava/util/List<TE;>;",
+                "()Ljava/util/Iterator<TE;>;",
+            ],
         ),
         class_sig(
             "java/util/AbstractList",
@@ -933,6 +1035,7 @@ pub fn check_source_methods(
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     let source_set = register_source_set(&mut db, &fixture, files);
+    let context = source_context(&db, source_set.clone());
     let scope = hir::ResolutionScope::SourceSet(source_set);
 
     let mut lines = files
@@ -942,17 +1045,18 @@ pub fn check_source_methods(
     lines.push("METHODS:".to_owned());
     for (label, build_receiver, name, arg_builders) in samples {
         let receiver = build_receiver(&db);
-        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
-        let picked = hir_ty::pick_method(
-            &db,
-            &scope,
-            &receiver,
-            name,
-            &args,
-            &hir_ty::InvocationContext::unconstrained(),
-            None,
-        );
+        let args: Vec<hir_ty::PolyArg> = arg_builders
+            .iter()
+            .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+            .collect();
+        let arg_types: Vec<String> = args
+            .iter()
+            .map(|arg| match arg {
+                hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+            })
+            .collect();
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &context, None);
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),
@@ -1068,16 +1172,24 @@ pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> Strin
         .iter()
         .map(|(label, build_receiver, name, arg_builders)| {
             let receiver = build_receiver(&db);
-            let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-            let arg_types: Vec<String> =
-                args.iter().map(|ty| ty.display(&db).to_string()).collect();
+            let args: Vec<hir_ty::PolyArg> = arg_builders
+                .iter()
+                .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+                .collect();
+            let arg_types: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                    hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                })
+                .collect();
             let picked = hir_ty::pick_method(
                 &db,
                 &scope,
                 &receiver,
                 name,
                 &args,
-                &hir_ty::InvocationContext::unconstrained(),
+                &hir_ty::InvocationContext::external(&scope),
                 None,
             );
             let rendered = match picked {
@@ -1096,11 +1208,18 @@ pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> Strin
 pub fn check_source_methods_ctx(
     files: &[(&str, &str)],
     samples: &[(&str, TyBuilder, &str, &[TyBuilder])],
-    ctx: &hir_ty::InvocationContext,
+    ctx: Option<&hir_ty::InvocationContext>,
 ) -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     let source_set = register_source_set(&mut db, &fixture, files);
+    let context = match ctx {
+        Some(ctx) => ctx.clone(),
+        // `None` places the probe call site inside the first source class, so
+        // its package-private and `protected` members resolve as from within
+        // the source set ([JLS §6.6]).
+        None => source_context(&db, source_set.clone()),
+    };
     let scope = hir::ResolutionScope::SourceSet(source_set);
 
     let mut lines = files
@@ -1110,9 +1229,18 @@ pub fn check_source_methods_ctx(
     lines.push("METHODS:".to_owned());
     for (label, build_receiver, name, arg_builders) in samples {
         let receiver = build_receiver(&db);
-        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx, None);
+        let args: Vec<hir_ty::PolyArg> = arg_builders
+            .iter()
+            .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+            .collect();
+        let arg_types: Vec<String> = args
+            .iter()
+            .map(|arg| match arg {
+                hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+            })
+            .collect();
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &context, None);
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),
@@ -1156,9 +1284,17 @@ pub fn check_methods_lib_ctx(
         .iter()
         .map(|(label, build_receiver, name, arg_builders)| {
             let receiver = build_receiver(&db);
-            let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-            let arg_types: Vec<String> =
-                args.iter().map(|ty| ty.display(&db).to_string()).collect();
+            let args: Vec<hir_ty::PolyArg> = arg_builders
+                .iter()
+                .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+                .collect();
+            let arg_types: Vec<String> = args
+                .iter()
+                .map(|arg| match arg {
+                    hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                    hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                })
+                .collect();
             let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx, None);
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
@@ -1199,8 +1335,17 @@ pub fn check_source_methods_site(
         };
         let ctx = hir_ty::access_context(&db, file_id, method_id);
         let receiver = build_receiver(&db);
-        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
-        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
+        let args: Vec<hir_ty::PolyArg> = arg_builders
+            .iter()
+            .map(|build| hir_ty::PolyArg::Concrete(build(&db)))
+            .collect();
+        let arg_types: Vec<String> = args
+            .iter()
+            .map(|arg| match arg {
+                hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
+                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+            })
+            .collect();
         let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx, None);
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),

@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void consume(Function<String, Integer> f) {}
+
+    void call() {
+        consume(s -> s.length());
+        consume((String s) -> s.length());
+    }
+}
+
+method consume(java.util.function.Function<java.lang.String, java.lang.Integer>): void
+  locals: l0: java.util.function.Function<java.lang.String, java.lang.Integer>
+  exprs: 
+method call(): void
+  locals: 
+  exprs: e0: java.lang.String | e1: int | e2: java.util.function.Function<java.lang.String, java.lang.Integer> | e3: void | e4: java.lang.String | e5: int | e6: java.util.function.Function<java.lang.String, java.lang.Integer> | e7: void

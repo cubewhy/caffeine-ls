@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void cond(boolean flag) {
+        Function<String, Integer> f = flag ? (s -> s.length()) : (s -> 0);
+        Function<String, Integer> g = (s -> s.length());
+    }
+}
+
+method cond(boolean): void
+  locals: l0: boolean | l1: java.util.function.Function<java.lang.String, java.lang.Integer> | l2: java.util.function.Function<java.lang.String, java.lang.Integer>
+  exprs: e0: boolean | e1: java.lang.String | e2: int | e3: java.util.function.Function<java.lang.String, java.lang.Integer> | e4: java.util.function.Function<java.lang.String, java.lang.Integer> | e5: int | e6: java.util.function.Function<java.lang.String, java.lang.Integer> | e7: java.util.function.Function<java.lang.String, java.lang.Integer> | e8: java.util.function.Function<java.lang.String, java.lang.Integer> | e9: java.lang.String | e10: int | e11: java.util.function.Function<java.lang.String, java.lang.Integer> | e12: java.util.function.Function<java.lang.String, java.lang.Integer>

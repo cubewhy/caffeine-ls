@@ -107,6 +107,8 @@ body_snapshot! {
 class Foo {
     int a = 1;
     int[] b = { 1, 2, 3 };
+    int[] c = new int[] { 1, 2, 3 };
+    int[] d = new int[3];
     String s = "x" + "y";
     static { int x = 1; }
     { int y = 2; }

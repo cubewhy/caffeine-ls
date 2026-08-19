@@ -260,10 +260,13 @@ pub enum ExprData {
         args: Vec<ExprId>,
     },
     /// An array creation `new Type[dims]` ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)),
-    /// or — with `Missing` dims args — `new Type[] { ... }` via [`ExprData::ArrayInit`].
+    /// or — with empty `dims` — `new Type[] { ... }`, whose `initializer`
+    /// ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6))
+    /// carries the element expressions of an array initializer when present.
     NewArray {
         ty: TypeRef<Name>,
         dims: Vec<ExprId>,
+        initializer: Option<Vec<ExprId>>,
     },
     /// An array initializer `{ a, b }` ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6)).
     ArrayInit(Vec<ExprId>),

@@ -1,11 +1,15 @@
 //! Salsa glue of the type database.
 //!
 //! [`TyDatabase`] extends [`hir::HirDatabase`] with everything the type layer
-//! needs. Heavy per-item work — type resolution and method parameter lowering —
-//! is memoized as tracked queries keyed on the interned [`ItemKey`], so
-//! repeated lookups of the same item (the IDE pattern) hit the query cache
-//! instead of re-walking the item tree. The type parameters in scope of every
-//! item of a file ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3))
+//! needs. Heavy per-item work — type resolution, method parameter lowering,
+//! body inference and the access-control context of a call site — is memoized
+//! as tracked queries keyed on the interned [`ItemKey`], so repeated lookups of
+//! the same item (the IDE pattern) hit the query cache instead of re-walking
+//! the item tree. The member set of a name
+//! ([`crate::method::member_set_query`]) is likewise memoized per interned
+//! (scope, receiver, name, context), and the subtype/supertype walks
+//! ([`crate::subtyping`]) per interned pair. The type parameters in scope of
+//! every item of a file ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3))
 //! are computed once per file in [`type_params_map_query`].
 
 use std::sync::Arc;
@@ -20,6 +24,7 @@ use syntax::stub::{TypeParameter, TypeRef};
 use vfs::FileId;
 
 use crate::{
+    method::{InvocationContext, InvocationMode},
     resolve::{self, Resolver, item_data, resolve_type_ref, scope_for_file},
     ty::Ty,
 };
@@ -77,6 +82,34 @@ impl ScopeKind {
             ScopeKind::Classpath(libraries) => hir::ResolutionScope::Classpath(libraries.clone()),
             ScopeKind::JdkBuiltins => hir::ResolutionScope::JdkBuiltins,
         }
+    }
+}
+
+/// The invocation context of a method or field access, interned so it can key
+/// the memoized member-set query
+/// ([`crate::method::member_set_query`]): the invocation mode
+/// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+/// plus the access-control context
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
+/// of the access site. A `None` access field is permissive: that restriction
+/// is not enforced. Interned (rather than passed as a plain value) so it can
+/// key the memoized member-set query.
+#[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
+pub struct ContextKey {
+    pub mode: InvocationMode,
+    pub enclosing_class: Option<Name>,
+    pub package: Option<Name>,
+}
+
+impl ContextKey {
+    /// The interning data of an [`InvocationContext`].
+    pub fn from_invocation(db: &dyn TyDatabase, ctx: &InvocationContext) -> ContextKey {
+        ContextKey::new(
+            db,
+            ctx.mode,
+            ctx.enclosing_class.as_deref().map(Name::new),
+            ctx.package.as_deref().map(Name::new),
+        )
     }
 }
 
@@ -213,4 +246,22 @@ pub(crate) fn body_types_query<'db>(
     let file_id = key.file(db);
     let item_id = key.item(db);
     crate::infer::body_types_impl(db, file_id, item_id).map(Arc::new)
+}
+
+/// The access-control context
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
+/// of a source access site inside the method or field `item` of `file`,
+/// memoized per (file, item). See [`crate::method::access_context`].
+#[salsa::tracked(returns(copy))]
+pub(crate) fn access_context_key_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: ItemKey<'db>,
+) -> ContextKey {
+    let file = key.file(db);
+    let item = key.item(db);
+    let enclosing_class = enclosing_class_query(db, db.file_text(file))
+        .get(&item)
+        .cloned();
+    let package = hir::file_item_tree(db, file).package.clone();
+    ContextKey::new(db, InvocationMode::Virtual, enclosing_class, package)
 }
