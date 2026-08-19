@@ -420,6 +420,13 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         ),
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         class("java/lang/Integer", Some("java/lang/Number"), &[]),
+        class("java/lang/Exception", Some("java/lang/Object"), &[]),
+        class(
+            "java/lang/RuntimeException",
+            Some("java/lang/Exception"),
+            &[],
+        ),
+        class("java/io/IOException", Some("java/lang/Exception"), &[]),
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
         interface("java/util/Collection"),
@@ -1081,4 +1088,50 @@ pub fn check_methods_lib_ctx(
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Renders the source files and the resolved method call for each
+/// `(label, file_index, method, receiver, name, args)` sample, where the
+/// invocation context is derived from the call site's enclosing method
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6), [`hir_ty::access_context`]).
+/// `file_index` maps to the i-th `(path, text)` of `files` (files are
+/// registered as `FileId::from_raw(i + 1)`); `method` names a method of that
+/// file whose body contains the call site.
+pub fn check_source_methods_site(
+    files: &[(&str, &str)],
+    samples: &[(&str, usize, &str, TyBuilder, &str, &[TyBuilder])],
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    let source_set = register_source_set(&mut db, &fixture, files);
+    let scope = hir::ResolutionScope::SourceSet(source_set);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    lines.push("METHODS:".to_owned());
+    for (label, file_index, method, build_receiver, name, arg_builders) in samples {
+        let file_id = FileId::from_raw((*file_index + 1) as u32);
+        let tree = hir::file_item_tree(&db, file_id);
+        let Some(method_id) = find_method(&tree, method) else {
+            panic!("method {method} not found in file {file_index}");
+        };
+        let ctx = hir_ty::access_context(&db, file_id, method_id);
+        let receiver = build_receiver(&db);
+        let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
+        let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx);
+        let rendered = match picked {
+            Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
+            None => "<none>".to_owned(),
+        };
+        lines.push(format!(
+            "{label}: {rendered} [ctx: class={:?}, package={:?}] [args: {}]",
+            ctx.enclosing_class,
+            ctx.package,
+            arg_types.join(", ")
+        ));
+    }
+    lines.join("\n")
 }

@@ -79,30 +79,43 @@ pub(crate) fn supertypes_impl(
             };
             match resolved {
                 hir::Resolved::Library(resolved) => {
-                    if !args.is_empty()
-                        && let Some(info) =
-                            hir::class_generic_info(db, &hir::Resolved::Library(resolved.clone()))
+                    if let Some(info) =
+                        hir::class_generic_info(db, &hir::Resolved::Library(resolved.clone()))
                     {
-                        // §4.10.2 with type-argument substitution: bind the class's
-                        // declared type parameters to the actual arguments and
-                        // substitute into the superclass/interfaces from the
-                        // classfile `Signature` attribute.
-                        let interner = &db.hir_state().interner;
-                        let binding: FxHashMap<Name, Ty> = info
-                            .type_params
-                            .iter()
-                            .map(|tp| Name::new(interner.resolve(&tp.name)))
-                            .zip(args.iter().copied())
-                            .collect();
-                        let instantiate = |tyref: &hir::TypeRef<hir::Symbol>| {
-                            crate::resolve::ty_from_library(db, tyref).substitute(db, &binding)
-                        };
-                        let mut out = Vec::new();
-                        if let Some(super_class) = &info.super_class {
-                            out.push(instantiate(super_class));
+                        if info.type_params.is_empty() || !args.is_empty() {
+                            // §4.10.2 with type-argument substitution: bind the class's
+                            // declared type parameters to the actual arguments and
+                            // substitute into the superclass/interfaces from the
+                            // classfile `Signature` attribute. A non-generic class
+                            // (e.g. `String`, whose parents are `Comparable<String>`)
+                            // carries fully-ground parent types.
+                            let interner = &db.hir_state().interner;
+                            let binding: FxHashMap<Name, Ty> = info
+                                .type_params
+                                .iter()
+                                .map(|tp| Name::new(interner.resolve(&tp.name)))
+                                .zip(args.iter().copied())
+                                .collect();
+                            let instantiate = |tyref: &hir::TypeRef<hir::Symbol>| {
+                                crate::resolve::ty_from_library(db, tyref).substitute(db, &binding)
+                            };
+                            let mut out = Vec::new();
+                            if let Some(super_class) = &info.super_class {
+                                out.push(instantiate(super_class));
+                            }
+                            out.extend(info.interfaces.iter().map(instantiate));
+                            out
+                        } else {
+                            // Erasure-style fallback (raw types per §4.8, or tier-2 data
+                            // unavailable): tier-1 classfile data carries no arguments.
+                            let interner = &db.hir_state().interner;
+                            hir::super_types(db, &hir::Resolved::Library(resolved))
+                                .into_iter()
+                                .map(|fqn| {
+                                    Ty::reference(db, Name::new(interner.resolve(&fqn)), Vec::new())
+                                })
+                                .collect()
                         }
-                        out.extend(info.interfaces.iter().map(instantiate));
-                        out
                     } else {
                         // Erasure-style fallback (raw types per §4.8, or tier-2 data
                         // unavailable): tier-1 classfile data carries no arguments.
@@ -239,9 +252,26 @@ pub(crate) fn is_subtype_query(
         // §4.10.2: a type variable is a subtype of its declared bounds.
         (TyKind::TypeVar { .. }, TyKind::Reference { .. })
         | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
+        // §4.10.2 with §5.1.10: a type variable with a lower bound `L` ranges
+        // over `L <: X`, so `S <: CAP` is provable from `S <: L`.
+        (
+            _,
+            TyKind::TypeVar {
+                lower: Some(lower), ..
+            },
+        ) => is_subtype_query(db, scope, sub.id, lower.id),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
             reference_subtype(db, scope, sub, sup)
         }
+        // §4.10.2: `S <: A & B` iff `S <: A` and `S <: B`; `A & B <: T` iff
+        // some member is a subtype of `T` (§4.9). Equal intersections are
+        // already handled by the identity check above.
+        (TyKind::Intersection(members), _) => members
+            .iter()
+            .any(|member| is_subtype_query(db, scope, member.id, sup.id)),
+        (_, TyKind::Intersection(members)) => members
+            .iter()
+            .all(|member| is_subtype_query(db, scope, sub.id, member.id)),
         _ => false,
     }
 }
@@ -259,7 +289,7 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
     let mut visited = FxHashSet::default();
     let mut stack = vec![sub];
     while let Some(current) = stack.pop() {
-        let TyKind::TypeVar { name, bounds } = current.kind(db) else {
+        let TyKind::TypeVar { name, bounds, .. } = current.kind(db) else {
             continue;
         };
         if !visited.insert(name) {
@@ -409,7 +439,10 @@ pub fn is_assignable(
     }
     match (src.kind(db), dst.kind(db)) {
         (TyKind::Primitive(src), TyKind::Primitive(dst)) => widening_primitive(*src, *dst),
-        (TyKind::Reference { .. }, TyKind::Reference { .. }) => is_subtype(db, scope, src, dst),
+        (
+            TyKind::Reference { .. } | TyKind::Intersection(_),
+            TyKind::Reference { .. } | TyKind::Intersection(_),
+        ) => is_subtype(db, scope, src, dst),
         // Boxing (§5.1.7): a primitive is assignable to its boxed type, or to
         // any reference supertype of it (a widening reference conversion §5.1.5
         // after boxing).

@@ -28,19 +28,16 @@
 //! * Method bodies are dropped during lowering, so there is no expression IR:
 //!   expression-level type inference is unavailable, and the compatibility of
 //!   the invocation with a *target type* ([JLS §18.5.2.4]) is not modelled —
-//!   a bare invocation has none. The least upper bound of
-//!   [§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)
-//!   is approximated by the most specific bound under subtyping, the capture
-//!   of `? super T` ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10))
-//!   is not modelled, and throws inference
-//!   ([§18.5.2.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.3))
-//!   is out of scope. Supporting expression-level inference is future work and
-//!   requires `hir-def` to keep a body IR.
+//!   a bare invocation has none. Supporting expression-level inference is
+//!   future work and requires `hir-def` to keep a body IR.
 //! * Access control
 //!   ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
-//!   is enforced from the [`method::InvocationContext`]: when the caller omits
-//!   the enclosing class or package, the corresponding restriction is treated
-//!   permissively.
+//!   is enforced from the [`method::InvocationContext`]. For source call sites
+//!   [`method::access_context`] derives the enclosing class and package from
+//!   the call site ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
+//!   so the corresponding restrictions are enforced rather than treated
+//!   permissively; a `None` context field (library/test callers) remains
+//!   permissive.
 //!
 //! All JLS references use the Java SE 26 edition
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
@@ -53,12 +50,15 @@ pub mod subtyping;
 pub mod ty;
 
 pub use db::TyDatabase;
+pub use inference::least_upper_bound;
 pub use method::{
     Access, InvocationContext, InvocationMode, MethodData, MethodDisplay, MethodTypeParam,
-    member_set, pick_method,
+    access_context, member_set, pick_method,
 };
 pub use resolve::{
     Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,
 };
 pub use subtyping::{is_assignable, is_subtype, supertypes};
-pub use ty::{BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, ty_from_source};
+pub use ty::{
+    BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
+};

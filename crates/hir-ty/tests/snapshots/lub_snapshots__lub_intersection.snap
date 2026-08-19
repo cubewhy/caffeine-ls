@@ -1,0 +1,7 @@
+---
+source: crates/hir-ty/tests/lub_snapshots.rs
+expression: out
+---
+singular lub(java.lang.String) -> java.lang.String
+string_integer lub(java.lang.String, java.lang.Integer) -> java.lang.Comparable<?> & java.io.Serializable
+number_string lub(java.lang.Number, java.lang.String) -> java.lang.Object

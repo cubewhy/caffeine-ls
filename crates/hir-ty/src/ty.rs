@@ -57,13 +57,29 @@ pub enum TyKind {
     /// with its declared bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
     /// `bounds` is empty for unbounded type variables and for re-entrant
     /// (recursive) references — the cycle guard in [`crate::resolve`] erases
-    /// bounds on re-entry so interning terminates.
-    TypeVar { name: Name, bounds: Vec<Ty> },
+    /// bounds on re-entry so interning terminates. `lower` is set only for the
+    /// fresh type variables of capture conversion
+    /// ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
+    /// `? super T` captures to a variable with the `Object` upper bound and
+    /// the `T` lower bound.
+    TypeVar {
+        name: Name,
+        bounds: Vec<Ty>,
+        lower: Option<Ty>,
+    },
     /// An array type ([JLS §10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.1)).
     Array(Box<Ty>),
     /// A wildcard type argument `?`, `? extends T` or `? super T`
     /// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)).
     Wildcard(Option<Box<WildcardBound>>),
+    /// An intersection type `A & B` ([JLS §4.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.9)),
+    /// produced by the least upper bound computation
+    /// ([§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)) —
+    /// `lub(U1, ..., Uk) = Best(W1) & ... & Best(Wr)` — and by the greatest
+    /// lower bound used in capture conversion ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)).
+    /// Java has no intersection type literal; the type is a compiler-internal
+    /// projection.
+    Intersection(Vec<Ty>),
     /// An inference variable ([JLS §18.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.1.1)),
     /// created fresh per method invocation type inference ([JLS §18.5.2]) from
     /// the session-wide id counter ([`HirState::next_infer_var`]). Ids are
@@ -121,6 +137,25 @@ impl Ty {
             TyKind::TypeVar {
                 name: name.into(),
                 bounds,
+                lower: None,
+            },
+        )
+    }
+
+    /// A capture variable ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
+    /// a fresh type variable with the `Object` upper bound and the `lower`
+    /// bound (the `? super T` capture).
+    pub(crate) fn captured_var(db: &dyn TyDatabase, lower: Ty) -> Self {
+        let name = format!(
+            "CAP#{}",
+            NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        );
+        Self::new(
+            db,
+            TyKind::TypeVar {
+                name: Name::new(&name),
+                bounds: vec![Ty::reference(db, "java.lang.Object", Vec::new())],
+                lower: Some(lower),
             },
         )
     }
@@ -130,7 +165,23 @@ impl Ty {
     }
 
     pub fn wildcard(db: &dyn TyDatabase, bound: Option<Box<WildcardBound>>) -> Self {
+        // §4.5.1: `? extends Object` is equivalent to the unbounded wildcard `?`.
+        let bound = match bound {
+            Some(b) if b.kind == BoundKind::Upper && b.ty.is_object(db) => None,
+            other => other,
+        };
         Self::new(db, TyKind::Wildcard(bound))
+    }
+
+    /// An intersection type `A & B` ([JLS §4.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.9)),
+    /// produced by [`crate::least_upper_bound`]
+    /// ([§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)).
+    pub fn intersection(db: &dyn TyDatabase, members: Vec<Ty>) -> Self {
+        match members.len() {
+            0 => Self::error(db),
+            1 => members[0],
+            _ => Self::new(db, TyKind::Intersection(members)),
+        }
     }
 
     /// A fresh inference variable ([JLS §18.1.1]), unique for the session.
@@ -196,6 +247,7 @@ impl Ty {
             TyKind::Wildcard(bound) => bound
                 .as_deref()
                 .is_some_and(|b| b.ty.contains_infer_var(db)),
+            TyKind::Intersection(members) => members.iter().any(|m| m.contains_infer_var(db)),
             _ => false,
         }
     }
@@ -239,6 +291,16 @@ impl Ty {
         }
     }
 
+    /// The lower bound of this (capture) type variable
+    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
+    /// or `None` for ordinary type variables.
+    pub fn lower<'a>(&self, db: &'a dyn TyDatabase) -> Option<Ty> {
+        match self.kind(db) {
+            TyKind::TypeVar { lower, .. } => *lower,
+            _ => None,
+        }
+    }
+
     /// Replaces every type variable named in `binding` with its type argument.
     /// Used to instantiate the supertypes of a parameterized type
     /// ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)):
@@ -261,6 +323,10 @@ impl Ty {
                         ty: b.ty.substitute(db, binding),
                     })
                 }),
+            ),
+            TyKind::Intersection(members) => Ty::intersection(
+                db,
+                members.iter().map(|m| m.substitute(db, binding)).collect(),
             ),
             TyKind::InferenceVar(_) => *self,
         }
@@ -291,6 +357,13 @@ impl Ty {
                     })
                 }),
             ),
+            TyKind::Intersection(members) => Ty::intersection(
+                db,
+                members
+                    .iter()
+                    .map(|m| m.substitute_infer(db, subst))
+                    .collect(),
+            ),
             _ => *self,
         }
     }
@@ -317,6 +390,9 @@ impl Ty {
                     })
                 }),
             ),
+            TyKind::Intersection(members) => {
+                Ty::intersection(db, members.iter().map(|m| m.erase_infer_vars(db)).collect())
+            }
             _ => *self,
         }
     }
@@ -332,6 +408,12 @@ impl Ty {
             TyKind::TypeVar { bounds, .. } => bounds
                 .first()
                 .map(|bound| bound.erasure(db))
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new())),
+            // The erasure of an intersection type is the erasure of its
+            // first member (§4.9).
+            TyKind::Intersection(members) => members
+                .first()
+                .map(|member| member.erasure(db))
                 .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new())),
             other => Self::new(db, other.clone()),
         }
@@ -371,6 +453,15 @@ impl fmt::Display for TyDisplay<'_> {
             }
             TyKind::TypeVar { name, .. } => f.write_str(name.as_str()),
             TyKind::Array(inner) => write!(f, "{}[]", inner.display(self.db)),
+            TyKind::Intersection(members) => {
+                for (i, member) in members.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" & ")?;
+                    }
+                    write!(f, "{}", member.display(self.db))?;
+                }
+                Ok(())
+            }
             TyKind::Wildcard(bound) => {
                 f.write_str("?")?;
                 if let Some(bound) = bound {
@@ -490,32 +581,38 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// replaces the wildcard type arguments of `ty` with fresh type variables,
 /// so the member set of a wildcard-parameterized receiver sees a concrete
 /// instantiation. `? extends T` becomes the fresh variable `CAP#<n>` bounded
-/// by `T`; an unbounded `?` becomes `CAP#<n>` bounded by `Object`. `? super T`
-/// is kept as-is — the captured lower bound is not modelled (an approximation,
-/// see the crate docs). Applied to the receiver before the member set walk of
+/// by `T`; an unbounded `?` becomes `CAP#<n>` bounded by `Object`; `? super T`
+/// becomes `CAP#<n>` bounded above by `Object` and below by `T`. Applied to
+/// the receiver before the member set walk of
 /// [`crate::method::member_set`], and only there: the capture variables never
 /// reach the memoized subtype queries.
-pub(crate) fn capture(db: &dyn TyDatabase, ty: Ty) -> Ty {
+pub fn capture_conversion(db: &dyn TyDatabase, ty: Ty) -> Ty {
     let fresh = |bound: Ty| {
         let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ty::type_var(
             db,
             Name::new(&format!("CAP#{id}")),
-            vec![capture(db, bound)],
+            vec![capture_conversion(db, bound)],
         )
     };
     match ty.kind(db) {
         TyKind::Reference { name, args } => Ty::reference(
             db,
             name.clone(),
-            args.iter().map(|arg| capture(db, *arg)).collect(),
+            args.iter()
+                .map(|arg| capture_conversion(db, *arg))
+                .collect(),
         ),
-        TyKind::Array(inner) => Ty::array(db, capture(db, **inner)),
+        TyKind::Array(inner) => Ty::array(db, capture_conversion(db, **inner)),
         TyKind::Wildcard(Some(bound)) => match bound.kind {
             BoundKind::Upper => fresh(bound.ty),
-            BoundKind::Lower => ty,
+            // `? super T`: a capture variable with the `Object` upper bound
+            // and the `T` lower bound (§5.1.10).
+            BoundKind::Lower => Ty::captured_var(db, capture_conversion(db, bound.ty)),
         },
         TyKind::Wildcard(None) => fresh(Ty::reference(db, "java.lang.Object", Vec::new())),
+        // Intersection and type-variable receivers are not parameterized by
+        // wildcards; leave them as-is.
         _ => ty,
     }
 }

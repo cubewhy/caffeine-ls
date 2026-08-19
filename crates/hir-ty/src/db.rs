@@ -94,6 +94,55 @@ pub(crate) fn type_params_map_query(
     Arc::new(resolve::type_params_map(&tree))
 }
 
+/// The canonical fully qualified name
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
+/// of the nearest enclosing class or interface declaration of every item of
+/// `file` ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+/// Class-like items map to themselves; non-class items map to the type whose
+/// member they are. Items outside any class (imports, module-info) are absent.
+/// Computed in a single tree walk per file and memoized; invalidated together
+/// with the file's item tree when the file text changes.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn enclosing_class_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashMap<ItemId, Name>> {
+    let file_id = *file.file_id(db);
+    let tree = hir::file_item_tree(db, file_id);
+    let mut map: FxHashMap<ItemId, Name> = FxHashMap::default();
+    fn walk(
+        db: &dyn TyDatabase,
+        file_id: FileId,
+        tree: &hir_expand::item_tree::ItemTree,
+        id: ItemId,
+        enclosing: Option<ItemId>,
+        map: &mut FxHashMap<ItemId, Name>,
+    ) {
+        let data = tree.data(id);
+        let is_type = matches!(
+            data,
+            ItemData::Class(_)
+                | ItemData::Interface(_)
+                | ItemData::Enum(_)
+                | ItemData::Record(_)
+                | ItemData::Annotation(_)
+        );
+        let current = if is_type { Some(id) } else { enclosing };
+        if let Some(enclosing) = current {
+            if let Some(fqn) = hir::source_class_fqn(db, file_id, enclosing) {
+                map.insert(id, fqn);
+            }
+        }
+        for &child in data.body() {
+            walk(db, file_id, tree, child, current, map);
+        }
+    }
+    for &top in &tree.top {
+        walk(db, file_id, &tree, top, None, &mut map);
+    }
+    Arc::new(map)
+}
+
 /// The declared type of `item` in `file`, memoized per (file, item). The
 /// resolution scope is derived from the file ([`scope_for_file`]); see
 /// [`resolve::item_ty`].

@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/access_site_snapshots.rs
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+class A {
+    public void pub() {}
+    protected void pro() {}
+    void pkg() {}
+    private void priv() {}
+    public static void stat() {}
+    void callPub() { pub(); }
+    void callPriv() { priv(); }
+    void callPkg() { pkg(); }
+}
+class B extends A {
+    void callPro() { pro(); }
+}
+
+FILE /src/org/other/C.java:
+package org.other;
+class C extends com.example.A {
+    void callPro() { pro(); }
+}
+class Other {
+    void callPub(A a) { a.pub(); }
+    void callPriv(A a) { a.priv(); }
+    void callPkg(A a) { a.pkg(); }
+}
+
+METHODS:
+A.callPub: com.example.A.pub() -> void [ctx: class=Some("com.example.A"), package=Some("com.example")] [args: ]
+A.callPriv: com.example.A.priv() -> void [ctx: class=Some("com.example.A"), package=Some("com.example")] [args: ]
+A.callPkg: com.example.A.pkg() -> void [ctx: class=Some("com.example.A"), package=Some("com.example")] [args: ]
+B.callPro: com.example.A.pro() -> void [ctx: class=Some("com.example.B"), package=Some("com.example")] [args: ]
+C.callPro: com.example.A.pro() -> void [ctx: class=Some("org.other.C"), package=Some("org.other")] [args: ]
+Other.callPub: com.example.A.pub() -> void [ctx: class=Some("org.other.Other"), package=Some("org.other")] [args: ]
+Other.callPriv: <none> [ctx: class=Some("org.other.Other"), package=Some("org.other")] [args: ]
+Other.callPkg: <none> [ctx: class=Some("org.other.Other"), package=Some("org.other")] [args: ]

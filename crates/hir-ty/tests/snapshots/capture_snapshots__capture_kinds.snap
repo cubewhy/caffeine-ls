@@ -1,0 +1,7 @@
+---
+source: crates/hir-ty/tests/capture_snapshots.rs
+expression: out
+---
+unbounded: java.util.List<?> => java.util.List<CAP#0 [upper: java.lang.Object]>
+upper: java.util.List<? extends java.lang.Number> => java.util.List<CAP#1 [upper: java.lang.Number]>
+lower: java.util.List<? super java.lang.Integer> => java.util.List<CAP#2 [upper: java.lang.Object] [lower: java.lang.Integer]>

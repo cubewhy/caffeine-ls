@@ -33,18 +33,19 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::TypeParameter;
+use vfs::FileId;
 
-use hir_expand::{item_tree::ItemData, name::Name};
+use hir_expand::{item_tree::ItemData, item_tree::ItemId, name::Name};
 
 use crate::{
     db::{
-        ItemKey, ScopeId, ScopeKind, TyDatabase, item_ty_query, method_params_query,
-        type_params_map_query,
+        ItemKey, ScopeId, ScopeKind, TyDatabase, enclosing_class_query, item_ty_query,
+        method_params_query, type_params_map_query,
     },
     inference::{Constraint, Inference, InvocationPhase},
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file, ty_from_library},
     subtyping::{is_subtype, supertypes_query},
-    ty::{Ty, TyData, TyKind, boxed_type, capture},
+    ty::{Ty, TyData, TyKind, boxed_type, capture_conversion},
 };
 
 /// How the method name is qualified: the invocation mode of
@@ -71,8 +72,9 @@ pub enum InvocationMode {
 /// access control ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
 ///
 /// `None` context fields are treated permissively: a missing access
-/// restriction does not filter candidates out. [`InvocationContext::unconstrained`]
-/// performs no mode or access filtering.
+/// restriction does not filter candidates out. Source call sites obtain a
+/// fully constrained context with [`access_context`];
+/// [`InvocationContext::unconstrained`] performs no mode or access filtering.
 #[derive(Debug, Clone)]
 pub struct InvocationContext {
     /// The invocation mode.
@@ -95,6 +97,29 @@ impl InvocationContext {
             enclosing_class: None,
             package: None,
         }
+    }
+}
+
+/// The access-control context ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
+/// of a source call site inside the method or field `item` of `file`: the
+/// canonical fully qualified name ([§6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
+/// of the nearest enclosing class or interface ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1))
+/// and the compilation unit's package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+/// A virtual invocation ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+/// is assumed; items outside any class yield `None` for both fields (treated
+/// permissively by [`is_accessible`]).
+pub fn access_context(db: &dyn TyDatabase, file: FileId, item: ItemId) -> InvocationContext {
+    let enclosing_class = enclosing_class_query(db, db.file_text(file))
+        .get(&item)
+        .map(|name| name.as_str().to_owned());
+    let package = hir::file_item_tree(db, file)
+        .package
+        .as_ref()
+        .map(|name| name.as_str().to_owned());
+    InvocationContext {
+        mode: InvocationMode::Virtual,
+        enclosing_class,
+        package,
     }
 }
 
@@ -158,6 +183,10 @@ pub struct MethodData {
     pub params: Vec<Ty>,
     /// The return type, in the same partially instantiated form.
     pub ret: Ty,
+    /// The thrown exceptions ([JLS §8.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.6)),
+    /// instantiated with the declaring type's type arguments; the method's own
+    /// type parameters are not yet instantiated.
+    pub throws: Vec<Ty>,
     /// Whether the method is a variable-arity method
     /// ([JLS §8.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.1)).
     pub varargs: bool,
@@ -201,7 +230,17 @@ impl std::fmt::Display for MethodDisplay<'_> {
             }
             write!(f, "{}", param.display(self.db))?;
         }
-        write!(f, ")")
+        write!(f, ")")?;
+        if !self.method.throws.is_empty() {
+            write!(f, " throws ")?;
+            for (i, thrown) in self.method.throws.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", thrown.display(self.db))?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -227,7 +266,7 @@ pub fn member_set(
     ctx: &InvocationContext,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture(db, *receiver);
+    let receiver = capture_conversion(db, *receiver);
     let mut stack = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
         _ => vec![receiver],
@@ -347,6 +386,7 @@ fn library_class_methods(
                 .map(|param| instantiate(&param.param_type))
                 .collect(),
             ret: instantiate(&method.return_type),
+            throws: method.throws_list.iter().map(instantiate).collect(),
             varargs: method.flags & 0x0080 != 0,   // ACC_VARARGS
             is_static: method.flags & 0x0008 != 0, // ACC_STATIC
             access: Access::from_flags(method.flags),
@@ -432,11 +472,23 @@ fn source_class_methods(
             *last = Ty::array(db, *last);
         }
         let ret = instantiate(&item_ty_query(db, key));
+        // The declared throws clause ([§8.4.6]): resolve and instantiate with
+        // the declaring type's type arguments; method type parameters stay as
+        // type variables for [`instantiate`] to solve.
+        let mut throws: Vec<Ty> = method
+            .sig
+            .throws
+            .iter()
+            .map(|ex| resolve_type_ref(db, &scope, &method_resolver, ex))
+            .map(|ty| instantiate(&ty))
+            .collect();
+        throws.dedup();
         out.push(MethodData {
             name: name.to_owned(),
             owner: fqn.clone(),
             params,
             ret,
+            throws,
             varargs,
             is_static: method.modifiers.static_,
             access: access_of(&method.modifiers),
@@ -557,6 +609,20 @@ fn instantiate(
         .map(|p| p.substitute(db, &subst))
         .collect();
 
+    // The throws clause ([§8.4.6]) substitutes the same way; a method type
+    // parameter that appears in it carries the `throws` α bound (§18.5.2.2,
+    // §18.1.3), directing resolution to prefer an unchecked exception type.
+    let throws_formals: Vec<Ty> = method
+        .throws
+        .iter()
+        .map(|t| t.substitute(db, &subst))
+        .collect();
+    for thrown in &throws_formals {
+        if thrown.is_infer_var(db) {
+            inference.mark_throws(db, *thrown);
+        }
+    }
+
     // In the loose phase (and for variable-arity invocation, §15.12.2.4)
     // primitive arguments are boxed, so `⟨int → α⟩` yields the boxed lower
     // bound.
@@ -605,6 +671,14 @@ fn instantiate(
 
     let resolved = inference.solve(db, scope, phase, constraints)?;
 
+    // The invocation type's throws clause ([§18.5.2.3]): the method's throws
+    // types with the resolved substitution applied.
+    let mut throws: Vec<Ty> = throws_formals
+        .iter()
+        .map(|t| t.substitute_infer(db, &resolved))
+        .collect();
+    throws.dedup();
+
     Some(MethodData {
         name: method.name.clone(),
         owner: method.owner.clone(),
@@ -616,6 +690,7 @@ fn instantiate(
             .ret
             .substitute(db, &subst)
             .substitute_infer(db, &resolved),
+        throws,
         varargs: method.varargs,
         is_static: method.is_static,
         access: method.access,

@@ -1,0 +1,9 @@
+---
+source: crates/hir-ty/tests/throws_snapshots.rs
+expression: out
+---
+throwChecked(Exception): com.example.Util.throwChecked(boolean, java.lang.Exception) throws java.lang.Exception -> java.lang.Exception [args: boolean, java.lang.Exception]
+throwChecked(IOException): com.example.Util.throwChecked(boolean, java.io.IOException) throws java.io.IOException -> java.io.IOException [args: boolean, java.io.IOException]
+throwChecked(RuntimeException): com.example.Util.throwChecked(boolean, java.lang.RuntimeException) throws java.lang.RuntimeException -> java.lang.RuntimeException [args: boolean, java.lang.RuntimeException]
+rethrow(): com.example.Util.rethrow() throws java.lang.RuntimeException -> void [args: ]
+io(): com.example.Util.io() throws java.io.IOException -> void [args: ]
