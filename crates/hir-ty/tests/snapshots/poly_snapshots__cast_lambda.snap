@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+import java.lang.Runnable;
+
+class Poly {
+    void casts() {
+        Runnable r = (Runnable) () -> {};
+        Function<String, Integer> f = (Function<String, Integer>) (s -> s.length());
+        Function<String, Integer> g = (Function<String, Integer>) s -> s.length();
+    }
+}
+
+method casts(): void
+  locals: l0: java.lang.Runnable | l1: java.util.function.Function<java.lang.String, java.lang.Integer> | l2: java.util.function.Function<java.lang.String, java.lang.Integer>
+  exprs: e0: java.lang.Runnable | e1: java.lang.Runnable | e2: java.lang.String | e3: int | e4: java.util.function.Function<java.lang.String, java.lang.Integer> | e5: java.util.function.Function<java.lang.String, java.lang.Integer> | e6: java.util.function.Function<java.lang.String, java.lang.Integer> | e7: java.lang.String | e8: int | e9: java.util.function.Function<java.lang.String, java.lang.Integer> | e10: java.util.function.Function<java.lang.String, java.lang.Integer>

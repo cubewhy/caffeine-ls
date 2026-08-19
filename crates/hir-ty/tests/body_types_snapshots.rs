@@ -245,3 +245,128 @@ class Body {
 ",
     )])
 );
+
+snapshot!(
+    nested_invocation_argument,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    void call() {
+        take(Collections.emptyList());
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    nested_invocation_chain,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        take(Collections.emptyList());
+        take(id(7));
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    overload_by_target,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+    void take(Object o) {}
+
+    void call() {
+        take(Collections.emptyList());
+        take(new Object());
+    }
+}
+",
+    )])
+);
+// The `take(Object)` overload is eagerly applicable to the standalone
+// `List<Object>` of `emptyList()`, so the plain resolution already succeeds
+// and the §18.5.2.2 retry (which only runs on failure) never engages: the
+// nested call is not retargeted, and the call stays `take(Object)`. javac's
+// per-candidate inference of §18.5.2.1 would find `take(List<String>)` more
+// specific; the eager-wins behavior here is the documented degradation of the
+// retry-on-failure heuristic.
+
+snapshot!(
+    overload_retarget_choice,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+    void take(List<Integer> ys) {}
+
+    void call() {
+        take(Collections.emptyList());
+    }
+}
+",
+    )])
+);
+// Neither overload is eagerly applicable to the standalone `List<Object>`
+// (invariant type arguments), so the retry runs and picks the first candidate
+// whose retargeted arguments resolve — `take(List<String>)`, with the nested
+// `emptyList()` typed `List<String>`. javac would report this as ambiguous;
+// picking the first applicable candidate is a documented heuristic.
+
+snapshot!(
+    poly_conditional_invocation,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    void call(boolean flag) {
+        take(flag ? Collections.emptyList() : Collections.emptyList());
+    }
+}
+",
+    )])
+);

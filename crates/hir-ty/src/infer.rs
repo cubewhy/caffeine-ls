@@ -22,10 +22,15 @@
 //! bound). Method calls are refined by their *target type*
 //! ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4))
 //! where the context fixes it: a declaration initializer, an assignment
-//! right-hand side, or a returned expression. Lambdas and method references
-//! are poly expressions whose type comes from the *target* functional
-//! interface ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)):
-//! their standalone type is unknown, so they infer to [`Ty::error`].
+//! right-hand side, a returned expression, or a cast. Lambdas and method
+//! references are poly expressions whose type comes from the *target*
+//! functional interface ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)):
+//! their standalone type is unknown, so they infer to [`Ty::error`]. A nested
+//! generic method invocation in an argument position is likewise a poly
+//! expression ([JLS §18.5.2.4]): when the plain overload resolution fails, the
+//! invocation is retried with each argument retyped against the candidate's
+//! formal parameter, so `take(emptyList())` resolves the nested `emptyList()`
+//! against `take(List<String>)`.
 
 use std::sync::Arc;
 
@@ -45,8 +50,8 @@ use crate::{
     db::{TyDatabase, enclosing_class_query, type_params_map_query},
     inference::least_upper_bound,
     method::{
-        FieldData, InvocationContext, PolyArg, access_context, member_set, pick_field, pick_method,
-        single_abstract_method,
+        FieldData, InvocationContext, MethodData, PolyArg, access_context, member_set, pick_field,
+        pick_method, single_abstract_method,
     },
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     ty::{Ty, TyKind, unboxed_primitive},
@@ -278,10 +283,22 @@ impl<'a> InferCtx<'a> {
                 let _ = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
                 lhs_ty
             }
-            // §15.16: a cast has the type named in the cast.
+            // §15.16: a cast has the type named in the cast. Per §15.16 and
+            // §5.5, a lambda or method reference operand is a poly expression
+            // ([§15.27.2], [§15.13.2]) whose type is the target type named by
+            // the cast — the target is propagated into the operand so it is
+            // typed against the cast type. (A cast of a poly *invocation* is a
+            // standalone expression per §15.16, so plain method calls are not
+            // given the target here.)
             ExprData::Cast { ty, expr } => {
-                let _ = self.infer_expr(expr);
-                resolve_type_ref(self.db, &self.scope, &self.resolver, &ty)
+                if expr_is_poly(&self.tree, expr) {
+                    let cast_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
+                    let _ = self.with_target(Some(cast_ty), |this| this.infer_expr(expr));
+                    cast_ty
+                } else {
+                    let _ = self.infer_expr(expr);
+                    resolve_type_ref(self.db, &self.scope, &self.resolver, &ty)
+                }
             }
             // §15.20.2: `instanceof` always has type `boolean`.
             ExprData::InstanceOf { expr, .. } => {
@@ -293,18 +310,23 @@ impl<'a> InferCtx<'a> {
             // the target is a functional interface and both arms are poly
             // (lambdas/method refs), the conditional is itself a poly
             // expression with the target type ([§15.25.2]): the target is
-            // propagated into the arms so they are typed against it.
+            // propagated into the arms so they are typed against it. The same
+            // applies when the arms are poly invocations (e.g. nested generic
+            // method calls) — the target is still propagated into the arms so
+            // they can resolve against it.
             ExprData::Conditional { cond, then, els } => {
                 let _ = self.infer_expr(cond);
-                let cond_is_poly = expr_is_poly(&self.tree, then) && expr_is_poly(&self.tree, els);
-                if cond_is_poly
-                    && self.target.is_some_and(|target| {
-                        crate::method::single_abstract_method(self.db, &self.scope, &target)
-                            .is_some()
-                    })
-                {
+                let cond_is_poly =
+                    expr_is_poly_ext(&self.tree, then) && expr_is_poly_ext(&self.tree, els);
+                let target_is_fi = self.target.is_some_and(|target| {
+                    crate::method::single_abstract_method(self.db, &self.scope, &target).is_some()
+                });
+                let both_arms_calls =
+                    expr_is_call(&self.tree, then) && expr_is_call(&self.tree, els);
+                if cond_is_poly && self.target.is_some() && (target_is_fi || both_arms_calls) {
                     // §15.25.2: a conditional whose arms are poly expressions
-                    // is a poly expression with the target type.
+                    // is a poly expression with the target type; the target
+                    // propagates into the arms so they are typed against it.
                     let _ = self.infer_expr(then);
                     let _ = self.infer_expr(els);
                     self.target.expect("target checked above")
@@ -525,13 +547,89 @@ impl<'a> InferCtx<'a> {
                 }
                 method.ret
             }
-            None => {
-                for expr in poly_args.into_values() {
-                    let _ = self.infer_expr(expr);
+            // §18.5.2.1/§18.5.2.2: a nested generic method invocation argument
+            // is itself a poly expression whose type is inferred against the
+            // candidate's formal parameter ([JLS §18.5.2.4]). When the plain
+            // resolution fails, each candidate is retried with the invocation
+            // arguments retyped against its formal parameters, so
+            // `take(emptyList())` resolves `emptyList()` as `List<String>`
+            // against `take(List<String>)` instead of failing on the
+            // standalone `List<Object>`.
+            None => match self.retry_poly_invocation(receiver_ty, &name, args, target) {
+                Some(method) => {
+                    for (i, expr) in poly_args {
+                        if let Some(formal) = method.params.get(i) {
+                            let _ = self.with_target(Some(*formal), |this| this.infer_expr(expr));
+                        }
+                    }
+                    method.ret
                 }
-                self.error()
+                None => {
+                    for expr in poly_args.into_values() {
+                        let _ = self.infer_expr(expr);
+                    }
+                    self.error()
+                }
+            },
+        }
+    }
+
+    /// The §18.5.2.2 retry of a failed invocation ([JLS §18.5.2.4]): retypes
+    /// each argument against every candidate's formal parameter and re-runs
+    /// the overload selection. An argument is only retargeted when the formal
+    /// is a *proper* type ([JLS §18.4.1]) — a formal that still mentions a type
+    /// variable (a generic member such as `List<T>`) is left as the standalone
+    /// argument type, since its own inference cannot use the target.
+    ///
+    /// The retargeted types are only retained when a candidate is selected; on
+    /// total failure the standalone argument types are restored, so the
+    /// recorded types stay those of the argument expressions as independent
+    /// expressions.
+    fn retry_poly_invocation(
+        &mut self,
+        receiver_ty: Ty,
+        name: &Name,
+        args: &[ExprId],
+        target: Option<Ty>,
+    ) -> Option<MethodData> {
+        let members = member_set(
+            self.db,
+            &self.scope,
+            &receiver_ty,
+            name.as_str(),
+            &self.access,
+        );
+        let saved = self.types.clone();
+        for member in &members {
+            self.types = saved.clone();
+            let mut candidate_args: Vec<PolyArg> = Vec::with_capacity(args.len());
+            for (i, arg) in args.iter().enumerate() {
+                let ty = match member.params.get(i) {
+                    Some(formal) if is_targetable(self.db, *formal) => {
+                        self.with_target(Some(*formal), |this| this.infer_expr(*arg))
+                    }
+                    _ => self
+                        .types
+                        .get(arg)
+                        .copied()
+                        .unwrap_or_else(|| self.infer_expr(*arg)),
+                };
+                candidate_args.push(PolyArg::Concrete(ty));
+            }
+            if let Some(method) = pick_method(
+                self.db,
+                &self.scope,
+                &receiver_ty,
+                name.as_str(),
+                &candidate_args,
+                &self.access,
+                target,
+            ) {
+                return Some(method);
             }
         }
+        self.types = saved;
+        None
     }
 
     /// A class instance creation ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)):
@@ -1058,6 +1156,45 @@ fn expr_is_poly(tree: &BodyTree, id: ExprId) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `expr` is a poly expression, additionally treating a method
+/// invocation as poly ([JLS §18.5.2.4]): a nested generic invocation is a poly
+/// expression whose type is inferred against the target (its enclosing
+/// invocation's resolved formal). Used for the §15.25.2 conditional rule where
+/// a conditional with poly invocation arms must be treated as poly, without
+/// deferring invocation arguments during overload resolution.
+fn expr_is_poly_ext(tree: &BodyTree, id: ExprId) -> bool {
+    match tree.expr(id).clone() {
+        ExprData::Lambda { .. } | ExprData::MethodRef { .. } | ExprData::MethodCall { .. } => true,
+        ExprData::Paren(inner) => expr_is_poly_ext(tree, inner),
+        ExprData::Conditional { then, els, .. } => {
+            expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `expr` is (possibly parenthesized) a method invocation, used to
+/// recognize conditional expressions whose arms are poly invocations.
+fn expr_is_call(tree: &BodyTree, id: ExprId) -> bool {
+    match tree.expr(id).clone() {
+        ExprData::MethodCall { .. } => true,
+        ExprData::Paren(inner) => expr_is_call(tree, inner),
+        _ => false,
+    }
+}
+
+/// Whether a formal parameter is a *proper* type ([JLS §18.4.1]) that a nested
+/// poly invocation can be inferred against: not the error type, and not
+/// mentioning an uninstantiated type variable. The error type is never a
+/// usable target, and a formal still mentioning a type variable (a generic
+/// member such as `List<T>`) cannot fix the nested invocation's own inference.
+fn is_targetable(db: &dyn TyDatabase, formal: Ty) -> bool {
+    !formal.is_error(db)
+        && !formal.is_type_var(db)
+        && !formal.contains_type_var(db)
+        && !formal.contains_infer_var(db)
 }
 
 /// The parameter count of a lambda argument ([§15.12.2.2]), used to check the

@@ -219,3 +219,67 @@ class Poly {
 ",
     )])
 );
+
+snapshot!(
+    cast_lambda,
+    check_body_types(&[(
+        "/src/com/example/Poly.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+import java.lang.Runnable;
+
+class Poly {
+    void casts() {
+        Runnable r = (Runnable) () -> {};
+        Function<String, Integer> f = (Function<String, Integer>) (s -> s.length());
+        Function<String, Integer> g = (Function<String, Integer>) s -> s.length();
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    cast_method_ref,
+    check_body_types(&[(
+        "/src/com/example/Poly.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+class Box {
+    Box() {}
+}
+
+class Poly {
+    void refs() {
+        Function<String, Integer> f = (Function<String, Integer>) String::length;
+        Supplier<Box> s = (Supplier<Box>) Box::new;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    isolation_error,
+    check_body_types(&[(
+        "/src/com/example/Poly.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void isolation() {
+        Object o = s -> s;
+        Object r = String::length;
+    }
+}
+",
+    )])
+);

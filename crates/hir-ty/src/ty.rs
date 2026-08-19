@@ -266,6 +266,18 @@ impl Ty {
         }
     }
 
+    /// Whether any nested component is a type variable.
+    pub fn contains_type_var(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::TypeVar { .. } => true,
+            TyKind::Reference { args, .. } => args.iter().any(|arg| arg.contains_type_var(db)),
+            TyKind::Array(inner) => inner.contains_type_var(db),
+            TyKind::Wildcard(bound) => bound.as_deref().is_some_and(|b| b.ty.contains_type_var(db)),
+            TyKind::Intersection(members) => members.iter().any(|m| m.contains_type_var(db)),
+            _ => false,
+        }
+    }
+
     pub fn is_error(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Error)
     }

@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Poly {
+    void isolation() {
+        Object o = s -> s;
+        Object r = String::length;
+    }
+}
+
+method isolation(): void
+  locals: l0: java.lang.Object | l1: java.lang.Object
+  exprs: e1: <error> | e3: <error>

@@ -27,9 +27,13 @@
 //! * Target typing ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4))
 //!   refines a method invocation's inference variables with its expected type
 //!   in the contexts that fix it — declaration initializers, assignment
-//!   right-hand sides and returned expressions — but the general poly-
-//!   expression rules of §18.5.2.4 (e.g. argument positions) are not fully
-//!   modelled. Lambdas and method references are poly expressions
+//!   right-hand sides, returned expressions, and casts — and a nested poly
+//!   invocation in an argument position is inferred against the candidate's
+//!   formal parameter ([JLS §18.5.2.2]) when the plain overload resolution
+//!   fails. The full poly-expression rules of §18.5.2.4 (e.g. nested generic
+//!   calls through more than one level, or retargeting against a formal that
+//!   still mentions an uninstantiated type variable) are not modelled. Lambdas
+//!   and method references are poly expressions
 //!   ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27),
 //!   [§15.13](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13))
 //!   whose type comes from the target functional interface, so they infer to

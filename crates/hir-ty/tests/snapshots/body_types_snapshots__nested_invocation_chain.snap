@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        take(Collections.emptyList());
+        take(id(7));
+    }
+}
+
+method take(java.util.List<java.lang.String>): void
+  locals: l0: java.util.List<java.lang.String>
+  exprs: 
+method id(T): T
+  locals: l1: T
+  exprs: e0: T
+method call(): void
+  locals: 
+  exprs: e2: java.util.List<java.lang.String> | e3: void | e4: int | e5: java.lang.Integer | e6: <error>
