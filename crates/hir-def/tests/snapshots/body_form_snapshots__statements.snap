@@ -1,0 +1,100 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m() {
+        ; // empty
+        int a = 1;
+        long b = 2L, c = 3L;
+        String s = "x";
+        foo();
+        a++;
+        ++a;
+        --a;
+        a--;
+        a += 2;
+        a -= 1;
+        if (a > 0) { a = 0; } else { a = 1; }
+        while (a < 10) { a++; }
+        do { a--; } while (a > 0);
+        for (int i = 0; i < 3; i++) { a += i; }
+        for (int x : new int[] { 1, 2 }) { a += x; }
+        switch (a) {
+            case 0: a = 1; break;
+            case 1: a = 2; break;
+            default: a = 0;
+        }
+        switch (a) {
+            case 0 -> a = 1;
+            case 1 -> { a = 2; }
+            default -> throw new RuntimeException();
+        }
+        return;
+    }
+    int v(int x) {
+        if (x) throw new RuntimeException();
+        return x + 1;
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..820
+  method m() -> void @12..726
+  method v(int x) -> int @726..818
+
+BODIES:
+body:
+  s0: empty
+  s1: decl l0 = e0
+  s4: block
+    s2: decl l1 = e1
+    s3: decl l2 = e2
+  s5: decl l3 = e3
+  s6: expr e4: call foo()
+  s7: expr e6: postfix ++ e5
+  s8: expr e8: unary ++ e7
+  s9: expr e10: unary -- e9
+  s10: expr e12: postfix -- e11
+  s11: expr e15: assign += e13 e14
+  s12: expr e18: assign -= e16 e17
+  s18: if e19
+    s14: block
+      s13: expr e22: assign = e20 e21
+  s18: else
+    s16: block
+      s15: expr e25: assign = e23 e24
+  s21: while e26
+    s20: block
+      s19: expr e28: postfix ++ e27
+  s24: do-while e31
+    s23: block
+      s22: expr e30: postfix -- e29
+  s28: for
+    s25: decl l4 = e32
+    cond: e35
+    step: e37
+    s27: block
+      s26: expr e40: assign += e38 e39
+  s31: for-each l5 in e41
+    s30: block
+      s29: expr e44: assign += e42 e43
+  s32: switch e45
+  s33: switch e46
+  s34: return none
+body:
+  param l6: int x
+  s37: if e47
+    s35: throw e48
+  s38: return e51
+  l0: int a
+  l1: long b
+  l2: long c
+  l3: String s
+  l4: int i
+  l5: int x

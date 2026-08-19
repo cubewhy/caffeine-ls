@@ -177,7 +177,7 @@ fn check_capture_method() -> String {
 
     let call = |arg_name: &str| {
         let arg = r(&db, arg_name);
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, "add", &[arg], &ctx);
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, "add", &[arg], &ctx, None);
         match picked {
             Some(method) => {
                 let params: Vec<String> = method.params.iter().map(|ty| render(&db, ty)).collect();

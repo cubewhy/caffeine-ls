@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int literals() {
+        int i = 42;
+        long l = 42L;
+        char c = 'x';
+        float f = 1.5f;
+        double d = 1.5;
+        boolean b = true;
+        String s = "hi";
+        Object o = null;
+        Class<?> clazz = String.class;
+        return i;
+    }
+}
+
+method literals(): int
+  locals: l0: int | l1: long | l2: char | l3: float | l4: double | l5: boolean | l6: java.lang.String | l7: java.lang.Object | l8: java.lang.Class<?>
+  exprs: e0: int | e1: long | e2: char | e3: float | e4: double | e5: boolean | e6: java.lang.String | e7: null | e8: java.lang.Class<java.lang.String> | e9: int

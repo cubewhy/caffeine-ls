@@ -412,11 +412,14 @@ pub fn interface_with_methods(
 pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
     vec![
         class("java/lang/Object", None, &[]),
+        class("java/lang/Class", Some("java/lang/Object"), &[]),
         interface("java/lang/CharSequence"),
-        class(
+        class_with_methods(
             "java/lang/String",
             Some("java/lang/Object"),
             &["java/lang/CharSequence"],
+            &[("length", "()I")],
+            &[""],
         ),
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         class("java/lang/Integer", Some("java/lang/Number"), &[]),
@@ -461,6 +464,19 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;Ljava/util/List<TE;>;\
                  Ljava/lang/Cloneable;Ljava/io/Serializable;",
             ),
+        ),
+        class_with_methods(
+            "java/util/Collections",
+            None,
+            &[],
+            &[
+                ("emptyList", "()Ljava/util/List;"),
+                ("sort", "(Ljava/util/List;)V"),
+            ],
+            &[
+                "<T:Ljava/lang/Object;>()Ljava/util/List<TT;>;",
+                "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)V",
+            ],
         ),
     ]
 }
@@ -935,6 +951,7 @@ pub fn check_source_methods(
             name,
             &args,
             &hir_ty::InvocationContext::unconstrained(),
+            None,
         );
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
@@ -976,6 +993,68 @@ pub fn check_source_relations(
     lines.join("\n")
 }
 
+/// Renders the source files and the inferred types of every method body
+/// ([JLS §15], [§14.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4)):
+/// for each method the parameter types, the return type, and the inferred type
+/// of every local and expression of its body, ordered by arena id.
+pub fn check_body_types(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, _) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let tree = hir::file_item_tree(&db, file_id);
+        for (id, data) in all_items(&tree) {
+            let ItemData::Method(method) = data else {
+                continue;
+            };
+            let Some(types) = hir_ty::body_types(&db, file_id, id) else {
+                continue;
+            };
+            let ret = if method.sig.ret.is_none() {
+                "<init>".to_owned()
+            } else {
+                hir_ty::item_ty(&db, file_id, id).display(&db).to_string()
+            };
+            let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
+                .iter()
+                .map(|ty| ty.display(&db).to_string())
+                .collect();
+            lines.push(format!(
+                "method {}({}): {ret}",
+                method.name,
+                params.join(", ")
+            ));
+            let mut locals: Vec<_> = types.locals.iter().collect();
+            locals.sort_by_key(|(id, _)| id.0.0);
+            lines.push(format!(
+                "  locals: {}",
+                locals
+                    .iter()
+                    .map(|(id, ty)| format!("{id}: {}", ty.display(&db)))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ));
+            let mut exprs: Vec<_> = types.exprs.iter().collect();
+            exprs.sort_by_key(|(id, _)| id.0.0);
+            lines.push(format!(
+                "  exprs: {}",
+                exprs
+                    .iter()
+                    .map(|(id, ty)| format!("{id}: {}", ty.display(&db)))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 /// Renders the resolved method call for each `(label, receiver, name, args)`
 /// sample, against the JDK fixture. The receiver and the arguments are
 /// [`TyBuilder`]s rendered after resolution.
@@ -999,6 +1078,7 @@ pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> Strin
                 name,
                 &args,
                 &hir_ty::InvocationContext::unconstrained(),
+                None,
             );
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
@@ -1032,7 +1112,7 @@ pub fn check_source_methods_ctx(
         let receiver = build_receiver(&db);
         let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
         let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx);
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx, None);
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),
@@ -1079,7 +1159,7 @@ pub fn check_methods_lib_ctx(
             let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
             let arg_types: Vec<String> =
                 args.iter().map(|ty| ty.display(&db).to_string()).collect();
-            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx);
+            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx, None);
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
                 None => "<none>".to_owned(),
@@ -1121,7 +1201,7 @@ pub fn check_source_methods_site(
         let receiver = build_receiver(&db);
         let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
         let arg_types: Vec<String> = args.iter().map(|ty| ty.display(&db).to_string()).collect();
-        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx);
+        let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx, None);
         let rendered = match picked {
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),

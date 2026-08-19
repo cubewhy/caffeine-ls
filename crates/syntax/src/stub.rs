@@ -217,6 +217,8 @@ pub struct MethodStub<N> {
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
 pub struct FieldStub<N> {
+    /// The name of the field (from the constant pool).
+    pub name: N,
     pub flags: u16,
     pub field_type: TypeRef<N>,
     pub annotations: Vec<AnnotationSig<N>>,

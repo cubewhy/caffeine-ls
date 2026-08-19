@@ -45,6 +45,12 @@ pub struct TyData {
 pub enum TyKind {
     /// The `void` type ([JLS §4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.3)).
     Void,
+    /// The null type ([JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1),
+    /// [§3.10.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10.8)):
+    /// the type of the null literal, a subtype of every reference and array
+    /// type ([§4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2),
+    /// [§4.10.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.3)).
+    Null,
     /// A primitive type ([JLS §4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.2)).
     Primitive(PrimitiveType),
     /// A reference type `name<args>` with a canonical FQN name. `args` is
@@ -115,6 +121,10 @@ impl Ty {
 
     pub fn void(db: &dyn TyDatabase) -> Self {
         Self::new(db, TyKind::Void)
+    }
+
+    pub fn null(db: &dyn TyDatabase) -> Self {
+        Self::new(db, TyKind::Null)
     }
 
     pub fn primitive(db: &dyn TyDatabase, p: PrimitiveType) -> Self {
@@ -203,6 +213,10 @@ impl Ty {
 
     pub fn is_void(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Void)
+    }
+
+    pub fn is_null(&self, db: &dyn TyDatabase) -> bool {
+        matches!(self.kind(db), TyKind::Null)
     }
 
     pub fn is_primitive(&self, db: &dyn TyDatabase) -> bool {
@@ -308,7 +322,7 @@ impl Ty {
     /// and substituting `E → String` gives `AbstractList<String>`.
     pub fn substitute(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
         match self.kind(db) {
-            TyKind::Void | TyKind::Primitive(_) | TyKind::Error => *self,
+            TyKind::Void | TyKind::Null | TyKind::Primitive(_) | TyKind::Error => *self,
             TyKind::TypeVar { name, .. } => binding.get(name).copied().unwrap_or(*self),
             TyKind::Reference { name, args } => {
                 let args: Vec<Ty> = args.iter().map(|arg| arg.substitute(db, binding)).collect();
@@ -436,6 +450,7 @@ impl fmt::Display for TyDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.ty.kind(self.db) {
             TyKind::Void => f.write_str("void"),
+            TyKind::Null => f.write_str("null"),
             TyKind::Primitive(p) => f.write_str(primitive_name(*p)),
             TyKind::Reference { name, args } => {
                 f.write_str(name.as_str())?;

@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int identity(int x) {
+        return x;
+    }
+
+    String concat(String a, String b) {
+        return a + b;
+    }
+
+    int call() {
+        int x = identity(7);
+        String s = concat("a", "b");
+        int len = s.length();
+        Body other = new Body();
+        int y = other.identity(x);
+        return y;
+    }
+}
+
+method identity(int): int
+  locals: l0: int
+  exprs: e0: int
+method concat(java.lang.String, java.lang.String): java.lang.String
+  locals: l1: java.lang.String | l2: java.lang.String
+  exprs: e1: java.lang.String | e2: java.lang.String | e3: java.lang.String
+method call(): int
+  locals: l3: int | l4: java.lang.String | l5: int | l6: com.example.Body | l7: int
+  exprs: e4: int | e5: int | e6: java.lang.String | e7: java.lang.String | e8: java.lang.String | e9: java.lang.String | e10: int | e11: com.example.Body | e12: int | e13: com.example.Body | e14: int | e15: int

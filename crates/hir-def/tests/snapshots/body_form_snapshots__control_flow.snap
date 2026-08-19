@@ -1,0 +1,62 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m(int a) {
+        lbl: for (int i = 0; ; i++) {
+            if (i == 3) break lbl;
+            if (i % 2 == 0) continue;
+            assert a > 0 : "msg";
+            synchronized (this) { a++; }
+            try {
+                risky();
+            } catch (Exception e) {
+                a = 1;
+            } finally {
+                a = 2;
+            }
+        }
+    }
+    void n() throws Exception { }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..433
+  method m(int a) -> void @12..397
+  method n() -> void throws Exception @397..431
+
+BODIES:
+body:
+  param l0: int a
+  s20: label s19 @label0
+    s19: for
+      s0: decl l1 = e0
+      cond: none
+      step: e2
+      s18: block
+        s3: if e3
+          s1: break label0
+        s6: if e4
+          s4: continue unlabeled
+        s7: assert e7 msg e8
+        s10: synchronized e9
+          s9: block
+            s8: expr e11: postfix ++ e10
+        s17: try resources []
+          s12: block
+            s11: expr e12: call risky()
+          catch l2
+            s14: block
+              s13: expr e15: assign = e13 e14
+        s17: finally
+          s16: block
+            s15: expr e18: assign = e16 e17
+body:
+  l1: int i
+  l2: Exception e

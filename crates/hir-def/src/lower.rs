@@ -4,7 +4,11 @@
 //! walkers allocate items into it in CST order.
 
 use base_db::LanguageKind;
-use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
+use hir_expand::{
+    body::{BodyTree, LabelId},
+    item_tree::{ItemData, ItemId, ItemTree},
+    name::Name,
+};
 use syntax::SourceFile;
 
 pub mod java;
@@ -12,6 +16,11 @@ pub mod kotlin;
 
 pub struct LowerCtx {
     pub tree: ItemTree,
+    pub bodies: BodyTree,
+    /// The labels currently in scope, innermost last, so that `break`/`continue`
+    /// statements resolve to the [`LabelId`] of their enclosing labeled
+    /// statement ([JLS §14.15](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.15)).
+    pub labels: Vec<(Name, LabelId)>,
 }
 
 impl LowerCtx {
@@ -21,6 +30,8 @@ impl LowerCtx {
                 language,
                 ..Default::default()
             },
+            bodies: BodyTree::default(),
+            labels: Vec::new(),
         }
     }
 
@@ -45,5 +56,6 @@ pub fn lower_source(language: LanguageKind, text: &str) -> ItemTree {
         SourceFile::Java(file) => java::lower_file(&mut ctx, &file),
         SourceFile::Kotlin(_) => kotlin::lower_file(&mut ctx),
     }
+    ctx.tree.bodies = std::sync::Arc::new(ctx.bodies);
     ctx.tree
 }

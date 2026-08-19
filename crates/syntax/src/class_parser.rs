@@ -238,6 +238,7 @@ impl<'a> ClassParser<'a> {
         });
 
         FieldStub {
+            name: self.interner.get_or_intern(&node.name),
             flags: node.access_flags,
             field_type,
             annotations: self.map_annotations(&node.attributes, constant_pool),

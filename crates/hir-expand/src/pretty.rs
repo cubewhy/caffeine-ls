@@ -6,7 +6,11 @@
 use syntax::stub::{PrimitiveType, TypeBound, TypeParameter, TypeRef};
 
 use crate::{
-    item_tree::{ItemData, ItemTree, LanguageKind, ModuleData, Signature},
+    body::{
+        AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PostfixOp,
+        StmtData, StmtId, UnaryOp,
+    },
+    item_tree::{ItemData, ItemId, ItemTree, LanguageKind, ModuleData, Signature},
     modifiers::Modifiers,
     name::Name,
 };
@@ -392,5 +396,425 @@ pub fn render_primitive(prim: PrimitiveType) -> &'static str {
         PrimitiveType::Char => "char",
         PrimitiveType::Short => "short",
         PrimitiveType::Void => "void",
+    }
+}
+
+/// A stable, human-readable rendering of the lowered bodies of a file's
+/// `ItemTree`, the snapshot surface for the body IR. Expression, statement and
+/// local ids print via [`Display`] (`e5`, `s3`, `l0`); the arena is filled in
+/// CST order, so the output is deterministic for a given source file.
+pub fn pretty_body(tree: &ItemTree) -> String {
+    let mut out = String::new();
+    let bodies: &BodyTree = tree.bodies.as_ref();
+    for (_id, body) in bodies.bodies.iter() {
+        out.push_str("body:\n");
+        for &param in &body.params {
+            let local = bodies.local(param);
+            out.push_str(&format!(
+                "  param {param}: {} {}\n",
+                render_type(&local.ty.clone().unwrap_or(TypeRef::Error)),
+                local.name,
+            ));
+        }
+        for &stmt in &body.stmts {
+            render_stmt(&mut out, bodies, stmt, 1);
+        }
+    }
+    for (local_id, local) in bodies.locals.iter() {
+        let declared: Vec<_> = bodies
+            .bodies
+            .iter()
+            .flat_map(|(_, b)| b.params.iter().copied())
+            .collect();
+        if !declared.contains(&LocalId(local_id)) {
+            let id = LocalId(local_id);
+            out.push_str(&format!(
+                "  {id}: {} {}\n",
+                render_type(&local.ty.clone().unwrap_or(TypeRef::Error)),
+                local.name,
+            ));
+        }
+    }
+    for &top in &tree.top {
+        render_orphan_initializers(&mut out, tree, top, 0);
+    }
+    out
+}
+
+/// Renders expressions that live in the shared expr arena but belong to no
+/// [`Body`]: field initializers, enum constant arguments and annotation
+/// element defaults.
+fn render_orphan_initializers(out: &mut String, tree: &ItemTree, id: ItemId, depth: usize) {
+    let indent = "  ".repeat(depth);
+    match tree.data(id) {
+        ItemData::Field(f) => {
+            if let Some(e) = f.initializer_expr {
+                out.push_str(&format!("{indent}field {}: initializer ", f.name));
+                render_expr(out, tree.bodies.as_ref(), e);
+                out.push('\n');
+            }
+        }
+        ItemData::EnumConstant(c) => {
+            if !c.argument_exprs.is_empty() {
+                out.push_str(&format!("{indent}constant {}: arguments [", c.name));
+                out.push_str(
+                    &c.argument_exprs
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                out.push_str("]\n");
+                for e in &c.argument_exprs {
+                    out.push_str(&format!("{indent}  "));
+                    render_expr(out, tree.bodies.as_ref(), *e);
+                    out.push('\n');
+                }
+            }
+        }
+        ItemData::Method(m) => {
+            if let Some(e) = m.default_expr {
+                out.push_str(&format!("{indent}method {}: default ", m.name));
+                render_expr(out, tree.bodies.as_ref(), e);
+                out.push('\n');
+            }
+        }
+        _ => {}
+    }
+    for &child in tree.data(id).body() {
+        render_orphan_initializers(out, tree, child, depth + 1);
+    }
+}
+
+fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
+    let indent = "  ".repeat(depth);
+    let data = bodies.stmt(id);
+    match data {
+        StmtData::Empty => out.push_str(&format!("{indent}{id}: empty\n")),
+        StmtData::Block(stmts) => {
+            out.push_str(&format!("{indent}{id}: block\n"));
+            for &s in stmts {
+                render_stmt(out, bodies, s, depth + 1);
+            }
+        }
+        StmtData::Decl { local, initializer } => {
+            out.push_str(&format!(
+                "{indent}{id}: decl {local} = {}\n",
+                initializer
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "none".to_owned()),
+            ));
+        }
+        StmtData::Expr(e) => {
+            out.push_str(&format!("{indent}{id}: expr "));
+            render_expr(out, bodies, *e);
+            out.push('\n');
+        }
+        StmtData::Labeled { label, stmt } => {
+            out.push_str(&format!("{indent}{id}: label {stmt} @{label}\n"));
+            render_stmt(out, bodies, *stmt, depth + 1);
+        }
+        StmtData::If { cond, then, els } => {
+            out.push_str(&format!("{indent}{id}: if {cond}\n"));
+            render_stmt(out, bodies, *then, depth + 1);
+            if let Some(els) = els {
+                out.push_str(&format!("{indent}{id}: else\n"));
+                render_stmt(out, bodies, *els, depth + 1);
+            }
+        }
+        StmtData::While { cond, body } => {
+            out.push_str(&format!("{indent}{id}: while {cond}\n"));
+            render_stmt(out, bodies, *body, depth + 1);
+        }
+        StmtData::DoWhile { body, cond } => {
+            out.push_str(&format!("{indent}{id}: do-while {cond}\n"));
+            render_stmt(out, bodies, *body, depth + 1);
+        }
+        StmtData::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
+            out.push_str(&format!("{indent}{id}: for\n"));
+            for &i in init {
+                render_stmt(out, bodies, i, depth + 1);
+            }
+            out.push_str(&format!(
+                "{indent}  cond: {}\n",
+                cond.map(|e| e.to_string())
+                    .unwrap_or_else(|| "none".to_owned())
+            ));
+            out.push_str(&format!(
+                "{indent}  step: {}\n",
+                step.iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            render_stmt(out, bodies, *body, depth + 1);
+        }
+        StmtData::ForEach {
+            var,
+            iterable,
+            body,
+        } => {
+            out.push_str(&format!("{indent}{id}: for-each {var} in {iterable}\n"));
+            render_stmt(out, bodies, *body, depth + 1);
+        }
+        StmtData::Switch { scrutinee, arms } => {
+            out.push_str(&format!("{indent}{id}: switch {scrutinee}\n"));
+            for arm in arms {
+                out.push_str(&format!(
+                    "{indent}  case [{}] ->\n",
+                    arm.labels
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                for &s in &arm.body {
+                    render_stmt(out, bodies, s, depth + 2);
+                }
+            }
+        }
+        StmtData::Return(e) => {
+            out.push_str(&format!(
+                "{indent}{id}: return {}\n",
+                e.map(|e| e.to_string())
+                    .unwrap_or_else(|| "none".to_owned())
+            ));
+        }
+        StmtData::Throw(e) => out.push_str(&format!("{indent}{id}: throw {e}\n")),
+        StmtData::Break(l) => out.push_str(&format!(
+            "{indent}{id}: break {}\n",
+            l.map(|l| l.to_string())
+                .unwrap_or_else(|| "unlabeled".to_owned())
+        )),
+        StmtData::Continue(l) => out.push_str(&format!(
+            "{indent}{id}: continue {}\n",
+            l.map(|l| l.to_string())
+                .unwrap_or_else(|| "unlabeled".to_owned())
+        )),
+        StmtData::Yield(e) => out.push_str(&format!("{indent}{id}: yield {e}\n")),
+        StmtData::Synchronized { expr, body } => {
+            out.push_str(&format!("{indent}{id}: synchronized {expr}\n"));
+            render_stmt(out, bodies, *body, depth + 1);
+        }
+        StmtData::Try {
+            resources,
+            body,
+            catches,
+            finally,
+        } => {
+            out.push_str(&format!(
+                "{indent}{id}: try resources [{}]\n",
+                resources
+                    .iter()
+                    .map(|r| r.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            render_stmt(out, bodies, *body, depth + 1);
+            for catch in catches {
+                out.push_str(&format!("{indent}  catch {}\n", catch.param));
+                render_stmt(out, bodies, catch.body, depth + 2);
+            }
+            if let Some(finally) = finally {
+                out.push_str(&format!("{indent}{id}: finally\n"));
+                render_stmt(out, bodies, *finally, depth + 1);
+            }
+        }
+        StmtData::Assert { cond, msg } => {
+            out.push_str(&format!(
+                "{indent}{id}: assert {cond} msg {}\n",
+                msg.map(|e| e.to_string())
+                    .unwrap_or_else(|| "none".to_owned())
+            ));
+        }
+        StmtData::Missing => out.push_str(&format!("{indent}{id}: <missing>\n")),
+    }
+}
+
+fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
+    let data = bodies.expr(id);
+    match data {
+        ExprData::Literal(lit) => out.push_str(&format!("{id}: literal {}", render_literal(*lit))),
+        ExprData::Null => out.push_str(&format!("{id}: null")),
+        ExprData::This { qualifier } => out.push_str(&format!(
+            "{id}: this {}",
+            qualifier.as_ref().map(render_type).unwrap_or_default()
+        )),
+        ExprData::Super => out.push_str(&format!("{id}: super")),
+        ExprData::ClassLit(ty) => out.push_str(&format!("{id}: class-lit {}", render_type(ty))),
+        ExprData::Var(name) => out.push_str(&format!("{id}: var {name}")),
+        ExprData::NamePath(name) => out.push_str(&format!("{id}: name-path {name}")),
+        ExprData::FieldAccess { target, name } => out.push_str(&format!(
+            "{id}: field-access {}.{name}",
+            target
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "implicit".to_owned())
+        )),
+        ExprData::ArrayAccess { array, index } => {
+            out.push_str(&format!("{id}: array-access {array}[{index}]"))
+        }
+        ExprData::MethodCall {
+            receiver,
+            name,
+            args,
+            type_args: _,
+        } => out.push_str(&format!(
+            "{id}: call {}{name}({})",
+            receiver.map(|e| format!("{e}.")).unwrap_or_default(),
+            args.iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ExprData::New { ty, args } => out.push_str(&format!(
+            "{id}: new {}({})",
+            render_type(ty),
+            args.iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ExprData::NewArray { ty, dims } => out.push_str(&format!(
+            "{id}: new-array {}[{}]",
+            render_type(ty),
+            dims.iter()
+                .map(|d| d.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ExprData::ArrayInit(elems) => out.push_str(&format!(
+            "{id}: array-init {{{}}}",
+            elems
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        ExprData::Unary { op, expr } => {
+            out.push_str(&format!("{id}: unary {} {expr}", render_unary(*op)))
+        }
+        ExprData::Postfix { op, expr } => {
+            out.push_str(&format!("{id}: postfix {} {expr}", render_postfix(*op)))
+        }
+        ExprData::Binary { op, lhs, rhs } => {
+            out.push_str(&format!("{id}: binary {} {lhs} {rhs}", render_binary(*op)))
+        }
+        ExprData::Assign { op, lhs, rhs } => {
+            out.push_str(&format!("{id}: assign {} {lhs} {rhs}", render_assign(*op)))
+        }
+        ExprData::Cast { ty, expr } => {
+            out.push_str(&format!("{id}: cast ({}) {expr}", render_type(ty)))
+        }
+        ExprData::InstanceOf { expr, ty } => {
+            out.push_str(&format!("{id}: instanceof {expr} {}", render_type(ty)))
+        }
+        ExprData::Conditional { cond, then, els } => {
+            out.push_str(&format!("{id}: conditional {cond} ? {then} : {els}"))
+        }
+        ExprData::Lambda { params, body } => out.push_str(&format!(
+            "{id}: lambda ({}) -> {}",
+            params
+                .iter()
+                .map(|(name, ty)| ty
+                    .as_ref()
+                    .map(|t| format!("{} {}", render_type(t), name))
+                    .unwrap_or_else(|| name.to_string()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            match body {
+                LambdaBody::Expr(e) => e.to_string(),
+                LambdaBody::Block(s) => s.to_string(),
+            }
+        )),
+        ExprData::MethodRef {
+            qualifier: _,
+            type_name,
+            name,
+        } => out.push_str(&format!(
+            "{id}: method-ref {}\\::{name}",
+            type_name.as_ref().map(render_type).unwrap_or_default()
+        )),
+        ExprData::Switch { scrutinee, arms } => out.push_str(&format!(
+            "{id}: switch-expr {scrutinee} ({} arm(s))",
+            arms.len()
+        )),
+        ExprData::Paren(e) => out.push_str(&format!("{id}: paren {e}")),
+        ExprData::Missing => out.push_str(&format!("{id}: <missing>")),
+    }
+}
+
+fn render_literal(lit: Literal) -> &'static str {
+    match lit {
+        Literal::Int => "int",
+        Literal::Long => "long",
+        Literal::Char => "char",
+        Literal::Float => "float",
+        Literal::Double => "double",
+        Literal::Boolean => "boolean",
+        Literal::Str => "string",
+    }
+}
+
+fn render_unary(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Plus => "+",
+        UnaryOp::Minus => "-",
+        UnaryOp::BitNot => "~",
+        UnaryOp::Not => "!",
+        UnaryOp::Inc => "++",
+        UnaryOp::Dec => "--",
+    }
+}
+
+fn render_postfix(op: PostfixOp) -> &'static str {
+    match op {
+        PostfixOp::Inc => "++",
+        PostfixOp::Dec => "--",
+    }
+}
+
+fn render_binary(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+        BinaryOp::UShr => ">>>",
+        BinaryOp::Lt => "<",
+        BinaryOp::Gt => ">",
+        BinaryOp::Le => "<=",
+        BinaryOp::Ge => ">=",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitXor => "^",
+        BinaryOp::BitOr => "|",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
+    }
+}
+
+fn render_assign(op: AssignOp) -> &'static str {
+    match op {
+        AssignOp::Assign => "=",
+        AssignOp::Mul => "*=",
+        AssignOp::Div => "/=",
+        AssignOp::Rem => "%=",
+        AssignOp::Add => "+=",
+        AssignOp::Sub => "-=",
+        AssignOp::Shl => "<<=",
+        AssignOp::Shr => ">>=",
+        AssignOp::UShr => ">>>=",
+        AssignOp::BitAnd => "&=",
+        AssignOp::BitXor => "^=",
+        AssignOp::BitOr => "|=",
     }
 }

@@ -70,6 +70,11 @@ pub(crate) struct Inference {
     /// it directs resolution to prefer an unchecked exception type
     /// ([§18.4], [§18.5.2.3]).
     throws: FxHashSet<u64>,
+    /// The equalities incorporated eagerly ([§18.3.1]). `incorporate`
+    /// substitutes an equality into the bound set and removes the variable, so
+    /// `resolve` can no longer see it; the applied substitution is recorded
+    /// here and merged into the resolved instantiation.
+    applied: FxHashMap<u64, Ty>,
 }
 
 impl Inference {
@@ -77,6 +82,7 @@ impl Inference {
         Self {
             bounds: FxHashMap::default(),
             throws: FxHashSet::default(),
+            applied: FxHashMap::default(),
         }
     }
 
@@ -413,6 +419,7 @@ impl Inference {
                         .as_ref()
                         .map(|t| t.substitute_infer(db, &subst));
                 }
+                self.applied.insert(id, eq);
                 self.bounds.remove(&id);
                 changed = true;
             }
@@ -449,7 +456,10 @@ impl Inference {
         db: &dyn TyDatabase,
         scope: &hir::ResolutionScope,
     ) -> Option<FxHashMap<u64, Ty>> {
-        let mut subst: FxHashMap<u64, Ty> = FxHashMap::default();
+        // The equalities incorporated eagerly are no longer in the bound set;
+        // seed the substitution with them so the caller's instantiation sees
+        // the resolved values.
+        let mut subst: FxHashMap<u64, Ty> = self.applied.clone();
         let ids: Vec<u64> = self.bounds.keys().copied().collect();
         loop {
             let mut progress = false;
@@ -494,6 +504,25 @@ impl Inference {
                     )?;
                     subst.insert(id, inst);
                 }
+            }
+        }
+        // The incorporated equalities can reference each other and the
+        // resolved variables; substitute the values to a fixpoint so the
+        // instantiation is fully resolved.
+        let keys: Vec<u64> = subst.keys().copied().collect();
+        loop {
+            let mut changed = false;
+            for key in &keys {
+                if let Some(value) = subst.get(key).copied() {
+                    let updated = value.substitute_infer(db, &subst);
+                    if subst.get(key).copied() != Some(updated) {
+                        subst.insert(*key, updated);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
         Some(subst)

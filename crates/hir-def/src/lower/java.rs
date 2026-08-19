@@ -2,8 +2,9 @@
 //!
 //! The walker mirrors the parser grammar: `TYPE`, `MODIFIER_LIST`,
 //! `TYPE_PARAMETERS`, the various `*_CLAUSE`s and the declaration nodes. The
-//! tree is a *declaration* IR: bodies and initializer expressions are dropped
-//! and only their source ranges are kept.
+//! tree is a *declaration* IR: method bodies and initializer expressions are
+//! lowered into the per-file body tree ([`crate::lower::java::body`]) and the
+//! source ranges of every declaration are kept.
 
 use java_syntax::{Lang, SyntaxKind as J};
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
@@ -20,6 +21,8 @@ use hir_expand::{
 };
 
 use crate::lower::LowerCtx;
+
+pub(super) mod body;
 
 pub(super) fn lower_file(ctx: &mut LowerCtx, file: &java_syntax::SourceFile) {
     for child in file.syntax_node.children() {
@@ -72,13 +75,33 @@ fn lower_import(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) {
 /// for node kinds that carry no items (`EMPTY_DECL`, `ERROR`).
 fn lower_member(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     if is(node, J::STATIC_INITIALIZER) {
-        Some(ctx.alloc(ItemData::StaticInit(StaticInitData {
+        let block = node.children().find(|child| is(child, J::BLOCK));
+        let id = ctx.alloc(ItemData::StaticInit(StaticInitData {
+            body: None,
             range: node.text_range(),
-        })))
+        }));
+        if let Some(block) = block {
+            let body = body::lower_initializer_body(ctx, id, &block);
+            let ItemData::StaticInit(data) = ctx.tree.items.get_mut(id.0) else {
+                unreachable!("static initializer");
+            };
+            data.body = body;
+        }
+        Some(id)
     } else if is(node, J::INSTANCE_INITIALIZER) {
-        Some(ctx.alloc(ItemData::InstanceInit(InstanceInitData {
+        let block = node.children().find(|child| is(child, J::BLOCK));
+        let id = ctx.alloc(ItemData::InstanceInit(InstanceInitData {
+            body: None,
             range: node.text_range(),
-        })))
+        }));
+        if let Some(block) = block {
+            let body = body::lower_initializer_body(ctx, id, &block);
+            let ItemData::InstanceInit(data) = ctx.tree.items.get_mut(id.0) else {
+                unreachable!("instance initializer");
+            };
+            data.body = body;
+        }
+        Some(id)
     } else if is(node, J::METHOD_DECL) {
         lower_method(ctx, node)
     } else if is(node, J::CONSTRUCTOR_DECL) {
@@ -211,16 +234,28 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
         ret,
         throws: clause_types(node, J::THROWS_CLAUSE),
     };
-    let body = child_block_range(node);
-    Some(ctx.alloc(ItemData::Method(MethodData {
+    let block = node.children().find(|child| is(child, J::BLOCK));
+    let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
         sig,
         is_constructor: false,
-        body,
+        body: None,
         default_value: None,
+        default_expr: None,
         range: node.text_range(),
-    })))
+    }));
+    if let Some(block) = block {
+        let params = node
+            .children()
+            .find(|child| is(child, J::FORMAL_PARAMETERS));
+        let body = body::lower_method_body(ctx, id, &block, params.as_ref());
+        let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("method");
+        };
+        data.body = Some(body);
+    }
+    Some(id)
 }
 
 fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool) -> Option<ItemId> {
@@ -240,16 +275,31 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
             clause_types(node, J::THROWS_CLAUSE)
         },
     };
-    let body = child_block_range(node);
-    Some(ctx.alloc(ItemData::Method(MethodData {
+    let block = node.children().find(|child| is(child, J::BLOCK));
+    let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
         sig,
         is_constructor: true,
-        body,
+        body: None,
         default_value: None,
+        default_expr: None,
         range: node.text_range(),
-    })))
+    }));
+    if let Some(block) = block {
+        let params = if compact {
+            None
+        } else {
+            node.children()
+                .find(|child| is(child, J::FORMAL_PARAMETERS))
+        };
+        let body = body::lower_method_body(ctx, id, &block, params.as_ref());
+        let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("constructor");
+        };
+        data.body = Some(body);
+    }
+    Some(id)
 }
 
 fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
@@ -260,7 +310,7 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
         .find(|child| is(child, J::TYPE))
         .map(|child| type_from(&child));
     let default_value = token_range_after(node, J::DEFAULT_KW, J::SEMICOLON);
-    Some(ctx.alloc(ItemData::Method(MethodData {
+    let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
         sig: Signature {
@@ -272,8 +322,18 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
         is_constructor: false,
         body: None,
         default_value,
+        default_expr: None,
         range: node.text_range(),
-    })))
+    }));
+    if let Some(value_node) = body::find_expression_child(node)
+        && let Some(expr_id) = body::lower_expr(ctx, id, &value_node)
+    {
+        let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+            unreachable!("annotation element");
+        };
+        data.default_expr = Some(expr_id);
+    }
+    Some(id)
 }
 
 fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> {
@@ -307,13 +367,24 @@ fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> 
             .filter_map(|element| element.as_token().cloned())
             .find(|token| token_is(token, J::EQUAL))
             .map(|equal| TextRange::new(equal.text_range().end(), declarator.text_range().end()));
-        ids.push(ctx.alloc(ItemData::Field(FieldData {
+        let expr_slot = body::find_expression_child(&declarator);
+        let field_id = ctx.alloc(ItemData::Field(FieldData {
             name,
             modifiers,
             ty,
             initializer,
+            initializer_expr: None,
             range: declarator.text_range(),
-        })));
+        }));
+        if let Some(expr_node) = expr_slot
+            && let Some(expr_id) = body::lower_expr(ctx, field_id, &expr_node)
+        {
+            let ItemData::Field(data) = ctx.tree.items.get_mut(field_id.0) else {
+                unreachable!("field");
+            };
+            data.initializer_expr = Some(expr_id);
+        }
+        ids.push(field_id);
     }
     ids
 }
@@ -333,12 +404,25 @@ fn enum_body_members(ctx: &mut LowerCtx, body: &SyntaxNode<Lang>) -> Vec<ItemId>
                 .children()
                 .find(|nested| is(nested, J::CLASS_BODY))
                 .map(|nested| nested.text_range());
-            ids.push(ctx.alloc(ItemData::EnumConstant(EnumConstantData {
+            let constant_id = ctx.alloc(ItemData::EnumConstant(EnumConstantData {
                 name,
                 arguments,
+                argument_exprs: Vec::new(),
                 class_body,
                 range: child.text_range(),
-            })));
+            }));
+            if let Some(list) = child.children().find(|nested| is(nested, J::ARGUMENT_LIST)) {
+                let exprs: Vec<_> = list
+                    .children()
+                    .filter(|arg| body::is_expr_kind(arg.kind()))
+                    .filter_map(|arg| body::lower_expr(ctx, constant_id, &arg))
+                    .collect();
+                let ItemData::EnumConstant(data) = ctx.tree.items.get_mut(constant_id.0) else {
+                    unreachable!("enum constant");
+                };
+                data.argument_exprs = exprs;
+            }
+            ids.push(constant_id);
         } else if let Some(id) = lower_member(ctx, &child) {
             ids.push(id);
         }
@@ -476,19 +560,19 @@ fn provides_from(directive: &SyntaxNode<Lang>) -> ModuleProvides {
 
 // --- helpers ---
 
-fn is(node: &SyntaxNode<Lang>, kind: J) -> bool {
+pub(super) fn is(node: &SyntaxNode<Lang>, kind: J) -> bool {
     node.kind() == kind
 }
 
-fn token_is(token: &SyntaxToken<Lang>, kind: J) -> bool {
+pub(super) fn token_is(token: &SyntaxToken<Lang>, kind: J) -> bool {
     token.kind() == kind
 }
 
-fn token_text(token: &SyntaxToken<Lang>, text: &str) -> bool {
+pub(super) fn token_text(token: &SyntaxToken<Lang>, text: &str) -> bool {
     token.text() == text
 }
 
-fn trimmed_text(node: &SyntaxNode<Lang>) -> String {
+pub(super) fn trimmed_text(node: &SyntaxNode<Lang>) -> String {
     node.text().to_string().trim().to_owned()
 }
 
@@ -509,7 +593,7 @@ fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
     None
 }
 
-fn first_token(node: &SyntaxNode<Lang>, kind: J) -> Option<SyntaxToken<Lang>> {
+pub(super) fn first_token(node: &SyntaxNode<Lang>, kind: J) -> Option<SyntaxToken<Lang>> {
     for element in node.children_with_tokens() {
         if let Some(token) = element.as_token()
             && token.kind() == kind
@@ -647,12 +731,6 @@ fn qualified_name_text(node: &SyntaxNode<Lang>) -> Option<Name> {
         .map(|child| Name::new(&trimmed_text(&child)))
 }
 
-fn child_block_range(node: &SyntaxNode<Lang>) -> Option<TextRange> {
-    node.children()
-        .find(|child| is(child, J::BLOCK))
-        .map(|block| block.text_range())
-}
-
 /// Range from the end of the first `start_kind` token to the start of the
 /// first `end_kind` token (or the end of the node).
 fn token_range_after(node: &SyntaxNode<Lang>, start_kind: J, end_kind: J) -> Option<TextRange> {
@@ -668,7 +746,7 @@ fn token_range_after(node: &SyntaxNode<Lang>, start_kind: J, end_kind: J) -> Opt
     Some(TextRange::new(start, end))
 }
 
-fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
+pub(super) fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
     if !is(node, J::TYPE) {
         return TypeRef::Error;
     }

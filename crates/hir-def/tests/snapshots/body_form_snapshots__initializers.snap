@@ -1,0 +1,47 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    int a = 1;
+    int[] b = { 1, 2, 3 };
+    String s = "x" + "y";
+    static { int x = 1; }
+    { int y = 2; }
+    enum E { A(1), B(2) }
+    @interface Anno { int value() default 1; }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..200
+  field a: int initializer @24..26 @21..26
+  field b: int[] initializer @41..53 @38..53
+  field s: String initializer @69..79 @66..79
+  static block @80..106
+  instance block @106..125
+  enum E @125..151
+    constant A arguments @140..143 @138..143
+    constant B arguments @146..149 @144..149
+  @interface Anno @151..198
+    method value() -> int default @193..195 @173..196
+
+BODIES:
+body:
+  s0: decl l0 = e8
+body:
+  s1: decl l1 = e9
+  l0: int x
+  l1: int y
+  field a: initializer e0: literal int
+  field b: initializer e4: array-init {e1, e2, e3}
+  field s: initializer e7: binary + e5 e6
+    constant A: arguments [e10]
+      e10: literal int
+    constant B: arguments [e11]
+      e11: literal int
+    method value: default e12: literal int

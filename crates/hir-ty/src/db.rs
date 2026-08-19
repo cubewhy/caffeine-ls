@@ -201,3 +201,16 @@ pub(crate) fn method_params_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db
         _ => Vec::new(),
     }
 }
+
+/// The inferred types of the expressions and locals of the body of `item` in
+/// `file` ([JLS §15], [§14.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4)),
+/// memoized per (file, item). See [`crate::infer::body_types_impl`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn body_types_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: ItemKey<'db>,
+) -> Option<Arc<crate::infer::BodyTypes>> {
+    let file_id = key.file(db);
+    let item_id = key.item(db);
+    crate::infer::body_types_impl(db, file_id, item_id).map(Arc::new)
+}

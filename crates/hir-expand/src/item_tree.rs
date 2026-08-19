@@ -2,14 +2,19 @@
 //!
 //! Lowering turns a language's CST into this flat, arena-based IR: every
 //! top-level type, member, field, enum constant, initializer and module
-//! directive gets a stable [`ItemId`]. Method bodies are dropped; only their
-//! source range is kept so IDE features can map items back to source.
+//! directive gets a stable [`ItemId`]. Method bodies and initializer
+//! expressions are lowered into the per-file [`crate::body::BodyTree`]
+//! embedded in the tree, keeping the source range of each declaration so IDE
+//! features can map items back to source.
+
+use std::sync::Arc;
 
 use rowan::TextRange;
 use syntax::stub::{RecordComponentData, TypeParameter, TypeRef};
 
 use crate::{
     arena::{Arena, ArenaId},
+    body::{BodyId, BodyTree, ExprId},
     modifiers::Modifiers,
     name::Name,
 };
@@ -38,6 +43,11 @@ pub struct ItemTree {
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
     pub items: Arena<ItemData>,
+    /// The lowered bodies of the file's methods, initializers, field
+    /// initializers, enum constant arguments and annotation defaults
+    /// ([JLS §14](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html),
+    /// [§15](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html)).
+    pub bodies: Arc<BodyTree>,
 }
 
 impl Default for ItemTree {
@@ -48,6 +58,7 @@ impl Default for ItemTree {
             imports: Vec::new(),
             top: Vec::new(),
             items: Arena::default(),
+            bodies: Arc::default(),
         }
     }
 }
@@ -180,15 +191,16 @@ pub struct Param {
 
 /// A method, constructor or annotation element. `is_constructor` is `true` for
 /// constructors and compact constructors; annotation elements carry a
-/// `default_value` range.
+/// `default_value` range and expression.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodData {
     pub name: Name,
     pub modifiers: Modifiers,
     pub sig: Signature,
     pub is_constructor: bool,
-    pub body: Option<TextRange>,
+    pub body: Option<BodyId>,
     pub default_value: Option<TextRange>,
+    pub default_expr: Option<ExprId>,
     pub range: TextRange,
 }
 
@@ -198,6 +210,7 @@ pub struct FieldData {
     pub modifiers: Modifiers,
     pub ty: TypeRef<Name>,
     pub initializer: Option<TextRange>,
+    pub initializer_expr: Option<ExprId>,
     pub range: TextRange,
 }
 
@@ -205,17 +218,20 @@ pub struct FieldData {
 pub struct EnumConstantData {
     pub name: Name,
     pub arguments: Option<TextRange>,
+    pub argument_exprs: Vec<ExprId>,
     pub class_body: Option<TextRange>,
     pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticInitData {
+    pub body: Option<BodyId>,
     pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInitData {
+    pub body: Option<BodyId>,
     pub range: TextRange,
 }
 

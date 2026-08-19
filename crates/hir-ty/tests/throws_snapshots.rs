@@ -82,7 +82,7 @@ fn check_throws() -> String {
             let args: Vec<Ty> = arg_builders.iter().map(|build| build(&db)).collect();
             let arg_types: Vec<String> =
                 args.iter().map(|ty| ty.display(&db).to_string()).collect();
-            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx);
+            let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx, None);
             let rendered = match picked {
                 Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
                 None => "<none>".to_owned(),

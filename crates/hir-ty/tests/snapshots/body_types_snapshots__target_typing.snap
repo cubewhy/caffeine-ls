@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    List<String> empty() {
+        return Collections.emptyList();
+    }
+
+    void use() {
+        List<String> list = Collections.emptyList();
+        Collections.sort(list);
+        Collections.sort(new ArrayList<String>());
+        Collections.emptyList();
+    }
+}
+
+method empty(): java.util.List<java.lang.String>
+  locals: 
+  exprs: e1: java.util.List<java.lang.String>
+method use(): void
+  locals: l0: java.util.List<java.lang.String>
+  exprs: e3: java.util.List<java.lang.String> | e4: java.util.List<java.lang.String> | e6: void | e7: java.util.ArrayList<java.lang.String> | e9: void | e11: java.util.List<java.lang.Object>

@@ -1,0 +1,64 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    int m() {
+        int a = 1 + 2 * 3;
+        long b = 1L << 2;
+        boolean c = a > 0 && b >= 2 || !c;
+        int d = (int) b;
+        int e = c ? 1 : 2;
+        int[] arr = new int[3];
+        int f = arr[1];
+        int g = (a).getClass().hashCode();
+        String h = "a" + "b";
+        Object i = "x" instanceof String;
+        Runnable r = (int x, int y) -> x + y;
+        Object j = Runnable::run;
+        Foo k = new Foo();
+        int l = this.m();
+        return a;
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..504
+  method m() -> int @12..502
+
+BODIES:
+body:
+  s0: decl l0 = e4
+  s1: decl l1 = e7
+  s2: decl l2 = e17
+  s3: decl l3 = e19
+  s4: decl l4 = e23
+  s5: decl l5 = e25
+  s6: decl l6 = e28
+  s7: decl l7 = e32
+  s8: decl l8 = e35
+  s9: decl l9 = e37
+  s10: decl l10 = e41
+  s11: decl l11 = e43
+  s12: decl l12 = e44
+  s13: decl l13 = e46
+  s14: return e47
+  l0: int a
+  l1: long b
+  l2: boolean c
+  l3: int d
+  l4: int e
+  l5: int[] arr
+  l6: int f
+  l7: int g
+  l8: String h
+  l9: Object i
+  l10: Runnable r
+  l11: Object j
+  l12: Foo k
+  l13: int l

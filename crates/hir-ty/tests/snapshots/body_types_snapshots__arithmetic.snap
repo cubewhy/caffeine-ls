@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int arithmetic(byte a, short b, char c, long lo) {
+        int i = a + b;
+        long j = a + lo;
+        double d = 1 + 2.5;
+        float f = a + 1.0f;
+        int neg = -a;
+        int shl = a << 2;
+        boolean big = a > b;
+        boolean eq = a == b;
+        String s = "x" + i;
+        return i;
+    }
+}
+
+method arithmetic(byte, short, char, long): int
+  locals: l0: byte | l1: short | l2: char | l3: long | l4: int | l5: long | l6: double | l7: float | l8: int | l9: int | l10: boolean | l11: boolean | l12: java.lang.String
+  exprs: e0: byte | e1: short | e2: int | e3: byte | e4: long | e5: long | e6: int | e7: double | e8: double | e9: byte | e10: float | e11: float | e12: byte | e13: int | e14: byte | e15: int | e16: int | e17: byte | e18: short | e19: boolean | e20: byte | e21: short | e22: boolean | e23: java.lang.String | e24: int | e25: java.lang.String | e26: int

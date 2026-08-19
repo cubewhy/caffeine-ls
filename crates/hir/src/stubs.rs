@@ -169,6 +169,7 @@ impl<'a> StubStringTable<'a> {
 
     pub fn field(&mut self, f: &FieldStub<Symbol>) -> FieldStub<u32> {
         FieldStub {
+            name: self.symbol(f.name),
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -375,6 +376,7 @@ impl<'a> DiskResolver<'a> {
 
     pub fn field(&self, f: &FieldStub<u32>) -> FieldStub<Symbol> {
         FieldStub {
+            name: self.symbol(f.name),
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -514,6 +516,7 @@ mod tests {
                 default_value: None,
             }],
             fields: vec![FieldStub {
+                name: interner.get_or_intern("size"),
                 flags: 0x0001,
                 field_type: TypeRef::Reference {
                     name: interner.get_or_intern("int"),

@@ -263,6 +263,14 @@ pub(crate) fn is_subtype_query(
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
             reference_subtype(db, scope, sub, sup)
         }
+        // §4.10.2/§4.10.3: the null type is a subtype of every reference type
+        // (class, interface, type variable, array and intersection).
+        (TyKind::Null, TyKind::Reference { .. } | TyKind::Array(_) | TyKind::TypeVar { .. }) => {
+            true
+        }
+        (TyKind::Null, TyKind::Intersection(members)) => members
+            .iter()
+            .all(|member| is_subtype_query(db, scope, sub.id, member.id)),
         // §4.10.2: `S <: A & B` iff `S <: A` and `S <: B`; `A & B <: T` iff
         // some member is a subtype of `T` (§4.9). Equal intersections are
         // already handled by the identity check above.
@@ -459,6 +467,8 @@ pub fn is_assignable(
             };
             unboxed == *dst || widening_primitive(unboxed, *dst)
         }
+        // §5.1.4/§5.1.5: the null literal is assignable to any reference type.
+        (TyKind::Null, _) => is_subtype(db, scope, src, dst),
         _ => false,
     }
 }

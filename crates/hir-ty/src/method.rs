@@ -29,7 +29,8 @@
 //! invocation: its parameters and return type carry the inferred type
 //! arguments. Inference-derived bounds and captured wildcard types
 //! ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10))
-//! are modelled; target-type compatibility of §18.5.2.4 is not.
+//! are modelled; target-type compatibility ([§18.5.2.4]) is incorporated
+//! through the `target` argument of [`pick_method`].
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::TypeParameter;
@@ -538,23 +539,46 @@ fn is_accessible(
     method: &MethodData,
     ctx: &InvocationContext,
 ) -> bool {
-    match method.access {
+    member_accessible(
+        db,
+        scope,
+        method.access,
+        method.declaring_package.as_deref(),
+        method.declaring_top_level.as_deref(),
+        ctx,
+    )
+}
+
+/// Whether a member with `access` declared in `declaring_package` (its top-level
+/// class `declaring_top_level`) is accessible to the class in which the access
+/// appears ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
+/// A missing context field (`None`) is permissive: that restriction is not
+/// enforced.
+fn member_accessible(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    access: Access,
+    declaring_package: Option<&str>,
+    declaring_top_level: Option<&str>,
+    ctx: &InvocationContext,
+) -> bool {
+    match access {
         Access::Public => true,
         // §6.6.1: a private member is accessible throughout the top-level
         // class in which it is declared.
-        Access::Private => match (&ctx.enclosing_class, &method.declaring_top_level) {
+        Access::Private => match (&ctx.enclosing_class, declaring_top_level) {
             (Some(enclosing), Some(declaring)) => enclosing == declaring,
             _ => true,
         },
         // §6.6.1: a package member is accessible only within its own package.
-        Access::Package => match (&ctx.package, &method.declaring_package) {
+        Access::Package => match (&ctx.package, declaring_package) {
             (Some(invocation), Some(declaring)) => invocation == declaring,
             _ => true,
         },
         // §6.6.2: a protected member is accessible within the declaring
         // package, or from a class that is a subclass of the declaring class.
         Access::Protected => {
-            if let (Some(invocation), Some(declaring)) = (&ctx.package, &method.declaring_package)
+            if let (Some(invocation), Some(declaring)) = (&ctx.package, declaring_package)
                 && invocation == declaring
             {
                 return true;
@@ -562,7 +586,8 @@ fn is_accessible(
             match &ctx.enclosing_class {
                 Some(enclosing) => {
                     let enclosing = Ty::reference(db, enclosing.as_str(), Vec::new());
-                    let declaring = Ty::reference(db, method.owner.as_str(), Vec::new());
+                    let declaring =
+                        Ty::reference(db, declaring_top_level.unwrap_or_default(), Vec::new());
                     is_subtype(db, scope, &enclosing, &declaring)
                 }
                 None => true,
@@ -574,7 +599,12 @@ fn is_accessible(
 /// Instantiates `method` to its invocation type
 /// ([JLS §15.12.2.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.6))
 /// for a call with `args` in `phase`, running the method invocation type
-/// inference of [JLS §18.5.2] against the actual argument types. `None` when
+/// inference of [JLS §18.5.2] against the actual argument types. `target` is
+/// the expected type of the invocation
+/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)):
+/// when present and compatible with the invocation type's return type, the
+/// constraint ⟨R → T⟩ joins the constraint set before resolution, so the
+/// inference variables are also bounded by the target type. `None` when
 /// `method` is not applicable in this phase. `varargs` selects the variable-
 /// arity invocation rules of [§15.12.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.4).
 fn instantiate(
@@ -584,6 +614,7 @@ fn instantiate(
     args: &[Ty],
     phase: InvocationPhase,
     varargs: bool,
+    target: Option<Ty>,
 ) -> Option<MethodData> {
     let mut inference = Inference::new();
 
@@ -667,6 +698,15 @@ fn instantiate(
         for (formal, arg) in formals.iter().zip(&args) {
             constraints.push(Constraint::Sub(*arg, *formal));
         }
+    }
+
+    // §18.5.2.4 (resolution): when the invocation is a poly expression with an
+    // expected type, the constraint ⟨R → T⟩ is incorporated with the
+    // argument constraints, so the inference variables are bounded by the
+    // target type as well.
+    if let Some(target) = target {
+        let invocation_ret = method.ret.substitute(db, &subst);
+        constraints.push(Constraint::Sub(invocation_ret, target));
     }
 
     let resolved = inference.solve(db, scope, phase, constraints)?;
@@ -812,7 +852,10 @@ fn choose_most_specific(
 /// access of `ctx` ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1),
 /// [§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
 /// The returned [`MethodData`] is the inferred invocation type
-/// ([JLS §18.5.2]).
+/// ([JLS §18.5.2]), refined by `target` — the expected type of the
+/// invocation in its context
+/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)) —
+/// when the call is a poly expression.
 pub fn pick_method(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -820,6 +863,7 @@ pub fn pick_method(
     name: &str,
     args: &[Ty],
     ctx: &InvocationContext,
+    target: Option<Ty>,
 ) -> Option<MethodData> {
     let members = member_set(db, scope, receiver, name, ctx);
 
@@ -828,8 +872,16 @@ pub fn pick_method(
     let strict: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
-            instantiate(db, scope, method, args, InvocationPhase::Strict, false)
-                .map(|invocation| (method.clone(), invocation))
+            instantiate(
+                db,
+                scope,
+                method,
+                args,
+                InvocationPhase::Strict,
+                false,
+                target,
+            )
+            .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !strict.is_empty() {
@@ -840,8 +892,16 @@ pub fn pick_method(
     let loose: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
-            instantiate(db, scope, method, args, InvocationPhase::Loose, false)
-                .map(|invocation| (method.clone(), invocation))
+            instantiate(
+                db,
+                scope,
+                method,
+                args,
+                InvocationPhase::Loose,
+                false,
+                target,
+            )
+            .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !loose.is_empty() {
@@ -852,8 +912,16 @@ pub fn pick_method(
     let varargs: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
-            instantiate(db, scope, method, args, InvocationPhase::Loose, true)
-                .map(|invocation| (method.clone(), invocation))
+            instantiate(
+                db,
+                scope,
+                method,
+                args,
+                InvocationPhase::Loose,
+                true,
+                target,
+            )
+            .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !varargs.is_empty() {
@@ -861,4 +929,202 @@ pub fn pick_method(
     }
 
     None
+}
+
+/// A field resolved through the member set of a field access
+/// ([JLS §15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)),
+/// instantiated with the receiver type's type arguments (type variables are not
+/// yet instantiated — fields carry no type parameters of their own, so the
+/// field type is the declaration type with the receiver's type arguments
+/// substituted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldData {
+    /// The simple name of the field.
+    pub name: String,
+    /// The fully qualified name of the declaring class or interface.
+    pub owner: String,
+    /// The field's type, instantiated with the declaring type's type arguments.
+    pub ty: Ty,
+    /// Whether the field is static.
+    pub is_static: bool,
+    /// The access of the field
+    /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
+    pub access: Access,
+    /// The package of the declaring class, or `None` for the unnamed package.
+    pub declaring_package: Option<String>,
+    /// The fully qualified name of the top-level class of the declaring class
+    /// ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+    pub declaring_top_level: Option<String>,
+}
+
+/// Resolves a field access `receiver.name`
+/// ([JLS §15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)):
+/// the field named `name` of the receiver type, or of the closest of its
+/// superclasses and superinterfaces (the member set of
+/// [§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)
+/// — field hiding is resolved in favour of the most derived declaration).
+/// The receiver is first captured ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10))
+/// so wildcard type arguments become fresh type variables, and only fields
+/// accessible at the access site ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
+/// are returned. For a type variable receiver the declared bounds
+/// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
+/// are searched instead. `None` when no field is found.
+pub fn pick_field(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &str,
+    ctx: &InvocationContext,
+) -> Option<FieldData> {
+    let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
+    let receiver = capture_conversion(db, *receiver);
+    let mut stack = match receiver.kind(db) {
+        TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
+        _ => vec![receiver],
+    };
+    let mut seen: FxHashSet<TyData> = FxHashSet::default();
+    while let Some(ty) = stack.pop() {
+        if !seen.insert(ty.id) {
+            continue;
+        }
+        for field in class_fields(db, &scope_id, &ty, name) {
+            if member_accessible(
+                db,
+                scope,
+                field.access,
+                field.declaring_package.as_deref(),
+                field.declaring_top_level.as_deref(),
+                ctx,
+            ) {
+                return Some(field);
+            }
+        }
+        for parent in supertypes_query(db, scope_id, ty.id) {
+            stack.push(parent);
+        }
+    }
+    None
+}
+
+/// The fields of a single class or interface, instantiated with `ty`'s type
+/// arguments.
+fn class_fields(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -> Vec<FieldData> {
+    let TyKind::Reference {
+        name: class_name,
+        args,
+    } = ty.kind(db)
+    else {
+        return Vec::new();
+    };
+    let Some(resolved) = hir::fqn_resolve(db, &scope_id.kind(db).to_scope(), class_name.as_str())
+    else {
+        return Vec::new();
+    };
+    let args = args.clone();
+    match resolved {
+        hir::Resolved::Library(class) => library_class_fields(db, class, args, name),
+        hir::Resolved::Source(source) => source_class_fields(db, source, args, name),
+    }
+}
+
+/// The fields of a library class, instantiated with the class's type
+/// parameters bound to `args`.
+fn library_class_fields(
+    db: &dyn TyDatabase,
+    class: hir::ResolvedClass,
+    args: Vec<Ty>,
+    name: &str,
+) -> Vec<FieldData> {
+    let Some(record) = hir::class_record(db, &class) else {
+        return Vec::new();
+    };
+    let hir::ClassOrModuleStub::Class(class) = record.as_ref() else {
+        return Vec::new();
+    };
+    let interner = &db.hir_state().interner;
+    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
+        FxHashMap::default()
+    } else {
+        class
+            .type_params
+            .iter()
+            .zip(args.iter().copied())
+            .map(|(tp, arg)| (Name::new(interner.resolve(&tp.name)), arg))
+            .collect()
+    };
+    let fqn = interner.resolve(&class.fqn).to_owned();
+    let declaring_package = package_of(&fqn);
+    let declaring_top_level = Some(top_level_of(&fqn));
+    let mut out = Vec::new();
+    for field in &class.fields {
+        if interner.resolve(&field.name) != name {
+            continue;
+        }
+        out.push(FieldData {
+            name: name.to_owned(),
+            owner: fqn.clone(),
+            ty: ty_from_library(db, &field.field_type).substitute(db, &binding),
+            is_static: field.flags & 0x0008 != 0, // ACC_STATIC
+            access: Access::from_flags(field.flags),
+            declaring_package: declaring_package.clone(),
+            declaring_top_level: declaring_top_level.clone(),
+        });
+    }
+    out
+}
+
+/// The fields of a source class, resolved against the file's own scope and
+/// instantiated with `args`.
+fn source_class_fields(
+    db: &dyn TyDatabase,
+    source: hir::SourceClass,
+    args: Vec<Ty>,
+    name: &str,
+) -> Vec<FieldData> {
+    let tree = hir::file_item_tree(db, source.file);
+    let Some(class_data) = item_data(&tree, source.item) else {
+        return Vec::new();
+    };
+    let declared: &[TypeParameter<Name>] = match class_data {
+        ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
+        ItemData::Record(d) => &d.type_params,
+        _ => &[],
+    };
+    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
+        FxHashMap::default()
+    } else {
+        declared
+            .iter()
+            .map(|tp| tp.name.clone())
+            .zip(args.iter().copied())
+            .collect()
+    };
+    let type_params = type_params_map_query(db, db.file_text(source.file));
+    let resolver = Resolver::new(&tree, type_params, source.item);
+    let fqn = hir::source_class_fqn(db, source.file, source.item)
+        .map(|fqn| fqn.as_str().to_owned())
+        .unwrap_or_default();
+    let declaring_package = resolver.package().map(|p| p.as_str().to_owned());
+    let declaring_top_level = (!fqn.is_empty()).then(|| top_level_of(&fqn));
+
+    let mut out = Vec::new();
+    for &item in class_data.body() {
+        let Some(ItemData::Field(field)) = item_data(&tree, item) else {
+            continue;
+        };
+        if field.name.as_str() != name {
+            continue;
+        }
+        let key = ItemKey::new(db, source.file, item);
+        out.push(FieldData {
+            name: name.to_owned(),
+            owner: fqn.clone(),
+            ty: item_ty_query(db, key).substitute(db, &binding),
+            is_static: field.modifiers.static_,
+            access: access_of(&field.modifiers),
+            declaring_package: declaring_package.clone(),
+            declaring_top_level: declaring_top_level.clone(),
+        });
+    }
+    out
 }

@@ -5,6 +5,7 @@
 //! `DefDatabase` trait. Language-specific lowering lives in `hir-def`.
 
 pub mod arena;
+pub mod body;
 pub mod db;
 pub mod files;
 pub mod item_loc;
