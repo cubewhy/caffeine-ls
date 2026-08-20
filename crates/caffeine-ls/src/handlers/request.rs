@@ -1,4 +1,4 @@
-use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics};
+use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics, lsp::symbols};
 
 use ide::LanguageKind;
 use lsp_types::*;
@@ -35,4 +35,38 @@ pub fn on_diagnostic(
     } else {
         anyhow::bail!("failed to get vfs path from uri")
     }
+}
+
+pub fn on_document_symbol(
+    state: GlobalStateSnapshot,
+    params: DocumentSymbolParams,
+) -> anyhow::Result<Option<DocumentSymbolResponse>> {
+    tracing::info!(uri = ?params.text_document.uri, "request document symbols");
+
+    let file_id = state
+        .url_to_file_id(&params.text_document.uri)?
+        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let line_index = state.file_line_index(file_id)?;
+    let document_symbols = state.analysis.document_symbols(file_id)?;
+    let nested = symbols::nest_document_symbols(&line_index, &document_symbols);
+
+    Ok(Some(nested.into()))
+}
+
+pub fn on_workspace_symbol(
+    state: GlobalStateSnapshot,
+    params: WorkspaceSymbolParams,
+) -> anyhow::Result<Option<WorkspaceSymbolResponse>> {
+    tracing::info!(query = ?params.query, "request workspace symbols");
+
+    let workspace_symbols = state.analysis.workspace_symbols(&params.query)?;
+    let mut out = Vec::with_capacity(workspace_symbols.len());
+    for symbol in workspace_symbols {
+        let uri = state.file_id_to_url(symbol.file)?;
+        let line_index = state.file_line_index(symbol.file)?;
+        let location = symbols::location(&line_index, uri, &symbol);
+        out.push(symbols::workspace_symbol(location, &symbol));
+    }
+
+    Ok(Some(out.into()))
 }

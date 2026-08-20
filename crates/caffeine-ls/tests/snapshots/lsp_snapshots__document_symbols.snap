@@ -1,0 +1,178 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: response
+---
+[
+  {
+    "name": "com.example.Foo",
+    "kind": 5,
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 20
+      },
+      "end": {
+        "line": 13,
+        "character": 1
+      }
+    },
+    "selectionRange": {
+      "start": {
+        "line": 0,
+        "character": 20
+      },
+      "end": {
+        "line": 13,
+        "character": 1
+      }
+    },
+    "children": [
+      {
+        "name": "com.example.Foo.x",
+        "kind": 8,
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 15
+          },
+          "end": {
+            "line": 3,
+            "character": 16
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 3,
+            "character": 15
+          },
+          "end": {
+            "line": 3,
+            "character": 16
+          }
+        }
+      },
+      {
+        "name": "com.example.Foo.s",
+        "kind": 8,
+        "range": {
+          "start": {
+            "line": 4,
+            "character": 19
+          },
+          "end": {
+            "line": 4,
+            "character": 20
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 4,
+            "character": 19
+          },
+          "end": {
+            "line": 4,
+            "character": 20
+          }
+        }
+      },
+      {
+        "name": "com.example.Foo.Foo",
+        "kind": 6,
+        "range": {
+          "start": {
+            "line": 4,
+            "character": 21
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 4,
+            "character": 21
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        }
+      },
+      {
+        "name": "com.example.Foo.bar",
+        "kind": 6,
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 19
+          },
+          "end": {
+            "line": 8,
+            "character": 29
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 6,
+            "character": 19
+          },
+          "end": {
+            "line": 8,
+            "character": 29
+          }
+        }
+      },
+      {
+        "name": "com.example.Foo.Inner",
+        "kind": 5,
+        "range": {
+          "start": {
+            "line": 8,
+            "character": 29
+          },
+          "end": {
+            "line": 12,
+            "character": 5
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 8,
+            "character": 29
+          },
+          "end": {
+            "line": 12,
+            "character": 5
+          }
+        },
+        "children": [
+          {
+            "name": "com.example.Foo.Inner.y",
+            "kind": 8,
+            "range": {
+              "start": {
+                "line": 11,
+                "character": 20
+              },
+              "end": {
+                "line": 11,
+                "character": 21
+              }
+            },
+            "selectionRange": {
+              "start": {
+                "line": 11,
+                "character": 20
+              },
+              "end": {
+                "line": 11,
+                "character": 21
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

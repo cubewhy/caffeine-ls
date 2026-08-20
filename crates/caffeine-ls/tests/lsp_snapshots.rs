@@ -401,3 +401,135 @@ fn test_syntax_diagnostics_before_workspace_load() {
 
     lsp.shutdown();
 }
+
+#[test]
+fn test_document_symbols() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Foo.java";
+    lsp.write_file(
+        path,
+        r#"package com.example;
+
+public class Foo {
+    public int x;
+    private String s;
+
+    public Foo() {}
+
+    public void bar(int a) {}
+
+    public static class Inner {
+        private int y;
+    }
+}
+"#,
+    );
+    lsp.open_document(path);
+
+    let response = request_until(
+        &lsp,
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("document_symbols", response);
+
+    lsp.shutdown();
+}
+
+#[test]
+fn test_workspace_symbols() {
+    let lsp = create_lsp();
+    lsp.write_file(
+        "/src/com/example/Foo.java",
+        r#"package com.example;
+
+public class Foo {
+    public int x;
+    public void bar(int a) {}
+}
+"#,
+    );
+    lsp.write_file(
+        "/src/org/other/Bar.java",
+        r#"package org.other;
+
+public interface Bar {
+    void baz();
+}
+"#,
+    );
+
+    // `workspace/symbol` needs the workspace to be loaded, so retry until the
+    // plain source root graph has been applied.
+    let response = request_until(
+        &lsp,
+        "workspace/symbol",
+        json!({ "query": "" }),
+        |response| {
+            response
+                .as_array()
+                .map(|symbols| !symbols.is_empty())
+                .unwrap_or(false)
+        },
+    );
+
+    // The file URIs embed the temp workspace path, which varies between runs.
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let normalized = normalize_uris(response, &workspace_root);
+    insta::assert_json_snapshot!("workspace_symbols", normalized);
+
+    lsp.shutdown();
+}
+
+/// Sends `method`/`params`, retrying while `accept` fails. The server cancels
+/// an in-flight request when the database is modified mid-query (salsa raises
+/// `Cancelled`); a cancelled request surfaces as a `null` result here.
+fn request_until(
+    lsp: &LspHarness,
+    method: &str,
+    params: serde_json::Value,
+    accept: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let response = lsp.request(method, params.clone());
+        if accept(&response) {
+            return response;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "server never produced an acceptable {method} response"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Rewrites every `file://` URI containing `workspace_root` to a stable
+/// placeholder, so snapshots don't capture the temp dir path.
+fn normalize_uris(value: serde_json::Value, workspace_root: &str) -> serde_json::Value {
+    let mut value = value;
+    walk_json(&mut value, workspace_root);
+    value
+}
+
+fn walk_json(value: &mut serde_json::Value, workspace_root: &str) {
+    match value {
+        serde_json::Value::String(s) => {
+            if let Some(pos) = s.find(workspace_root) {
+                s.replace_range(pos..pos + workspace_root.len(), "<WORKSPACE_ROOT>");
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                walk_json(item, workspace_root);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for value in map.values_mut() {
+                walk_json(value, workspace_root);
+            }
+        }
+        _ => {}
+    }
+}

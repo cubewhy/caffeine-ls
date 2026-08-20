@@ -29,6 +29,8 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
             }
             .into(),
         ),
+        document_symbol_provider: Some(true.into()),
+        workspace_symbol_provider: Some(true.into()),
         ..Default::default()
     }
 }

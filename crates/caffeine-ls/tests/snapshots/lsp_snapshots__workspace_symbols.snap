@@ -1,0 +1,96 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: normalized
+---
+[
+  {
+    "location": {
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 20
+        },
+        "end": {
+          "line": 5,
+          "character": 1
+        }
+      }
+    },
+    "name": "com.example.Foo",
+    "kind": 5,
+    "containerName": "com.example"
+  },
+  {
+    "location": {
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 17
+        },
+        "end": {
+          "line": 4,
+          "character": 29
+        }
+      }
+    },
+    "name": "com.example.Foo.bar",
+    "kind": 6,
+    "containerName": "com.example.Foo"
+  },
+  {
+    "location": {
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 15
+        },
+        "end": {
+          "line": 3,
+          "character": 16
+        }
+      }
+    },
+    "name": "com.example.Foo.x",
+    "kind": 8,
+    "containerName": "com.example.Foo"
+  },
+  {
+    "location": {
+      "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
+      "range": {
+        "start": {
+          "line": 0,
+          "character": 18
+        },
+        "end": {
+          "line": 4,
+          "character": 1
+        }
+      }
+    },
+    "name": "org.other.Bar",
+    "kind": 11,
+    "containerName": "org.other"
+  },
+  {
+    "location": {
+      "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 22
+        },
+        "end": {
+          "line": 3,
+          "character": 15
+        }
+      }
+    },
+    "name": "org.other.Bar.baz",
+    "kind": 6,
+    "containerName": "org.other.Bar"
+  }
+]

@@ -367,6 +367,16 @@ impl GlobalStateSnapshot {
         url_to_file_id(&self.vfs_read(), url)
     }
 
+    /// The URI of a file known to the vfs.
+    pub(crate) fn file_id_to_url(&self, file_id: FileId) -> anyhow::Result<Uri> {
+        let vfs = self.vfs_read();
+        let path = vfs.file_path(file_id);
+        let path = path
+            .as_path()
+            .ok_or_else(|| anyhow::format_err!("file has no absolute path: {file_id:?}"))?;
+        Uri::from_file_path(path).map_err(|_| anyhow::format_err!("failed to build URI for {path}"))
+    }
+
     pub(crate) fn file_line_index(&self, file_id: FileId) -> Cancellable<LineIndex> {
         let endings = self.vfs.read().1[&file_id];
         let index = self.analysis.file_line_index(file_id)?;
