@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    <T> List<T> wrap(List<T> xs) {
+        return xs;
+    }
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        List<String> ys = wrap(id(Collections.emptyList()));
+    }
+}
+
+method wrap(java.util.List<T>): java.util.List<T>
+  locals: l0: java.util.List<T>
+  exprs: e0: java.util.List<T>
+method id(T): T
+  locals: l1: T
+  exprs: e1: T
+method call(): void
+  locals: l2: java.util.List<java.lang.String>
+  exprs: e3: java.util.List<java.lang.String> | e4: java.util.List<java.lang.String> | e5: java.util.List<java.lang.String>

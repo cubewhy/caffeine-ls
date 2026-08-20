@@ -28,6 +28,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     db::TyDatabase,
+    method::MethodData,
     subtyping::{is_assignable, is_subtype, strict_conversion, supertypes_impl},
     ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type},
 };
@@ -55,7 +56,7 @@ pub(crate) enum Constraint {
 
 /// The bounds of one inference variable ([JLS §18.3.1]): upper bounds
 /// `α <: T`, lower bounds `S <: α` and the equality bound `α = T`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Bounds {
     upper: Vec<Ty>,
     lower: Vec<Ty>,
@@ -63,6 +64,7 @@ struct Bounds {
 }
 
 /// An invocation type inference table ([JLS §18.5.2]).
+#[derive(Clone)]
 pub(crate) struct Inference {
     bounds: FxHashMap<u64, Bounds>,
     /// The inference variables that appear in the method's `throws` clause
@@ -75,6 +77,8 @@ pub(crate) struct Inference {
     /// `resolve` can no longer see it; the applied substitution is recorded
     /// here and merged into the resolved instantiation.
     applied: FxHashMap<u64, Ty>,
+    /// Constraints added but not yet reduced ([JLS §18.2]).
+    worklist: VecDeque<Constraint>,
 }
 
 impl Inference {
@@ -83,6 +87,7 @@ impl Inference {
             bounds: FxHashMap::default(),
             throws: FxHashSet::default(),
             applied: FxHashMap::default(),
+            worklist: VecDeque::new(),
         }
     }
 
@@ -119,42 +124,150 @@ impl Inference {
         phase: InvocationPhase,
         constraints: Vec<Constraint>,
     ) -> Option<FxHashMap<u64, Ty>> {
-        if !self.reduce(db, scope, phase, constraints) {
+        self.worklist.extend(constraints);
+        self.solve_after(db, scope, phase)
+    }
+
+    /// Adds a constraint to the worklist, to be reduced by a later
+    /// [`Self::drain_worklist`]. Used by the joint inference of §18.5.2.4,
+    /// where nested poly invocations contribute their constraints to the
+    /// enclosing invocation's table incrementally.
+    pub(crate) fn add_constraint(&mut self, constraint: Constraint) {
+        self.worklist.push_back(constraint);
+    }
+
+    /// Reduces the pending constraints ([JLS §18.2]); `false` when a
+    /// constraint reduces to false.
+    pub(crate) fn drain_worklist(
+        &mut self,
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        phase: InvocationPhase,
+    ) -> bool {
+        let mut worklist = std::mem::take(&mut self.worklist);
+        let result = loop {
+            let Some(constraint) = worklist.pop_front() else {
+                break true;
+            };
+            match constraint {
+                Constraint::Sub(s, t) => {
+                    if !self.reduce_sub(db, scope, phase, &s, &t, &mut worklist) {
+                        break false;
+                    }
+                }
+                Constraint::Eq(s, t) => {
+                    if !self.reduce_eq(db, &s, &t, &mut worklist) {
+                        break false;
+                    }
+                }
+            }
+        };
+        self.worklist = worklist;
+        result
+    }
+
+    /// The tail of a full solve: drain the worklist, incorporate the bounds
+    /// ([§18.3.1]) and resolve ([§18.4.1]). `None` when the bounds are
+    /// contradictory — the invocation is not applicable in this phase. Used by
+    /// the joint inference of §18.5.2.4 after the argument and target
+    /// constraints have been contributed incrementally.
+    pub(crate) fn solve_after(
+        &mut self,
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        phase: InvocationPhase,
+    ) -> Option<FxHashMap<u64, Ty>> {
+        if !self.drain_worklist(db, scope, phase) {
             return None;
         }
-        if !self.incorporate(db, scope) {
+        if !self.incorporate(db, scope, phase) {
             return None;
         }
         self.resolve(db, scope)
     }
 
-    /// Constraint reduction ([JLS §18.2.1, §18.2.2, §18.2.3]): each constraint
-    /// either adds a bound to an inference variable, spawns derived
-    /// constraints, or — when both sides are proper types — is checked against
-    /// the subtype/conversion relation.
-    fn reduce(
+    /// Whether the bound set is consistent with the constraints contributed so
+    /// far: the worklist is drained and the bounds incorporated, but no
+    /// variable is resolved to a concrete type. Used by the joint resolution
+    /// of a nested poly invocation, which probes each candidate against the
+    /// enclosing invocation's shared table and commits to the first locally
+    /// consistent one.
+    pub(crate) fn check_consistent(
         &mut self,
         db: &dyn TyDatabase,
         scope: &hir::ResolutionScope,
         phase: InvocationPhase,
-        constraints: Vec<Constraint>,
     ) -> bool {
-        let mut worklist: VecDeque<Constraint> = constraints.into();
-        while let Some(constraint) = worklist.pop_front() {
-            match constraint {
-                Constraint::Sub(s, t) => {
-                    if !self.reduce_sub(db, scope, phase, &s, &t, &mut worklist) {
-                        return false;
-                    }
-                }
-                Constraint::Eq(s, t) => {
-                    if !self.reduce_eq(db, &s, &t, &mut worklist) {
-                        return false;
-                    }
+        if !self.drain_worklist(db, scope, phase) {
+            return false;
+        }
+        self.incorporate(db, scope, phase)
+    }
+
+    /// A snapshot of the table state for speculative candidate probing: the
+    /// joint resolution of a nested poly invocation probes each candidate
+    /// against the shared table and restores the state of the failed probes.
+    pub(crate) fn snapshot(&self) -> Self {
+        self.clone()
+    }
+
+    /// Restores the table to a [`Self::snapshot`].
+    pub(crate) fn restore(&mut self, snapshot: Self) {
+        *self = snapshot;
+    }
+
+    /// Instantiates `method`'s type parameters ([JLS §18.5.2.2]) as fresh
+    /// inference variables with their declared bounds, returning the
+    /// substituted formal parameter types, return type and throws clause
+    /// types ([§18.5.2.3]). The types reference the fresh variables; the
+    /// caller relates them to the actual argument types with further
+    /// constraints. Unlike the self-contained [`Self::solve`], the fresh
+    /// variables live in this table, so a nested poly invocation's inference
+    /// is shared with its enclosing invocation ([JLS §18.5.2.4]).
+    pub(crate) fn register_method(
+        &mut self,
+        db: &dyn TyDatabase,
+        method: &MethodData,
+    ) -> (Vec<Ty>, Ty, Vec<Ty>) {
+        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+        for tp in &method.type_params {
+            let var = self.fresh_var(db);
+            subst.insert(tp.name.clone(), var);
+            let bounds: Vec<Ty> = tp.bounds.iter().map(|b| b.substitute(db, &subst)).collect();
+            if bounds.is_empty() {
+                self.add_upper(db, var, Ty::reference(db, "java.lang.Object", Vec::new()));
+            } else {
+                for bound in bounds {
+                    self.add_upper(db, var, bound);
                 }
             }
         }
-        true
+        let formals: Vec<Ty> = method
+            .params
+            .iter()
+            .map(|p| p.substitute(db, &subst))
+            .collect();
+        let ret = method.ret.substitute(db, &subst);
+        let throws_formals: Vec<Ty> = method
+            .throws
+            .iter()
+            .map(|t| t.substitute(db, &subst))
+            .collect();
+        for thrown in &throws_formals {
+            if thrown.is_infer_var(db) {
+                self.mark_throws(db, *thrown);
+            }
+        }
+        (formals, ret, throws_formals)
+    }
+
+    /// The total number of bounds in the table, used to detect whether
+    /// reducing the implied bounds changed anything.
+    fn bound_count(&self) -> usize {
+        self.bounds
+            .values()
+            .map(|b| b.upper.len() + b.lower.len() + usize::from(b.equality.is_some()))
+            .sum()
     }
 
     fn reduce_sub(
@@ -384,9 +497,15 @@ impl Inference {
     }
 
     /// Bound set incorporation ([JLS §18.3.1]): equality bounds are substituted
-    /// away, and a proper lower bound `S <: α` against a proper upper bound
-    /// `α <: T` must satisfy `S <: T`.
-    fn incorporate(&mut self, db: &dyn TyDatabase, scope: &hir::ResolutionScope) -> bool {
+    /// away, a proper lower bound `S <: α` against a proper upper bound
+    /// `α <: T` must satisfy `S <: T`, and same-erasure lower/upper pairs
+    /// imply equalities between their type arguments.
+    fn incorporate(
+        &mut self,
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        phase: InvocationPhase,
+    ) -> bool {
         loop {
             let mut changed = false;
 
@@ -424,6 +543,28 @@ impl Inference {
                 changed = true;
             }
 
+            // §18.3.1 implied bounds: a proper lower bound `S <: α` against a
+            // proper upper bound `α <: T` of the same erasure constrains the
+            // type arguments to be equal. The constraints are reduced
+            // immediately and the loop repeats, so `take(id(emptyList()))`
+            // resolves: β's lower `List<E>` and upper `List<String>` imply
+            // `E = String` instead of leaving E to resolve to `Object` and
+            // failing the invariance check.
+            let ids: Vec<u64> = self.bounds.keys().copied().collect();
+            let before = self.bound_count();
+            for id in ids {
+                let b = &self.bounds[&id];
+                for constraint in self.implied_bounds(db, &b.lower, &b.upper) {
+                    self.worklist.push_back(constraint);
+                }
+            }
+            if !self.worklist.is_empty() && !self.drain_worklist(db, scope, phase) {
+                return false;
+            }
+            if self.bound_count() > before {
+                changed = true;
+            }
+
             let ids: Vec<u64> = self.bounds.keys().copied().collect();
             for id in ids {
                 let b = &self.bounds[&id];
@@ -445,6 +586,38 @@ impl Inference {
                 return true;
             }
         }
+    }
+
+    /// The implied bounds of §18.3.1: for a pair of proper bounds `S <: α` and
+    /// `α <: T` where `S` and `T` have the same erasure, the type arguments
+    /// must be related — equal for invariant parameterizations ([§4.10.2]) and
+    /// for array element types. Wildcard type arguments are left out: they are
+    /// constrained by the wildcard rules of §18.2.3 instead.
+    fn implied_bounds(&self, db: &dyn TyDatabase, lower: &[Ty], upper: &[Ty]) -> Vec<Constraint> {
+        let mut out = Vec::new();
+        for l in lower {
+            for u in upper {
+                match (l.kind(db), u.kind(db)) {
+                    (TyKind::Array(li), TyKind::Array(ui)) => {
+                        if l != u {
+                            out.push(Constraint::Eq(**li, **ui));
+                        }
+                    }
+                    (
+                        TyKind::Reference { name: ln, args: la },
+                        TyKind::Reference { name: un, args: ua },
+                    ) if ln == un && !la.is_empty() && la.len() == ua.len() && l != u => {
+                        for (a, b) in la.iter().zip(ua.iter()) {
+                            if a != b && !a.is_wildcard(db) && !b.is_wildcard(db) {
+                                out.push(Constraint::Eq(*a, *b));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 
     /// Bound set resolution ([JLS §18.4.1]). Returns the instantiation of
@@ -930,7 +1103,25 @@ fn pick_instantiation(
         return Some(Ty::reference(db, "java.lang.RuntimeException", Vec::new()));
     }
     if !upper.is_empty() {
-        return Some(least_upper_bound(db, scope, upper));
+        // §18.4: a variable with only upper bounds instantiates to their least
+        // upper bound. The implicit `Object` bound of an unbounded type
+        // parameter ([§8.4.4]) is redundant next to a more specific bound:
+        // `⟨T → Function<String,Integer>⟩` with `T <: Object` must instantiate
+        // to `Function<String,Integer>`, not `Object`. Supertype bounds are
+        // dropped before the lub, matching javac's least-upper-bound.
+        let bounds: Vec<Ty> = upper
+            .iter()
+            .copied()
+            .filter(|u| {
+                !upper
+                    .iter()
+                    .any(|v| *v != *u && !v.contains_infer_var(db) && is_subtype(db, scope, v, u))
+            })
+            .collect();
+        if bounds.is_empty() {
+            return Some(least_upper_bound(db, scope, upper));
+        }
+        return Some(least_upper_bound(db, scope, &bounds));
     }
     Some(Ty::reference(db, "java.lang.Object", Vec::new()))
 }

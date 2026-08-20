@@ -90,11 +90,32 @@ snapshot! {
     access_subclass_other_package,
     library_access(ctx(InvocationMode::Virtual, C, "org.other")),
 }
+// `C` is a subclass of `A` in another package, so `A`'s `protected` members
+// are accessible (§6.6.2) — but only through a receiver that is a subtype of
+// `C`. The probe receiver is `A`, so the instance `pro` is denied ([§6.6.2]);
+// `stat` is `public static` and stays accessible.
 
 snapshot! {
     access_unrelated_other_package,
     library_access(ctx(InvocationMode::Virtual, "org.other.Other", "org.other")),
 }
+
+const PROTECTED_RECEIVER_SAMPLES: [Sample; 2] = [
+    ("C.pro", |db| r(db, C), "pro", &[]),
+    ("A.pro", |db| r(db, A), "pro", &[]),
+];
+
+fn library_protected_receiver(ctx: InvocationContext) -> String {
+    check_methods_lib_ctx(&access_classes(), &PROTECTED_RECEIVER_SAMPLES, &ctx)
+}
+
+snapshot! {
+    protected_receiver_rule,
+    library_protected_receiver(ctx(InvocationMode::Virtual, C, "org.other")),
+}
+// JLS §6.6.2: a `protected` instance member of `A` is accessible from the
+// subclass `C` (in another package) only through a receiver whose type is `C`
+// or a subtype of `C`: `c.pro()` is allowed, `a.pro()` (receiver `A`) is not.
 
 fn library_modes(ctx: InvocationContext) -> String {
     check_methods_lib_ctx(
@@ -171,6 +192,9 @@ snapshot! {
     source_access_subclass_other_package,
     source_access(ctx(InvocationMode::Virtual, C, "org.other")),
 }
+// `C` is a subclass of `A` in another package: `A`'s `protected` members are
+// accessible (§6.6.2), but through the probe receiver `A` the instance `pro`
+// is denied by the receiver rule ([§6.6.2]).
 
 snapshot! {
     source_access_unrelated_other_package,

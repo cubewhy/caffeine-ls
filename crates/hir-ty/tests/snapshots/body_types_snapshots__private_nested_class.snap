@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Outer.java:
+package com.example;
+
+class Outer {
+    private int secret;
+
+    static class Inner {
+        void use(Outer o) {
+            o.secret = 1;
+        }
+    }
+}
+
+class Other {
+    void use(Outer o) {
+        o.secret = 2;
+    }
+}
+
+method use(com.example.Outer): void
+  locals: l0: com.example.Outer
+  exprs: e0: com.example.Outer | e1: int | e2: int | e3: int
+method use(com.example.Outer): void
+  locals: l1: com.example.Outer
+  exprs: e4: com.example.Outer | e5: <error> | e6: int | e7: <error>

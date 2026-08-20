@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    static void s() {}
+    void i() {}
+
+    void use() {
+        Body.s();
+        Body b = new Body();
+        b.s();
+        b.i();
+        Body.i();
+    }
+}
+
+method s(): void
+  locals: 
+  exprs: 
+method i(): void
+  locals: 
+  exprs: 
+method use(): void
+  locals: l0: com.example.Body
+  exprs: e1: void | e2: com.example.Body | e3: com.example.Body | e4: void | e5: com.example.Body | e6: void | e8: <error>

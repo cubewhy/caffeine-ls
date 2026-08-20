@@ -24,16 +24,18 @@
 //!
 //! # Known limitations
 //!
-//! * Target typing ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4))
-//!   refines a method invocation's inference variables with its expected type
-//!   in the contexts that fix it — declaration initializers, assignment
-//!   right-hand sides, returned expressions, and casts — and a nested poly
-//!   invocation in an argument position is inferred against the candidate's
-//!   formal parameter ([JLS §18.5.2.2]) when the plain overload resolution
-//!   fails. The full poly-expression rules of §18.5.2.4 (e.g. nested generic
-//!   calls through more than one level, or retargeting against a formal that
-//!   still mentions an uninstantiated type variable) are not modelled. Lambdas
-//!   and method references are poly expressions
+//! * A nested poly invocation in an argument position is inferred jointly with
+//!   the enclosing invocation ([JLS §18.5.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.1),
+//!   [§18.5.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.2)):
+//!   its constraints are contributed to the enclosing call's inference table,
+//!   so `take(emptyList())` types the nested `emptyList()` as `List<String>`
+//!   against `take(List<String>)` even when the formal still mentions an
+//!   uninstantiated type variable. The nested candidate is selected greedily —
+//!   the first locally consistent candidate in the first applicable phase is
+//!   committed to. The poly arguments — lambdas, method references and nested
+//!   invocations — are then re-inferred against the resolved formal parameters
+//!   ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)).
+//!   Lambdas and method references are poly expressions
 //!   ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27),
 //!   [§15.13](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13))
 //!   whose type comes from the target functional interface, so they infer to
@@ -55,13 +57,15 @@
 //!   is enforced from the [`method::InvocationContext`]. For source call sites
 //!   [`method::access_context`] derives the enclosing class and package from
 //!   the call site ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
-//!   so the corresponding restrictions are enforced rather than treated
-//!   permissively; a `None` context field remains permissive, and the test-
-//!   harness probes use [`method::InvocationContext::external`] (a caller
-//!   outside the resolved scope, which sees only `public` members) or derive
-//!   the context of a source item. The member set of a name
-//!   ([`method::member_set`]) and the access context of a call site
-//!   ([`db::access_context_key_query`]) are memoized salsa queries.
+//!   and the invocation mode ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+//!   is derived per call site — a bare type name receiver is a static
+//!   invocation, `super` a super invocation, an expression a virtual
+//!   invocation. A `None` context field is never permissive: private members
+//!   are limited to their top-level class (§6.6.1), package members to their
+//!   package, and `protected` members (§6.6.2) to the declaring package or a
+//!   subclass whose receiver is a subtype of the enclosing class. The member
+//!   set of a name ([`method::member_set`]) and the access context of a call
+//!   site ([`db::access_context_key_query`]) are memoized salsa queries.
 //!
 //! All JLS references use the Java SE 26 edition
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).

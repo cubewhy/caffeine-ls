@@ -567,7 +567,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                  Ljava/lang/Cloneable;Ljava/io/Serializable;",
             ),
         ),
-        class_with_methods(
+        class_with_methods_access(
             "java/util/Collections",
             None,
             &[],
@@ -579,6 +579,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "<T:Ljava/lang/Object;>()Ljava/util/List<TT;>;",
                 "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)V",
             ],
+            &[0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
         ),
     ]
 }

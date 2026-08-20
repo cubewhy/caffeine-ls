@@ -91,8 +91,7 @@ impl ScopeKind {
 /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
 /// plus the access-control context
 /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
-/// of the access site. A `None` access field is permissive: that restriction
-/// is not enforced. Interned (rather than passed as a plain value) so it can
+/// of the access site. Interned (rather than passed as a plain value) so it can
 /// key the memoized member-set query.
 #[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
 pub struct ContextKey {
@@ -251,7 +250,15 @@ pub(crate) fn body_types_query<'db>(
 /// The access-control context
 /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
 /// of a source access site inside the method or field `item` of `file`,
-/// memoized per (file, item). See [`crate::method::access_context`].
+/// memoized per (file, item): the canonical fully qualified name of the
+/// nearest enclosing class or interface ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1))
+/// and the compilation unit's package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
+/// with the unnamed package ([§7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
+/// as `""`. A virtual invocation
+/// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+/// is assumed; the per-call-site mode
+/// ([`crate::method::InvocationContext::with_mode`]) refines it. See
+/// [`crate::method::access_context`].
 #[salsa::tracked(returns(copy))]
 pub(crate) fn access_context_key_query<'db>(
     db: &'db dyn TyDatabase,
@@ -262,6 +269,13 @@ pub(crate) fn access_context_key_query<'db>(
     let enclosing_class = enclosing_class_query(db, db.file_text(file))
         .get(&item)
         .cloned();
-    let package = hir::file_item_tree(db, file).package.clone();
+    // The compilation unit's package ([§6.6.1]); the unnamed package
+    // ([§7.4.2]) is `""`, so a `None` context package is never permissive.
+    let package = Some(
+        hir::file_item_tree(db, file)
+            .package
+            .clone()
+            .unwrap_or_else(|| Name::new("")),
+    );
     ContextKey::new(db, InvocationMode::Virtual, enclosing_class, package)
 }

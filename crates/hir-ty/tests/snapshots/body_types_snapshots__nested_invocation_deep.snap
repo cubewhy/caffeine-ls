@@ -10,20 +10,22 @@ import java.util.List;
 
 class Body {
     void take(List<String> xs) {}
-    void take(Object o) {}
+
+    <T> T id(T x) {
+        return x;
+    }
 
     void call() {
-        take(Collections.emptyList());
-        take(new Object());
+        take(id(Collections.emptyList()));
     }
 }
 
 method take(java.util.List<java.lang.String>): void
   locals: l0: java.util.List<java.lang.String>
   exprs: 
-method take(java.lang.Object): void
-  locals: l1: java.lang.Object
-  exprs: 
+method id(T): T
+  locals: l1: T
+  exprs: e0: T
 method call(): void
   locals: 
-  exprs: e1: java.util.List<java.lang.String> | e2: void | e3: java.lang.Object | e4: void
+  exprs: e2: java.util.List<java.lang.String> | e3: java.util.List<java.lang.String> | e4: void

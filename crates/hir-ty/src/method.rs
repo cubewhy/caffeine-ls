@@ -72,10 +72,10 @@ pub enum InvocationMode {
 /// invocation mode, JLS §15.12.1/§15.12.3) and the lexical context used for
 /// access control ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
 ///
-/// `None` context fields are treated permissively: a missing access
-/// restriction does not filter candidates out. Source call sites obtain a
-/// fully constrained context with [`access_context`];
-/// [`InvocationContext::external`] models a library-only probe call site.
+/// Source call sites obtain a fully constrained context with [`access_context`]
+/// and refine the mode per call site with [`InvocationContext::with_mode`];
+/// [`InvocationContext::external`] models a library-only probe call site
+/// outside the resolved scope.
 #[derive(Debug, Clone)]
 pub struct InvocationContext {
     /// The invocation mode.
@@ -86,7 +86,7 @@ pub struct InvocationContext {
     /// [§6.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.2)).
     pub enclosing_class: Option<String>,
     /// The package of the compilation unit in which the invocation appears,
-    /// for package and `protected` access control.
+    /// for package and `protected` access control; the unnamed package is `""`.
     pub package: Option<String>,
 }
 
@@ -123,16 +123,30 @@ impl InvocationContext {
                 .map(|name| name.as_str().to_owned()),
         }
     }
+
+    /// The invocation context of the same access site with the invocation mode
+    /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+    /// of the call set to `mode`.
+    pub fn with_mode(&self, mode: InvocationMode) -> InvocationContext {
+        InvocationContext {
+            mode,
+            enclosing_class: self.enclosing_class.clone(),
+            package: self.package.clone(),
+        }
+    }
 }
 
 /// The access-control context ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
 /// of a source call site inside the method or field `item` of `file`: the
 /// canonical fully qualified name ([§6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
 /// of the nearest enclosing class or interface ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1))
-/// and the compilation unit's package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
-/// A virtual invocation ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
-/// is assumed; items outside any class yield `None` for both fields (treated
-/// permissively by [`is_accessible`]).
+/// and the compilation unit's package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
+/// with the unnamed package ([§7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
+/// as `""`. A virtual invocation
+/// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
+/// is assumed; the caller derives the per-call-site mode with
+/// [`InvocationContext::with_mode`]. Items outside any class yield `None` for
+/// the enclosing class.
 pub fn access_context(db: &dyn TyDatabase, file: FileId, item: ItemId) -> InvocationContext {
     let key = access_context_key_query(db, ItemKey::new(db, file, item));
     InvocationContext::from_key(db, key)
@@ -336,7 +350,9 @@ fn member_set_impl(
         out.extend(
             class_methods(db, &scope_id, &ty, name)
                 .into_iter()
-                .filter(|method| mode_allows(method, ctx) && is_accessible(db, scope, method, ctx)),
+                .filter(|method| {
+                    mode_allows(method, ctx) && is_accessible(db, scope, method, &receiver, ctx)
+                }),
         );
         for parent in supertypes_query(db, scope_id, ty.id) {
             stack.push(parent);
@@ -603,7 +619,12 @@ fn source_class_methods(
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|fqn| fqn.as_str().to_owned())
         .unwrap_or_default();
-    let declaring_package = resolver.package().map(|p| p.as_str().to_owned());
+    let declaring_package = Some(
+        resolver
+            .package()
+            .map(|p| p.as_str().to_owned())
+            .unwrap_or_default(),
+    );
     let declaring_top_level = (!fqn.is_empty()).then(|| top_level_of(&fqn));
     let declaring_interface =
         matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
@@ -701,13 +722,13 @@ fn mode_allows(method: &MethodData, ctx: &InvocationContext) -> bool {
 }
 
 /// Whether `method` is accessible to the class in which the invocation appears
-/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
-/// A missing context field (`None`) is permissive: that restriction is not
-/// enforced.
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
+/// when accessed through the receiver expression of type `receiver`.
 fn is_accessible(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     method: &MethodData,
+    receiver: &Ty,
     ctx: &InvocationContext,
 ) -> bool {
     member_accessible(
@@ -716,21 +737,25 @@ fn is_accessible(
         method.access,
         method.declaring_package.as_deref(),
         method.declaring_top_level.as_deref(),
+        receiver,
+        method.is_static,
         ctx,
     )
 }
 
 /// Whether a member with `access` declared in `declaring_package` (its top-level
 /// class `declaring_top_level`) is accessible to the class in which the access
-/// appears ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
-/// A missing context field (`None`) is permissive: that restriction is not
-/// enforced.
+/// appears ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
+/// when accessed through the receiver expression of type `receiver`.
+#[allow(clippy::too_many_arguments)]
 fn member_accessible(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     access: Access,
     declaring_package: Option<&str>,
     declaring_top_level: Option<&str>,
+    receiver: &Ty,
+    static_member: bool,
     ctx: &InvocationContext,
 ) -> bool {
     match access {
@@ -738,13 +763,14 @@ fn member_accessible(
         // §6.6.1: a private member is accessible throughout the top-level
         // class in which it is declared.
         Access::Private => match (&ctx.enclosing_class, declaring_top_level) {
-            (Some(enclosing), Some(declaring)) => enclosing == declaring,
-            _ => true,
+            (Some(enclosing), Some(declaring)) => within_top_level(enclosing, declaring),
+            _ => false,
         },
-        // §6.6.1: a package member is accessible only within its own package.
+        // §6.6.1: a package member is accessible only within its own package;
+        // the unnamed package ([§7.4.2]) is `""`.
         Access::Package => match (&ctx.package, declaring_package) {
             (Some(invocation), Some(declaring)) => invocation == declaring,
-            _ => true,
+            _ => false,
         },
         // §6.6.2: a protected member is accessible within the declaring
         // package, or from a class that is a subclass of the declaring class.
@@ -759,12 +785,36 @@ fn member_accessible(
                     let enclosing = Ty::reference(db, enclosing.as_str(), Vec::new());
                     let declaring =
                         Ty::reference(db, declaring_top_level.unwrap_or_default(), Vec::new());
-                    is_subtype(db, scope, &enclosing, &declaring)
+                    if !is_subtype(db, scope, &enclosing, &declaring) {
+                        return false;
+                    }
+                    // §6.6.2: a protected instance member accessed outside the
+                    // declaring package by a receiver expression requires the
+                    // type of that expression to be a subtype of the enclosing
+                    // class. A `super` invocation accesses the member through
+                    // the `super` keyword, not an expression, so the rule does
+                    // not apply ([§15.12.1]).
+                    if static_member || ctx.mode == InvocationMode::Super {
+                        true
+                    } else {
+                        is_subtype(db, scope, receiver, &enclosing)
+                    }
                 }
-                None => true,
+                None => false,
             }
         }
     }
+}
+
+/// Whether the class `enclosing` is the top-level class `declaring` or
+/// lexically inside it ([JLS §6.6.1]): a private member is accessible
+/// throughout the body of its top-level class, including from nested classes.
+/// Library class names nest with `$` (`Outer$Inner`), source class names with
+/// `.` (`com.example.Outer.Inner`).
+fn within_top_level(enclosing: &str, declaring: &str) -> bool {
+    enclosing == declaring
+        || enclosing.starts_with(&format!("{}.", declaring))
+        || top_level_of(enclosing) == declaring
 }
 
 /// An actual argument of a method invocation: either a concrete type, or a
@@ -983,7 +1033,7 @@ fn instantiate(
 /// substituted by `m1`'s (by position), and `m1`'s declared bounds must be at
 /// least as restrictive as `m2`'s, so `<T extends String>` is more specific
 /// than `<T>`.
-fn more_specific(
+pub(crate) fn more_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     m1: &MethodData,
@@ -1227,6 +1277,8 @@ pub fn pick_field(
                 field.access,
                 field.declaring_package.as_deref(),
                 field.declaring_top_level.as_deref(),
+                &receiver,
+                field.is_static,
                 ctx,
             ) {
                 return Some(field);
@@ -1337,7 +1389,12 @@ fn source_class_fields(
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|fqn| fqn.as_str().to_owned())
         .unwrap_or_default();
-    let declaring_package = resolver.package().map(|p| p.as_str().to_owned());
+    let declaring_package = Some(
+        resolver
+            .package()
+            .map(|p| p.as_str().to_owned())
+            .unwrap_or_default(),
+    );
     let declaring_top_level = (!fqn.is_empty()).then(|| top_level_of(&fqn));
 
     let mut out = Vec::new();

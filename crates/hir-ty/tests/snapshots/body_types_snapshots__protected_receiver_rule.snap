@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+public class A {
+    protected void pro() {}
+}
+
+FILE /src/org/other/C.java:
+package org.other;
+
+class C extends com.example.A {
+    A a = new A();
+    C c = new C();
+
+    void use() {
+        a.pro();
+        c.pro();
+        super.pro();
+        pro();
+    }
+}
+
+method pro(): void
+  locals: 
+  exprs: 
+method use(): void
+  locals: 
+  exprs: e2: org.other.A | e3: <error> | e4: org.other.C | e5: void | e7: void | e8: void

@@ -1,0 +1,6 @@
+---
+source: crates/hir-ty/tests/method_access_snapshots.rs
+expression: out
+---
+C.pro: com.example.A.pro() -> void [args: ]
+A.pro: <none> [args: ]

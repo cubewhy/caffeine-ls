@@ -315,13 +315,11 @@ class Body {
 ",
     )])
 );
-// The `take(Object)` overload is eagerly applicable to the standalone
-// `List<Object>` of `emptyList()`, so the plain resolution already succeeds
-// and the §18.5.2.2 retry (which only runs on failure) never engages: the
-// nested call is not retargeted, and the call stays `take(Object)`. javac's
-// per-candidate inference of §18.5.2.1 would find `take(List<String>)` more
-// specific; the eager-wins behavior here is the documented degradation of the
-// retry-on-failure heuristic.
+// Each overload is probed with `emptyList()`'s inference shared against its
+// formal parameter ([JLS §18.5.2.4]): `emptyList()` is `List<String>` against
+// `take(List<String>)` and `List<Object>` against `take(Object)`. Both are
+// applicable in the strict phase, and `take(List<String>)` is the most
+// specific (§15.12.2.5), so it wins.
 
 snapshot!(
     overload_retarget_choice,
@@ -344,11 +342,10 @@ class Body {
 ",
     )])
 );
-// Neither overload is eagerly applicable to the standalone `List<Object>`
-// (invariant type arguments), so the retry runs and picks the first candidate
-// whose retargeted arguments resolve — `take(List<String>)`, with the nested
-// `emptyList()` typed `List<String>`. javac would report this as ambiguous;
-// picking the first applicable candidate is a documented heuristic.
+// Both overloads are applicable — `emptyList()` is `List<String>` against
+// `take(List<String>)` and `List<Integer>` against `take(List<Integer>)` —
+// and neither is more specific than the other (§15.12.2.5), so the invocation
+// is ambiguous; the nested `emptyList()` keeps its standalone `List<Object>`.
 
 snapshot!(
     poly_conditional_invocation,
@@ -365,6 +362,222 @@ class Body {
 
     void call(boolean flag) {
         take(flag ? Collections.emptyList() : Collections.emptyList());
+    }
+}
+",
+    )])
+);
+// The nested `emptyList()` is retargeted against `take`'s formal even when it
+// is itself an argument to the generic `id`, whose own type parameter ranges
+// over the formal ([JLS §18.5.2.2]): `id(emptyList())` is `List<String>`.
+
+snapshot!(
+    nested_invocation_deep,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        take(id(Collections.emptyList()));
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    nested_generic_target,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    <T> List<T> wrap(List<T> xs) {
+        return xs;
+    }
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        List<String> ys = wrap(id(Collections.emptyList()));
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    poly_lambda_in_nested_call,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Body {
+    void use(Function<String, Integer> f) {}
+
+    <T> T id(T x) {
+        return x;
+    }
+
+    void call() {
+        use(id(s -> s.length()));
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    constructor_poly_argument,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.lang.Runnable;
+
+class Job {
+    Job(Runnable r) {}
+}
+
+class Body {
+    void hire() {
+        new Job(() -> {});
+    }
+}
+",
+    )])
+);
+// The invocation mode ([JLS §15.12.1]) is derived per call site: a bare type
+// name receiver selects only static members (§15.12.3), an expression receiver
+// (virtual invocation) may also select a class's static members.
+
+snapshot!(
+    mode_static_source,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static void s() {}
+    void i() {}
+
+    void use() {
+        Body.s();
+        Body b = new Body();
+        b.s();
+        b.i();
+        Body.i();
+    }
+}
+",
+    )])
+);
+// A `super` invocation ([JLS §15.12.1]) selects only instance members of the
+// direct superclass (§15.12.3); its receiver is the superclass type.
+
+snapshot!(
+    mode_super_source,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class A {
+    void m() {}
+    static void s() {}
+}
+
+class B extends A {
+    void use() {
+        super.m();
+        super.s();
+    }
+}
+",
+    )])
+);
+// JLS §6.6.2: a `protected` instance member of `A` is accessible from the
+// subclass `C` (in another package) only through a receiver that is `C` or a
+// subtype of `C`, or through `super` — never through a plain `A` receiver.
+
+snapshot!(
+    protected_receiver_rule,
+    check_body_types(&[
+        (
+            "/src/com/example/A.java",
+            "\
+package com.example;
+
+public class A {
+    protected void pro() {}
+}
+",
+        ),
+        (
+            "/src/org/other/C.java",
+            "\
+package org.other;
+
+class C extends com.example.A {
+    A a = new A();
+    C c = new C();
+
+    void use() {
+        a.pro();
+        c.pro();
+        super.pro();
+        pro();
+    }
+}
+",
+        ),
+    ])
+);
+// JLS §6.6.1: a `private` member is accessible throughout the body of its
+// top-level class, including from nested classes.
+
+snapshot!(
+    private_nested_class,
+    check_body_types(&[(
+        "/src/com/example/Outer.java",
+        "\
+package com.example;
+
+class Outer {
+    private int secret;
+
+    static class Inner {
+        void use(Outer o) {
+            o.secret = 1;
+        }
+    }
+}
+
+class Other {
+    void use(Outer o) {
+        o.secret = 2;
     }
 }
 ",

@@ -25,12 +25,12 @@
 //! right-hand side, a returned expression, or a cast. Lambdas and method
 //! references are poly expressions whose type comes from the *target*
 //! functional interface ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)):
-//! their standalone type is unknown, so they infer to [`Ty::error`]. A nested
-//! generic method invocation in an argument position is likewise a poly
-//! expression ([JLS §18.5.2.4]): when the plain overload resolution fails, the
-//! invocation is retried with each argument retyped against the candidate's
-//! formal parameter, so `take(emptyList())` resolves the nested `emptyList()`
-//! against `take(List<String>)`.
+//! their standalone type is unknown, so they infer to [`Ty::error`] when no
+//! target exists. A nested generic method invocation in an argument position
+//! is likewise a poly expression ([JLS §18.5.2.4]): its inference shares the
+//! enclosing invocation's table, so `take(emptyList())` resolves the nested
+//! `emptyList()` as `List<String>` against `take(List<String>)` instead of the
+//! standalone `List<Object>`.
 
 use std::sync::Arc;
 
@@ -48,13 +48,14 @@ use vfs::FileId;
 
 use crate::{
     db::{TyDatabase, enclosing_class_query, type_params_map_query},
-    inference::least_upper_bound,
+    inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
     method::{
-        FieldData, InvocationContext, MethodData, PolyArg, access_context, member_set, pick_field,
-        pick_method, single_abstract_method,
+        FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
+        more_specific, pick_field, pick_method, single_abstract_method,
     },
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
-    ty::{Ty, TyKind, unboxed_primitive},
+    subtyping::supertypes_impl,
+    ty::{Ty, TyKind, boxed_type, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -494,153 +495,466 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        // §15.27.3/§15.13.2: a lambda or method reference argument is a poly
-        // expression; its type is the resolved formal parameter of the chosen
-        // candidate, so it is deferred to [`Self::type_poly_args`].
-        let mut poly_args: FxHashMap<usize, ExprId> = FxHashMap::default();
-        let arg_tys: Vec<PolyArg> = args
-            .iter()
-            .enumerate()
-            .map(|(i, arg)| {
-                if expr_is_poly(&self.tree, *arg) {
-                    poly_args.insert(i, *arg);
-                    PolyArg::Poly(*arg, poly_arity(&self.tree, *arg))
-                } else {
-                    PolyArg::Concrete(self.infer_expr(*arg))
-                }
-            })
-            .collect();
-        let receiver_ty = match receiver {
-            Some(receiver) => {
-                // `Type.method(...)` — a static invocation whose receiver
-                // expression is a bare type name ([§15.12.1]).
-                if let ExprData::Var(type_name) = self.tree.expr(receiver).clone()
-                    && let Some(ty) = self.type_name_ty(&type_name)
-                {
-                    ty
-                } else {
-                    self.infer_expr(receiver)
-                }
-            }
-            // An unqualified call is an implicit `this` invocation
-            // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)).
-            None => self.enclosing_class.unwrap_or_else(|| self.error()),
-        };
-        match pick_method(
-            self.db,
-            &self.scope,
-            &receiver_ty,
-            name.as_str(),
-            &arg_tys,
-            &self.access,
-            target,
-        ) {
-            Some(method) => {
-                // §18.5.2.2: the resolved formal parameters are the target
-                // types of the poly arguments — the lambda or method
-                // reference is a value of the functional interface it is
-                // assigned to.
-                for (i, expr) in poly_args {
-                    if let Some(formal) = method.params.get(i) {
-                        let _ = self.with_target(Some(*formal), |this| this.infer_expr(expr));
-                    }
-                }
+        let (receiver_ty, mode) = self.receiver_info(receiver);
+        let access = self.access.with_mode(mode);
+        let arg_kinds = self.arg_kinds(args);
+        match self.resolve_call(&receiver_ty, &name, &arg_kinds, target, &access) {
+            Some((method, deferred)) => {
+                // §18.5.2.2/§18.5.2.4: the resolved formal parameters are the
+                // target types of the poly arguments — the lambda, method
+                // reference or nested invocation is re-inferred against the
+                // instantiated formal ([JLS §18.5.2.4]).
+                self.reinfer_deferred(&method, &deferred);
                 method.ret
             }
-            // §18.5.2.1/§18.5.2.2: a nested generic method invocation argument
-            // is itself a poly expression whose type is inferred against the
-            // candidate's formal parameter ([JLS §18.5.2.4]). When the plain
-            // resolution fails, each candidate is retried with the invocation
-            // arguments retyped against its formal parameters, so
-            // `take(emptyList())` resolves `emptyList()` as `List<String>`
-            // against `take(List<String>)` instead of failing on the
-            // standalone `List<Object>`.
-            None => match self.retry_poly_invocation(receiver_ty, &name, args, target) {
-                Some(method) => {
-                    for (i, expr) in poly_args {
-                        if let Some(formal) = method.params.get(i) {
-                            let _ = self.with_target(Some(*formal), |this| this.infer_expr(expr));
-                        }
-                    }
-                    method.ret
+            // On total failure the poly arguments keep their standalone types
+            // (a lambda or method reference without a target is the error
+            // type; a nested invocation resolves in isolation), so the
+            // recorded types stay those of the argument expressions as
+            // independent expressions.
+            None => {
+                for arg in args {
+                    let _ = self.infer_expr(*arg);
                 }
-                None => {
-                    for expr in poly_args.into_values() {
-                        let _ = self.infer_expr(expr);
-                    }
-                    self.error()
-                }
-            },
+                self.error()
+            }
         }
     }
 
-    /// The §18.5.2.2 retry of a failed invocation ([JLS §18.5.2.4]): retypes
-    /// each argument against every candidate's formal parameter and re-runs
-    /// the overload selection. An argument is only retargeted when the formal
-    /// is a *proper* type ([JLS §18.4.1]) — a formal that still mentions a type
-    /// variable (a generic member such as `List<T>`) is left as the standalone
-    /// argument type, since its own inference cannot use the target.
-    ///
-    /// The retargeted types are only retained when a candidate is selected; on
-    /// total failure the standalone argument types are restored, so the
-    /// recorded types stay those of the argument expressions as independent
-    /// expressions.
-    fn retry_poly_invocation(
-        &mut self,
-        receiver_ty: Ty,
-        name: &Name,
-        args: &[ExprId],
-        target: Option<Ty>,
-    ) -> Option<MethodData> {
-        let members = member_set(
-            self.db,
-            &self.scope,
-            &receiver_ty,
-            name.as_str(),
-            &self.access,
-        );
-        let saved = self.types.clone();
-        for member in &members {
-            self.types = saved.clone();
-            let mut candidate_args: Vec<PolyArg> = Vec::with_capacity(args.len());
-            for (i, arg) in args.iter().enumerate() {
-                let ty = match member.params.get(i) {
-                    Some(formal) if is_targetable(self.db, *formal) => {
-                        self.with_target(Some(*formal), |this| this.infer_expr(*arg))
+    /// The receiver type and invocation mode of an invocation
+    /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)):
+    /// a bare type name in receiver position is a static invocation whose
+    /// receiver is a type, not a value; an unqualified call is an implicit
+    /// `this` invocation; a `super` receiver is the superclass of the
+    /// enclosing class.
+    fn receiver_info(&mut self, receiver: Option<ExprId>) -> (Ty, InvocationMode) {
+        match receiver {
+            Some(receiver) => match self.tree.expr(receiver).clone() {
+                // `Type.method(...)` — a static invocation whose receiver
+                // expression is a bare type name ([§15.12.1]).
+                ExprData::Var(type_name) => {
+                    if let Some(ty) = self.type_name_ty(&type_name) {
+                        return (ty, InvocationMode::Static);
                     }
-                    _ => self
-                        .types
-                        .get(arg)
-                        .copied()
-                        .unwrap_or_else(|| self.infer_expr(*arg)),
-                };
-                candidate_args.push(PolyArg::Concrete(ty));
+                    (self.infer_expr(receiver), InvocationMode::Virtual)
+                }
+                // `super.method(...)` — a super invocation whose receiver is
+                // the superclass of the enclosing class ([§15.12.1]).
+                ExprData::Super => (self.super_ty(), InvocationMode::Super),
+                _ => (self.infer_expr(receiver), InvocationMode::Virtual),
+            },
+            // An unqualified call is an implicit `this` invocation
+            // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)).
+            None => (
+                self.enclosing_class.unwrap_or_else(|| self.error()),
+                InvocationMode::Virtual,
+            ),
+        }
+    }
+
+    /// The type of `super` in the current class: the direct superclass
+    /// ([JLS §8.1.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.4)),
+    /// with the enclosing class's type arguments substituted. The direct
+    /// supertypes of a class list the superclass first
+    /// ([`supertypes_impl`]).
+    fn super_ty(&self) -> Ty {
+        let Some(enclosing) = self.enclosing_class else {
+            return self.error();
+        };
+        supertypes_impl(self.db, &self.scope, &enclosing)
+            .first()
+            .copied()
+            .unwrap_or_else(|| self.error())
+    }
+
+    /// The kinds of the actual arguments of an invocation for joint inference:
+    /// each argument decomposes into its poly leaves ([JLS §15.2]) — a lambda,
+    /// method reference or method invocation, or a parenthesized or conditional
+    /// expression of them. An argument with no poly leaves is a concrete
+    /// argument, inferred standalone.
+    fn arg_kinds(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
+        args.iter().map(|arg| self.arg_info(*arg)).collect()
+    }
+
+    fn arg_info(&mut self, arg: ExprId) -> ArgInfo {
+        let leaves = poly_leaves(&self.tree, arg);
+        if leaves.is_empty() {
+            ArgInfo {
+                id: arg,
+                poly: false,
+                leaves: vec![ArgKind::Concrete(self.infer_expr(arg))],
             }
-            if let Some(method) = pick_method(
-                self.db,
-                &self.scope,
-                &receiver_ty,
-                name.as_str(),
-                &candidate_args,
-                &self.access,
-                target,
-            ) {
-                return Some(method);
+        } else {
+            ArgInfo {
+                id: arg,
+                poly: true,
+                leaves: leaves
+                    .iter()
+                    .map(|leaf| match self.tree.expr(*leaf).clone() {
+                        ExprData::Lambda { .. } | ExprData::MethodRef { .. } => ArgKind::Lambda {
+                            arity: poly_arity(&self.tree, *leaf),
+                        },
+                        ExprData::MethodCall { .. } => ArgKind::Invocation { id: *leaf },
+                        _ => unreachable!("a poly leaf is a lambda, method reference or call"),
+                    })
+                    .collect(),
             }
         }
-        self.types = saved;
-        None
+    }
+
+    /// Resolves an invocation `receiver.name(args)` by the applicability
+    /// phases of [JLS §15.12.2]: strict invocation
+    /// ([§15.12.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.2)),
+    /// then loose invocation ([§15.12.2.3]), then variable arity
+    /// ([§15.12.2.4]); the most specific applicable method
+    /// ([§15.12.2.5]) wins. Returns the inferred invocation type and the poly
+    /// arguments to re-infer against the resolved formal parameters
+    /// ([JLS §18.5.2.4]). `None` when no method is applicable or the
+    /// applicable ones are ambiguous.
+    fn resolve_call(
+        &mut self,
+        receiver_ty: &Ty,
+        name: &Name,
+        arg_kinds: &[ArgInfo],
+        target: Option<Ty>,
+        ctx: &InvocationContext,
+    ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
+        let members = member_set(self.db, &self.scope, receiver_ty, name.as_str(), ctx);
+        for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
+            if let Some(chosen) = self.choose_candidate(&members, arg_kinds, phase, false, target) {
+                return Some(chosen);
+            }
+        }
+        self.choose_candidate(&members, arg_kinds, InvocationPhase::Loose, true, target)
+    }
+
+    /// The most specific applicable candidate in `phase`, or `None` when none
+    /// applies or the applicable ones are ambiguous ([JLS §15.12.2.5]). Each
+    /// candidate is probed in its own fresh inference table.
+    fn choose_candidate(
+        &mut self,
+        members: &[MethodData],
+        arg_kinds: &[ArgInfo],
+        phase: InvocationPhase,
+        varargs: bool,
+        target: Option<Ty>,
+    ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
+        let mut applicable: Vec<ApplicableCandidate> = Vec::new();
+        for member in members {
+            let mut inference = Inference::new();
+            let mut deferred = Vec::new();
+            if let Some(invocation) = self.try_candidate(
+                &mut inference,
+                member,
+                arg_kinds,
+                phase,
+                varargs,
+                target,
+                &mut deferred,
+                true,
+            ) {
+                applicable.push((member.clone(), invocation, deferred));
+            }
+        }
+        if applicable.is_empty() {
+            return None;
+        }
+        if applicable.len() == 1 {
+            let (_, invocation, deferred) = applicable.pop().expect("len checked");
+            return Some((invocation, deferred));
+        }
+        let mut best: Option<usize> = None;
+        for (i, (candidate, _, _)) in applicable.iter().enumerate() {
+            let wins = applicable.iter().all(|(other, _, _)| {
+                other == candidate || more_specific(self.db, &self.scope, candidate, other)
+            });
+            if wins {
+                if best.is_some() {
+                    return None;
+                }
+                best = Some(i);
+            }
+        }
+        best.map(|i| {
+            let (_, invocation, deferred) = applicable.remove(i);
+            (invocation, deferred)
+        })
+    }
+
+    /// Instantiates `method` against `arg_kinds` in `phase`, contributing the
+    /// argument and target constraints to `inference`. When `resolve` is set
+    /// the inference is solved to the invocation type
+    /// ([JLS §15.12.2.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.6));
+    /// otherwise only consistency is checked — the nested poly invocation
+    /// probe of §18.5.2.4, which must not fix variables before the enclosing
+    /// invocation's constraints are all in. `None` when `method` is not
+    /// applicable in this phase. The poly arguments to re-infer against the
+    /// resolved formals are collected in `deferred`.
+    #[allow(clippy::too_many_arguments)]
+    fn try_candidate(
+        &mut self,
+        inference: &mut Inference,
+        method: &MethodData,
+        arg_kinds: &[ArgInfo],
+        phase: InvocationPhase,
+        varargs: bool,
+        target: Option<Ty>,
+        deferred: &mut Vec<(ExprId, usize)>,
+        resolve: bool,
+    ) -> Option<MethodData> {
+        let (formals, ret, throws_formals) = inference.register_method(self.db, method);
+
+        // §15.12.2.2/§15.12.2.3: a lambda is compatible with a function type
+        // only when the parameter list has the same arity as the single
+        // abstract method ([§15.27.3]). A candidate whose functional interface
+        // does not fit a lambda argument is not applicable.
+        for (i, info) in arg_kinds.iter().enumerate() {
+            let Some(formal) = formals.get(i).copied() else {
+                break;
+            };
+            for kind in &info.leaves {
+                if let ArgKind::Lambda {
+                    arity: Some(arity), ..
+                } = kind
+                    && let Some(sam) = single_abstract_method(self.db, &self.scope, &formal)
+                    && sam.params.len() != *arity
+                {
+                    return None;
+                }
+            }
+        }
+
+        // §18.5.2.2: in the loose phase (and for variable-arity invocation,
+        // §15.12.2.4) primitive arguments are boxed, so `⟨int → α⟩` yields the
+        // boxed lower bound. A poly argument is not boxed: its type is the
+        // target functional interface, and it contributes no constraint
+        // (§15.12.2.2/§15.12.2.3, §18.5.2.2).
+        if varargs {
+            if !method.varargs || arg_kinds.len() + 1 < formals.len() {
+                return None;
+            }
+            let (fixed, last) = formals.split_at(formals.len() - 1);
+            for (i, info) in arg_kinds.iter().enumerate().take(fixed.len()) {
+                let formal = fixed[i];
+                if info.poly {
+                    deferred.push((info.id, i));
+                }
+                for kind in &info.leaves {
+                    if !self.contribute_leaf(inference, kind, formal, phase) {
+                        return None;
+                    }
+                }
+            }
+            // §15.12.2.4: a single trailing actual of the array type is used
+            // as-is; otherwise the trailing actuals are packed into the array,
+            // each related to the element type.
+            let rest: Vec<&ArgKind> = arg_kinds
+                .iter()
+                .skip(fixed.len())
+                .flat_map(|info| info.leaves.iter())
+                .collect();
+            if rest.len() == 1 {
+                match rest[0] {
+                    ArgKind::Concrete(ty) if ty.is_array(self.db) => {
+                        if !self.contribute_leaf(inference, rest[0], last[0], phase) {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        let element = last[0].element(self.db).copied()?;
+                        for kind in rest {
+                            if !self.contribute_leaf(inference, kind, element, phase) {
+                                return None;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let element = last[0].element(self.db).copied()?;
+                for kind in rest {
+                    if !self.contribute_leaf(inference, kind, element, phase) {
+                        return None;
+                    }
+                }
+            }
+        } else {
+            if formals.len() != arg_kinds.len() {
+                return None;
+            }
+            for (i, info) in arg_kinds.iter().enumerate() {
+                let formal = formals[i];
+                if info.poly {
+                    deferred.push((info.id, i));
+                }
+                for kind in &info.leaves {
+                    if !self.contribute_leaf(inference, kind, formal, phase) {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        // §18.5.2.4 (resolution): when the invocation is a poly expression with
+        // an expected type, the constraint ⟨R → T⟩ joins the constraint set, so
+        // the inference variables are bounded by the target type as well. Only
+        // a generic method can have a poly invocation ([JLS §15.12.2.6]): a
+        // non-generic method's return type is fixed, so a mismatched target
+        // must not reject an otherwise-applicable invocation.
+        if let Some(target) = target
+            && !method.type_params.is_empty()
+        {
+            inference.add_constraint(Constraint::Sub(ret, target));
+        }
+
+        let build = |resolved: &FxHashMap<u64, Ty>| MethodData {
+            name: method.name.clone(),
+            owner: method.owner.clone(),
+            params: formals
+                .iter()
+                .map(|p| p.substitute_infer(self.db, resolved))
+                .collect(),
+            ret: ret.substitute_infer(self.db, resolved),
+            throws: throws_formals
+                .iter()
+                .map(|t| t.substitute_infer(self.db, resolved))
+                .collect(),
+            varargs: method.varargs,
+            is_static: method.is_static,
+            abstract_: method.abstract_,
+            access: method.access,
+            declaring_package: method.declaring_package.clone(),
+            declaring_top_level: method.declaring_top_level.clone(),
+            declaring_interface: method.declaring_interface,
+            type_params: method.type_params.clone(),
+        };
+        if resolve {
+            let resolved = inference.solve_after(self.db, &self.scope, phase)?;
+            Some(build(&resolved))
+        } else if inference.check_consistent(self.db, &self.scope, phase) {
+            Some(build(&FxHashMap::default()))
+        } else {
+            None
+        }
+    }
+
+    /// Contributes one poly leaf (or concrete argument) against the formal
+    /// parameter `formal` ([JLS §18.5.2.2]): a concrete argument constrains
+    /// the formal by `⟨S → T⟩`; a lambda or method reference is deferred to the
+    /// resolved formal; a nested invocation is resolved against the formal by
+    /// contributing its constraints to the shared table ([JLS §18.5.2.4]).
+    /// `false` when the nested invocation has no applicable method.
+    fn contribute_leaf(
+        &mut self,
+        inference: &mut Inference,
+        kind: &ArgKind,
+        formal: Ty,
+        phase: InvocationPhase,
+    ) -> bool {
+        match kind {
+            ArgKind::Concrete(ty) => {
+                // §15.12.2.3: loose invocation boxes primitive arguments.
+                let ty = match (phase, ty.kind(self.db)) {
+                    (InvocationPhase::Loose, TyKind::Primitive(p)) => {
+                        Ty::reference(self.db, boxed_type(*p), Vec::new())
+                    }
+                    _ => *ty,
+                };
+                inference.add_constraint(Constraint::Sub(ty, formal));
+                true
+            }
+            ArgKind::Lambda { .. } => true,
+            ArgKind::Invocation { id } => self.contribute_invocation(inference, *id, formal),
+        }
+    }
+
+    /// Resolves a nested poly invocation argument against the target formal
+    /// ([JLS §18.5.2.4]) by contributing its constraints to the enclosing
+    /// invocation's inference table. The nested invocation's own candidate
+    /// selection is greedy — the first locally consistent candidate, in the
+    /// first applicable phase, is committed to — so the enclosing inference
+    /// fixes the nested variables ([JLS §18.5.2.1/§18.5.2.2]) instead of the
+    /// nested invocation resolving them standalone. `false` when no candidate
+    /// is applicable against the formal.
+    fn contribute_invocation(&mut self, inference: &mut Inference, id: ExprId, formal: Ty) -> bool {
+        let ExprData::MethodCall {
+            receiver,
+            name,
+            args,
+            ..
+        } = self.tree.expr(id).clone()
+        else {
+            return true;
+        };
+        let (receiver_ty, mode) = self.receiver_info(receiver);
+        let access = self.access.with_mode(mode);
+        let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
+        let arg_kinds = self.arg_kinds(&args);
+        for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
+            let phase_snapshot = inference.snapshot();
+            for member in &members {
+                let probe = inference.snapshot();
+                let mut deferred = Vec::new();
+                if self
+                    .try_candidate(
+                        inference,
+                        member,
+                        &arg_kinds,
+                        phase,
+                        false,
+                        Some(formal),
+                        &mut deferred,
+                        false,
+                    )
+                    .is_some()
+                {
+                    return true;
+                }
+                inference.restore(probe);
+            }
+            inference.restore(phase_snapshot);
+        }
+        for member in &members {
+            let probe = inference.snapshot();
+            let mut deferred = Vec::new();
+            if self
+                .try_candidate(
+                    inference,
+                    member,
+                    &arg_kinds,
+                    InvocationPhase::Loose,
+                    true,
+                    Some(formal),
+                    &mut deferred,
+                    false,
+                )
+                .is_some()
+            {
+                return true;
+            }
+            inference.restore(probe);
+        }
+        false
+    }
+
+    /// Re-infers the poly arguments against the resolved formal parameters of
+    /// the chosen candidate ([JLS §18.5.2.4]): the lambda, method reference or
+    /// nested invocation is typed by its target — the instantiated formal — so
+    /// its expression tree records the target-dependent types.
+    fn reinfer_deferred(&mut self, method: &MethodData, deferred: &[(ExprId, usize)]) {
+        for (arg, index) in deferred {
+            if let Some(formal) = method.params.get(*index) {
+                let _ = self.with_target(Some(*formal), |this| this.infer_expr(*arg));
+            }
+        }
     }
 
     /// A class instance creation ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)):
     /// the created class's type. Constructors are resolved so the arguments
-    /// are checked; source constructors are named after the class, library
-    /// constructors are `<init>`.
+    /// are checked against the same joint inference as a method invocation —
+    /// `new Job(() -> {})` types the lambda argument against the resolved
+    /// constructor's formal parameter. Source constructors are named after the
+    /// class, library constructors are `<init>`.
     fn new_expr(&mut self, ty: TypeRef<Name>, args: &[ExprId]) -> Ty {
-        let arg_tys: Vec<PolyArg> = args
-            .iter()
-            .map(|arg| PolyArg::Concrete(self.infer_expr(*arg)))
-            .collect();
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
@@ -649,15 +963,21 @@ impl<'a> InferCtx<'a> {
             Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
             _ => simple_name(name.as_str()),
         };
-        let _ = pick_method(
-            self.db,
-            &self.scope,
+        let arg_kinds = self.arg_kinds(args);
+        let access = self.access.clone();
+        if let Some((method, deferred)) = self.resolve_call(
             &class_ty,
-            &constructor_name,
-            &arg_tys,
-            &self.access,
+            &Name::new(&constructor_name),
+            &arg_kinds,
             None,
-        );
+            &access,
+        ) {
+            self.reinfer_deferred(&method, &deferred);
+        } else {
+            for arg in args {
+                let _ = self.infer_expr(*arg);
+            }
+        }
         class_ty
     }
 
@@ -1185,16 +1505,70 @@ fn expr_is_call(tree: &BodyTree, id: ExprId) -> bool {
     }
 }
 
-/// Whether a formal parameter is a *proper* type ([JLS §18.4.1]) that a nested
-/// poly invocation can be inferred against: not the error type, and not
-/// mentioning an uninstantiated type variable. The error type is never a
-/// usable target, and a formal still mentioning a type variable (a generic
-/// member such as `List<T>`) cannot fix the nested invocation's own inference.
-fn is_targetable(db: &dyn TyDatabase, formal: Ty) -> bool {
-    !formal.is_error(db)
-        && !formal.is_type_var(db)
-        && !formal.contains_type_var(db)
-        && !formal.contains_infer_var(db)
+/// The kinds of the actual arguments of a method invocation for the joint
+/// inference of §18.5.2.4: a concrete argument has a standalone type; a poly
+/// argument is a lambda or method reference deferred to its target formal
+/// ([JLS §18.5.2.2], [§15.27.3], [§15.13.2]), or a nested method invocation
+/// whose inference shares the enclosing invocation's table
+/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)).
+#[derive(Clone)]
+enum ArgKind {
+    /// An argument with a concrete standalone type.
+    Concrete(Ty),
+    /// A lambda or method reference; the arity check of §15.12.2.2/§15.12.2.3
+    /// is run against the target formal's single abstract method. A method
+    /// reference is not arity-checkable without resolving the referenced
+    /// method, so its arity is `None`.
+    Lambda { arity: Option<usize> },
+    /// A nested method invocation, resolved against the target formal by
+    /// contributing its constraints to the enclosing invocation's table.
+    Invocation { id: ExprId },
+}
+
+/// One actual argument of an invocation: its poly leaves — each contributing a
+/// constraint to the candidate's inference — and whether the argument itself is
+/// a poly expression whose type is the target formal and so must be re-inferred
+/// against it after resolution ([JLS §18.5.2.4]).
+struct ArgInfo {
+    /// The argument expression, re-inferred against the resolved formal.
+    id: ExprId,
+    /// Whether the argument is a poly expression: its type is the target
+    /// formal, so it is deferred to the post-resolution re-inference.
+    poly: bool,
+    /// The poly leaves of the argument ([JLS §15.2]), each contributed against
+    /// the formal during candidate probing. A concrete argument has a single
+    /// `Concrete` leaf.
+    leaves: Vec<ArgKind>,
+}
+
+/// An applicable candidate in [`InferCtx::choose_candidate`]: the declared
+/// method, its inferred invocation type, and the deferred poly arguments to
+/// re-infer against the resolved formal parameters ([JLS §18.5.2.4]).
+type ApplicableCandidate = (MethodData, MethodData, Vec<(ExprId, usize)>);
+
+/// The poly leaves of an argument ([JLS §15.2]): a lambda, method reference or
+/// method invocation, or the leaves of a parenthesized or conditional
+/// expression whose arms are poly ([JLS §18.5.2.4]). An argument that is not a
+/// poly expression has no leaves — it is inferred standalone.
+fn poly_leaves(tree: &BodyTree, id: ExprId) -> Vec<ExprId> {
+    match tree.expr(id).clone() {
+        ExprData::Lambda { .. } | ExprData::MethodRef { .. } | ExprData::MethodCall { .. } => {
+            vec![id]
+        }
+        ExprData::Paren(inner) => poly_leaves(tree, inner),
+        ExprData::Conditional { then, els, .. } => {
+            // §15.25.2: a conditional is a poly expression only when both arms
+            // are poly.
+            if expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els) {
+                let mut leaves = poly_leaves(tree, then);
+                leaves.extend(poly_leaves(tree, els));
+                leaves
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// The parameter count of a lambda argument ([§15.12.2.2]), used to check the

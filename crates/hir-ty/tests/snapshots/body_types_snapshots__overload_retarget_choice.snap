@@ -25,4 +25,4 @@ method take(java.util.List<java.lang.Integer>): void
   exprs: 
 method call(): void
   locals: 
-  exprs: e1: java.util.List<java.lang.String> | e2: void
+  exprs: e1: java.util.List<java.lang.Object> | e2: <error>
