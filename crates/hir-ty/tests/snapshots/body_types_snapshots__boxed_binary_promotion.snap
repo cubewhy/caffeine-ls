@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int boxing(java.lang.Integer i, java.lang.Long l, java.lang.Character c) {
+        int a = i + i;
+        long b = i + l;
+        double d = i + 1.5;
+        int e = -i;
+        long f = ~l;
+        int g = i << 1;
+        int h = c + c;
+        boolean big = i > l;
+        return a + e + g + h;
+    }
+}
+
+method boxing(java.lang.Integer, java.lang.Long, java.lang.Character): int
+  locals: l0: java.lang.Integer | l1: java.lang.Long | l2: java.lang.Character | l3: int | l4: long | l5: double | l6: int | l7: long | l8: int | l9: int | l10: boolean
+  exprs: e0: java.lang.Integer | e1: java.lang.Integer | e2: int | e3: java.lang.Integer | e4: java.lang.Long | e5: long | e6: java.lang.Integer | e7: double | e8: double | e9: java.lang.Integer | e10: int | e11: java.lang.Long | e12: long | e13: java.lang.Integer | e14: int | e15: int | e16: java.lang.Character | e17: java.lang.Character | e18: int | e19: java.lang.Integer | e20: java.lang.Long | e21: boolean | e22: int | e23: int | e24: int | e25: int | e26: int | e27: int | e28: int

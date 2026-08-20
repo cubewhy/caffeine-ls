@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Iterator;
+
+class Source implements Iterable<Integer> {
+    public Iterator<Integer> iterator() {
+        return null;
+    }
+}
+
+class Item {
+    int weight() {
+        return 0;
+    }
+}
+
+class Body {
+    int forEach(Source src, Item[] items) {
+        int sum = 0;
+        for (Integer x : src) {
+            sum += x;
+        }
+        for (Item it : items) {
+            sum += it.weight();
+        }
+        return sum;
+    }
+}
+
+method iterator(): java.util.Iterator<java.lang.Integer>
+  locals: 
+  exprs: e0: null
+method weight(): int
+  locals: 
+  exprs: e1: int
+method forEach(com.example.Source, com.example.Item[]): int
+  locals: l0: com.example.Source | l1: com.example.Item[] | l2: int | l3: java.lang.Integer | l4: com.example.Item
+  exprs: e2: int | e3: com.example.Source | e4: int | e5: java.lang.Integer | e6: int | e7: com.example.Item[] | e8: int | e9: com.example.Item | e10: int | e11: int | e12: int

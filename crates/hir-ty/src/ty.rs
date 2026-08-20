@@ -553,6 +553,20 @@ pub(crate) fn unboxed_primitive(fqn: &str) -> Option<PrimitiveType> {
     }
 }
 
+/// Unary numeric promotion ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)):
+/// `byte`, `short` and `char` promote to `int`; the other numeric types keep
+/// their type. Applied to the unboxed operand of a binary expression
+/// ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2),
+/// [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
+/// so `Character + Character` promotes to `int`.
+pub(crate) fn numeric_promotion(p: PrimitiveType) -> PrimitiveType {
+    use PrimitiveType::*;
+    match p {
+        Byte | Short | Char => Int,
+        other => other,
+    }
+}
+
 /// Lowers a [`TypeRef`] into a [`Ty`], mapping names with `name`. Reference
 /// names are used verbatim (no resolution): use
 /// [`crate::resolve::resolve_type_ref`] for source-side resolution, and this

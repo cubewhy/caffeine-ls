@@ -448,6 +448,101 @@ class Body {
 );
 
 snapshot!(
+    nested_most_specific_overload,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    <T> T wrap(T t) {
+        return t;
+    }
+
+    <T extends java.lang.Number> T transform(Object o) {
+        return null;
+    }
+
+    String transform(String s) {
+        return s;
+    }
+
+    void call() {
+        String s = wrap(transform(\"\"));
+    }
+}
+",
+    )])
+);
+// The nested `transform(\"\")` is probed against `wrap`'s uninstantiated type
+// parameter ([JLS §18.5.2.4]). Both overloads are applicable in the strict
+// phase, but the non-generic `transform(String)` is more specific than the
+// generic `transform(Object)` (§15.12.2.5), and only the winner's constraints
+// are lifted into the enclosing table ([JLS §18.5.2.1/§18.5.2.2]). A greedy
+// selection would commit `transform(Object)` first, whose `T extends Number`
+// lower bound makes `wrap` inconsistent with the `String` target and the whole
+// invocation an error.
+
+snapshot!(
+    nested_most_specific_overload_reversed,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    <T> T wrap(T t) {
+        return t;
+    }
+
+    String transform(String s) {
+        return s;
+    }
+
+    <T extends java.lang.Number> T transform(Object o) {
+        return null;
+    }
+
+    void call() {
+        String s = wrap(transform(\"\"));
+    }
+}
+",
+    )])
+);
+// The same source with the overloads declared in the other order resolves to
+// the same `String` — the nested candidate selection is independent of
+// declaration order ([§15.12.2.5]).
+
+snapshot!(
+    nested_overload_no_candidate,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    void pick(java.lang.Integer i) {}
+    void pick(String s) {}
+
+    void call() {
+        take(pick(Collections.emptyList()));
+    }
+}
+",
+    )])
+);
+// Neither `pick` overload accepts a `List` argument, so the nested
+// invocation has no applicable candidate against `take`'s formal — the
+// enclosing call is an error, and the nested `pick` re-infers standalone as
+// an error ([JLS §18.5.2.4]).
+
+snapshot!(
     constructor_poly_argument,
     check_body_types(&[(
         "/src/com/example/Body.java",
@@ -583,3 +678,164 @@ class Other {
 ",
     )])
 );
+
+snapshot!(
+    boxed_binary_promotion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int boxing(java.lang.Integer i, java.lang.Long l, java.lang.Character c) {
+        int a = i + i;
+        long b = i + l;
+        double d = i + 1.5;
+        int e = -i;
+        long f = ~l;
+        int g = i << 1;
+        int h = c + c;
+        boolean big = i > l;
+        return a + e + g + h;
+    }
+}
+",
+    )])
+);
+// Each boxed operand is unboxed ([JLS §5.1.8]) and binary numeric promotion
+// ([JLS §5.6.2]) applies: `Integer + Integer` → `int`, `Integer + Long` →
+// `long`, `Integer + double` → `double`, `~Long` → `long`, `Integer << 1` →
+// `int` (the shift operator promotes only the left operand), and
+// `Character + Character` → `int`. Unary minus promotes a `Integer` to `int`.
+
+snapshot!(
+    for_each_source_iterable,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Iterator;
+
+class Source implements Iterable<Integer> {
+    public Iterator<Integer> iterator() {
+        return null;
+    }
+}
+
+class Item {
+    int weight() {
+        return 0;
+    }
+}
+
+class Body {
+    int forEach(Source src, Item[] items) {
+        int sum = 0;
+        for (Integer x : src) {
+            sum += x;
+        }
+        for (Item it : items) {
+            sum += it.weight();
+        }
+        return sum;
+    }
+}
+",
+    )])
+);
+// A for-each loop ([JLS §14.14.2]) over a source class implementing the
+// generic `Iterable<T>` ([§14.14.2.1]) types the loop variable from `T`, and
+// over an array types it from the element type. The `src.iterator()` and
+// `iterator.next()` invocations are resolved against the source class.
+
+snapshot!(
+    array_initializer_empty,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int[] empty() {
+        int[] a = new int[] {};
+        String[][] b = new String[][] { {} };
+        int[] c = { 1, 2 };
+        int[] d = {};
+        return a;
+    }
+}
+",
+    )])
+);
+// An array creation with an initializer ([JLS §15.10.1]) types the array from
+// its declared element type even when the initializer is empty: `new int[] {}`
+// is `int[]`. The standalone `{}` array-initializer expression infers its
+// element type from its elements, so an empty one is an `error[]`.
+
+snapshot!(
+    package_private_access,
+    check_body_types(&[
+        (
+            "/src/com/example/A.java",
+            "\
+package com.example;
+
+public class A {
+    void pkg() {}
+}
+
+class Body {
+    void use(A a) {
+        a.pkg();
+    }
+}
+",
+        ),
+        (
+            "/src/org/other/Use.java",
+            "\
+package org.other;
+
+class Use {
+    void use(com.example.A a) {
+        a.pkg();
+    }
+}
+",
+        ),
+    ])
+);
+// A package-private member ([JLS §6.6.1]) is accessible from any class of the
+// same package — `Body` resolves `a.pkg()` — but not from another package —
+// `Use` in `org.other` gets an error.
+
+snapshot!(
+    interface_static_mode,
+    check_body_types(&[(
+        "/src/com/example/Shape.java",
+        "\
+package com.example;
+
+interface Shape {
+    static void describe() {}
+}
+
+class Circle implements Shape {
+}
+
+class Body {
+    void use() {
+        Shape.describe();
+        Circle c = new Circle();
+        c.describe();
+    }
+}
+",
+    )])
+);
+// A static method of an interface ([JLS §9.4.3]) is invoked through the
+// interface type ([§15.12.1] static invocation): `Shape.describe()` resolves.
+// Invoked through an implementing-class expression receiver the invocation
+// mode is virtual ([§15.12.3]), which must not select the interface's static
+// member, so `c.describe()` is an error.

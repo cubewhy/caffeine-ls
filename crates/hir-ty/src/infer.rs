@@ -30,7 +30,11 @@
 //! is likewise a poly expression ([JLS §18.5.2.4]): its inference shares the
 //! enclosing invocation's table, so `take(emptyList())` resolves the nested
 //! `emptyList()` as `List<String>` against `take(List<String>)` instead of the
-//! standalone `List<Object>`.
+//! standalone `List<Object>`. The nested invocation's own candidate selection
+//! is independent of the enclosing one: each candidate is probed against a
+//! fresh bound set ([JLS §18.5.1]), the most specific applicable one
+//! ([§15.12.2.5]) wins, and only its constraints are lifted into the
+//! enclosing table ([JLS §18.5.2.1/§18.5.2.2]).
 
 use std::sync::Arc;
 
@@ -55,7 +59,7 @@ use crate::{
     },
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     subtyping::supertypes_impl,
-    ty::{Ty, TyKind, boxed_type, unboxed_primitive},
+    ty::{Ty, TyKind, boxed_type, numeric_promotion, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -868,13 +872,16 @@ impl<'a> InferCtx<'a> {
     }
 
     /// Resolves a nested poly invocation argument against the target formal
-    /// ([JLS §18.5.2.4]) by contributing its constraints to the enclosing
-    /// invocation's inference table. The nested invocation's own candidate
-    /// selection is greedy — the first locally consistent candidate, in the
-    /// first applicable phase, is committed to — so the enclosing inference
-    /// fixes the nested variables ([JLS §18.5.2.1/§18.5.2.2]) instead of the
-    /// nested invocation resolving them standalone. `false` when no candidate
-    /// is applicable against the formal.
+    /// ([JLS §18.5.2.4]) by contributing the constraints of its most specific
+    /// applicable candidate to the enclosing invocation's inference table.
+    /// Each candidate is probed against its own snapshot of the table — the
+    /// fresh bound set of [JLS §18.5.1] — so no candidate sees another's
+    /// constraints; the applicable ones are collected, and the most specific
+    /// ([§15.12.2.5], [JLS §18.5.4]) wins. Only the winner's constraints are
+    /// lifted into the enclosing table, the B3 of
+    /// [JLS §18.5.2.1]/[§18.5.2.2]; the losing candidates leave no trace, so
+    /// a less specific candidate can never poison the enclosing inference.
+    /// `false` when no candidate is applicable against the formal.
     fn contribute_invocation(&mut self, inference: &mut Inference, id: ExprId, formal: Ty) -> bool {
         let ExprData::MethodCall {
             receiver,
@@ -890,50 +897,93 @@ impl<'a> InferCtx<'a> {
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);
         for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
-            let phase_snapshot = inference.snapshot();
-            for member in &members {
-                let probe = inference.snapshot();
-                let mut deferred = Vec::new();
-                if self
-                    .try_candidate(
-                        inference,
-                        member,
-                        &arg_kinds,
-                        phase,
-                        false,
-                        Some(formal),
-                        &mut deferred,
-                        false,
-                    )
-                    .is_some()
-                {
-                    return true;
-                }
-                inference.restore(probe);
+            if self.choose_nested_candidate(inference, &members, &arg_kinds, phase, false, &formal)
+            {
+                return true;
             }
-            inference.restore(phase_snapshot);
         }
-        for member in &members {
-            let probe = inference.snapshot();
+        self.choose_nested_candidate(
+            inference,
+            &members,
+            &arg_kinds,
+            InvocationPhase::Loose,
+            true,
+            &formal,
+        )
+    }
+
+    /// The most specific applicable candidate of `members` against the target
+    /// `formal`, contributed to the shared table. `false` when none applies in
+    /// this phase or the applicable ones are ambiguous ([JLS §15.12.2.5]).
+    fn choose_nested_candidate(
+        &mut self,
+        inference: &mut Inference,
+        members: &[MethodData],
+        arg_kinds: &[ArgInfo],
+        phase: InvocationPhase,
+        varargs: bool,
+        formal: &Ty,
+    ) -> bool {
+        let base = inference.snapshot();
+        let mut applicable: Vec<MethodData> = Vec::new();
+        for member in members {
+            inference.restore(base.clone());
             let mut deferred = Vec::new();
             if self
                 .try_candidate(
                     inference,
                     member,
-                    &arg_kinds,
-                    InvocationPhase::Loose,
-                    true,
-                    Some(formal),
+                    arg_kinds,
+                    phase,
+                    varargs,
+                    Some(*formal),
                     &mut deferred,
                     false,
                 )
                 .is_some()
             {
-                return true;
+                applicable.push(member.clone());
             }
-            inference.restore(probe);
         }
-        false
+        if applicable.is_empty() {
+            inference.restore(base);
+            return false;
+        }
+        if applicable.len() > 1 {
+            let mut best: Option<usize> = None;
+            for (i, candidate) in applicable.iter().enumerate() {
+                let wins = applicable.iter().all(|other| {
+                    other == candidate || more_specific(self.db, &self.scope, candidate, other)
+                });
+                if wins {
+                    if best.is_some() {
+                        inference.restore(base);
+                        return false;
+                    }
+                    best = Some(i);
+                }
+            }
+            let Some(i) = best else {
+                inference.restore(base);
+                return false;
+            };
+            let winner = applicable.remove(i);
+            inference.restore(base);
+            // §18.5.2.1: lift the winner's constraints from the base
+            // snapshot — the losing candidates are discarded with it.
+            let mut deferred = Vec::new();
+            let _ = self.try_candidate(
+                inference,
+                &winner,
+                arg_kinds,
+                phase,
+                varargs,
+                Some(*formal),
+                &mut deferred,
+                false,
+            );
+        }
+        true
     }
 
     /// Re-infers the poly arguments against the resolved formal parameters of
@@ -1212,19 +1262,16 @@ impl<'a> InferCtx<'a> {
     /// ([§5.6.2]). A non-numeric reference operand cannot be unboxed and makes
     /// the expression ill-typed.
     fn binary_numeric_promotion(&self, lhs: Ty, rhs: Ty) -> Ty {
+        // §5.6.2: `byte`, `short` and `char` promote to `int`; the wider of
+        // the two operand types is the promoted type. The same applies to a
+        // boxed operand after unboxing ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
+        // so `Integer + Integer` and `Character + Character` both promote to
+        // `int` ([§5.6.2]).
         let promote = |ty: Ty| match ty.kind(self.db) {
-            TyKind::Primitive(
-                PrimitiveType::Byte
-                | PrimitiveType::Short
-                | PrimitiveType::Char
-                | PrimitiveType::Int,
-            ) => Some(PrimitiveType::Int),
-            TyKind::Primitive(PrimitiveType::Long) => Some(PrimitiveType::Long),
-            TyKind::Primitive(PrimitiveType::Float) => Some(PrimitiveType::Float),
-            TyKind::Primitive(PrimitiveType::Double) => Some(PrimitiveType::Double),
-            // A boxed primitive operand is unboxed before the promotion
-            // applies (§5.6.2, §5.1.8).
-            TyKind::Reference { name, .. } => unboxed_primitive(name.as_str()),
+            TyKind::Primitive(p) => Some(numeric_promotion(*p)),
+            TyKind::Reference { name, .. } => {
+                unboxed_primitive(name.as_str()).map(numeric_promotion)
+            }
             _ => None,
         };
         let (lhs, rhs) = (promote(lhs), promote(rhs));

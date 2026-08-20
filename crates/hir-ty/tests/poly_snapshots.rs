@@ -275,11 +275,17 @@ package com.example;
 import java.util.function.Function;
 
 class Poly {
-    void isolation() {
+    void isolation(boolean flag) {
         Object o = s -> s;
         Object r = String::length;
+        Object c = flag ? (s -> s.length()) : (s -> 0);
     }
 }
 ",
     )])
 );
+// A lambda or method reference has no standalone type ([JLS §15.2]): without
+// a functional-interface target it infers to an error. A conditional whose
+// arms are lambdas is a poly expression only when the target is a functional
+// interface ([§15.25.2]); against the non-functional `Object` target both
+// arms and the conditional infer to an error.

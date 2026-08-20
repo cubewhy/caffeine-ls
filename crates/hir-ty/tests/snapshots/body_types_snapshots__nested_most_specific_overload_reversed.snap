@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    <T> T wrap(T t) {
+        return t;
+    }
+
+    String transform(String s) {
+        return s;
+    }
+
+    <T extends java.lang.Number> T transform(Object o) {
+        return null;
+    }
+
+    void call() {
+        String s = wrap(transform(""));
+    }
+}
+
+method wrap(T): T
+  locals: l0: T
+  exprs: e0: T
+method transform(java.lang.String): java.lang.String
+  locals: l1: java.lang.String
+  exprs: e1: java.lang.String
+method transform(java.lang.Object): T
+  locals: l2: java.lang.Object
+  exprs: e2: null
+method call(): void
+  locals: l3: java.lang.String
+  exprs: e3: java.lang.String | e4: java.lang.String | e5: java.lang.String

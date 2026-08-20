@@ -22,18 +22,24 @@
 //! * [`inference`] — method invocation type inference ([§18.5.2]).
 //! * [`db`] — [`TyDatabase`], the salsa database trait.
 //!
-//! # Known limitations
+//! # Method invocation inference and access control
 //!
-//! * A nested poly invocation in an argument position is inferred jointly with
-//!   the enclosing invocation ([JLS §18.5.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.1),
-//!   [§18.5.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.2)):
-//!   its constraints are contributed to the enclosing call's inference table,
-//!   so `take(emptyList())` types the nested `emptyList()` as `List<String>`
+//! * Method invocation inference ([JLS §18.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2))
+//!   is joint for a nested poly invocation in an argument position: its
+//!   constraints are contributed to the enclosing call's inference table, so
+//!   `take(emptyList())` types the nested `emptyList()` as `List<String>`
 //!   against `take(List<String>)` even when the formal still mentions an
-//!   uninstantiated type variable. The nested candidate is selected greedily —
-//!   the first locally consistent candidate in the first applicable phase is
-//!   committed to. The poly arguments — lambdas, method references and nested
-//!   invocations — are then re-inferred against the resolved formal parameters
+//!   uninstantiated type variable. The nested invocation's own candidate
+//!   selection is independent of the enclosing one: each candidate is probed
+//!   against its own fresh bound set ([JLS §18.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.1)),
+//!   the most specific applicable one wins
+//!   ([§15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5),
+//!   [JLS §18.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.4)),
+//!   and only its constraints are lifted into the enclosing table
+//!   ([JLS §18.5.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.1),
+//!   [JLS §18.5.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.2)).
+//!   The poly arguments — lambdas, method references and nested invocations —
+//!   are re-inferred against the resolved formal parameters
 //!   ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)).
 //!   Lambdas and method references are poly expressions
 //!   ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27),

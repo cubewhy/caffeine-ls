@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int[] empty() {
+        int[] a = new int[] {};
+        String[][] b = new String[][] { {} };
+        int[] c = { 1, 2 };
+        int[] d = {};
+        return a;
+    }
+}
+
+method empty(): int[]
+  locals: l0: int[] | l1: java.lang.String[][] | l2: int[] | l3: int[]
+  exprs: e0: int[] | e1: <error>[] | e2: java.lang.String[][] | e3: int | e4: int | e5: int[] | e6: <error>[] | e7: int[]

@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Shape.java:
+package com.example;
+
+interface Shape {
+    static void describe() {}
+}
+
+class Circle implements Shape {
+}
+
+class Body {
+    void use() {
+        Shape.describe();
+        Circle c = new Circle();
+        c.describe();
+    }
+}
+
+method describe(): void
+  locals: 
+  exprs: 
+method use(): void
+  locals: l0: com.example.Circle
+  exprs: e1: void | e2: com.example.Circle | e3: com.example.Circle | e4: <error>

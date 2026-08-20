@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+public class A {
+    void pkg() {}
+}
+
+class Body {
+    void use(A a) {
+        a.pkg();
+    }
+}
+
+FILE /src/org/other/Use.java:
+package org.other;
+
+class Use {
+    void use(com.example.A a) {
+        a.pkg();
+    }
+}
+
+method pkg(): void
+  locals: 
+  exprs: 
+method use(com.example.A): void
+  locals: l0: com.example.A
+  exprs: e0: com.example.A | e1: void
+method use(com.example.A): void
+  locals: l0: com.example.A
+  exprs: e0: com.example.A | e1: <error>
