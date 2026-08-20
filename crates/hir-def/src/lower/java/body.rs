@@ -16,7 +16,8 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 use hir_expand::{
     body::{
         AssignOp, BinaryOp, Body, BodyId, CatchClause, ExprData, ExprId, Label, LabelId,
-        LambdaBody, Literal, Local, LocalId, PostfixOp, StmtData, StmtId, SwitchArm, UnaryOp,
+        LambdaBody, Literal, Local, LocalId, PatternData, PatternId, PostfixOp, RecordPattern,
+        Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern, UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -121,6 +122,7 @@ fn is_stmt_kind(kind: J) -> bool {
             | J::LABELED_STMT
             | J::SYNCHRONIZED_STMT
             | J::TRY_STMT
+            | J::TRY_WITH_RESOURCES_STMT
             | J::ASSERT_STMT
     )
 }
@@ -298,7 +300,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
             let body = first_stmt_or_block(ctx, owner, node);
             StmtData::Synchronized { expr: expr_, body }
         }
-        TRY_STMT => try_stmt(ctx, owner, node),
+        TRY_STMT | TRY_WITH_RESOURCES_STMT => try_stmt(ctx, owner, node),
         ASSERT_STMT => {
             let mut exprs = node.children().filter(|c| is_expr_kind(c.kind()));
             let cond = exprs
@@ -401,15 +403,10 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
             CatchClause { param, body }
         })
         .collect();
-    let resources: Vec<LocalId> = node
+    let resources: Vec<Resource> = node
         .children()
         .find(|c| c.kind() == RESOURCE_SPECIFICATION)
-        .map(|spec| {
-            spec.children()
-                .filter(|r| r.kind() == RESOURCE)
-                .map(|_| alloc_local_missing(ctx))
-                .collect()
-        })
+        .map(|spec| resource_locals(ctx, owner, &spec))
         .unwrap_or_default();
     let finally = node
         .children()
@@ -422,6 +419,63 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
         catches,
         finally,
     }
+}
+
+/// The resources of a try-with-resources statement
+/// ([JLS §14.20.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.20.3)):
+/// each `RESOURCE` is a `LOCAL_VARIABLE_DECLARATION` (a declared local, whose
+/// type is written or `var`) or a bare `VARIABLE_ACCESS` naming an existing
+/// variable. Only the declarator form declares a new local; a variable-access
+/// resource is skipped (its variable is already in scope).
+fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -> Vec<Resource> {
+    use J::*;
+    let mut out = Vec::new();
+    for resource in spec.children().filter(|r| r.kind() == RESOURCE) {
+        let Some(decl) = resource
+            .children()
+            .find(|c| c.kind() == LOCAL_VARIABLE_DECLARATION)
+        else {
+            continue;
+        };
+        let type_ref = decl
+            .children()
+            .find(|c| c.kind() == TYPE)
+            .map(|t| super::type_from(&t));
+        // §14.4.1: `var` — a contextual keyword lexed as an identifier — writes
+        // no type; the resource's type is inferred from its initializer.
+        let is_var = type_ref.is_none()
+            && first_identifier(&decl).is_some_and(|name| name.as_str() == "var");
+        let declarators: Vec<_> = decl
+            .children()
+            .find(|c| c.kind() == VARIABLE_DECLARATOR_LIST)
+            .map(|list| {
+                list.children()
+                    .filter(|c| c.kind() == VARIABLE_DECLARATOR)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for declarator in declarators {
+            let name = first_identifier(&declarator).unwrap_or_else(missing_name);
+            let local = alloc_local(
+                ctx,
+                Local {
+                    name,
+                    ty: if is_var {
+                        None
+                    } else {
+                        Some(type_ref.clone().unwrap_or(TypeRef::Error))
+                    },
+                },
+                declarator.text_range(),
+            );
+            let initializer = declarator
+                .children()
+                .find(|c| is_expr_kind(c.kind()))
+                .map(|c| expr(ctx, owner, &c));
+            out.push(Resource { local, initializer });
+        }
+    }
+    out
 }
 
 fn switch(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {
@@ -464,13 +518,35 @@ fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ve
             let mut seen = false;
             for sub in label.children() {
                 if is_expr_kind(sub.kind()) {
-                    labels.push(expr(ctx, owner, &sub));
+                    labels.push(SwitchLabel::Expr(expr(ctx, owner, &sub)));
+                    seen = true;
+                } else if is_pattern_kind(sub.kind()) {
+                    // §14.30.2/§14.30.3: a `case Foo f ->`, `case
+                    // Point(int x, int y) ->` or `case _ ->` label.
+                    labels.push(SwitchLabel::Pattern(pattern(ctx, &sub)));
                     seen = true;
                 }
             }
             if !seen {
-                // `default`
-                labels.push(alloc_expr(ctx, ExprData::Missing, node.text_range()));
+                // `case null` or `default` — the `null` keyword is a token,
+                // not a node ([§14.11.1]); `default` has no operands at all.
+                if let Some(null) = label
+                    .children_with_tokens()
+                    .filter_map(|e| e.as_token().cloned())
+                    .find(|t| token_is(t, NULL_LITERAL))
+                {
+                    labels.push(SwitchLabel::Expr(alloc_expr(
+                        ctx,
+                        ExprData::Null,
+                        null.text_range(),
+                    )));
+                } else {
+                    labels.push(SwitchLabel::Expr(alloc_expr(
+                        ctx,
+                        ExprData::Missing,
+                        node.text_range(),
+                    )));
+                }
             }
         }
         let mut body = Vec::new();
@@ -504,6 +580,7 @@ pub(super) fn is_expr_kind(kind: J) -> bool {
             | J::INSTANCEOF_EXPR
             | J::CAST_EXPR
             | J::PAREN_EXPR
+            | J::PARENTHESIZED_EXPR
             | J::NEW_EXPR
             | J::METHOD_CALL
             | J::FIELD_ACCESS
@@ -517,6 +594,18 @@ pub(super) fn is_expr_kind(kind: J) -> bool {
             | J::SWITCH_EXPR
             | J::TEMPLATE_EXPR
             | J::ARRAY_INITIALIZER
+    )
+}
+
+/// `true` for a node whose kind is a pattern kind
+/// ([JLS §14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30)):
+/// a type pattern `Foo f`, a record pattern `Point(int x, int y)` or the
+/// match-all pattern `_`. Patterns appear in `instanceof` expressions
+/// ([§15.20.2]) and as `case` labels ([§14.30.2], [§14.30.3]).
+pub(super) fn is_pattern_kind(kind: J) -> bool {
+    matches!(
+        kind,
+        J::TYPE_PATTERN | J::RECORD_PATTERN | J::MATCH_ALL_PATTERN
     )
 }
 
@@ -539,7 +628,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
     use J::*;
     match node.kind() {
         LITERAL => literal(node),
-        TEMPLATE_EXPR => ExprData::Literal(Literal::Str),
+        TEMPLATE_EXPR => template(ctx, owner, node),
         PRIMITIVE_TYPE_EXPR => {
             let prim = node
                 .children_with_tokens()
@@ -617,12 +706,22 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
         }
         INSTANCEOF_EXPR => {
             let expr_ = first_expr(ctx, owner, node);
+            // §15.20.2: `expr instanceof Type` or `expr instanceof Pattern`
+            // ([§14.30]); the `Type` of a pattern test is nested inside the
+            // `TYPE_PATTERN`/`RECORD_PATTERN` node.
+            let pattern = node
+                .children()
+                .find(|c| is_pattern_kind(c.kind()))
+                .map(|c| pattern(ctx, &c));
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t))
-                .unwrap_or(TypeRef::Error);
-            ExprData::InstanceOf { expr: expr_, ty }
+                .map(|t| super::type_from(&t));
+            ExprData::InstanceOf {
+                expr: expr_,
+                ty,
+                pattern,
+            }
         }
         ASSIGN_EXPR => {
             let op = first_op_token(node)
@@ -664,7 +763,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let expr_ = first_expr(ctx, owner, node);
             ExprData::Cast { ty, expr: expr_ }
         }
-        PAREN_EXPR => ExprData::Paren(first_expr(ctx, owner, node)),
+        PAREN_EXPR | PARENTHESIZED_EXPR => ExprData::Paren(first_expr(ctx, owner, node)),
         ARRAY_ACCESS => {
             let kids = expr_children(node);
             let array = kids
@@ -680,6 +779,14 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
         METHOD_CALL => method_call(ctx, owner, node),
         FIELD_ACCESS => {
             let name = identifier_of(node).unwrap_or_else(missing_name);
+            // `STR."\{x}"` — a string template through a processor
+            // ([JLS §15.8.6]): the FIELD_ACCESS node wraps the TEMPLATE_EXPR;
+            // the processor is dropped and the template is lowered directly.
+            if name.as_str() == "<missing>"
+                && let Some(template_node) = node.children().find(|c| c.kind() == TEMPLATE_EXPR)
+            {
+                return template(ctx, owner, &template_node);
+            }
             let target = node.children().find(|c| is_expr_kind(c.kind()));
             match target {
                 Some(target) => ExprData::FieldAccess {
@@ -837,6 +944,12 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
 
 fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     use J::*;
+    // §15.9.2: `new Foo<>()` — a `TYPE_ARGUMENTS` child with no argument
+    // elements is the diamond operator, distinct from a raw type (no
+    // `TYPE_ARGUMENTS` at all) and an explicit argument list.
+    let diamond = node
+        .children()
+        .any(|c| c.kind() == TYPE_ARGUMENTS && c.children().next().is_none());
     let base = node
         .children()
         .find(|c| c.kind() == TYPE)
@@ -874,7 +987,11 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             .filter(|c| is_expr_kind(c.kind()))
             .map(|c| expr(ctx, owner, &c))
             .collect();
-        return ExprData::New { ty: base, args };
+        return ExprData::New {
+            ty: base,
+            args,
+            diamond,
+        };
     }
     // Array creation ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)):
     // the `DIMENSIONS` node holds one `DIMENSION` per bracket pair. A
@@ -970,6 +1087,77 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
         LambdaBody::Expr(alloc_expr(ctx, ExprData::Missing, node.text_range()))
     };
     ExprData::Lambda { params, body }
+}
+
+// --- patterns and templates -------------------------------------------------
+
+/// Lowers a `TYPE_PATTERN`, `RECORD_PATTERN` or `MATCH_ALL_PATTERN` node into
+/// the pattern arena ([JLS §14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30)).
+fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
+    use J::*;
+    let data = match node.kind() {
+        TYPE_PATTERN => {
+            let ty = node
+                .children()
+                .find(|c| c.kind() == TYPE)
+                .map(|t| super::type_from(&t))
+                .unwrap_or(TypeRef::Error);
+            // §14.30.1: `Foo f` binds the identifier, whose declared type is
+            // the pattern type; `Foo _` binds nothing.
+            let binding = node
+                .children_with_tokens()
+                .filter_map(|e| e.as_token().cloned())
+                .find(|t| token_is(t, IDENTIFIER))
+                .map(|t| {
+                    alloc_local(
+                        ctx,
+                        Local {
+                            name: Name::new(t.text()),
+                            ty: Some(ty.clone()),
+                        },
+                        t.text_range(),
+                    )
+                });
+            PatternData::Type(TypePattern { ty, binding })
+        }
+        RECORD_PATTERN => {
+            let ty = node
+                .children()
+                .find(|c| c.kind() == TYPE)
+                .map(|t| super::type_from(&t))
+                .unwrap_or(TypeRef::Error);
+            // §14.30.2: `Point(int x, int y)` — each component is a nested
+            // pattern node.
+            let components = node
+                .children()
+                .filter(|c| is_pattern_kind(c.kind()))
+                .map(|c| pattern(ctx, &c))
+                .collect();
+            PatternData::Record(RecordPattern { ty, components })
+        }
+        MATCH_ALL_PATTERN => PatternData::MatchAll,
+        _ => PatternData::MatchAll,
+    };
+    alloc_pattern(ctx, data, node.text_range())
+}
+
+fn alloc_pattern(ctx: &mut LowerCtx, data: PatternData, range: TextRange) -> PatternId {
+    ctx.bodies.pattern_ranges.push(range);
+    PatternId(ctx.bodies.patterns.alloc(data))
+}
+
+/// A string template `STR."\{x}"` / `"\{x}"` ([JLS §15.8.6]; a preview
+/// feature removed in JLS 23). Each `TEMPLATE_ARGUMENT` child holds one
+/// embedded expression; the processor is dropped, the template types as
+/// `String`, and the embedded expressions are inferred by the type layer.
+fn template(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
+    let args: Vec<ExprId> = node
+        .children()
+        .filter(|c| c.kind() == J::TEMPLATE_ARGUMENT)
+        .flat_map(|arg| arg.children().filter(|c| is_expr_kind(c.kind())))
+        .map(|c| expr(ctx, owner, &c))
+        .collect();
+    ExprData::Template { args }
 }
 
 // --- small helpers ----------------------------------------------------------

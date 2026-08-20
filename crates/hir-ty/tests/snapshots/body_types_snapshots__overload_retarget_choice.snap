@@ -26,3 +26,4 @@ method take(java.util.List<java.lang.Integer>): void
 method call(): void
   locals: 
   exprs: e1: java.util.List<java.lang.Object> | e2: <error>
+  diags: e2@10:8: wrong-argument-count: method 'take' is not applicable to the arguments (expected 1, found 1)

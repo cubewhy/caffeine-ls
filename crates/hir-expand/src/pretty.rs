@@ -7,8 +7,8 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeParameter, TypeRef};
 
 use crate::{
     body::{
-        AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PostfixOp,
-        StmtData, StmtId, UnaryOp,
+        AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
+        PatternId, PostfixOp, StmtData, StmtId, SwitchLabel, UnaryOp,
     },
     item_tree::{ItemData, ItemId, ItemTree, LanguageKind, ModuleData, Signature},
     modifiers::Modifiers,
@@ -569,7 +569,10 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     "{indent}  case [{}] ->\n",
                     arm.labels
                         .iter()
-                        .map(|e| e.to_string())
+                        .map(|label| match label {
+                            SwitchLabel::Expr(e) => e.to_string(),
+                            SwitchLabel::Pattern(p) => render_pattern(bodies, *p),
+                        })
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
@@ -611,7 +614,10 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                 "{indent}{id}: try resources [{}]\n",
                 resources
                     .iter()
-                    .map(|r| r.to_string())
+                    .map(|resource| match resource.initializer {
+                        Some(init) => format!("{} = {init}", resource.local),
+                        None => resource.local.to_string(),
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -671,9 +677,10 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
-        ExprData::New { ty, args } => out.push_str(&format!(
-            "{id}: new {}({})",
+        ExprData::New { ty, args, diamond } => out.push_str(&format!(
+            "{id}: new {}{}({})",
             render_type(ty),
+            if *diamond { "<>" } else { "" },
             args.iter()
                 .map(|a| a.to_string())
                 .collect::<Vec<_>>()
@@ -729,8 +736,15 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
         ExprData::Cast { ty, expr } => {
             out.push_str(&format!("{id}: cast ({}) {expr}", render_type(ty)))
         }
-        ExprData::InstanceOf { expr, ty } => {
-            out.push_str(&format!("{id}: instanceof {expr} {}", render_type(ty)))
+        ExprData::InstanceOf { expr, ty, pattern } => {
+            out.push_str(&format!("{id}: instanceof {expr}"));
+            match pattern {
+                Some(p) => out.push_str(&format!(" pat {p}")),
+                None => out.push_str(&format!(
+                    " {}",
+                    render_type(&ty.clone().unwrap_or(TypeRef::Error))
+                )),
+            }
         }
         ExprData::Conditional { cond, then, els } => {
             out.push_str(&format!("{id}: conditional {cond} ? {then} : {els}"))
@@ -763,7 +777,42 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             arms.len()
         )),
         ExprData::Paren(e) => out.push_str(&format!("{id}: paren {e}")),
+        ExprData::Template { args } => out.push_str(&format!(
+            "{id}: template [{}]",
+            args.iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
         ExprData::Missing => out.push_str(&format!("{id}: <missing>")),
+    }
+}
+
+/// Renders a pattern of the body IR
+/// ([JLS §14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30)):
+/// a type pattern `Foo f`, a record pattern `Point(int x, int y)` or the
+/// match-all `_`.
+fn render_pattern(bodies: &BodyTree, id: PatternId) -> String {
+    let data = bodies.pattern(id);
+    match data {
+        PatternData::Type(tp) => {
+            let binding = tp
+                .binding
+                .map(|b| format!(" {}", bodies.local(b).name))
+                .unwrap_or_default();
+            format!("{} {}{}", id, render_type(&tp.ty), binding)
+        }
+        PatternData::Record(rp) => format!(
+            "{} {}({})",
+            id,
+            render_type(&rp.ty),
+            rp.components
+                .iter()
+                .map(|&c| render_pattern(bodies, c))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        PatternData::MatchAll => format!("{id} _"),
     }
 }
 

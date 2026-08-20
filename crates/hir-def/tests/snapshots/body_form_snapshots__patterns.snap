@@ -1,0 +1,57 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m(Object o) {
+        if (o instanceof String s) {
+            System.out.println(s);
+        }
+        if (o instanceof Point(int x, int y)) { }
+        switch (o) {
+            case Point p -> p.area();
+            case String _ -> { }
+            case null -> { }
+            default -> { }
+        }
+    }
+}
+
+record Point(int x, int y) {
+    int area() { return x * y; }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..333
+  method m(Object o) -> void @12..331
+record Point(int x, int y) @333..398
+  method area() -> int @363..396
+
+BODIES:
+body:
+  param l0: Object o
+  s3: if e2
+    s1: block
+      s0: expr e6: call e5.println(e3)
+  s6: if e9
+    s4: block
+  s11: switch e10
+    case [p4 Point p] ->
+      s7: expr e12: call e11.area()
+    case [p5 String] ->
+      s8: block
+    case [e13] ->
+      s9: block
+    case [e14] ->
+      s10: block
+body:
+  s12: return e17
+  l1: String s
+  l2: int x
+  l3: int y
+  l4: Point p

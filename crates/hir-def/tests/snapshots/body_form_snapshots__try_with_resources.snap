@@ -1,0 +1,34 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m() throws Exception {
+        try (FileReader r = new FileReader("x"); var w = new FileWriter("y")) {
+            r.read();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo @1..229
+  method m() -> void throws Exception @12..227
+
+BODIES:
+body:
+  s4: try resources [l1 = e5, l2 = e7]
+    s1: block
+      s0: expr e1: call e0.read()
+    catch l0
+      s3: block
+        s2: expr e3: call e2.printStackTrace()
+  l0: Exception e
+  l1: FileReader r
+  l2: <error> w

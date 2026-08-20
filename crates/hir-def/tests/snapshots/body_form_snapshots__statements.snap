@@ -1,6 +1,5 @@
 ---
 source: crates/hir-def/tests/body_form_snapshots.rs
-assertion_line: 14
 expression: out
 ---
 SOURCE:
@@ -64,50 +63,50 @@ body:
   s10: expr e12: postfix -- e11
   s11: expr e15: assign += e13 e14
   s12: expr e18: assign -= e16 e17
-  s18: if e19
+  s18: if e22
     s14: block
-      s13: expr e22: assign = e20 e21
+      s13: expr e25: assign = e23 e24
   s18: else
     s16: block
-      s15: expr e25: assign = e23 e24
-  s21: while e26
+      s15: expr e28: assign = e26 e27
+  s21: while e32
     s20: block
-      s19: expr e28: postfix ++ e27
-  s24: do-while e31
+      s19: expr e34: postfix ++ e33
+  s24: do-while e40
     s23: block
-      s22: expr e30: postfix -- e29
+      s22: expr e36: postfix -- e35
   s28: for
-    s25: decl l4 = e32
-    cond: e35
-    step: e37
+    s25: decl l4 = e41
+    cond: e44
+    step: e46
     s27: block
-      s26: expr e40: assign += e38 e39
-  s31: for-each l5 in e43
+      s26: expr e49: assign += e47 e48
+  s31: for-each l5 in e52
     s30: block
-      s29: expr e46: assign += e44 e45
-  s37: switch e47
-    case [e48] ->
-      s32: expr e51: assign = e49 e50
+      s29: expr e55: assign += e53 e54
+  s37: switch e56
+    case [e57] ->
+      s32: expr e60: assign = e58 e59
       s33: break unlabeled
-    case [e52] ->
-      s34: expr e55: assign = e53 e54
-      s35: break unlabeled
-    case [e56] ->
-      s36: expr e59: assign = e57 e58
-  s42: switch e60
     case [e61] ->
-      s38: expr e64: assign = e62 e63
+      s34: expr e64: assign = e62 e63
+      s35: break unlabeled
     case [e65] ->
+      s36: expr e68: assign = e66 e67
+  s42: switch e69
+    case [e70] ->
+      s38: expr e73: assign = e71 e72
+    case [e74] ->
       s40: block
-        s39: expr e68: assign = e66 e67
-    case [e69] ->
-      s41: throw e70
+        s39: expr e77: assign = e75 e76
+    case [e78] ->
+      s41: throw e79
   s43: return none
 body:
   param l6: int x
-  s46: if e71
-    s44: throw e72
-  s47: return e75
+  s46: if e81
+    s44: throw e82
+  s47: return e85
   l0: int a
   l1: long b
   l2: long c

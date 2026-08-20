@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Foo<T> {
+    Foo() {}
+}
+
+class Body {
+    Foo<String> a = new Foo<>();
+    Foo<Integer> b = new Foo<>();
+    Object c = new Foo<>();
+}
+
+method Foo(): <init>
+  locals: 
+  exprs: 
+field a
+  locals: 
+  exprs: e0: com.example.Foo<java.lang.String>
+field b
+  locals: 
+  exprs: e1: com.example.Foo<java.lang.Integer>
+field c
+  locals: 
+  exprs: e2: com.example.Foo

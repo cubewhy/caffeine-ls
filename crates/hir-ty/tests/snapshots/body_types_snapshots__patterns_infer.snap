@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+record R(int x) { }
+
+class Point {
+    int x;
+    int y;
+}
+
+class Body {
+    void m(Object o) {
+        if (o instanceof String s && s.length() > 0) {
+            int len = s.length();
+        }
+        if (o instanceof R(int v)) {
+            int vv = v;
+        } else {
+            int bad = v;
+        }
+        switch (o) {
+            case R(int v) -> { int vv = v; }
+            case Point p -> p.x = 1;
+            case null -> { }
+            default -> { }
+        }
+    }
+}
+
+method m(java.lang.Object): void
+  locals: l0: java.lang.Object | l1: java.lang.String | l2: int | l3: int | l4: int | l5: int | l6: int | l7: int | l8: com.example.Point
+  exprs: e0: java.lang.Object | e1: boolean | e2: java.lang.String | e3: int | e4: int | e5: boolean | e6: boolean | e7: boolean | e8: java.lang.String | e9: int | e10: java.lang.Object | e11: boolean | e12: boolean | e13: int | e14: <error> | e15: java.lang.Object | e16: int | e17: com.example.Point | e18: int | e19: int | e20: int | e21: null | e22: <error>
+  diags: e14@17:21: cannot-resolve-symbol: cannot resolve symbol 'v'

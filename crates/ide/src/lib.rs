@@ -97,6 +97,12 @@ impl Analysis {
         self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id, fallback_language_kind))
     }
 
+    /// The type-layer diagnostics of the file, collected from the inference of
+    /// every body it owns (see [`ide_diagnostics::type_diagnostics`]).
+    pub fn type_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::type_diagnostics(db, file_id))
+    }
+
     /// Gets the file's `LineIndex`: data structure to convert between absolute
     /// offsets and line/column representation.
     pub fn file_line_index(&self, file_id: FileId) -> Cancellable<Arc<LineIndex>> {

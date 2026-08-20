@@ -1,3 +1,4 @@
+use hir::hir_expand::item_tree::{ItemData, ItemId, ItemTree};
 use ide_db::{
     FileRange, RootDatabase, Severity,
     base_db::{self, LanguageKind, SourceDatabase},
@@ -40,6 +41,52 @@ pub fn syntax_diagnostics(
         .iter()
         .map(|e| make_diagnostic(file_id, &e.message, e.range, e.code))
         .collect()
+}
+
+/// The type-layer diagnostics of a file ([JLS §6.5], [§14.18], [§15.11],
+/// [§15.12]): the `TypeError`s reported while inferring the body of every
+/// method, constructor, initializer, field initializer and enum constant
+/// argument in the file (see [`hir_ty::body_types`]). Each diagnostic's range
+/// is the source range of the offending construct, computed from its body-IR
+/// arena id.
+pub fn type_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
+    let tree = hir::file_item_tree(db, file_id);
+    let mut out = Vec::new();
+    for (item_id, _) in all_items(&tree) {
+        let Some(body_types) = hir_ty::body_types(db, file_id, item_id) else {
+            continue;
+        };
+        for diagnostic in &body_types.diagnostics {
+            let Some(range) = diagnostic.range(&tree.bodies) else {
+                // A synthetic construct (e.g. a `Missing` expression lowered
+                // from broken source) has no range to point at.
+                continue;
+            };
+            out.push(make_diagnostic(
+                file_id,
+                &diagnostic.message(&tree.bodies),
+                range,
+                Some(diagnostic.code()),
+            ));
+        }
+    }
+    out
+}
+
+/// Every `(ItemId, &ItemData)` in the tree, parents before children.
+fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
+    fn walk<'a>(tree: &'a ItemTree, id: ItemId, out: &mut Vec<(ItemId, &'a ItemData)>) {
+        let data = tree.data(id);
+        out.push((id, data));
+        for &child in data.body() {
+            walk(tree, child, out);
+        }
+    }
+    let mut out = Vec::new();
+    for &top in &tree.top {
+        walk(tree, top, &mut out);
+    }
+    out
 }
 
 fn make_diagnostic(

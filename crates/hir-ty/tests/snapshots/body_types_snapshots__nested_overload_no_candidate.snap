@@ -31,3 +31,4 @@ method pick(java.lang.String): void
 method call(): void
   locals: 
   exprs: e1: java.util.List<java.lang.Object> | e2: <error> | e3: <error>
+  diags: e2@12:13: wrong-argument-count: method 'pick' is not applicable to the arguments (expected 1, found 1) | e3@12:8: wrong-argument-count: method 'take' is not applicable to the arguments (expected 1, found 1)

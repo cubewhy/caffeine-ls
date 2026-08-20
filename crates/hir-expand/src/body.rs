@@ -33,9 +33,13 @@ pub struct ExprId(pub ArenaId);
 pub struct StmtId(pub ArenaId);
 
 /// The id of a local variable binding (parameter, declared local, catch
-/// parameter, for variable) within its owning [`BodyTree`].
+/// parameter, for variable, pattern variable) within its owning [`BodyTree`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LocalId(pub ArenaId);
+
+/// The id of a pattern within its owning [`BodyTree`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PatternId(pub ArenaId);
 
 /// The id of a label within its owning [`BodyTree`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -63,6 +67,12 @@ impl std::fmt::Display for LocalId {
     }
 }
 
+impl std::fmt::Display for PatternId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "p{}", self.0.0)
+    }
+}
+
 impl std::fmt::Display for LabelId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "label{}", self.0.0)
@@ -81,6 +91,7 @@ pub struct BodyTree {
     pub exprs: Arena<ExprData>,
     pub stmts: Arena<StmtData>,
     pub locals: Arena<Local>,
+    pub patterns: Arena<PatternData>,
     pub labels: Arena<Label>,
     pub bodies: Arena<Body>,
     /// The source range of every expression, parallel to [`BodyTree::exprs`]:
@@ -89,6 +100,8 @@ pub struct BodyTree {
     /// The source range of every local (parameter or declared local), parallel
     /// to [`BodyTree::locals`].
     pub local_ranges: Vec<TextRange>,
+    /// The source range of every pattern, parallel to [`BodyTree::patterns`].
+    pub pattern_ranges: Vec<TextRange>,
 }
 
 impl BodyTree {
@@ -115,6 +128,15 @@ impl BodyTree {
         self.local_ranges.get(id.0.0 as usize).copied()
     }
 
+    pub fn pattern(&self, id: PatternId) -> &PatternData {
+        self.patterns.get(id.0)
+    }
+
+    /// The source range of the pattern, when it was lowered from a syntax node.
+    pub fn pattern_range(&self, id: PatternId) -> Option<TextRange> {
+        self.pattern_ranges.get(id.0.0 as usize).copied()
+    }
+
     pub fn label(&self, id: LabelId) -> &Label {
         self.labels.get(id.0)
     }
@@ -138,13 +160,51 @@ pub struct Body {
     pub stmts: Vec<StmtId>,
 }
 
-/// A local variable binding: a parameter, a declared local, a catch parameter
-/// or a for-loop variable. The declared type is `None` for var/`var`-less
-/// parameters and patterns.
+/// A local variable binding: a parameter, a declared local, a catch parameter,
+/// a for-loop variable or a pattern variable. The declared type is `None` for
+/// var/`var`-less parameters and patterns.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Local {
     pub name: Name,
     pub ty: Option<TypeRef<Name>>,
+}
+
+/// A type pattern `Foo f` ([JLS §14.30.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.1)):
+/// a type and an optional binding. The binding is a [`LocalId`] so the
+/// pattern variable participates in the local arena (and so in name
+/// resolution and the type layer); `Foo _` and the match-all `_` bind nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypePattern {
+    pub ty: TypeRef<Name>,
+    /// The pattern variable binding — `Foo f`; `Foo _` and `_` have none.
+    pub binding: Option<LocalId>,
+}
+
+/// A record pattern `Point(int x, int y)`
+/// ([JLS §14.30.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.2)):
+/// a reference type and the component patterns, each of which may bind its own
+/// variable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordPattern {
+    pub ty: TypeRef<Name>,
+    pub components: Vec<PatternId>,
+}
+
+/// A pattern ([JLS §14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30)):
+/// a type pattern, a record pattern, or the match-all pattern of
+/// [§14.30.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.3).
+/// Patterns appear in `instanceof` expressions ([§15.20.2]) and as `case`
+/// labels ([§14.30.2], [§14.30.3]); the variables they bind are scoped by
+/// flow scoping ([§14.30.3]) in the type layer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatternData {
+    /// A type pattern `Foo f` ([§14.30.1]).
+    Type(TypePattern),
+    /// A record pattern `Point(int x, int y)` ([§14.30.2]).
+    Record(RecordPattern),
+    /// The match-all pattern `_` ([§14.30.3]): matches everything and binds
+    /// nothing.
+    MatchAll,
 }
 
 /// A label name for [`StmtData::Break`], [`StmtData::Continue`],
@@ -211,7 +271,7 @@ pub enum StmtData {
     Synchronized { expr: ExprId, body: StmtId },
     /// A `try` statement, `try`-catch and `try` with resources ([§14.20]).
     Try {
-        resources: Vec<LocalId>,
+        resources: Vec<Resource>,
         body: StmtId,
         catches: Vec<CatchClause>,
         finally: Option<StmtId>,
@@ -229,13 +289,42 @@ pub struct CatchClause {
     pub body: StmtId,
 }
 
+/// A resource of a try-with-resources statement
+/// ([JLS §14.20.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.20.3)):
+/// each resource is a local variable declaration `Type var = init` (or a
+/// `var` declaration) — a bare `VariableAccess` resource names an existing
+/// variable and declares nothing, so it produces no [`Resource`] entry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resource {
+    /// The declared resource variable.
+    pub local: LocalId,
+    /// The resource initializer.
+    pub initializer: Option<ExprId>,
+}
+
 /// One arm of a `switch` statement or expression: `case` labels (an empty
 /// label list for `default`), followed by the statements of a block group or
 /// the single consequent of `case ... ->`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SwitchArm {
-    pub labels: Vec<ExprId>,
+    pub labels: Vec<SwitchLabel>,
     pub body: Vec<StmtId>,
+}
+
+/// One `case` label of a switch
+/// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1),
+/// [§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)):
+/// a constant expression (or `null`), or a pattern
+/// ([§14.30.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.2),
+/// [§14.30.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.3)).
+/// The `default` label is lowered as [`SwitchLabel::Expr`] of a `Missing`
+/// expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SwitchLabel {
+    /// A constant expression label `case 1, 2` or `null`.
+    Expr(ExprId),
+    /// A pattern label `case Foo f`, `case Point(int x, int y)`, `case _`.
+    Pattern(PatternId),
 }
 
 /// An expression, mirroring the expression forms of
@@ -246,6 +335,11 @@ pub enum ExprData {
     Literal(Literal),
     /// The null literal ([§3.10.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10.8)).
     Null,
+    /// A string template `STR."\{expr}"` ([JLS §15.8.6]; a preview feature
+    /// removed in JLS 23). The processor is not modelled — the expression
+    /// types as `String` — and each `args` element is an embedded expression,
+    /// inferred by the type layer.
+    Template { args: Vec<ExprId> },
     /// `this` or `TypeName.this` ([§15.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.3)).
     This { qualifier: Option<TypeRef<Name>> },
     /// `super` ([§15.8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.4)).
@@ -276,6 +370,11 @@ pub enum ExprData {
     New {
         ty: TypeRef<Name>,
         args: Vec<ExprId>,
+        /// `new Foo<>()` — the diamond operator
+        /// ([§15.9.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.2)):
+        /// the type arguments are inferred from the target type by the type
+        /// layer. `false` for a raw type and an explicit argument list.
+        diamond: bool,
     },
     /// An array creation `new Type[dims]` ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)),
     /// or — with empty `dims` — `new Type[] { ... }`, whose `initializer`
@@ -307,8 +406,17 @@ pub enum ExprData {
     },
     /// A cast `(Type) expr` ([§15.16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.16)).
     Cast { ty: TypeRef<Name>, expr: ExprId },
-    /// An `instanceof` test `expr instanceof Type` ([§15.20.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.20.2)).
-    InstanceOf { expr: ExprId, ty: TypeRef<Name> },
+    /// An `instanceof` test `expr instanceof Type` or, with a pattern,
+    /// `expr instanceof Pattern` ([§15.20.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.20.2)).
+    /// Exactly one of `ty` (a plain type test) and `pattern` (a pattern test,
+    /// [§14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30))
+    /// is set; a pattern test binds its pattern variables by flow scoping
+    /// ([§14.30.3]).
+    InstanceOf {
+        expr: ExprId,
+        ty: Option<TypeRef<Name>>,
+        pattern: Option<PatternId>,
+    },
     /// A conditional expression `cond ? then : els` ([§15.25](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25)).
     Conditional {
         cond: ExprId,

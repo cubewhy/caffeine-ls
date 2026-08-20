@@ -1136,6 +1136,8 @@ dependencies = [
 name = "ide-diagnostics"
 version = "0.0.0"
 dependencies = [
+ "hir",
+ "hir-ty",
  "ide-db",
  "ra_ap_vfs",
  "rowan",

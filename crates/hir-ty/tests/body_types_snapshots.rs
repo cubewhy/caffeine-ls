@@ -1065,3 +1065,116 @@ class Body {
 // The `var` type is shared across all declarators of one declaration
 // ([§14.4.1]); each declarator still needs its own initializer, so `c` is
 // reported while `a` and `b` infer as `int`.
+
+// -- quick wins (JLS SE 26) --------------------------------------------------
+
+// Try-with-resources ([JLS §14.20.3]): each resource is a real local typed
+// from its declared type or (for `var`) its initializer ([§14.4.1]); the
+// resource's methods resolve on that type.
+
+snapshot!(
+    try_with_resources_infer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Res {
+    Res() {}
+    int read() { return 1; }
+}
+
+class Body {
+    void m() {
+        try (Res r = new Res(); var v = new Res()) {
+            r.read();
+        }
+    }
+}
+",
+    )])
+);
+
+// `instanceof` patterns ([JLS §14.30.2]) and switch pattern labels
+// ([§14.30.3], [§14.11.1]) bind the pattern variables in the flow-sensitive
+// region only: the `&&` right-hand operand and then-arm of an `if`, the arm
+// body of a switch rule. The record pattern ([§14.30.1]) binds its components.
+
+snapshot!(
+    patterns_infer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+record R(int x) { }
+
+class Point {
+    int x;
+    int y;
+}
+
+class Body {
+    void m(Object o) {
+        if (o instanceof String s && s.length() > 0) {
+            int len = s.length();
+        }
+        if (o instanceof R(int v)) {
+            int vv = v;
+        } else {
+            int bad = v;
+        }
+        switch (o) {
+            case R(int v) -> { int vv = v; }
+            case Point p -> p.x = 1;
+            case null -> { }
+            default -> { }
+        }
+    }
+}
+",
+    )])
+);
+
+// String templates ([JLS §15.8.6, preview in JLS 22, removed in JLS 23]) type
+// as `String`; their embedded expressions are inferred as standalone.
+
+snapshot!(
+    string_template_infer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    String m(int x) {
+        return STR.\"value: \\{x}\";
+    }
+}
+",
+    )])
+);
+
+// Diamond instantiation ([JLS §15.9.2]): `new Foo<>()` in a field initializer
+// inherits the target field's type arguments ([§15.9.2.1]); with an unrelated
+// target the class is created raw ([§15.9.2.2]).
+
+snapshot!(
+    diamond_infer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Foo<T> {
+    Foo() {}
+}
+
+class Body {
+    Foo<String> a = new Foo<>();
+    Foo<Integer> b = new Foo<>();
+    Object c = new Foo<>();
+}
+",
+    )])
+);

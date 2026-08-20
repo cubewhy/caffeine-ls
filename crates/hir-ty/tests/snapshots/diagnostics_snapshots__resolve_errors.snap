@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/diagnostics_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(String s, Body b) {
+        undefinedName;
+        b.missing;
+        b.missing();
+        s.length(1, 2);
+        throw new Object();
+    }
+}
+
+method m(java.lang.String, com.example.Body): void
+  locals: l0: java.lang.String | l1: com.example.Body
+  exprs: e0: <error> | e1: com.example.Body | e2: <error> | e3: com.example.Body | e4: <error> | e5: int | e6: int | e7: java.lang.String | e8: <error> | e9: <error>
+  diags: e0@4:8: cannot-resolve-symbol: cannot resolve symbol 'undefinedName' | e2@5:8: no-such-field: cannot find field 'missing' | e4@6:8: no-such-method: cannot find method 'missing' | e8@7:8: wrong-argument-count: method 'length' is not applicable to the arguments (expected 0, found 2) | e9@8:13: incompatible-types: incompatible types: java.lang.Object cannot be converted to java.lang.Throwable

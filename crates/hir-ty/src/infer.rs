@@ -40,8 +40,8 @@ use std::sync::Arc;
 
 use hir_expand::{
     body::{
-        BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, StmtData,
-        StmtId, UnaryOp,
+        BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
+        PatternId, StmtData, StmtId, SwitchLabel, UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -284,9 +284,9 @@ impl<'a> InferCtx<'a> {
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
                 Ty::reference(self.db, "java.lang.Class", vec![inner])
             }
-            ExprData::Var(name) => self.var(name),
-            ExprData::NamePath(name) => self.name_path(name),
-            ExprData::FieldAccess { target, name } => self.field_access(target, name),
+            ExprData::Var(name) => self.var(id, name),
+            ExprData::NamePath(name) => self.name_path(id, name),
+            ExprData::FieldAccess { target, name } => self.field_access(id, target, name),
             // §15.13: the type of `array[index]` is the array's element type.
             ExprData::ArrayAccess { array, index } => {
                 let _ = self.infer_expr(index);
@@ -305,10 +305,11 @@ impl<'a> InferCtx<'a> {
                 name,
                 args,
                 ..
-            } => self.method_call(receiver, name, &args, self.target),
+            } => self.method_call(id, receiver, name, &args, self.target),
             // §15.9: a class instance creation has the type of the created
-            // class.
-            ExprData::New { ty, args } => self.new_expr(ty, &args),
+            // class; the diamond operator ([§15.9.2]) instantiates the type
+            // arguments from the target type.
+            ExprData::New { ty, args, diamond } => self.new_expr(ty, diamond, &args, self.target),
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
             // (§10.6) fills the element expressions.
@@ -377,9 +378,14 @@ impl<'a> InferCtx<'a> {
                     resolve_type_ref(self.db, &self.scope, &self.resolver, &ty)
                 }
             }
-            // §15.20.2: `instanceof` always has type `boolean`.
-            ExprData::InstanceOf { expr, .. } => {
+            // §15.20.2: `instanceof` always has type `boolean`; a pattern test
+            // ([§14.30]) additionally resolves the pattern, recording the type
+            // of each variable it binds ([§14.30.1], [§14.30.2]).
+            ExprData::InstanceOf { expr, pattern, .. } => {
                 let _ = self.infer_expr(expr);
+                if let Some(pattern) = pattern {
+                    let _ = self.pattern_type(pattern);
+                }
                 self.primitive(PrimitiveType::Boolean)
             }
             // §15.25: a conditional expression's type follows the rules of
@@ -432,8 +438,21 @@ impl<'a> InferCtx<'a> {
                 self.switch_targets.push(self.target);
                 let mut result_tys: Vec<Ty> = Vec::new();
                 for arm in arms {
-                    for &label in &arm.labels {
-                        let _ = self.infer_expr(label);
+                    // §14.30.2/§14.30.3: a pattern label's variables are in
+                    // scope in the arm's statements.
+                    self.scopes.push(FxHashMap::default());
+                    for label in &arm.labels {
+                        match label {
+                            SwitchLabel::Expr(e) => {
+                                let _ = self.infer_expr(*e);
+                            }
+                            SwitchLabel::Pattern(p) => {
+                                let _ = self.pattern_type(*p);
+                                for binding in self.pattern_bindings_of(*p) {
+                                    self.scope_binding(binding);
+                                }
+                            }
+                        }
                     }
                     for &stmt in &arm.body {
                         let data = self.tree.stmt(stmt).clone();
@@ -463,6 +482,7 @@ impl<'a> InferCtx<'a> {
                             _ => self.infer_stmt_data(&data),
                         }
                     }
+                    self.scopes.pop();
                 }
                 self.switch_targets.pop();
                 if result_tys.is_empty() {
@@ -476,6 +496,15 @@ impl<'a> InferCtx<'a> {
                 }
             }
             ExprData::Paren(inner) => self.infer_expr(inner),
+            // §15.8.6 (a preview feature removed in JLS 23): a string template
+            // types as `String` (the `STR` processor); each embedded expression
+            // is inferred.
+            ExprData::Template { args } => {
+                for arg in args {
+                    let _ = self.infer_expr(arg);
+                }
+                self.string()
+            }
             ExprData::Missing => self.error(),
         };
         self.types.insert(id, ty);
@@ -484,7 +513,7 @@ impl<'a> InferCtx<'a> {
 
     /// A bare name: a local variable or parameter, or — when no local — a
     /// field of the implicit receiver ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)).
-    fn var(&mut self, name: Name) -> Ty {
+    fn var(&mut self, expr: ExprId, name: Name) -> Ty {
         if let Some(local) = self.lookup_local(&name) {
             return self
                 .locals
@@ -506,6 +535,12 @@ impl<'a> InferCtx<'a> {
         if let Some(field) = self.pick_field_of(self.enclosing_class, name.as_str()) {
             return field.ty;
         }
+        // §6.5: a simple name that resolves to nothing is a compile-time
+        // error.
+        self.report(TypeError::CannotResolveName {
+            expr,
+            name: name.clone(),
+        });
         self.error()
     }
 
@@ -525,7 +560,7 @@ impl<'a> InferCtx<'a> {
     /// access, [§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1))
     /// when the prefix resolves to a type; a simple non-local name falls back
     /// to a field of the implicit receiver.
-    fn name_path(&mut self, name: Name) -> Ty {
+    fn name_path(&mut self, expr: ExprId, name: Name) -> Ty {
         let text = name.as_str();
         let (prefix, last) = match text.rsplit_once('.') {
             Some((prefix, last)) => (prefix, last),
@@ -538,6 +573,12 @@ impl<'a> InferCtx<'a> {
             if let Some(field) = self.pick_field_of(self.enclosing_class, last) {
                 return field.ty;
             }
+            // §6.5: a simple name that resolves to nothing is a compile-time
+            // error.
+            self.report(TypeError::CannotResolveName {
+                expr,
+                name: name.clone(),
+            });
             return self.error();
         }
         let prefix_ty = {
@@ -550,6 +591,12 @@ impl<'a> InferCtx<'a> {
         if let Some(field) = pick_field(self.db, &self.scope, &prefix_ty, last, &self.access) {
             return field.ty;
         }
+        // §15.11: a qualified name whose last component is no member of the
+        // resolved prefix is a compile-time error.
+        self.report(TypeError::NoSuchField {
+            expr,
+            name: Name::new(last),
+        });
         self.error()
     }
 
@@ -577,9 +624,9 @@ impl<'a> InferCtx<'a> {
         (hir::fqn_resolve(self.db, &self.scope, resolved.as_str()).is_some()).then_some(ty)
     }
 
-    fn field_access(&mut self, target: Option<ExprId>, name: Name) -> Ty {
+    fn field_access(&mut self, expr: ExprId, target: Option<ExprId>, name: Name) -> Ty {
         let Some(target) = target else {
-            return self.var(name);
+            return self.var(expr, name);
         };
         // `super.field` — a field of the direct superclass ([§15.11.1],
         // [§15.12.1]): the receiver is the superclass type and the access
@@ -590,9 +637,22 @@ impl<'a> InferCtx<'a> {
             // §15.11.1: a `super` field access selects an instance member of
             // the direct superclass; a static field via `super` is illegal.
             return match pick_field(self.db, &self.scope, &receiver, name.as_str(), &access) {
-                Some(field) if field.is_static => self.error(),
+                Some(field) if field.is_static => {
+                    self.report(TypeError::NoSuchField {
+                        expr,
+                        name: name.clone(),
+                    });
+                    self.error()
+                }
                 Some(field) => field.ty,
-                None => self.error(),
+                None => {
+                    // §15.11: no field of the name on the superclass.
+                    self.report(TypeError::NoSuchField {
+                        expr,
+                        name: name.clone(),
+                    });
+                    self.error()
+                }
             };
         }
         // `Type.name` — the receiver expression is a bare name that resolves
@@ -613,7 +673,14 @@ impl<'a> InferCtx<'a> {
             // `Type.name` read without a call — or used as the receiver of a
             // `Type.method(...)` call — is the type itself.
             None if is_static => receiver,
-            None => self.error(),
+            None => {
+                // §15.11: no (accessible) field of the name on the receiver.
+                self.report(TypeError::NoSuchField {
+                    expr,
+                    name: name.clone(),
+                });
+                self.error()
+            }
         }
     }
 
@@ -624,6 +691,7 @@ impl<'a> InferCtx<'a> {
 
     fn method_call(
         &mut self,
+        expr: ExprId,
         receiver: Option<ExprId>,
         name: Name,
         args: &[ExprId],
@@ -632,6 +700,10 @@ impl<'a> InferCtx<'a> {
         let (receiver_ty, mode) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
+        // §15.12.1: no member of the name on the receiver is a compile-time
+        // error; members of the name that are all inapplicable (§15.12.2) is a
+        // wrong-argument-count error.
+        let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, target, &access) {
             Some((method, deferred)) => {
                 // §18.5.2.2/§18.5.2.4: the resolved formal parameters are the
@@ -649,6 +721,25 @@ impl<'a> InferCtx<'a> {
             None => {
                 for arg in args {
                     let _ = self.infer_expr(*arg);
+                }
+                if members.is_empty() {
+                    // §15.12.1: no method of the name on the receiver.
+                    self.report(TypeError::NoSuchMethod {
+                        expr,
+                        name: name.clone(),
+                    });
+                } else {
+                    // §15.12.2: members of the name exist but none is
+                    // applicable to the actual arguments.
+                    self.report(TypeError::WrongArity {
+                        expr,
+                        name: name.clone(),
+                        found: args.len(),
+                        expected: members
+                            .first()
+                            .map(|m| m.params.len())
+                            .unwrap_or(args.len()),
+                    });
                 }
                 self.error()
             }
@@ -1155,8 +1246,21 @@ impl<'a> InferCtx<'a> {
     /// `new Job(() -> {})` types the lambda argument against the resolved
     /// constructor's formal parameter. Source constructors are named after the
     /// class, library constructors are `<init>`.
-    fn new_expr(&mut self, ty: TypeRef<Name>, args: &[ExprId]) -> Ty {
+    fn new_expr(
+        &mut self,
+        ty: TypeRef<Name>,
+        diamond: bool,
+        args: &[ExprId],
+        target: Option<Ty>,
+    ) -> Ty {
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
+        // §15.9.2: `new Foo<>()` — the created class's type arguments are
+        // inferred from the target type ([§15.9.2.2]).
+        let class_ty = if diamond {
+            self.diamond_instantiation(class_ty, target)
+        } else {
+            class_ty
+        };
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
         };
@@ -1180,6 +1284,37 @@ impl<'a> InferCtx<'a> {
             }
         }
         class_ty
+    }
+
+    /// §15.9.2: the diamond operator — the created class's type arguments are
+    /// inferred from the target type. When the target is a reference type
+    /// whose erasure is the created class ([§15.9.2.1]), its type arguments
+    /// are taken; otherwise the class is created raw
+    /// ([§15.9.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.2.2)).
+    /// (Supertype targets — `List<String> l = new ArrayList<>();` — are not
+    /// tracked; full §15.9.2 inference is deferred.)
+    fn diamond_instantiation(&self, class_ty: Ty, target: Option<Ty>) -> Ty {
+        let Some(target) = target else {
+            return class_ty;
+        };
+        let TyKind::Reference {
+            name: target_name,
+            args,
+        } = target.kind(self.db)
+        else {
+            return class_ty;
+        };
+        let TyKind::Reference {
+            name: class_name, ..
+        } = class_ty.kind(self.db)
+        else {
+            return class_ty;
+        };
+        if target_name.as_str() == class_name.as_str() && !args.is_empty() {
+            Ty::reference(self.db, class_name.as_str(), args.clone())
+        } else {
+            class_ty
+        }
     }
 
     /// The type of a lambda expression ([JLS §15.27.2]): the target
@@ -1363,6 +1498,23 @@ impl<'a> InferCtx<'a> {
     }
 
     fn binary(&mut self, op: BinaryOp, lhs: ExprId, rhs: ExprId) -> Ty {
+        // §15.23: `&&`/`||` always have type `boolean`. §14.30.3: a pattern
+        // variable of the left operand is in scope in the right-hand operand
+        // (flow scoping), so the operands are inferred once, in that order —
+        // the ordinary two-operand pass below would re-infer the right-hand
+        // operand without the pattern variables in scope.
+        if matches!(op, BinaryOp::And | BinaryOp::Or) {
+            let _ = self.infer_expr(lhs);
+            self.scopes.push(FxHashMap::default());
+            if let Some(bindings) = self.pattern_binding_ids(lhs) {
+                for binding in bindings {
+                    self.scope_binding(binding);
+                }
+            }
+            let _ = self.infer_expr(rhs);
+            self.scopes.pop();
+            return self.primitive(PrimitiveType::Boolean);
+        }
         let lhs_ty = self.infer_expr(lhs);
         let rhs_ty = self.infer_expr(rhs);
         match op {
@@ -1399,9 +1551,9 @@ impl<'a> InferCtx<'a> {
             | BinaryOp::Le
             | BinaryOp::Ge
             | BinaryOp::Eq
-            | BinaryOp::Ne
-            | BinaryOp::And
-            | BinaryOp::Or => self.primitive(PrimitiveType::Boolean),
+            | BinaryOp::Ne => self.primitive(PrimitiveType::Boolean),
+            // Handled above: `&&`/`||` are inferred with pattern flow scoping.
+            BinaryOp::And | BinaryOp::Or => self.primitive(PrimitiveType::Boolean),
         }
     }
 
@@ -1522,6 +1674,78 @@ impl<'a> InferCtx<'a> {
         None
     }
 
+    // -- patterns ([JLS §14.30]) ---------------------------------------------
+
+    /// Resolves the type of a pattern ([JLS §14.30]), recording the type of
+    /// each variable it binds ([§14.30.1], [§14.30.2]) into [`Self::locals`].
+    /// Returns the pattern's type; the match-all `_` ([§14.30.3]) has none.
+    fn pattern_type(&mut self, id: PatternId) -> Ty {
+        match self.tree.pattern(id).clone() {
+            PatternData::Type(tp) => {
+                let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &tp.ty);
+                if let Some(binding) = tp.binding {
+                    self.locals.insert(binding, ty);
+                }
+                ty
+            }
+            PatternData::Record(rp) => {
+                let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &rp.ty);
+                for &component in &rp.components {
+                    let _ = self.pattern_type(component);
+                }
+                ty
+            }
+            PatternData::MatchAll => self.error(),
+        }
+    }
+
+    /// The pattern variables a pattern binds, recursively through record
+    /// components ([JLS §14.30.1], [§14.30.2]).
+    fn pattern_bindings_of(&self, id: PatternId) -> Vec<LocalId> {
+        match self.tree.pattern(id).clone() {
+            PatternData::Type(tp) => tp.binding.into_iter().collect(),
+            PatternData::Record(rp) => rp
+                .components
+                .iter()
+                .flat_map(|&c| self.pattern_bindings_of(c))
+                .collect(),
+            PatternData::MatchAll => Vec::new(),
+        }
+    }
+
+    /// The pattern variables of the `instanceof` expression `id`, recursing
+    /// through parenthesization and `&&`/`||` chains ([JLS §14.30.3]) — the
+    /// bindings whose scope extends to the enclosing `if` then-arm (or the
+    /// right-hand operand of the `&&`/`||`). `None` when `id` is not a
+    /// pattern-carrying condition.
+    fn pattern_binding_ids(&self, id: ExprId) -> Option<Vec<LocalId>> {
+        match self.tree.expr(id).clone() {
+            ExprData::InstanceOf { pattern, .. } => pattern.map(|p| self.pattern_bindings_of(p)),
+            ExprData::Paren(inner) => self.pattern_binding_ids(inner),
+            ExprData::Binary {
+                op: BinaryOp::And | BinaryOp::Or,
+                lhs,
+                rhs,
+            } => {
+                let mut bindings = self.pattern_binding_ids(lhs).unwrap_or_default();
+                bindings.extend(self.pattern_binding_ids(rhs).unwrap_or_default());
+                Some(bindings)
+            }
+            _ => None,
+        }
+    }
+
+    /// Establishes the scope of a pattern variable ([JLS §14.30.3]) in the
+    /// current innermost scope. The variable's type was already recorded by
+    /// [`Self::pattern_type`] during expression inference.
+    fn scope_binding(&mut self, id: LocalId) {
+        let name = self.tree.local(id).name.clone();
+        self.scopes
+            .last_mut()
+            .expect("scope stack non-empty")
+            .insert(name, id);
+    }
+
     fn infer_stmt(&mut self, id: StmtId) {
         let stmt = self.tree.stmt(id).clone();
         self.infer_stmt_data(&stmt);
@@ -1570,7 +1794,16 @@ impl<'a> InferCtx<'a> {
             StmtData::Labeled { stmt, .. } => self.infer_stmt(*stmt),
             StmtData::If { cond, then, els } => {
                 let _ = self.infer_expr(*cond);
+                // §14.30.3: a pattern variable of the condition is in scope
+                // in the `then` arm (flow scoping), not in the `else` arm.
+                self.scopes.push(FxHashMap::default());
+                if let Some(bindings) = self.pattern_binding_ids(*cond) {
+                    for binding in bindings {
+                        self.scope_binding(binding);
+                    }
+                }
                 self.infer_stmt(*then);
+                self.scopes.pop();
                 if let Some(els) = els {
                     self.infer_stmt(*els);
                 }
@@ -1618,12 +1851,26 @@ impl<'a> InferCtx<'a> {
                 let _ = self.infer_expr(*scrutinee);
                 self.scopes.push(FxHashMap::default());
                 for arm in arms {
-                    for &label in &arm.labels {
-                        let _ = self.infer_expr(label);
+                    // §14.30.2/§14.30.3: a pattern label's variables are in
+                    // scope in the arm's statements.
+                    self.scopes.push(FxHashMap::default());
+                    for label in &arm.labels {
+                        match label {
+                            SwitchLabel::Expr(e) => {
+                                let _ = self.infer_expr(*e);
+                            }
+                            SwitchLabel::Pattern(p) => {
+                                let _ = self.pattern_type(*p);
+                                for binding in self.pattern_bindings_of(*p) {
+                                    self.scope_binding(binding);
+                                }
+                            }
+                        }
                     }
                     for &stmt in &arm.body {
                         self.infer_stmt(stmt);
                     }
+                    self.scopes.pop();
                 }
                 self.scopes.pop();
             }
@@ -1648,6 +1895,12 @@ impl<'a> InferCtx<'a> {
                 let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
                 if !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable) {
                     self.types.insert(*expr, self.error());
+                    // §14.18: a non-throwable operand is a compile-time error.
+                    self.report(TypeError::IncompatibleTypes {
+                        expr: *expr,
+                        found: ty.display(self.db).to_string(),
+                        expected: "java.lang.Throwable".to_owned(),
+                    });
                 }
             }
             StmtData::Return(None) | StmtData::Break(_) | StmtData::Continue(_) => {}
@@ -1662,8 +1915,27 @@ impl<'a> InferCtx<'a> {
                 finally,
             } => {
                 self.scopes.push(FxHashMap::default());
-                for &resource in resources {
-                    self.declare_local(resource);
+                for resource in resources {
+                    // §14.20.3: each declaration resource is a local variable
+                    // declaration; a `var` resource infers its type from its
+                    // initializer ([§14.4.1]).
+                    if self.tree.local(resource.local).ty.is_none() {
+                        let Some(initializer) = resource.initializer else {
+                            self.declare_local(resource.local);
+                            continue;
+                        };
+                        let ty = self.infer_expr(initializer);
+                        let local = self.tree.local(resource.local).clone();
+                        self.bind_local(resource.local, local.name, ty);
+                    } else {
+                        self.declare_local(resource.local);
+                        if let Some(initializer) = resource.initializer {
+                            // The initializer is a poly expression whose
+                            // target is the resource's declared type.
+                            let target = self.locals.get(&resource.local).copied();
+                            let _ = self.with_target(target, |this| this.infer_expr(initializer));
+                        }
+                    }
                 }
                 self.infer_stmt(*body);
                 for clause in catches {

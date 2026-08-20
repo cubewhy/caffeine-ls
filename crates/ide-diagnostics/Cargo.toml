@@ -4,6 +4,8 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+hir.workspace = true
+hir-ty.workspace = true
 ide-db.workspace = true
 rowan.workspace = true
 syntax.workspace = true

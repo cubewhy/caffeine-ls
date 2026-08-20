@@ -1,0 +1,57 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 19
+        },
+        "end": {
+          "line": 3,
+          "character": 20
+        }
+      },
+      "severity": 1,
+      "code": "not-a-statement",
+      "source": "caffeine-ls",
+      "message": "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 12
+        },
+        "end": {
+          "line": 2,
+          "character": 28
+        }
+      },
+      "severity": 1,
+      "code": "no-such-method",
+      "source": "caffeine-ls",
+      "message": "cannot find method 'noSuchMethod'"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 12
+        },
+        "end": {
+          "line": 3,
+          "character": 19
+        }
+      },
+      "severity": 1,
+      "code": "cannot-resolve-symbol",
+      "source": "caffeine-ls",
+      "message": "cannot resolve symbol 'unknown'"
+    }
+  ],
+  "kind": "full"
+}

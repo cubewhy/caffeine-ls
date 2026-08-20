@@ -1,0 +1,22 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo<T> {
+    void m() {
+        new Foo<>();
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Foo<T> @1..59
+  method m() -> void @15..57
+
+BODIES:
+body:
+  s0: expr e0: new Foo<>()

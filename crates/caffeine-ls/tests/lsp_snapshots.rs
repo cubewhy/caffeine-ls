@@ -265,6 +265,25 @@ lsp_test!(
 );
 
 lsp_test!(
+    test_type_diagnostics,
+    r#"
+    //- /src/Main.java
+    public class Main {
+        void test(Main m) {
+            m.noSuchMethod();
+            unknown;
+        }
+    }
+    "#,
+    |lsp| {
+        lsp.open_document("/src/Main.java");
+        let diagnostics = lsp.pull_document_diagnostics("/src/Main.java");
+
+        insta::assert_json_snapshot!("type_diagnostics", diagnostics);
+    }
+);
+
+lsp_test!(
     test_kotlin_syntax_diagnostics,
     r#"
     //- /src/Main.kt

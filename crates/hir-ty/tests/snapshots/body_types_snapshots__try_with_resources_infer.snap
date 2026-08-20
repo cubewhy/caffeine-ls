@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Res {
+    Res() {}
+    int read() { return 1; }
+}
+
+class Body {
+    void m() {
+        try (Res r = new Res(); var v = new Res()) {
+            r.read();
+        }
+    }
+}
+
+method Res(): <init>
+  locals: 
+  exprs: 
+method read(): int
+  locals: 
+  exprs: e0: int
+method m(): void
+  locals: l0: com.example.Res | l1: com.example.Res
+  exprs: e1: com.example.Res | e2: int | e3: com.example.Res | e4: com.example.Res

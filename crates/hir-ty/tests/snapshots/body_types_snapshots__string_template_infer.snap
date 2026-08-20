@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    String m(int x) {
+        return STR."value: \{x}";
+    }
+}
+
+method m(int): java.lang.String
+  locals: l0: int
+  exprs: e0: int | e1: java.lang.String

@@ -24,6 +24,16 @@ pub enum JavaDiagnosticCode {
     // Type layer (`hir-ty`).
     /// §14.4.1: a `var` declaration must have an initializer.
     VarWithoutInitializer,
+    /// §6.5: a simple name resolves to nothing.
+    CannotResolveName,
+    /// §15.11: no field of the name on the receiver.
+    NoSuchField,
+    /// §15.12.1: no method of the name on the receiver.
+    NoSuchMethod,
+    /// §15.12.2: no member is applicable to the actual arguments.
+    WrongArity,
+    /// §14.18: a `throw` operand is not assignable to `Throwable`.
+    IncompatibleTypes,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -63,6 +73,11 @@ impl JavaDiagnosticCode {
     pub fn as_str(&self) -> &'static str {
         match self {
             JavaDiagnosticCode::VarWithoutInitializer => "var-without-initializer",
+            JavaDiagnosticCode::CannotResolveName => "cannot-resolve-symbol",
+            JavaDiagnosticCode::NoSuchField => "no-such-field",
+            JavaDiagnosticCode::NoSuchMethod => "no-such-method",
+            JavaDiagnosticCode::WrongArity => "wrong-argument-count",
+            JavaDiagnosticCode::IncompatibleTypes => "incompatible-types",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

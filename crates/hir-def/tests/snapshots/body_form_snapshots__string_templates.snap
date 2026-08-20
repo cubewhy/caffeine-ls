@@ -1,0 +1,23 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Foo {
+    void m(int x) {
+        STR."value: \{x}";
+    }
+}
+
+PARSE_ERRORS:
+Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed @58..59
+ITEM_TREE:
+file (java)
+class Foo @1..67
+  method m(int x) -> void @12..65
+
+BODIES:
+body:
+  param l0: int x
+  s0: expr e1: template [e0]

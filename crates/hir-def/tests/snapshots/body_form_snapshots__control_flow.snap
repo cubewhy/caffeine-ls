@@ -40,23 +40,23 @@ body:
       cond: none
       step: e2
       s18: block
-        s3: if e3
+        s3: if e6
           s1: break label0
-        s6: if e4
+        s6: if e12
           s4: continue unlabeled
-        s7: assert e7 msg e8
-        s10: synchronized e9
+        s7: assert e15 msg e16
+        s10: synchronized e18
           s9: block
-            s8: expr e11: postfix ++ e10
+            s8: expr e20: postfix ++ e19
         s17: try resources []
           s12: block
-            s11: expr e12: call risky()
+            s11: expr e21: call risky()
           catch l2
             s14: block
-              s13: expr e15: assign = e13 e14
+              s13: expr e24: assign = e22 e23
         s17: finally
           s16: block
-            s15: expr e18: assign = e16 e17
+            s15: expr e27: assign = e25 e26
 body:
   l1: int i
   l2: Exception e

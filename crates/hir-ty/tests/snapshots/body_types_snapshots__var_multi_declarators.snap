@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
-assertion_line: 1049
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -16,4 +15,4 @@ class Body {
 method m(): int
   locals: l0: int | l1: int | l2: <error>
   exprs: e0: int | e1: int | e2: <error> | e3: <error> | e4: <error> | e5: <error> | e6: <error>
-  diags: l2@4:25: var-without-initializer: variable 'c' is declared with 'var' but has no initializer
+  diags: l2@4:25: var-without-initializer: variable 'c' is declared with 'var' but has no initializer | e2@5:15: cannot-resolve-symbol: cannot resolve symbol 'a' | e3@5:18: cannot-resolve-symbol: cannot resolve symbol 'b' | e5@5:22: cannot-resolve-symbol: cannot resolve symbol 'c'

@@ -117,3 +117,80 @@ class Foo {
 }
 "#,
 }
+
+// -- quick wins (JLS SE 26) --------------------------------------------------
+
+// Try-with-resources ([JLS §14.20.3]) lowers each resource to a real local
+// with its initializer; a bare `VARIABLE_ACCESS` resource (no initializer) is
+// lowered to the local alone.
+
+body_snapshot! {
+    try_with_resources,
+    r#"
+class Foo {
+    void m() throws Exception {
+        try (FileReader r = new FileReader("x"); var w = new FileWriter("y")) {
+            r.read();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+"#,
+}
+
+// `instanceof` patterns ([JLS §14.30.2]) and switch pattern labels
+// ([§14.11.1]) lower to `PatternData::Type`/`Record`/`MatchAll`.
+
+body_snapshot! {
+    patterns,
+    r#"
+class Foo {
+    void m(Object o) {
+        if (o instanceof String s) {
+            System.out.println(s);
+        }
+        if (o instanceof Point(int x, int y)) { }
+        switch (o) {
+            case Point p -> p.area();
+            case String _ -> { }
+            case null -> { }
+            default -> { }
+        }
+    }
+}
+
+record Point(int x, int y) {
+    int area() { return x * y; }
+}
+"#,
+}
+
+// String templates ([JLS §15.8.6, preview in JLS 22, removed in JLS 23]) lower
+// `STR."\{x}"` (a `FIELD_ACCESS` wrapping a `TEMPLATE_EXPR`) to a template
+// expression whose arguments are inferred.
+
+body_snapshot! {
+    string_templates,
+    r#"
+class Foo {
+    void m(int x) {
+        STR."value: \{x}";
+    }
+}
+"#,
+}
+
+// Diamond instantiation ([JLS §15.9.1]) — `new Foo<>()` — is marked on the
+// `New` expression so inference can substitute the target's type arguments.
+
+body_snapshot! {
+    diamond_new,
+    r#"
+class Foo<T> {
+    void m() {
+        new Foo<>();
+    }
+}
+"#,
+}
