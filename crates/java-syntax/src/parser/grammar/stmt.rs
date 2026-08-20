@@ -993,6 +993,12 @@ pub fn is_local_variable_declaration(p: &Parser) -> bool {
         return true;
     }
 
+    // §14.21: `yield Expression ;` is a yield statement, not a declaration
+    // with `yield` as a type name — let `statement` treat it as such.
+    if p.nth_at_contextual_kw(i, ContextualKeyword::Yield) {
+        return false;
+    }
+
     // var keyword
     if p.nth_at_contextual_kw(i, ContextualKeyword::Var) && p.nth(i + 1) == Some(IDENTIFIER) {
         return true;
