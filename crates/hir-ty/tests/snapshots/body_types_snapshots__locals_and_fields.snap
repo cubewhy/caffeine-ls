@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 136
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -29,6 +30,12 @@ class Body {
     }
 }
 
+field count
+  locals: 
+  exprs: e0: int
+field singleton
+  locals: 
+  exprs: e1: com.example.Body
 method run(int[], int): int
   locals: l0: int[] | l1: int | l2: int | l3: int
   exprs: e2: int | e3: int | e4: int | e5: int[] | e6: int | e7: boolean | e8: int | e9: int | e10: int | e11: int | e12: int[] | e13: int | e14: int | e15: int | e16: int | e17: int | e18: com.example.Body | e19: int | e20: int

@@ -319,8 +319,12 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     let type_ref = decl
         .children()
         .find(|c| c.kind() == TYPE)
-        .map(|t| super::type_from(&t))
-        .unwrap_or(TypeRef::Error);
+        .map(|t| super::type_from(&t));
+    // §14.4.1: `var` — a contextual keyword lexed as an identifier — writes
+    // no type; the local's type is inferred from its initializer. A `None`
+    // type on a local marks such a declaration for the type layer.
+    let is_var =
+        type_ref.is_none() && first_identifier(&decl).is_some_and(|name| name.as_str() == "var");
     let declarators: Vec<_> = decl
         .children()
         .find(|c| c.kind() == VARIABLE_DECLARATOR_LIST)
@@ -338,7 +342,11 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
         let name = first_identifier(declarator).unwrap_or_else(missing_name);
         let local = LocalId(ctx.bodies.locals.alloc(Local {
             name,
-            ty: Some(type_ref.clone()),
+            ty: if is_var {
+                None
+            } else {
+                Some(type_ref.clone().unwrap_or(TypeRef::Error))
+            },
         }));
         let initializer = declarator
             .children()
@@ -531,7 +539,19 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             ExprData::ClassLit(TypeRef::Primitive(prim))
         }
         CLASS_LITERAL => class_literal(node),
-        THIS_EXPR => ExprData::This { qualifier: None },
+        // `Outer.this` — the THIS_EXPR node carries the qualifier identifier
+        // before `.this` ([JLS §15.8.3]); a bare `this` lowers from THIS_KW.
+        THIS_EXPR => {
+            // The qualifier identifier of `Outer.this` is wrapped in a nested
+            // LITERAL node ([JLS §15.8.3]); join the identifiers recursively.
+            let qualifier = join_dotted(node);
+            ExprData::This {
+                qualifier: (qualifier.as_str() != "<missing>").then(|| TypeRef::Reference {
+                    name: qualifier,
+                    generic_args: Vec::new(),
+                }),
+            }
+        }
         SUPER_EXPR => ExprData::Super,
         PREFIX_EXPR => {
             let op = first_op_token(node)

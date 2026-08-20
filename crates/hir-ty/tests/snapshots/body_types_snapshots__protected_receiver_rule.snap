@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 620
 expression: out
 ---
 FILE /src/com/example/A.java:
@@ -27,6 +28,12 @@ class C extends com.example.A {
 method pro(): void
   locals: 
   exprs: 
+field a
+  locals: 
+  exprs: e0: org.other.A
+field c
+  locals: 
+  exprs: e1: org.other.C
 method use(): void
   locals: 
   exprs: e2: org.other.A | e3: <error> | e4: org.other.C | e5: void | e7: void | e8: void

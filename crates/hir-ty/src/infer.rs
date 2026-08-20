@@ -88,12 +88,6 @@ pub(crate) fn body_types_impl(
     item: ItemId,
 ) -> Option<BodyTypes> {
     let tree = hir::file_item_tree(db, file);
-    let body_id = match item_data(&tree, item)? {
-        hir_expand::item_tree::ItemData::Method(method) => method.body,
-        hir_expand::item_tree::ItemData::StaticInit(init) => init.body,
-        hir_expand::item_tree::ItemData::InstanceInit(init) => init.body,
-        _ => None,
-    }?;
     let scope = scope_for_file(db, file);
     let type_params = type_params_map_query(db, db.file_text(file));
     let resolver = Resolver::new(&tree, type_params, item);
@@ -101,17 +95,6 @@ pub(crate) fn body_types_impl(
     let enclosing_class = enclosing_class_query(db, db.file_text(file))
         .get(&item)
         .map(|name| Ty::reference(db, name.as_str(), Vec::new()));
-    // The return type of the enclosing method — the target type of a return
-    // statement ([JLS §14.17], [JLS §18.5.2.4]).
-    let enclosing_ret = match item_data(&tree, item) {
-        Some(hir_expand::item_tree::ItemData::Method(method)) => method
-            .sig
-            .ret
-            .as_ref()
-            .map(|ret| resolve_type_ref(db, &scope, &resolver, ret)),
-        _ => None,
-    };
-
     let mut ctx = InferCtx {
         db,
         scope,
@@ -119,7 +102,7 @@ pub(crate) fn body_types_impl(
         resolver,
         access,
         enclosing_class,
-        enclosing_ret,
+        enclosing_ret: None,
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
         scopes: vec![FxHashMap::default()],
@@ -127,14 +110,75 @@ pub(crate) fn body_types_impl(
         target: None,
         switch_targets: Vec::new(),
     };
-    for &param in &tree.bodies.body(body_id).params {
-        ctx.declare_local(param);
-    }
-    for &stmt in &tree.bodies.body(body_id).stmts {
-        ctx.infer_stmt(stmt);
+    let mut body = None;
+    match item_data(&tree, item)? {
+        // A method or constructor body ([§8.4]); the return type is the
+        // target of a `return` ([§14.17], [§18.5.2.4]).
+        hir_expand::item_tree::ItemData::Method(method) => {
+            ctx.enclosing_ret = method
+                .sig
+                .ret
+                .as_ref()
+                .map(|ret| resolve_type_ref(db, &ctx.scope, &ctx.resolver, ret));
+            match method.body {
+                Some(body_id) => {
+                    body = Some(body_id);
+                    for &param in &tree.bodies.body(body_id).params {
+                        ctx.declare_local(param);
+                    }
+                    for &stmt in &tree.bodies.body(body_id).stmts {
+                        ctx.infer_stmt(stmt);
+                    }
+                }
+                // An annotation type element default ([JLS §9.6.2]): a poly
+                // expression whose target is the element's return type.
+                None => {
+                    let default = method.default_expr?;
+                    let _ = ctx.with_target(ctx.enclosing_ret, |this| this.infer_expr(default));
+                }
+            }
+        }
+        hir_expand::item_tree::ItemData::StaticInit(init) => {
+            let body_id = init.body?;
+            body = Some(body_id);
+            for &param in &tree.bodies.body(body_id).params {
+                ctx.declare_local(param);
+            }
+            for &stmt in &tree.bodies.body(body_id).stmts {
+                ctx.infer_stmt(stmt);
+            }
+        }
+        hir_expand::item_tree::ItemData::InstanceInit(init) => {
+            let body_id = init.body?;
+            body = Some(body_id);
+            for &param in &tree.bodies.body(body_id).params {
+                ctx.declare_local(param);
+            }
+            for &stmt in &tree.bodies.body(body_id).stmts {
+                ctx.infer_stmt(stmt);
+            }
+        }
+        // A field initializer ([§8.3.3]): a poly expression whose target is
+        // the field's declared type.
+        hir_expand::item_tree::ItemData::Field(field) => {
+            let initializer = field.initializer_expr?;
+            let target = resolve_type_ref(db, &ctx.scope, &ctx.resolver, &field.ty);
+            let _ = ctx.with_target(Some(target), |this| this.infer_expr(initializer));
+        }
+        // Enum constant arguments ([§8.9.1]) — inferred standalone (the
+        // constructor resolution is out of scope here).
+        hir_expand::item_tree::ItemData::EnumConstant(constant) => {
+            if constant.argument_exprs.is_empty() {
+                return None;
+            }
+            for &arg in &constant.argument_exprs {
+                let _ = ctx.infer_expr(arg);
+            }
+        }
+        _ => return None,
     }
     Some(BodyTypes {
-        body: Some(body_id),
+        body,
         exprs: ctx.types,
         locals: ctx.locals,
     })
@@ -209,8 +253,14 @@ impl<'a> InferCtx<'a> {
             ExprData::Literal(Literal::Str) => self.string(),
             // §3.10.8: the null literal has the null type.
             ExprData::Null => Ty::null(self.db),
-            // §15.8.3: `this` is the type of the enclosing class.
-            ExprData::This { .. } => self.enclosing_class.unwrap_or_else(|| self.error()),
+            // §15.8.3: `this` is the type of the enclosing class; a qualified
+            // `TypeName.this` is the class or interface `TypeName`.
+            ExprData::This { qualifier } => match qualifier {
+                Some(type_name) => {
+                    resolve_type_ref(self.db, &self.scope, &self.resolver, &type_name)
+                }
+                None => self.enclosing_class.unwrap_or_else(|| self.error()),
+            },
             ExprData::Super => self.error(),
             // §15.8.2: `T.class` has type `Class<T>`.
             ExprData::ClassLit(tyref) => {
@@ -431,10 +481,27 @@ impl<'a> InferCtx<'a> {
                 return *ty;
             }
         }
+        // §7.5.4: a simple name may name a statically imported member — a
+        // static field read through its declaring type.
+        if let Some(ty) = self.static_import_field(name.as_str()) {
+            return ty;
+        }
         if let Some(field) = self.pick_field_of(self.enclosing_class, name.as_str()) {
             return field.ty;
         }
         self.error()
+    }
+
+    /// A static field ([§7.5.4]) named by a static import: `import static
+    /// pkg.Type.FIELD`, or the on-demand form `import static pkg.Type.*`,
+    /// makes the simple name `FIELD` a static member access (§15.11.1).
+    fn static_import_field(&self, simple: &str) -> Option<Ty> {
+        let (owner, member) = self.resolver.static_import_owner(simple)?;
+        let receiver = Ty::reference(self.db, owner.as_str(), Vec::new());
+        let access = self.access.with_mode(InvocationMode::Static);
+        pick_field(self.db, &self.scope, &receiver, &member, &access)
+            .filter(|field| field.is_static)
+            .map(|field| field.ty)
     }
 
     /// A qualified name in expression position: `Type.field` (a static field
@@ -448,6 +515,9 @@ impl<'a> InferCtx<'a> {
             None => ("", text),
         };
         if prefix.is_empty() {
+            if let Some(ty) = self.static_import_field(last) {
+                return ty;
+            }
             if let Some(field) = self.pick_field_of(self.enclosing_class, last) {
                 return field.ty;
             }
@@ -500,7 +570,10 @@ impl<'a> InferCtx<'a> {
         if matches!(self.tree.expr(target).clone(), ExprData::Super) {
             let receiver = self.super_ty();
             let access = self.access.with_mode(InvocationMode::Super);
+            // §15.11.1: a `super` field access selects an instance member of
+            // the direct superclass; a static field via `super` is illegal.
             return match pick_field(self.db, &self.scope, &receiver, name.as_str(), &access) {
+                Some(field) if field.is_static => self.error(),
                 Some(field) => field.ty,
                 None => self.error(),
             };
@@ -539,7 +612,7 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        let (receiver_ty, mode) = self.receiver_info(receiver);
+        let (receiver_ty, mode) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, target, &access) {
@@ -571,7 +644,7 @@ impl<'a> InferCtx<'a> {
     /// receiver is a type, not a value; an unqualified call is an implicit
     /// `this` invocation; a `super` receiver is the superclass of the
     /// enclosing class.
-    fn receiver_info(&mut self, receiver: Option<ExprId>) -> (Ty, InvocationMode) {
+    fn receiver_info(&mut self, receiver: Option<ExprId>, name: &Name) -> (Ty, InvocationMode) {
         match receiver {
             Some(receiver) => match self.tree.expr(receiver).clone() {
                 // `Type.method(...)` — a static invocation whose receiver
@@ -588,12 +661,33 @@ impl<'a> InferCtx<'a> {
                 _ => (self.infer_expr(receiver), InvocationMode::Virtual),
             },
             // An unqualified call is an implicit `this` invocation
-            // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)).
-            None => (
-                self.enclosing_class.unwrap_or_else(|| self.error()),
-                InvocationMode::Virtual,
-            ),
+            // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)),
+            // unless a static import ([§7.5.4]) names the method through its
+            // declaring type.
+            None => {
+                if let Some(ty) = self.static_import_method_receiver(name.as_str()) {
+                    return (ty, InvocationMode::Static);
+                }
+                (
+                    self.enclosing_class.unwrap_or_else(|| self.error()),
+                    InvocationMode::Virtual,
+                )
+            }
         }
+    }
+
+    /// The receiver of an unqualified call that names a statically imported
+    /// method ([§7.5.4]): the declaring type, when that type has a static
+    /// member of the name. `None` otherwise — the call falls back to the
+    /// implicit `this` receiver.
+    fn static_import_method_receiver(&self, simple: &str) -> Option<Ty> {
+        let (owner, member) = self.resolver.static_import_owner(simple)?;
+        let receiver = Ty::reference(self.db, owner.as_str(), Vec::new());
+        let access = self.access.with_mode(InvocationMode::Static);
+        let has_static = member_set(self.db, &self.scope, &receiver, &member, &access)
+            .iter()
+            .any(|method| method.is_static);
+        has_static.then_some(receiver)
     }
 
     /// The type of `super` in the current class: the direct superclass
@@ -932,7 +1026,7 @@ impl<'a> InferCtx<'a> {
         else {
             return true;
         };
-        let (receiver_ty, mode) = self.receiver_info(receiver);
+        let (receiver_ty, mode) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);
@@ -1427,6 +1521,16 @@ impl<'a> InferCtx<'a> {
                 self.scopes.pop();
             }
             StmtData::Decl { local, initializer } => {
+                // §14.4.1: a `var` declaration has no written type — the
+                // initializer is inferred standalone and its type becomes the
+                // local's (§15.2: a `var` initializer is never poly).
+                if self.tree.local(*local).ty.is_none() {
+                    let initializer = initializer.expect("a var declaration has an initializer");
+                    let ty = self.infer_expr(initializer);
+                    let local_data = self.tree.local(*local).clone();
+                    self.bind_local(*local, local_data.name, ty);
+                    return;
+                }
                 self.declare_local(*local);
                 if let Some(initializer) = initializer {
                     // The initializer is a poly expression whose target is the

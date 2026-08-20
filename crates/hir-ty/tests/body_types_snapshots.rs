@@ -910,6 +910,7 @@ package com.example;
 class A {
     int x = 1;
     protected int y = 2;
+    static int z = 3;
 }
 
 class B extends A {
@@ -926,4 +927,100 @@ class B extends A {
 );
 // `super.field` ([§15.11.1]) is a field of the direct superclass, resolved in
 // the super invocation mode ([§15.12.1]): `super.x` and `super.y` are `int`,
-// and a field that does not exist in the superclass is an error.
+// a field that does not exist in the superclass is an error, and a static
+// field accessed through `super` is illegal ([§15.11.1]).
+
+snapshot!(
+    var_local_decl,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m() {
+        var s = \"x\";
+        var n = 1 + 2;
+        return s.length() + n;
+    }
+}
+",
+    )])
+);
+// §14.4.1: a `var` declaration infers the local's type from its initializer,
+// inferred standalone (§15.2: a `var` initializer is never poly): `s` is
+// `java.lang.String`, `n` is `int`, and `s.length()` resolves to `int`.
+
+snapshot!(
+    field_initializer_enum_args,
+    check_body_types(&[(
+        "/src/com/example/Shape.java",
+        "\
+package com.example;
+
+enum Color {
+    RED(1),
+    GREEN(2);
+
+    Color(int id) {}
+}
+
+@interface Tag {
+    String value() default \"default\" + \"Tag\";
+}
+
+class Body {
+    static final String NAME = \"x\" + \"y\";
+    Color color = Color.RED;
+}
+",
+    )])
+);
+// Field initializers ([§8.3.3]) are poly expressions whose target is the
+// field's declared type; enum constant arguments ([§8.9.1]) are inferred
+// standalone; an annotation element default ([§9.6.2]) is a poly expression
+// whose target is the element's return type.
+
+snapshot!(
+    qualified_this,
+    check_body_types(&[(
+        "/src/com/example/Outer.java",
+        "\
+package com.example;
+
+class Outer {
+    int x = 1;
+
+    class Inner {
+        int read() {
+            return Outer.this.x;
+        }
+    }
+}
+",
+    )])
+);
+// §15.8.3: `Outer.this` — a qualified `this` — has the type of the named
+// class `Outer`, not the innermost enclosing class.
+
+snapshot!(
+    static_import,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import static java.lang.Math.max;
+import static java.lang.Math.*;
+
+class Body {
+    int use() {
+        return max(1, 2) + min(3, 4);
+    }
+}
+",
+    )])
+);
+// §7.5.4: a static import makes an unqualified name a static member access
+// through its declaring type — `max` resolves against `java.lang.Math`, and
+// the on-demand form resolves `min` the same way.

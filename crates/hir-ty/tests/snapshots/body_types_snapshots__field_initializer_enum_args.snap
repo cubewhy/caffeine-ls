@@ -1,0 +1,42 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 954
+expression: out
+---
+FILE /src/com/example/Shape.java:
+package com.example;
+
+enum Color {
+    RED(1),
+    GREEN(2);
+
+    Color(int id) {}
+}
+
+@interface Tag {
+    String value() default "default" + "Tag";
+}
+
+class Body {
+    static final String NAME = "x" + "y";
+    Color color = Color.RED;
+}
+
+constant RED
+  locals: 
+  exprs: e0: int
+constant GREEN
+  locals: 
+  exprs: e1: int
+method Color(int): <init>
+  locals: l0: int
+  exprs: 
+method value(): java.lang.String
+  locals: 
+  exprs: e2: java.lang.String | e3: java.lang.String | e4: java.lang.String
+field NAME
+  locals: 
+  exprs: e5: java.lang.String | e6: java.lang.String | e7: java.lang.String
+field color
+  locals: 
+  exprs: e9: com.example.Color

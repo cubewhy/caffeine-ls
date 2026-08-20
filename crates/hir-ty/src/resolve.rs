@@ -66,6 +66,27 @@ impl Resolver {
         &self.imports
     }
 
+    /// For a static import ([JLS §7.5.4]) that names `simple` as a member —
+    /// `import static pkg.Type.MEMBER` or `import static pkg.Type.*` — the
+    /// declaring type's FQN and the member's simple name, in declaration
+    /// order (the first matching import wins, [JLS §7.5.4]).
+    pub fn static_import_owner(&self, simple: &str) -> Option<(Name, String)> {
+        for import in &self.imports {
+            if !import.is_static {
+                continue;
+            }
+            let text = import.name.as_str();
+            if import.is_asterisk {
+                return Some((import.name.clone(), simple.to_owned()));
+            }
+            let (owner, member) = text.rsplit_once('.')?;
+            if member == simple {
+                return Some((Name::new(owner), member.to_owned()));
+            }
+        }
+        None
+    }
+
     pub fn type_params(&self) -> &[TypeParameter<Name>] {
         &self.type_params
     }

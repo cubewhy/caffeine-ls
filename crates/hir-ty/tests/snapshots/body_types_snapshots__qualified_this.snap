@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 984
+expression: out
+---
+FILE /src/com/example/Outer.java:
+package com.example;
+
+class Outer {
+    int x = 1;
+
+    class Inner {
+        int read() {
+            return Outer.this.x;
+        }
+    }
+}
+
+field x
+  locals: 
+  exprs: e0: int
+method read(): int
+  locals: 
+  exprs: e1: com.example.Outer | e2: int

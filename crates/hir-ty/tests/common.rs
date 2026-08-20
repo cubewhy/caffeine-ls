@@ -505,6 +505,14 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[],
         ),
         class("java/io/IOException", Some("java/lang/Exception"), &[]),
+        class_with_methods_access(
+            "java/lang/Math",
+            Some("java/lang/Object"),
+            &[],
+            &[("max", "(II)I"), ("min", "(II)I")],
+            &["", ""],
+            &[0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
+        ),
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
         interface_with_methods(
@@ -1116,26 +1124,27 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
         let file_id = FileId::from_raw((i + 1) as u32);
         let tree = hir::file_item_tree(&db, file_id);
         for (id, data) in all_items(&tree) {
-            let ItemData::Method(method) = data else {
-                continue;
+            let header = match data {
+                ItemData::Method(method) => {
+                    let ret = if method.sig.ret.is_none() {
+                        "<init>".to_owned()
+                    } else {
+                        hir_ty::item_ty(&db, file_id, id).display(&db).to_string()
+                    };
+                    let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
+                        .iter()
+                        .map(|ty| ty.display(&db).to_string())
+                        .collect();
+                    format!("method {}({}): {ret}", method.name, params.join(", "))
+                }
+                ItemData::Field(field) => format!("field {}", field.name),
+                ItemData::EnumConstant(constant) => format!("constant {}", constant.name),
+                _ => continue,
             };
             let Some(types) = hir_ty::body_types(&db, file_id, id) else {
                 continue;
             };
-            let ret = if method.sig.ret.is_none() {
-                "<init>".to_owned()
-            } else {
-                hir_ty::item_ty(&db, file_id, id).display(&db).to_string()
-            };
-            let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
-                .iter()
-                .map(|ty| ty.display(&db).to_string())
-                .collect();
-            lines.push(format!(
-                "method {}({}): {ret}",
-                method.name,
-                params.join(", ")
-            ));
+            lines.push(header);
             let mut locals: Vec<_> = types.locals.iter().collect();
             locals.sort_by_key(|(id, _)| id.0.0);
             lines.push(format!(
