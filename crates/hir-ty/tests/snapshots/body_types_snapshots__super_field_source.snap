@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 903
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+class A {
+    int x = 1;
+    protected int y = 2;
+}
+
+class B extends A {
+    int read() {
+        return super.x + super.y;
+    }
+
+    int bad() {
+        return super.z;
+    }
+}
+
+method read(): int
+  locals: 
+  exprs: e3: int | e5: int | e6: int
+method bad(): int
+  locals: 
+  exprs: e8: <error>

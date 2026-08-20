@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 843
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    <T extends Exception> T makeEx() {
+        return null;
+    }
+
+    String checked() {
+        throw new RuntimeException();
+        throw makeEx();
+        throw new Object();
+        return null;
+    }
+}
+
+method makeEx(): T
+  locals: 
+  exprs: e0: null
+method checked(): java.lang.String
+  locals: 
+  exprs: e1: java.lang.RuntimeException | e2: java.lang.Exception | e3: <error> | e4: null

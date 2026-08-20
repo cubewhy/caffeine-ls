@@ -1,5 +1,6 @@
 ---
 source: crates/hir-def/tests/body_form_snapshots.rs
+assertion_line: 14
 expression: out
 ---
 SOURCE:
@@ -84,14 +85,29 @@ body:
   s31: for-each l5 in e43
     s30: block
       s29: expr e46: assign += e44 e45
-  s32: switch e47
-  s33: switch e48
-  s34: return none
+  s37: switch e47
+    case [e48] ->
+      s32: expr e51: assign = e49 e50
+      s33: break unlabeled
+    case [e52] ->
+      s34: expr e55: assign = e53 e54
+      s35: break unlabeled
+    case [e56] ->
+      s36: expr e59: assign = e57 e58
+  s42: switch e60
+    case [e61] ->
+      s38: expr e64: assign = e62 e63
+    case [e65] ->
+      s40: block
+        s39: expr e68: assign = e66 e67
+    case [e69] ->
+      s41: throw e70
+  s43: return none
 body:
   param l6: int x
-  s37: if e49
-    s35: throw e50
-  s38: return e53
+  s46: if e71
+    s44: throw e72
+  s47: return e75
   l0: int a
   l1: long b
   l2: long c

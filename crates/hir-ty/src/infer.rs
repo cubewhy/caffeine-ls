@@ -125,6 +125,7 @@ pub(crate) fn body_types_impl(
         scopes: vec![FxHashMap::default()],
         lambda_params: Vec::new(),
         target: None,
+        switch_targets: Vec::new(),
     };
     for &param in &tree.bodies.body(body_id).params {
         ctx.declare_local(param);
@@ -162,6 +163,10 @@ struct InferCtx<'a> {
     /// where the context fixes the type: a declaration initializer, an
     /// assignment right-hand side, or a return statement.
     target: Option<Ty>,
+    /// The target types of the enclosing switch expressions, innermost last
+    /// ([JLS §14.21]): a `yield` value has the type of its switch expression
+    /// as target, not the enclosing method's return type.
+    switch_targets: Vec<Option<Ty>>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -352,23 +357,47 @@ impl<'a> InferCtx<'a> {
                 type_name,
                 name,
             } => self.method_ref_type(qualifier, type_name.as_ref(), &name),
-            // §15.28: a switch expression's type is derived from its arm result
-            // types.
+            // §15.28: a switch expression's type is derived from its arm
+            // result types; a `yield` value inside an arm has the switch
+            // expression's type as target ([JLS §14.21]).
             ExprData::Switch { scrutinee, arms } => {
                 let _ = self.infer_expr(scrutinee);
+                self.switch_targets.push(self.target);
                 let mut result_tys: Vec<Ty> = Vec::new();
-                for arm in &arms {
+                for arm in arms {
                     for &label in &arm.labels {
                         let _ = self.infer_expr(label);
                     }
                     for &stmt in &arm.body {
                         let data = self.tree.stmt(stmt).clone();
-                        match data {
-                            StmtData::Expr(expr) => result_tys.push(self.infer_expr(expr)),
+                        match &data {
+                            // §15.28: the value of an arrow arm
+                            // `case L -> expr` is the expression itself.
+                            StmtData::Expr(expr) => result_tys.push(self.infer_expr(*expr)),
+                            // §14.21: a block arm yields its value with the
+                            // switch expression's type as target.
+                            StmtData::Yield(expr) => {
+                                let target = self.switch_targets.last().copied().flatten();
+                                result_tys
+                                    .push(self.with_target(target, |this| this.infer_expr(*expr)));
+                            }
+                            // §15.28: an arrow arm with a block body, or a
+                            // block arm, produces its value through the block's
+                            // final `yield` statement.
+                            StmtData::Block(stmts) => {
+                                self.infer_stmt_data(&data);
+                                if let Some(&last) = stmts.last()
+                                    && let StmtData::Yield(expr) = self.tree.stmt(last).clone()
+                                    && let Some(ty) = self.types.get(&expr).copied()
+                                {
+                                    result_tys.push(ty);
+                                }
+                            }
                             _ => self.infer_stmt_data(&data),
                         }
                     }
                 }
+                self.switch_targets.pop();
                 if result_tys.is_empty() {
                     self.error()
                 } else {
@@ -465,6 +494,17 @@ impl<'a> InferCtx<'a> {
         let Some(target) = target else {
             return self.var(name);
         };
+        // `super.field` — a field of the direct superclass ([§15.11.1],
+        // [§15.12.1]): the receiver is the superclass type and the access
+        // context is the super invocation mode.
+        if matches!(self.tree.expr(target).clone(), ExprData::Super) {
+            let receiver = self.super_ty();
+            let access = self.access.with_mode(InvocationMode::Super);
+            return match pick_field(self.db, &self.scope, &receiver, name.as_str(), &access) {
+                Some(field) => field.ty,
+                None => self.error(),
+            };
+        }
         // `Type.name` — the receiver expression is a bare name that resolves
         // to a type, not a value ([§15.11.1]).
         let (receiver, is_static) = if let ExprData::Var(type_name) = self.tree.expr(target).clone()
@@ -1458,10 +1498,28 @@ impl<'a> InferCtx<'a> {
                 }
                 self.scopes.pop();
             }
-            StmtData::Return(Some(expr)) | StmtData::Throw(expr) | StmtData::Yield(expr) => {
+            StmtData::Return(Some(expr)) | StmtData::Yield(expr) => {
                 // A returned expression is a poly expression whose target is
-                // the method's return type ([JLS §14.17]).
-                let _ = self.with_target(self.enclosing_ret, |this| this.infer_expr(*expr));
+                // the method's return type ([JLS §14.17]); a `yield` value has
+                // the enclosing switch expression's type as target
+                // ([JLS §14.21], see [`InferCtx::switch_targets`]).
+                let target = if matches!(stmt, StmtData::Yield(_)) {
+                    self.switch_targets.last().copied().flatten()
+                } else {
+                    self.enclosing_ret
+                };
+                let _ = self.with_target(target, |this| this.infer_expr(*expr));
+            }
+            StmtData::Throw(expr) => {
+                // §14.18: the operand of a `throw` statement is not a poly
+                // expression ([JLS §15.2]) — it is inferred standalone — and
+                // must be assignable to `Throwable` ([§5.2]); a non-throwable
+                // operand marks the expression as an error.
+                let ty = self.infer_expr(*expr);
+                let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
+                if !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable) {
+                    self.types.insert(*expr, self.error());
+                }
             }
             StmtData::Return(None) | StmtData::Break(_) | StmtData::Continue(_) => {}
             StmtData::Synchronized { expr, body } => {

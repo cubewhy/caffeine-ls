@@ -839,3 +839,91 @@ class Body {
 // Invoked through an implementing-class expression receiver the invocation
 // mode is virtual ([§15.12.3]), which must not select the interface's static
 // member, so `c.describe()` is an error.
+
+snapshot!(
+    throw_statement,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    <T extends Exception> T makeEx() {
+        return null;
+    }
+
+    String checked() {
+        throw new RuntimeException();
+        throw makeEx();
+        throw new Object();
+        return null;
+    }
+}
+",
+    )])
+);
+// §14.18: the operand of a `throw` is inferred standalone ([JLS §15.2]) and
+// must be assignable to `Throwable` ([§5.2]): `new RuntimeException()` and the
+// generic `makeEx()` — which resolves to its `Exception` bound rather than the
+// method's `String` return type — are fine, while `new Object()` is not a
+// `Throwable` and marks the operand as an error.
+
+snapshot!(
+    yield_target,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    <T> T id(T x) {
+        return x;
+    }
+
+    int m(boolean b) {
+        String s = switch (b) {
+            case true -> \"a\";
+            default -> { yield id(\"b\"); }
+        };
+        int n = switch (b) {
+            case true -> 1;
+            default -> { yield 2; }
+        };
+        return s.length() + n;
+    }
+}
+",
+    )])
+);
+// §14.21: a `yield` value has the enclosing switch expression's type as its
+// target — `yield id(\"b\")` resolves `id` against `String`, not the method's
+// `int` return type. §15.28: a block arm produces its value through its final
+// `yield` statement, so the second switch expression types as `int`.
+
+snapshot!(
+    super_field_source,
+    check_body_types(&[(
+        "/src/com/example/A.java",
+        "\
+package com.example;
+
+class A {
+    int x = 1;
+    protected int y = 2;
+}
+
+class B extends A {
+    int read() {
+        return super.x + super.y;
+    }
+
+    int bad() {
+        return super.z;
+    }
+}
+",
+    )])
+);
+// `super.field` ([§15.11.1]) is a field of the direct superclass, resolved in
+// the super invocation mode ([§15.12.1]): `super.x` and `super.y` are `int`,
+// and a field that does not exist in the superclass is an error.

@@ -497,7 +497,8 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("get", "()Ljava/lang/Object;")],
             &["()TT;"],
         ),
-        class("java/lang/Exception", Some("java/lang/Object"), &[]),
+        class("java/lang/Throwable", Some("java/lang/Object"), &[]),
+        class("java/lang/Exception", Some("java/lang/Throwable"), &[]),
         class(
             "java/lang/RuntimeException",
             Some("java/lang/Exception"),

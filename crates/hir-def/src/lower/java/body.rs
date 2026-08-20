@@ -430,10 +430,19 @@ fn switch_parts(
 fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Vec<SwitchArm> {
     use J::*;
     let mut arms = Vec::new();
-    for group in node
-        .children()
-        .filter(|c| c.kind() == SWITCH_BLOCK_STATEMENT_GROUP || c.kind() == SWITCH_RULE)
-    {
+    // Both a switch statement ([§14.11]) and a switch expression ([§15.28])
+    // wrap their groups or rules in a `SWITCH_BLOCK`; descend into it.
+    let groups: Vec<_> = if let Some(block) = node.children().find(|c| c.kind() == SWITCH_BLOCK) {
+        block
+            .children()
+            .filter(|c| c.kind() == SWITCH_BLOCK_STATEMENT_GROUP || c.kind() == SWITCH_RULE)
+            .collect()
+    } else {
+        node.children()
+            .filter(|c| c.kind() == SWITCH_BLOCK_STATEMENT_GROUP || c.kind() == SWITCH_RULE)
+            .collect()
+    };
+    for group in groups {
         let mut labels = Vec::new();
         for label in group.children().filter(|c| c.kind() == SWITCH_LABEL) {
             let mut seen = false;
