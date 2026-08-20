@@ -40,12 +40,14 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
 
     sh.change_dir(&extension_dir);
 
+    let pnpm = which::which("pnpm").context("No pnpm installation found in PATH")?;
+
     if !extension_dir.join("node_modules").exists() {
         println!("  - Installing dependencies...");
-        cmd!(sh, "pnpm install").env("CI", "true").run()?;
+        cmd!(sh, "{pnpm} install").env("CI", "true").run()?;
     }
 
-    cmd!(sh, "pnpm run compile").env("CI", "true").run()?;
+    cmd!(sh, "{pnpm} run compile").env("CI", "true").run()?;
 
     sh.set_var("RUST_BACKTRACE", "1");
     sh.set_var("CAFFEINE_LS_LOG", "debug");
