@@ -1139,6 +1139,7 @@ dependencies = [
  "ide-db",
  "ra_ap_vfs",
  "rowan",
+ "syntax",
  "tracing",
 ]
 

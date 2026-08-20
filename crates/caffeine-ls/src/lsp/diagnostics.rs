@@ -7,11 +7,9 @@ pub(crate) fn convert_diagnostic(
     lsp_types::Diagnostic {
         range: lsp::to_proto::range(line_index, d.range.range),
         severity: Some(lsp::to_proto::diagnostic_severity(d.severity)),
-        // code: Some(lsp_types::Code::String(d.code.as_str().to_owned())),
-        // code_description: Some(lsp_types::CodeDescription {
-        //     href: lsp_types::Uri::parse(&d.code.url()).unwrap(),
-        // }),
-        code: None,
+        code: d
+            .code
+            .map(|code| lsp_types::Code::String(code.as_str().to_owned())),
         code_description: None,
         source: Some(crate::NAME.to_owned()),
         message: lsp_types::Message::String(d.message),

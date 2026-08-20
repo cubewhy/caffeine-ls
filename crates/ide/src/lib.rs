@@ -12,6 +12,7 @@ pub use ide_db::{
     line_index::{LineCol, LineIndex},
 };
 pub use ide_diagnostics::Diagnostic;
+pub use syntax::{DiagnosticCode, JavaDiagnosticCode, KotlinDiagnosticCode};
 use triomphe::Arc;
 use vfs::FileId;
 

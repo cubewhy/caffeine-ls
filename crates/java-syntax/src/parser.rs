@@ -378,6 +378,7 @@ pub enum ParseErrorKind {
         found: Option<SyntaxKind>,
     },
     ExpectedConstruct(ExpectedConstruct),
+    NotAStatement,
     Message(&'static str),
 }
 
@@ -412,6 +413,9 @@ impl ParseErrorKind {
             }
             ParseErrorKind::ExpectedConstruct(construct) => {
                 format!("expected {}", construct)
+            }
+            ParseErrorKind::NotAStatement => {
+                "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed".to_string()
             }
             ParseErrorKind::Message(msg) => msg.to_string(),
         }

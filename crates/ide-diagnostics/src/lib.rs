@@ -3,6 +3,7 @@ use ide_db::{
     base_db::{self, LanguageKind, SourceDatabase},
 };
 use rowan::TextRange;
+use syntax::DiagnosticCode;
 use vfs::FileId;
 
 #[derive(Debug)]
@@ -11,6 +12,9 @@ pub struct Diagnostic {
     pub range: FileRange,
     pub severity: Severity,
     pub unused: bool,
+    /// The stable diagnostic code, when the underlying error kind carries one
+    /// (see [`syntax::DiagnosticCode`]); surfaces as the LSP `code` field.
+    pub code: Option<DiagnosticCode>,
 }
 
 pub fn syntax_diagnostics(
@@ -34,16 +38,22 @@ pub fn syntax_diagnostics(
     parse
         .errors()
         .iter()
-        .map(|e| make_diagnostic(file_id, &e.message, e.range))
+        .map(|e| make_diagnostic(file_id, &e.message, e.range, e.code))
         .collect()
 }
 
-fn make_diagnostic(file_id: FileId, message: &str, range: TextRange) -> Diagnostic {
+fn make_diagnostic(
+    file_id: FileId,
+    message: &str,
+    range: TextRange,
+    code: Option<DiagnosticCode>,
+) -> Diagnostic {
     let range = FileRange::new(file_id, range);
     Diagnostic {
         message: message.to_string(),
         range,
         severity: Severity::Error,
         unused: false,
+        code,
     }
 }

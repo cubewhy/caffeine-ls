@@ -357,29 +357,35 @@ impl ParseErrorKind {
     pub fn desc(&self) -> String {
         match self {
             ParseErrorKind::ExpectedToken { expected, found } => {
-                let expected_str = expected
-                    .iter()
-                    .map(|k| k.to_quoted_string())
-                    .collect::<Vec<_>>()
-                    .join(" or ");
+                let found_str = found
+                    .map(|f| f.to_quoted_string())
+                    .unwrap_or_else(|| "end of file".to_string());
 
-                let found_str = match found {
-                    Some(f) => f.to_quoted_string(),
-                    None => "end of file".to_string(),
+                let expected_options = expected
+                    .iter()
+                    .map(|e| e.to_quoted_string())
+                    .collect::<Vec<_>>();
+
+                let expected_msg = if expected_options.len() > 1 {
+                    expected_options.join(" or ")
+                } else {
+                    expected_options.first().cloned().unwrap_or_default()
                 };
 
-                format!("expected {expected_str}, found {found_str}")
+                format!("Expected {expected_msg}, but found {found_str}.")
             }
             ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
-                let found_str = match found {
-                    Some(f) => f.to_quoted_string(),
-                    None => "end of file".to_string(),
-                };
-
-                format!("expected keyword '{}', found {found_str}", keyword.as_str())
+                let found_str = found
+                    .map(|kind| kind.to_quoted_string())
+                    .unwrap_or_else(|| "end of file".to_string());
+                format!(
+                    "Expected keyword '{}', but found {found_str}.",
+                    keyword.as_str()
+                )
             }
-            ParseErrorKind::ExpectedConstruct(construct) => {
-                format!("expected {construct}")
+            ParseErrorKind::ExpectedConstruct(expected_construct) => {
+                let construct_str = expected_construct.to_string();
+                format!("Expected {construct_str} here.")
             }
             ParseErrorKind::Message(msg) => msg.to_string(),
         }

@@ -11,6 +11,7 @@
 
 use hir_expand::body::{BodyTree, ExprId, LocalId};
 use rowan::TextRange;
+use syntax::{DiagnosticCode, JavaDiagnosticCode};
 
 /// Where a reported type error occurred, in the currency of the body IR: the
 /// stable-per-file arena ids the inference layer works with.
@@ -35,33 +36,6 @@ impl DiagLocation {
     }
 }
 
-/// A stable, typed diagnostic code, distinct from the human-readable message.
-///
-/// The LSP layer renders this as the `Diagnostic.code` field and can key
-/// code actions off it (e.g. "add initializer" for
-/// [`DiagnosticCode::VarWithoutInitializer`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagnosticCode {
-    /// §14.4.1: a `var` declaration must have an initializer.
-    VarWithoutInitializer,
-}
-
-impl DiagnosticCode {
-    /// The stable machine-readable identifier; kept `'static` so it can be
-    /// cheaply embedded in an LSP `code`/code-action `data` payload.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DiagnosticCode::VarWithoutInitializer => "var-without-initializer",
-        }
-    }
-}
-
-impl std::fmt::Display for DiagnosticCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// A type error reported during body inference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
@@ -75,7 +49,9 @@ impl TypeError {
     /// The typed code of this error ([`DiagnosticCode`]).
     pub fn code(&self) -> DiagnosticCode {
         match self {
-            TypeError::VarWithoutInitializer { .. } => DiagnosticCode::VarWithoutInitializer,
+            TypeError::VarWithoutInitializer { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::VarWithoutInitializer)
+            }
         }
     }
 

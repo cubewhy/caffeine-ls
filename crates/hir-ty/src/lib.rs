@@ -86,7 +86,9 @@ pub mod subtyping;
 pub mod ty;
 
 pub use db::TyDatabase;
-pub use diagnostics::{DiagLocation, DiagnosticCode, TypeError};
+// `DiagnosticCode` lives in the shared `syntax` crate; re-export it here so
+// the hir-ty API can keep naming it directly.
+pub use diagnostics::{DiagLocation, TypeError};
 pub use infer::{BodyTypes, body_types};
 pub use inference::least_upper_bound;
 pub use method::{
@@ -98,6 +100,7 @@ pub use resolve::{
     Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,
 };
 pub use subtyping::{is_assignable, is_subtype, supertypes};
+pub use syntax::{DiagnosticCode, JavaDiagnosticCode};
 pub use ty::{
     BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
 };

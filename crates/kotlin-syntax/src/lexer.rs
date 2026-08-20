@@ -1042,33 +1042,41 @@ pub enum LexicalErrorKind {
 impl LexicalErrorKind {
     pub fn desc(&self) -> String {
         match self {
-            LexicalErrorKind::UnterminatedBlockComment => "unterminated block comment".to_string(),
-            LexicalErrorKind::UnterminatedString => "unterminated string literal".to_string(),
-            LexicalErrorKind::EmptyCharLiteral => "empty character literal".to_string(),
+            LexicalErrorKind::UnterminatedBlockComment => {
+                "Missing closing '*/' for block comment.".to_string()
+            }
+            LexicalErrorKind::UnterminatedString => {
+                "Missing closing quote '\"' for string literal.".to_string()
+            }
+            LexicalErrorKind::EmptyCharLiteral => "Empty character literal.".to_string(),
             LexicalErrorKind::UnterminatedCharLiteral => {
-                "unterminated character literal".to_string()
+                "Missing closing quote ''' for character literal.".to_string()
             }
             LexicalErrorKind::TooManyCharsInCharLiteral => {
-                "too many characters in character literal".to_string()
+                "Too many characters in character literal.".to_string()
             }
             LexicalErrorKind::UnsupportedEscapeSequence => {
-                "unsupported escape sequence".to_string()
+                "Unsupported escape sequence inside string or char literal.".to_string()
             }
-            LexicalErrorKind::EmptyIdentifier => "empty identifier".to_string(),
-            LexicalErrorKind::UnterminatedIdentifier => "unterminated identifier".to_string(),
-            LexicalErrorKind::UnexpectedChar(c) => format!("unexpected character '{c}'"),
+            LexicalErrorKind::EmptyIdentifier => "Empty identifier.".to_string(),
+            LexicalErrorKind::UnterminatedIdentifier => "Unterminated identifier.".to_string(),
+            LexicalErrorKind::UnexpectedChar(c) => {
+                format!("Unexpected character '{c}' found in source code.")
+            }
             LexicalErrorKind::LeadingZerosNotAllowed => {
-                "leading zeros are not allowed in integer literals".to_string()
+                "Leading zeros are not allowed in integer literals.".to_string()
             }
             LexicalErrorKind::WrongLongSuffixCase => {
-                "wrong case for 'L' suffix in long literal".to_string()
+                "Use uppercase 'L' for the long literal suffix.".to_string()
             }
             LexicalErrorKind::IllegalUnderscore => {
-                "illegal underscore in numeric literal".to_string()
+                "Illegal underscore in numeric literal.".to_string()
             }
-            LexicalErrorKind::MissingExponentDigits => "missing digits after exponent".to_string(),
+            LexicalErrorKind::MissingExponentDigits => {
+                "Missing digits after exponent in numeric literal.".to_string()
+            }
             LexicalErrorKind::MissingNumericDigits => {
-                "missing digits in numeric literal".to_string()
+                "Missing digits in numeric literal.".to_string()
             }
         }
     }

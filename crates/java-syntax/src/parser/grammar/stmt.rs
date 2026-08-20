@@ -16,7 +16,7 @@ use crate::grammar::types::{dimensions, is_primitive_type, reference_type, type_
 use crate::parser::marker::{CompletedMarker, Marker};
 use crate::parser::{ExpectedConstruct, Parser};
 use crate::syntax_kind::SyntaxKind::*;
-use crate::{ContextualKeyword, SyntaxKind, tokenset};
+use crate::{ContextualKeyword, ParseErrorKind, SyntaxKind, tokenset};
 
 pub fn method_body_or_semicolon(p: &mut Parser) {
     if p.at(L_BRACE) {
@@ -829,7 +829,7 @@ fn expression_statement(p: &mut Parser) {
     };
 
     if !is_legal_statement_expression(expr_marker.kind()) {
-        p.error_message("Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed");
+        p.error(ParseErrorKind::NotAStatement);
     }
 
     p.expect(SEMICOLON);

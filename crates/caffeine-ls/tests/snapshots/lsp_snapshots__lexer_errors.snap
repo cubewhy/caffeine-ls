@@ -1,5 +1,6 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
+assertion_line: 228
 expression: diagnostics
 ---
 {
@@ -16,6 +17,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "unexpected-char",
       "source": "caffeine-ls",
       "message": "Unexpected character '`' found in source code."
     },
@@ -31,6 +33,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "unexpected-char",
       "source": "caffeine-ls",
       "message": "Unexpected character '`' found in source code."
     },
@@ -46,6 +49,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "invalid-char",
       "source": "caffeine-ls",
       "message": "Invalid character literal. Did you forget a closing quote '''?"
     },
@@ -76,6 +80,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "expected-token",
       "source": "caffeine-ls",
       "message": "Expected ';', but found 'UNKNOWN'."
     },
@@ -91,6 +96,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
+      "code": "expected-construct",
       "source": "caffeine-ls",
       "message": "Expected a class member (e.g., field or method) here."
     }
