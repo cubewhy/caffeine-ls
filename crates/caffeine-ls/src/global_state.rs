@@ -45,6 +45,14 @@ pub enum BackgroundTaskEvent {
         id: lsp_server::RequestId,
         result: Result<serde_json::Value, anyhow::Error>,
     },
+    /// An async request was cancelled by a pending salsa write. The closure
+    /// re-runs the request once the write has been applied; it must not hold a
+    /// database snapshot, since the writer blocks until every snapshot clone
+    /// is released.
+    AsyncRequestRetry {
+        id: lsp_server::RequestId,
+        run: PendingRequest,
+    },
     NotifyUser {
         typ: lsp_types::MessageType,
         message: String,
@@ -96,6 +104,11 @@ pub(crate) enum ProgressTokenState {
 
 type ReqQueue = lsp_server::ReqQueue<(String, Instant), OutgoingRequest>;
 
+/// An async request that was cancelled by a pending write, ready to be re-run
+/// on a fresh snapshot once the write has been applied. The request id is
+/// captured inside the closure.
+pub(crate) type PendingRequest = Box<dyn FnOnce(GlobalStateSnapshot) + Send>;
+
 pub struct GlobalState {
     sender: Sender<lsp_server::Message>,
     req_queue: ReqQueue,
@@ -116,6 +129,9 @@ pub struct GlobalState {
     pub(crate) loader: Handle<Box<dyn vfs::loader::Handle>, Receiver<vfs::loader::Message>>,
     pub(crate) vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
     pub(crate) vfs_config_version: u32,
+    /// Async requests cancelled by a pending salsa write, re-run once the
+    /// write is applied. See [`BackgroundTaskEvent::AsyncRequestRetry`].
+    pub(crate) pending_requests: Vec<PendingRequest>,
     /// Tracks the loader config version whose VFS scan progress is currently
     /// being reported to the client, so stale `Message::Progress` updates from
     /// a previous (reload) config are ignored.
@@ -163,6 +179,7 @@ impl GlobalState {
             loader,
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
+            pending_requests: Vec::new(),
             scan_config_version: None,
             progress_tokens: FxHashMap::default(),
             file_set_config: None,
@@ -310,6 +327,19 @@ impl GlobalState {
             analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
+        }
+    }
+
+    /// Re-runs async requests that were cancelled by a pending salsa write, on
+    /// a fresh snapshot that observes the change just applied to the database.
+    /// Called from the main loop after `process_changes`.
+    pub(crate) fn run_pending_requests(&mut self) {
+        let pending = std::mem::take(&mut self.pending_requests);
+        for run in pending {
+            let snapshot = self.snapshot();
+            self.thread_pool.execute(move || {
+                run(snapshot);
+            });
         }
     }
 

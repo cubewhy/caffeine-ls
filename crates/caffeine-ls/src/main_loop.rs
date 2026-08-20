@@ -67,6 +67,10 @@ impl GlobalState {
 
             self.process_changes();
 
+            // Async requests cancelled by the write just applied can now be
+            // re-run on a fresh snapshot.
+            self.run_pending_requests();
+
             if self.exit_requested {
                 break Ok(());
             }
@@ -494,6 +498,10 @@ impl GlobalState {
                     self.respond_err(id, ErrorCode::InternalError, err.to_string());
                 }
             },
+            BackgroundTaskEvent::AsyncRequestRetry { id, run } => {
+                tracing::debug!(?id, "request cancelled by pending write; queuing for retry");
+                self.pending_requests.push(run);
+            }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
         }
     }
