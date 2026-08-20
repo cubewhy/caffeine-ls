@@ -1,6 +1,5 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 381
 expression: diagnostics
 ---
 {
@@ -19,7 +18,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "Expected ';', but found '}'."
+      "message": "Expected ';', found '}'"
     }
   ],
   "kind": "full"

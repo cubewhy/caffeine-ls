@@ -1,6 +1,5 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 303
 expression: "(diag_broken, diag_fixed)"
 ---
 [
@@ -35,7 +34,7 @@ expression: "(diag_broken, diag_fixed)"
         "severity": 1,
         "code": "expected-construct",
         "source": "caffeine-ls",
-        "message": "Expected a statement here."
+        "message": "Expected a statement here"
       }
     ],
     "kind": "full"

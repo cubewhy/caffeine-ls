@@ -393,26 +393,26 @@ impl ParseErrorKind {
                     .join(" or ");
 
                 let found_str = match found {
+                    None | Some(SyntaxKind::EOF) | Some(SyntaxKind::UNKNOWN) => return format!("Expected {}", expected_str),
                     Some(f) => f.to_quoted_string(),
-                    None => "end of file".to_string(),
                 };
 
-                format!("expected {}, found {}", expected_str, found_str)
+                format!("Expected {}, found {}", expected_str, found_str)
             }
             ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
                 let found_str = match found {
+                    None | Some(SyntaxKind::EOF) | Some(SyntaxKind::UNKNOWN) => return format!("Expected '{}'", keyword.as_str()),
                     Some(f) => f.to_quoted_string(),
-                    None => "end of file".to_string(),
                 };
 
                 format!(
-                    "expected keyword '{}', found {}",
+                    "Expected keyword '{}', found {}",
                     keyword.as_str(),
                     found_str
                 )
             }
             ParseErrorKind::ExpectedConstruct(construct) => {
-                format!("expected {}", construct)
+                format!("Expected {} here", construct)
             }
             ParseErrorKind::NotAStatement => {
                 "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed".to_string()

@@ -944,17 +944,28 @@ pub enum LexicalErrorKind {
 impl LexicalErrorKind {
     pub fn desc(&self) -> String {
         match self {
-            LexicalErrorKind::UnexpectedChar(c) => format!("unexpected character '{}'", c),
-            LexicalErrorKind::UnterminatedString => "unterminated string literal".to_string(),
-            LexicalErrorKind::UnterminatedComment => "unterminated comment".to_string(),
-            LexicalErrorKind::InvalidChar => "invalid character".to_string(),
-            LexicalErrorKind::IllegalTextBlockOpen => "illegal text block opening".to_string(),
-            LexicalErrorKind::UnterminatedTextBlock => "unterminated text block".to_string(),
-            LexicalErrorKind::InvalidNumber => "invalid number format".to_string(),
-            LexicalErrorKind::InvalidUnicodeEscape => "invalid unicode escape sequence".to_string(),
-            LexicalErrorKind::UnterminatedChar => "unterminated character literal".to_string(),
-            LexicalErrorKind::InvalidEscapeSequence => "invalid escape sequence".to_string(),
-            LexicalErrorKind::UnterminatedTemplate => "unterminated template".to_string(),
+            LexicalErrorKind::UnexpectedChar(c) =>
+                format!("Unexpected character '{}' found in source code", c),
+            LexicalErrorKind::UnterminatedString =>
+                "String literal is missing a closing double quote (\").".to_string(),
+            LexicalErrorKind::UnterminatedComment =>
+                "Block comment is missing a closing '*/'.".to_string(),
+            LexicalErrorKind::InvalidChar =>
+                "Invalid character literal. Did you forget a closing quote \"'\"?".to_string(),
+            LexicalErrorKind::IllegalTextBlockOpen =>
+                "Invalid text block opening. A text block must begin with \"\"\" followed by a new line.".to_string(),
+            LexicalErrorKind::UnterminatedTextBlock =>
+                "Text block is missing the closing \"\"\" delimiters.".to_string(),
+            LexicalErrorKind::InvalidNumber =>
+                "Invalid number format. Check for typos, extra letters, or incorrect underscores.".to_string(),
+            LexicalErrorKind::InvalidUnicodeEscape =>
+                "Invalid Unicode escape sequence. The expected format is '\\uXXXX' (e.g., '\\u005C').".to_string(),
+            LexicalErrorKind::UnterminatedChar =>
+                "Character literal is missing a closing single quote (').".to_string(),
+            LexicalErrorKind::InvalidEscapeSequence =>
+                "Invalid escape sequence. Unrecognized character found after a backslash (\\).".to_string(),
+            LexicalErrorKind::UnterminatedTemplate =>
+                "String template expression is missing a closing delimiter.".to_string(),
         }
     }
 }

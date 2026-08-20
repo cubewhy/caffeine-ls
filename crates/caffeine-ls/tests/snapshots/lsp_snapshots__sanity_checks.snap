@@ -1,6 +1,5 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 263
 expression: "(diag_empty, diag_garbage)"
 ---
 [
@@ -24,7 +23,7 @@ expression: "(diag_empty, diag_garbage)"
         "severity": 1,
         "code": "unexpected-char",
         "source": "caffeine-ls",
-        "message": "Unexpected character '#' found in source code."
+        "message": "Unexpected character '#' found in source code"
       },
       {
         "range": {
@@ -40,7 +39,7 @@ expression: "(diag_empty, diag_garbage)"
         "severity": 1,
         "code": "expected-construct",
         "source": "caffeine-ls",
-        "message": "Expected a declaration (e.g., class, variable, or method) here."
+        "message": "Expected a declaration (e.g., class, variable, or method) here"
       }
     ],
     "kind": "full"

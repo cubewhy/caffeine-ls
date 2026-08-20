@@ -9,12 +9,12 @@ class Foo {
 }
 
 PARSE_ERRORS:
-Expected identifier, but found '}'. @22..23
-Expected '(', but found '}'. @22..23
-Expected a type here. @22..23
-Expected ')', but found 'EOF'. @24..24
-Expected ';', but found 'EOF'. @24..24
-Expected '}', but found 'EOF'. @24..24
+Expected identifier, found '}' @22..23
+Expected '(', found '}' @22..23
+Expected a type here @22..23
+Expected ')' @24..24
+Expected ';' @24..24
+Expected '}' @24..24
 ITEM_TREE:
 file (java)
 class Foo @1..24

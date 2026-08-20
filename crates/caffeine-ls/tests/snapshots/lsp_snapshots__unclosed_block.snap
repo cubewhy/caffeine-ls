@@ -1,6 +1,5 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 244
 expression: diagnostics
 ---
 {
@@ -19,7 +18,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-construct",
       "source": "caffeine-ls",
-      "message": "Expected a type here."
+      "message": "Expected a type here"
     },
     {
       "range": {
@@ -35,7 +34,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "Expected '}', but found 'EOF'."
+      "message": "Expected '}'"
     },
     {
       "range": {
@@ -51,7 +50,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "Expected '}', but found 'EOF'."
+      "message": "Expected '}'"
     }
   ],
   "kind": "full"

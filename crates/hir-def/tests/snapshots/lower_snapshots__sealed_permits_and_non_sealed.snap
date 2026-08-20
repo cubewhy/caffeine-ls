@@ -11,12 +11,12 @@ non-sealed class Circle extends Shape {
 }
 
 PARSE_ERRORS:
-Expected '{', but found 'identifier'. @20..27
-Expected ';', but found '{'. @43..44
-Expected identifier or '_', but found '-'. @51..52
-Expected ';', but found '-'. @51..52
-Expected a class member (e.g., field or method) here. @51..52
-Expected '}', but found 'EOF'. @90..90
+Expected '{', found identifier @20..27
+Expected ';', found '{' @43..44
+Expected identifier or '_', found '-' @51..52
+Expected ';', found '-' @51..52
+Expected a class member (e.g., field or method) here @51..52
+Expected '}' @90..90
 ITEM_TREE:
 file (java)
 class Shape [sealed] @1..90
