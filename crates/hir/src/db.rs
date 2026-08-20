@@ -30,6 +30,7 @@ use crate::{
     loader,
     project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId},
     stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
+    symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind},
 };
 pub use project_model::LibraryId;
 
@@ -356,45 +357,79 @@ pub fn resolve_in_libraries(
     None
 }
 
-/// The fully qualified names ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
-/// of the class-like declarations in `file`: the package name, then each
-/// enclosing simple name joined by `.`. Keyed on the interned [`FileText`] so
-/// edits invalidate the FQN set of exactly the changed file.
+/// The indexed declarations ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6))
+/// of `file` as [`SourceSymbol`]s: class-like types get the package name then
+/// each enclosing simple name joined by `.` ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7));
+/// members get `EnclosingFqn.simple`. Keyed on the interned [`FileText`] so
+/// edits invalidate the symbol set of exactly the changed file.
 #[salsa::tracked(returns(ref))]
-fn file_classes_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<(Name, ItemId)>> {
+fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<SourceSymbol>> {
     let file_id = *file.file_id(db);
     let tree = file_item_tree(db, file_id);
-    Arc::new(file_classes(&tree))
+    Arc::new(collect_file_symbols(&tree))
 }
 
-fn file_classes(tree: &ItemTree) -> Vec<(Name, ItemId)> {
-    fn collect(tree: &ItemTree, id: ItemId, prefix: Option<&Name>, out: &mut Vec<(Name, ItemId)>) {
+fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
+    fn collect(tree: &ItemTree, id: ItemId, prefix: Option<&Name>, out: &mut Vec<SourceSymbol>) {
         let data = tree.data(id);
-        let simple = match data {
-            ItemData::Class(d) | ItemData::Interface(d) => Some(&d.name),
-            ItemData::Enum(d) => Some(&d.name),
-            ItemData::Record(d) => Some(&d.name),
-            ItemData::Annotation(d) => Some(&d.name),
-            _ => None,
+        let Some(kind) = SourceSymbolKind::of(data) else {
+            // Initializers have no name and are not indexed.
+            return;
         };
-        if let Some(simple) = simple {
-            let fqn = match prefix {
-                Some(prefix) => join_name(prefix, simple.as_str()),
-                None => match &tree.package {
-                    Some(package) => join_name(package, simple.as_str()),
-                    None => simple.clone(),
-                },
-            };
-            out.push((fqn.clone(), id));
-            for &child in data.body() {
-                collect(tree, child, Some(&fqn), out);
-            }
-        } else {
-            for &child in data.body() {
-                collect(tree, child, prefix, out);
-            }
+        let (simple, public, range) = match data {
+            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::Enum(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::Record(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::Annotation(d) => (&d.name, d.modifiers.public, d.range),
+            // Enum constants are implicitly `public static final`
+            // ([JLS §8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)).
+            ItemData::EnumConstant(d) => (&d.name, true, d.range),
+            // A module declaration carries no access modifiers
+            // ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)).
+            ItemData::Module(d) => (&d.name, false, d.range),
+            ItemData::Method(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::Field(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::StaticInit(_) | ItemData::InstanceInit(_) => unreachable!(),
+        };
+        let name = match prefix {
+            Some(prefix) => join_name(prefix, simple.as_str()),
+            // The unnamed package
+            // ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
+            // yields a bare simple name.
+            None => match &tree.package {
+                Some(package) => join_name(package, simple.as_str()),
+                None => simple.clone(),
+            },
+        };
+        out.push(SourceSymbol {
+            name: name.clone(),
+            item: id,
+            range,
+            kind,
+            public,
+        });
+        if data.body().is_empty() {
+            return;
+        }
+        let child_prefix = match kind {
+            // Nested types are indexed under the enclosing FQN
+            // ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3));
+            // members under `EnclosingFqn.simple`.
+            SourceSymbolKind::Class
+            | SourceSymbolKind::Interface
+            | SourceSymbolKind::Enum
+            | SourceSymbolKind::Record
+            | SourceSymbolKind::Annotation => Some(&name),
+            SourceSymbolKind::Module
+            | SourceSymbolKind::Method
+            | SourceSymbolKind::Field
+            | SourceSymbolKind::EnumConstant => prefix,
+        };
+        for &child in data.body() {
+            collect(tree, child, child_prefix, out);
         }
     }
+
     let mut out = Vec::new();
     for &top in &tree.top {
         collect(tree, top, None, &mut out);
@@ -410,50 +445,105 @@ fn join_name(prefix: &Name, suffix: &str) -> Name {
     Name::new(&text)
 }
 
-/// The class FQNs of every file in a source root, keyed by name. Tracked on
-/// the interned [`SourceRootInput`] so file-set changes invalidate it.
+/// The symbols of every file in a source root, tagged with their file. Tracked
+/// on the interned [`SourceRootInput`] so file-set changes invalidate it.
 #[salsa::tracked(returns(ref))]
-fn source_root_classes_query(
+fn source_root_symbols_query(
     db: &dyn HirDatabase,
     root: SourceRootInput,
-) -> Arc<Vec<(Name, FileId, ItemId)>> {
+) -> Arc<Vec<(FileId, SourceSymbol)>> {
     let source_root = root.source_root(db);
     let mut out = Vec::new();
     for file in source_root.iter() {
-        for (name, item) in file_classes_query(db, db.file_text(file)).iter() {
-            out.push((name.clone(), file, *item));
+        for symbol in file_symbols_query(db, db.file_text(file)).iter() {
+            out.push((file, symbol.clone()));
         }
     }
     Arc::new(out)
 }
 
-/// Resolves `fqn` against the classes of `source_set`'s own source roots.
+/// The source symbol index of one source set, scoped to its *own* source
+/// roots: it indexes only the declarations defined by that source set
+/// ([JLS §7.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7.4)
+/// classpath/unnamed-module semantics; see [`fqn_resolve`] for how resolution
+/// consults each index in classpath order). Tracked on the [`ProjectGraph`]
+/// so graph replacement invalidates it; the per-file symbols are themselves
+/// tracked on [`FileText`], so a text edit recomputes only the edited file's
+/// symbols before this query re-aggregates.
+#[salsa::tracked(returns(ref))]
+fn source_set_symbol_index_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    source_set: SourceSetId,
+) -> Arc<SourceSymbolIndex> {
+    let graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    let mut symbols = Vec::new();
+    let mut roots: Vec<SourceRootId> = graph
+        .source_root_to_source_set(db)
+        .iter()
+        .filter(|(_, owner)| **owner == source_set)
+        .map(|(root, _)| *root)
+        .collect();
+    roots.sort();
+    for root in roots {
+        for (file, symbol) in source_root_symbols_query(db, db.source_root(root)).iter() {
+            symbols.push((*file, symbol.clone()));
+        }
+    }
+    Arc::new(SourceSymbolIndex::build(symbols))
+}
+
+/// The indexed symbols of a file.
+pub fn file_symbols(db: &dyn HirDatabase, file_id: FileId) -> Arc<Vec<SourceSymbol>> {
+    file_symbols_query(db, db.file_text(file_id)).clone()
+}
+
+/// The source symbol index of a source set, scoped to its own source roots.
+pub fn source_set_symbols(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<SourceSymbolIndex> {
+    let graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    source_set_symbol_index_query(db, graph, source_set).clone()
+}
+
+/// Resolves `fqn` against the source symbol index of `source_set`'s own
+/// source roots. Types are indexed under their fully qualified name
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
+/// so a single indexed lookup replaces the former linear scan.
 fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> Option<Resolved> {
     let graph = ProjectGraph::try_get(db)?;
     let name = Name::new(fqn);
-    for (root, owner) in graph.source_root_to_source_set(db) {
-        if owner == source_set {
-            let classes = source_root_classes_query(db, db.source_root(*root));
-            if let Some((_, file, item)) = classes.iter().find(|(n, _, _)| n == &name) {
-                return Some(Resolved::Source(SourceClass {
-                    file: *file,
-                    item: *item,
-                }));
-            }
-        }
-    }
-    None
+    let index = source_set_symbol_index_query(db, graph, source_set.clone());
+    index.resolve_class_fqn(&name).map(|reference| {
+        Resolved::Source(SourceClass {
+            file: reference.file,
+            item: reference.symbol.item,
+        })
+    })
 }
 
 /// The fully qualified name
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
-/// of a source class declaration.
+/// of a source class declaration. Preserves the classic semantics — only
+/// class-like items, excluding `module-info` — because `hir-ty` uses it to
+/// compute enclosing classes for access control
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
 pub fn source_class_fqn(db: &dyn HirDatabase, file: FileId, item: ItemId) -> Option<Name> {
-    let classes = file_classes_query(db, db.file_text(file));
-    classes
+    let symbols = file_symbols_query(db, db.file_text(file));
+    symbols
         .iter()
-        .find(|(_, id)| *id == item)
-        .map(|(name, _)| name.clone())
+        .find(|symbol| {
+            symbol.item == item
+                && matches!(
+                    symbol.kind,
+                    SourceSymbolKind::Class
+                        | SourceSymbolKind::Interface
+                        | SourceSymbolKind::Enum
+                        | SourceSymbolKind::Record
+                        | SourceSymbolKind::Annotation
+                )
+        })
+        .map(|symbol| symbol.name.clone())
 }
 
 /// The direct super class and interfaces of a class, as FQN symbols. Source
