@@ -1,0 +1,5 @@
+---
+source: crates/ide/tests/symbol_snapshots.rs
+expression: render_workspace_symbols(&bar)
+---
+class      com.example.api.Bar @file2

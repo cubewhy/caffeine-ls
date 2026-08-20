@@ -6,6 +6,9 @@ publish = false
 
 [dependencies]
 dashmap.workspace = true
+hir.workspace = true
+hir-expand.workspace = true
+hir-ty.workspace = true
 ide-db.workspace = true
 ide-diagnostics.workspace = true
 parking_lot.workspace = true
@@ -15,3 +18,6 @@ rustc-hash.workspace = true
 syntax.workspace = true
 triomphe.workspace = true
 vfs.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

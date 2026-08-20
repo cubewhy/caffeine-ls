@@ -1,0 +1,17 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_symbols(&file_symbols(&db, FileId::from_raw(1)))"
+---
+class      com.example.Outer public=true @20..217
+field      com.example.Outer.count public=false @59..64
+field      com.example.Outer.NAME public=true @97..111
+method     com.example.Outer.greet public=true @112..151
+class      com.example.Outer.Nested public=true @151..215
+method     com.example.Outer.Nested.inner public=false @185..209
+interface  com.example.Listener public=false @217..261
+method     com.example.Listener.onEvent public=false @239..259
+enum       com.example.Color public=false @261..296
+constant   com.example.Color.RED public=true @275..283
+constant   com.example.Color.GREEN public=true @284..294
+record     com.example.Point public=false @296..327
+@interface com.example.Marker public=false @327..349

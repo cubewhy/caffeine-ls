@@ -30,5 +30,7 @@ vfs.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
+hir-def.workspace = true
+insta.workspace = true
 tempfile = "3"
 triomphe.workspace = true

@@ -1,0 +1,5 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_resolved(&db,\nfqn_resolve(&db, &ResolutionScope::SourceSet(b),\n\"com.example.Secret\").as_ref())"
+---
+source @file1 item0

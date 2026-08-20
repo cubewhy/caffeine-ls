@@ -1,0 +1,6 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_index(&source_set_symbols(&db, main))"
+---
+class      com.example.A2 @file1 item0
+class      com.example.B @file2 item0

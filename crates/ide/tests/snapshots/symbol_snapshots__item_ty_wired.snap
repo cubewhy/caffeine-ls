@@ -1,0 +1,7 @@
+---
+source: crates/ide/tests/symbol_snapshots.rs
+expression: "lines.join(\"\\n\")"
+---
+class      com.example.Calc : com.example.Calc
+field      com.example.Calc.count : int
+method     com.example.Calc.compute : int

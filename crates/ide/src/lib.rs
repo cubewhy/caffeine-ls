@@ -17,6 +17,9 @@ use triomphe::Arc;
 use vfs::FileId;
 
 pub mod delta;
+pub mod symbols;
+
+pub use symbols::{DocumentSymbol, WorkspaceSymbol};
 
 pub type Cancellable<T> = Result<T, Cancelled>;
 
@@ -107,5 +110,35 @@ impl Analysis {
     /// offsets and line/column representation.
     pub fn file_line_index(&self, file_id: FileId) -> Cancellable<Arc<LineIndex>> {
         self.with_db(|db| line_index(db, file_id).clone())
+    }
+
+    /// The declared symbols of a file, in declaration order.
+    pub fn document_symbols(&self, file_id: FileId) -> Cancellable<Vec<DocumentSymbol>> {
+        self.with_db(|db| symbols::document_symbols(db, file_id))
+    }
+
+    /// Symbols whose simple name matches `query` (case-insensitive) across
+    /// every registered source set, sorted by (name, file, item).
+    pub fn workspace_symbols(&self, query: &str) -> Cancellable<Vec<WorkspaceSymbol>> {
+        self.with_db(|db| symbols::workspace_symbols(db, query))
+    }
+
+    /// The declared type of an item — a field's type, a method's return type,
+    /// or the type of a class-like declaration — from the HIR type layer.
+    pub fn item_ty(
+        &self,
+        file_id: FileId,
+        item: hir::hir_expand::item_tree::ItemId,
+    ) -> Cancellable<String> {
+        self.with_db(|db| symbols::item_ty(db, file_id, item))
+    }
+
+    /// The parameter types of a method or constructor, in declaration order.
+    pub fn method_params(
+        &self,
+        file_id: FileId,
+        item: hir::hir_expand::item_tree::ItemId,
+    ) -> Cancellable<Arc<Vec<String>>> {
+        self.with_db(|db| symbols::method_params(db, file_id, item))
     }
 }

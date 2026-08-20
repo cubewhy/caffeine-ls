@@ -1,0 +1,5 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_symbols(&file_symbols(&db, FileId::from_raw(1)))"
+---
+module     com.example.core public=false @0..81

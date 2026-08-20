@@ -1,0 +1,7 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_index(&source_set_symbols(&db, main_source_set()))"
+---
+class      com.example.Foo @file1 item1
+interface  com.example.api.Service @file2 item0
+method     com.example.Foo.bar @file1 item0

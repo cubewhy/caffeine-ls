@@ -1,0 +1,5 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_resolved(&db,\nfqn_resolve(&db, &ResolutionScope::SourceSet(c.clone()),\n\"com.example.Secret\").as_ref())"
+---
+<none>

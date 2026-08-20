@@ -1,0 +1,5 @@
+---
+source: crates/hir/tests/symbol_index_snapshots.rs
+expression: "render_resolved(&db,\nfqn_resolve(&db, &ResolutionScope::SourceSet(main),\n\"com.example.Greeter\").as_ref())"
+---
+source @file1 item0

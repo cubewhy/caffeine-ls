@@ -917,6 +917,7 @@ dependencies = [
  "dashmap",
  "hir-def",
  "hir-expand",
+ "insta",
  "jimage-rs",
  "lasso",
  "lru",
@@ -1102,8 +1103,12 @@ name = "ide"
 version = "0.0.0"
 dependencies = [
  "dashmap",
+ "hir",
+ "hir-expand",
+ "hir-ty",
  "ide-db",
  "ide-diagnostics",
+ "insta",
  "parking_lot",
  "project-model",
  "ra_ap_vfs",
