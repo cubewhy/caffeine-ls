@@ -1120,9 +1120,10 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))
         .collect::<Vec<_>>();
-    for (i, _) in files.iter().enumerate() {
+    for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
         let tree = hir::file_item_tree(&db, file_id);
+        let line_index = line_index::LineIndex::new(text);
         for (id, data) in all_items(&tree) {
             let header = match data {
                 ItemData::Method(method) => {
@@ -1165,6 +1166,30 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                     .collect::<Vec<_>>()
                     .join(" | ")
             ));
+            if !types.diagnostics.is_empty() {
+                lines.push(format!(
+                    "  diags: {}",
+                    types
+                        .diagnostics
+                        .iter()
+                        .map(|diag| {
+                            let loc = match diag.location() {
+                                hir_ty::DiagLocation::Expr(id) => format!("{id}"),
+                                hir_ty::DiagLocation::Local(id) => format!("{id}"),
+                            };
+                            let at = diag
+                                .range(&tree.bodies)
+                                .map(|r| {
+                                    let lc = line_index.line_col(r.start());
+                                    format!("@{line}:{col}", line = lc.line, col = lc.col)
+                                })
+                                .unwrap_or_default();
+                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(&tree.bodies))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                ));
+            }
         }
     }
     lines.join("\n")

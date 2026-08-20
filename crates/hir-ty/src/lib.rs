@@ -77,6 +77,7 @@
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
 
 pub mod db;
+pub mod diagnostics;
 pub mod infer;
 pub mod inference;
 pub mod method;
@@ -85,6 +86,7 @@ pub mod subtyping;
 pub mod ty;
 
 pub use db::TyDatabase;
+pub use diagnostics::{DiagLocation, DiagnosticCode, TypeError};
 pub use infer::{BodyTypes, body_types};
 pub use inference::least_upper_bound;
 pub use method::{

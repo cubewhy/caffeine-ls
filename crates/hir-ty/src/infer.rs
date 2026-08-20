@@ -52,6 +52,7 @@ use vfs::FileId;
 
 use crate::{
     db::{TyDatabase, enclosing_class_query, type_params_map_query},
+    diagnostics::TypeError,
     inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
     method::{
         FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
@@ -73,6 +74,8 @@ pub struct BodyTypes {
     /// The type of every local of the body — parameters, declared locals,
     /// for-loop variables, catch parameters — keyed by its arena id.
     pub locals: FxHashMap<LocalId, Ty>,
+    /// The type errors reported while inferring the body, in report order.
+    pub diagnostics: Vec<TypeError>,
 }
 
 /// Infers the types of the body of `item` in `file`, memoized per (file,
@@ -105,6 +108,7 @@ pub(crate) fn body_types_impl(
         enclosing_ret: None,
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
+        diagnostics: Vec::new(),
         scopes: vec![FxHashMap::default()],
         lambda_params: Vec::new(),
         target: None,
@@ -181,6 +185,7 @@ pub(crate) fn body_types_impl(
         body,
         exprs: ctx.types,
         locals: ctx.locals,
+        diagnostics: ctx.diagnostics,
     })
 }
 
@@ -196,6 +201,10 @@ struct InferCtx<'a> {
     enclosing_ret: Option<Ty>,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
+    /// The type errors reported so far, in report order ([§14.4.1], [§8.3.3]).
+    /// Every entry corresponds to a source construct the compiler degrades to
+    /// [`Ty::error`]; the diagnostics layer collects them per file.
+    diagnostics: Vec<TypeError>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.
     scopes: Vec<FxHashMap<Name, LocalId>>,
     /// The lambda parameter scopes in effect ([JLS §6.3], [§15.27.2]): a
@@ -216,6 +225,14 @@ struct InferCtx<'a> {
 impl<'a> InferCtx<'a> {
     fn error(&self) -> Ty {
         Ty::error(self.db)
+    }
+
+    /// Records a type error. The construct it reports degrades to
+    /// [`Ty::error`] so that downstream resolution of the body keeps working;
+    /// the diagnostics layer collects these per file via
+    /// [`BodyTypes::diagnostics`].
+    fn report(&mut self, diagnostic: TypeError) {
+        self.diagnostics.push(diagnostic);
     }
 
     /// Infers `expr` under the expected type `target`, restoring the previous
@@ -1523,10 +1540,18 @@ impl<'a> InferCtx<'a> {
             StmtData::Decl { local, initializer } => {
                 // §14.4.1: a `var` declaration has no written type — the
                 // initializer is inferred standalone and its type becomes the
-                // local's (§15.2: a `var` initializer is never poly).
+                // local's (§15.2: a `var` initializer is never poly). A `var`
+                // without an initializer is a compile-time error
+                // ([§14.4.1]): report it and degrade the local to `error`
+                // rather than panic.
                 if self.tree.local(*local).ty.is_none() {
-                    let initializer = initializer.expect("a var declaration has an initializer");
-                    let ty = self.infer_expr(initializer);
+                    let Some(initializer) = initializer else {
+                        self.report(TypeError::VarWithoutInitializer { local: *local });
+                        let local_data = self.tree.local(*local).clone();
+                        self.bind_local(*local, local_data.name, self.error());
+                        return;
+                    };
+                    let ty = self.infer_expr(*initializer);
                     let local_data = self.tree.local(*local).clone();
                     self.bind_local(*local, local_data.name, ty);
                     return;

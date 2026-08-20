@@ -980,6 +980,7 @@ dependencies = [
  "hir-def",
  "hir-expand",
  "insta",
+ "line-index",
  "ra_ap_vfs",
  "rowan",
  "rustc-hash 2.1.2",

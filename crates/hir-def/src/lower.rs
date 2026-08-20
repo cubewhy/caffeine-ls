@@ -56,6 +56,11 @@ pub fn lower_source(language: LanguageKind, text: &str) -> ItemTree {
         SourceFile::Java(file) => java::lower_file(&mut ctx, &file),
         SourceFile::Kotlin(_) => kotlin::lower_file(&mut ctx),
     }
+    // The range arenas are allocated lock-step with the expr/local arenas;
+    // assert the alignment so a future direct allocation cannot silently
+    // desynchronize them.
+    debug_assert_eq!(ctx.bodies.expr_ranges.len(), ctx.bodies.exprs.len());
+    debug_assert_eq!(ctx.bodies.local_ranges.len(), ctx.bodies.locals.len());
     ctx.tree.bodies = std::sync::Arc::new(ctx.bodies);
     ctx.tree
 }

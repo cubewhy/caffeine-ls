@@ -15,6 +15,7 @@
 //! stable per file; a [`TypeRef`] appears where a declared type exists, so
 //! [`crate::Ty`]-level resolution happens later against the file's resolver.
 
+use rowan::TextRange;
 use syntax::stub::TypeRef;
 
 use crate::{
@@ -82,11 +83,23 @@ pub struct BodyTree {
     pub locals: Arena<Local>,
     pub labels: Arena<Label>,
     pub bodies: Arena<Body>,
+    /// The source range of every expression, parallel to [`BodyTree::exprs`]:
+    /// index `n` is the range of the expression with arena id `n`.
+    pub expr_ranges: Vec<TextRange>,
+    /// The source range of every local (parameter or declared local), parallel
+    /// to [`BodyTree::locals`].
+    pub local_ranges: Vec<TextRange>,
 }
 
 impl BodyTree {
     pub fn expr(&self, id: ExprId) -> &ExprData {
         self.exprs.get(id.0)
+    }
+
+    /// The source range of the expression, when the expression was lowered
+    /// from a syntax node (synthetic `Missing` expressions have none).
+    pub fn expr_range(&self, id: ExprId) -> Option<TextRange> {
+        self.expr_ranges.get(id.0.0 as usize).copied()
     }
 
     pub fn stmt(&self, id: StmtId) -> &StmtData {
@@ -95,6 +108,11 @@ impl BodyTree {
 
     pub fn local(&self, id: LocalId) -> &Local {
         self.locals.get(id.0)
+    }
+
+    /// The source range of the local, when it was lowered from a syntax node.
+    pub fn local_range(&self, id: LocalId) -> Option<TextRange> {
+        self.local_ranges.get(id.0.0 as usize).copied()
     }
 
     pub fn label(&self, id: LabelId) -> &Label {

@@ -10,7 +10,7 @@
 //! expression children out in source order.
 
 use java_syntax::{Lang, SyntaxKind as J};
-use rowan::{NodeOrToken, SyntaxNode, SyntaxToken};
+use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
@@ -94,7 +94,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                 .find(|c| c.kind() == J::TYPE)
                 .map(|t| super::type_from(&t))
                 .unwrap_or(TypeRef::Error);
-            LocalId(ctx.bodies.locals.alloc(Local { name, ty: Some(ty) }))
+            alloc_local(ctx, Local { name, ty: Some(ty) }, child.text_range())
         })
         .collect()
 }
@@ -165,7 +165,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
             let cond = exprs
                 .next()
                 .map(|c| expr(ctx, owner, &c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let body: Vec<StmtId> = node
                 .children()
                 .filter(|c| is_stmt_kind(c.kind()))
@@ -240,7 +240,11 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                         .and_then(|d| first_identifier(&d))
                         .or_else(|| first_identifier(node))
                         .unwrap_or_else(missing_name);
-                    LocalId(ctx.bodies.locals.alloc(Local { name, ty: Some(ty) }))
+                    let var = node.children().find(|c| c.kind() == J::VARIABLE_DECLARATOR);
+                    let range = var
+                        .as_ref()
+                        .map_or_else(|| node.text_range(), |d| d.text_range());
+                    alloc_local(ctx, Local { name, ty: Some(ty) }, range)
                 })
                 .unwrap_or_else(|| alloc_local_missing(ctx));
             let iterable = first_expr(ctx, owner, node);
@@ -300,7 +304,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
             let cond = exprs
                 .next()
                 .map(|c| expr(ctx, owner, &c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let msg = exprs.next().map(|c| expr(ctx, owner, &c));
             StmtData::Assert { cond, msg }
         }
@@ -340,14 +344,18 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     let mut decls = Vec::with_capacity(declarators.len());
     for declarator in &declarators {
         let name = first_identifier(declarator).unwrap_or_else(missing_name);
-        let local = LocalId(ctx.bodies.locals.alloc(Local {
-            name,
-            ty: if is_var {
-                None
-            } else {
-                Some(type_ref.clone().unwrap_or(TypeRef::Error))
+        let local = alloc_local(
+            ctx,
+            Local {
+                name,
+                ty: if is_var {
+                    None
+                } else {
+                    Some(type_ref.clone().unwrap_or(TypeRef::Error))
+                },
             },
-        }));
+            declarator.text_range(),
+        );
         let initializer = declarator
             .children()
             .find(|c| is_expr_kind(c.kind()))
@@ -382,7 +390,7 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         .and_then(|ct| ct.children().find(|t| t.kind() == TYPE))
                         .map(|t| super::type_from(&t))
                         .unwrap_or(TypeRef::Error);
-                    LocalId(ctx.bodies.locals.alloc(Local { name, ty: Some(ty) }))
+                    alloc_local(ctx, Local { name, ty: Some(ty) }, p.text_range())
                 })
                 .unwrap_or_else(|| alloc_local_missing(ctx));
             let body = c
@@ -462,7 +470,7 @@ fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ve
             }
             if !seen {
                 // `default`
-                labels.push(alloc_expr(ctx, ExprData::Missing));
+                labels.push(alloc_expr(ctx, ExprData::Missing, node.text_range()));
             }
         }
         let mut body = Vec::new();
@@ -517,13 +525,14 @@ fn expr_children(node: &SyntaxNode<Lang>) -> Vec<SyntaxNode<Lang>> {
     node.children().filter(|c| is_expr_kind(c.kind())).collect()
 }
 
-fn alloc_expr(ctx: &mut LowerCtx, data: ExprData) -> ExprId {
+fn alloc_expr(ctx: &mut LowerCtx, data: ExprData, range: TextRange) -> ExprId {
+    ctx.bodies.expr_ranges.push(range);
     ExprId(ctx.bodies.exprs.alloc(data))
 }
 
 fn expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
     let data = expr_data(ctx, owner, node);
-    alloc_expr(ctx, data)
+    alloc_expr(ctx, data, node.text_range())
 }
 
 fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
@@ -599,11 +608,11 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let lhs = kids
                 .first()
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let rhs = kids
                 .get(1)
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             ExprData::Binary { op, lhs, rhs }
         }
         INSTANCEOF_EXPR => {
@@ -623,11 +632,11 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let lhs = kids
                 .first()
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let rhs = kids
                 .get(1)
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             ExprData::Assign { op, lhs, rhs }
         }
         COND_EXPR => {
@@ -635,15 +644,15 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let cond = kids
                 .first()
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let then = kids
                 .get(1)
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let els = kids
                 .get(2)
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             ExprData::Conditional { cond, then, els }
         }
         CAST_EXPR => {
@@ -661,11 +670,11 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let array = kids
                 .first()
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             let index = kids
                 .get(1)
                 .map(|c| expr(ctx, owner, c))
-                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing));
+                .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()));
             ExprData::ArrayAccess { array, index }
         }
         METHOD_CALL => method_call(ctx, owner, node),
@@ -958,7 +967,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
     } else if let Some(e) = node.children().find(|c| is_expr_kind(c.kind())) {
         LambdaBody::Expr(expr(ctx, owner, &e))
     } else {
-        LambdaBody::Expr(alloc_expr(ctx, ExprData::Missing))
+        LambdaBody::Expr(alloc_expr(ctx, ExprData::Missing, node.text_range()))
     };
     ExprData::Lambda { params, body }
 }
@@ -972,7 +981,8 @@ fn expr_child_opt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) ->
 }
 
 fn first_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
-    expr_child_opt(ctx, owner, node).unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing))
+    expr_child_opt(ctx, owner, node)
+        .unwrap_or_else(|| alloc_expr(ctx, ExprData::Missing, node.text_range()))
 }
 
 fn first_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtId {
@@ -1141,11 +1151,20 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<TypeRef<Name>> {
         .collect()
 }
 
+fn alloc_local(ctx: &mut LowerCtx, local: Local, range: TextRange) -> LocalId {
+    ctx.bodies.local_ranges.push(range);
+    LocalId(ctx.bodies.locals.alloc(local))
+}
+
 fn alloc_local_missing(ctx: &mut LowerCtx) -> LocalId {
-    LocalId(ctx.bodies.locals.alloc(Local {
-        name: missing_name(),
-        ty: None,
-    }))
+    alloc_local(
+        ctx,
+        Local {
+            name: missing_name(),
+            ty: None,
+        },
+        TextRange::default(),
+    )
 }
 
 fn alloc_label_missing(ctx: &mut LowerCtx) -> LabelId {

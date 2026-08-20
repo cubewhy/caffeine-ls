@@ -1024,3 +1024,44 @@ class Body {
 // §7.5.4: a static import makes an unqualified name a static member access
 // through its declaring type — `max` resolves against `java.lang.Math`, and
 // the on-demand form resolves `min` the same way.
+
+snapshot!(
+    var_without_initializer,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m() {
+        var x;
+        return x + 1;
+    }
+}
+",
+    )])
+);
+// §14.4.1: a `var` declaration must have an initializer. Without one the
+// local has no type to infer, so `x` is a compile-time error: reported as a
+// `var-without-initializer` diagnostic and degraded to `error` — later uses
+// of `x` are `<error>` too instead of panicking.
+
+snapshot!(
+    var_multi_declarators,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m() {
+        var a = 1, b = 2, c;
+        return a + b + c;
+    }
+}
+",
+    )])
+);
+// The `var` type is shared across all declarators of one declaration
+// ([§14.4.1]); each declarator still needs its own initializer, so `c` is
+// reported while `a` and `b` infer as `int`.
