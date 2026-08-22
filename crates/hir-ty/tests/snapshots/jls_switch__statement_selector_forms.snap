@@ -1,6 +1,6 @@
 ---
 source: crates/hir-ty/tests/jls_switch.rs
-assertion_line: 23
+assertion_line: 21
 expression: out
 ---
 FILE /src/com/example/Sw.java:
@@ -29,6 +29,15 @@ class Sw {
                 return 0;
         }
     }
+
+    int byColor(Color c) {
+        switch (c) {
+            case R:
+                return 1;
+            default:
+                return 0;
+        }
+    }
 }
 
 method classic(int): int
@@ -37,3 +46,6 @@ method classic(int): int
 method byName(java.lang.String): int
   locals: l1: java.lang.String
   exprs: e8: java.lang.String | e9: java.lang.String | e10: int | e11: <error> | e12: int
+method byColor(com.example.Color): int
+  locals: l2: com.example.Color
+  exprs: e13: com.example.Color | e14: com.example.Color | e15: int | e16: <error> | e17: int

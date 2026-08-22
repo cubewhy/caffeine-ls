@@ -247,6 +247,20 @@ pub(crate) fn body_types_query<'db>(
     crate::infer::body_types_impl(db, file_id, item_id).map(Arc::new)
 }
 
+/// The declaration-level diagnostics
+/// ([JLS §8.4.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.3),
+/// [§9.4.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.3))
+/// of every class in `file`, memoized per file. See
+/// [`crate::decl_check::class_diagnostics_impl`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn class_diagnostics_query<'db>(
+    db: &'db dyn TyDatabase,
+    file: FileText,
+) -> Vec<crate::decl_check::DeclDiagnostic> {
+    let file_id = *file.file_id(db);
+    crate::decl_check::class_diagnostics_impl(db, file_id)
+}
+
 /// The access-control context
 /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
 /// of a source access site inside the method or field `item` of `file`,

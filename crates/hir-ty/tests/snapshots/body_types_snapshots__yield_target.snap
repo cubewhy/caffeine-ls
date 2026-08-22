@@ -11,13 +11,13 @@ class Body {
         return x;
     }
 
-    int m(boolean b) {
+    int m(int b) {
         String s = switch (b) {
-            case true -> "a";
+            case 1 -> "a";
             default -> { yield id("b"); }
         };
         int n = switch (b) {
-            case true -> 1;
+            case 1 -> 1;
             default -> { yield 2; }
         };
         return s.length() + n;
@@ -27,6 +27,6 @@ class Body {
 method id(T): T
   locals: l0: T
   exprs: e0: T
-method m(boolean): int
-  locals: l1: boolean | l2: java.lang.String | l3: int
-  exprs: e1: boolean | e2: boolean | e3: java.lang.String | e4: <error> | e5: java.lang.String | e6: java.lang.String | e7: java.lang.String | e8: boolean | e9: boolean | e10: int | e11: <error> | e12: int | e13: int | e14: java.lang.String | e15: int | e16: int | e17: int
+method m(int): int
+  locals: l1: int | l2: java.lang.String | l3: int
+  exprs: e1: int | e2: int | e3: java.lang.String | e4: <error> | e5: java.lang.String | e6: java.lang.String | e7: java.lang.String | e8: int | e9: int | e10: int | e11: <error> | e12: int | e13: int | e14: java.lang.String | e15: int | e16: int | e17: int

@@ -57,6 +57,30 @@ pub enum JavaDiagnosticCode {
     CannotInstantiateTypeVar,
     /// §14.4: a `var` initializer cannot be an array initializer.
     VarArrayInitializer,
+    /// §14.11.1: the selector of a `switch` is not one of the allowed types
+    /// (`char`, `byte`, `short`, `int` or their boxes, `String`, an enum).
+    SwitchSelectorType,
+    /// §8.4.8.3: an override's return type is not return-type-substitutable.
+    IncompatibleOverride,
+    /// §9.4.1.3: two unrelated superinterfaces declare matching default
+    /// methods and the class does not override them.
+    ConflictingDefaults,
+    /// §9.8/§15.27.3: a lambda or method reference target is not a functional
+    /// interface.
+    NotAFunctionalInterface,
+    /// §11.2: a checked exception is thrown but neither caught nor declared.
+    UnreportedException,
+    /// §11.2.3: a catch clause is shadowed by an earlier superclass catch.
+    AlreadyCaught,
+    /// §8.3.3: a field initializer reads a same-class field declared later
+    /// by simple name.
+    IllegalForwardReference,
+    /// §16: a local variable's value is read before it is definitely
+    /// assigned.
+    VariableMightNotHaveBeenInitialized,
+    /// §14.11.1/§15.28: a switch expression does not cover all possible
+    /// selector values.
+    NotExhaustive,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -109,6 +133,17 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::GenericArrayCreation => "generic-array-creation",
             JavaDiagnosticCode::CannotInstantiateTypeVar => "cannot-instantiate-type-var",
             JavaDiagnosticCode::VarArrayInitializer => "var-array-initializer",
+            JavaDiagnosticCode::SwitchSelectorType => "switch-selector-type",
+            JavaDiagnosticCode::IncompatibleOverride => "incompatible-override",
+            JavaDiagnosticCode::ConflictingDefaults => "conflicting-defaults",
+            JavaDiagnosticCode::NotAFunctionalInterface => "not-a-functional-interface",
+            JavaDiagnosticCode::UnreportedException => "unreported-exception",
+            JavaDiagnosticCode::AlreadyCaught => "already-caught",
+            JavaDiagnosticCode::IllegalForwardReference => "illegal-forward-reference",
+            JavaDiagnosticCode::VariableMightNotHaveBeenInitialized => {
+                "variable-might-not-have-been-initialized"
+            }
+            JavaDiagnosticCode::NotExhaustive => "not-exhaustive",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

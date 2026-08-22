@@ -15,9 +15,9 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
     body::{
-        AssignOp, BinaryOp, Body, BodyId, CatchClause, ExprData, ExprId, Label, LabelId,
-        LambdaBody, Literal, Local, LocalId, PatternData, PatternId, PostfixOp, RecordPattern,
-        Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern, UnaryOp,
+        AnonymousMethod, AssignOp, BinaryOp, Body, BodyId, CatchClause, ExprData, ExprId, Label,
+        LabelId, LambdaBody, Literal, Local, LocalId, PatternData, PatternId, PostfixOp,
+        RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern, UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -124,6 +124,12 @@ fn is_stmt_kind(kind: J) -> bool {
             | J::TRY_STMT
             | J::TRY_WITH_RESOURCES_STMT
             | J::ASSERT_STMT
+            // A local class, interface, record or enum declaration
+            // ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)).
+            | J::CLASS_DECL
+            | J::INTERFACE_DECL
+            | J::RECORD_DECL
+            | J::ENUM_DECL
     )
 }
 
@@ -159,6 +165,27 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
         EMPTY_STMT => StmtData::Empty,
         BLOCK => StmtData::Block(lower_statement_list(ctx, owner, node)),
         LOCAL_VARIABLE_DECLARATION_STMT => local_declaration(ctx, owner, node),
+        // A local class, interface, record or enum declaration
+        // ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+        // carried as a named statement so the declaration is not dropped.
+        // A record's contextual `record` keyword is an IDENTIFIER token too —
+        // the declared name follows it.
+        CLASS_DECL | INTERFACE_DECL | RECORD_DECL | ENUM_DECL => {
+            let mut identifiers = node
+                .children_with_tokens()
+                .filter_map(|e| e.as_token().cloned())
+                .filter(|t| token_is(t, J::IDENTIFIER))
+                .map(|t| t.text().to_string());
+            let first = identifiers.next().unwrap_or_default();
+            let name = if node.kind() == RECORD_DECL && first == "record" {
+                identifiers.next().unwrap_or(first)
+            } else {
+                first
+            };
+            StmtData::LocalClass {
+                name: Name::new(&name),
+            }
+        }
         EXPRESSION_STMT => StmtData::Expr(first_expr(ctx, owner, node)),
         RETURN_STMT => StmtData::Return(expr_child_opt(ctx, owner, node)),
         THROW_STMT => StmtData::Throw(first_expr(ctx, owner, node)),
@@ -654,7 +681,18 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                 }),
             }
         }
-        SUPER_EXPR => ExprData::Super,
+        // `I.super` — the qualifier identifier of the qualified-super
+        // receiver ([§15.11.2]) is wrapped in a nested LITERAL node, like the
+        // qualifier of `Outer.this` ([§15.8.3]).
+        SUPER_EXPR => {
+            let qualifier = join_dotted(node);
+            ExprData::Super {
+                qualifier: (qualifier.as_str() != "<missing>").then(|| TypeRef::Reference {
+                    name: qualifier,
+                    generic_args: Vec::new(),
+                }),
+            }
+        }
         PREFIX_EXPR => {
             let op = first_op_token(node)
                 .map(|t| {
@@ -849,10 +887,23 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
     };
     match token.kind() {
         J::INTEGER_LITERAL => {
-            if token.text().ends_with('L') || token.text().ends_with('l') {
-                ExprData::Literal(Literal::Long)
+            // §3.10.1: strip separators and any `L`/`l` suffix, then keep the
+            // value for constant-expression evaluation ([§5.2], [§15.28]).
+            let is_long = token.text().ends_with('L') || token.text().ends_with('l');
+            let text = token.text().trim_end_matches(['L', 'l']).replace('_', "");
+            let value = if let Some(hex) = text.strip_prefix("0x").or(text.strip_prefix("0X")) {
+                i64::from_str_radix(hex, 16).ok()
+            } else if let Some(oct) = text.strip_prefix("0b").or(text.strip_prefix("0B")) {
+                i64::from_str_radix(oct, 2).ok()
+            } else if text.len() > 1 && text.starts_with('0') {
+                i64::from_str_radix(&text, 8).ok()
             } else {
-                ExprData::Literal(Literal::Int)
+                text.parse::<i64>().ok()
+            };
+            if is_long {
+                ExprData::Literal(Literal::Long(value.unwrap_or(0)))
+            } else {
+                ExprData::Literal(Literal::Int(value.unwrap_or(0)))
             }
         }
         J::FLOAT_LITERAL => {
@@ -863,13 +914,47 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
             }
         }
         J::STRING_LITERAL | J::TEXT_BLOCK => ExprData::Literal(Literal::Str),
-        J::CHAR_LITERAL => ExprData::Literal(Literal::Char),
+        J::CHAR_LITERAL => {
+            // §3.10.4: decode the single character between the quotes,
+            // resolving the simple escapes; a malformed literal keeps type
+            // correctness by falling back to NUL.
+            let decoded = unescape_char(token.text());
+            ExprData::Literal(Literal::Char(decoded))
+        }
         J::TRUE_LITERAL | J::FALSE_LITERAL => ExprData::Literal(Literal::Boolean),
         J::NULL_LITERAL => ExprData::Null,
         J::IDENTIFIER | J::UNDERSCORE => ExprData::Var(Name::new(token.text())),
         J::THIS_KW => ExprData::This { qualifier: None },
-        J::SUPER_KW => ExprData::Super,
+        J::SUPER_KW => ExprData::Super { qualifier: None },
         _ => ExprData::Missing,
+    }
+}
+
+/// Decodes the scalar value of a character literal ([JLS §3.10.4]): the single
+/// character between the quotes, with the simple escapes resolved. A
+/// malformed literal yields NUL so typing stays well-formed.
+fn unescape_char(text: &str) -> char {
+    let inner = text
+        .strip_prefix('\'')
+        .and_then(|t| t.strip_suffix('\''))
+        .unwrap_or(text);
+    let mut chars = inner.chars();
+    let Some(first) = chars.next() else {
+        return '\0';
+    };
+    if first != '\\' {
+        return first;
+    }
+    match chars.next() {
+        Some('n') => '\n',
+        Some('t') => '\t',
+        Some('b') => '\u{0008}',
+        Some('r') => '\r',
+        Some('f') => '\u{000C}',
+        Some('s') => ' ',
+        Some('0') => '\0',
+        Some(other) => other,
+        None => '\0',
     }
 }
 
@@ -925,16 +1010,25 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
     }
 
     // `foo(args)`: the receiver slot is a single name reference; the method
-    // name is that reference (an implicit `this` receiver).
-    if let Some(recv) = node.children().find(|c| c.kind() == J::LITERAL)
-        && let ExprData::Var(name) = literal(&recv)
-    {
-        return ExprData::MethodCall {
-            receiver: None,
-            name,
-            type_args,
-            args,
-        };
+    // name is that reference (an implicit `this` receiver). A `this` keyword
+    // in that slot is instead an explicit constructor invocation
+    // ([§8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)),
+    // which delegates to another constructor of the same class.
+    if let Some(recv) = node.children().find(|c| c.kind() == J::LITERAL) {
+        match literal(&recv) {
+            ExprData::Var(name) => {
+                return ExprData::MethodCall {
+                    receiver: None,
+                    name,
+                    type_args,
+                    args,
+                };
+            }
+            ExprData::This { .. } => {
+                return ExprData::CtorCall { args };
+            }
+            _ => {}
+        }
     }
     // `Type.method(args)` without a declared type child is impossible in the
     // CST; everything else falls through to the field-access form above.
@@ -991,10 +1085,18 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             .filter(|c| is_expr_kind(c.kind()))
             .map(|c| expr(ctx, owner, &c))
             .collect();
+        // §15.9.5: an anonymous class body's member methods are carried by
+        // name and arity so the body is not dropped.
+        let members = node
+            .children()
+            .find(|c| c.kind() == CLASS_BODY)
+            .map(|body| anonymous_members(&body))
+            .unwrap_or_default();
         return ExprData::New {
             ty: base,
             args,
             diamond,
+            members,
         };
     }
     // Array creation ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)):
@@ -1033,6 +1135,31 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
         dims,
         initializer,
     }
+}
+
+/// The member methods of an anonymous class body
+/// ([JLS §15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5)):
+/// each `METHOD_DECL`'s name and parameter count.
+fn anonymous_members(class_body: &SyntaxNode<Lang>) -> Vec<AnonymousMethod> {
+    class_body
+        .children()
+        .filter(|c| c.kind() == J::METHOD_DECL)
+        .map(|method| AnonymousMethod {
+            name: first_identifier(&method).unwrap_or_else(missing_name),
+            params: method
+                .children()
+                .find(|c| c.kind() == J::FORMAL_PARAMETERS)
+                .map(|params| {
+                    params
+                        .children()
+                        .filter(|c| {
+                            c.kind() == J::FORMAL_PARAMETER || c.kind() == J::SPREAD_PARAMETER
+                        })
+                        .count() as u32
+                })
+                .unwrap_or(0),
+        })
+        .collect()
 }
 
 fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {

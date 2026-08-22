@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 139
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+enum Color { R, G, B }
+
+class Sw {
+    int m(Color c) {
+        return switch (c) {
+            case R -> 1;
+            case G, B -> 2;
+        };
+    }
+}
+
+method m(com.example.Color): int
+  locals: l0: com.example.Color
+  exprs: e0: com.example.Color | e1: com.example.Color | e2: int | e3: com.example.Color | e4: com.example.Color | e5: int | e6: int

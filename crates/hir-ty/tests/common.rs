@@ -1211,6 +1211,34 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
     lines.join("\n")
 }
 
+/// Renders the declaration-level diagnostics
+/// ([JLS §8.4.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.3),
+/// [§9.4.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.3))
+/// of every class in the source files: one line per diagnostic, ordered by
+/// file then source order, as `method <name>: <code>: <message>`.
+pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, _) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        for diag in hir_ty::class_diagnostics(&db, file_id) {
+            lines.push(format!(
+                "method {}: {}: {}",
+                diag.method_name(),
+                diag.code(),
+                diag.message()
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
 /// Renders the resolved method call for each `(label, receiver, name, args)`
 /// sample, against the JDK fixture. The receiver and the arguments are
 /// [`TyBuilder`]s rendered after resolution.

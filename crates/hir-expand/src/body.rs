@@ -285,6 +285,11 @@ pub enum StmtData {
     },
     /// An `assert` statement ([§14.10]).
     Assert { cond: ExprId, msg: Option<ExprId> },
+    /// A local class, interface, record or enum declaration
+    /// ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
+    /// the declaration is scoped to the enclosing block; only its name is
+    /// carried in the body IR.
+    LocalClass { name: Name },
     /// An expression or statement that could not be lowered.
     Missing,
 }
@@ -349,8 +354,11 @@ pub enum ExprData {
     Template { args: Vec<ExprId> },
     /// `this` or `TypeName.this` ([§15.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.3)).
     This { qualifier: Option<TypeRef<Name>> },
-    /// `super` ([§15.8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.4)).
-    Super,
+    /// `super` or `TypeName.super` — the latter only as the receiver of a
+    /// method invocation ([§15.8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.4),
+    /// [§15.11.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2)):
+    /// the qualified form invokes the default method of the named interface.
+    Super { qualifier: Option<TypeRef<Name>> },
     /// A class literal `Foo.class` ([§15.8.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.2)).
     ClassLit(TypeRef<Name>),
     /// A single name: a local variable or parameter reference, or — after
@@ -373,7 +381,6 @@ pub enum ExprData {
         args: Vec<ExprId>,
     },
     /// A class instance creation `new Type(args)` ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
-    /// Anonymous class bodies are not modelled (a `Missing` body).
     New {
         ty: TypeRef<Name>,
         args: Vec<ExprId>,
@@ -382,7 +389,17 @@ pub enum ExprData {
         /// the type arguments are inferred from the target type by the type
         /// layer. `false` for a raw type and an explicit argument list.
         diamond: bool,
+        /// The methods declared in an anonymous class body
+        /// ([§15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5)):
+        /// each member's name and parameter count, so the body is not
+        /// dropped. Empty for a plain instance creation.
+        members: Vec<AnonymousMethod>,
     },
+    /// An explicit constructor invocation `this(args)` in a constructor body
+    /// ([§8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
+    /// it delegates to another constructor of the same class and, as a
+    /// statement form, has no value.
+    CtorCall { args: Vec<ExprId> },
     /// An array creation `new Type[dims]` ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)),
     /// or — with empty `dims` — `new Type[] { ... }`, whose `initializer`
     /// ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6))
@@ -454,11 +471,19 @@ pub enum ExprData {
 }
 
 /// The kind of a literal ([JLS §3.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.10)).
+/// Integral and character literals carry their value: a constant expression's
+/// value drives the narrowing conversion of assignment context
+/// ([JLS §5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2))
+/// and definite assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Literal {
-    Int,
-    Long,
-    Char,
+    /// An integer literal ([§3.10.1]) with its parsed value (underscores and
+    /// any suffix stripped).
+    Int(i64),
+    /// A long literal ([§3.10.1]) with its parsed value.
+    Long(i64),
+    /// A character literal ([§3.10.4]) with its decoded scalar value.
+    Char(char),
     Float,
     Double,
     Boolean,
@@ -470,6 +495,15 @@ pub enum Literal {
 pub enum LambdaBody {
     Expr(ExprId),
     Block(StmtId),
+}
+
+/// One method declared in an anonymous class body
+/// ([JLS §15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5)):
+/// its name and parameter count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnonymousMethod {
+    pub name: Name,
+    pub params: u32,
 }
 
 /// A unary operator ([JLS §15.15]).

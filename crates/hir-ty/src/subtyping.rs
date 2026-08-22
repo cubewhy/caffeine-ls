@@ -215,6 +215,94 @@ fn resolve_name(
     hir::fqn_resolve(db, scope, name.as_str())
 }
 
+/// The declared constant names of the named type, when it is an `enum`
+/// ([JLS §8.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9)):
+/// a source enum lists its `EnumConstant` items, a library enum its
+/// ACC_ENUM-flagged fields ([JVMS §4.6]). A non-enum or unresolvable type
+/// yields `None`.
+pub(crate) fn enum_constants(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<Vec<Name>> {
+    let (name, _) = ty.as_reference(db)?;
+    match resolve_name(db, scope, name)? {
+        hir::Resolved::Library(library) => {
+            let record = hir::class_record(db, &library)?;
+            let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
+                return None;
+            };
+            // JVMS §4.6: enum constants carry ACC_ENUM = 0x4000.
+            if class.flags & 0x4000 == 0 {
+                return None;
+            }
+            let interner = &db.hir_state().interner;
+            Some(
+                class
+                    .fields
+                    .iter()
+                    .filter(|field| field.flags & 0x4000 != 0)
+                    .map(|field| Name::new(interner.resolve(&field.name)))
+                    .collect(),
+            )
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let ItemData::Enum(data) = item_data(&tree, source.item)? else {
+                return None;
+            };
+            Some(
+                data.body
+                    .iter()
+                    .filter_map(|&item| match item_data(&tree, item) {
+                        Some(ItemData::EnumConstant(constant)) => Some(constant.name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// Whether the named reference type is a *class-like* type (`class`, `enum`
+/// or `record`, as opposed to an interface or annotation) and whether it is
+/// `final` ([JLS §8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1),
+/// [§8.1.1.2], [§8.9], [§9.1]). Unresolvable names yield `None`; callers must
+/// stay permissive there.
+pub(crate) fn class_like_and_final(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<(bool, bool)> {
+    let (name, _) = ty.as_reference(db)?;
+    let resolved = resolve_name(db, scope, name)?;
+    match resolved {
+        hir::Resolved::Library(library) => {
+            let record = hir::class_record(db, &library)?;
+            let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
+                return None;
+            };
+            // JVM access flags: ACC_INTERFACE = 0x0200, ACC_FINAL = 0x0010.
+            // A record is implicitly final ([§8.10]).
+            let interface = class.flags & 0x0200 != 0;
+            let final_ = class.flags & 0x0010 != 0 || class.is_record;
+            Some((!interface, !interface && final_))
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            match item_data(&tree, source.item)? {
+                ItemData::Class(d) => Some((true, d.modifiers.final_)),
+                ItemData::Record(_) => Some((true, true)),
+                // §8.9: an enum without constant bodies is implicitly final,
+                // but treating every enum as final only ever tightens a cast
+                // check that single inheritance already makes disjoint.
+                ItemData::Enum(_) => Some((true, true)),
+                _ => Some((false, false)),
+            }
+        }
+    }
+}
+
 /// Whether `sub` is a subtype of `sup`
 /// ([JLS §4.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10)).
 pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, sup: &Ty) -> bool {
@@ -508,4 +596,18 @@ pub(crate) fn widening_primitive(src: PrimitiveType, dst: PrimitiveType) -> bool
             | (Long, Float | Double)
             | (Float, Double)
     )
+}
+
+/// Whether a constant value is representable in the target primitive
+/// ([JLS §5.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.3)):
+/// the narrowing-of-constants half of the assignment-context conversion
+/// ([§5.2]) for `int` constants to `byte`, `short` and `char`.
+pub(crate) fn fits_primitive(value: i64, dst: PrimitiveType) -> bool {
+    use PrimitiveType::*;
+    match dst {
+        Byte => (i8::MIN as i64..=i8::MAX as i64).contains(&value),
+        Short => (i16::MIN as i64..=i16::MAX as i64).contains(&value),
+        Char => (0..=u16::MAX as i64).contains(&value),
+        _ => false,
+    }
 }

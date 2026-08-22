@@ -1,6 +1,6 @@
 ---
 source: crates/hir-ty/tests/jls_exceptions.rs
-assertion_line: 89
+assertion_line: 61
 expression: out
 ---
 FILE /src/com/example/Exc.java:
@@ -11,18 +11,13 @@ import java.io.IOException;
 class Exc {
     void risky() throws IOException { }
 
-    void m() {
-        try {
-            risky();
-        } catch (Exception e) {
-        } catch (IOException e) {
-        }
-    }
+    void caller() { risky(); }
 }
 
 method risky(): void
   locals: 
   exprs: 
-method m(): void
-  locals: l0: java.lang.Exception | l1: java.io.IOException
+method caller(): void
+  locals: 
   exprs: e0: void
+  diags: e0@7:20: unreported-exception: unreported exception java.io.IOException; must be caught or declared to be thrown

@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 64
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    void m() {
+        int x;
+        int y = x + 1;
+    }
+}
+
+method m(): void
+  locals: l0: int | l1: int
+  exprs: e0: <error> | e1: int | e2: <error>
+  diags: e0@5:16: variable-might-not-have-been-initialized: variable 'x' might not have been initialized

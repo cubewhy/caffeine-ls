@@ -41,12 +41,12 @@ use std::sync::Arc;
 use hir_expand::{
     body::{
         AssignOp, BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId,
-        PatternData, PatternId, StmtData, StmtId, SwitchLabel, UnaryOp,
+        PatternData, PatternId, StmtData, StmtId, SwitchArm, SwitchLabel, UnaryOp,
     },
-    item_tree::ItemId,
+    item_tree::{ItemData, ItemId},
     name::Name,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 use vfs::FileId;
 
@@ -106,6 +106,12 @@ pub(crate) fn body_types_impl(
         access,
         enclosing_class,
         enclosing_ret: None,
+        enclosing_throws: Vec::new(),
+        thrown: Vec::new(),
+        forward_names: Vec::new(),
+        definite: FxHashSet::default(),
+        exited: false,
+        writing: false,
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
         diagnostics: Vec::new(),
@@ -124,15 +130,25 @@ pub(crate) fn body_types_impl(
                 .ret
                 .as_ref()
                 .map(|ret| resolve_type_ref(db, &ctx.scope, &ctx.resolver, ret));
+            // §11.2: the declared throws clause discharges the method's
+            // checked-exception liability.
+            ctx.enclosing_throws = method
+                .sig
+                .throws
+                .iter()
+                .map(|ex| resolve_type_ref(db, &ctx.scope, &ctx.resolver, ex))
+                .collect();
             match method.body {
                 Some(body_id) => {
                     body = Some(body_id);
                     for &param in &tree.bodies.body(body_id).params {
-                        ctx.declare_local(param);
+                        ctx.declare_param(param);
                     }
                     for &stmt in &tree.bodies.body(body_id).stmts {
                         ctx.infer_stmt(stmt);
                     }
+                    // §11.2: the body must discharge its checked exceptions.
+                    ctx.check_thrown_liability();
                 }
                 // An annotation type element default ([JLS §9.6.2]): a poly
                 // expression whose target is the element's return type.
@@ -146,7 +162,7 @@ pub(crate) fn body_types_impl(
             let body_id = init.body?;
             body = Some(body_id);
             for &param in &tree.bodies.body(body_id).params {
-                ctx.declare_local(param);
+                ctx.declare_param(param);
             }
             for &stmt in &tree.bodies.body(body_id).stmts {
                 ctx.infer_stmt(stmt);
@@ -156,17 +172,24 @@ pub(crate) fn body_types_impl(
             let body_id = init.body?;
             body = Some(body_id);
             for &param in &tree.bodies.body(body_id).params {
-                ctx.declare_local(param);
+                ctx.declare_param(param);
             }
             for &stmt in &tree.bodies.body(body_id).stmts {
                 ctx.infer_stmt(stmt);
             }
+            // §11.2.2: an initializer cannot declare throws, so every
+            // remaining checked exception is unreported.
+            ctx.check_thrown_liability();
         }
         // A field initializer ([§8.3.3]): a poly expression whose target is
         // the field's declared type.
         hir_expand::item_tree::ItemData::Field(field) => {
             let initializer = field.initializer_expr?;
             let target = resolve_type_ref(db, &ctx.scope, &ctx.resolver, &field.ty);
+            // §8.3.3: the names this initializer may not read by simple name
+            // — same-class fields of the same static/instance kind declared
+            // textually after it.
+            ctx.forward_names = forward_field_names(&tree, item, field.modifiers.static_);
             let _ = ctx.with_target(Some(target), |this| this.infer_expr(initializer));
         }
         // Enum constant arguments ([§8.9.1]) — inferred standalone (the
@@ -199,6 +222,35 @@ struct InferCtx<'a> {
     /// The return type of the enclosing method or constructor: the target
     /// type ([JLS §18.5.2.4]) of the expressions it returns.
     enclosing_ret: Option<Ty>,
+    /// The declared `throws` clause of the enclosing method or constructor
+    /// ([§8.4.6]): the discharge targets of the checked-exception liability
+    /// check ([§11.2]).
+    enclosing_throws: Vec<Ty>,
+    /// Checked exceptions thrown so far at the current position and not yet
+    /// discharged by a catch clause, with the expression that threw them
+    /// ([§11.2]): entries are appended by invocations of throwing methods
+    /// ([§11.2.1]) and `throw` statements ([§14.18]), and removed when a
+    /// `catch` clause handles their type.
+    thrown: Vec<(Ty, ExprId)>,
+    /// The names of same-class fields declared *textually after* the field
+    /// whose initializer is currently being inferred and of the same
+    /// static/instance kind ([§8.3.3]): reading one by simple name is an
+    /// illegal forward reference.
+    forward_names: Vec<Name>,
+    /// The locals definitely assigned at the current position
+    /// ([§16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html)):
+    /// parameters start assigned; a declarator with an initializer or the
+    /// target of a simple assignment joins. Branch-sensitive — see
+    /// [`InferCtx::infer_stmt_data`].
+    definite: FxHashSet<LocalId>,
+    /// Whether control flow has exited (return/break/continue/throw/yield)
+    /// on every path to the current position ([§14.22] in effect): reads past
+    /// this point are not definite-assignment errors.
+    exited: bool,
+    /// Whether the expression currently being inferred is the left-hand side
+    /// of a simple assignment — a write, not a value read ([§15.26.1],
+    /// [§16]).
+    writing: bool,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
     /// The type errors reported so far, in report order ([§14.4.1], [§8.3.3]).
@@ -363,8 +415,7 @@ impl<'a> InferCtx<'a> {
     /// Whether `from` can be cast to `to` by a casting conversion
     /// ([JLS §5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5)):
     /// identity, primitive widening/narrowing with boxing/unboxing, or a
-    /// reference widening/narrowing cast. Provably-disjoint final-class casts
-    /// are not modelled.
+    /// reference widening/narrowing cast.
     fn castable(&self, from: Ty, to: Ty) -> bool {
         if from == to {
             return true;
@@ -401,17 +452,233 @@ impl<'a> InferCtx<'a> {
                 "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
             ),
             (TyKind::TypeVar { .. }, TyKind::Reference { .. }) => true,
-            (TyKind::Reference { .. }, TyKind::Reference { .. }) => true,
+            (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
+                self.reference_castable(from, to)
+            }
             _ => false,
+        }
+    }
+
+    /// Whether a reference-to-reference casting conversion exists
+    /// ([JLS §5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5),
+    /// [§5.5.1], [§5.1.6.3]): the cast fails only when the two types are
+    /// *provably distinct* — both class-like (`class`/`enum`/`record`) with
+    /// neither a subtype of the other, which single inheritance makes final:
+    /// no common subclass can ever implement both. Casts involving interfaces,
+    /// arrays or unresolvable types always succeed here (the runtime check may
+    /// still fail; that is not a compile-time error per §5.5.1).
+    fn reference_castable(&self, from: Ty, to: Ty) -> bool {
+        let sub = crate::subtyping::is_subtype(self.db, &self.scope, &from, &to);
+        let sup = crate::subtyping::is_subtype(self.db, &self.scope, &to, &from);
+        if sub || sup {
+            return true;
+        }
+        match (
+            crate::subtyping::class_like_and_final(self.db, &self.scope, &from),
+            crate::subtyping::class_like_and_final(self.db, &self.scope, &to),
+        ) {
+            (Some((true, _)), Some((true, _))) => false,
+            _ => true,
+        }
+    }
+
+    /// Infers a `switch` selector and checks its type
+    /// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1)):
+    /// the selector must be convertible to `int` — a primitive `char`,
+    /// `byte`, `short` or `int`, one of their boxed types, or an unboxing
+    /// reference — or be a `String` or an enum type.
+    fn infer_switch_selector(&mut self, scrutinee: ExprId) -> Ty {
+        let ty = self.infer_expr(scrutinee);
+        if !ty.is_error(self.db) && !self.switchable(&ty) {
+            self.report(TypeError::SwitchSelectorType {
+                expr: scrutinee,
+                found: ty.display(self.db).to_string(),
+            });
+        }
+        ty
+    }
+
+    /// §14.11.1/§15.28: whether the arms of a switch expression cover every
+    /// selector value. A `default` label is always exhaustive; an enum
+    /// selector requires every constant to be named by some label.
+    fn switch_is_exhaustive(&self, selector: &Ty, arms: &[SwitchArm]) -> bool {
+        let mut covered: Vec<Name> = Vec::new();
+        for arm in arms {
+            for label in &arm.labels {
+                if let SwitchLabel::Expr(e) = label
+                    && let ExprData::Var(name) = self.tree.expr(*e).clone()
+                {
+                    covered.push(name);
+                }
+            }
+        }
+        let has_default = arms.iter().any(|arm| {
+            arm.labels.iter().any(|label| {
+                matches!(label, SwitchLabel::Expr(e) if matches!(self.tree.expr(*e).clone(), ExprData::Missing))
+            })
+        });
+        if has_default {
+            return true;
+        }
+        match crate::subtyping::enum_constants(self.db, &self.scope, selector) {
+            Some(constants) => constants
+                .iter()
+                .all(|constant| covered.iter().any(|covered| covered == constant)),
+            None => true,
+        }
+    }
+
+    /// §14.11.1: whether the selector type is supported by `switch`. A    /// primitive selector must be one of the int-compatible types
+    /// (`char`, `byte`, `short`, `int`); any reference or type-variable
+    /// selector is supported ([§14.11]: pattern labels match arbitrary
+    /// reference types), while `long`, `float`, `double` and `boolean` are
+    /// never selectable.
+    fn switchable(&self, ty: &Ty) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Primitive(p) => matches!(
+                p,
+                PrimitiveType::Byte
+                    | PrimitiveType::Short
+                    | PrimitiveType::Char
+                    | PrimitiveType::Int
+            ),
+            TyKind::Reference { .. } | TyKind::TypeVar { .. } | TyKind::Array(_) => true,
+            _ => false,
+        }
+    }
+
+    /// A `case` label of a switch with the given selector
+    /// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1)):
+    /// against an enum selector a bare-name label is the enum constant of that
+    /// name ([§8.9.1]) — ordinary name resolution does not see constants of a
+    /// type, so it is resolved here; every other label is an ordinary
+    /// constant expression, which must be assignable to the selector.
+    fn infer_switch_label(&mut self, label: ExprId, selector: &Ty) {
+        if let ExprData::Var(name) = self.tree.expr(label).clone()
+            && let Some(constants) =
+                crate::subtyping::enum_constants(self.db, &self.scope, selector)
+            && constants.iter().any(|constant| constant == &name)
+        {
+            self.types.insert(label, selector.clone());
+            return;
+        }
+        let ty = self.infer_expr(label);
+        // The `default` label lowers as a `Missing` expression and has no
+        // type; anything else must be assignable to the selector ([§14.11.1]).
+        if !ty.is_error(self.db)
+            && !selector.is_error(self.db)
+            && !matches!(self.tree.expr(label).clone(), ExprData::Missing)
+            && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, selector)
+        {
+            self.report(TypeError::IncompatibleTypes {
+                expr: label,
+                found: ty.display(self.db).to_string(),
+                expected: selector.display(self.db).to_string(),
+            });
+        }
+    }
+
+    /// Whether `expr` is a constant expression of value `v` that narrows to
+    /// the primitive type `dst` in assignment context
+    /// ([JLS §5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2)):
+    /// an int-typed constant expression ([§4.12.4], [§15.28]) may narrow to
+    /// `byte`, `short` or `char` when its value is representable in the
+    /// target type ([§5.1.3] narrowing of constants).
+    fn constant_narrowable(&self, expr: ExprId, src: Ty, dst: Ty) -> bool {
+        let (TyKind::Primitive(p), TyKind::Primitive(d)) = (src.kind(self.db), dst.kind(self.db))
+        else {
+            return false;
+        };
+        if *p != PrimitiveType::Int
+            || !matches!(
+                d,
+                PrimitiveType::Byte | PrimitiveType::Short | PrimitiveType::Char
+            )
+        {
+            return false;
+        }
+        self.const_int_value(expr)
+            .is_some_and(|value| crate::subtyping::fits_primitive(value, *d))
+    }
+
+    /// The value of an int-typed constant expression
+    /// ([JLS §4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4),
+    /// [§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)):
+    /// integer and char literals, parenthesized forms, unary plus/minus and
+    /// the additive/multiplicative operators over constant operands.
+    fn const_int_value(&self, id: ExprId) -> Option<i64> {
+        match self.tree.expr(id).clone() {
+            ExprData::Literal(Literal::Int(v)) => Some(v),
+            // A char literal is an int-typed constant with its code-point value.
+            ExprData::Literal(Literal::Char(c)) => Some(c as i64),
+            ExprData::Paren(inner) => self.const_int_value(inner),
+            ExprData::Unary { op, expr } => {
+                let v = self.const_int_value(expr)?;
+                match op {
+                    UnaryOp::Plus => Some(v),
+                    UnaryOp::Minus => v.checked_neg(),
+                    _ => None,
+                }
+            }
+            ExprData::Binary { op, lhs, rhs } => {
+                let l = self.const_int_value(lhs)?;
+                let r = self.const_int_value(rhs)?;
+                match op {
+                    BinaryOp::Add => l.checked_add(r),
+                    BinaryOp::Sub => l.checked_sub(r),
+                    BinaryOp::Mul => l.checked_mul(r),
+                    BinaryOp::Div if r != 0 => Some(l.wrapping_div(r)),
+                    BinaryOp::Rem if r != 0 => Some(l.wrapping_rem(r)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// §11.2: whether the type is a *checked* exception — assignable to
+    /// `Throwable` but not to `RuntimeException` or `Error`
+    /// ([§11.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-11.html#jls-11.1.1)).
+    fn is_checked(&self, ty: &Ty) -> bool {
+        let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
+        if !crate::subtyping::is_assignable(self.db, &self.scope, ty, &throwable) {
+            return false;
+        }
+        let unchecked = ["java.lang.RuntimeException", "java.lang.Error"];
+        !unchecked.iter().any(|name| {
+            let supertype = Ty::reference(self.db, *name, Vec::new());
+            crate::subtyping::is_assignable(self.db, &self.scope, ty, &supertype)
+        })
+    }
+
+    /// §11.2: at the end of a body, every remaining checked exception that no
+    /// catch clause discharged and no `throws` clause declares is reported at
+    /// the expression that threw it.
+    fn check_thrown_liability(&mut self) {
+        let declared = self.enclosing_throws.clone();
+        let pending = std::mem::take(&mut self.thrown);
+        for (ty, expr) in pending {
+            if !self.is_checked(&ty) {
+                continue;
+            }
+            let discharged = declared
+                .iter()
+                .any(|target| crate::subtyping::is_assignable(self.db, &self.scope, &ty, target));
+            if !discharged {
+                self.report(TypeError::UnreportedException {
+                    expr,
+                    thrown: ty.display(self.db).to_string(),
+                });
+            }
         }
     }
 
     fn infer_expr(&mut self, id: ExprId) -> Ty {
         let expr = self.tree.expr(id).clone();
         let ty = match expr {
-            ExprData::Literal(Literal::Int) => self.primitive(PrimitiveType::Int),
-            ExprData::Literal(Literal::Long) => self.primitive(PrimitiveType::Long),
-            ExprData::Literal(Literal::Char) => self.primitive(PrimitiveType::Char),
+            ExprData::Literal(Literal::Int(_)) => self.primitive(PrimitiveType::Int),
+            ExprData::Literal(Literal::Long(_)) => self.primitive(PrimitiveType::Long),
+            ExprData::Literal(Literal::Char(_)) => self.primitive(PrimitiveType::Char),
             ExprData::Literal(Literal::Float) => self.primitive(PrimitiveType::Float),
             ExprData::Literal(Literal::Double) => self.primitive(PrimitiveType::Double),
             ExprData::Literal(Literal::Boolean) => self.primitive(PrimitiveType::Boolean),
@@ -426,7 +693,7 @@ impl<'a> InferCtx<'a> {
                 }
                 None => self.enclosing_class.unwrap_or_else(|| self.error()),
             },
-            ExprData::Super => self.error(),
+            ExprData::Super { .. } => self.error(),
             // §15.8.2: `T.class` has type `Class<T>`.
             ExprData::ClassLit(tyref) => {
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
@@ -454,12 +721,15 @@ impl<'a> InferCtx<'a> {
                 args,
                 ..
             } => self.method_call(id, receiver, name, &args, self.target),
+            // §8.8.7.1: `this(args)` delegates to another constructor of the
+            // enclosing class.
+            ExprData::CtorCall { args } => self.ctor_call(id, &args),
             // §15.9: a class instance creation has the type of the created
             // class; the diamond operator ([§15.9.2]) instantiates the type
             // arguments from the target type.
-            ExprData::New { ty, args, diamond } => {
-                self.new_expr(id, ty, diamond, &args, self.target)
-            }
+            ExprData::New {
+                ty, args, diamond, ..
+            } => self.new_expr(id, ty, diamond, &args, self.target),
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
             // (§10.6) fills the element expressions. A non-reifiable component
@@ -524,12 +794,34 @@ impl<'a> InferCtx<'a> {
             // ([§15.26.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.26.1),
             // [§5.2]).
             ExprData::Assign { op, lhs, rhs } => {
-                let lhs_ty = self.infer_expr(lhs);
+                // §15.26.1: the left-hand side of a *simple* assignment is
+                // written, not read — the definite-assignment check does not
+                // apply to it.
+                let lhs_ty = if matches!(op, AssignOp::Assign) {
+                    self.writing = true;
+                    let ty = self.infer_expr(lhs);
+                    self.writing = false;
+                    ty
+                } else {
+                    self.infer_expr(lhs)
+                };
                 let rhs_ty = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
+                // §16: a simple assignment definitely assigns its left-hand
+                // local; a compound assignment or increment reads it first,
+                // so it does not discharge a blank local.
+                if matches!(op, AssignOp::Assign)
+                    && let ExprData::Var(name) = self.tree.expr(lhs).clone()
+                    && let Some(local) = self.lookup_local(&name)
+                {
+                    self.definite.insert(local);
+                }
                 if matches!(op, AssignOp::Assign)
                     && !lhs_ty.is_error(self.db)
                     && !rhs_ty.is_error(self.db)
                     && !crate::subtyping::is_assignable(self.db, &self.scope, &rhs_ty, &lhs_ty)
+                    // §5.2: an in-range int constant narrows to the target
+                    // primitive ([§5.1.3]).
+                    && !self.constant_narrowable(rhs, rhs_ty, lhs_ty)
                 {
                     self.report(TypeError::IncompatibleTypes {
                         expr: rhs,
@@ -616,27 +908,27 @@ impl<'a> InferCtx<'a> {
             // functional interface ([§15.27.3]), which comes from the context
             // (a declaration initializer, an assignment, a return, or a method
             // invocation's resolved formal).
-            ExprData::Lambda { params, body } => self.lambda_type(&params, body),
+            ExprData::Lambda { params, body } => self.lambda_type(id, &params, body),
             ExprData::MethodRef {
                 qualifier,
                 type_name,
                 name,
-            } => self.method_ref_type(qualifier, type_name.as_ref(), &name),
+            } => self.method_ref_type(id, qualifier, type_name.as_ref(), &name),
             // §15.28: a switch expression's type is derived from its arm
             // result types; a `yield` value inside an arm has the switch
             // expression's type as target ([JLS §14.21]).
             ExprData::Switch { scrutinee, arms } => {
-                let _ = self.infer_expr(scrutinee);
+                let selector = self.infer_switch_selector(scrutinee);
                 self.switch_targets.push(self.target);
                 let mut result_tys: Vec<Ty> = Vec::new();
-                for arm in arms {
+                for arm in &arms {
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
                     self.scopes.push(FxHashMap::default());
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                let _ = self.infer_expr(*e);
+                                let _ = self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);
@@ -677,6 +969,14 @@ impl<'a> InferCtx<'a> {
                     self.scopes.pop();
                 }
                 self.switch_targets.pop();
+                // §14.11.1/§15.28: a switch *expression* must be exhaustive —
+                // every selector value has a matching arm or there is a
+                // `default`. Against an enum selector, coverage means every
+                // constant is named by some label ([§14.11.1]); sealed-class
+                // hierarchies are not yet modelled and are not checked.
+                if !self.switch_is_exhaustive(&selector, arms.as_slice()) {
+                    self.report(TypeError::NotExhaustive { expr: id });
+                }
                 if result_tys.is_empty() {
                     self.error()
                 } else {
@@ -707,6 +1007,18 @@ impl<'a> InferCtx<'a> {
     /// field of the implicit receiver ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)).
     fn var(&mut self, expr: ExprId, name: Name) -> Ty {
         if let Some(local) = self.lookup_local(&name) {
+            // §16: a local's value may be read only after it is definitely
+            // assigned on every path to the read. Reads past an exit
+            // (return/break/throw) are not checked — the path is unreachable —
+            // and the left-hand side of a simple assignment is written, not
+            // read ([§15.26.1]).
+            if !self.exited && !self.writing && !self.definite.contains(&local) {
+                self.report(TypeError::NotDefinitelyAssigned {
+                    expr,
+                    name: name.clone(),
+                });
+                return self.error();
+            }
             return self
                 .locals
                 .get(&local)
@@ -725,6 +1037,17 @@ impl<'a> InferCtx<'a> {
             return ty;
         }
         if let Some(field) = self.pick_field_of(self.enclosing_class, name.as_str()) {
+            // §8.3.3: a simple-name read of a same-class field declared
+            // textually later, of the same static/instance kind, is an
+            // illegal forward reference. A qualified read (`this.b`) takes
+            // the field-access path and stays legal.
+            if self.forward_names.iter().any(|forward| forward == &name) {
+                self.report(TypeError::IllegalForwardReference {
+                    expr,
+                    name: name.clone(),
+                });
+                return self.error();
+            }
             return field.ty;
         }
         // §6.5: a simple name that resolves to nothing is a compile-time
@@ -865,7 +1188,7 @@ impl<'a> InferCtx<'a> {
         // `super.field` — a field of the direct superclass ([§15.11.1],
         // [§15.12.1]): the receiver is the superclass type and the access
         // context is the super invocation mode.
-        if matches!(self.tree.expr(target).clone(), ExprData::Super) {
+        if matches!(self.tree.expr(target).clone(), ExprData::Super { .. }) {
             let receiver = self.super_ty();
             let access = self.access.with_mode(InvocationMode::Super);
             // §15.11.1: a `super` field access selects an instance member of
@@ -921,6 +1244,65 @@ impl<'a> InferCtx<'a> {
         pick_field(self.db, &self.scope, &receiver, name, &self.access)
     }
 
+    /// An explicit constructor invocation `this(args)`
+    /// ([JLS §8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
+    /// the candidates are the constructors of the enclosing class — methods
+    /// named after the class with no return type — resolved by the same
+    /// applicability phases as a method invocation
+    /// ([§15.12.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2)).
+    /// The invocation is a statement form and has no value.
+    fn ctor_call(&mut self, expr: ExprId, args: &[ExprId]) -> Ty {
+        let Some(receiver_ty) = self.enclosing_class else {
+            for arg in args {
+                let _ = self.infer_expr(*arg);
+            }
+            return self.error();
+        };
+        // Constructors are declared under the class's simple name.
+        let (fqn, _) = receiver_ty.as_reference(self.db).expect("class reference");
+        let simple = fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str());
+        let name = Name::new(simple);
+        let access = self.access.with_mode(InvocationMode::Virtual);
+        let arg_kinds = self.arg_kinds(args);
+        match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access) {
+            Some((method, deferred)) => {
+                self.reinfer_deferred(&method, &deferred);
+                // §11.2.1: a delegating constructor's declared exceptions add
+                // to the enclosing liability.
+                for thrown in &method.throws {
+                    if self.is_checked(thrown) {
+                        self.thrown.push((thrown.clone(), expr));
+                    }
+                }
+            }
+            None => {
+                for arg in args {
+                    let _ = self.infer_expr(*arg);
+                }
+                let members =
+                    member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
+                if members.is_empty() {
+                    // §8.8.7.1: no constructor of that signature exists.
+                    self.report(TypeError::NoSuchMethod {
+                        expr,
+                        name: name.clone(),
+                    });
+                } else {
+                    self.report(TypeError::WrongArity {
+                        expr,
+                        name: name.clone(),
+                        found: args.len(),
+                        expected: members
+                            .first()
+                            .map(|m| m.params.len())
+                            .unwrap_or(args.len()),
+                    });
+                }
+            }
+        }
+        self.primitive(PrimitiveType::Void)
+    }
+
     fn method_call(
         &mut self,
         expr: ExprId,
@@ -943,6 +1325,13 @@ impl<'a> InferCtx<'a> {
                 // reference or nested invocation is re-inferred against the
                 // instantiated formal ([JLS §18.5.2.4]).
                 self.reinfer_deferred(&method, &deferred);
+                // §11.2.1: an invocation of a method that declares checked
+                // exceptions adds them to the enclosing liability.
+                for thrown in &method.throws {
+                    if self.is_checked(thrown) {
+                        self.thrown.push((thrown.clone(), expr));
+                    }
+                }
                 method.ret
             }
             // On total failure the poly arguments keep their standalone types
@@ -996,7 +1385,17 @@ impl<'a> InferCtx<'a> {
                 match self.tree.expr(receiver).clone() {
                     // `super.method(...)` — a super invocation whose receiver is
                     // the superclass of the enclosing class ([§15.12.1]).
-                    ExprData::Super => (self.super_ty(), InvocationMode::Super),
+                    ExprData::Super { qualifier: None } => (self.super_ty(), InvocationMode::Super),
+                    // §15.11.2/§15.12.1: `I.super.m(...)` — a qualified-super
+                    // invocation selects the default method of the *named*
+                    // interface; the receiver type is `I` itself and the mode
+                    // restricts candidates to instance members.
+                    ExprData::Super {
+                        qualifier: Some(qualifier),
+                    } => (
+                        resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier),
+                        InvocationMode::Interface,
+                    ),
                     _ => (self.infer_expr(receiver), InvocationMode::Virtual),
                 }
             }
@@ -1605,11 +2004,24 @@ impl<'a> InferCtx<'a> {
     /// ([JLS §9.8]) and its body is inferred against the SAM's return type —
     /// a return statement inside a lambda body returns from the lambda, not
     /// from the enclosing method.
-    fn lambda_type(&mut self, params: &[(Name, Option<TypeRef<Name>>)], body: LambdaBody) -> Ty {
+    fn lambda_type(
+        &mut self,
+        expr: ExprId,
+        params: &[(Name, Option<TypeRef<Name>>)],
+        body: LambdaBody,
+    ) -> Ty {
         let Some(target) = self.target else {
             return self.error();
         };
+        // §9.8/§15.27.3: a lambda expression's target must be a functional
+        // interface — one with exactly one abstract method.
         let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
+            if !target.is_error(self.db) {
+                self.report(TypeError::NotAFunctionalInterface {
+                    expr,
+                    target: target.display(self.db).to_string(),
+                });
+            }
             return self.error();
         };
         if sam.params.len() != params.len() {
@@ -1646,6 +2058,7 @@ impl<'a> InferCtx<'a> {
     /// parameters ([§15.13.3]) so the qualifier is inferred.
     fn method_ref_type(
         &mut self,
+        expr: ExprId,
         qualifier: Option<ExprId>,
         type_name: Option<&TypeRef<Name>>,
         name: &Name,
@@ -1653,7 +2066,15 @@ impl<'a> InferCtx<'a> {
         let Some(target) = self.target else {
             return self.error();
         };
+        // §9.8/§15.13: a method reference's target must be a functional
+        // interface too.
         let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
+            if !target.is_error(self.db) {
+                self.report(TypeError::NotAFunctionalInterface {
+                    expr,
+                    target: target.display(self.db).to_string(),
+                });
+            }
             return self.error();
         };
         self.resolve_method_ref(qualifier, type_name, name, &sam.params);
@@ -2017,6 +2438,14 @@ impl<'a> InferCtx<'a> {
         self.bind_local(id, local.name, ty);
     }
 
+    /// Declares a formal parameter, which is definitely assigned throughout
+    /// its body ([JLS §16.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html#jls-16.1.5),
+    /// [§16.1.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html#jls-16.1.9)).
+    fn declare_param(&mut self, id: LocalId) {
+        self.declare_local(id);
+        self.definite.insert(id);
+    }
+
     fn declare_local_ty(&mut self, id: LocalId, fallback: Ty) {
         let local = self.tree.local(id).clone();
         let ty = match &local.ty {
@@ -2028,6 +2457,10 @@ impl<'a> InferCtx<'a> {
 
     fn bind_local(&mut self, id: LocalId, name: Name, ty: Ty) {
         self.locals.insert(id, ty);
+        // Every binding form except a bare declarator initializes its local
+        // (parameters, initializers, catch/foreach/resource variables,
+        // pattern bindings), so it is definitely assigned ([§16]).
+        self.definite.insert(id);
         self.scopes
             .last_mut()
             .expect("scope stack non-empty")
@@ -2109,6 +2542,9 @@ impl<'a> InferCtx<'a> {
     /// [`Self::pattern_type`] during expression inference.
     fn scope_binding(&mut self, id: LocalId) {
         let name = self.tree.local(id).name.clone();
+        // A pattern variable is definitely assigned wherever it is in scope
+        // ([§16.1.13]): it is bound exactly when the pattern matched.
+        self.definite.insert(id);
         self.scopes
             .last_mut()
             .expect("scope stack non-empty")
@@ -2166,6 +2602,11 @@ impl<'a> InferCtx<'a> {
                     return;
                 }
                 self.declare_local(*local);
+                if initializer.is_none() {
+                    // §16: a declarator without an initializer is not
+                    // definitely assigned until a later assignment reaches it.
+                    self.definite.remove(local);
+                }
                 if let Some(initializer) = initializer {
                     // The initializer is a poly expression whose target is the
                     // declared type of the local ([JLS §14.4]).
@@ -2185,7 +2626,11 @@ impl<'a> InferCtx<'a> {
                     if matches!(self.tree.expr(*initializer).clone(), ExprData::ArrayInit(_)) {
                         return;
                     }
-                    if !crate::subtyping::is_assignable(self.db, &self.scope, &init_ty, &target) {
+                    // §5.2: an int-typed constant expression whose value fits
+                    // the target narrows in assignment context ([§5.1.3]).
+                    if !crate::subtyping::is_assignable(self.db, &self.scope, &init_ty, &target)
+                        && !self.constant_narrowable(*initializer, init_ty, target)
+                    {
                         self.report(TypeError::IncompatibleTypes {
                             expr: *initializer,
                             found: init_ty.display(self.db).to_string(),
@@ -2208,19 +2653,52 @@ impl<'a> InferCtx<'a> {
                         self.scope_binding(binding);
                     }
                 }
+                // §16: after the `if`, a local is definitely assigned only if
+                // it is assigned on *both* paths — the then branch and (when
+                // present) the else branch; a branch that exits contributes
+                // no constraint.
+                let before = self.definite.clone();
+                let before_exited = self.exited;
                 self.infer_stmt(*then);
                 self.scopes.pop();
+                let mut then_set = std::mem::replace(&mut self.definite, before.clone());
+                let then_exited = std::mem::replace(&mut self.exited, before_exited);
                 if let Some(els) = els {
                     self.infer_stmt(*els);
+                }
+                // The else-less form leaves `definite` at `before` already.
+                if els.is_some() {
+                    if then_exited && !self.exited {
+                        // Only the else path falls through: keep its set.
+                    } else if self.exited && !then_exited {
+                        // Only the then path falls through: keep its set.
+                    } else {
+                        then_set.retain(|local| self.definite.contains(local));
+                        self.definite = then_set;
+                    }
+                    self.exited = then_exited && self.exited;
                 }
             }
             StmtData::While { cond, body } => {
                 self.check_condition(*cond);
+                // §16.1.10: the body may run zero times, so nothing it
+                // assigns is definitely assigned after the loop.
+                let before = self.definite.clone();
                 self.infer_stmt(*body);
+                self.definite = before;
+                self.exited = false;
             }
             StmtData::DoWhile { body, cond } => {
+                // §16.1.11: a do-loop's body runs at least once, so its
+                // assignments carry past the loop when the body falls
+                // through; an exiting body constrains nothing.
+                let before = self.definite.clone();
                 self.infer_stmt(*body);
+                if self.exited {
+                    self.definite = before;
+                }
                 self.check_condition(*cond);
+                self.exited = false;
             }
             StmtData::For {
                 init,
@@ -2238,7 +2716,11 @@ impl<'a> InferCtx<'a> {
                 for &step in step {
                     let _ = self.infer_expr(step);
                 }
+                // §16.1.14: like `while`, the body may run zero times.
+                let before = self.definite.clone();
                 self.infer_stmt(*body);
+                self.definite = before;
+                self.exited = false;
                 self.scopes.pop();
             }
             StmtData::ForEach {
@@ -2273,11 +2755,15 @@ impl<'a> InferCtx<'a> {
                 };
                 self.scopes.push(FxHashMap::default());
                 self.declare_local_ty(*var, element);
+                // §16.1.11: like `while`, the body may run zero times.
+                let before = self.definite.clone();
                 self.infer_stmt(*body);
+                self.definite = before;
+                self.exited = false;
                 self.scopes.pop();
             }
             StmtData::Switch { scrutinee, arms } => {
-                let _ = self.infer_expr(*scrutinee);
+                let selector = self.infer_switch_selector(*scrutinee);
                 self.scopes.push(FxHashMap::default());
                 for arm in arms {
                     // §14.30.2/§14.30.3: a pattern label's variables are in
@@ -2286,7 +2772,7 @@ impl<'a> InferCtx<'a> {
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                let _ = self.infer_expr(*e);
+                                let _ = self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);
@@ -2331,6 +2817,9 @@ impl<'a> InferCtx<'a> {
                             if !ty.is_error(self.db)
                                 && !ret.is_error(self.db)
                                 && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &ret)
+                                // §5.2: an in-range int constant narrows to a
+                                // primitive return type ([§5.1.3]).
+                                && !self.constant_narrowable(*expr, ty, ret)
                             {
                                 // §14.17: the returned value must be assignable
                                 // to the return type ([§5.2]).
@@ -2342,6 +2831,11 @@ impl<'a> InferCtx<'a> {
                             }
                         }
                     }
+                }
+                // §16: a `return` exits this path; a `yield` stays inside its
+                // switch expression.
+                if matches!(stmt, StmtData::Return(_)) {
+                    self.exited = true;
                 }
             }
             StmtData::Throw(expr) => {
@@ -2359,9 +2853,18 @@ impl<'a> InferCtx<'a> {
                         found: ty.display(self.db).to_string(),
                         expected: "java.lang.Throwable".to_owned(),
                     });
+                } else if self.is_checked(&ty) {
+                    // §11.2.2/§14.18: a `throw` of a checked exception adds it
+                    // to the enclosing liability.
+                    self.thrown.push((ty, *expr));
                 }
+                // §16: control does not continue past a `throw` on this path.
+                self.exited = true;
             }
-            StmtData::Return(None) | StmtData::Break(_) | StmtData::Continue(_) => {}
+            StmtData::Return(None) | StmtData::Break(_) | StmtData::Continue(_) => {
+                // §16: control does not continue past an exit on this path.
+                self.exited = true;
+            }
             StmtData::Synchronized { expr, body } => {
                 let _ = self.infer_expr(*expr);
                 self.infer_stmt(*body);
@@ -2395,15 +2898,79 @@ impl<'a> InferCtx<'a> {
                         }
                     }
                 }
+                // §16.1.8: the try block may exit via any catch, so a local
+                // is definitely assigned after the statement only if it is
+                // assigned at the end of *every* path — the intersection of
+                // the try block and each catch clause. A `finally` always
+                // runs, so its assignments override.
+                let before = self.definite.clone();
+                let before_exited = self.exited;
                 self.infer_stmt(*body);
+                // The end-of-body state is one path; each catch clause adds
+                // another, starting from the pre-try state.
+                let mut paths: Vec<FxHashSet<LocalId>> = vec![self.definite.clone()];
+                let mut all_exits = self.exited;
+                // exceptions assignable to its declared type; a clause whose
+                // type is a subtype of an *earlier* clause's type is
+                // unreachable ([§14.20]).
+                let mut catch_tys: Vec<Ty> = Vec::new();
                 for clause in catches {
                     self.scopes.push(FxHashMap::default());
+                    let clause_ty = self
+                        .tree
+                        .local(clause.param)
+                        .ty
+                        .as_ref()
+                        .map(|ty| resolve_type_ref(self.db, &self.scope, &self.resolver, ty));
+                    if let Some(clause_ty) = &clause_ty {
+                        if !clause_ty.is_error(self.db)
+                            && catch_tys.iter().any(|earlier| {
+                                crate::subtyping::is_subtype(
+                                    self.db,
+                                    &self.scope,
+                                    &clause_ty.clone(),
+                                    earlier,
+                                )
+                            })
+                        {
+                            // §11.2.3: already caught by an earlier clause.
+                            self.report(TypeError::AlreadyCaught {
+                                local: clause.param,
+                            });
+                        } else {
+                            self.thrown.retain(|(thrown, _)| {
+                                !crate::subtyping::is_assignable(
+                                    self.db,
+                                    &self.scope,
+                                    thrown,
+                                    clause_ty,
+                                )
+                            });
+                            catch_tys.push(clause_ty.clone());
+                        }
+                    }
                     self.declare_local(clause.param);
                     self.infer_stmt(clause.body);
+                    // Each catch clause is an alternative path from the
+                    // pre-try state ([§16.1.8]).
+                    self.definite = before.clone();
+                    self.exited = before_exited;
+                    paths.push(self.definite.clone());
+                    all_exits &= self.exited;
                     self.scopes.pop();
                 }
+                // The intersection of every path: a local is definitely
+                // assigned after the try only if each path assigned it.
+                let mut joined = paths.pop().unwrap_or_default();
+                for path in &paths {
+                    joined.retain(|local| path.contains(local));
+                }
+                self.definite = joined;
+                self.exited = all_exits;
                 self.scopes.pop();
                 if let Some(finally) = finally {
+                    // §16.1.8: the `finally` block always runs, so its
+                    // assignments override the joined state.
                     self.infer_stmt(*finally);
                 }
             }
@@ -2414,6 +2981,9 @@ impl<'a> InferCtx<'a> {
                     let _ = self.infer_expr(*msg);
                 }
             }
+            // §14.3: a local class declaration declares a type, not a value —
+            // it has no effect on expression typing.
+            StmtData::LocalClass { .. } => {}
             StmtData::Missing => {}
         }
     }
@@ -2426,6 +2996,58 @@ fn simple_name(fqn: &str) -> String {
         Some(i) => fqn[i + 1..].to_owned(),
         None => fqn.to_owned(),
     }
+}
+
+/// The names a field initializer may not read by simple name
+/// ([JLS §8.3.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.3.3)):
+/// same-class fields declared textually *after* `field` with the same
+/// static/instance kind. A cross-kind read (an instance initializer reading a
+/// later static, or vice versa) is legal.
+fn forward_field_names(
+    tree: &hir_expand::item_tree::ItemTree,
+    field: hir_expand::item_tree::ItemId,
+    static_field: bool,
+) -> Vec<Name> {
+    // The class-like declaration owning `field`.
+    fn owner_of(
+        tree: &hir_expand::item_tree::ItemTree,
+        id: hir_expand::item_tree::ItemId,
+        target: hir_expand::item_tree::ItemId,
+    ) -> Option<hir_expand::item_tree::ItemId> {
+        let data = tree.data(id);
+        let class_like = matches!(
+            data,
+            ItemData::Class(_) | ItemData::Interface(_) | ItemData::Enum(_) | ItemData::Record(_)
+        );
+        for &child in data.body() {
+            if child == target {
+                return class_like.then_some(id);
+            }
+            if let Some(found) = owner_of(tree, child, target) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    for top in &tree.top {
+        if let Some(class_item) = owner_of(tree, *top, field) {
+            return tree
+                .data(class_item)
+                .body()
+                .iter()
+                .filter(|&&item| item > field)
+                .filter_map(|&item| match tree.data(item) {
+                    ItemData::Field(later)
+                        if later.modifiers.static_ == static_field && item != field =>
+                    {
+                        Some(later.name.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 /// The source symbol of a unary operator, for [`TypeError::IncompatibleOperand`].

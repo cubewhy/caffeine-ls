@@ -1,6 +1,6 @@
 ---
 source: crates/hir-ty/tests/jls_classes.rs
-assertion_line: 89
+assertion_line: 86
 expression: out
 ---
 FILE /src/com/example/CtorChain.java:
@@ -16,8 +16,7 @@ class CtorChain {
 
 method CtorChain(): <init>
   locals: 
-  exprs: e0: int | e1: <error>
-  diags: e1@5:18: no-such-method: cannot find method '<missing>'
+  exprs: e0: int | e1: void
 method CtorChain(int): <init>
   locals: l0: int
   exprs: e2: com.example.CtorChain | e3: int | e4: int | e5: int

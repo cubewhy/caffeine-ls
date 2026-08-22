@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 843
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -10,7 +11,7 @@ class Body {
         return null;
     }
 
-    String checked() {
+    String checked() throws Exception {
         throw new RuntimeException();
         throw makeEx();
         throw new Object();

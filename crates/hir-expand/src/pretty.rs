@@ -644,6 +644,9 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     .unwrap_or_else(|| "none".to_owned())
             ));
         }
+        StmtData::LocalClass { name } => {
+            out.push_str(&format!("{indent}{id}: local-class {}\n", name.as_str()))
+        }
         StmtData::Missing => out.push_str(&format!("{indent}{id}: <missing>\n")),
     }
 }
@@ -657,7 +660,10 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             "{id}: this {}",
             qualifier.as_ref().map(render_type).unwrap_or_default()
         )),
-        ExprData::Super => out.push_str(&format!("{id}: super")),
+        ExprData::Super { qualifier } => out.push_str(&format!(
+            "{id}: super {}",
+            qualifier.as_ref().map(render_type).unwrap_or_default()
+        )),
         ExprData::ClassLit(ty) => out.push_str(&format!("{id}: class-lit {}", render_type(ty))),
         ExprData::Var(name) => out.push_str(&format!("{id}: var {name}")),
         ExprData::NamePath(name) => out.push_str(&format!("{id}: name-path {name}")),
@@ -683,10 +689,34 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
-        ExprData::New { ty, args, diamond } => out.push_str(&format!(
-            "{id}: new {}{}({})",
-            render_type(ty),
-            if *diamond { "<>" } else { "" },
+        ExprData::New {
+            ty,
+            args,
+            diamond,
+            members,
+        } => {
+            out.push_str(&format!(
+                "{id}: new {}{}({})",
+                render_type(ty),
+                if *diamond { "<>" } else { "" },
+                args.iter()
+                    .map(|a| a.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+            if !members.is_empty() {
+                out.push_str(&format!(
+                    " {{ {} }}",
+                    members
+                        .iter()
+                        .map(|m| format!("{}({})", m.name.as_str(), m.params))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+        ExprData::CtorCall { args } => out.push_str(&format!(
+            "{id}: ctor-call({})",
             args.iter()
                 .map(|a| a.to_string())
                 .collect::<Vec<_>>()
@@ -824,9 +854,9 @@ fn render_pattern(bodies: &BodyTree, id: PatternId) -> String {
 
 fn render_literal(lit: Literal) -> &'static str {
     match lit {
-        Literal::Int => "int",
-        Literal::Long => "long",
-        Literal::Char => "char",
+        Literal::Int(_) => "int",
+        Literal::Long(_) => "long",
+        Literal::Char(_) => "char",
         Literal::Float => "float",
         Literal::Double => "double",
         Literal::Boolean => "boolean",

@@ -852,7 +852,7 @@ class Body {
         return null;
     }
 
-    String checked() {
+    String checked() throws Exception {
         throw new RuntimeException();
         throw makeEx();
         throw new Object();
@@ -866,7 +866,8 @@ class Body {
 // must be assignable to `Throwable` ([§5.2]): `new RuntimeException()` and the
 // generic `makeEx()` — which resolves to its `Exception` bound rather than the
 // method's `String` return type — are fine, while `new Object()` is not a
-// `Throwable` and marks the operand as an error.
+// `Throwable` and marks the operand as an error. §11.2: the checked
+// exceptions thrown here are discharged by the declared `throws`.
 
 snapshot!(
     yield_target,
@@ -880,13 +881,13 @@ class Body {
         return x;
     }
 
-    int m(boolean b) {
+    int m(int b) {
         String s = switch (b) {
-            case true -> \"a\";
+            case 1 -> \"a\";
             default -> { yield id(\"b\"); }
         };
         int n = switch (b) {
-            case true -> 1;
+            case 1 -> 1;
             default -> { yield 2; }
         };
         return s.length() + n;

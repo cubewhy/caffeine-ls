@@ -19,5 +19,4 @@ method name(): java.lang.String
   exprs: e0: java.lang.String
 method name(): java.lang.String
   locals: 
-  exprs: e2: <error>
-  diags: e2@7:33: no-such-method: cannot find method 'name'
+  exprs: e2: java.lang.String

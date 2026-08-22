@@ -97,6 +97,28 @@ pub enum TypeError {
     GenericArrayCreation { expr: ExprId, ty: String },
     /// §15.9: a `new` of a type variable, interface, abstract class or enum.
     CannotInstantiateTypeVar { expr: ExprId, name: String },
+    /// §14.11.1: the selector of a `switch` is not one of the types a switch
+    /// supports (`char`, `byte`, `short`, `int` or their boxes, `String`, an
+    /// enum).
+    SwitchSelectorType { expr: ExprId, found: String },
+    /// §11.2: a checked exception is thrown at `expr` but neither caught by
+    /// an enclosing `catch` nor declared by the enclosing method's `throws`.
+    UnreportedException { expr: ExprId, thrown: String },
+    /// §11.2.3/§14.20: a catch clause's parameter is shadowed by an earlier
+    /// clause whose type is a superclass — the clause is unreachable.
+    AlreadyCaught { local: LocalId },
+    /// §9.8/§15.27.3: a lambda or method reference target is not a functional
+    /// interface.
+    NotAFunctionalInterface { expr: ExprId, target: String },
+    /// §8.3.3: a field initializer reads a same-class field declared
+    /// textually later, by simple name and of the same static/instance kind.
+    IllegalForwardReference { expr: ExprId, name: Name },
+    /// §16 (definite assignment): the value of a blank or not-yet-assigned
+    /// local is read before an assignment reaches the read.
+    NotDefinitelyAssigned { expr: ExprId, name: Name },
+    /// §14.11.1/§15.28: a switch expression is not exhaustive — some selector
+    /// values have no matching arm and there is no `default`.
+    NotExhaustive { expr: ExprId },
 }
 
 impl TypeError {
@@ -120,6 +142,19 @@ impl TypeError {
             TypeError::CannotInstantiateTypeVar { .. } => {
                 DiagnosticCode::Java(CannotInstantiateTypeVar)
             }
+            TypeError::SwitchSelectorType { .. } => DiagnosticCode::Java(SwitchSelectorType),
+            TypeError::UnreportedException { .. } => DiagnosticCode::Java(UnreportedException),
+            TypeError::AlreadyCaught { .. } => DiagnosticCode::Java(AlreadyCaught),
+            TypeError::NotAFunctionalInterface { .. } => {
+                DiagnosticCode::Java(NotAFunctionalInterface)
+            }
+            TypeError::IllegalForwardReference { .. } => {
+                DiagnosticCode::Java(IllegalForwardReference)
+            }
+            TypeError::NotDefinitelyAssigned { .. } => {
+                DiagnosticCode::Java(VariableMightNotHaveBeenInitialized)
+            }
+            TypeError::NotExhaustive { .. } => DiagnosticCode::Java(NotExhaustive),
         }
     }
 
@@ -141,7 +176,14 @@ impl TypeError {
             | NonIterableForEach { expr, .. }
             | BadCast { expr, .. }
             | GenericArrayCreation { expr, .. }
-            | CannotInstantiateTypeVar { expr, .. } => DiagLocation::Expr(*expr),
+            | CannotInstantiateTypeVar { expr, .. }
+            | SwitchSelectorType { expr, .. }
+            | UnreportedException { expr, .. }
+            | NotAFunctionalInterface { expr, .. }
+            | IllegalForwardReference { expr, .. }
+            | NotDefinitelyAssigned { expr, .. }
+            | NotExhaustive { expr, .. } => DiagLocation::Expr(*expr),
+            AlreadyCaught { local } => DiagLocation::Local(*local),
         }
     }
 
@@ -210,6 +252,30 @@ impl TypeError {
             }
             CannotInstantiateTypeVar { name, .. } => {
                 format!("{name} is abstract; cannot be instantiated")
+            }
+            SwitchSelectorType { found, .. } => {
+                format!("switch selector type {found} is not convertible to int, String or an enum")
+            }
+            UnreportedException { thrown, .. } => {
+                format!("unreported exception {thrown}; must be caught or declared to be thrown")
+            }
+            AlreadyCaught { local } => {
+                let name = tree.local(*local).name.as_str();
+                format!("exception {name} has already been caught")
+            }
+            NotAFunctionalInterface { target, .. } => {
+                format!("{target} is not a functional interface")
+            }
+            IllegalForwardReference { name, .. } => {
+                let name = name.as_str();
+                format!("illegal forward reference: '{name}' is declared later")
+            }
+            NotDefinitelyAssigned { name, .. } => {
+                let name = name.as_str();
+                format!("variable '{name}' might not have been initialized")
+            }
+            NotExhaustive { .. } => {
+                "the switch expression does not cover all possible input values".to_owned()
             }
         }
     }

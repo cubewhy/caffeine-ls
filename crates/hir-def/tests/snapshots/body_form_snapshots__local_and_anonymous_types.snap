@@ -1,6 +1,6 @@
 ---
 source: crates/hir-def/tests/body_form_snapshots.rs
-assertion_line: 206
+assertion_line: 205
 expression: out
 ---
 SOURCE:
@@ -9,7 +9,7 @@ class Foo {
     void m() {
         class Local {}
         record Pair(int a, int b) {}
-        Runnable r = new Runnable() {
+        new Runnable() {
             public void run() {}
         };
     }
@@ -19,10 +19,11 @@ PARSE_ERRORS:
 <none>
 ITEM_TREE:
 file (java)
-class Foo @1..177
-  method m() -> void @12..175
+class Foo @1..164
+  method m() -> void @12..162
 
 BODIES:
 body:
-  s0: decl l0 = e0
-  l0: Runnable r
+  s0: local-class Local
+  s1: local-class Pair
+  s2: expr e0: new Runnable() { run(0) }

@@ -77,6 +77,7 @@
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
 
 pub mod db;
+pub mod decl_check;
 pub mod diagnostics;
 pub mod infer;
 pub mod inference;
@@ -88,14 +89,17 @@ pub mod ty;
 pub use db::TyDatabase;
 // `DiagnosticCode` lives in the shared `syntax` crate; re-export it here so
 // the hir-ty API can keep naming it directly.
+pub use decl_check::{DeclDiagnostic, class_diagnostics};
 pub use diagnostics::{DiagLocation, TypeError};
 pub use infer::{BodyTypes, body_types};
 pub use inference::least_upper_bound;
+pub use method::all_methods as all_methods_for_test;
 pub use method::{
     Access, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,
     MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
     pick_method, single_abstract_method,
 };
+pub use resolve::scope_for_file as scope_for_test;
 pub use resolve::{
     Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,
 };

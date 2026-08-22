@@ -3,14 +3,9 @@
 //! widening and narrowing primitive conversion ([§5.1.2], [§5.1.3]), boxing
 //! and unboxing ([§5.1.7], [§5.1.8]) and casting contexts ([§5.5]). Red cases
 //! render the diagnostics the type layer must report; green cases confirm
-//! legal conversions apply.
-//!
-//! The trailing *known divergence* section pins behaviour that still
-//! contradicts the spec or `javac` 25 — constant narrowing of `int` literals
-//! in assignment context ([§5.2], accepted by `javac`, reported as an error)
-//! and inconvertible-reference-cast detection ([§5.5], rejected by `javac`,
-//! not diagnosed). Their snapshots are kept pending (`.snap.new`) until the
-//! divergences are fixed; a fix must flip them.
+//! legal conversions apply, including the narrowing of `int` constants in
+//! assignment context ([§5.2], [§5.1.3]) and the rejection of casts between
+//! provably distinct class types ([§5.5.1], [§5.1.6.3]).
 
 #[macro_use]
 mod common;
@@ -119,12 +114,13 @@ class Body {
     )])
 );
 
-// -- known divergence: constant narrowing ([§5.2]) ------------------------------
-// `javac` 25 accepts every assignment below (an `int` constant narrows in
-// assignment context); the type layer wrongly reports `incompatible-types`.
+// -- green: narrowing of int constants in assignment context ([§5.2]) ----------
+// An int-typed constant expression ([§4.12.4], [§15.28]) narrows to `byte`,
+// `short` or `char` when its value is representable in the target
+// ([§5.1.3]); `javac` 25 accepts every assignment below.
 
 snapshot!(
-    divergence_constant_narrowing,
+    constant_narrowing,
     check_body_types(&[(
         "/src/com/example/Body.java",
         "\
@@ -142,12 +138,12 @@ class Body {
     )])
 );
 
-// -- known divergence: inconvertible cast ([§5.5]) -------------------------------
-// `String` and `Integer` are unrelated final classes, so `javac` 25 rejects
-// this cast; the type layer stays silent.
+// -- red: a cast between provably distinct class types ([§5.5.1]) ----------------
+// `String` and `Integer` are unrelated final classes, so no common subclass
+// can exist and the cast is inconvertible; `javac` 25 rejects it the same way.
 
 snapshot!(
-    divergence_inconvertible_cast,
+    inconvertible_cast,
     check_body_types(&[(
         "/src/com/example/Body.java",
         "\

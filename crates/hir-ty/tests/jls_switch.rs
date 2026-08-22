@@ -5,22 +5,18 @@
 //! fall-through, the arm result types of a switch expression and `yield`
 //! ([§14.21]), plus type-pattern, guarded and `null` labels ([§14.30]). Red
 //! cases render the diagnostics the type layer must report; green cases
-//! confirm the switch forms type without errors.
-//!
-//! The trailing *known divergence* section pins behaviour that still
-//! contradicts the spec or `javac` 25 — bare enum constants in case labels
-//! resolve as `cannot-resolve-symbol` ([§14.11.1]) and non-switchable selector
-//! types such as `double` are not diagnosed ([§14.11.1]). Exhaustiveness
-//! checking of switch expressions over sealed or enumerated selectors is not
-//! modelled and is not snapshotted. Divergence snapshots are kept pending
-//! (`.snap.new`) until the divergences are fixed; a fix must flip them.
+//! confirm the switch forms type without errors — including bare enum
+//! constant labels resolved against the selector ([§14.11.1], [§8.9.1]) and
+//! the rejection of non-selectable primitive selectors ([§14.11.1]).
+//! Exhaustiveness checking of switch expressions over sealed or enumerated
+//! selectors is not modelled and is not snapshotted.
 
 #[macro_use]
 mod common;
 
 use crate::common::check_body_types;
 
-// -- green: statement selectors over int and String -------------------------------
+// -- green: statement selectors over int, String and an enum ---------------------
 
 snapshot!(
     statement_selector_forms,
@@ -48,6 +44,38 @@ class Sw {
         switch (s) {
             case \"a\":
                 return 1;
+            default:
+                return 0;
+        }
+    }
+
+    int byColor(Color c) {
+        switch (c) {
+            case R:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+}
+",
+    )])
+);
+
+// -- red: a non-selectable primitive selector ([§14.11.1]) ------------------------
+// Only the int-compatible primitives may be selected; `javac` 25 rejects
+// `double` (a primitive pattern is required to switch on it).
+
+snapshot!(
+    unsupported_selector,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    double m(double d) {
+        switch (d) {
             default:
                 return 0;
         }
@@ -105,12 +133,11 @@ class Sw {
     )])
 );
 
-// -- known divergence: bare enum constants as case labels ([§14.11.1]) --------------
-// `javac` 25 resolves the bare constant `R` against the enum selector; the
-// type layer reports a spurious `cannot-resolve-symbol`.
+// -- green: an exhaustive switch expression over an enum ([§14.11.1]) -------------
+// Every constant is named by some label, so no `default` is required.
 
 snapshot!(
-    divergence_switch_enum_selector_labels,
+    exhaustive_enum_switch,
     check_body_types(&[(
         "/src/com/example/Sw.java",
         "\
@@ -119,36 +146,35 @@ package com.example;
 enum Color { R, G, B }
 
 class Sw {
-    int byColor(Color c) {
-        switch (c) {
-            case R:
-                return 1;
-            default:
-                return 0;
-        }
+    int m(Color c) {
+        return switch (c) {
+            case R -> 1;
+            case G, B -> 2;
+        };
     }
 }
 ",
     )])
 );
 
-// -- known divergence: non-switchable selector type ([§14.11.1]) ---------------------
-// Only char/byte/short/int, their boxes, String and enum types may be
-// selected; `javac` 25 rejects `double`, but the type layer stays silent.
+// -- red: a switch expression that is not exhaustive ([§15.28]) --------------------
+// `G` and `B` have no arm and there is no `default`; `javac` 25 reports "the
+// switch expression does not cover all possible input values".
 
 snapshot!(
-    divergence_switch_double_selector,
+    not_exhaustive,
     check_body_types(&[(
         "/src/com/example/Sw.java",
         "\
 package com.example;
 
+enum Color { R, G, B }
+
 class Sw {
-    double m(double d) {
-        switch (d) {
-            default:
-                return 0;
-        }
+    int m(Color c) {
+        return switch (c) {
+            case R -> 1;
+        };
     }
 }
 ",

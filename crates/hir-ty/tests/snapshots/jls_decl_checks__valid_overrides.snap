@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 19
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    Base self() { return this; }
+}
+
+class Derived extends Base {
+    Derived self() { return this; }
+}
+
+interface A {
+    default String name() { return "a"; }
+}
+
+interface B {
+    default String name() { return "b"; }
+}
+
+class Diamond implements A, B {
+    public String name() { return "c"; }
+}

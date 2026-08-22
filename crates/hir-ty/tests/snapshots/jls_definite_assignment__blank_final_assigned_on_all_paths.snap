@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 16
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    void m(boolean p) {
+        final int f;
+        if (p) {
+            f = 1;
+        } else {
+            f = 2;
+        }
+        int use = f + 1;
+    }
+}
+
+method m(boolean): void
+  locals: l0: boolean | l1: int | l2: int
+  exprs: e0: boolean | e1: boolean | e2: int | e3: int | e4: int | e5: int | e6: int | e7: int | e8: int | e9: int | e10: int

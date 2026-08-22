@@ -306,6 +306,55 @@ pub fn member_set(
     member_set_query(db, scope, receiver.id, Name::new(name), ctx)
 }
 
+/// All methods of `ty` across its supertype closure, most-derived first and
+/// deduped by overriding signature
+/// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)):
+/// the raw material of the declaration-level checks ([§8.4.8.3],
+/// [§9.4.1.3], [`crate::decl_check`]). The access-control context is that of
+/// the declaring class itself ([§6.6.1]).
+pub fn all_methods(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    ctx: &InvocationContext,
+) -> Vec<MethodData> {
+    member_set_impl(db, scope, receiver, "", ctx)
+}
+
+/// The default methods `receiver` inherits, **without** the most-derived
+/// dedup of [`member_set_impl`](Self): two unrelated superinterfaces may both
+/// declare a matching default without either overriding the other, and that
+/// conflict is exactly what the §9.4.1.3 check must see
+/// ([JLS §9.4.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.3)).
+pub(crate) fn inherited_defaults(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    ctx: &InvocationContext,
+) -> Vec<MethodData> {
+    let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
+    let receiver = capture_conversion(db, *receiver);
+    let mut stack = vec![receiver];
+    let mut seen: FxHashSet<TyData> = FxHashSet::default();
+    let mut out = Vec::new();
+    while let Some(ty) = stack.pop() {
+        if !seen.insert(ty.id) {
+            continue;
+        }
+        out.extend(
+            class_methods(db, &scope_id, &ty, "")
+                .into_iter()
+                .filter(|method| {
+                    method.declaring_interface && !method.is_static && !method.abstract_
+                }),
+        );
+        for parent in supertypes_query(db, scope_id, ty.id) {
+            stack.push(parent);
+        }
+    }
+    out
+}
+
 /// Memoized per (scope, receiver, name, context). See [`member_set`]. The
 /// receiver and context are interned ids ([`TyData`], [`ContextKey`]), so
 /// repeated member sets at the same call site hit the query cache instead of
@@ -578,7 +627,9 @@ fn library_class_methods(
 
     let mut out = Vec::new();
     for method in &class.methods {
-        if interner.resolve(&method.name) != name {
+        // An empty name is the wildcard of the declaration-level walk
+        // ([§9.8], [`crate::decl_check`]); no method can be named "".
+        if !name.is_empty() && interner.resolve(&method.name) != name {
             continue;
         }
         let type_params = method
@@ -590,7 +641,9 @@ fn library_class_methods(
             })
             .collect();
         out.push(MethodData {
-            name: name.to_owned(),
+            // The method's own name — not the lookup filter, which is the
+            // empty wildcard in the declaration-level walk.
+            name: interner.resolve(&method.name).to_owned(),
             owner: fqn.clone(),
             params: method
                 .params
@@ -656,11 +709,13 @@ fn source_class_methods(
         matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
 
     let mut out = Vec::new();
-    for &item in class_data.body() {
+    for item in class_data.body().to_vec() {
         let Some(ItemData::Method(method)) = item_data(&tree, item) else {
             continue;
         };
-        if method.name.as_str() != name {
+        // An empty name is the wildcard of the declaration-level walk
+        // ([§9.8], [`crate::decl_check`]); no method can be named "".
+        if !name.is_empty() && method.name.as_str() != name {
             continue;
         }
         let method_resolver = Resolver::new(&tree, type_params, item);
@@ -702,7 +757,9 @@ fn source_class_methods(
             .collect();
         throws.dedup();
         out.push(MethodData {
-            name: name.to_owned(),
+            // The method's own name — not the lookup filter, which is the
+            // empty wildcard in the declaration-level walk.
+            name: method.name.as_str().to_owned(),
             owner: fqn.clone(),
             params,
             ret,

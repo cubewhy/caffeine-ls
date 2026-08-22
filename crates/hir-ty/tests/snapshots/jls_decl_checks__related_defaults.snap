@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 108
+expression: out
+---
+FILE /src/com/example/Chain.java:
+package com.example;
+
+interface A {
+    default String name() { return "a"; }
+}
+
+interface B extends A {
+    default String name() { return "b"; }
+}
+
+class Chain implements B {}
