@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+assertion_line: 52
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+interface A {
+    default String name() { return "a"; }
+    int MAX = 10;
+}
+
+interface B extends A {
+    String name();
+}
+
+class C implements B {
+    public String name() { return "c" + MAX; }
+
+    int useMax() {
+        return B.MAX + C.this.MAX;
+    }
+}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+field MAX
+  locals: 
+  exprs: e1: int
+method name(): java.lang.String
+  locals: 
+  exprs: e2: java.lang.String | e3: int | e4: java.lang.String
+method useMax(): int
+  locals: 
+  exprs: e6: int | e7: com.example.C | e8: int | e9: int

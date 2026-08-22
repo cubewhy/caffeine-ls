@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+assertion_line: 15
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(byte b, short s, char c, int i, long l, float f) {
+        long l2 = i;
+        float f2 = l;
+        double d1 = f;
+        double d2 = c;
+        int back = b + s;
+    }
+}
+
+method m(byte, short, char, int, long, float): void
+  locals: l0: byte | l1: short | l2: char | l3: int | l4: long | l5: float | l6: long | l7: float | l8: double | l9: double | l10: int
+  exprs: e0: int | e1: long | e2: float | e3: char | e4: byte | e5: short | e6: int

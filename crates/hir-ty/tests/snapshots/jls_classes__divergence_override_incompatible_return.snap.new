@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+assertion_line: 111
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    int f() { return 1; }
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    String f() { return ""; }
+}
+
+method f(): int
+  locals: 
+  exprs: e0: int
+method f(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String

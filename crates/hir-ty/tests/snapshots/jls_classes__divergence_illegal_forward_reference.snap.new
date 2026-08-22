@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+assertion_line: 142
+expression: out
+---
+FILE /src/com/example/InitOrder.java:
+package com.example;
+
+class InitOrder {
+    int a = b;
+    int b = 1;
+}
+
+field a
+  locals: 
+  exprs: e0: int
+field b
+  locals: 
+  exprs: e1: int

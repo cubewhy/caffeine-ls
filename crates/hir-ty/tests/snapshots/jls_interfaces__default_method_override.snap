@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+assertion_line: 21
+expression: out
+---
+FILE /src/com/example/Greets.java:
+package com.example;
+
+interface Greets {
+    default String name() { return "g"; }
+    String loud();
+}
+
+FILE /src/com/example/Impl.java:
+package com.example;
+
+class Impl implements Greets {
+    public String name() { return "i"; }
+    public String loud() { return "!"; }
+}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method loud(): java.lang.String
+  locals: 
+  exprs: e1: java.lang.String

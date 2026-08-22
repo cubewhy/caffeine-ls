@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+assertion_line: 58
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m() {
+        byte b = 200;
+        char c = -1;
+        long l = 3.14f;
+    }
+}
+
+method m(): void
+  locals: l0: byte | l1: char | l2: long
+  exprs: e0: int | e1: int | e2: int | e3: float
+  diags: e0@4:16: incompatible-types: incompatible types: int cannot be converted to byte | e2@5:16: incompatible-types: incompatible types: int cannot be converted to char | e3@6:16: incompatible-types: incompatible types: float cannot be converted to long

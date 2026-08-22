@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 85
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    int m(Object o) {
+        return switch (o) {
+            case Integer i when i > 0 -> i;
+            case Number n -> 1;
+            case null -> -1;
+            default -> 0;
+        };
+    }
+}
+
+method m(java.lang.Object): int
+  locals: l0: java.lang.Object | l1: java.lang.Integer | l2: java.lang.Number
+  exprs: e0: java.lang.Object | e1: java.lang.Integer | e2: int | e3: boolean | e4: java.lang.Integer | e5: int | e6: null | e7: int | e8: int | e9: <error> | e10: int | e11: int

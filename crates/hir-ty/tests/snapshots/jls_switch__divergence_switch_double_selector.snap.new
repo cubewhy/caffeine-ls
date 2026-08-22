@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 139
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    double m(double d) {
+        switch (d) {
+            default:
+                return 0;
+        }
+    }
+}
+
+method m(double): double
+  locals: l0: double
+  exprs: e0: double | e1: <error> | e2: int

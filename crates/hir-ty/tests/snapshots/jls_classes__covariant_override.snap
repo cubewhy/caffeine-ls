@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+assertion_line: 21
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    Base self() { return this; }
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    Derived self() { return this; }
+}
+
+method self(): com.example.Base
+  locals: 
+  exprs: e0: com.example.Base
+method self(): com.example.Derived
+  locals: 
+  exprs: e0: com.example.Derived

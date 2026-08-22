@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_types.rs
+assertion_line: 40
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int m(char c, int i) {
+        return c + i;
+    }
+}
+
+method m(char, int): int
+  locals: l0: char | l1: int
+  exprs: e0: char | e1: int | e2: int

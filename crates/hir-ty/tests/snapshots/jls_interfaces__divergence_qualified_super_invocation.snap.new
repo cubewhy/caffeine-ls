@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+assertion_line: 157
+expression: out
+---
+FILE /src/com/example/Greets.java:
+package com.example;
+
+interface Greets {
+    default String name() { return "g"; }
+}
+
+class Impl implements Greets {
+    public String name() { return Greets.super.name(); }
+}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method name(): java.lang.String
+  locals: 
+  exprs: e2: <error>
+  diags: e2@7:33: no-such-method: cannot find method 'name'

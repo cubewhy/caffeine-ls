@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+assertion_line: 89
+expression: out
+---
+FILE /src/com/example/CtorChain.java:
+package com.example;
+
+class CtorChain {
+    int v;
+
+    CtorChain() { this(1); }
+
+    CtorChain(int v) { this.v = v; }
+}
+
+method CtorChain(): <init>
+  locals: 
+  exprs: e0: int | e1: <error>
+  diags: e1@5:18: no-such-method: cannot find method '<missing>'
+method CtorChain(int): <init>
+  locals: l0: int
+  exprs: e2: com.example.CtorChain | e3: int | e4: int | e5: int

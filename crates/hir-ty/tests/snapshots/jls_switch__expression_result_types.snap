@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 60
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    int m(int i) {
+        int r = switch (i) {
+            case 1 -> 10;
+            case 2 -> {
+                yield 20;
+            }
+            default -> 30;
+        };
+        return r;
+    }
+}
+
+method m(int): int
+  locals: l0: int | l1: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: <error> | e6: int | e7: int | e8: int

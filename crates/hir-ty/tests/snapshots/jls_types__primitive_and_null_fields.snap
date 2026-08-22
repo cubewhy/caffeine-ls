@@ -1,0 +1,51 @@
+---
+source: crates/hir-ty/tests/jls_types.rs
+assertion_line: 15
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    boolean flag = false;
+    byte small = 100;
+    short mid = 300;
+    char letter = 'A';
+    int count = 42;
+    long big = 42L;
+    float approx = 1.5f;
+    double precise = 2.0;
+    Object any = null;
+    String text = null;
+}
+
+field flag
+  locals: 
+  exprs: e0: boolean
+field small
+  locals: 
+  exprs: e1: int
+field mid
+  locals: 
+  exprs: e2: int
+field letter
+  locals: 
+  exprs: e3: char
+field count
+  locals: 
+  exprs: e4: int
+field big
+  locals: 
+  exprs: e5: long
+field approx
+  locals: 
+  exprs: e6: float
+field precise
+  locals: 
+  exprs: e7: double
+field any
+  locals: 
+  exprs: e8: null
+field text
+  locals: 
+  exprs: e9: null

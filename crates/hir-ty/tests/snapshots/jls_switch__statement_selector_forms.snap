@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 23
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+enum Color { R, G, B }
+
+class Sw {
+    int classic(int i) {
+        switch (i) {
+            case 1:
+                return 10;
+            case 2:
+            case 3:
+                return 30;
+            default:
+                return 0;
+        }
+    }
+
+    int byName(String s) {
+        switch (s) {
+            case "a":
+                return 1;
+            default:
+                return 0;
+        }
+    }
+}
+
+method classic(int): int
+  locals: l0: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: <error> | e7: int
+method byName(java.lang.String): int
+  locals: l1: java.lang.String
+  exprs: e8: java.lang.String | e9: java.lang.String | e10: int | e11: <error> | e12: int

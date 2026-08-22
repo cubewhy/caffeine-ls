@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+assertion_line: 86
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+interface A {
+    default String name() { return "a"; }
+}
+
+FILE /src/com/example/B.java:
+package com.example;
+
+interface B {
+    default String name() { return "b"; }
+}
+
+FILE /src/com/example/Diamond.java:
+package com.example;
+
+class Diamond implements A, B {}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String

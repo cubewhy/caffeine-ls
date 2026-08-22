@@ -191,6 +191,25 @@ enum Op implements Runnable {
 "#,
 }
 
+// Constant bodies implementing an abstract enum method
+// ([JLS §8.9.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.2)).
+
+lower_snapshot! {
+    enum_abstract_method_constant_bodies,
+    r#"
+enum Op {
+    ADD {
+        int apply(int a, int b) { return a + b; }
+    },
+    SUB {
+        int apply(int a, int b) { return a - b; }
+    };
+
+    abstract int apply(int a, int b);
+}
+"#,
+}
+
 // -- records ----------------------------------------------------------------
 
 lower_snapshot! {

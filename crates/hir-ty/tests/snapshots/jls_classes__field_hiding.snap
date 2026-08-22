@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+assertion_line: 49
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    int x = 1;
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    String x = "d";
+
+    String pick() {
+        if (((Base) this).x == 1 && super.x == 1) {
+            return x;
+        }
+        return "";
+    }
+}
+
+field x
+  locals: 
+  exprs: e0: int
+field x
+  locals: 
+  exprs: e0: java.lang.String
+method pick(): java.lang.String
+  locals: 
+  exprs: e1: com.example.Derived | e2: com.example.Base | e3: com.example.Base | e4: int | e5: int | e6: boolean | e8: int | e9: int | e10: boolean | e11: boolean | e12: boolean | e13: java.lang.String | e14: java.lang.String

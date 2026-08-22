@@ -194,3 +194,26 @@ class Foo<T> {
 }
 "#,
 }
+
+// **Known divergence**: local class and local record declarations
+// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+// and anonymous class bodies
+// ([JLS §15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5))
+// parse cleanly but are dropped from the lowered body — only the surrounding
+// declaration survives. `javac` accepts these forms; the body IR should keep
+// them.
+
+body_snapshot! {
+    local_and_anonymous_types_dropped,
+    r#"
+class Foo {
+    void m() {
+        class Local {}
+        record Pair(int a, int b) {}
+        Runnable r = new Runnable() {
+            public void run() {}
+        };
+    }
+}
+"#,
+}

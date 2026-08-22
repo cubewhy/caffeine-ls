@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+assertion_line: 99
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(Object o) {
+        Integer bad1 = "str";
+        int bad2 = o;
+        Boolean bad3 = 1;
+    }
+}
+
+method m(java.lang.Object): void
+  locals: l0: java.lang.Object | l1: java.lang.Integer | l2: int | l3: java.lang.Boolean
+  exprs: e0: java.lang.String | e1: java.lang.Object | e2: int
+  diags: e0@4:22: incompatible-types: incompatible types: java.lang.String cannot be converted to java.lang.Integer | e1@5:18: incompatible-types: incompatible types: java.lang.Object cannot be converted to int | e2@6:22: incompatible-types: incompatible types: int cannot be converted to java.lang.Boolean

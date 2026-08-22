@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+assertion_line: 124
+expression: out
+---
+FILE /src/com/example/NotFI.java:
+package com.example;
+
+interface NotFI {
+    int f(int x);
+    int g(int x);
+}
+
+FILE /src/com/example/UsesFI.java:
+package com.example;
+
+class UsesFI {
+    void m() {
+        NotFI lam = x -> x;
+    }
+}
+
+method m(): void
+  locals: l0: com.example.NotFI
+  exprs: e1: <error>
