@@ -90,8 +90,8 @@ mod tests {
     use std::{fs::File, io::Write as _, sync::Arc};
 
     use base_db::{
-        DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce,
-        SourceDatabase, SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
+        DepsMap, FileChange, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase,
+        SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
     };
     use tempfile::TempDir;
     use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -174,9 +174,6 @@ mod tests {
         ) {
             let files = Arc::clone(&self.files);
             files.set_source_root_with_durability(self, source_root_id, source_root, durability);
-        }
-        fn file_language_kind(&self, file_id: FileId) -> Option<LanguageKind> {
-            self.files.file_language_kind(self, file_id)
         }
         fn deps_map(&self) -> triomphe::Arc<DepsMap> {
             self.deps_map.clone()

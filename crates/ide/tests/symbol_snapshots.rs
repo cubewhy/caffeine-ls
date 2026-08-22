@@ -195,3 +195,57 @@ fn item_ty_wired() {
     }
     assert_snapshot!("item_ty_wired", lines.join("\n"));
 }
+
+#[test]
+fn document_symbols_recompute_when_roots_attach() {
+    // A document opened and queried before any source root is applied lowers
+    // as Unknown (empty item tree). Attaching the workspace roots afterwards
+    // must invalidate the memoized result: the same query then returns the
+    // file's symbols instead of replaying the pre-load emptiness (a stale
+    // cache is exactly the bug that produced `[]` for id 4 in the field log).
+    let mut host = AnalysisHost::new();
+    let file_id = FileId::from_raw(1);
+    let text = "package org.example;\n\npublic class Foo {\n    public void bar() {}\n}\n";
+
+    let mut change = FileChange::default();
+    change.change_file(file_id, Some(text.to_string()));
+    host.apply_change(change);
+    assert!(
+        host.snapshot()
+            .document_symbols(file_id)
+            .unwrap()
+            .is_empty(),
+        "pre-load document symbols should be empty (no source root yet)"
+    );
+
+    let mut file_set = FileSet::default();
+    file_set.insert(
+        file_id,
+        VfsPath::from(AbsPathBuf::assert_utf8(
+            "/src/main/java/org/example/Foo.java".to_owned().into(),
+        )),
+    );
+    let mut data = ProjectGraphData::default();
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), main_source_set(0));
+    data.source_sets.insert(
+        main_source_set(0),
+        Arc::new(Classpath {
+            entries: Vec::<ClasspathEntry>::new(),
+        }),
+    );
+    let mut change = FileChange::default();
+    change.set_roots(vec![SourceRoot::new(file_set)]);
+    host.apply_change(change);
+    set_project_graph(host.raw_database_mut(), data);
+
+    let symbols = host.snapshot().document_symbols(file_id).unwrap();
+    assert!(
+        !symbols.is_empty(),
+        "symbols must recompute once the source root is applied"
+    );
+    assert_snapshot!(
+        "document_symbols_after_roots_attach",
+        render_document_symbols(&symbols)
+    );
+}

@@ -9,7 +9,7 @@ pub use salsa;
 pub use syntax::LanguageKind;
 
 use rowan::TextSize;
-use vfs::{AnchoredPath, FileId};
+use vfs::{AnchoredPath, FileId, file_set::FileSet};
 
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
@@ -24,6 +24,16 @@ pub struct FileText {
     pub text: Arc<str>,
     pub file_id: vfs::FileId,
 }
+
+/// The reserved source root for documents that hold text but are not yet
+/// claimed by any applied workspace layout. Its file set is empty; it exists
+/// only so every file with text has a [`FileSourceRootInput`] salsa input,
+/// keeping `file_source_root` total. Attaching the document to a real root
+/// later replaces this provisional mapping, which is a salsa change: tracked
+/// queries that derived the language from the file's root (see
+/// [`file_language_kind_query`]) invalidate and recompute instead of serving a
+/// stale result built before the workspace was loaded.
+pub const FALLBACK_SOURCE_ROOT: SourceRootId = SourceRootId(u32::MAX);
 
 #[derive(Debug, Default)]
 pub struct Files {
@@ -43,6 +53,7 @@ impl Files {
     }
 
     pub fn set_file_text(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId, text: &str) {
+        self.ensure_file_source_root(db, file_id);
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
                 occupied.get_mut().set_text(db).to(Arc::from(text));
@@ -61,6 +72,7 @@ impl Files {
         text: &str,
         durability: Durability,
     ) {
+        self.ensure_file_source_root(db, file_id);
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
                 occupied
@@ -144,6 +156,28 @@ impl Files {
             .map(|input| *input.source_root_id(db))
     }
 
+    /// Ensures `file_id` has a [`FileSourceRootInput`] salsa input, so
+    /// [`SourceDatabase::file_source_root`] is total for every file that holds
+    /// text. Documents not yet claimed by an applied source root are
+    /// attributed to [`FALLBACK_SOURCE_ROOT`]; attaching them to a real root
+    /// later (see [`Self::set_file_source_root_with_durability`]) is a salsa
+    /// change that invalidates the tracked [`file_language_kind_query`].
+    fn ensure_file_source_root(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId) {
+        if self.file_source_roots.get(&file_id).is_some() {
+            return;
+        }
+        if !self.source_roots.contains_key(&FALLBACK_SOURCE_ROOT) {
+            let root = SourceRootInput::builder(Arc::new(SourceRoot::new(FileSet::default())))
+                .durability(Durability::LOW)
+                .new(db);
+            self.source_roots.insert(FALLBACK_SOURCE_ROOT, root);
+        }
+        let file_root = FileSourceRootInput::builder(FALLBACK_SOURCE_ROOT)
+            .durability(Durability::LOW)
+            .new(db);
+        self.file_source_roots.insert(file_id, file_root);
+    }
+
     fn path_for_file(&self, db: &dyn SourceDatabase, id: vfs::FileId) -> Option<vfs::VfsPath> {
         for source_root in &*self.source_roots {
             let source_root = *source_root.value();
@@ -176,16 +210,6 @@ impl Files {
                 vacant.insert(file_source_root);
             }
         };
-    }
-
-    pub fn file_language_kind(
-        &self,
-        db: &dyn SourceDatabase,
-        file_id: vfs::FileId,
-    ) -> Option<LanguageKind> {
-        let path = self.path_for_file(db, file_id)?;
-
-        Some(LanguageKind::from_path(&path.to_string()))
     }
 }
 
@@ -235,7 +259,16 @@ pub trait SourceDatabase: salsa::Database {
         source_root.source_root(self).resolve_path(path)
     }
 
-    fn file_language_kind(&self, file_id: vfs::FileId) -> Option<LanguageKind>;
+    /// The language kind of the file, derived from its source root. The
+    /// default is a tracked read (see [`file_language_kind`]), so attaching a
+    /// source root to a later-open document invalidates dependent queries
+    /// instead of serving a stale `Unknown` result.
+    fn file_language_kind(&self, file_id: vfs::FileId) -> Option<LanguageKind>
+    where
+        Self: Sized,
+    {
+        file_language_kind(self, file_id)
+    }
 
     #[doc(hidden)]
     fn deps_map(&self) -> Arc<DepsMap>;
@@ -272,6 +305,41 @@ pub struct SourceRootInput {
 #[salsa::input(debug)]
 pub struct FileSourceRootInput {
     pub source_root_id: SourceRootId,
+}
+
+/// The interned file id `salsa` key of [`SourceDatabase::file_language_kind`].
+#[salsa::interned]
+struct InternedFileId {
+    #[returns(copy)]
+    file_id: vfs::FileId,
+}
+
+/// The [`LanguageKind`] of a file, derived from the owning source root's file
+/// set. This is a *tracked* read — keyed on the interned file, it touches only
+/// the salsa inputs [`SourceDatabase::file_source_root`] and
+/// [`SourceDatabase::source_root`] — so attaching a document to a source root
+/// (e.g. when the workspace finishes loading over an already-open file)
+/// invalidates the result and everything built from it, instead of replaying a
+/// stale `Unknown` lowered before the workspace was ready. Returns `None`
+/// while the file has no source root; such files lower as
+/// [`LanguageKind::Unknown`].
+#[salsa::tracked(returns(ref))]
+fn file_language_kind_query<'db>(
+    db: &'db dyn SourceDatabase,
+    file: InternedFileId<'db>,
+) -> Option<LanguageKind> {
+    let file_id = file.file_id(db);
+    let file_root = db.file_source_root(file_id);
+    let root = db.source_root(*file_root.source_root_id(db));
+    let path = root.source_root(db).path_for_file(&file_id)?;
+    Some(LanguageKind::from_path(&path.to_string()))
+}
+
+/// The [`LanguageKind`] of a file. Free-function form of a tracked read that
+/// also works through `&dyn SourceDatabase` (the trait method requires
+/// `Self: Sized`).
+pub fn file_language_kind(db: &dyn SourceDatabase, file_id: vfs::FileId) -> Option<LanguageKind> {
+    *file_language_kind_query(db, InternedFileId::new(db, file_id))
 }
 
 /// The set of "local" (that is, from the current workspace) roots.

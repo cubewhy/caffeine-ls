@@ -357,6 +357,15 @@ pub fn resolve_in_libraries(
     None
 }
 
+/// Best-effort path of `file` for diagnostics, `<no source root>` when the
+/// file does not belong to any source root (e.g. opened before the workspace
+/// is loaded).
+fn debug_path(db: &dyn HirDatabase, file: FileId) -> String {
+    db.source_root_for_file(file)
+        .and_then(|root| db.source_root(root).source_root(db).path_for_file(&file))
+        .map_or_else(|| "<no source root>".to_owned(), |path| path.to_string())
+}
+
 /// The indexed declarations ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6))
 /// of `file` as [`SourceSymbol`]s: class-like types get the package name then
 /// each enclosing simple name joined by `.` ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7));
@@ -366,7 +375,15 @@ pub fn resolve_in_libraries(
 fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<SourceSymbol>> {
     let file_id = *file.file_id(db);
     let tree = file_item_tree(db, file_id);
-    Arc::new(collect_file_symbols(&tree))
+    let symbols = collect_file_symbols(&tree);
+    tracing::debug!(
+        file_id = ?file_id,
+        path = %debug_path(db, file_id),
+        top_level_items = tree.top.len(),
+        symbol_count = symbols.len(),
+        "hir: indexed file declarations",
+    );
+    Arc::new(symbols)
 }
 
 fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
@@ -454,11 +471,17 @@ fn source_root_symbols_query(
 ) -> Arc<Vec<(FileId, SourceSymbol)>> {
     let source_root = root.source_root(db);
     let mut out = Vec::new();
+    let file_count = source_root.iter().count();
     for file in source_root.iter() {
         for symbol in file_symbols_query(db, db.file_text(file)).iter() {
             out.push((file, symbol.clone()));
         }
     }
+    tracing::debug!(
+        file_count,
+        symbol_count = out.len(),
+        "hir: aggregated symbols of a source root",
+    );
     Arc::new(out)
 }
 
@@ -486,24 +509,46 @@ fn source_set_symbol_index_query(
         .map(|(root, _)| *root)
         .collect();
     roots.sort();
+    let root_count = roots.len();
     for root in roots {
         for (file, symbol) in source_root_symbols_query(db, db.source_root(root)).iter() {
             symbols.push((*file, symbol.clone()));
         }
     }
-    Arc::new(SourceSymbolIndex::build(symbols))
+    let index = SourceSymbolIndex::build(symbols);
+    tracing::debug!(
+        source_set = ?source_set,
+        root_count,
+        symbol_count = index.len(),
+        "hir: built source set symbol index",
+    );
+    Arc::new(index)
 }
 
 /// The indexed symbols of a file.
 pub fn file_symbols(db: &dyn HirDatabase, file_id: FileId) -> Arc<Vec<SourceSymbol>> {
-    file_symbols_query(db, db.file_text(file_id)).clone()
+    let symbols = file_symbols_query(db, db.file_text(file_id));
+    tracing::debug!(
+        file_id = ?file_id,
+        path = %debug_path(db, file_id),
+        symbol_count = symbols.len(),
+        "hir: requested file symbols",
+    );
+    symbols.clone()
 }
 
 /// The source symbol index of a source set, scoped to its own source roots.
 pub fn source_set_symbols(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<SourceSymbolIndex> {
     let graph =
         ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
-    source_set_symbol_index_query(db, graph, source_set).clone()
+    let index = source_set_symbol_index_query(db, graph, source_set.clone());
+    tracing::debug!(
+        source_set = %source_set,
+        symbol_count = index.len(),
+        index_empty = index.is_empty(),
+        "hir: requested source set symbol index",
+    );
+    index.clone()
 }
 
 /// Resolves `fqn` against the source symbol index of `source_set`'s own

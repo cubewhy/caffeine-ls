@@ -5,8 +5,8 @@ pub use base_db;
 use hir::hir_expand::files::FileRangeWrapper;
 
 use base_db::{
-    DepsMap, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase, SourceRoot,
-    SourceRootId, SourceRootInput,
+    DepsMap, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase, SourceRoot, SourceRootId,
+    SourceRootInput,
 };
 use hir::{HirDatabase, HirState};
 use line_index::LineIndex;
@@ -116,10 +116,6 @@ impl SourceDatabase for RootDatabase {
     ) {
         let files = Arc::clone(&self.files);
         files.set_file_source_root_with_durability(self, id, source_root_id, durability);
-    }
-
-    fn file_language_kind(&self, file_id: vfs::FileId) -> Option<LanguageKind> {
-        self.files.file_language_kind(self, file_id)
     }
 
     fn deps_map(&self) -> Arc<DepsMap> {

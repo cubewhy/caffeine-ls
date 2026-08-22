@@ -25,9 +25,11 @@ pub trait DefDatabase: hir_expand::db::DefDatabase {}
 #[salsa::tracked(unsafe(non_salsa_values))]
 fn item_tree_query(db: &dyn DefDatabase, file: FileText) -> Arc<ItemTree> {
     let file_id = *file.file_id(db);
-    let language = db
-        .file_language_kind(file_id)
-        .unwrap_or(LanguageKind::Unknown);
+    // A tracked read (see `base_db::file_language_kind`): resolves from the
+    // file's source-root salsa inputs, so attaching the file to a source root
+    // later recomputes the tree with the correct language instead of serving
+    // an `Unknown`-lowered (empty) result.
+    let language = base_db::file_language_kind(db, file_id).unwrap_or(LanguageKind::Unknown);
     Arc::new(crate::lower::lower_source(language, file.text(db)))
 }
 

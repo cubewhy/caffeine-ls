@@ -96,9 +96,6 @@ impl SourceDatabase for TestDatabase {
         let files = Arc::clone(&self.files);
         files.set_source_root_with_durability(self, source_root_id, source_root, durability);
     }
-    fn file_language_kind(&self, file_id: FileId) -> Option<LanguageKind> {
-        self.files.file_language_kind(self, file_id)
-    }
     fn deps_map(&self) -> Arc3<DepsMap> {
         self.deps_map.clone()
     }
