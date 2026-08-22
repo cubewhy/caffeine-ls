@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int m(int x, String s, Object o) {
+        int acc = 0;
+        for (Object v : o) { acc++; }
+        for (char c : s) { acc++; }
+        return acc;
+    }
+}
+
+method m(int, java.lang.String, java.lang.Object): int
+  locals: l0: int | l1: java.lang.String | l2: java.lang.Object | l3: int | l4: java.lang.Object | l5: char
+  exprs: e0: int | e1: java.lang.Object | e2: int | e3: int | e4: java.lang.String | e5: int | e6: int | e7: int
+  diags: e1@5:23: non-iterable-for-each: for-each requires an array or an Iterable, found java.lang.Object | e4@6:21: non-iterable-for-each: for-each requires an array or an Iterable, found java.lang.String

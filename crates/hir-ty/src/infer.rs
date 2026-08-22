@@ -40,8 +40,8 @@ use std::sync::Arc;
 
 use hir_expand::{
     body::{
-        BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
-        PatternId, StmtData, StmtId, SwitchLabel, UnaryOp,
+        AssignOp, BinaryOp, BodyId, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId,
+        PatternData, PatternId, StmtData, StmtId, SwitchLabel, UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -258,6 +258,154 @@ impl<'a> InferCtx<'a> {
         matches!(ty.kind(self.db), TyKind::Reference { name, .. } if name.as_str() == "java.lang.String")
     }
 
+    /// Whether `ty` is `boolean` in a condition position ([JLS §14.9], [§15.25.1]):
+    /// a primitive `boolean`, or a boxed `Boolean` after unboxing ([§5.1.8]).
+    fn is_boolean(&self, ty: Ty) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Primitive(PrimitiveType::Boolean) => true,
+            TyKind::Reference { name, .. } => {
+                unboxed_primitive(name.as_str()) == Some(PrimitiveType::Boolean)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` is numeric for a unary/binary numeric or shift operator
+    /// ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1),
+    /// [§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2)):
+    /// a primitive other than `boolean`, or a boxed primitive after unboxing.
+    fn is_numeric_operand(&self, ty: Ty) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Primitive(p) => !matches!(p, PrimitiveType::Boolean),
+            TyKind::Reference { name, .. } => match unboxed_primitive(name.as_str()) {
+                Some(p) => !matches!(p, PrimitiveType::Boolean),
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// Whether `ty` is a reference type in the loose sense used by the
+    /// comparison and castability checks: a class, interface, array, type
+    /// variable or intersection type ([JLS §4.3]).
+    fn is_reference_like(&self, ty: Ty) -> bool {
+        matches!(
+            ty.kind(self.db),
+            TyKind::Reference { .. }
+                | TyKind::Array(_)
+                | TyKind::TypeVar { .. }
+                | TyKind::Intersection(_)
+                | TyKind::Null
+        )
+    }
+
+    /// Infers the condition expression of an `if`/`while`/`do`/`for`/`assert`
+    /// ([§14.9], [§14.11], [§14.16]), the scrutinee-free condition of a
+    /// conditional expression ([§15.25.1]) and the boolean operand positions
+    /// of `!`, `&&`/`||`. A condition that is not `boolean` degrades to the
+    /// error type and is reported.
+    fn check_condition(&mut self, cond: ExprId) {
+        let ty = self.infer_expr(cond);
+        if !self.is_boolean(ty) {
+            self.types.insert(cond, self.error());
+            self.report(TypeError::NonBooleanCondition { expr: cond });
+        }
+    }
+
+    /// Whether the two operand types of an equality or relational operator are
+    /// comparable ([§15.20], [§15.21]): both numeric (after boxing/unboxing),
+    /// both boolean-like, or reference types that could be related. The
+    /// provably-unrelated reference case (`String == Integer`) is rejected by
+    /// demanding a subtype link when exactly one operand unboxes.
+    fn comparable(&self, a: Ty, b: Ty) -> bool {
+        let boolean_like = |t: Ty| match t.kind(self.db) {
+            TyKind::Primitive(PrimitiveType::Boolean) => true,
+            TyKind::Reference { name, .. } => {
+                unboxed_primitive(name.as_str()) == Some(PrimitiveType::Boolean)
+            }
+            _ => false,
+        };
+        // §15.21.3: `null` is comparable with a reference type only.
+        if a.is_null(self.db) || b.is_null(self.db) {
+            let other = if a.is_null(self.db) { b } else { a };
+            return self.is_reference_like(other);
+        }
+        if a.is_error(self.db) || b.is_error(self.db) {
+            return true;
+        }
+        let (a_num, b_num) = (self.is_numeric_operand(a), self.is_numeric_operand(b));
+        let (a_bool, b_bool) = (boolean_like(a), boolean_like(b));
+        if a_num && b_num {
+            return true;
+        }
+        if a_bool && b_bool {
+            return true;
+        }
+        if a_num || b_num {
+            return false;
+        }
+        if !self.is_reference_like(a) || !self.is_reference_like(b) {
+            return false;
+        }
+        // A reference pair where one operand unboxes to a primitive and the
+        // other does not (§15.21.3): comparable only when the types are
+        // related (`Number` vs `Integer`), not when provably unrelated
+        // (`String` vs `Integer`).
+        let a_unboxes = matches!(a.kind(self.db), TyKind::Reference { name, .. } if unboxed_primitive(name.as_str()).is_some());
+        let b_unboxes = matches!(b.kind(self.db), TyKind::Reference { name, .. } if unboxed_primitive(name.as_str()).is_some());
+        if a_unboxes != b_unboxes {
+            return crate::subtyping::is_subtype(self.db, &self.scope, &a, &b)
+                || crate::subtyping::is_subtype(self.db, &self.scope, &b, &a);
+        }
+        true
+    }
+
+    /// Whether `from` can be cast to `to` by a casting conversion
+    /// ([JLS §5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5)):
+    /// identity, primitive widening/narrowing with boxing/unboxing, or a
+    /// reference widening/narrowing cast. Provably-disjoint final-class casts
+    /// are not modelled.
+    fn castable(&self, from: Ty, to: Ty) -> bool {
+        if from == to {
+            return true;
+        }
+        if from.is_null(self.db) && self.is_reference_like(to) {
+            return true;
+        }
+        match (from.kind(self.db), to.kind(self.db)) {
+            // §5.5: primitive-to-primitive casts are always casting conversions
+            // (widening or narrowing, never to `boolean` — see the reference arm).
+            (TyKind::Primitive(_), TyKind::Primitive(_)) => true,
+            // §5.1.7: boxing, optionally followed by a reference widening.
+            (TyKind::Primitive(f), TyKind::Reference { .. }) => {
+                let boxed = Ty::reference(self.db, boxed_type(*f), Vec::new());
+                boxed == to || crate::subtyping::is_subtype(self.db, &self.scope, &boxed, &to)
+            }
+            // §5.1.8/§5.5: unboxing, optionally followed by a *widening*
+            // primitive conversion — an unbox-then-narrow cast (`(int) aLong`)
+            // is not a casting conversion.
+            (TyKind::Reference { name, .. }, TyKind::Primitive(t)) => {
+                match unboxed_primitive(name.as_str()) {
+                    Some(p) => p == *t || crate::subtyping::widening_primitive(p, *t),
+                    None => false,
+                }
+            }
+            // §5.5.1: no class cast to an array except the object supertypes.
+            (TyKind::Reference { name, .. }, TyKind::Array(_)) => matches!(
+                name.as_str(),
+                "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
+            ),
+            (TyKind::Array(_), TyKind::Array(_)) => true,
+            (TyKind::Array(_), TyKind::Reference { name, .. }) => matches!(
+                name.as_str(),
+                "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
+            ),
+            (TyKind::TypeVar { .. }, TyKind::Reference { .. }) => true,
+            (TyKind::Reference { .. }, TyKind::Reference { .. }) => true,
+            _ => false,
+        }
+    }
+
     fn infer_expr(&mut self, id: ExprId) -> Ty {
         let expr = self.tree.expr(id).clone();
         let ty = match expr {
@@ -309,10 +457,14 @@ impl<'a> InferCtx<'a> {
             // §15.9: a class instance creation has the type of the created
             // class; the diamond operator ([§15.9.2]) instantiates the type
             // arguments from the target type.
-            ExprData::New { ty, args, diamond } => self.new_expr(ty, diamond, &args, self.target),
+            ExprData::New { ty, args, diamond } => {
+                self.new_expr(id, ty, diamond, &args, self.target)
+            }
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
-            // (§10.6) fills the element expressions.
+            // (§10.6) fills the element expressions. A non-reifiable component
+            // type ([§4.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.7)) —
+            // a type variable or a type with type arguments — is not allowed.
             ExprData::NewArray {
                 ty,
                 dims,
@@ -327,6 +479,18 @@ impl<'a> InferCtx<'a> {
                     }
                 }
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
+                let non_reifiable = match inner.kind(self.db) {
+                    TyKind::TypeVar { .. } => true,
+                    TyKind::Reference { args, .. } => !args.is_empty(),
+                    _ => false,
+                };
+                if non_reifiable {
+                    self.types.insert(id, self.error());
+                    self.report(TypeError::GenericArrayCreation {
+                        expr: id,
+                        ty: inner.display(self.db).to_string(),
+                    });
+                }
                 let mut result = inner;
                 for _ in 0..dims.len() {
                     result = Ty::array(self.db, result);
@@ -348,17 +512,31 @@ impl<'a> InferCtx<'a> {
                 };
                 Ty::array(self.db, element)
             }
-            ExprData::Unary { op, expr } => self.unary(op, expr),
+            ExprData::Unary { op, expr } => self.unary(expr, op),
             // §15.14: a postfix increment/decrement has the type of its
             // operand.
             ExprData::Postfix { expr, .. } => self.infer_expr(expr),
             ExprData::Binary { op, lhs, rhs } => self.binary(op, lhs, rhs),
             // §15.26: an assignment expression has the type of its left-hand
             // side; the right-hand side is a poly expression with the left
-            // side's type as target ([JLS §18.5.2.4]).
-            ExprData::Assign { lhs, rhs, .. } => {
+            // side's type as target ([JLS §18.5.2.4]). For a plain assignment
+            // the right-hand side must be assignable to the left-hand side
+            // ([§15.26.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.26.1),
+            // [§5.2]).
+            ExprData::Assign { op, lhs, rhs } => {
                 let lhs_ty = self.infer_expr(lhs);
-                let _ = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
+                let rhs_ty = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
+                if matches!(op, AssignOp::Assign)
+                    && !lhs_ty.is_error(self.db)
+                    && !rhs_ty.is_error(self.db)
+                    && !crate::subtyping::is_assignable(self.db, &self.scope, &rhs_ty, &lhs_ty)
+                {
+                    self.report(TypeError::IncompatibleTypes {
+                        expr: rhs,
+                        found: rhs_ty.display(self.db).to_string(),
+                        expected: lhs_ty.display(self.db).to_string(),
+                    });
+                }
                 lhs_ty
             }
             // §15.16: a cast has the type named in the cast. Per §15.16 and
@@ -374,8 +552,22 @@ impl<'a> InferCtx<'a> {
                     let _ = self.with_target(Some(cast_ty), |this| this.infer_expr(expr));
                     cast_ty
                 } else {
-                    let _ = self.infer_expr(expr);
-                    resolve_type_ref(self.db, &self.scope, &self.resolver, &ty)
+                    let operand = self.infer_expr(expr);
+                    let cast_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
+                    // §5.5/§15.16: a cast that is prohibited by the casting
+                    // conversion rules is a compile-time error.
+                    if !operand.is_error(self.db)
+                        && !cast_ty.is_error(self.db)
+                        && !self.castable(operand, cast_ty)
+                    {
+                        self.types.insert(expr, self.error());
+                        self.report(TypeError::BadCast {
+                            expr,
+                            found: operand.display(self.db).to_string(),
+                            target: cast_ty.display(self.db).to_string(),
+                        });
+                    }
+                    cast_ty
                 }
             }
             // §15.20.2: `instanceof` always has type `boolean`; a pattern test
@@ -398,7 +590,7 @@ impl<'a> InferCtx<'a> {
             // method calls) — the target is still propagated into the arms so
             // they can resolve against it.
             ExprData::Conditional { cond, then, els } => {
-                let _ = self.infer_expr(cond);
+                self.check_condition(cond);
                 let cond_is_poly =
                     expr_is_poly_ext(&self.tree, then) && expr_is_poly_ext(&self.tree, els);
                 let target_is_fi = self.target.is_some_and(|target| {
@@ -624,6 +816,48 @@ impl<'a> InferCtx<'a> {
         (hir::fqn_resolve(self.db, &self.scope, resolved.as_str()).is_some()).then_some(ty)
     }
 
+    /// The type named by a pure name chain (`Type`, `pkg.Type`,
+    /// `java.util.Map.Entry`) — a (possibly qualified) type name used as a
+    /// static member receiver ([§6.5.5], [§15.11.1]). Every segment must be a
+    /// plain name — no segment may be a local variable — and the canonical
+    /// fully qualified name must resolve on the classpath. `None` otherwise,
+    /// so ordinary instance field chains keep their expression treatment.
+    fn dotted_type_name(&self, id: ExprId) -> Option<Ty> {
+        let mut parts: Vec<String> = Vec::new();
+        let mut cur = id;
+        loop {
+            match self.tree.expr(cur).clone() {
+                ExprData::FieldAccess {
+                    target: Some(t),
+                    name,
+                } => {
+                    parts.push(name.as_str().to_owned());
+                    cur = t;
+                }
+                ExprData::Var(name) => {
+                    if self.lookup_local(&name).is_some() {
+                        return None;
+                    }
+                    parts.push(name.as_str().to_owned());
+                    break;
+                }
+                _ => return None,
+            }
+        }
+        parts.reverse();
+        let tyref = TypeRef::Reference {
+            name: Name::new(&parts.join(".")),
+            generic_args: Vec::new(),
+        };
+        let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
+        let TyKind::Reference { name: resolved, .. } = ty.kind(self.db) else {
+            return None;
+        };
+        hir::fqn_resolve(self.db, &self.scope, resolved.as_str())
+            .is_some()
+            .then_some(ty)
+    }
+
     fn field_access(&mut self, expr: ExprId, target: Option<ExprId>, name: Name) -> Ty {
         let Some(target) = target else {
             return self.var(expr, name);
@@ -655,14 +889,12 @@ impl<'a> InferCtx<'a> {
                 }
             };
         }
-        // `Type.name` — the receiver expression is a bare name that resolves
-        // to a type, not a value ([§15.11.1]).
-        let (receiver, is_static) = if let ExprData::Var(type_name) = self.tree.expr(target).clone()
-            && let Some(ty) = self.type_name_ty(&type_name)
-        {
-            (ty, true)
-        } else {
-            (self.infer_expr(target), false)
+        // `Type.name` — the receiver expression is a pure name chain that
+        // resolves to a type, not a value ([§15.11.1]): a bare name or a
+        // qualified name such as `java.util.Collections`.
+        let (receiver, is_static) = match self.dotted_type_name(target) {
+            Some(ty) => (ty, true),
+            None => (self.infer_expr(target), false),
         };
         // §10.7: every array type has a public final `length` field.
         if receiver.is_array(self.db) && name.as_str() == "length" {
@@ -754,20 +986,20 @@ impl<'a> InferCtx<'a> {
     /// enclosing class.
     fn receiver_info(&mut self, receiver: Option<ExprId>, name: &Name) -> (Ty, InvocationMode) {
         match receiver {
-            Some(receiver) => match self.tree.expr(receiver).clone() {
+            Some(receiver) => {
                 // `Type.method(...)` — a static invocation whose receiver
-                // expression is a bare type name ([§15.12.1]).
-                ExprData::Var(type_name) => {
-                    if let Some(ty) = self.type_name_ty(&type_name) {
-                        return (ty, InvocationMode::Static);
-                    }
-                    (self.infer_expr(receiver), InvocationMode::Virtual)
+                // expression is a pure type name ([§15.12.1]): a bare name or
+                // a qualified name such as `java.util.Collections`.
+                if let Some(ty) = self.dotted_type_name(receiver) {
+                    return (ty, InvocationMode::Static);
                 }
-                // `super.method(...)` — a super invocation whose receiver is
-                // the superclass of the enclosing class ([§15.12.1]).
-                ExprData::Super => (self.super_ty(), InvocationMode::Super),
-                _ => (self.infer_expr(receiver), InvocationMode::Virtual),
-            },
+                match self.tree.expr(receiver).clone() {
+                    // `super.method(...)` — a super invocation whose receiver is
+                    // the superclass of the enclosing class ([§15.12.1]).
+                    ExprData::Super => (self.super_ty(), InvocationMode::Super),
+                    _ => (self.infer_expr(receiver), InvocationMode::Virtual),
+                }
+            }
             // An unqualified call is an implicit `this` invocation
             // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)),
             // unless a static import ([§7.5.4]) names the method through its
@@ -1248,6 +1480,7 @@ impl<'a> InferCtx<'a> {
     /// class, library constructors are `<init>`.
     fn new_expr(
         &mut self,
+        expr: ExprId,
         ty: TypeRef<Name>,
         diamond: bool,
         args: &[ExprId],
@@ -1261,6 +1494,9 @@ impl<'a> InferCtx<'a> {
         } else {
             class_ty
         };
+        // §15.9: instantiating a type variable, an interface, an abstract
+        // class or an enum with `new` is a compile-time error.
+        self.check_instantiable(expr, class_ty);
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
         };
@@ -1284,6 +1520,52 @@ impl<'a> InferCtx<'a> {
             }
         }
         class_ty
+    }
+
+    /// §15.9: a class instance creation must instantiate a class and not a
+    /// type variable, an interface, an abstract class or an enum
+    /// ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
+    /// Source declarations are known directly; library classes are not flagged
+    /// (their access flags are not surfaced).
+    fn check_instantiable(&mut self, expr: ExprId, class_ty: Ty) {
+        let (TyKind::TypeVar { .. } | TyKind::Reference { .. }) = class_ty.kind(self.db) else {
+            return;
+        };
+        let non_instantiable = match class_ty.kind(self.db) {
+            TyKind::TypeVar { .. } => true,
+            TyKind::Reference { name, .. } => {
+                let Some(hir::Resolved::Source(source)) =
+                    hir::fqn_resolve(self.db, &self.scope, name.as_str())
+                else {
+                    return;
+                };
+                let tree = hir::file_item_tree(self.db, source.file);
+                let Some(data) = crate::resolve::item_data(&tree, source.item) else {
+                    return;
+                };
+                let non_instantiable = match data {
+                    hir_expand::item_tree::ItemData::Interface(_)
+                    | hir_expand::item_tree::ItemData::Enum(_)
+                    | hir_expand::item_tree::ItemData::Annotation(_) => true,
+                    hir_expand::item_tree::ItemData::Class(d) => d.modifiers.abstract_,
+                    _ => false,
+                };
+                if !non_instantiable {
+                    return;
+                }
+                true
+            }
+            _ => return,
+        };
+        if non_instantiable {
+            let name = match class_ty.kind(self.db) {
+                TyKind::TypeVar { name, .. } => name.as_str().to_owned(),
+                TyKind::Reference { name, .. } => simple_name(name.as_str()),
+                _ => unreachable!(),
+            };
+            self.types.insert(expr, self.error());
+            self.report(TypeError::CannotInstantiateTypeVar { expr, name });
+        }
     }
 
     /// §15.9.2: the diamond operator — the created class's type arguments are
@@ -1432,13 +1714,38 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    fn unary(&mut self, op: UnaryOp, expr: ExprId) -> Ty {
+    fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {
         let inner = self.infer_expr(expr);
         match op {
-            // §15.15.6: `!` has type `boolean`.
-            UnaryOp::Not => self.primitive(PrimitiveType::Boolean),
+            // §15.15.6: `!` has type `boolean` and its operand must be a
+            // `boolean` ([§15.15.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.15.6)).
+            UnaryOp::Not => {
+                if !self.is_boolean(inner) {
+                    if !inner.is_error(self.db) {
+                        self.types.insert(expr, self.error());
+                        self.report(TypeError::NonBooleanCondition { expr });
+                    }
+                    self.error()
+                } else {
+                    self.primitive(PrimitiveType::Boolean)
+                }
+            }
             // §15.15.1-3: unary numeric promotion (§5.6.1).
-            UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot => self.unary_promotion(inner),
+            UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot => {
+                let promoted = self.unary_promotion(inner);
+                if promoted.is_error(self.db) {
+                    if !inner.is_error(self.db) {
+                        self.types.insert(expr, self.error());
+                        self.report(TypeError::IncompatibleOperand {
+                            expr,
+                            op: unary_op_symbol(op),
+                        });
+                    }
+                    self.error()
+                } else {
+                    promoted
+                }
+            }
             // §15.15.1/§15.15.2: `++`/`--` have the operand's type.
             UnaryOp::Inc | UnaryOp::Dec => inner,
         }
@@ -1504,54 +1811,130 @@ impl<'a> InferCtx<'a> {
         // the ordinary two-operand pass below would re-infer the right-hand
         // operand without the pattern variables in scope.
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            let _ = self.infer_expr(lhs);
+            self.check_condition(lhs);
             self.scopes.push(FxHashMap::default());
             if let Some(bindings) = self.pattern_binding_ids(lhs) {
                 for binding in bindings {
                     self.scope_binding(binding);
                 }
             }
-            let _ = self.infer_expr(rhs);
+            self.check_condition(rhs);
             self.scopes.pop();
             return self.primitive(PrimitiveType::Boolean);
         }
         let lhs_ty = self.infer_expr(lhs);
         let rhs_ty = self.infer_expr(rhs);
         match op {
-            BinaryOp::Mul
-            | BinaryOp::Div
-            | BinaryOp::Rem
-            | BinaryOp::Add
-            | BinaryOp::Sub
-            | BinaryOp::BitAnd
-            | BinaryOp::BitXor
-            | BinaryOp::BitOr => {
+            BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem | BinaryOp::Add | BinaryOp::Sub => {
                 // §15.18.1: `+` with a `String` operand is string
                 // concatenation and has type `String`.
                 if matches!(op, BinaryOp::Add) && (self.is_string(lhs_ty) || self.is_string(rhs_ty))
                 {
-                    self.string()
+                    return self.string();
+                }
+                let promoted = self.binary_numeric_promotion(lhs_ty, rhs_ty);
+                if promoted.is_error(self.db) {
+                    // §15.17/§15.18/§15.22: a numeric operator on a non-numeric
+                    // operand is a compile-time error.
+                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
+                        let bad = if !self.is_numeric_operand(lhs_ty) {
+                            lhs
+                        } else {
+                            rhs
+                        };
+                        self.types.insert(bad, self.error());
+                        self.report(TypeError::IncompatibleOperand {
+                            expr: bad,
+                            op: binary_op_symbol(op),
+                        });
+                    }
+                    self.error()
                 } else {
-                    self.binary_numeric_promotion(lhs_ty, rhs_ty)
+                    promoted
                 }
             }
-            // §15.19: a shift has the unary-promoted type of the left operand.
+            // §15.22.1/§15.22.2: the bitwise/logical operators are binary
+            // numeric promotion on numeric operands (§15.22.1) or boolean
+            // logical operators on `boolean` operands (§15.22.2); a `boolean`
+            // mixed with a non-`boolean` operand is an error.
+            BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
+                let (a_bool, b_bool) = (self.is_boolean(lhs_ty), self.is_boolean(rhs_ty));
+                if a_bool && b_bool {
+                    return self.primitive(PrimitiveType::Boolean);
+                }
+                if a_bool != b_bool {
+                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
+                        let bad = if a_bool { rhs } else { lhs };
+                        self.types.insert(bad, self.error());
+                        self.report(TypeError::IncompatibleOperand {
+                            expr: bad,
+                            op: binary_op_symbol(op),
+                        });
+                    }
+                    return self.error();
+                }
+                let promoted = self.binary_numeric_promotion(lhs_ty, rhs_ty);
+                if promoted.is_error(self.db) {
+                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
+                        let bad = if !self.is_numeric_operand(lhs_ty) {
+                            lhs
+                        } else {
+                            rhs
+                        };
+                        self.types.insert(bad, self.error());
+                        self.report(TypeError::IncompatibleOperand {
+                            expr: bad,
+                            op: binary_op_symbol(op),
+                        });
+                    }
+                    self.error()
+                } else {
+                    promoted
+                }
+            }
+            // §15.19: a shift has the unary-promoted type of the left operand, and
+            // each of the operands undergoes unary numeric promotion
+            // ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1))
+            // — a non-numeric operand on either side is an error.
             BinaryOp::Shl | BinaryOp::Shr | BinaryOp::UShr => {
                 let promoted = self.unary_promotion(lhs_ty);
-                if promoted.is_error(self.db) {
+                let rhs_numeric = self.is_numeric_operand(rhs_ty);
+                if promoted.is_error(self.db) || !rhs_numeric {
+                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
+                        let bad = if promoted.is_error(self.db) { lhs } else { rhs };
+                        self.types.insert(bad, self.error());
+                        self.report(TypeError::IncompatibleOperand {
+                            expr: bad,
+                            op: binary_op_symbol(op),
+                        });
+                    }
                     self.error()
                 } else {
                     promoted
                 }
             }
             // §15.20-15.24: relational, equality and boolean-logical
-            // expressions have type `boolean`.
+            // expressions have type `boolean`; §15.20/§15.21 demand comparable
+            // operands.
             BinaryOp::Lt
             | BinaryOp::Gt
             | BinaryOp::Le
             | BinaryOp::Ge
             | BinaryOp::Eq
-            | BinaryOp::Ne => self.primitive(PrimitiveType::Boolean),
+            | BinaryOp::Ne => {
+                if !self.comparable(lhs_ty, rhs_ty)
+                    && !lhs_ty.is_error(self.db)
+                    && !rhs_ty.is_error(self.db)
+                {
+                    self.types.insert(lhs, self.error());
+                    self.report(TypeError::IncomparableTypes {
+                        expr: lhs,
+                        found: lhs_ty.display(self.db).to_string(),
+                        other: rhs_ty.display(self.db).to_string(),
+                    });
+                }
+                self.primitive(PrimitiveType::Boolean)
+            }
             // Handled above: `&&`/`||` are inferred with pattern flow scoping.
             BinaryOp::And | BinaryOp::Or => self.primitive(PrimitiveType::Boolean),
         }
@@ -1598,22 +1981,13 @@ impl<'a> InferCtx<'a> {
         self.primitive(promoted)
     }
 
-    /// The element type of a for-each iterable
-    /// ([§14.14.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2)):
-    /// the element type for arrays; for a reference type, the `T` of an
-    /// `Iterable<T>` — the `E` of the `Iterator<E>` returned by `iterator()`
-    /// ([§14.14.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2.1)).
-    fn element_type(&self, iterable: Ty) -> Ty {
-        if iterable.is_array(self.db) {
-            return iterable
-                .element(self.db)
-                .copied()
-                .unwrap_or_else(|| self.error());
-        }
-        // §14.14.2.1: the expression must be `Iterable<T>`; the loop variable
-        // takes `T`, the element type of the `Iterator<E>` that `iterator()`
-        // returns.
-        let iterator = match pick_method(
+    /// The element type of an `Iterable<T>` for a for-each loop
+    /// ([§14.14.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2.1)):
+    /// the `T` of the `Iterable<T>` — the `E` of the `Iterator<E>` returned by
+    /// `iterator()`. `None` when the type is not an `Iterable` (the caller
+    /// reports [`TypeError::NonIterableForEach`]).
+    fn iterable_element(&self, iterable: Ty) -> Option<Ty> {
+        let iterator = pick_method(
             self.db,
             &self.scope,
             &iterable,
@@ -1621,22 +1995,17 @@ impl<'a> InferCtx<'a> {
             &[],
             &self.access,
             None,
-        ) {
-            Some(method) => method.ret,
-            None => return self.error(),
-        };
-        match pick_method(
+        )?;
+        pick_method(
             self.db,
             &self.scope,
-            &iterator,
+            &iterator.ret,
             "next",
             &[],
             &self.access,
             None,
-        ) {
-            Some(method) => method.ret,
-            None => self.error(),
-        }
+        )
+        .map(|method| method.ret)
     }
 
     fn declare_local(&mut self, id: LocalId) {
@@ -1761,6 +2130,14 @@ impl<'a> InferCtx<'a> {
                 }
                 self.scopes.pop();
             }
+            // §14.4/§6.3: the declarators of one declaration statement share
+            // the *enclosing* scope, so this is inferred without pushing one
+            // (unlike a [`StmtData::Block`]).
+            StmtData::DeclGroup(stmts) => {
+                for &stmt in stmts {
+                    self.infer_stmt(stmt);
+                }
+            }
             StmtData::Decl { local, initializer } => {
                 // §14.4.1: a `var` declaration has no written type — the
                 // initializer is inferred standalone and its type becomes the
@@ -1775,6 +2152,14 @@ impl<'a> InferCtx<'a> {
                         self.bind_local(*local, local_data.name, self.error());
                         return;
                     };
+                    // §14.4.1: an array initializer has no standalone type, so
+                    // `var x = { 1, 2, 3 };` cannot be a `var` declaration.
+                    if matches!(self.tree.expr(*initializer).clone(), ExprData::ArrayInit(_)) {
+                        let local_data = self.tree.local(*local).clone();
+                        self.report(TypeError::VarArrayInitializer { local: *local });
+                        self.bind_local(*local, local_data.name, self.error());
+                        return;
+                    }
                     let ty = self.infer_expr(*initializer);
                     let local_data = self.tree.local(*local).clone();
                     self.bind_local(*local, local_data.name, ty);
@@ -1785,7 +2170,28 @@ impl<'a> InferCtx<'a> {
                     // The initializer is a poly expression whose target is the
                     // declared type of the local ([JLS §14.4]).
                     let target = self.locals.get(local).copied();
-                    let _ = self.with_target(target, |this| this.infer_expr(*initializer));
+                    let init_ty = self.with_target(target, |this| this.infer_expr(*initializer));
+                    let (Some(target), false) = (target, init_ty.is_error(self.db)) else {
+                        return;
+                    };
+                    if target.is_error(self.db) {
+                        return;
+                    }
+                    // §10.6: an array-initializer expression in a declaration
+                    // gets its element type from the target ([§15.2]) — an
+                    // empty `{}` types as the declared array — so its
+                    // standalone type (an `error[]` for empty) is not the
+                    // assignability operand.
+                    if matches!(self.tree.expr(*initializer).clone(), ExprData::ArrayInit(_)) {
+                        return;
+                    }
+                    if !crate::subtyping::is_assignable(self.db, &self.scope, &init_ty, &target) {
+                        self.report(TypeError::IncompatibleTypes {
+                            expr: *initializer,
+                            found: init_ty.display(self.db).to_string(),
+                            expected: target.display(self.db).to_string(),
+                        });
+                    }
                 }
             }
             StmtData::Expr(expr) => {
@@ -1793,7 +2199,7 @@ impl<'a> InferCtx<'a> {
             }
             StmtData::Labeled { stmt, .. } => self.infer_stmt(*stmt),
             StmtData::If { cond, then, els } => {
-                let _ = self.infer_expr(*cond);
+                self.check_condition(*cond);
                 // §14.30.3: a pattern variable of the condition is in scope
                 // in the `then` arm (flow scoping), not in the `else` arm.
                 self.scopes.push(FxHashMap::default());
@@ -1809,12 +2215,12 @@ impl<'a> InferCtx<'a> {
                 }
             }
             StmtData::While { cond, body } => {
-                let _ = self.infer_expr(*cond);
+                self.check_condition(*cond);
                 self.infer_stmt(*body);
             }
             StmtData::DoWhile { body, cond } => {
                 self.infer_stmt(*body);
-                let _ = self.infer_expr(*cond);
+                self.check_condition(*cond);
             }
             StmtData::For {
                 init,
@@ -1827,7 +2233,7 @@ impl<'a> InferCtx<'a> {
                     self.infer_stmt(init);
                 }
                 if let Some(cond) = cond {
-                    let _ = self.infer_expr(*cond);
+                    self.check_condition(*cond);
                 }
                 for &step in step {
                     let _ = self.infer_expr(step);
@@ -1841,7 +2247,30 @@ impl<'a> InferCtx<'a> {
                 body,
             } => {
                 let iterable_ty = self.infer_expr(*iterable);
-                let element = self.element_type(iterable_ty);
+                let element = if iterable_ty.is_array(self.db) {
+                    iterable_ty
+                        .element(self.db)
+                        .copied()
+                        .unwrap_or_else(|| self.error())
+                } else {
+                    // §14.14.2.1: the expression must be `Iterable<T>`; the
+                    // loop variable takes `T`, the element type of the
+                    // `Iterator<E>` that `iterator()` returns.
+                    match self.iterable_element(iterable_ty) {
+                        Some(element) => element,
+                        None => {
+                            if !iterable_ty.is_error(self.db) {
+                                // §14.14.2: a for-each over a non-iterable
+                                // reference type is a compile-time error.
+                                self.report(TypeError::NonIterableForEach {
+                                    expr: *iterable,
+                                    found: iterable_ty.display(self.db).to_string(),
+                                });
+                            }
+                            self.error()
+                        }
+                    }
+                };
                 self.scopes.push(FxHashMap::default());
                 self.declare_local_ty(*var, element);
                 self.infer_stmt(*body);
@@ -1884,7 +2313,36 @@ impl<'a> InferCtx<'a> {
                 } else {
                     self.enclosing_ret
                 };
-                let _ = self.with_target(target, |this| this.infer_expr(*expr));
+                let ty = self.with_target(target, |this| this.infer_expr(*expr));
+                if matches!(stmt, StmtData::Return(_)) {
+                    match self.enclosing_ret {
+                        // §14.17: a value returned from a `void` method or a
+                        // constructor is an error.
+                        None => {
+                            if !ty.is_error(self.db) {
+                                self.report(TypeError::IncompatibleTypes {
+                                    expr: *expr,
+                                    found: ty.display(self.db).to_string(),
+                                    expected: "void".to_owned(),
+                                });
+                            }
+                        }
+                        Some(ret) => {
+                            if !ty.is_error(self.db)
+                                && !ret.is_error(self.db)
+                                && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &ret)
+                            {
+                                // §14.17: the returned value must be assignable
+                                // to the return type ([§5.2]).
+                                self.report(TypeError::IncompatibleTypes {
+                                    expr: *expr,
+                                    found: ty.display(self.db).to_string(),
+                                    expected: ret.display(self.db).to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
             }
             StmtData::Throw(expr) => {
                 // §14.18: the operand of a `throw` statement is not a poly
@@ -1950,7 +2408,8 @@ impl<'a> InferCtx<'a> {
                 }
             }
             StmtData::Assert { cond, msg } => {
-                let _ = self.infer_expr(*cond);
+                // §14.16: the assertion condition must be a boolean.
+                self.check_condition(*cond);
                 if let Some(msg) = msg {
                     let _ = self.infer_expr(*msg);
                 }
@@ -1966,6 +2425,43 @@ fn simple_name(fqn: &str) -> String {
     match fqn.rfind(['$', '.']) {
         Some(i) => fqn[i + 1..].to_owned(),
         None => fqn.to_owned(),
+    }
+}
+
+/// The source symbol of a unary operator, for [`TypeError::IncompatibleOperand`].
+fn unary_op_symbol(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Plus => "+",
+        UnaryOp::Minus => "-",
+        UnaryOp::BitNot => "~",
+        UnaryOp::Inc => "++",
+        UnaryOp::Dec => "--",
+        UnaryOp::Not => "!",
+    }
+}
+
+/// The source symbol of a binary operator, for [`TypeError::IncompatibleOperand`].
+fn binary_op_symbol(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Mul => "*",
+        BinaryOp::Div => "/",
+        BinaryOp::Rem => "%",
+        BinaryOp::Add => "+",
+        BinaryOp::Sub => "-",
+        BinaryOp::Shl => "<<",
+        BinaryOp::Shr => ">>",
+        BinaryOp::UShr => ">>>",
+        BinaryOp::Lt => "<",
+        BinaryOp::Gt => ">",
+        BinaryOp::Le => "<=",
+        BinaryOp::Ge => ">=",
+        BinaryOp::Eq => "==",
+        BinaryOp::Ne => "!=",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitXor => "^",
+        BinaryOp::BitOr => "|",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
     }
 }
 

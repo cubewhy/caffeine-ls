@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    String m(int i, boolean b, Object o) {
+        String s1 = "a" + i;
+        String s2 = b + "b";
+        String s3 = o + "c";
+        String s4 = "" + "";
+        return s1 + s2 + s3 + s4;
+    }
+}
+
+method m(int, boolean, java.lang.Object): java.lang.String
+  locals: l0: int | l1: boolean | l2: java.lang.Object | l3: java.lang.String | l4: java.lang.String | l5: java.lang.String | l6: java.lang.String
+  exprs: e0: java.lang.String | e1: int | e2: java.lang.String | e3: boolean | e4: java.lang.String | e5: java.lang.String | e6: java.lang.Object | e7: java.lang.String | e8: java.lang.String | e9: java.lang.String | e10: java.lang.String | e11: java.lang.String | e12: java.lang.String | e13: java.lang.String | e14: java.lang.String | e15: java.lang.String | e16: java.lang.String | e17: java.lang.String | e18: java.lang.String

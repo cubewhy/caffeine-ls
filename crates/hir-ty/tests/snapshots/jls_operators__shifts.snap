@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int m(byte b, short s, char c, long lo, java.lang.Integer box) {
+        int shl = b << 2;
+        int shr = s >> 1;
+        int ushr = c >>> 1;
+        long lsh = lo << 3;
+        int boxed = box << 2;
+        return shl + shr + ushr + (int) lsh + boxed;
+    }
+}
+
+method m(byte, short, char, long, java.lang.Integer): int
+  locals: l0: byte | l1: short | l2: char | l3: long | l4: java.lang.Integer | l5: int | l6: int | l7: int | l8: long | l9: int
+  exprs: e0: byte | e1: int | e2: int | e3: short | e4: int | e5: int | e6: char | e7: int | e8: int | e9: long | e10: int | e11: long | e12: java.lang.Integer | e13: int | e14: int | e15: int | e16: int | e17: int | e18: int | e19: int | e20: long | e21: int | e22: int | e23: int | e24: int

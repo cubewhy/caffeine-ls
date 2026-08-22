@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    boolean m(int i, long lo, double d, java.lang.Integer box, java.lang.String s, Object o, int[] arr) {
+        boolean lt = i < lo;
+        boolean gt = d > i;
+        boolean le = i <= 1;
+        boolean ge = box >= 1;
+        boolean eq = i == 1L;
+        boolean ne = box != lo;
+        boolean ref = s == "x";
+        boolean obj = o == s;
+        boolean nullEq = s == null;
+        boolean nulNe = null != arr;
+        boolean unbox = box == i;
+        return lt && gt && le && ge && eq && ne && ref && obj && nullEq && nulNe && unbox;
+    }
+}
+
+method m(int, long, double, java.lang.Integer, java.lang.String, java.lang.Object, int[]): boolean
+  locals: l0: int | l1: long | l2: double | l3: java.lang.Integer | l4: java.lang.String | l5: java.lang.Object | l6: int[] | l7: boolean | l8: boolean | l9: boolean | l10: boolean | l11: boolean | l12: boolean | l13: boolean | l14: boolean | l15: boolean | l16: boolean | l17: boolean
+  exprs: e0: int | e1: long | e2: boolean | e3: double | e4: int | e5: boolean | e6: int | e7: int | e8: boolean | e9: java.lang.Integer | e10: int | e11: boolean | e12: int | e13: long | e14: boolean | e15: java.lang.Integer | e16: long | e17: boolean | e18: java.lang.String | e19: java.lang.String | e20: boolean | e21: java.lang.Object | e22: java.lang.String | e23: boolean | e24: java.lang.String | e25: null | e26: boolean | e27: null | e28: int[] | e29: boolean | e30: java.lang.Integer | e31: int | e32: boolean | e33: boolean | e34: boolean | e35: boolean | e36: boolean | e37: boolean | e38: boolean | e39: boolean | e40: boolean | e41: boolean | e42: boolean | e43: boolean | e44: boolean | e45: boolean | e46: boolean | e47: boolean | e48: boolean | e49: boolean | e50: boolean | e51: boolean | e52: boolean | e53: boolean

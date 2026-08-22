@@ -1,5 +1,6 @@
 ---
 source: crates/hir-def/tests/body_form_snapshots.rs
+assertion_line: 14
 expression: out
 ---
 SOURCE:
@@ -52,7 +53,7 @@ BODIES:
 body:
   s0: empty
   s1: decl l0 = e0
-  s4: block
+  s4: decl-group
     s2: decl l1 = e1
     s3: decl l2 = e2
   s5: decl l3 = e3

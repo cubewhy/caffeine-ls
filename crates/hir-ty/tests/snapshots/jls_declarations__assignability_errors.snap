@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_declarations.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(String s, long l, int i, Object o) {
+        int bad = "not an int";
+        int narrowed = l;
+        i = s;
+        int[] arr = o;
+        Body b = i;
+    }
+}
+
+method m(java.lang.String, long, int, java.lang.Object): void
+  locals: l0: java.lang.String | l1: long | l2: int | l3: java.lang.Object | l4: int | l5: int | l6: int[] | l7: com.example.Body
+  exprs: e0: java.lang.String | e1: long | e2: int | e3: java.lang.String | e4: int | e5: java.lang.Object | e6: int
+  diags: e0@4:17: incompatible-types: incompatible types: java.lang.String cannot be converted to int | e1@5:22: incompatible-types: incompatible types: long cannot be converted to int | e3@6:11: incompatible-types: incompatible types: java.lang.String cannot be converted to int | e5@7:19: incompatible-types: incompatible types: java.lang.Object cannot be converted to int[] | e6@8:16: incompatible-types: incompatible types: int cannot be converted to com.example.Body

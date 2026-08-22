@@ -10,4 +10,4 @@ class Box<T extends Comparable<T>> {
 }
 
 RESOLVED:
-field value: T | bounds: com.example.Comparable<T> | erasure: com.example.Comparable
+field value: T | bounds: java.lang.Comparable<T> | erasure: java.lang.Comparable

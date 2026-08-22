@@ -1,0 +1,42 @@
+---
+source: crates/hir-ty/tests/jls_declarations.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    List<String> a = new java.util.ArrayList<>();
+    List<String> b = new java.util.ArrayList<String>();
+    Object c = new Object();
+    Runnable r = new Runnable() { public void run() {} };
+
+    int m() {
+        Body n = new Body();
+        java.lang.String s = new java.lang.String("x");
+        return n.m2() + s.length();
+    }
+
+    int m2() { return 1; }
+}
+
+field a
+  locals: 
+  exprs: e0: java.util.ArrayList
+field b
+  locals: 
+  exprs: e1: java.util.ArrayList<java.lang.String>
+field c
+  locals: 
+  exprs: e2: java.lang.Object
+field r
+  locals: 
+  exprs: e3: java.lang.Runnable
+method m(): int
+  locals: l0: com.example.Body | l1: java.lang.String
+  exprs: e4: com.example.Body | e5: java.lang.String | e6: java.lang.String | e7: com.example.Body | e8: int | e9: java.lang.String | e10: int | e11: int
+method m2(): int
+  locals: 
+  exprs: e12: int

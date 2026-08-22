@@ -505,6 +505,12 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                     .unwrap_or_else(|| "none".to_owned()),
             ));
         }
+        StmtData::DeclGroup(stmts) => {
+            out.push_str(&format!("{indent}{id}: decl-group\n"));
+            for &s in stmts {
+                render_stmt(out, bodies, s, depth + 1);
+            }
+        }
         StmtData::Expr(e) => {
             out.push_str(&format!("{indent}{id}: expr "));
             render_expr(out, bodies, *e);

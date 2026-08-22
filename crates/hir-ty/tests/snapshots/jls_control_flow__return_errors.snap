@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(String s) {
+        Body b = m2(s);
+    }
+
+    int m2(String s) { return 1; }
+
+    void bad() { return 1; }
+    String bad2() { return 1; }
+    int bad3(Object o) { return o; }
+}
+
+method m(java.lang.String): void
+  locals: l0: java.lang.String | l1: com.example.Body
+  exprs: e0: java.lang.String | e1: int
+  diags: e1@4:16: incompatible-types: incompatible types: int cannot be converted to com.example.Body
+method m2(java.lang.String): int
+  locals: l2: java.lang.String
+  exprs: e2: int
+method bad(): void
+  locals: 
+  exprs: e3: int
+  diags: e3@9:23: incompatible-types: incompatible types: int cannot be converted to void
+method bad2(): java.lang.String
+  locals: 
+  exprs: e4: int
+  diags: e4@10:26: incompatible-types: incompatible types: int cannot be converted to java.lang.String
+method bad3(java.lang.Object): int
+  locals: l3: java.lang.Object
+  exprs: e5: java.lang.Object
+  diags: e5@11:31: incompatible-types: incompatible types: java.lang.Object cannot be converted to int

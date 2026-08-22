@@ -44,6 +44,9 @@ pub enum TypeError {
     /// is what the local's type is inferred from, so without one the local
     /// has no type.
     VarWithoutInitializer { local: LocalId },
+    /// §14.4.1: a `var` declaration whose initializer is an array initializer
+    /// (a `var x = { 1, 2 }` has no standalone type to infer).
+    VarArrayInitializer { local: LocalId },
     /// §6.5: a simple name resolves to nothing — no local variable, no
     /// statically imported member, no field of the implicit receiver.
     CannotResolveName { expr: ExprId, name: Name },
@@ -67,6 +70,33 @@ pub enum TypeError {
         found: String,
         expected: String,
     },
+    /// §14.9, §14.11, §14.12.1, §14.16, §15.25.1: the condition of an
+    /// `if`/`while`/`do`/`for`/`assert`/`? :`/`&&`/`||`/`!` is not `boolean`.
+    NonBooleanCondition { expr: ExprId },
+    /// §15.15, §15.17, §15.18, §15.19, §15.22: a unary, binary or shift
+    /// operator applied to a non-numeric operand.
+    IncompatibleOperand { expr: ExprId, op: &'static str },
+    /// §15.20/§15.21: an equality or relational operator between operands that
+    /// are not comparable.
+    IncomparableTypes {
+        expr: ExprId,
+        found: String,
+        other: String,
+    },
+    /// §14.14.2: the iterable of a for-each loop is not an array or an
+    /// `Iterable`.
+    NonIterableForEach { expr: ExprId, found: String },
+    /// §5.5/§15.16: a cast to a type the operand cannot be cast to.
+    BadCast {
+        expr: ExprId,
+        found: String,
+        target: String,
+    },
+    /// §15.10.2: array creation with a non-reifiable component type
+    /// (`new List<String>[3]`).
+    GenericArrayCreation { expr: ExprId, ty: String },
+    /// §15.9: a `new` of a type variable, interface, abstract class or enum.
+    CannotInstantiateTypeVar { expr: ExprId, name: String },
 }
 
 impl TypeError {
@@ -75,11 +105,21 @@ impl TypeError {
         use JavaDiagnosticCode::*;
         match self {
             TypeError::VarWithoutInitializer { .. } => DiagnosticCode::Java(VarWithoutInitializer),
+            TypeError::VarArrayInitializer { .. } => DiagnosticCode::Java(VarArrayInitializer),
             TypeError::CannotResolveName { .. } => DiagnosticCode::Java(CannotResolveName),
             TypeError::NoSuchField { .. } => DiagnosticCode::Java(NoSuchField),
             TypeError::NoSuchMethod { .. } => DiagnosticCode::Java(NoSuchMethod),
             TypeError::WrongArity { .. } => DiagnosticCode::Java(WrongArity),
             TypeError::IncompatibleTypes { .. } => DiagnosticCode::Java(IncompatibleTypes),
+            TypeError::NonBooleanCondition { .. } => DiagnosticCode::Java(NonBooleanCondition),
+            TypeError::IncompatibleOperand { .. } => DiagnosticCode::Java(IncompatibleOperand),
+            TypeError::IncomparableTypes { .. } => DiagnosticCode::Java(IncomparableTypes),
+            TypeError::NonIterableForEach { .. } => DiagnosticCode::Java(NonIterableForEach),
+            TypeError::BadCast { .. } => DiagnosticCode::Java(BadCast),
+            TypeError::GenericArrayCreation { .. } => DiagnosticCode::Java(GenericArrayCreation),
+            TypeError::CannotInstantiateTypeVar { .. } => {
+                DiagnosticCode::Java(CannotInstantiateTypeVar)
+            }
         }
     }
 
@@ -87,12 +127,21 @@ impl TypeError {
     pub fn location(&self) -> DiagLocation {
         use TypeError::*;
         match self {
-            VarWithoutInitializer { local } => DiagLocation::Local(*local),
+            VarWithoutInitializer { local } | VarArrayInitializer { local } => {
+                DiagLocation::Local(*local)
+            }
             CannotResolveName { expr, .. }
             | NoSuchField { expr, .. }
             | NoSuchMethod { expr, .. }
             | WrongArity { expr, .. }
-            | IncompatibleTypes { expr, .. } => DiagLocation::Expr(*expr),
+            | IncompatibleTypes { expr, .. }
+            | NonBooleanCondition { expr }
+            | IncompatibleOperand { expr, .. }
+            | IncomparableTypes { expr, .. }
+            | NonIterableForEach { expr, .. }
+            | BadCast { expr, .. }
+            | GenericArrayCreation { expr, .. }
+            | CannotInstantiateTypeVar { expr, .. } => DiagLocation::Expr(*expr),
         }
     }
 
@@ -110,6 +159,12 @@ impl TypeError {
             VarWithoutInitializer { local } => {
                 let name = tree.local(*local).name.as_str();
                 format!("variable '{name}' is declared with 'var' but has no initializer")
+            }
+            VarArrayInitializer { local } => {
+                let name = tree.local(*local).name.as_str();
+                format!(
+                    "array initializer needs an explicit target-type, but variable '{name}' is declared with 'var'"
+                )
             }
             CannotResolveName { name, .. } => {
                 format!("cannot resolve symbol '{name}'")
@@ -134,6 +189,27 @@ impl TypeError {
                 found, expected, ..
             } => {
                 format!("incompatible types: {found} cannot be converted to {expected}")
+            }
+            NonBooleanCondition { .. } => {
+                "incompatible types: the condition must be a boolean".to_owned()
+            }
+            IncompatibleOperand { op, .. } => {
+                format!("bad operand type for operator '{op}'")
+            }
+            IncomparableTypes { found, other, .. } => {
+                format!("incomparable types: {found} and {other}")
+            }
+            NonIterableForEach { found, .. } => {
+                format!("for-each requires an array or an Iterable, found {found}")
+            }
+            BadCast { found, target, .. } => {
+                format!("inconvertible types: {found} cannot be cast to {target}")
+            }
+            GenericArrayCreation { ty, .. } => {
+                format!("generic array creation: cannot create array of {ty}")
+            }
+            CannotInstantiateTypeVar { name, .. } => {
+                format!("{name} is abstract; cannot be instantiated")
             }
         }
     }

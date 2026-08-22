@@ -1,0 +1,74 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    String s = "x";
+    Object o = null;
+
+    String unaryMinus() { return -s; }
+    int stringMinus() { return "a" - "b"; }
+    String bitNot() { return ~s; }
+    int shiftBad() { return 1 << s; }
+    boolean notBad() { return !1; }
+    boolean eqBad() { return 1 == s; }
+    boolean ltBad() { return 1 < s; }
+    boolean boolAndBad() { return true && 1; }
+    boolean boolOrBad() { return false || 1; }
+    int castBad() { return (int) s; }
+    int mulBad() { return 2 * s; }
+}
+
+field s
+  locals: 
+  exprs: e0: java.lang.String
+field o
+  locals: 
+  exprs: e1: null
+method unaryMinus(): java.lang.String
+  locals: 
+  exprs: e2: <error> | e3: <error>
+  diags: e2@6:34: incompatible-operand: bad operand type for operator '-'
+method stringMinus(): int
+  locals: 
+  exprs: e4: <error> | e5: java.lang.String | e6: <error>
+  diags: e4@7:31: incompatible-operand: bad operand type for operator '-'
+method bitNot(): java.lang.String
+  locals: 
+  exprs: e7: <error> | e8: <error>
+  diags: e7@8:30: incompatible-operand: bad operand type for operator '~'
+method shiftBad(): int
+  locals: 
+  exprs: e9: int | e10: <error> | e11: <error>
+  diags: e10@9:32: incompatible-operand: bad operand type for operator '<<'
+method notBad(): boolean
+  locals: 
+  exprs: e12: <error> | e13: <error>
+  diags: e12@10:31: non-boolean-condition: incompatible types: the condition must be a boolean
+method eqBad(): boolean
+  locals: 
+  exprs: e14: <error> | e15: java.lang.String | e16: boolean
+  diags: e14@11:29: incomparable-types: incomparable types: int and java.lang.String
+method ltBad(): boolean
+  locals: 
+  exprs: e17: <error> | e18: java.lang.String | e19: boolean
+  diags: e17@12:29: incomparable-types: incomparable types: int and java.lang.String
+method boolAndBad(): boolean
+  locals: 
+  exprs: e20: boolean | e21: <error> | e22: boolean
+  diags: e21@13:41: non-boolean-condition: incompatible types: the condition must be a boolean
+method boolOrBad(): boolean
+  locals: 
+  exprs: e23: boolean | e24: <error> | e25: boolean
+  diags: e24@14:41: non-boolean-condition: incompatible types: the condition must be a boolean
+method castBad(): int
+  locals: 
+  exprs: e26: <error> | e27: int
+  diags: e26@15:32: bad-cast: inconvertible types: java.lang.String cannot be cast to int
+method mulBad(): int
+  locals: 
+  exprs: e28: int | e29: <error> | e30: <error>
+  diags: e29@16:29: incompatible-operand: bad operand type for operator '*'

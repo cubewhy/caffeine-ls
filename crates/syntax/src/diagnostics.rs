@@ -32,8 +32,31 @@ pub enum JavaDiagnosticCode {
     NoSuchMethod,
     /// §15.12.2: no member is applicable to the actual arguments.
     WrongArity,
-    /// §14.18: a `throw` operand is not assignable to `Throwable`.
+    /// §14.18: a `throw` operand is not assignable to `Throwable`; also used
+    /// for a declaration initializer, an assignment or a returned expression
+    /// not assignable to its target ([§5.2], [§14.17]).
     IncompatibleTypes,
+    /// §14.9/§14.11/§14.12.1/§14.16/§15.25: a condition position requires a
+    /// `boolean`.
+    NonBooleanCondition,
+    /// §15.15/§15.17/§15.18/§15.22: a numeric operand of a unary, binary or
+    /// shift operator is not numeric.
+    IncompatibleOperand,
+    /// §15.21/§15.20: the operands of an equality or relational operator are
+    /// not comparable.
+    IncomparableTypes,
+    /// §14.14.2: the expression of a for-each loop is not an array or
+    /// `Iterable`.
+    NonIterableForEach,
+    /// §5.5/§15.16: a cast is not a casting conversion.
+    BadCast,
+    /// §15.10: generic array creation (`new List<String>[3]`).
+    GenericArrayCreation,
+    /// §15.9: instantiating a type variable, interface, abstract class or enum
+    /// with `new`.
+    CannotInstantiateTypeVar,
+    /// §14.4: a `var` initializer cannot be an array initializer.
+    VarArrayInitializer,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -78,6 +101,14 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::NoSuchMethod => "no-such-method",
             JavaDiagnosticCode::WrongArity => "wrong-argument-count",
             JavaDiagnosticCode::IncompatibleTypes => "incompatible-types",
+            JavaDiagnosticCode::NonBooleanCondition => "non-boolean-condition",
+            JavaDiagnosticCode::IncompatibleOperand => "incompatible-operand",
+            JavaDiagnosticCode::IncomparableTypes => "incomparable-types",
+            JavaDiagnosticCode::NonIterableForEach => "non-iterable-for-each",
+            JavaDiagnosticCode::BadCast => "bad-cast",
+            JavaDiagnosticCode::GenericArrayCreation => "generic-array-creation",
+            JavaDiagnosticCode::CannotInstantiateTypeVar => "cannot-instantiate-type-var",
+            JavaDiagnosticCode::VarArrayInitializer => "var-array-initializer",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

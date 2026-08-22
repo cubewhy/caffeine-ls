@@ -358,7 +358,33 @@ fn member_set_impl(
             stack.push(parent);
         }
     }
-    out
+    // §8.4.8.1: an overriding method replaces the overridden one in the
+    // member set — a subtype's declaration of a method with the same signature
+    // shadows the supertype's — so only the most-derived declaration of each
+    // signature survives. The walk is derived-first, so the first occurrence
+    // is the most-derived. Without this, `List.iterator()` (overriding
+    // `Collection.iterator()`/`Iterable.iterator()`) would surface three
+    // identical candidates that the most-specific tie-break reports as
+    // ambiguous.
+    let mut deduped: Vec<MethodData> = Vec::with_capacity(out.len());
+    for method in out {
+        if !deduped
+            .iter()
+            .any(|seen| same_overriding_signature(seen, &method))
+        {
+            deduped.push(method);
+        }
+    }
+    deduped
+}
+
+/// Whether two methods declare the same overriding signature
+/// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)):
+/// identical parameter types and return type, both static or neither, and the
+/// same variable-arity behavior. Two such members differing only in declaring
+/// type are the same method inherited and overridden down the hierarchy.
+fn same_overriding_signature(a: &MethodData, b: &MethodData) -> bool {
+    a.params == b.params && a.ret == b.ret && a.is_static == b.is_static && a.varargs == b.varargs
 }
 
 /// The abstract methods of the interface `ty` and its superinterfaces

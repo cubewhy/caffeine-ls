@@ -367,7 +367,11 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     if decls.len() == 1 {
         return decls.pop().unwrap();
     }
-    StmtData::Block(decls.into_iter().map(|d| alloc_stmt(ctx, d)).collect())
+    // §14.4/§6.3: the declarators of one declaration statement all live in
+    // the *enclosing* scope, so they must not be wrapped in a (scoping)
+    // block — a dedicated group keeps them sequential without introducing
+    // one.
+    StmtData::DeclGroup(decls.into_iter().map(|d| alloc_stmt(ctx, d)).collect())
 }
 
 fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {

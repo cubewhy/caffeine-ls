@@ -225,6 +225,13 @@ pub enum StmtData {
         local: LocalId,
         initializer: Option<ExprId>,
     },
+    /// A multi-declarator local declaration `int a = 1, b = 2;` ([§14.4]):
+    /// the declarators of one declaration statement, lowered in order. Unlike
+    /// a [`StmtData::Block`], this is *not* a lexical scope — every declarator
+    /// of a single declaration statement is declared in the enclosing scope
+    /// ([§6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)),
+    /// so each inner statement must be inferred without pushing a scope.
+    DeclGroup(Vec<StmtId>),
     /// An expression statement ([§14.8]).
     Expr(ExprId),
     /// A labeled statement ([§14.7]).

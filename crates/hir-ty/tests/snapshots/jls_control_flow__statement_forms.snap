@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    int m(int a, boolean p, boolean q, List<String> xs, int[] arr, Object o) {
+        int acc = 0;
+        if (p && q) { acc += 1; } else if (p) { acc += 2; } else { acc += 3; }
+        while (p && acc < 10) { acc++; }
+        do { acc--; } while (acc > 0 && p);
+        for (int i = 0; i < 3 && acc < 5; i++) { acc += i; }
+        for (String x : xs) { acc += x.length(); }
+        for (int n : arr) { acc += n; }
+        if (o instanceof String s) { acc += s.length(); }
+        assert p : "msg";
+        return acc;
+    }
+}
+
+method m(int, boolean, boolean, java.util.List<java.lang.String>, int[], java.lang.Object): int
+  locals: l0: int | l1: boolean | l2: boolean | l3: java.util.List<java.lang.String> | l4: int[] | l5: java.lang.Object | l6: int | l7: int | l8: java.lang.String | l9: int | l10: java.lang.String
+  exprs: e0: int | e1: boolean | e2: boolean | e3: boolean | e4: boolean | e5: int | e6: int | e7: int | e8: boolean | e9: boolean | e10: int | e11: int | e12: int | e13: int | e14: int | e15: int | e16: boolean | e17: int | e18: int | e19: boolean | e20: boolean | e21: boolean | e22: int | e23: int | e24: int | e25: int | e26: int | e27: int | e28: boolean | e29: boolean | e30: boolean | e31: boolean | e32: int | e33: int | e34: int | e35: boolean | e36: int | e37: int | e38: boolean | e39: boolean | e40: int | e41: int | e42: int | e43: int | e44: int | e45: java.util.List<java.lang.String> | e46: int | e47: java.lang.String | e48: int | e49: int | e50: int[] | e51: int | e52: int | e53: int | e54: java.lang.Object | e55: boolean | e56: boolean | e57: int | e58: java.lang.String | e59: int | e60: int | e61: boolean | e62: java.lang.String | e63: int

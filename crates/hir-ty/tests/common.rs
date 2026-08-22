@@ -454,6 +454,25 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         class("java/lang/Object", None, &[]),
         class("java/lang/Class", Some("java/lang/Object"), &[]),
         interface("java/lang/CharSequence"),
+        interface_sig(
+            "java/lang/Comparable",
+            &[],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+        ),
+        interface_with_methods(
+            "java/lang/AutoCloseable",
+            &[],
+            None,
+            &[("close", "()V")],
+            &[""],
+        ),
+        interface_with_methods(
+            "java/io/Closeable",
+            &["java/lang/AutoCloseable"],
+            None,
+            &[("close", "()V")],
+            &[""],
+        ),
         class_with_methods(
             "java/lang/String",
             Some("java/lang/Object"),
