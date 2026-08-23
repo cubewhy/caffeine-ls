@@ -95,7 +95,15 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                 .find(|c| c.kind() == J::TYPE)
                 .map(|t| super::type_from(&t))
                 .unwrap_or(TypeRef::Error);
-            alloc_local(ctx, Local { name, ty: Some(ty) }, child.text_range())
+            alloc_local(
+                ctx,
+                Local {
+                    name,
+                    ty: Some(ty),
+                    is_final: false,
+                },
+                child.text_range(),
+            )
         })
         .collect()
 }
@@ -273,7 +281,17 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                     let range = var
                         .as_ref()
                         .map_or_else(|| node.text_range(), |d| d.text_range());
-                    alloc_local(ctx, Local { name, ty: Some(ty) }, range)
+                    alloc_local(
+                        ctx,
+                        Local {
+                            name,
+                            ty: Some(ty),
+                            // §14.20.3: a resource variable is effectively
+                            // final, so it may be a constant variable.
+                            is_final: true,
+                        },
+                        range,
+                    )
                 })
                 .unwrap_or_else(|| alloc_local_missing(ctx));
             let iterable = first_expr(ctx, owner, node);
@@ -358,6 +376,15 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     // type on a local marks such a declaration for the type layer.
     let is_var =
         type_ref.is_none() && first_identifier(&decl).is_some_and(|name| name.as_str() == "var");
+    // §4.12.4: a `final` local whose initializer is a constant expression is
+    // a constant variable, so its reads are constant expressions ([§15.28]).
+    let is_final = decl
+        .children()
+        .find(|c| c.kind() == J::MODIFIER_LIST)
+        .is_some_and(|mods| {
+            mods.children_with_tokens()
+                .any(|e| e.as_token().is_some_and(|t| t.kind() == J::FINAL_KW))
+        });
     let declarators: Vec<_> = decl
         .children()
         .find(|c| c.kind() == VARIABLE_DECLARATOR_LIST)
@@ -382,6 +409,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
                 } else {
                     Some(type_ref.clone().unwrap_or(TypeRef::Error))
                 },
+                is_final,
             },
             declarator.text_range(),
         );
@@ -423,7 +451,15 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         .and_then(|ct| ct.children().find(|t| t.kind() == TYPE))
                         .map(|t| super::type_from(&t))
                         .unwrap_or(TypeRef::Error);
-                    alloc_local(ctx, Local { name, ty: Some(ty) }, p.text_range())
+                    alloc_local(
+                        ctx,
+                        Local {
+                            name,
+                            ty: Some(ty),
+                            is_final: false,
+                        },
+                        p.text_range(),
+                    )
                 })
                 .unwrap_or_else(|| alloc_local_missing(ctx));
             let body = c
@@ -496,6 +532,7 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                     } else {
                         Some(type_ref.clone().unwrap_or(TypeRef::Error))
                     },
+                    is_final: true,
                 },
                 declarator.text_range(),
             );
@@ -549,7 +586,14 @@ fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ve
             let mut seen = false;
             for sub in label.children() {
                 if is_expr_kind(sub.kind()) {
-                    labels.push(SwitchLabel::Expr(expr(ctx, owner, &sub)));
+                    // §14.11.1: after a pattern, the only expression of the
+                    // label is its `when` guard — `case P when cond` — not a
+                    // case label of its own.
+                    if seen && matches!(labels.last(), Some(SwitchLabel::Pattern(_))) {
+                        labels.push(SwitchLabel::Guard(expr(ctx, owner, &sub)));
+                    } else {
+                        labels.push(SwitchLabel::Expr(expr(ctx, owner, &sub)));
+                    }
                     seen = true;
                 } else if is_pattern_kind(sub.kind()) {
                     // §14.30.2/§14.30.3: a `case Foo f ->`, `case
@@ -913,7 +957,14 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
                 ExprData::Literal(Literal::Double)
             }
         }
-        J::STRING_LITERAL | J::TEXT_BLOCK => ExprData::Literal(Literal::Str),
+        J::STRING_LITERAL | J::TEXT_BLOCK => {
+            // §3.10.5: decode the escapes so constant expressions over
+            // strings can be evaluated ([§15.28]); text blocks ([§3.10.6])
+            // are decoded with their quotes and incidental whitespace kept
+            // as written — a malformed literal falls back to the empty
+            // string so typing stays well-formed.
+            ExprData::Literal(Literal::Str(unescape_string(token.text())))
+        }
         J::CHAR_LITERAL => {
             // §3.10.4: decode the single character between the quotes,
             // resolving the simple escapes; a malformed literal keeps type
@@ -921,7 +972,9 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
             let decoded = unescape_char(token.text());
             ExprData::Literal(Literal::Char(decoded))
         }
-        J::TRUE_LITERAL | J::FALSE_LITERAL => ExprData::Literal(Literal::Boolean),
+        J::TRUE_LITERAL | J::FALSE_LITERAL => {
+            ExprData::Literal(Literal::Boolean(token.kind() == J::TRUE_LITERAL))
+        }
         J::NULL_LITERAL => ExprData::Null,
         J::IDENTIFIER | J::UNDERSCORE => ExprData::Var(Name::new(token.text())),
         J::THIS_KW => ExprData::This { qualifier: None },
@@ -945,17 +998,47 @@ fn unescape_char(text: &str) -> char {
     if first != '\\' {
         return first;
     }
-    match chars.next() {
-        Some('n') => '\n',
-        Some('t') => '\t',
-        Some('b') => '\u{0008}',
-        Some('r') => '\r',
-        Some('f') => '\u{000C}',
-        Some('s') => ' ',
-        Some('0') => '\0',
-        Some(other) => other,
-        None => '\0',
+    unescape_escape_char(chars.next().unwrap_or('\0'))
+}
+
+/// The decoded value of the character following a `\` in a string or char
+/// literal ([JLS §3.10.6], [§3.10.4]); octal and unicode escapes degrade to
+/// the escape character itself.
+fn unescape_escape_char(escaped: char) -> char {
+    match escaped {
+        'n' => '\n',
+        't' => '\t',
+        'b' => '\u{0008}',
+        'r' => '\r',
+        'f' => '\u{000C}',
+        's' => ' ',
+        '0' => '\0',
+        other => other,
     }
+}
+
+/// Decodes the value of a string literal ([JLS §3.10.5]) — the characters
+/// between the quotes with the simple escapes resolved. A text block
+/// ([§3.10.6]) is kept verbatim; a malformed literal yields the empty string
+/// so typing stays well-formed.
+pub(super) fn unescape_string(text: &str) -> String {
+    let inner = text
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text);
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(escaped) => out.push(unescape_escape_char(escaped)),
+            None => break,
+        }
+    }
+    out
 }
 
 fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
@@ -1245,6 +1328,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                         Local {
                             name: Name::new(t.text()),
                             ty: Some(ty.clone()),
+                            is_final: false,
                         },
                         t.text_range(),
                     )
@@ -1481,6 +1565,7 @@ fn alloc_local_missing(ctx: &mut LowerCtx) -> LocalId {
         Local {
             name: missing_name(),
             ty: None,
+            is_final: false,
         },
         TextRange::default(),
     )

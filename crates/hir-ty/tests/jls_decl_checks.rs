@@ -124,3 +124,60 @@ class Chain implements B {}
 ",
     )])
 );
+
+// -- §9.6.4.4: `@Override` validation ---------------------------------------------
+// A method annotated `@Override` must override or implement an instance
+// supertype method; a `static` method only hides ([§8.4.8.2]), so its
+// annotation always fails.
+
+snapshot!(
+    override_annotation,
+    check_class_diagnostics(&[(
+        "/src/com/example/Base.java",
+        "\
+package com.example;
+
+class Base {
+    void run() {}
+    static void hide() {}
+}
+
+class Derived extends Base {
+    @Override
+    void run() {}
+
+    @Override
+    void missing() {}
+
+    @Override
+    static void hide() {}
+}
+",
+    )])
+);
+
+// -- §9.7.1/§6.5.5.1: a same-package annotation shadows the JDK one ---------------
+// `Override` here resolves to the local annotation type, not
+// `java.lang.Override`, so `@Override` on the method carries no override
+// requirement and no diagnostic is reported.
+
+snapshot!(
+    override_annotation_shadowed,
+    check_class_diagnostics(&[(
+        "/src/com/example/Base.java",
+        "\
+package com.example;
+
+@interface Override {}
+
+class Base {
+    void run() {}
+}
+
+class Derived extends Base {
+    @Override
+    void missing() {}
+}
+",
+    )])
+);

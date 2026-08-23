@@ -119,6 +119,23 @@ pub enum TypeError {
     /// §14.11.1/§15.28: a switch expression is not exhaustive — some selector
     /// values have no matching arm and there is no `default`.
     NotExhaustive { expr: ExprId },
+    /// §14.11.1: a `case` label of a primitive- or `String`-selector switch
+    /// is not a constant expression ([§15.28]).
+    NonConstantCaseLabel { expr: ExprId },
+    /// §14.11.1: two `case` labels of one `switch` declare the same constant
+    /// value — the second arm is unreachable.
+    DuplicateCaseLabel { expr: ExprId, value: String },
+    /// §4.12.2: a declared type names a generic class without type arguments
+    /// — a *raw type* use. A warning, not an error.
+    RawTypeUse { local: LocalId, name: String },
+    /// §5.1.9/§5.2: a raw-typed expression is assigned to a parameterized
+    /// target; the conversion succeeds but carries no static element-type
+    /// guarantee. A warning, not an error.
+    UncheckedConversion {
+        expr: ExprId,
+        from: String,
+        to: String,
+    },
 }
 
 impl TypeError {
@@ -155,7 +172,21 @@ impl TypeError {
                 DiagnosticCode::Java(VariableMightNotHaveBeenInitialized)
             }
             TypeError::NotExhaustive { .. } => DiagnosticCode::Java(NotExhaustive),
+            TypeError::NonConstantCaseLabel { .. } => DiagnosticCode::Java(NonConstantCaseLabel),
+            TypeError::DuplicateCaseLabel { .. } => DiagnosticCode::Java(DuplicateCaseLabel),
+            TypeError::RawTypeUse { .. } => DiagnosticCode::Java(RawTypeUse),
+            TypeError::UncheckedConversion { .. } => DiagnosticCode::Java(UncheckedConversion),
         }
+    }
+
+    /// Whether this diagnostic is a *warning* — a legal program reported for
+    /// its unsoundness ([§4.12.2] raw types, [§5.1.9] unchecked conversion) —
+    /// rather than a compile-time error.
+    pub fn is_warning(&self) -> bool {
+        matches!(
+            self,
+            TypeError::RawTypeUse { .. } | TypeError::UncheckedConversion { .. }
+        )
     }
 
     /// The location of the error within its body.
@@ -182,8 +213,12 @@ impl TypeError {
             | NotAFunctionalInterface { expr, .. }
             | IllegalForwardReference { expr, .. }
             | NotDefinitelyAssigned { expr, .. }
-            | NotExhaustive { expr, .. } => DiagLocation::Expr(*expr),
+            | NotExhaustive { expr, .. }
+            | NonConstantCaseLabel { expr, .. }
+            | DuplicateCaseLabel { expr, .. }
+            | UncheckedConversion { expr, .. } => DiagLocation::Expr(*expr),
             AlreadyCaught { local } => DiagLocation::Local(*local),
+            RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
     }
 
@@ -276,6 +311,16 @@ impl TypeError {
             }
             NotExhaustive { .. } => {
                 "the switch expression does not cover all possible input values".to_owned()
+            }
+            NonConstantCaseLabel { .. } => "case label must be a constant expression".to_owned(),
+            DuplicateCaseLabel { value, .. } => {
+                format!("duplicate case label: '{value}' has already been covered")
+            }
+            RawTypeUse { name, .. } => {
+                format!("raw type '{name}' is used without type arguments")
+            }
+            UncheckedConversion { from, to, .. } => {
+                format!("unchecked conversion: {from} converted to {to}")
             }
         }
     }

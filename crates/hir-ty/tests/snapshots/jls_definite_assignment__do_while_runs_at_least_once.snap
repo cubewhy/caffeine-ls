@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 180
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    void m(boolean p) {
+        int x;
+        do {
+            x = 1;
+        } while (p);
+        int y = x;
+    }
+}
+
+method m(boolean): void
+  locals: l0: boolean | l1: int | l2: int
+  exprs: e0: int | e1: int | e2: int | e3: boolean | e4: boolean | e5: int

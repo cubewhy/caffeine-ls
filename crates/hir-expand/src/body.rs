@@ -167,6 +167,11 @@ pub struct Body {
 pub struct Local {
     pub name: Name,
     pub ty: Option<TypeRef<Name>>,
+    /// Whether the declaration carries the `final` modifier ([§4.12.4]):
+    /// a `final` local whose initializer is a constant expression is a
+    /// *constant variable*, and reads of it are constant expressions
+    /// ([§15.28]).
+    pub is_final: bool,
 }
 
 /// A type pattern `Foo f` ([JLS §14.30.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.1)):
@@ -337,6 +342,10 @@ pub enum SwitchLabel {
     Expr(ExprId),
     /// A pattern label `case Foo f`, `case Point(int x, int y)`, `case _`.
     Pattern(PatternId),
+    /// A guarded pattern label's condition — the `when cond` of
+    /// `case Foo f when cond` ([§14.11.1]). It is a boolean expression
+    /// evaluated when its pattern matched, not a case label of its own.
+    Guard(ExprId),
 }
 
 /// An expression, mirroring the expression forms of
@@ -475,7 +484,7 @@ pub enum ExprData {
 /// value drives the narrowing conversion of assignment context
 /// ([JLS §5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2))
 /// and definite assignment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Literal {
     /// An integer literal ([§3.10.1]) with its parsed value (underscores and
     /// any suffix stripped).
@@ -486,8 +495,12 @@ pub enum Literal {
     Char(char),
     Float,
     Double,
-    Boolean,
-    Str,
+    /// A boolean literal ([§3.10.3]) with its value.
+    Boolean(bool),
+    /// A string literal or text block ([§3.10.5], [§3.10.6]) with its decoded
+    /// value — escapes resolved, text-block incidental whitespace stripped —
+    /// so constant expressions over strings can be evaluated ([§15.28]).
+    Str(String),
 }
 
 /// A lambda body: an expression or a block ([JLS §15.27.2]).

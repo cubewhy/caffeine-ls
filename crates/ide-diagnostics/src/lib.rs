@@ -39,7 +39,7 @@ pub fn syntax_diagnostics(
     parse
         .errors()
         .iter()
-        .map(|e| make_diagnostic(file_id, &e.message, e.range, e.code))
+        .map(|e| make_diagnostic(file_id, &e.message, e.range, e.code, Severity::Error))
         .collect()
 }
 
@@ -67,6 +67,14 @@ pub fn type_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
                 &diagnostic.message(&tree.bodies),
                 range,
                 Some(diagnostic.code()),
+                // Raw-type and unchecked-conversion reports are warnings
+                // ([JLS §4.12.2], [§5.1.9]): legal programs, flagged for
+                // their unsoundness.
+                if diagnostic.is_warning() {
+                    Severity::Warning
+                } else {
+                    Severity::Error
+                },
             ));
         }
     }
@@ -94,12 +102,13 @@ fn make_diagnostic(
     message: &str,
     range: TextRange,
     code: Option<DiagnosticCode>,
+    severity: Severity,
 ) -> Diagnostic {
     let range = FileRange::new(file_id, range);
     Diagnostic {
         message: message.to_string(),
         range,
-        severity: Severity::Error,
+        severity,
         unused: false,
         code,
     }

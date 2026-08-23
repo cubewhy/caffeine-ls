@@ -51,6 +51,7 @@ use syntax::stub::{PrimitiveType, TypeRef};
 use vfs::FileId;
 
 use crate::{
+    const_eval::{Const, ConstEnv},
     db::{TyDatabase, enclosing_class_query, type_params_map_query},
     diagnostics::TypeError,
     inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
@@ -119,6 +120,8 @@ pub(crate) fn body_types_impl(
         lambda_params: Vec::new(),
         target: None,
         switch_targets: Vec::new(),
+        const_locals: FxHashMap::default(),
+        case_values: Vec::new(),
     };
     let mut body = None;
     match item_data(&tree, item)? {
@@ -272,6 +275,14 @@ struct InferCtx<'a> {
     /// ([JLS §14.21]): a `yield` value has the type of its switch expression
     /// as target, not the enclosing method's return type.
     switch_targets: Vec<Option<Ty>>,
+    /// The constant variables in scope ([JLS §4.12.4]): a `final` local whose
+    /// initializer was itself a constant expression, with its value — reads
+    /// of it are constant expressions ([§15.28]).
+    const_locals: FxHashMap<LocalId, Const>,
+    /// The constant values of the case labels seen in the enclosing switch,
+    /// innermost last ([§14.11.1]): a label repeating an earlier value is
+    /// reported as duplicate.
+    case_values: Vec<FxHashMap<String, ()>>,
 }
 
 impl<'a> InferCtx<'a> {
@@ -576,6 +587,9 @@ impl<'a> InferCtx<'a> {
                 expected: selector.display(self.db).to_string(),
             });
         }
+        // §14.11.1/§15.28: a primitive- or String-selector label must be a
+        // constant expression; labels of one switch may not repeat.
+        self.check_case_label(label, selector);
     }
 
     /// Whether `expr` is a constant expression of value `v` that narrows to
@@ -604,35 +618,122 @@ impl<'a> InferCtx<'a> {
     /// The value of an int-typed constant expression
     /// ([JLS §4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4),
     /// [§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)):
-    /// integer and char literals, parenthesized forms, unary plus/minus and
-    /// the additive/multiplicative operators over constant operands.
+    /// literals, parenthesized forms, the constant operators, and simple
+    /// names of constant variables — evaluated by [`crate::const_eval`].
     fn const_int_value(&self, id: ExprId) -> Option<i64> {
-        match self.tree.expr(id).clone() {
-            ExprData::Literal(Literal::Int(v)) => Some(v),
-            // A char literal is an int-typed constant with its code-point value.
-            ExprData::Literal(Literal::Char(c)) => Some(c as i64),
-            ExprData::Paren(inner) => self.const_int_value(inner),
-            ExprData::Unary { op, expr } => {
-                let v = self.const_int_value(expr)?;
-                match op {
-                    UnaryOp::Plus => Some(v),
-                    UnaryOp::Minus => v.checked_neg(),
-                    _ => None,
+        self.const_value(id).and_then(|value| value.as_int())
+    }
+
+    /// The value of a constant expression ([§15.28]) in the current
+    /// environment of constant variables ([§4.12.4]).
+    fn const_value(&self, id: ExprId) -> Option<Const> {
+        ConstEnv::new(&self.tree, &self.const_locals).eval(id)
+    }
+
+    /// §4.12.2: whether `ty` is a *raw type* — a reference to a generic class
+    /// ([§8.1.2]) used without its type arguments.
+    fn is_raw_type(&self, ty: &Ty) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Reference { name, args } if args.is_empty() => {
+                !ty.is_error(self.db)
+                    && crate::resolve::class_is_generic(self.db, &self.scope, name)
+            }
+            _ => false,
+        }
+    }
+
+    /// §4.12.2: reports a declared local whose type is a raw type.
+    fn warn_raw_declared_type(&mut self, local: LocalId) {
+        let Some(ty) = self.locals.get(&local).copied() else {
+            return;
+        };
+        if let TyKind::Reference { name, .. } = ty.kind(self.db)
+            && self.is_raw_type(&ty)
+        {
+            let simple = name.as_str().rsplit('.').next().unwrap_or_default();
+            self.report(TypeError::RawTypeUse {
+                local,
+                name: simple.to_owned(),
+            });
+        }
+    }
+
+    /// §5.1.9/§5.2: an assignment whose source is a raw type and whose target
+    /// is parameterized succeeds by *unchecked conversion*; report it.
+    fn warn_unchecked(&mut self, expr: ExprId, src: &Ty, dst: &Ty) {
+        if src.is_error(self.db) || dst.is_error(self.db) || !self.is_raw_type(src) {
+            return;
+        }
+        let parameterized =
+            matches!(dst.kind(self.db), TyKind::Reference { args, .. } if !args.is_empty());
+        let plain_subtype = crate::subtyping::is_subtype(self.db, &self.scope, src, dst);
+        if parameterized && !plain_subtype {
+            self.report(TypeError::UncheckedConversion {
+                expr,
+                from: src.display(self.db).to_string(),
+                to: dst.display(self.db).to_string(),
+            });
+        }
+    }
+
+    /// §14.11.1: a `case` label of a switch whose selector is int-compatible
+    /// or `String` must be a constant expression ([§15.28]); two labels of
+    /// one switch may not declare the same value. Enum selectors are exempt —
+    /// their bare-name labels are resolved as constants above.
+    fn check_case_label(&mut self, label: ExprId, selector: &Ty) {
+        if matches!(self.tree.expr(label).clone(), ExprData::Missing)
+            || selector.is_error(self.db)
+            || crate::subtyping::enum_constants(self.db, &self.scope, selector).is_some()
+        {
+            return;
+        }
+        let required = self.switchable(selector) || self.is_string(*selector);
+        match self.const_value(label) {
+            Some(value) => {
+                let key = match &value {
+                    Const::Int(v) => format!("int:{v}"),
+                    Const::Bool(b) => format!("bool:{b}"),
+                    Const::Str(s) => format!("str:{s}"),
+                };
+                let display = match &value {
+                    Const::Int(v) => v.to_string(),
+                    Const::Bool(b) => b.to_string(),
+                    Const::Str(s) => format!("\"{s}\""),
+                };
+                // Only int-compatible and String labels can repeat across
+                // arms ([§14.11.1]); pattern labels are checked elsewhere.
+                if required {
+                    let cases = self
+                        .case_values
+                        .last_mut()
+                        .expect("switch case stack non-empty");
+                    if cases.insert(key, ()).is_some() {
+                        self.report(TypeError::DuplicateCaseLabel {
+                            expr: label,
+                            value: display,
+                        });
+                    }
                 }
             }
-            ExprData::Binary { op, lhs, rhs } => {
-                let l = self.const_int_value(lhs)?;
-                let r = self.const_int_value(rhs)?;
-                match op {
-                    BinaryOp::Add => l.checked_add(r),
-                    BinaryOp::Sub => l.checked_sub(r),
-                    BinaryOp::Mul => l.checked_mul(r),
-                    BinaryOp::Div if r != 0 => Some(l.wrapping_div(r)),
-                    BinaryOp::Rem if r != 0 => Some(l.wrapping_rem(r)),
-                    _ => None,
+            None => {
+                // A closed form over literals and operators must evaluate;
+                // a simple name is only an error when it names a *local*
+                // that is not a constant variable — an unresolvable name
+                // may be a constant field or static import, which this
+                // layer does not track (reported as NoSuchField etc.).
+                let closed = match self.tree.expr(label).clone() {
+                    ExprData::Literal(_)
+                    | ExprData::Paren(_)
+                    | ExprData::Unary { .. }
+                    | ExprData::Binary { .. }
+                    | ExprData::Conditional { .. } => true,
+                    ExprData::Var(name) => self.lookup_local(&name).is_some(),
+                    _ => false,
+                };
+                if required && closed {
+                    self.report(TypeError::NonConstantCaseLabel { expr: label });
                 }
             }
-            _ => None,
         }
     }
 
@@ -681,8 +782,8 @@ impl<'a> InferCtx<'a> {
             ExprData::Literal(Literal::Char(_)) => self.primitive(PrimitiveType::Char),
             ExprData::Literal(Literal::Float) => self.primitive(PrimitiveType::Float),
             ExprData::Literal(Literal::Double) => self.primitive(PrimitiveType::Double),
-            ExprData::Literal(Literal::Boolean) => self.primitive(PrimitiveType::Boolean),
-            ExprData::Literal(Literal::Str) => self.string(),
+            ExprData::Literal(Literal::Boolean(_)) => self.primitive(PrimitiveType::Boolean),
+            ExprData::Literal(Literal::Str(_)) => self.string(),
             // §3.10.8: the null literal has the null type.
             ExprData::Null => Ty::null(self.db),
             // §15.8.3: `this` is the type of the enclosing class; a qualified
@@ -829,6 +930,11 @@ impl<'a> InferCtx<'a> {
                         expected: lhs_ty.display(self.db).to_string(),
                     });
                 }
+                // §5.1.9: a raw source assigned to a parameterized target is
+                // an unchecked conversion — report the warning.
+                if matches!(op, AssignOp::Assign) {
+                    self.warn_unchecked(rhs, &rhs_ty, &lhs_ty);
+                }
                 lhs_ty
             }
             // §15.16: a cast has the type named in the cast. Per §15.16 and
@@ -900,7 +1006,17 @@ impl<'a> InferCtx<'a> {
                 } else {
                     let then_ty = self.infer_expr(then);
                     let els_ty = self.infer_expr(els);
-                    self.conditional_type(then_ty, els_ty)
+                    let ty = self.conditional_type(then_ty, els_ty);
+                    // §15.25: a boolean operand against an unrelated
+                    // primitive makes the conditional ill-typed — report the
+                    // degradation (the arms' types, not the expression's).
+                    if ty.is_error(self.db)
+                        && !then_ty.is_error(self.db)
+                        && !els_ty.is_error(self.db)
+                    {
+                        self.report(TypeError::IncompatibleOperand { expr: id, op: "?:" });
+                    }
+                    ty
                 }
             }
             // §15.27/§15.13: lambdas and method references are poly
@@ -920,6 +1036,7 @@ impl<'a> InferCtx<'a> {
             ExprData::Switch { scrutinee, arms } => {
                 let selector = self.infer_switch_selector(scrutinee);
                 self.switch_targets.push(self.target);
+                self.case_values.push(FxHashMap::default());
                 let mut result_tys: Vec<Ty> = Vec::new();
                 for arm in &arms {
                     // §14.30.2/§14.30.3: a pattern label's variables are in
@@ -935,6 +1052,11 @@ impl<'a> InferCtx<'a> {
                                 for binding in self.pattern_bindings_of(*p) {
                                     self.scope_binding(binding);
                                 }
+                            }
+                            // §14.11.1: a `when` guard must be a boolean;
+                            // its pattern bindings are already in scope.
+                            SwitchLabel::Guard(cond) => {
+                                self.check_condition(*cond);
                             }
                         }
                     }
@@ -968,6 +1090,7 @@ impl<'a> InferCtx<'a> {
                     }
                     self.scopes.pop();
                 }
+                self.case_values.pop();
                 self.switch_targets.pop();
                 // §14.11.1/§15.28: a switch *expression* must be exhaustive —
                 // every selector value has a matching arm or there is a
@@ -2184,17 +2307,35 @@ impl<'a> InferCtx<'a> {
         if then_ty == els_ty {
             return then_ty;
         }
-        // §15.25.2: both operands convertible to a numeric type — a primitive
-        // or a boxed reference operand, unboxed (§5.1.8) — apply binary
-        // numeric promotion.
-        let numeric = |ty: Ty| match ty.kind(self.db) {
-            TyKind::Primitive(p) => Some(*p),
-            TyKind::Reference { name, .. } => unboxed_primitive(name.as_str()),
-            _ => None,
-        };
-        if let (Some(l), Some(r)) = (numeric(then_ty), numeric(els_ty)) {
-            return self
-                .binary_numeric_promotion(Ty::primitive(self.db, l), Ty::primitive(self.db, r));
+        // §15.25: when at least one operand is primitive *and* the other
+        // unboxes to a primitive too, the primitive rules apply. A primitive
+        // against an unrelated reference takes the least upper bound below,
+        // as do two references: two boxed numerics never promote (`c ?
+        // Integer : Long` is `Number`, not `long`).
+        let then_prim = matches!(then_ty.kind(self.db), TyKind::Primitive(_));
+        let els_prim = matches!(els_ty.kind(self.db), TyKind::Primitive(_));
+        if then_prim || els_prim {
+            let l = self.unboxed_operand(then_ty);
+            let r = self.unboxed_operand(els_ty);
+            let both_primitive = matches!(l.kind(self.db), TyKind::Primitive(_))
+                && matches!(r.kind(self.db), TyKind::Primitive(_));
+            if both_primitive {
+                // §15.25: the boolean rules — a `boolean`/`Boolean` mix has
+                // type `boolean`; a boolean against any other primitive is
+                // ill-typed (not silently promoted).
+                let boolean = matches!(l.kind(self.db), TyKind::Primitive(PrimitiveType::Boolean))
+                    || matches!(r.kind(self.db), TyKind::Primitive(PrimitiveType::Boolean));
+                if boolean {
+                    return match (l.kind(self.db), r.kind(self.db)) {
+                        (
+                            TyKind::Primitive(PrimitiveType::Boolean),
+                            TyKind::Primitive(PrimitiveType::Boolean),
+                        ) => self.primitive(PrimitiveType::Boolean),
+                        _ => self.error(),
+                    };
+                }
+                return self.binary_numeric_promotion(l, r);
+            }
         }
         if then_ty.is_null(self.db) && els_ty.is_reference(self.db) {
             return els_ty;
@@ -2203,6 +2344,20 @@ impl<'a> InferCtx<'a> {
             return then_ty;
         }
         least_upper_bound(self.db, &self.scope, &[then_ty, els_ty])
+    }
+
+    /// The operand of a conditional in its unboxed form ([JLS §5.1.8]): a
+    /// primitive keeps its type; a boxed reference unboxes; anything else is
+    /// left for [`Self::binary_numeric_promotion`] to reject.
+    fn unboxed_operand(&self, ty: Ty) -> Ty {
+        match ty.kind(self.db) {
+            TyKind::Primitive(_) => ty,
+            TyKind::Reference { name, .. } => match unboxed_primitive(name.as_str()) {
+                Some(p) => Ty::primitive(self.db, p),
+                None => ty,
+            },
+            _ => ty,
+        }
     }
 
     /// Unary numeric promotion ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)):
@@ -2602,6 +2757,9 @@ impl<'a> InferCtx<'a> {
                     return;
                 }
                 self.declare_local(*local);
+                // §4.12.2: a declared type naming a generic class without its
+                // arguments is a raw type — legal, reported as a warning.
+                self.warn_raw_declared_type(*local);
                 if initializer.is_none() {
                     // §16: a declarator without an initializer is not
                     // definitely assigned until a later assignment reaches it.
@@ -2612,6 +2770,15 @@ impl<'a> InferCtx<'a> {
                     // declared type of the local ([JLS §14.4]).
                     let target = self.locals.get(local).copied();
                     let init_ty = self.with_target(target, |this| this.infer_expr(*initializer));
+                    // §4.12.4: a `final` local whose initializer is itself a
+                    // constant expression is a *constant variable* — later
+                    // reads of it are constant expressions ([§15.28]).
+                    let local_data = self.tree.local(*local).clone();
+                    if local_data.is_final
+                        && let Some(value) = self.const_value(*initializer)
+                    {
+                        self.const_locals.insert(*local, value);
+                    }
                     let (Some(target), false) = (target, init_ty.is_error(self.db)) else {
                         return;
                     };
@@ -2637,6 +2804,9 @@ impl<'a> InferCtx<'a> {
                             expected: target.display(self.db).to_string(),
                         });
                     }
+                    // §5.1.9: a raw source assigned to a parameterized target
+                    // is an unchecked conversion — report the warning.
+                    self.warn_unchecked(*initializer, &init_ty, &target);
                 }
             }
             StmtData::Expr(expr) => {
@@ -2764,6 +2934,7 @@ impl<'a> InferCtx<'a> {
             }
             StmtData::Switch { scrutinee, arms } => {
                 let selector = self.infer_switch_selector(*scrutinee);
+                self.case_values.push(FxHashMap::default());
                 self.scopes.push(FxHashMap::default());
                 for arm in arms {
                     // §14.30.2/§14.30.3: a pattern label's variables are in
@@ -2780,6 +2951,11 @@ impl<'a> InferCtx<'a> {
                                     self.scope_binding(binding);
                                 }
                             }
+                            // §14.11.1: a `when` guard must be a boolean;
+                            // its pattern bindings are already in scope.
+                            SwitchLabel::Guard(cond) => {
+                                self.check_condition(*cond);
+                            }
                         }
                     }
                     for &stmt in &arm.body {
@@ -2788,6 +2964,7 @@ impl<'a> InferCtx<'a> {
                     self.scopes.pop();
                 }
                 self.scopes.pop();
+                self.case_values.pop();
             }
             StmtData::Return(Some(expr)) | StmtData::Yield(expr) => {
                 // A returned expression is a poly expression whose target is
@@ -2915,6 +3092,10 @@ impl<'a> InferCtx<'a> {
                 // unreachable ([§14.20]).
                 let mut catch_tys: Vec<Ty> = Vec::new();
                 for clause in catches {
+                    // Each catch clause is an alternative path that starts
+                    // from the pre-try state ([§16.1.8]).
+                    self.definite = before.clone();
+                    self.exited = before_exited;
                     self.scopes.push(FxHashMap::default());
                     let clause_ty = self
                         .tree
@@ -2951,12 +3132,9 @@ impl<'a> InferCtx<'a> {
                     }
                     self.declare_local(clause.param);
                     self.infer_stmt(clause.body);
-                    // Each catch clause is an alternative path from the
-                    // pre-try state ([§16.1.8]).
-                    self.definite = before.clone();
-                    self.exited = before_exited;
-                    paths.push(self.definite.clone());
-                    all_exits &= self.exited;
+                    // The clause's end state joins the other paths.
+                    paths.push(std::mem::replace(&mut self.definite, before.clone()));
+                    all_exits &= std::mem::replace(&mut self.exited, before_exited);
                     self.scopes.pop();
                 }
                 // The intersection of every path: a local is definitely

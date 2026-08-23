@@ -36,6 +36,10 @@ pub enum DeclDiagnostic {
     /// §9.4.1.3: two unrelated superinterfaces declare matching default
     /// methods and the class inherits both without overriding.
     ConflictingDefaults { method: Name },
+    /// §9.6.4.4: a method annotated `@Override` overrides or implements no
+    /// supertype method — either nothing matches, or the annotated method is
+    /// `static` (static methods hide, they never override).
+    MethodDoesNotOverride { method: Name },
 }
 
 impl DeclDiagnostic {
@@ -47,6 +51,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ConflictingDefaults { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ConflictingDefaults)
+            }
+            DeclDiagnostic::MethodDoesNotOverride { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::MethodDoesNotOverride)
             }
         }
     }
@@ -63,6 +70,12 @@ impl DeclDiagnostic {
                 let name = method.as_str();
                 format!("class inherits unrelated default methods for {name}(); must be overridden")
             }
+            DeclDiagnostic::MethodDoesNotOverride { method } => {
+                let name = method.as_str();
+                format!(
+                    "method {name}() annotated @Override does not override or implement a method from a supertype"
+                )
+            }
         }
     }
 
@@ -70,7 +83,8 @@ impl DeclDiagnostic {
     pub fn method_name(&self) -> &str {
         match self {
             DeclDiagnostic::IncompatibleOverride { method, .. }
-            | DeclDiagnostic::ConflictingDefaults { method } => method.as_str(),
+            | DeclDiagnostic::ConflictingDefaults { method }
+            | DeclDiagnostic::MethodDoesNotOverride { method } => method.as_str(),
         }
     }
 }
@@ -102,7 +116,7 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
             ItemData::Class(_) | ItemData::Interface(_) | ItemData::Enum(_) | ItemData::Record(_)
         ) && let Some(fqn) = hir::source_class_fqn(db, file, id)
         {
-            out.extend(check_class(db, file, scope, fqn.as_str(), id));
+            out.extend(check_class(db, file, scope, &tree, fqn.as_str(), id));
         }
         for &child in data.body() {
             walk(db, file, scope, tree, child, out);
@@ -119,6 +133,7 @@ fn check_class(
     db: &dyn TyDatabase,
     file: FileId,
     scope: &hir::ResolutionScope,
+    tree: &hir_expand::item_tree::ItemTree,
     fqn: &str,
     item: hir_expand::item_tree::ItemId,
 ) -> Vec<DeclDiagnostic> {
@@ -186,6 +201,40 @@ fn check_class(
             }
         }
     }
+
+    // §9.6.4.4: a method annotated `@Override` must override or implement an
+    // instance method declared in a supertype — otherwise the annotation is a
+    // compile-time error. A `static` method never overrides ([§8.4.8.2]: it
+    // *hides*), so its annotation always fails.
+    let resolver = crate::resolve::Resolver::new(
+        tree,
+        crate::db::type_params_map_query(db, db.file_text(file)),
+        item,
+    );
+    for &child in tree.data(item).body() {
+        if let ItemData::Method(m) = tree.data(child)
+            && !m.is_constructor
+            && m.modifiers
+                .annotations
+                .iter()
+                .any(|name| is_override_annotation(db, scope, &resolver, name))
+        {
+            let Some(method) = declared
+                .iter()
+                .find(|d| d.name == m.name.as_str() && d.params.len() == m.sig.params.len())
+            else {
+                continue;
+            };
+            let overrides = inherited
+                .iter()
+                .any(|s| !s.is_static && same_signature(method, s));
+            if method.is_static || !overrides {
+                out.push(DeclDiagnostic::MethodDoesNotOverride {
+                    method: Name::new(&method.name),
+                });
+            }
+        }
+    }
     out
 }
 
@@ -193,6 +242,27 @@ fn check_class(
 /// parameter arity (parameter types are erased-equal in the raw model).
 fn same_signature(a: &MethodData, b: &MethodData) -> bool {
     a.name == b.name && a.params.len() == b.params.len()
+}
+
+/// §9.7.1/§6.5.5: whether an annotation name resolves to
+/// `java.lang.Override`. The name is resolved in the file's scope like any
+/// type reference, so a same-package `@interface Override` ([§6.5.5.1]) or a
+/// single-type import shadows the JDK annotation and does not count. A name
+/// that resolves nowhere falls back to its simple form, keeping broken or
+/// partial classpaths conservative.
+fn is_override_annotation(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &crate::resolve::Resolver,
+    name: &Name,
+) -> bool {
+    let resolved = crate::resolve::candidate_fqns(resolver, name)
+        .into_iter()
+        .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some());
+    match resolved {
+        Some(fqn) => fqn.as_str() == "java.lang.Override",
+        None => name.as_str().rsplit('.').next() == Some("Override"),
+    }
 }
 
 /// Whether the method is a default interface method: a non-static,

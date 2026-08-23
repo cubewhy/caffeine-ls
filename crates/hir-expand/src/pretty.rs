@@ -578,6 +578,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
                         .map(|label| match label {
                             SwitchLabel::Expr(e) => e.to_string(),
                             SwitchLabel::Pattern(p) => render_pattern(bodies, *p),
+                            SwitchLabel::Guard(cond) => format!("when {cond}"),
                         })
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -654,7 +655,7 @@ fn render_stmt(out: &mut String, bodies: &BodyTree, id: StmtId, depth: usize) {
 fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
     let data = bodies.expr(id);
     match data {
-        ExprData::Literal(lit) => out.push_str(&format!("{id}: literal {}", render_literal(*lit))),
+        ExprData::Literal(lit) => out.push_str(&format!("{id}: literal {}", render_literal(lit))),
         ExprData::Null => out.push_str(&format!("{id}: null")),
         ExprData::This { qualifier } => out.push_str(&format!(
             "{id}: this {}",
@@ -852,15 +853,15 @@ fn render_pattern(bodies: &BodyTree, id: PatternId) -> String {
     }
 }
 
-fn render_literal(lit: Literal) -> &'static str {
+fn render_literal(lit: &Literal) -> &'static str {
     match lit {
         Literal::Int(_) => "int",
         Literal::Long(_) => "long",
         Literal::Char(_) => "char",
         Literal::Float => "float",
         Literal::Double => "double",
-        Literal::Boolean => "boolean",
-        Literal::Str => "string",
+        Literal::Boolean(_) => "boolean",
+        Literal::Str(_) => "string",
     }
 }
 

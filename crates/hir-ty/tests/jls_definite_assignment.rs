@@ -118,3 +118,81 @@ class Da {
 ",
     )])
 );
+
+// -- red: the try block may exit before its assignment ([§16.2.15]) ---------------
+// An exception between the assignment and the end of `try` skips nothing —
+// control reaches the catch, so `x` is not definitely assigned after.
+
+snapshot!(
+    try_assignment_not_da_after,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    static void step() {}
+
+    void m() {
+        int x;
+        try {
+            x = 1;
+            step();
+        } catch (RuntimeException e) {
+        }
+        int y = x;
+    }
+}
+",
+    )])
+);
+
+// -- green: assigned on every path through try/catch ([§16.2.15]) ------------------
+// The assignment happens in the catch too, so after the statement `x` is
+// definitely assigned whichever way the try exits.
+
+snapshot!(
+    try_catch_all_paths,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    void m() {
+        int x;
+        try {
+            x = 1;
+        } catch (RuntimeException e) {
+            x = 2;
+        }
+        int y = x;
+    }
+}
+",
+    )])
+);
+
+// -- green: a do-loop body runs at least once ([§16.2.13]) -------------------------
+// Unlike a `while`, the condition is checked *after* the body, so an
+// assignment in the body holds afterwards.
+
+snapshot!(
+    do_while_runs_at_least_once,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    void m(boolean p) {
+        int x;
+        do {
+            x = 1;
+        } while (p);
+        int y = x;
+    }
+}
+",
+    )])
+);

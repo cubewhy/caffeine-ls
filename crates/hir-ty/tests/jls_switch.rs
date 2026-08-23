@@ -180,3 +180,61 @@ class Sw {
 ",
     )])
 );
+
+// -- green: constant-expression labels ([§15.28]) ---------------------------------
+// Constant expressions over literals and over a *constant variable* ([§4.12.4])
+// are legal labels; the int-typed constant `TWO + 1` also narrows to the
+// selector's `byte` in assignment context ([§5.2], [§5.1.3]).
+
+snapshot!(
+    constant_expression_labels,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(int i) {
+        final int two = 2;
+        switch (i) {
+            case 1 + 2 * 3 -> f(7);
+            case two + 1 -> f(3);
+            default -> {}
+        }
+        String s = \"a\" + \"b\";
+    }
+
+    void f(int x) {}
+}
+",
+    )])
+);
+
+// -- red: duplicate and non-constant labels ([§14.11.1], [§15.28]) -----------------
+// Two arms naming the same constant value make one unreachable, and a plain
+// local is not a constant expression — `javac` 25 reports "constant
+// expression required".
+
+snapshot!(
+    duplicate_and_non_constant_labels,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(int i) {
+        int notConstant = 2;
+        switch (i) {
+            case 1 + 1 -> f(2);
+            case 2 -> f(0);
+            case notConstant -> f(1);
+            default -> {}
+        }
+    }
+
+    void f(int x) {}
+}
+",
+    )])
+);

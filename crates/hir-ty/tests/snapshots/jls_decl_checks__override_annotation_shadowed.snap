@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 164
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+@interface Override {}
+
+class Base {
+    void run() {}
+}
+
+class Derived extends Base {
+    @Override
+    void missing() {}
+}

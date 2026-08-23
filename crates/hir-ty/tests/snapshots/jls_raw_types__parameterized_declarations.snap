@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+assertion_line: 17
+expression: out
+---
+FILE /src/com/example/Raw.java:
+package com.example;
+
+import java.util.List;
+import java.util.ArrayList;
+
+class Raw {
+    void m(List<String> xs) {
+        List<String> copy = new ArrayList<String>(xs);
+        String first = copy.get(0);
+    }
+}
+
+method m(java.util.List<java.lang.String>): void
+  locals: l0: java.util.List<java.lang.String> | l1: java.util.List<java.lang.String> | l2: java.lang.String
+  exprs: e0: java.util.List<java.lang.String> | e1: java.util.ArrayList<java.lang.String> | e2: int | e3: java.util.List<java.lang.String> | e4: java.lang.String

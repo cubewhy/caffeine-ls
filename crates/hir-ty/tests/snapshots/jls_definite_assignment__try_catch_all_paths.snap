@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 154
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    void m() {
+        int x;
+        try {
+            x = 1;
+        } catch (RuntimeException e) {
+            x = 2;
+        }
+        int y = x;
+    }
+}
+
+method m(): void
+  locals: l0: int | l1: java.lang.RuntimeException | l2: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int

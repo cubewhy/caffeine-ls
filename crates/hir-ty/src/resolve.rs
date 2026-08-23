@@ -237,7 +237,7 @@ fn resolve_reference_name(
 /// first. A qualified name is tried as-is first (it may already be fully
 /// qualified), then with each simple-name resolution of its prefix
 /// ([JLS §6.5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.2)).
-fn candidate_fqns(resolver: &Resolver, name: &Name) -> Vec<Name> {
+pub(crate) fn candidate_fqns(resolver: &Resolver, name: &Name) -> Vec<Name> {
     let text = name.as_str();
     if let Some((prefix, rest)) = text.split_once('.') {
         let mut out = vec![name.clone()];
@@ -301,6 +301,36 @@ pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionSc
     match hir::source_set_for_file(db, file_id) {
         Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
         None => hir::ResolutionScope::JdkBuiltins,
+    }
+}
+
+/// Whether `fqn` names a *generic class* — one declaring type parameters
+/// ([JLS §8.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.2)).
+/// A reference to it without type arguments is a raw type ([§4.8], [§4.12.2]).
+pub(crate) fn class_is_generic(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &Name,
+) -> bool {
+    let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+        return false;
+    };
+    match resolved {
+        // A library class is generic when its classfile `Signature` attribute
+        // ([JVMS §4.7.9.1]) declares type parameters.
+        hir::Resolved::Library(_) => {
+            hir::class_generic_info(db, &resolved).is_some_and(|info| !info.type_params.is_empty())
+        }
+        // A source class is generic when its declaration carries them.
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let type_params = match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
+                ItemData::Record(d) => Some(&d.type_params),
+                _ => None,
+            };
+            type_params.is_some_and(|params| !params.is_empty())
+        }
     }
 }
 

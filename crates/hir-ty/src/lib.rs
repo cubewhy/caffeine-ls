@@ -76,6 +76,7 @@
 //! All JLS references use the Java SE 26 edition
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
 
+pub mod const_eval;
 pub mod db;
 pub mod decl_check;
 pub mod diagnostics;

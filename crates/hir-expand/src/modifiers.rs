@@ -1,7 +1,10 @@
-//! Declaration modifiers as a fixed set of booleans (the source-side analog
-//! of the JVM access flags carried by the classfile stubs).
+//! Declaration modifiers as a fixed set of booleans plus the declared
+//! annotations (the source-side analog of the JVM access flags carried by the
+//! classfile stubs).
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+use crate::name::Name;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub public: bool,
     pub protected: bool,
@@ -17,6 +20,9 @@ pub struct Modifiers {
     pub synchronized: bool,
     pub transient: bool,
     pub volatile: bool,
+    /// The names of the annotations on the declaration ([JLS §9.7]), as
+    /// written — a qualified name keeps its prefix.
+    pub annotations: Vec<Name>,
 }
 
 impl Modifiers {
@@ -41,6 +47,15 @@ impl Modifiers {
             _ => return false,
         }
         true
+    }
+
+    /// Records an annotation name ([JLS §9.7]).
+    pub fn push_annotation(&mut self, name: Name) {
+        self.annotations.push(name);
+    }
+
+    pub fn has_annotation(&self, expected: &str) -> bool {
+        self.annotations.iter().any(|name| name == expected)
     }
 
     /// The recognized modifier names, in display order.

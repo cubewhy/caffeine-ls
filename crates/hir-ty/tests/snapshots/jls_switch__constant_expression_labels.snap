@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+assertion_line: 189
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    void m(int i) {
+        final int two = 2;
+        switch (i) {
+            case 1 + 2 * 3 -> f(7);
+            case two + 1 -> f(3);
+            default -> {}
+        }
+        String s = "a" + "b";
+    }
+
+    void f(int x) {}
+}
+
+method m(int): void
+  locals: l0: int | l1: int | l2: java.lang.String
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int | e7: int | e8: void | e9: int | e10: int | e11: int | e12: int | e13: void | e14: <error> | e15: java.lang.String | e16: java.lang.String | e17: java.lang.String
+method f(int): void
+  locals: l3: int
+  exprs:

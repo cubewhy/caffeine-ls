@@ -81,6 +81,20 @@ pub enum JavaDiagnosticCode {
     /// §14.11.1/§15.28: a switch expression does not cover all possible
     /// selector values.
     NotExhaustive,
+    /// §14.11.1/§15.28: a `case` label of a primitive- or `String`-selector
+    /// switch is not a constant expression.
+    NonConstantCaseLabel,
+    /// §14.11.1: two `case` labels of one `switch` declare the same constant
+    /// value.
+    DuplicateCaseLabel,
+    /// §4.12.2: a generic class is used without type arguments — a raw type.
+    RawTypeUse,
+    /// §5.1.9/§5.2: a raw value converts to a parameterized type without a
+    /// static guarantee — unchecked conversion.
+    UncheckedConversion,
+    /// §9.6.4.4: a method annotated `@Override` overrides or implements no
+    /// supertype method.
+    MethodDoesNotOverride,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -144,6 +158,11 @@ impl JavaDiagnosticCode {
                 "variable-might-not-have-been-initialized"
             }
             JavaDiagnosticCode::NotExhaustive => "not-exhaustive",
+            JavaDiagnosticCode::NonConstantCaseLabel => "non-constant-case-label",
+            JavaDiagnosticCode::DuplicateCaseLabel => "duplicate-case-label",
+            JavaDiagnosticCode::RawTypeUse => "raw-type-use",
+            JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
+            JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

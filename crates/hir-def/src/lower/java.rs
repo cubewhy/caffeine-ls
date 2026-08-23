@@ -370,7 +370,7 @@ fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> 
         let expr_slot = body::find_expression_child(&declarator);
         let field_id = ctx.alloc(ItemData::Field(FieldData {
             name,
-            modifiers,
+            modifiers: modifiers.clone(),
             ty,
             initializer,
             initializer_expr: None,
@@ -615,8 +615,23 @@ fn child_modifiers(node: &SyntaxNode<Lang>) -> Modifiers {
         .map(|mods| {
             let mut modifiers = Modifiers::default();
             for element in mods.children_with_tokens() {
-                if let NodeOrToken::Token(token) = element {
-                    modifiers.push(token.text());
+                match element {
+                    // §9.7: an annotation in the modifier list — record its
+                    // (possibly qualified) name.
+                    NodeOrToken::Node(annotation)
+                        if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION) =>
+                    {
+                        if let Some(name) = annotation
+                            .descendants()
+                            .find(|d| d.kind() == J::QUALIFIED_NAME)
+                        {
+                            modifiers.push_annotation(Name::new(&name.text().to_string()));
+                        }
+                    }
+                    NodeOrToken::Node(_) => {}
+                    NodeOrToken::Token(token) => {
+                        modifiers.push(token.text());
+                    }
                 }
             }
             modifiers

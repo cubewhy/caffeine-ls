@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 126
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    static void step() {}
+
+    void m() {
+        int x;
+        try {
+            x = 1;
+            step();
+        } catch (RuntimeException e) {
+        }
+        int y = x;
+    }
+}
+
+method step(): void
+  locals: 
+  exprs: 
+method m(): void
+  locals: l0: int | l1: java.lang.RuntimeException | l2: int
+  exprs: e0: int | e1: int | e2: int | e3: void | e4: <error>
+  diags: e4@12:15: variable-might-not-have-been-initialized: variable 'x' might not have been initialized

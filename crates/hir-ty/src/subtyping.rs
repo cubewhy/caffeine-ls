@@ -538,7 +538,13 @@ pub fn is_assignable(
         (
             TyKind::Reference { .. } | TyKind::Intersection(_),
             TyKind::Reference { .. } | TyKind::Intersection(_),
-        ) => is_subtype(db, scope, src, dst),
+        ) => {
+            is_subtype(db, scope, src, dst)
+                // §5.1.9/§5.2: a raw type converts to any parameterization of
+                // its own generic class by *unchecked conversion* — legal in
+                // assignment context, reported as a warning by the type layer.
+                || unchecked_conversion(db, scope, src, dst)
+        }
         // Boxing (§5.1.7): a primitive is assignable to its boxed type, or to
         // any reference supertype of it (a widening reference conversion §5.1.5
         // after boxing).
@@ -559,6 +565,51 @@ pub fn is_assignable(
         (TyKind::Null, _) => is_subtype(db, scope, src, dst),
         _ => false,
     }
+}
+
+/// §5.1.9: whether `src` is a *raw type* — a parameterized class used without
+/// its type arguments — whose erasure has `dst`'s erasure among its
+/// supertypes. The conversion is unchecked ([§5.2]): legal, but carrying no
+/// element-type guarantee.
+fn unchecked_conversion(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    src: &Ty,
+    dst: &Ty,
+) -> bool {
+    let Some((src_name, src_args)) = src.as_reference(db) else {
+        return false;
+    };
+    if !src_args.is_empty() {
+        return false;
+    }
+    let Some((dst_name, _)) = dst.as_reference(db) else {
+        return false;
+    };
+    // §5.1.9: the destination may be a parameterization of the raw type's own
+    // generic class — `raw List` converts to `List<String>` directly.
+    if src_name == dst_name {
+        return true;
+    }
+    let raw_src = Ty::reference(db, src_name.clone(), Vec::new());
+    let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
+    let mut stack = vec![raw_src];
+    let mut visited = FxHashSet::default();
+    while let Some(current) = stack.pop() {
+        for parent in supertypes_query(db, scope, current.id) {
+            if !visited.insert(parent.id) {
+                continue;
+            }
+            match parent.as_reference(db) {
+                // The erased supertype matches the destination's erasure:
+                // every instantiation of it is reachable from the raw source.
+                Some((parent_name, _)) if parent_name == dst_name => return true,
+                Some(_) => stack.push(parent),
+                None => {}
+            }
+        }
+    }
+    false
 }
 
 /// Whether `arg` is convertible to `param` by a strict invocation conversion

@@ -157,3 +157,29 @@ class Body {
 ",
     )])
 );
+
+// -- §15.25: conditional expression typing ----------------------------------------
+// The numeric promotion of a conditional applies only when at least one
+// operand is primitive ([§15.25]): `int ? : Integer` unboxes and promotes,
+// two boxed numerics take the least upper bound (`Number`), a
+// `boolean`/`Boolean` mix is `boolean`, and `boolean` against an unrelated
+// primitive is ill-typed.
+
+snapshot!(
+    conditional_numeric_rules,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m(java.lang.Integer i, java.lang.Long l) {
+        int p = true ? 1 : i;
+        java.lang.Number lub = true ? i : l;
+        boolean b1 = true ? false : java.lang.Boolean.TRUE;
+        int bad = true ? true : 1;
+    }
+}
+",
+    )])
+);
