@@ -580,6 +580,11 @@ impl<'a> InferCtx<'a> {
             && !selector.is_error(self.db)
             && !matches!(self.tree.expr(label).clone(), ExprData::Missing)
             && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, selector)
+            // A label sits in assignment context ([§5.2]), so an int
+            // *constant* also narrows to a `byte`, `short` or `char`
+            // selector when its value is representable there ([§5.1.3]) —
+            // `case 16` of a `byte` selector is legal.
+            && !self.constant_narrowable(label, ty.clone(), selector.clone())
         {
             self.report(TypeError::IncompatibleTypes {
                 expr: label,
@@ -691,12 +696,12 @@ impl<'a> InferCtx<'a> {
         match self.const_value(label) {
             Some(value) => {
                 let key = match &value {
-                    Const::Int(v) => format!("int:{v}"),
+                    Const::Int { v, .. } => format!("int:{v}"),
                     Const::Bool(b) => format!("bool:{b}"),
                     Const::Str(s) => format!("str:{s}"),
                 };
                 let display = match &value {
-                    Const::Int(v) => v.to_string(),
+                    Const::Int { v, .. } => v.to_string(),
                     Const::Bool(b) => b.to_string(),
                     Const::Str(s) => format!("\"{s}\""),
                 };

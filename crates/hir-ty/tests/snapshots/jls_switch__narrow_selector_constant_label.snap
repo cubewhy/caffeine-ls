@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    void m(byte sel) {
+        switch (sel) {
+            case 1 << 35 -> f(0);
+            case 7 + 1 -> f(0);
+            default -> {}
+        }
+    }
+
+    void f(int x) {}
+}
+
+method m(byte): void
+  locals: l0: byte
+  exprs: e0: byte | e1: int | e2: int | e3: int | e4: int | e5: void | e6: int | e7: int | e8: int | e9: int | e10: void | e11: <error>
+  diags: e8@6:16: duplicate-case-label: duplicate case label: '8' has already been covered
+method f(int): void
+  locals: l1: int
+  exprs:

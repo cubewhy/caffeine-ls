@@ -6,11 +6,14 @@
 //! forms, and a closed operator set — unary `+`/`-`/`~`/`!`, the arithmetic,
 //! shift, bitwise, logical, relational and equality operators, and string
 //! concatenation with `+`. The conditional operator `?:` is a constant
-//! expression when its condition and both branches are. Evaluation is exact:
-//! integer arithmetic wraps at 32/64 bits as at runtime, division by zero
-//! makes the expression non-constant (the compile-time error is reported by
-//! the type layer separately), and a boolean or `String` operand of `+`
-//! concatenates its textual form.
+//! expression when its condition *and both branches* are constants of
+//! primitive or `String` type — even though only one branch contributes the
+//! value. Evaluation is exact: integral arithmetic wraps at the operand's
+//! own width (`int` at 32 bits, `long` at 64) as at runtime ([§5.6.2],
+//! [§15.18.2], [§15.19]), division by zero makes the expression
+//! non-constant (the compile-time error is reported by the type layer
+//! separately), and a boolean or `String` operand of `+` concatenates its
+//! textual form.
 //!
 //! The evaluator is used by the type layer to validate `case` labels
 //! ([§14.11.1]), detect duplicate labels and apply the narrowing conversion
@@ -29,8 +32,11 @@ use hir_expand::body::{BinaryOp, BodyTree, ExprData, ExprId, Literal, LocalId, U
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     /// An int-compatible constant: an `int`, `long` or `char` constant
-    /// expression ([§4.2], [§4.2.1]), with its value.
-    Int(i64),
+    /// expression ([§4.2], [§4.2.1]), with its value. `long` records the
+    /// constant's own type ([§4.2.1] vs [§4.2.2]) — the width arithmetic
+    /// wraps at and shifts mask against ([§5.6.2], [§15.19]); it does not
+    /// affect the raw magnitude consumers range-check.
+    Int { v: i64, long: bool },
     /// A `boolean` constant expression.
     Bool(bool),
     /// A `String` constant expression.
@@ -38,12 +44,90 @@ pub enum Const {
 }
 
 impl Const {
-    /// The value as an `int`-compatible constant ([§4.2.1]), when this is one.
+    /// The magnitude as an `int`-compatible constant ([§4.2.1]).
     pub fn as_int(&self) -> Option<i64> {
         match self {
-            Const::Int(v) => Some(*v),
+            Const::Int { v, .. } => Some(*v),
             _ => None,
         }
+    }
+
+    /// The textual form a string conversion yields ([§5.1.11]): decimal
+    /// digits for an integral constant, `true`/`false` for boolean, the
+    /// characters themselves for a `String`.
+    fn text(&self) -> String {
+        match self {
+            Const::Int { v, .. } => v.to_string(),
+            Const::Bool(b) => b.to_string(),
+            Const::Str(s) => s.to_string(),
+        }
+    }
+}
+
+/// Wrapping addition, subtraction or multiplication at the promoted width
+/// ([§15.18.2]): an `int` operation wraps at 32 bits even though both
+/// operands travel sign-extended as `i64` here.
+fn wrap_arith(l: i64, r: i64, long: bool, op: ArithOp) -> i64 {
+    if long {
+        match op {
+            ArithOp::Add => l.wrapping_add(r),
+            ArithOp::Sub => l.wrapping_sub(r),
+            ArithOp::Mul => l.wrapping_mul(r),
+        }
+    } else {
+        let (l, r) = (l as i32, r as i32);
+        let v = match op {
+            ArithOp::Add => l.wrapping_add(r),
+            ArithOp::Sub => l.wrapping_sub(r),
+            ArithOp::Mul => l.wrapping_mul(r),
+        };
+        v as i64
+    }
+}
+
+enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+/// Wrapping division or remainder at the promoted width; `None` for a zero
+/// divisor, which makes the expression non-constant ([§15.28] — javac
+/// reports "division by zero" and the type layer owns that error).
+fn wrap_divrem(l: i64, r: i64, long: bool, rem: bool) -> Option<i64> {
+    if r == 0 {
+        return None;
+    }
+    Some(if long {
+        if rem {
+            l.wrapping_rem(r)
+        } else {
+            l.wrapping_div(r)
+        }
+    } else {
+        let (l, r) = (l as i32, r as i32);
+        let v = if rem {
+            l.wrapping_rem(r)
+        } else {
+            l.wrapping_div(r)
+        };
+        v as i64
+    })
+}
+
+/// The shift distance mask ([§15.19]): `& 0x1f` for an `int` shift,
+/// `& 0x3f` for a `long` shift.
+fn shift_mask(long: bool) -> i64 {
+    if long { 0x3f } else { 0x1f }
+}
+
+/// Unsigned right shift at the left operand's width ([§15.19]): `>>>` on an
+/// `int` shifts the 32-bit pattern and zero-fills within those 32 bits.
+fn wrap_ushr(l: i64, dist: i64, long: bool) -> i64 {
+    if long {
+        ((l as u64) >> (dist & shift_mask(true))) as i64
+    } else {
+        (((l as u32) >> (dist & shift_mask(false))) as i32) as i64
     }
 }
 
@@ -87,13 +171,19 @@ impl<'a> ConstEnv<'a> {
                 self.binary(op, l, r)
             }
             // §15.25/§15.28: a conditional expression is constant when its
-            // condition is a `boolean` constant and both branches are
-            // constant expressions of primitive or `String` type.
+            // condition is a `boolean` constant *and both branches* are
+            // constant expressions of primitive or `String` type — even
+            // though only the taken branch contributes the value. Folding
+            // just the taken branch would wrongly accept `false ? x : 1`
+            // for a non-constant `x`.
             ExprData::Conditional { cond, then, els } => {
-                if !matches!(self.eval(cond)?, Const::Bool(true)) {
-                    return self.eval(els);
-                }
-                self.eval(then)
+                let cond = match self.eval(cond)? {
+                    Const::Bool(b) => b,
+                    _ => return None,
+                };
+                let then_value = self.eval(then)?;
+                let else_value = self.eval(els)?;
+                Some(if cond { then_value } else { else_value })
             }
             _ => None,
         }
@@ -101,12 +191,17 @@ impl<'a> ConstEnv<'a> {
 
     fn literal(&self, literal: &Literal) -> Option<Const> {
         Some(match literal {
-            // An int literal is an int-typed constant; a long literal is a
-            // long-typed one ([§3.10.1]); both fold to [`Const::Int`].
-            Literal::Int(v) | Literal::Long(v) => Const::Int(*v),
+            // §3.10.1: an integer literal is int-typed; a long literal (its
+            // `L` suffix) is long-typed — the width later operations wrap
+            // and shift at.
+            Literal::Int(v) => Const::Int { v: *v, long: false },
+            Literal::Long(v) => Const::Int { v: *v, long: true },
             // A char literal is an int-typed constant with its code-point
             // value ([§3.10.4]).
-            Literal::Char(c) => Const::Int(*c as i64),
+            Literal::Char(c) => Const::Int {
+                v: *c as i64,
+                long: false,
+            },
             Literal::Boolean(b) => Const::Bool(*b),
             Literal::Str(s) => Const::Str(Arc::from(s.as_str())),
             // Floating-point literals are not part of any constant form the
@@ -117,20 +212,28 @@ impl<'a> ConstEnv<'a> {
 
     fn unary(&self, op: UnaryOp, v: &Const) -> Option<Const> {
         Some(match op {
-            UnaryOp::Plus => match v {
-                Const::Int(i) => Const::Int(*i),
+            UnaryOp::Plus => v.clone(),
+            // §15.15.4: `-x` equals `0 - x`, wrapping at the operand's width.
+            UnaryOp::Minus => match *v {
+                Const::Int { v, long } => Const::Int {
+                    v: if long {
+                        v.wrapping_neg()
+                    } else {
+                        (v as i32).wrapping_neg() as i64
+                    },
+                    long,
+                },
                 _ => return None,
             },
-            UnaryOp::Minus => match v {
-                Const::Int(i) => Const::Int(i.wrapping_neg()),
+            UnaryOp::BitNot => match *v {
+                Const::Int { v, long } => Const::Int {
+                    v: if long { !v } else { (!v as i32) as i64 },
+                    long,
+                },
                 _ => return None,
             },
-            UnaryOp::BitNot => match v {
-                Const::Int(i) => Const::Int(!*i),
-                _ => return None,
-            },
-            UnaryOp::Not => match v {
-                Const::Bool(b) => Const::Bool(!*b),
+            UnaryOp::Not => match *v {
+                Const::Bool(b) => Const::Bool(!b),
                 _ => return None,
             },
             // `++`/`--` are assignments, never constant expressions.
@@ -140,58 +243,106 @@ impl<'a> ConstEnv<'a> {
 
     fn binary(&self, op: BinaryOp, lhs: Const, rhs: Const) -> Option<Const> {
         use BinaryOp::*;
-        // String concatenation ([§15.18.1]): either operand a `String`
-        // constant converts the other to its textual form.
-        if matches!(op, Add)
-            && let (Some(l), Some(r)) = (lhs.as_str(), rhs.as_str())
-        {
-            return Some(Const::Str(Arc::from(format!("{l}{r}").as_str())));
+        // String concatenation ([§15.18.1]): *either* operand being a
+        // `String` constant converts the other to its textual form
+        // ([§5.1.11]), so `"a" + 1` is itself a constant ([§15.28]).
+        if matches!(op, Add) && (matches!(lhs, Const::Str(_)) || matches!(rhs, Const::Str(_))) {
+            let mut out = String::with_capacity(lhs.text().len() + rhs.text().len());
+            out.push_str(&lhs.text());
+            out.push_str(&rhs.text());
+            return Some(Const::Str(Arc::from(out.as_str())));
         }
-        // Logical operators on booleans ([§15.23]/[§15.24]).
+        // Logical operators on booleans ([§15.23]/[§15.24]); the bitwise
+        // forms also apply to booleans, without short-circuiting
+        // ([§15.22.2]) — all are constant operators ([§15.28]).
         if let (Const::Bool(l), Const::Bool(r)) = (&lhs, &rhs) {
             return match op {
                 And => Some(Const::Bool(*l && *r)),
                 Or => Some(Const::Bool(*l || *r)),
                 Eq => Some(Const::Bool(l == r)),
                 Ne => Some(Const::Bool(l != r)),
+                BitAnd => Some(Const::Bool(*l & *r)),
+                BitXor => Some(Const::Bool(*l ^ *r)),
+                BitOr => Some(Const::Bool(*l | *r)),
                 _ => None,
             };
         }
-        // Integer operators ([§15.17]-[§15.22]); evaluation wraps at 64 bits,
-        // matching the runtime semantics for the `int` values the callers
-        // consume.
-        let (l, r) = (lhs.as_int()?, rhs.as_int()?);
+        // Integral operators. Binary numeric promotion ([§5.6.2]): either
+        // operand `long` runs the operation at 64 bits; otherwise both widen
+        // to `int` and it wraps at 32 ([§15.17]-[§15.18.2]). Shifts are the
+        // exception — each operand promotes independently and the result
+        // takes the *left* operand's type, with the distance masked to that
+        // width ([§15.19]).
+        let (Const::Int { v: l, long: ll }, Const::Int { v: r, long: rl }) = (&lhs, &rhs) else {
+            return None;
+        };
+        let (l, r) = (*l, *r);
+        let long = *ll || *rl;
         Some(match op {
-            Add => Const::Int(l.wrapping_add(r)),
-            Sub => Const::Int(l.wrapping_sub(r)),
-            Mul => Const::Int(l.wrapping_mul(r)),
-            Div if r != 0 => Const::Int(l.wrapping_div(r)),
-            Rem if r != 0 => Const::Int(l.wrapping_rem(r)),
-            // Division/remained by zero is not a compile-time constant; the
-            // type layer does not report it here.
-            Div | Rem => return None,
-            Shl => Const::Int(l.wrapping_shl(r as u32)),
-            Shr => Const::Int(l.wrapping_shr(r as u32)),
-            UShr => Const::Int(((l as u64).wrapping_shr(r as u32)) as i64),
+            Add => Const::Int {
+                v: wrap_arith(l, r, long, ArithOp::Add),
+                long,
+            },
+            Sub => Const::Int {
+                v: wrap_arith(l, r, long, ArithOp::Sub),
+                long,
+            },
+            Mul => Const::Int {
+                v: wrap_arith(l, r, long, ArithOp::Mul),
+                long,
+            },
+            Div => Const::Int {
+                v: wrap_divrem(l, r, long, false)?,
+                long,
+            },
+            Rem => Const::Int {
+                v: wrap_divrem(l, r, long, true)?,
+                long,
+            },
+            Shl => Const::Int {
+                v: l << (r & shift_mask(*ll)),
+                long: *ll,
+            },
+            Shr => Const::Int {
+                v: l >> (r & shift_mask(*ll)),
+                long: *ll,
+            },
+            UShr => Const::Int {
+                v: wrap_ushr(l, r, *ll),
+                long: *ll,
+            },
             Lt => Const::Bool(l < r),
             Gt => Const::Bool(l > r),
             Le => Const::Bool(l <= r),
             Ge => Const::Bool(l >= r),
             Eq => Const::Bool(l == r),
             Ne => Const::Bool(l != r),
-            BitAnd => Const::Int(l & r),
-            BitXor => Const::Int(l ^ r),
-            BitOr => Const::Int(l | r),
+            BitAnd => Const::Int {
+                v: if long {
+                    l & r
+                } else {
+                    ((l as i32) & (r as i32)) as i64
+                },
+                long,
+            },
+            BitXor => Const::Int {
+                v: if long {
+                    l ^ r
+                } else {
+                    ((l as i32) ^ (r as i32)) as i64
+                },
+                long,
+            },
+            BitOr => Const::Int {
+                v: if long {
+                    l | r
+                } else {
+                    ((l as i32) | (r as i32)) as i64
+                },
+                long,
+            },
+            // `&&`/`||` operate on booleans only; they were handled above.
             And | Or => return None,
         })
-    }
-}
-
-impl Const {
-    fn as_str(&self) -> Option<&str> {
-        match self {
-            Const::Str(s) => Some(s),
-            _ => None,
-        }
     }
 }

@@ -54,10 +54,6 @@ impl Modifiers {
         self.annotations.push(name);
     }
 
-    pub fn has_annotation(&self, expected: &str) -> bool {
-        self.annotations.iter().any(|name| name == expected)
-    }
-
     /// The recognized modifier names, in display order.
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         [

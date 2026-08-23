@@ -1,4 +1,4 @@
-use std::{collections::HashSet, process};
+use std::collections::HashSet;
 use triomphe::Arc;
 
 use lsp_types::*;

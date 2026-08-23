@@ -49,16 +49,14 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
         let targets = match bodies.expr(expr_id).clone() {
             ExprData::Var(name) => {
                 let name_str = name.as_str();
-                // §6.3: a local of this body, by name — resolve to its
-                // declarator.
-                for (id, local) in bodies.locals.iter() {
-                    if local.name.as_str() == name_str {
-                        return vec![NavigationTarget {
-                            file,
-                            range: bodies.local_range(LocalId(id)).unwrap_or_default(),
-                            name: name_str.to_owned(),
-                        }];
-                    }
+                // §6.3: a local of this body — the innermost declaration in
+                // scope, so a shadowing inner declarator beats an outer one.
+                if let Some(local) = resolve_local(bodies, name_str, offset) {
+                    return vec![NavigationTarget {
+                        file,
+                        range: bodies.local_range(local).unwrap_or_default(),
+                        name: name_str.to_owned(),
+                    }];
                 }
                 // Otherwise an implicit-receiver field or a statically
                 // imported constant — resolve like a field access.
@@ -100,6 +98,39 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
         }
     }
     Vec::new()
+}
+
+/// The local of `name` in scope at `offset` ([JLS §6.3], [§6.4]): a
+/// same-named declarator *enclosing* the reference is a shadowing inner
+/// declaration and wins over every outer one; otherwise the nearest
+/// declaration *before* the use wins, since a local's scope begins at its own
+/// declarator and cannot reach forward. The body IR records declarator
+/// ranges but not block extents ([§6.3] scopes), so a use lexically *after*
+/// an inner block closed still resolves to the inner declaration — the
+/// innermost-first order matches javac everywhere else. `None` when no
+/// declaration is in scope: the name may denote a field or import.
+fn resolve_local(bodies: &BodyTree, name: &str, offset: TextSize) -> Option<LocalId> {
+    let mut enclosing: Option<(TextRange, LocalId)> = None;
+    let mut preceding: Option<(TextRange, LocalId)> = None;
+    for (id, local) in bodies.locals.iter() {
+        if local.name.as_str() != name {
+            continue;
+        }
+        let id = LocalId(id);
+        let Some(range) = bodies.local_range(id) else {
+            continue;
+        };
+        if range.contains(offset) {
+            if enclosing.is_none_or(|(best, _)| range.len() < best.len()) {
+                enclosing = Some((range, id));
+            }
+        } else if range.start() <= offset
+            && preceding.is_none_or(|(best, _)| range.start() > best.start())
+        {
+            preceding = Some((range, id));
+        }
+    }
+    enclosing.or(preceding).map(|(_, id)| id)
 }
 
 /// The plain (possibly qualified) type name of a `TypeRef`, descending

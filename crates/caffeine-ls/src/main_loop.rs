@@ -12,7 +12,6 @@ use ide_db::base_db::{FileChange, SourceRoot, SourceRootId, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
 use vfs::AbsPathBuf;

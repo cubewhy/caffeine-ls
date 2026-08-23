@@ -1,6 +1,6 @@
 use rowan::{GreenNode, TextRange};
 
-use crate::{KotlinDiagnosticCode, LanguageKind, diagnostics::DiagnosticCode, java, kotlin};
+use crate::{LanguageKind, diagnostics::DiagnosticCode, java, kotlin};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SyntaxError {

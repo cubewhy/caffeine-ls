@@ -181,3 +181,30 @@ class Derived extends Base {
 ",
     )])
 );
+
+// -- §9.6.4.4/§8.4.2: a same-arity overload is not an override ----------------------
+// Signature matching compares parameter *types*, not just arity: `f(int)` does
+// not override `f(long)` — boxing ([§5.1.7]) and widening ([§5.1.2]) apply to
+// invocation, never to overriding — so both annotated methods below fail.
+
+snapshot!(
+    override_annotation_overload,
+    check_class_diagnostics(&[(
+        "/src/com/example/Base.java",
+        "\
+package com.example;
+
+class Base {
+    void f(long x) {}
+}
+
+class Derived extends Base {
+    @Override
+    void f(int x) {}
+
+    @Override
+    void g(java.lang.String s) {}
+}
+",
+    )])
+);

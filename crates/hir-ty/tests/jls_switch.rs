@@ -238,3 +238,131 @@ class Sw {
 ",
     )])
 );
+
+// -- red: string constants compare by value across literal forms -------------------
+// ([§15.28], [§5.1.11], [§3.10.6]) An octal escape, `\s`, a text block and
+// string concatenation each denote their *value*, so every plain spelling
+// below collides with the form above it — `"\101"` is `"A"`, `"a\sb"` is
+// `"a b"`, the text block's incidental whitespace strips away, and `"a" + 1`
+// converts its int operand to text. None of them may pass as fresh labels.
+
+snapshot!(
+    string_constant_forms,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(String s) {
+        switch (s) {
+            case \"\\101\" -> f();
+            case \"A\" -> f();
+            case \"a\\sb\" -> f();
+            case \"a b\" -> f();
+            case \"\"\"
+                B
+                \"\"\" -> f();
+            case \"B\\n\" -> f();
+            case \"a\" + 1 -> f();
+            default -> {}
+        }
+    }
+
+    void f() {}
+}
+",
+    )])
+);
+
+// -- red: integral constants wrap and shift at their own width ----------------------
+// ([§15.19], [§15.18.2]) An `int` shift masks the distance to five bits
+// (`1 << 35` shifts by 3, so it is 8), `>>>` zero-fills within 32 bits even
+// for a negative operand (`-1 >>> 28` is 15) and arithmetic wraps at 32 bits
+// (`65535 * 65535` is -131071). Each pair below therefore collides.
+
+snapshot!(
+    shift_and_wrap_widths,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(int sel) {
+        switch (sel) {
+            case 1 << 35 -> f(0);
+            case 8 -> f(0);
+            case -1 >>> 28 -> f(1);
+            case 15 -> f(1);
+            case 65535 * 65535 -> f(2);
+            case -131071 -> f(2);
+            default -> {}
+        }
+    }
+
+    void f(int x) {}
+}
+",
+    )])
+);
+
+// -- green/red: a constant label narrows to a narrow selector ([§5.2], [§5.1.3]) ----
+// A label sits in assignment context, so the int constants below are legal
+// for a `byte` selector — but `15 + 1` is still the same value as the masked
+// shift above it, and the duplicate is reported.
+
+snapshot!(
+    narrow_selector_constant_label,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(byte sel) {
+        switch (sel) {
+            case 1 << 35 -> f(0);
+            case 7 + 1 -> f(0);
+            default -> {}
+        }
+    }
+
+    void f(int x) {}
+}
+",
+    )])
+);
+
+// -- red: conditional labels need both branches constant ----------------------------
+// ([§15.28]) A conditional expression is constant only when its condition and
+// *both* branches are: `false ? x : 2` stays non-constant even though only
+// the `else` arm contributes. With a constant-variable condition
+// (`true & false` folds once boolean bitwise operators count as constant
+// operators, [§15.22.2]) the expression folds to the `else` value and
+// duplicates `case 2`.
+
+snapshot!(
+    conditional_label_constancy,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    void m(int i) {
+        final boolean flag = true & false;
+        final int x = i;
+        switch (i) {
+            case false ? x : 2 -> f(0);
+            case flag ? 1 : 2 -> f(1);
+            case 2 -> f(1);
+            default -> {}
+        }
+    }
+
+    void f(int x) {}
+}
+",
+    )])
+);

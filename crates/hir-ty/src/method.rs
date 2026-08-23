@@ -330,7 +330,6 @@ pub(crate) fn inherited_defaults(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     receiver: &Ty,
-    ctx: &InvocationContext,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, *receiver);

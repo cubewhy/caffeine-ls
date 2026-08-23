@@ -1,7 +1,7 @@
 //! Insta snapshot tests for name-level navigation in `ide`: goto-definition
 //! and hover at an offset, resolved through the HIR layer (see [`ide::nav`]).
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
 use ide::{Analysis, AnalysisHost};
@@ -129,6 +129,31 @@ fn hover_over_class_declaration() {
     let fixture = test_file(SRC);
     // The class declaration's signature.
     assert_snapshot!("hover_class_declaration", render_nav(&fixture, "class Nav"));
+}
+
+// -- shadowing ([JLS §6.3]/[§6.4]): the innermost in-scope declarator wins ---------
+
+const SHADOW_SRC: &str = r#"package com.example;
+
+class Nav {
+    void m() {
+        int dup = 1;
+        {
+            int dup = 2;
+            take(dup);
+        }
+    }
+
+    void take(int v) {}
+}
+"#;
+
+#[test]
+fn goto_shadowed_local_use() {
+    let fixture = test_file(SHADOW_SRC);
+    // The use inside the inner block resolves to the *inner* declaration,
+    // not the first same-named one of the body.
+    assert_snapshot!("goto_shadowed_local_use", render_nav(&fixture, "(dup)"));
 }
 
 fn test_file(text: &str) -> Fixture {

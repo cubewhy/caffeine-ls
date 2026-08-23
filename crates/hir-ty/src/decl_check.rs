@@ -155,7 +155,7 @@ fn check_class(
             continue;
         }
         for super_method in &inherited {
-            if same_signature(method, super_method) {
+            if same_signature(db, method, super_method) {
                 if !super_method.ret.is_error(db)
                     && !subtyping::is_subtype(
                         db,
@@ -184,16 +184,16 @@ fn check_class(
     // class inherits them only if it overrides the signature itself. The
     // defaults are collected *without* the most-derived dedup — unrelated
     // defaults do not override each other, they conflict.
-    let defaults = method::inherited_defaults(db, scope, &self_ty, &ctx);
+    let defaults = method::inherited_defaults(db, scope, &self_ty);
     let defaults: Vec<&MethodData> = defaults.iter().filter(|m| m.owner != fqn).collect();
     for (i, a) in defaults.iter().enumerate() {
         for b in &defaults[i + 1..] {
-            if !same_signature(a, b) || related(db, scope, &a.owner, &b.owner) {
+            if !same_signature(db, a, b) || related(db, scope, &a.owner, &b.owner) {
                 continue;
             }
             let already_overridden = declared
                 .iter()
-                .any(|m| !m.is_static && same_signature(m, a));
+                .any(|m| !m.is_static && same_signature(db, m, a));
             if !already_overridden {
                 out.push(DeclDiagnostic::ConflictingDefaults {
                     method: Name::new(&a.name),
@@ -227,7 +227,7 @@ fn check_class(
             };
             let overrides = inherited
                 .iter()
-                .any(|s| !s.is_static && same_signature(method, s));
+                .any(|s| !s.is_static && same_signature(db, method, s));
             if method.is_static || !overrides {
                 out.push(DeclDiagnostic::MethodDoesNotOverride {
                     method: Name::new(&method.name),
@@ -238,10 +238,21 @@ fn check_class(
     out
 }
 
-/// Whether two methods have the same overriding signature: identical name and
-/// parameter arity (parameter types are erased-equal in the raw model).
-fn same_signature(a: &MethodData, b: &MethodData) -> bool {
-    a.name == b.name && a.params.len() == b.params.len()
+/// Whether two methods have the same overriding signature
+/// ([JLS §8.4.2]): identical name and *identical* parameter types. Widening
+/// ([§5.1.2]) or boxing ([§5.1.7]) conversions apply to invocation, never to
+/// overriding, so `f(int)` and `f(long)` are unrelated overloads. A parameter
+/// that failed to resolve is treated as matching, so a broken classpath stays
+/// conservative. The substitution of a supertype's type arguments into an
+/// inherited method's parameters happens when the member set is built; the
+/// substitution of a method's own type variables ([§8.4.4]) is not modelled.
+fn same_signature(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> bool {
+    a.name == b.name
+        && a.params.len() == b.params.len()
+        && a.params
+            .iter()
+            .zip(&b.params)
+            .all(|(x, y)| x.is_error(db) || y.is_error(db) || x == y)
 }
 
 /// §9.7.1/§6.5.5: whether an annotation name resolves to
@@ -263,12 +274,6 @@ fn is_override_annotation(
         Some(fqn) => fqn.as_str() == "java.lang.Override",
         None => name.as_str().rsplit('.').next() == Some("Override"),
     }
-}
-
-/// Whether the method is a default interface method: a non-static,
-/// non-abstract instance method declared in an interface ([§9.4.1]).
-fn is_default(method: &MethodData) -> bool {
-    method.declaring_interface && !method.is_static && !method.abstract_
 }
 
 /// Whether two declaring types are subtype-related in either direction, which

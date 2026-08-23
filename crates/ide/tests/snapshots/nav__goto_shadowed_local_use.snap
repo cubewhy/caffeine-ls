@@ -1,0 +1,8 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav(&fixture, \"(dup)\")"
+---
+--- goto @"(dup)" ---
+dup @96..103
+--- hover ---
+int

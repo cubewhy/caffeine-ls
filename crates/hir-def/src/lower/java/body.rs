@@ -9,6 +9,9 @@
 //! their operands in a single node, so the lowerer pulls the operand
 //! expression children out in source order.
 
+use std::iter::Peekable;
+use std::str::Chars;
+
 use java_syntax::{Lang, SyntaxKind as J};
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
@@ -957,14 +960,15 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
                 ExprData::Literal(Literal::Double)
             }
         }
-        J::STRING_LITERAL | J::TEXT_BLOCK => {
+        J::STRING_LITERAL => {
             // §3.10.5: decode the escapes so constant expressions over
-            // strings can be evaluated ([§15.28]); text blocks ([§3.10.6])
-            // are decoded with their quotes and incidental whitespace kept
-            // as written — a malformed literal falls back to the empty
-            // string so typing stays well-formed.
+            // strings evaluate correctly ([§15.28]) — the simple escapes,
+            // `\s` and the legacy octal forms ([§3.10.6]). A malformed
+            // literal falls back to the empty string so typing stays
+            // well-formed.
             ExprData::Literal(Literal::Str(unescape_string(token.text())))
         }
+        J::TEXT_BLOCK => ExprData::Literal(Literal::Str(text_block_value(token.text()))),
         J::CHAR_LITERAL => {
             // §3.10.4: decode the single character between the quotes,
             // resolving the simple escapes; a malformed literal keeps type
@@ -984,61 +988,170 @@ fn literal(node: &SyntaxNode<Lang>) -> ExprData {
 }
 
 /// Decodes the scalar value of a character literal ([JLS §3.10.4]): the single
-/// character between the quotes, with the simple escapes resolved. A
+/// character between the quotes, with the escape sequences resolved. A
 /// malformed literal yields NUL so typing stays well-formed.
 fn unescape_char(text: &str) -> char {
     let inner = text
         .strip_prefix('\'')
         .and_then(|t| t.strip_suffix('\''))
         .unwrap_or(text);
-    let mut chars = inner.chars();
+    let mut chars = inner.chars().peekable();
     let Some(first) = chars.next() else {
         return '\0';
     };
     if first != '\\' {
         return first;
     }
-    unescape_escape_char(chars.next().unwrap_or('\0'))
+    let mut out = String::new();
+    if let Some(escaped) = chars.next() {
+        push_escape(&mut out, escaped, &mut chars);
+    }
+    out.chars().next().unwrap_or('\0')
 }
 
-/// The decoded value of the character following a `\` in a string or char
-/// literal ([JLS §3.10.6], [§3.10.4]); octal and unicode escapes degrade to
-/// the escape character itself.
-fn unescape_escape_char(escaped: char) -> char {
+/// Appends the decoded value of the escape whose `\` was already consumed and
+/// whose escape character is `escaped` ([JLS §3.10.4]/[§3.10.6]
+/// EscapeSequence), consuming further characters for the octal forms.
+/// Unicode escapes never reach this layer — the lexer translates them before
+/// tokenizing ([§3.3]). A trailing lone `\` (a text-block line continuation
+/// whose line terminator was already split off) produces nothing.
+fn push_escape(out: &mut String, escaped: char, chars: &mut Peekable<Chars<'_>>) {
     match escaped {
-        'n' => '\n',
-        't' => '\t',
-        'b' => '\u{0008}',
-        'r' => '\r',
-        'f' => '\u{000C}',
-        's' => ' ',
-        '0' => '\0',
-        other => other,
+        'b' => out.push('\u{0008}'),
+        't' => out.push('\t'),
+        'n' => out.push('\n'),
+        'f' => out.push('\u{000C}'),
+        'r' => out.push('\r'),
+        '"' => out.push('"'),
+        '\'' => out.push('\''),
+        '\\' => out.push('\\'),
+        // §3.10.6: `\s` is a space — significant, unlike incidental
+        // whitespace, which stripping removes.
+        's' => out.push(' '),
+        // OctalEscape: `\` o | oo | ooo, at most three octal digits and a
+        // value ≤ 0377; the lexer accepts only the well-formed forms.
+        digit @ '0'..='7' => {
+            let mut value = (digit as u8) - b'0';
+            for _ in 0..2 {
+                match chars.peek() {
+                    Some(next @ '0'..='7') => {
+                        value = value * 8 + ((*next as u8) - b'0');
+                        chars.next();
+                    }
+                    _ => break,
+                }
+            }
+            out.push(value as char);
+        }
+        // Not an escape ([§3.10.6]): keep the character as written so a
+        // malformed literal still yields a well-typed value.
+        other => out.push(other),
     }
 }
 
-/// Decodes the value of a string literal ([JLS §3.10.5]) — the characters
-/// between the quotes with the simple escapes resolved. A text block
-/// ([§3.10.6]) is kept verbatim; a malformed literal yields the empty string
-/// so typing stays well-formed.
-pub(super) fn unescape_string(text: &str) -> String {
-    let inner = text
-        .strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .unwrap_or(text);
-    let mut out = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
+/// Decodes the escapes of one literal content line into `out` ([§3.10.4],
+/// [§3.10.5], [§3.10.6]).
+fn decode_line(out: &mut String, line: &str) {
+    let mut chars = line.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
             continue;
         }
         match chars.next() {
-            Some(escaped) => out.push(unescape_escape_char(escaped)),
-            None => break,
+            Some(escaped) => push_escape(out, escaped, &mut chars),
+            // A `\` at end of line: inside a text block this is the line
+            // continuation `\<line-terminator>` ([§3.10.6]), which produces
+            // nothing — the joining logic drops the terminator itself.
+            None => {}
         }
     }
+}
+
+/// Whether the line ends in an *odd* run of backslashes — its last `\` opens
+/// an escape, so within a text block it is the line continuation.
+fn ends_with_continuation(line: &str) -> bool {
+    let run = line.chars().rev().take_while(|c| *c == '\\').count();
+    run % 2 == 1
+}
+
+/// Decodes the value of a string literal ([JLS §3.10.5]) — the characters
+/// between the quotes with the escape sequences resolved ([§3.10.6]). A
+/// malformed literal yields the empty string so typing stays well-formed.
+fn unescape_string(text: &str) -> String {
+    let inner = text
+        .strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(text);
+    let mut out = String::with_capacity(inner.len());
+    decode_line(&mut out, inner);
     out
+}
+
+/// Computes the content of a text block ([JLS §3.10.6]): the characters
+/// between the delimiters, translated in the spec's order — line endings
+/// normalized to `\n`, the minimal indentation of the non-blank lines
+/// removed, then the escape sequences resolved, where `\s` preserves a space
+/// against that stripping and `\<line-terminator>` joins two lines. A
+/// malformed block yields the empty string so typing stays well-formed.
+fn text_block_value(text: &str) -> String {
+    let Some(inner) = text
+        .strip_prefix("\"\"\"")
+        .and_then(|t| t.strip_suffix("\"\"\""))
+    else {
+        return String::new();
+    };
+    // The open delimiter's line carries no content beyond incidental
+    // whitespace ([§3.10.6] grammar), so the content starts after its line
+    // terminator; normalize CR LF and CR to LF while copying.
+    let content = match inner.find(['\n', '\r']) {
+        Some(start) => &inner[start + 1..],
+        None => return String::new(),
+    };
+    let mut normalized = String::with_capacity(content.len());
+    let mut raw = content.chars().peekable();
+    while let Some(c) = raw.next() {
+        match c {
+            '\r' => {
+                if raw.peek() == Some(&'\n') {
+                    raw.next();
+                }
+                normalized.push('\n');
+            }
+            other => normalized.push(other),
+        }
+    }
+
+    // The minimal indentation over the non-blank lines governs the strip;
+    // blank lines — including the closing-delimiter line — are ignored.
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let indent = lines
+        .iter()
+        .filter_map(|line| {
+            let width = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+            (width < line.len()).then_some(width)
+        })
+        .min()
+        .unwrap_or(0);
+
+    let mut value = String::with_capacity(normalized.len());
+    let mut pending_continuation = false;
+    for (idx, line) in lines.iter().enumerate() {
+        if idx > 0 && !pending_continuation {
+            value.push('\n');
+        }
+        // Remove the shared indentation prefix; a continuation swallows the
+        // leading whitespace of the joined line as well ([§3.10.6]).
+        let body = line.chars().skip(indent).collect::<String>();
+        let body = if pending_continuation {
+            body.trim_start_matches([' ', '\t'])
+        } else {
+            &body
+        };
+        pending_continuation = ends_with_continuation(body);
+        decode_line(&mut value, body);
+    }
+    value
 }
 
 fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
