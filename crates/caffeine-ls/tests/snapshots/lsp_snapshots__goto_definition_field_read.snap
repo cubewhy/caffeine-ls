@@ -1,0 +1,20 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+assertion_line: 586
+expression: normalized
+---
+[
+  {
+    "uri": "file://<WORKSPACE_ROOT>/src/com/example/Nav.java",
+    "range": {
+      "start": {
+        "line": 3,
+        "character": 8
+      },
+      "end": {
+        "line": 3,
+        "character": 13
+      }
+    }
+  }
+]

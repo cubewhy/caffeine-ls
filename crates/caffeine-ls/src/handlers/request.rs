@@ -1,4 +1,4 @@
-use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics, lsp::symbols};
+use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics, lsp::symbols, lsp::to_proto};
 
 use ide::LanguageKind;
 use lsp_types::*;
@@ -69,4 +69,56 @@ pub fn on_workspace_symbol(
     }
 
     Ok(Some(out.into()))
+}
+
+/// The declaration(s) a reference at a position resolves to, as LSP
+/// locations ([JLS §6.5]).
+pub fn on_goto_definition(
+    state: GlobalStateSnapshot,
+    params: DefinitionParams,
+) -> anyhow::Result<Option<DefinitionResponse>> {
+    let pos = params.text_document_position_params;
+    tracing::info!(uri = ?pos.text_document.uri, "request goto definition");
+
+    let file_id = state
+        .url_to_file_id(&pos.text_document.uri)?
+        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let line_index = state.file_line_index(file_id)?;
+    let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
+    let targets = state.analysis.goto_definition(file_id, offset)?;
+    if targets.is_empty() {
+        return Ok(None);
+    }
+
+    let mut locations = Vec::with_capacity(targets.len());
+    for target in targets {
+        let uri = state.file_id_to_url(target.file)?;
+        let line_index = state.file_line_index(target.file)?;
+        locations.push(Location {
+            uri,
+            range: to_proto::range(&line_index, target.range),
+        });
+    }
+    Ok(Some(DefinitionResponse::Definition(locations.into())))
+}
+
+/// The hover at a position: the type of the expression or the signature of
+/// the declaration there.
+pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Result<Option<Hover>> {
+    let pos = params.text_document_position_params;
+    tracing::info!(uri = ?pos.text_document.uri, "request hover");
+
+    let file_id = state
+        .url_to_file_id(&pos.text_document.uri)?
+        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let line_index = state.file_line_index(file_id)?;
+    let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
+    let info = state.analysis.hover(file_id, offset)?;
+    Ok(info.map(|info| Hover {
+        contents: Contents::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: format!("```java\n{}\n```", info.value),
+        }),
+        range: None,
+    }))
 }

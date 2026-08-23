@@ -1,0 +1,9 @@
+---
+source: crates/ide/tests/nav.rs
+assertion_line: 85
+expression: "render_nav(&fixture, \"local;\")"
+---
+--- goto @"local;" ---
+local @82..95
+--- hover ---
+int

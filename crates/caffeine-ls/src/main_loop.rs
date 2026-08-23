@@ -94,6 +94,8 @@ impl GlobalState {
             .on_async::<DocumentDiagnosticRequest>(handlers::on_diagnostic)
             .on_async::<DocumentSymbolRequest>(handlers::on_document_symbol)
             .on_async::<WorkspaceSymbolRequest>(handlers::on_workspace_symbol)
+            .on_async::<DefinitionRequest>(handlers::on_goto_definition)
+            .on_async::<HoverRequest>(handlers::on_hover)
             // Add more requests here
             .finish();
     }

@@ -1,0 +1,9 @@
+---
+source: crates/ide/tests/nav.rs
+assertion_line: 132
+expression: "render_nav(&fixture, \"count;\\n\")"
+---
+--- goto @"count;\n" ---
+
+--- hover ---
+count: int

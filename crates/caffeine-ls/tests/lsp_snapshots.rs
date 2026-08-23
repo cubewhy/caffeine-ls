@@ -533,3 +533,104 @@ fn walk_json(value: &mut serde_json::Value, workspace_root: &str) {
         _ => {}
     }
 }
+
+/// The LSP position of the middle of `needle` (ASCII fixture files only).
+fn position_of(text: &str, needle: &str) -> (u32, u32) {
+    let idx = text.find(needle).expect("needle in text") + needle.len() / 2;
+    let before = &text[..idx];
+    let line = before.matches('\n').count() as u32;
+    let last = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let character = before[last..].chars().count() as u32;
+    (line, character)
+}
+
+#[test]
+fn test_goto_definition() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Nav.java";
+    let text = r#"package com.example;
+
+class Nav {
+    int count;
+
+    int compute() {
+        int local = count;
+        return local;
+    }
+
+    int add(int a, int b) {
+        return a + b;
+    }
+
+    void call() {
+        int r = add(1, 2);
+    }
+}
+"#;
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+
+    // Goto-definition on the field read `count` resolves to its declaration.
+    let (line, character) = position_of(text, "= count;");
+    let response = request_until(
+        &lsp,
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let normalized = normalize_uris(response, &workspace_root);
+    insta::assert_json_snapshot!("goto_definition_field_read", normalized);
+
+    lsp.shutdown();
+}
+
+#[test]
+fn test_hover() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Nav.java";
+    let text = r#"package com.example;
+
+class Nav {
+    int count;
+
+    int compute() {
+        int local = count;
+        return local;
+    }
+}
+"#;
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+
+    // Hover over the `count` read shows its type `int`; over the method
+    // declaration shows its signature.
+    let (line, character) = position_of(text, "= count;");
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("hover_expression", response);
+
+    let (line, character) = position_of(text, "int compute(");
+    let response = request_until(
+        &lsp,
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+        |response| !response.is_null(),
+    );
+    insta::assert_json_snapshot!("hover_method_declaration", response);
+
+    lsp.shutdown();
+}

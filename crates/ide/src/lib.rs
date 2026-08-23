@@ -17,8 +17,10 @@ use triomphe::Arc;
 use vfs::FileId;
 
 pub mod delta;
+pub mod nav;
 pub mod symbols;
 
+pub use nav::{HoverInfo, NavigationTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbol};
 
 pub type Cancellable<T> = Result<T, Cancelled>;
@@ -140,5 +142,26 @@ impl Analysis {
         item: hir::hir_expand::item_tree::ItemId,
     ) -> Cancellable<Arc<Vec<String>>> {
         self.with_db(|db| symbols::method_params(db, file_id, item))
+    }
+
+    /// The declaration(s) the reference at `offset` resolves to
+    /// ([JLS §6.5]) — the LSP `textDocument/definition` result.
+    pub fn goto_definition(
+        &self,
+        file_id: FileId,
+        offset: rowan::TextSize,
+    ) -> Cancellable<Vec<NavigationTarget>> {
+        self.with_db(|db| nav::definition(db, file_id, offset))
+    }
+
+    /// The hover at `offset` — the type of the expression or the signature of
+    /// the declaration, or `None` when nothing is there. Serves the LSP
+    /// `textDocument/hover` request.
+    pub fn hover(
+        &self,
+        file_id: FileId,
+        offset: rowan::TextSize,
+    ) -> Cancellable<Option<HoverInfo>> {
+        self.with_db(|db| nav::hover(db, file_id, offset))
     }
 }

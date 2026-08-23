@@ -1,0 +1,9 @@
+---
+source: crates/ide/tests/nav.rs
+assertion_line: 142
+expression: "render_nav(&fixture, \"int add(\")"
+---
+--- goto @"int add(" ---
+
+--- hover ---
+add(int, int): int

@@ -31,6 +31,8 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
         ),
         document_symbol_provider: Some(true.into()),
         workspace_symbol_provider: Some(true.into()),
+        definition_provider: Some(true.into()),
+        hover_provider: Some(true.into()),
         ..Default::default()
     }
 }
