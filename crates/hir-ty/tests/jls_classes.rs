@@ -117,3 +117,77 @@ class InitOrder {
 ",
     )])
 );
+
+// -- green: `$` in an identifier is an ordinary character ([§3.8]) --------------
+// `A$B` is one identifier, so its constructor is looked up by that simple name
+// ([§6.5], [§8.8]): the lambda argument is typed against the resolved formal
+// parameter ([§15.9.2]) instead of staying an untyped poly expression.
+
+snapshot!(
+    dollar_identifier_class,
+    check_body_types(&[(
+        "/src/com/example/DollarUse.java",
+        "\
+package com.example;
+
+class A$B {
+    A$B(Runnable task) { task.run(); }
+}
+
+class DollarUse {
+    void go() {
+        new A$B(() -> {});
+    }
+}
+",
+    )])
+);
+
+// -- green: a nested class whose name contains `$` ([§3.8], [§6.7]) -------------
+// Source nesting joins with dots ([§6.7]), so `Outer.Inner$Weird` declares the
+// single identifier `Inner$Weird` inside `Outer`; its constructor keeps the
+// whole identifier as its name.
+
+snapshot!(
+    nested_dollar_identifier,
+    check_body_types(&[(
+        "/src/com/example/NestedDollar.java",
+        "\
+package com.example;
+
+class Outer {
+    static class Inner$Weird {
+        Inner$Weird(Runnable task) { task.run(); }
+    }
+
+    void build() {
+        new Outer.Inner$Weird(() -> {});
+    }
+}
+",
+    )])
+);
+
+// -- red: instantiating an abstract class named with `$` ([§8.1.1.1]) -----------
+// The diagnostic carries the declared identifier; splitting the name at `$`
+// would report a non-existent class instead.
+
+snapshot!(
+    abstract_dollar_identifier,
+    check_body_types(&[(
+        "/src/com/example/AbstractDollar.java",
+        "\
+package com.example;
+
+abstract class Abs$Tract {
+    Abs$Tract() {}
+}
+
+class Instantiate {
+    void make() {
+        new Abs$Tract();
+    }
+}
+",
+    )])
+);

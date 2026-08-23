@@ -156,6 +156,53 @@ fn goto_shadowed_local_use() {
     assert_snapshot!("goto_shadowed_local_use", render_nav(&fixture, "(dup)"));
 }
 
+// -- `$` in identifiers ([JLS §3.8]) ---------------------------------------------
+// `$` is an ordinary identifier character, so `A$B`, `x$y` and `m$1` are whole
+// names: navigation must not split them into their last `$` segment.
+
+const DOLLAR_SRC: &str = r#"package com.example;
+
+class A$B {
+    int x$y;
+
+    void m$1() {}
+
+    void use() {
+        new A$B().m$1();
+    }
+}
+"#;
+
+#[test]
+fn goto_dollar_named_type() {
+    let fixture = test_file(DOLLAR_SRC);
+    assert_snapshot!("goto_dollar_named_type", render_nav(&fixture, "new A$B"));
+}
+
+#[test]
+fn goto_dollar_named_method() {
+    let fixture = test_file(DOLLAR_SRC);
+    assert_snapshot!("goto_dollar_named_method", render_nav(&fixture, "m$1();"));
+}
+
+#[test]
+fn hover_over_dollar_class_declaration() {
+    let fixture = test_file(DOLLAR_SRC);
+    assert_snapshot!(
+        "hover_over_dollar_class_declaration",
+        render_nav(&fixture, "class A$B")
+    );
+}
+
+#[test]
+fn hover_over_dollar_field_declaration() {
+    let fixture = test_file(DOLLAR_SRC);
+    assert_snapshot!(
+        "hover_over_dollar_field_declaration",
+        render_nav(&fixture, "x$y;\n")
+    );
+}
+
 fn test_file(text: &str) -> Fixture {
     let mut host = AnalysisHost::new();
     let file = FileId::from_raw(1);

@@ -576,12 +576,35 @@ fn package_of(fqn: &str) -> Option<String> {
     fqn.rfind('.').map(|i| fqn[..i].to_owned())
 }
 
-/// The fully qualified name of the top-level class of `fqn`: the name up to
-/// the first `$` (nested classes are named `Outer$Inner`).
+/// The fully qualified name of the top-level class of a *library* binary
+/// name: the name up to the first `$`. Library nested classes are named
+/// `Outer$Inner` ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2));
+/// source names nest with dots and must use [`source_top_level`] instead —
+/// `$` inside them is an ordinary identifier character ([JLS §3.8]).
 fn top_level_of(fqn: &str) -> String {
     match fqn.find('$') {
         Some(i) => fqn[..i].to_owned(),
         None => fqn.to_owned(),
+    }
+}
+
+/// The fully qualified name of the top-level class of a *source* `fqn`: the
+/// known package plus the first enclosing type — `com.example.Outer.Inner` is
+/// `com.example.Outer`, an unnamed-package `Outer.Inner` is `Outer`
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)).
+/// Source names never separate nesting with `$`, so none is split off.
+fn source_top_level(package: Option<&str>, fqn: &str) -> String {
+    let rest = match package {
+        Some(pkg) => fqn
+            .strip_prefix(pkg)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .unwrap_or(fqn),
+        None => fqn,
+    };
+    let top = rest.split('.').next().unwrap_or(rest);
+    match package {
+        Some(pkg) if !pkg.is_empty() => format!("{pkg}.{top}"),
+        _ => top.to_owned(),
     }
 }
 
@@ -697,13 +720,10 @@ fn source_class_methods(
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|fqn| fqn.as_str().to_owned())
         .unwrap_or_default();
-    let declaring_package = Some(
-        resolver
-            .package()
-            .map(|p| p.as_str().to_owned())
-            .unwrap_or_default(),
-    );
-    let declaring_top_level = (!fqn.is_empty()).then(|| top_level_of(&fqn));
+    let package = resolver.package().map(|p| p.as_str().to_owned());
+    let declaring_package = Some(package.clone().unwrap_or_default());
+    // Source names nest with dots: the top level is package + first type.
+    let declaring_top_level = (!fqn.is_empty()).then(|| source_top_level(package.as_deref(), &fqn));
     let declaring_interface =
         matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
 
@@ -818,6 +838,7 @@ fn is_accessible(
         scope,
         method.access,
         method.declaring_package.as_deref(),
+        method.owner.as_str(),
         method.declaring_top_level.as_deref(),
         receiver,
         method.is_static,
@@ -825,16 +846,20 @@ fn is_accessible(
     )
 }
 
-/// Whether a member with `access` declared in `declaring_package` (its top-level
-/// class `declaring_top_level`) is accessible to the class in which the access
-/// appears ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
-/// when accessed through the receiver expression of type `receiver`.
+/// Whether a member with `access` declared in `declaring_package` by the class
+/// `owner` (whose top-level class is `declaring_top_level`) is accessible to
+/// the class in which the access appears
+/// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
+/// when accessed through the receiver expression of type `receiver`. The two
+/// names serve different rules: §6.6.1 scopes *private* access by the
+/// top-level class, while §6.6.2 requires a subclass of the *declaring* class.
 #[allow(clippy::too_many_arguments)]
 fn member_accessible(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     access: Access,
     declaring_package: Option<&str>,
+    owner: &str,
     declaring_top_level: Option<&str>,
     receiver: &Ty,
     static_member: bool,
@@ -865,8 +890,7 @@ fn member_accessible(
             match &ctx.enclosing_class {
                 Some(enclosing) => {
                     let enclosing = Ty::reference(db, enclosing.as_str(), Vec::new());
-                    let declaring =
-                        Ty::reference(db, declaring_top_level.unwrap_or_default(), Vec::new());
+                    let declaring = Ty::reference(db, owner, Vec::new());
                     if !is_subtype(db, scope, &enclosing, &declaring) {
                         return false;
                     }
@@ -891,12 +915,11 @@ fn member_accessible(
 /// Whether the class `enclosing` is the top-level class `declaring` or
 /// lexically inside it ([JLS §6.6.1]): a private member is accessible
 /// throughout the body of its top-level class, including from nested classes.
-/// Library class names nest with `$` (`Outer$Inner`), source class names with
-/// `.` (`com.example.Outer.Inner`).
+/// `declaring_top_level` is always the top level itself, so containment is
+/// plain dot-prefix matching; the access site's enclosing class is a *source*
+/// dotted name (inference only runs on source), so `$` never separates it.
 fn within_top_level(enclosing: &str, declaring: &str) -> bool {
-    enclosing == declaring
-        || enclosing.starts_with(&format!("{}.", declaring))
-        || top_level_of(enclosing) == declaring
+    enclosing == declaring || enclosing.starts_with(&format!("{}.", declaring))
 }
 
 /// An actual argument of a method invocation: either a concrete type, or a
@@ -1358,6 +1381,7 @@ pub fn pick_field(
                 scope,
                 field.access,
                 field.declaring_package.as_deref(),
+                field.owner.as_str(),
                 field.declaring_top_level.as_deref(),
                 &receiver,
                 field.is_static,
@@ -1471,13 +1495,10 @@ fn source_class_fields(
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|fqn| fqn.as_str().to_owned())
         .unwrap_or_default();
-    let declaring_package = Some(
-        resolver
-            .package()
-            .map(|p| p.as_str().to_owned())
-            .unwrap_or_default(),
-    );
-    let declaring_top_level = (!fqn.is_empty()).then(|| top_level_of(&fqn));
+    let package = resolver.package().map(|p| p.as_str().to_owned());
+    let declaring_package = Some(package.clone().unwrap_or_default());
+    // Source names nest with dots: the top level is package + first type.
+    let declaring_top_level = (!fqn.is_empty()).then(|| source_top_level(package.as_deref(), &fqn));
 
     let mut out = Vec::new();
     for &item in class_data.body() {
@@ -1499,4 +1520,32 @@ fn source_class_fields(
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_top_level_splits_first_dollar() {
+        assert_eq!(top_level_of("java.util.Map$Entry"), "java.util.Map");
+        assert_eq!(top_level_of("com.example.Foo"), "com.example.Foo");
+    }
+
+    #[test]
+    fn source_top_level_keeps_dollar_identifiers() {
+        // §3.8: `$` is part of the identifier; the top level of `A$B` is `A$B`.
+        assert_eq!(
+            source_top_level(Some("com.example"), "com.example.A$B"),
+            "com.example.A$B"
+        );
+        // §6.6.1: the top level of a nested class is its first enclosing type.
+        assert_eq!(
+            source_top_level(Some("com.example"), "com.example.Outer.Inner"),
+            "com.example.Outer"
+        );
+        // The unnamed package ([§7.4.2]) has no prefix to keep.
+        assert_eq!(source_top_level(None, "Outer.Inner"), "Outer");
+        assert_eq!(source_top_level(None, "A$B"), "A$B");
+    }
 }

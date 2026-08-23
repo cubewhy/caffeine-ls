@@ -92,5 +92,77 @@ fn site_samples() -> Vec<SiteSample> {
 
 snapshot! {
     access_site_same_package,
-    check_source_methods_site(SITE_SRC, &site_samples()),
+    check_source_methods_site(SITE_SRC, &site_samples())
+}
+
+// -- `$` identifiers and same-top-level siblings ([§3.8], [§6.6.1]) --------------
+// `A` and `A$B` are two distinct top-level classes: a private member of one is
+// invisible in the other. Two classes nested in the *same* top-level class do
+// share private members ([§6.6.1]), so `Sibling` reads `Nested.secret`.
+
+const DOLLAR_SRC: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Holder.java",
+        r#"package com.example;
+class Holder {
+    static class Nested {
+        private void secret() {}
+        void selfCall() { secret(); }
+    }
+    static class Sibling {
+        void call(Nested n) { n.secret(); }
+    }
+}
+"#,
+    ),
+    (
+        "/src/com/example/Dollar.java",
+        r#"package com.example;
+class A$B {
+    private void priv() {}
+    void callSelf() { priv(); }
+}
+class A {
+    void callDollar(A$B x) { x.priv(); }
+}
+"#,
+    ),
+];
+
+fn dollar_samples() -> Vec<SiteSample> {
+    vec![
+        site_sample(
+            "Nested.self",
+            0,
+            "selfCall",
+            |db| r(db, "com.example.Holder.Nested"),
+            "secret",
+        ),
+        site_sample(
+            "Sibling.call",
+            0,
+            "call",
+            |db| r(db, "com.example.Holder.Nested"),
+            "secret",
+        ),
+        site_sample(
+            "Dollar.self",
+            1,
+            "callSelf",
+            |db| r(db, "com.example.A$B"),
+            "priv",
+        ),
+        site_sample(
+            "A.callDollar",
+            1,
+            "callDollar",
+            |db| r(db, "com.example.A$B"),
+            "priv",
+        ),
+    ]
+}
+
+snapshot! {
+    access_site_dollar_and_siblings,
+    check_source_methods_site(DOLLAR_SRC, &dollar_samples())
 }

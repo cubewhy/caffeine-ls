@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/NestedDollar.java:
+package com.example;
+
+class Outer {
+    static class Inner$Weird {
+        Inner$Weird(Runnable task) { task.run(); }
+    }
+
+    void build() {
+        new Outer.Inner$Weird(() -> {});
+    }
+}
+
+method Inner$Weird(java.lang.Runnable): <init>
+  locals: l0: java.lang.Runnable
+  exprs: e0: java.lang.Runnable | e1: void
+method build(): void
+  locals: 
+  exprs: e2: java.lang.Runnable | e3: com.example.Outer.Inner$Weird

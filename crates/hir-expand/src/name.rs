@@ -17,6 +17,35 @@ impl Name {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+
+    /// The last `.`-separated segment: `com.example.Outer.Inner` is `Inner`.
+    /// `$` is *not* a separator — source names nest with dots only, and a `$`
+    /// is an ordinary identifier character ([JLS
+    /// §3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)),
+    /// so `com.example.A$B` is simply `A$B`. Library binary names (`Outer$Inner`,
+    /// JVMS §4.2) never reach this helper; they are decomposed at the
+    /// library/source boundary instead.
+    pub fn simple_name(&self) -> &str {
+        match self.0.rsplit_once('.') {
+            Some((_, simple)) => simple,
+            None => self.0.as_str(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_name_splits_dots_only() {
+        assert_eq!(Name::new("com.example.Outer.Inner").simple_name(), "Inner");
+        // §3.8: `$` is part of the identifier, not a nesting separator.
+        assert_eq!(Name::new("com.example.A$B").simple_name(), "A$B");
+        assert_eq!(Name::new("com.example.C.m$1").simple_name(), "m$1");
+        assert_eq!(Name::new("Foo").simple_name(), "Foo");
+        assert_eq!(Name::new("").simple_name(), "");
+    }
 }
 
 impl fmt::Debug for Name {

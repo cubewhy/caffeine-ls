@@ -143,7 +143,7 @@ impl SourceSymbolIndex {
         let mut by_fqn: FxHashMap<Name, Vec<SourceSymbolRef>> = FxHashMap::default();
         let mut by_simple: FxHashMap<String, Vec<SourceSymbolRef>> = FxHashMap::default();
         for (file, symbol) in symbols {
-            let simple = simple_name(&symbol.name);
+            let simple = symbol.name.simple_name();
             by_simple
                 .entry(simple.to_lowercase())
                 .or_default()
@@ -235,13 +235,6 @@ impl SourceSymbolIndex {
     pub fn iter(&self) -> impl Iterator<Item = &SourceSymbolRef> {
         self.by_fqn.values().flatten()
     }
-}
-
-/// The last `.`-separated segment of a qualified name.
-fn simple_name(name: &Name) -> &str {
-    name.as_str()
-        .rsplit_once('.')
-        .map_or_else(|| name.as_str(), |(_, simple)| simple)
 }
 
 #[cfg(test)]

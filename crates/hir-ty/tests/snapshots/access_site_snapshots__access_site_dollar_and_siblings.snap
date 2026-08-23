@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/access_site_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Holder.java:
+package com.example;
+class Holder {
+    static class Nested {
+        private void secret() {}
+        void selfCall() { secret(); }
+    }
+    static class Sibling {
+        void call(Nested n) { n.secret(); }
+    }
+}
+
+FILE /src/com/example/Dollar.java:
+package com.example;
+class A$B {
+    private void priv() {}
+    void callSelf() { priv(); }
+}
+class A {
+    void callDollar(A$B x) { x.priv(); }
+}
+
+METHODS:
+Nested.self: com.example.Holder.Nested.secret() -> void [ctx: class=Some("com.example.Holder.Nested"), package=Some("com.example")] [args: ]
+Sibling.call: com.example.Holder.Nested.secret() -> void [ctx: class=Some("com.example.Holder.Sibling"), package=Some("com.example")] [args: ]
+Dollar.self: com.example.A$B.priv() -> void [ctx: class=Some("com.example.A$B"), package=Some("com.example")] [args: ]
+A.callDollar: <none> [ctx: class=Some("com.example.A"), package=Some("com.example")] [args: ]

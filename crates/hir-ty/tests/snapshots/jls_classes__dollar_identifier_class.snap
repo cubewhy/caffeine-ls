@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/DollarUse.java:
+package com.example;
+
+class A$B {
+    A$B(Runnable task) { task.run(); }
+}
+
+class DollarUse {
+    void go() {
+        new A$B(() -> {});
+    }
+}
+
+method A$B(java.lang.Runnable): <init>
+  locals: l0: java.lang.Runnable
+  exprs: e0: java.lang.Runnable | e1: void
+method go(): void
+  locals: 
+  exprs: e2: java.lang.Runnable | e3: com.example.A$B

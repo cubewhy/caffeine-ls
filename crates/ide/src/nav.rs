@@ -88,9 +88,7 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
                 };
                 type_targets(db, file, name)
             }
-            ExprData::NamePath(name) => {
-                type_targets(db, file, simple_name(name.as_str()).to_owned())
-            }
+            ExprData::NamePath(name) => type_targets(db, file, name.simple_name().to_owned()),
             _ => Vec::new(),
         };
         if !targets.is_empty() {
@@ -216,7 +214,7 @@ fn render_symbol_decl(
         .iter()
         .filter(|s| s.range.contains(offset))
         .min_by_key(|s| s.range.end() - s.range.start())?;
-    let simple = simple_name(symbol.name.as_str());
+    let simple = symbol.name.simple_name();
     let value = match symbol.kind {
         hir::SourceSymbolKind::Method => {
             let ret = hir_ty::item_ty(db, file, symbol.item)
@@ -270,7 +268,7 @@ fn member_targets(
                 Use::Method => s.kind == hir::SourceSymbolKind::Method,
             };
             kind_matches
-                && simple_name(s.name.as_str()) == simple
+                && s.name.simple_name() == simple
                 && arity.is_none_or(|arity| {
                     parameter_count(&tree, s.item).is_some_and(|count| count == arity)
                 })
@@ -295,7 +293,7 @@ fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<Navigati
                     | hir::SourceSymbolKind::Enum
                     | hir::SourceSymbolKind::Record
                     | hir::SourceSymbolKind::Annotation
-            ) && simple_name(s.name.as_str()) == simple
+            ) && s.name.simple_name() == simple
         })
         .map(|s| NavigationTarget {
             file,
@@ -326,10 +324,4 @@ fn exprs_at(bodies: &BodyTree, offset: TextSize) -> Vec<ExprId> {
         .collect();
     enclosing.sort_by_key(|(len, _)| *len);
     enclosing.into_iter().map(|(_, id)| id).collect()
-}
-
-/// The last path segment of a name — `com.example.Base.run` is `run`, a
-/// top-level `com.example.Foo` is `Foo`.
-fn simple_name(fqn: &str) -> &str {
-    fqn.rsplit(['.', '$']).next().unwrap_or(fqn)
 }

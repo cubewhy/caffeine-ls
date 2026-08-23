@@ -2029,7 +2029,7 @@ impl<'a> InferCtx<'a> {
         };
         let constructor_name = match hir::fqn_resolve(self.db, &self.scope, name.as_str()) {
             Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
-            _ => simple_name(name.as_str()),
+            _ => name.simple_name().to_owned(),
         };
         let arg_kinds = self.arg_kinds(args);
         let access = self.access.clone();
@@ -2087,7 +2087,7 @@ impl<'a> InferCtx<'a> {
         if non_instantiable {
             let name = match class_ty.kind(self.db) {
                 TyKind::TypeVar { name, .. } => name.as_str().to_owned(),
-                TyKind::Reference { name, .. } => simple_name(name.as_str()),
+                TyKind::Reference { name, .. } => name.simple_name().to_owned(),
                 _ => unreachable!(),
             };
             self.types.insert(expr, self.error());
@@ -2245,7 +2245,7 @@ impl<'a> InferCtx<'a> {
         let candidate_name = if name.as_str() == "new" {
             match hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) {
                 Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
-                _ => simple_name(fqn.as_str()),
+                _ => fqn.simple_name().to_owned(),
             }
         } else {
             name.as_str().to_owned()
@@ -3169,15 +3169,6 @@ impl<'a> InferCtx<'a> {
             StmtData::LocalClass { .. } => {}
             StmtData::Missing => {}
         }
-    }
-}
-
-/// The simple name of a possibly-qualified FQN: everything after the last
-/// `$` (nested classes are named `Outer$Inner`).
-fn simple_name(fqn: &str) -> String {
-    match fqn.rfind(['$', '.']) {
-        Some(i) => fqn[i + 1..].to_owned(),
-        None => fqn.to_owned(),
     }
 }
 
