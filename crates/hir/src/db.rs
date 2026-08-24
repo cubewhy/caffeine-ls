@@ -3,7 +3,7 @@
 //! Libraries are immutable within a session: their id is derived from the
 //! archive path and mtime (see `project_model::LibraryId`), so the index is
 //! registered once, loaded lazily on first use and then served from salsa's
-//! memoization plus the per-library LRU member cache.
+//! memoization plus the persistent LMDB stub cache.
 //!
 //! Resolution is scoped by the workspace classpath: a [`ProjectGraph`]
 //! salsa input maps every source set to its ordered [`Classpath`], and the
@@ -22,11 +22,12 @@ use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::name::Name;
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use vfs::FileId;
 
 use crate::{
     index::{ClassEntry, LibraryIndex, NameIndex},
+    lmdb_store::{self, StubStore},
     loader,
     project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId},
     stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
@@ -70,12 +71,16 @@ pub struct LibraryState {
     index: Mutex<Option<Arc<LibraryIndex>>>,
 }
 
-/// Session-wide shared state of the stub index: the symbol interner and the
-/// per-library indexes.
+/// Session-wide shared state of the stub index: the symbol interner, the
+/// per-library indexes and the persistent stub cache.
 #[derive(Default)]
 pub struct HirState {
     pub interner: ThreadedRodeo,
     pub libraries: DashMap<LibraryId, LibraryState>,
+    /// Persistent LMDB-backed stub cache. Starts disabled (memory-only);
+    /// server sessions enable it once at startup via
+    /// [`enable_persistent_stub_cache`].
+    pub stub_store: StubStore,
     /// Monotonic id source for inference variables
     /// ([JLS §18.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.1.1))
     /// created during method invocation type inference ([JLS §18.5.2]). Each
@@ -194,9 +199,14 @@ fn library_name_index_query(
         .get(&id)
         .unwrap_or_else(|| panic!("library {id:?} is not registered; this is a bug"));
     let cancel_check = || db.unwind_if_revision_cancelled();
-    ensure_loaded(id, library.value(), &state.interner, &cancel_check)
-        .names
-        .clone()
+    let index = ensure_loaded(
+        id,
+        library.value(),
+        &state.interner,
+        &state.stub_store,
+        &cancel_check,
+    );
+    Arc::clone(&index.names)
 }
 
 /// The tier-1 name index of a registered library.
@@ -210,6 +220,7 @@ fn ensure_loaded(
     id: LibraryId,
     library: &LibraryState,
     interner: &ThreadedRodeo,
+    store: &StubStore,
     cancel_check: &dyn Fn(),
 ) -> Arc<LibraryIndex> {
     {
@@ -219,18 +230,24 @@ fn ensure_loaded(
         }
     }
 
-    let index =
-        match loader::load_or_build(id, library.kind, &library.archive, interner, cancel_check) {
-            Ok(index) => Arc::new(index),
-            Err(err) => {
-                tracing::error!(library = %id, "failed to index library: {err:#}");
-                Arc::new(LibraryIndex::empty(
-                    id,
-                    library.kind,
-                    library.archive.clone(),
-                ))
-            }
-        };
+    let index = match loader::load_or_build(
+        id,
+        library.kind,
+        &library.archive,
+        interner,
+        cancel_check,
+        store,
+    ) {
+        Ok(index) => Arc::new(index),
+        Err(err) => {
+            tracing::error!(library = %id, "failed to index library: {err:#}");
+            Arc::new(LibraryIndex::empty(
+                id,
+                library.kind,
+                library.archive.clone(),
+            ))
+        }
+    };
     *library.index.lock() = Some(index.clone());
     index
 }
@@ -245,7 +262,39 @@ pub fn warmup_library(db: &dyn HirDatabase, id: LibraryId) {
     let Some(library) = state.libraries.get(&id) else {
         return;
     };
-    ensure_loaded(id, library.value(), &state.interner, &|| {});
+    ensure_loaded(
+        id,
+        library.value(),
+        &state.interner,
+        &state.stub_store,
+        &|| {},
+    );
+}
+
+/// Enables the persistent LMDB stub cache for this session, pointing it at
+/// the platform default cache directory. Idempotent; later calls after the
+/// first use have no effect. Also cleans up leftover pre-LMDB v1 cache
+/// files. Returns whether persistent caching could be enabled.
+pub fn enable_persistent_stub_cache(db: &dyn HirDatabase) -> bool {
+    match lmdb_store::cache_dir() {
+        Some(dir) => {
+            db.hir_state().stub_store.open_at(dir.clone());
+            lmdb_store::remove_legacy_v1_files(&dir);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Prunes stub-cache entries of unregistered libraries that have gone stale,
+/// freeing space for current projects. Intended to run once after library
+/// warmup completes.
+pub fn prune_stub_cache(db: &dyn HirDatabase) {
+    let live: FxHashSet<LibraryId> = registered_libraries(db).into_iter().collect();
+    let pruned = db.hir_state().stub_store.prune_stale(&live);
+    if pruned > 0 {
+        tracing::info!(pruned, "pruned stale stub cache entries");
+    }
 }
 
 fn library_index(db: &dyn HirDatabase, id: LibraryId) -> Option<Arc<LibraryIndex>> {

@@ -791,6 +791,10 @@ impl GlobalState {
                     .ok();
 
                 if done == total {
+                    // All libraries are indexed: now is a safe point to drop
+                    // cache entries of libraries no project uses anymore.
+                    hir::prune_stub_cache(db);
+
                     task_sender
                         .send(BackgroundTaskEvent::Progress(ProgressEvent {
                             token,

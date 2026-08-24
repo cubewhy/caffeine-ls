@@ -1,28 +1,22 @@
 //! In-memory library index: the always-resident tier-1 [`NameIndex`] plus
-//! the lazy tier-2 [`LibraryIndex`] member cache.
+//! the lazy tier-2 [`LibraryIndex`] member lookups.
 //!
 //! The name index supports FQN and package lookups and super-type queries;
-//! full member stubs are loaded on demand through an LRU cache that reads
-//! records back from `stubs.caf` on a miss (without ever touching the
-//! archive again).
+//! full member stubs are loaded on demand from the persistent LMDB stub
+//! cache (without ever touching the archive again).
 
-use std::{num::NonZeroUsize, path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use camino::Utf8PathBuf;
 use lasso::ThreadedRodeo;
-use lru::LruCache;
-use parking_lot::Mutex;
 use postcard::from_bytes;
 use rustc_hash::FxHashMap;
 
 use crate::{
     db::{LibraryId, LibraryKind},
-    disk,
+    lmdb_store,
     stubs::{ClassKind, ClassOrModuleRecord, DiskClassOrModuleRecord, DiskResolver, Symbol},
 };
-
-/// How many full class records to keep in memory per library.
-pub const DEFAULT_CLASS_CACHE_CAPACITY: usize = 512;
 
 /// Tier-1 entry: everything needed for name-based queries and hierarchy
 /// edges, without any member data.
@@ -122,29 +116,28 @@ impl NameIndex {
     }
 }
 
-/// Per-library index. Shared behind an `Arc`; the LRU member cache makes it
-/// cheap to hand out clones.
+/// Per-library index. Shared behind an `Arc`; cheap to hand out clones.
+///
+/// Tier-1 data ([`NameIndex`] plus the per-library string table) is
+/// resident; tier-2 member records are read from the persistent stub cache
+/// on demand.
 pub struct LibraryIndex {
     pub id: LibraryId,
     pub kind: LibraryKind,
     pub archive: Utf8PathBuf,
     pub names: Arc<NameIndex>,
     strings: Arc<Vec<String>>,
-    offsets: Arc<Vec<u64>>,
-    stubs_path: PathBuf,
-    records: Mutex<LruCache<u32, Arc<ClassOrModuleRecord>>>,
+    store: lmdb_store::StubStore,
 }
 
 impl LibraryIndex {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: LibraryId,
         kind: LibraryKind,
         archive: Utf8PathBuf,
         names: Arc<NameIndex>,
         strings: Arc<Vec<String>>,
-        offsets: Arc<Vec<u64>>,
-        stubs_path: PathBuf,
+        store: lmdb_store::StubStore,
     ) -> Self {
         Self {
             id,
@@ -152,11 +145,7 @@ impl LibraryIndex {
             archive,
             names,
             strings,
-            offsets,
-            stubs_path,
-            records: Mutex::new(LruCache::new(
-                NonZeroUsize::new(DEFAULT_CLASS_CACHE_CAPACITY).expect("non-zero capacity"),
-            )),
+            store,
         }
     }
 
@@ -168,8 +157,7 @@ impl LibraryIndex {
             archive,
             Arc::new(NameIndex::empty()),
             Arc::new(Vec::new()),
-            Arc::new(Vec::new()),
-            PathBuf::new(),
+            lmdb_store::StubStore::default(),
         )
     }
 
@@ -178,7 +166,7 @@ impl LibraryIndex {
     }
 
     /// Tier-2 access: returns the full member stubs for a class, loading
-    /// the record from the on-disk cache on a miss.
+    /// the record from the persistent cache on demand.
     pub fn class_record(
         &self,
         interner: &ThreadedRodeo,
@@ -201,22 +189,11 @@ impl LibraryIndex {
         interner: &ThreadedRodeo,
         record_idx: u32,
     ) -> Option<Arc<ClassOrModuleRecord>> {
-        let mut cache = self.records.lock();
-        if let Some(record) = cache.get(&record_idx) {
-            return Some(record.clone());
-        }
-        let offset = *self.offsets.get(record_idx as usize)?;
-        let bytes = disk::read_record_bytes(&self.stubs_path, offset).ok()?;
-        let disk_record: DiskClassOrModuleRecord = from_bytes(&bytes).ok()?;
+        let disk_record = self.store.with_record_bytes(self.id, record_idx, |bytes| {
+            from_bytes::<DiskClassOrModuleRecord>(bytes).ok()
+        })?;
         let resolver = DiskResolver::new(&self.strings, interner);
-        let record = Arc::new(resolver.class_or_module(&disk_record));
-        cache.push(record_idx, record.clone());
-        Some(record)
-    }
-
-    /// Drops all cached member records (the name index stays resident).
-    pub fn clear_record_cache(&self) {
-        self.records.lock().clear();
+        Some(Arc::new(resolver.class_or_module(&disk_record)))
     }
 }
 

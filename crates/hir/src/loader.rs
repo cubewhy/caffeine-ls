@@ -1,5 +1,5 @@
 //! Enumerates and parses JVM archives (jars and JDK jimages) into stub
-//! records, and maintains the persistent two-tier cache.
+//! records, and maintains the persistent LMDB stub cache.
 
 use std::{
     fs::File,
@@ -23,8 +23,8 @@ use zip::ZipArchive;
 
 use crate::{
     db::{LibraryId, LibraryKind},
-    disk::{self, DiskClassEntry, DiskModuleEntry, NamesBlob, StubsWriter},
     index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex},
+    lmdb_store::{DiskClassEntry, DiskModuleEntry, MetaBlob, StubStore},
     stubs::{DiskClassOrModuleRecord, StubStringTable},
 };
 
@@ -183,7 +183,7 @@ fn parse_archive(
 fn build(
     mut records: Vec<StubRecord>,
     interner: &ThreadedRodeo,
-) -> (NameIndex, NamesBlob, Vec<DiskClassOrModuleRecord>) {
+) -> (NameIndex, MetaBlob, Vec<DiskClassOrModuleRecord>) {
     // Deterministic ordering keeps the on-disk cache stable across runs.
     records.sort_by(|a, b| a.fqn.cmp(&b.fqn));
 
@@ -234,9 +234,9 @@ fn build(
         }
     }
 
-    // Disk records must be partitioned (all classes, then all modules) so the
-    // offsets table indexes module record `i` at `offsets[entries.len() + i]`
-    // (see `LibraryIndex::module_record`).
+    // Disk records are stored under sequential record keys, partitioned
+    // (all classes, then all modules) so that module record `i` lives at
+    // key `entries.len() + i` (see `LibraryIndex::module_record`).
     let mut disk_records = disk_class_records;
     disk_records.extend(disk_module_records);
 
@@ -250,13 +250,9 @@ fn build(
     }
 
     let name_index = NameIndex::new(entries, modules);
-    let blob = NamesBlob {
-        strings: table.into_strings(),
-        entries: disk_entries,
-        modules: disk_modules,
-        offsets: Vec::new(),
-    };
-    (name_index, blob, disk_records)
+    let strings = table.into_strings();
+    let meta = MetaBlob::new(strings, disk_entries, disk_modules);
+    (name_index, meta, disk_records)
 }
 
 fn disk_entry(table: &mut StubStringTable<'_>, entry: &ClassEntry) -> DiskClassEntry {
@@ -271,96 +267,56 @@ fn disk_entry(table: &mut StubStringTable<'_>, entry: &ClassEntry) -> DiskClassE
     }
 }
 
-/// Loads the index for a library, using the on-disk cache when present and
-/// otherwise parsing the archive and (re)building the cache.
+/// Loads the index for a library, using the persistent stub cache when
+/// populated and otherwise parsing the archive and (re)building it.
 pub fn load_or_build(
     id: LibraryId,
     kind: LibraryKind,
     archive: &Utf8Path,
     interner: &ThreadedRodeo,
     cancel_check: &dyn Fn(),
+    store: &StubStore,
 ) -> anyhow::Result<LibraryIndex> {
-    load_or_build_with_cache(id, kind, archive, interner, cancel_check, disk::cache_dir())
-}
-
-/// Like [`load_or_build`], but with an injectable cache directory (used by
-/// tests; `None` builds the index in memory only).
-fn load_or_build_with_cache(
-    id: LibraryId,
-    kind: LibraryKind,
-    archive: &Utf8Path,
-    interner: &ThreadedRodeo,
-    cancel_check: &dyn Fn(),
-    cache_dir: Option<std::path::PathBuf>,
-) -> anyhow::Result<LibraryIndex> {
-    let Some(cache_dir) = cache_dir else {
-        // No cache directory available: build the index in memory only
-        // (tier-2 member loading is unavailable).
-        let records = parse_archive(kind, archive, interner, cancel_check)?;
-        let (names, blob, _) = build(records, interner);
-        return Ok(LibraryIndex::new(
-            id,
-            kind,
-            archive.to_owned(),
-            Arc::new(names),
-            Arc::new(blob.strings),
-            Arc::new(Vec::new()),
-            std::path::PathBuf::new(),
-        ));
-    };
-
-    let names_path = disk::names_path(&cache_dir, id);
-    let stubs_path = disk::stubs_path(&cache_dir, id);
-
-    if names_path.exists() && stubs_path.exists() {
-        if let Some(index) = load_from_cache(id, kind, archive, interner, &cache_dir) {
+    if store.is_enabled() {
+        if let Some(index) = load_from_cache(id, kind, archive, interner, store) {
             return Ok(index);
         }
-        tracing::warn!(library = %id, "failed to load stub cache, rebuilding");
+        tracing::debug!(library = %id, "stub cache miss, reparsing archive");
     }
 
     let records = parse_archive(kind, archive, interner, cancel_check)?;
-    let (names, mut blob, disk_records) = build(records, interner);
+    let (names, meta, disk_records) = build(records, interner);
 
-    let mut writer = StubsWriter::create(&stubs_path)?;
-    for record in &disk_records {
-        writer.push(record)?;
+    // Persist atomically; a failure here only costs warm starts (the
+    // session still runs on the freshly built in-memory index).
+    if let Err(err) = store.write_library(id, &meta, &disk_records) {
+        tracing::warn!(library = %id, "failed to persist stub cache entry: {err:#}");
     }
-    let offsets = writer.finish()?;
-    blob.offsets = offsets.clone();
-
-    disk::write_names(&names_path, &blob)?;
 
     Ok(LibraryIndex::new(
         id,
         kind,
         archive.to_owned(),
         Arc::new(names),
-        Arc::new(blob.strings),
-        Arc::new(offsets),
-        stubs_path,
+        Arc::new(meta.strings),
+        store.clone(),
     ))
 }
 
-/// Loads the index from an existing on-disk cache. Returns `None` if the
-/// cache is missing or corrupt.
+/// Loads the index from an existing persistent cache. Returns `None` if the
+/// cache has no usable entry for this library.
 pub fn load_from_cache(
     id: LibraryId,
     kind: LibraryKind,
     archive: &Utf8Path,
     interner: &ThreadedRodeo,
-    cache_dir: &std::path::Path,
+    store: &StubStore,
 ) -> Option<LibraryIndex> {
-    let names_path = disk::names_path(cache_dir, id);
-    let stubs_path = disk::stubs_path(cache_dir, id);
+    let meta = store.read_meta(id)?;
 
-    let blob = disk::read_names(&names_path)
-        .inspect_err(|err| tracing::warn!(library = %id, "failed to read name index: {err:#}"))
-        .ok()?;
-
-    let mut entries = Vec::with_capacity(blob.entries.len());
-    for entry in &blob.entries {
-        let symbol = |idx: u32| interner.get_or_intern(&blob.strings[idx as usize]);
+    let mut entries = Vec::with_capacity(meta.entries.len());
+    for entry in &meta.entries {
+        let symbol = |idx: u32| interner.get_or_intern(&meta.strings[idx as usize]);
         entries.push(ClassEntry {
             fqn: symbol(entry.name),
             package: symbol(entry.package),
@@ -371,25 +327,27 @@ pub fn load_from_cache(
             module: entry.module.map(symbol),
         });
     }
-    let mut modules = Vec::with_capacity(blob.modules.len());
-    for module in &blob.modules {
-        let symbol = |idx: u32| interner.get_or_intern(&blob.strings[idx as usize]);
+    let mut modules = Vec::with_capacity(meta.modules.len());
+    for module in &meta.modules {
+        let symbol = |idx: u32| interner.get_or_intern(&meta.strings[idx as usize]);
         modules.push(ModuleEntry {
             name: symbol(module.name),
             flags: module.flags,
             version: module.version.map(symbol),
         });
     }
-
     let names = NameIndex::new(entries, modules);
+
+    // Mark the entry as used so stale pruning keeps it around.
+    store.touch_libraries([id]);
+
     Some(LibraryIndex::new(
         id,
         kind,
         archive.to_owned(),
         Arc::new(names),
-        Arc::new(blob.strings),
-        Arc::new(blob.offsets),
-        stubs_path,
+        Arc::new(meta.strings),
+        store.clone(),
     ))
 }
 
@@ -405,9 +363,16 @@ mod tests {
 
     use super::*;
     use crate::db::{LibraryId, LibraryKind};
-    use crate::disk::StubsWriter;
+    use crate::lmdb_store::StubStore;
 
     const NOOP: fn() = || {};
+
+    fn store_fixture() -> (tempfile::TempDir, StubStore) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = StubStore::default();
+        store.open_at(dir.path().to_owned());
+        (dir, store)
+    }
 
     /// Builds a minimal, hand-encoded `com/example/Greeter` class file with two
     /// methods (`<init>` and `greet`) and one field (`name`), then packs it
@@ -503,22 +468,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("test.jar")).unwrap();
         build_jar(&jar_path);
+        let (_store_dir, store) = store_fixture();
 
         let interner = ThreadedRodeo::default();
         let id = LibraryId(0xdeadbeef);
-        let (_, cache_dir) = cache_dir_fixture();
-        let cache_path = cache_dir.as_std_path().to_owned();
 
         // First run: build the index and write the cache.
-        let index = load_or_build_with_cache(
-            id,
-            LibraryKind::Jar,
-            &jar_path,
-            &interner,
-            &NOOP,
-            Some(cache_path.clone()),
-        )
-        .unwrap();
+        let index =
+            load_or_build(id, LibraryKind::Jar, &jar_path, &interner, &NOOP, &store).unwrap();
 
         let fqn = interner.get_or_intern("com.example.Greeter");
         let (entry_idx, entry) = index.lookup_fqn(fqn).unwrap();
@@ -538,16 +495,39 @@ mod tests {
         assert_eq!(class.fields.len(), 1);
         assert_eq!(class.methods[1].name, interner.get_or_intern("greet"));
 
-        // Second run (new interner, same cache dir): load from the cache.
+        // Second run (new interner, same cache): load from the cache.
+        // Symbols are re-interned with fresh ids, proving the string table
+        // fully restores names.
+        let cached_interner = ThreadedRodeo::default();
         let cached =
-            load_from_cache(id, LibraryKind::Jar, &jar_path, &interner, &cache_path).unwrap();
-        let (cached_idx, cached_entry) = cached.lookup_fqn(fqn).unwrap();
-        assert_eq!(cached_entry.fqn, fqn);
-        let cached_record = cached.class_record(&interner, cached_idx).unwrap();
+            load_from_cache(id, LibraryKind::Jar, &jar_path, &cached_interner, &store).unwrap();
+        let cached_fqn = cached_interner.get_or_intern("com.example.Greeter");
+        let (cached_idx, cached_entry) = cached.lookup_fqn(cached_fqn).unwrap();
+        assert_eq!(cached_entry.fqn, cached_fqn);
+        let cached_record = cached.class_record(&cached_interner, cached_idx).unwrap();
         let crate::stubs::ClassOrModuleStub::Class(class) = cached_record.as_ref() else {
             panic!("expected a class record");
         };
         assert_eq!(class.methods.len(), 2);
+    }
+
+    #[test]
+    fn disabled_store_serves_tier_1_only() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("test.jar")).unwrap();
+        build_jar(&jar_path);
+
+        let interner = ThreadedRodeo::default();
+        let id = LibraryId(0xfeedface);
+        let store = StubStore::default(); // never opened: memory-only
+
+        let index =
+            load_or_build(id, LibraryKind::Jar, &jar_path, &interner, &NOOP, &store).unwrap();
+        let (entry_idx, _) = index
+            .lookup_fqn(interner.get_or_intern("com.example.Greeter"))
+            .unwrap();
+        assert!(!store.is_enabled());
+        assert!(index.class_record(&interner, entry_idx).is_none());
     }
 
     #[test]
@@ -559,17 +539,9 @@ mod tests {
         let interner = ThreadedRodeo::default();
         let id = LibraryId(0xcafebabe);
 
-        let (_, cache_dir) = cache_dir_fixture();
-        let cache_path = cache_dir.as_std_path().to_owned();
-        let index = load_or_build_with_cache(
-            id,
-            LibraryKind::Jar,
-            &jar_path,
-            &interner,
-            &NOOP,
-            Some(cache_path),
-        )
-        .unwrap();
+        let (_store_dir, store) = store_fixture();
+        let index =
+            load_or_build(id, LibraryKind::Jar, &jar_path, &interner, &NOOP, &store).unwrap();
         assert!(
             index
                 .lookup_fqn(interner.get_or_intern("com.example.Greeter"))
@@ -643,28 +615,25 @@ mod tests {
                 if interner.resolve(&m.name) == "com.example.app" && m.requires.len() == 1
         )));
 
-        // Full pipeline: build the index + stubs, then read the module
-        // record back through the (class_count-offset) tier-2 lookup.
-        let (names, blob, disk_records) = build(records, &interner);
+        // Full pipeline: build the index + stubs, persist them, then read
+        // the module record back through the (class_count-offset) tier-2
+        // lookup.
+        let (names, meta, disk_records) = build(records, &interner);
         assert_eq!(names.modules().len(), 1);
         assert_eq!(names.class_count(), 1);
 
-        let stubs_path = dir.path().join("modular.stubs");
-        let mut writer = StubsWriter::create(&stubs_path).unwrap();
-        for record in &disk_records {
-            writer.push(record).unwrap();
-        }
-        let offsets = writer.finish().unwrap();
-        assert_eq!(offsets.len(), 2);
+        let (_store_dir, store) = store_fixture();
+        store
+            .write_library(LibraryId(0xfeed), &meta, &disk_records)
+            .unwrap();
 
         let index = LibraryIndex::new(
             LibraryId(0xfeed),
             LibraryKind::Jar,
             jar_path.clone(),
             Arc::new(names),
-            Arc::new(blob.strings),
-            Arc::new(offsets),
-            stubs_path,
+            Arc::new(meta.strings),
+            store,
         );
 
         let (module_idx, entry) = index

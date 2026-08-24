@@ -11,6 +11,7 @@ use std::time::Instant;
 use triomphe::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use hir::enable_persistent_stub_cache;
 use ide::{Analysis, AnalysisHost, Cancellable};
 use lsp_server::{ErrorCode, Response};
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
@@ -159,6 +160,11 @@ impl GlobalState {
             Handle { handle, receiver }
         };
 
+        let analysis_host = AnalysisHost::new();
+        if enable_persistent_stub_cache(analysis_host.raw_database()) {
+            tracing::debug!("persistent stub cache enabled");
+        }
+
         Self {
             sender,
             req_queue: ReqQueue::default(),
@@ -170,7 +176,7 @@ impl GlobalState {
             config: Arc::new(config),
             config_errors: None,
 
-            analysis_host: AnalysisHost::new(),
+            analysis_host,
             mem_docs: MemDocs::default(),
 
             shutdown_requested: false,

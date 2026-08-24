@@ -11,7 +11,7 @@ use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase,
     SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
 };
-use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind};
+use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind, lmdb_store::StubStore};
 use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
@@ -28,16 +28,28 @@ pub struct TestDatabase {
     deps_map: Arc3<DepsMap>,
     nonce: Nonce,
     hir_state: Arc<HirState>,
+    /// Keeps the per-test stub cache directory alive.
+    _stub_cache_dir: TempDir,
 }
 
 impl TestDatabase {
     pub fn new() -> Self {
+        // Each test database gets its own throwaway LMDB environment, so
+        // tier-2 record loads work without touching the user's real cache.
+        let stub_cache_dir = TempDir::new().unwrap();
+        let stub_store = StubStore::default();
+        stub_store.open_at(stub_cache_dir.path().to_owned());
+        let hir_state = HirState {
+            stub_store,
+            ..HirState::default()
+        };
         Self {
             storage: salsa::Storage::default(),
             files: Arc::default(),
             deps_map: Arc3::default(),
             nonce: Nonce::new(),
-            hir_state: Arc::default(),
+            hir_state: Arc::new(hir_state),
+            _stub_cache_dir: stub_cache_dir,
         }
     }
 }

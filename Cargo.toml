@@ -27,6 +27,7 @@ clap = "4"
 crossbeam-channel = "0.5.15"
 dashmap = "6"
 drop_bomb = "0.1.5"
+heed = "0.21"
 indexmap = "2.14.0"
 indicatif = "0.18.4"
 indoc = "2.0"
@@ -35,7 +36,6 @@ ignore = "0.4"
 jimage-rs = "0.0.4"
 lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
 line-index = "0.1.2"
-lru = "0.18.0"
 lsp-server = "0.7.9"
 lsp-types = {
   package = "gen-lsp-types",

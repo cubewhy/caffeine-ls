@@ -10,7 +10,8 @@ use base_db::{
     SourceRootId, SourceRootInput, salsa::Durability,
 };
 use hir::{
-    ClasspathEntry, HirState, LibraryInfo, ProjectGraphData, SourceSetId, set_project_graph,
+    ClasspathEntry, HirState, LibraryInfo, ProjectGraphData, SourceSetId, lmdb_store::StubStore,
+    set_project_graph,
 };
 use project_model::LibraryId;
 use tempfile::TempDir;
@@ -42,6 +43,8 @@ pub struct TestDatabase {
     deps_map: triomphe::Arc<DepsMap>,
     nonce: Nonce,
     hir_state: Arc<HirState>,
+    /// Keeps the per-test stub cache directory alive.
+    _stub_cache_dir: tempfile::TempDir,
 }
 
 impl TestDatabase {
@@ -60,12 +63,22 @@ impl TestDatabase {
 
 impl Default for TestDatabase {
     fn default() -> Self {
+        // Each test database gets its own throwaway LMDB environment, so
+        // tier-2 record loads work without touching the user's real cache.
+        let stub_cache_dir = tempfile::TempDir::new().unwrap();
+        let stub_store = StubStore::default();
+        stub_store.open_at(stub_cache_dir.path().to_owned());
+        let hir_state = HirState {
+            stub_store,
+            ..HirState::default()
+        };
         Self {
             storage: salsa::Storage::default(),
             files: Arc::default(),
             deps_map: triomphe::Arc::default(),
             nonce: Nonce::new(),
-            hir_state: Arc::default(),
+            hir_state: Arc::new(hir_state),
+            _stub_cache_dir: stub_cache_dir,
         }
     }
 }
