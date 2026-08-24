@@ -20,7 +20,7 @@ class Body {
 method m(java.lang.String): void
   locals: l0: java.lang.String | l1: com.example.Body
   exprs: e0: java.lang.String | e1: int
-  diags: e1@4:16: incompatible-types: incompatible types: int cannot be converted to com.example.Body
+  diags: e1@4:16: incompatible-types: incompatible types: int cannot be converted to Body
 method m2(java.lang.String): int
   locals: l2: java.lang.String
   exprs: e2: int
@@ -31,8 +31,8 @@ method bad(): void
 method bad2(): java.lang.String
   locals: 
   exprs: e4: int
-  diags: e4@10:26: incompatible-types: incompatible types: int cannot be converted to java.lang.String
+  diags: e4@10:26: incompatible-types: incompatible types: int cannot be converted to String
 method bad3(java.lang.Object): int
   locals: l3: java.lang.Object
   exprs: e5: java.lang.Object
-  diags: e5@11:31: incompatible-types: incompatible types: java.lang.Object cannot be converted to int
+  diags: e5@11:31: incompatible-types: incompatible types: Object cannot be converted to int

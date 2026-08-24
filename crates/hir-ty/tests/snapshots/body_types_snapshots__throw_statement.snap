@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
-assertion_line: 843
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -25,4 +24,4 @@ method makeEx(): T
 method checked(): java.lang.String
   locals: 
   exprs: e1: java.lang.RuntimeException | e2: java.lang.Exception | e3: <error> | e4: null
-  diags: e3@10:13: incompatible-types: incompatible types: java.lang.Object cannot be converted to java.lang.Throwable
+  diags: e3@10:13: incompatible-types: incompatible types: Object cannot be converted to Throwable

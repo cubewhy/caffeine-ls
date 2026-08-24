@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/javac_parity.rs
+expression: out
+---
+FILE /src/Da.java:
+class Da {
+    int t(boolean b) {
+        int x;
+        if (b) {
+            x = 1;
+        }
+        return x;
+    }
+}
+
+LSP (ours):
+6:14: compiler.err.var.might.not.have.been.initialized: variable 'x' might not have been initialized
+JAVAC:
+6:15: compiler.err.var.might.not.have.been.initialized: variable x might not have been initialized
+VERDICT:
+  matched: 0 · javac-only: 1 · ours-only: 1
+MISMATCH:
+  ours-only @(6, 14): compiler.err.var.might.not.have.been.initialized

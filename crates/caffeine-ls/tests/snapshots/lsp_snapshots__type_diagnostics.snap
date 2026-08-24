@@ -16,7 +16,7 @@ expression: diagnostics
         }
       },
       "severity": 1,
-      "code": "not-a-statement",
+      "code": "compiler.err.not.stmt",
       "source": "caffeine-ls",
       "message": "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed"
     },
@@ -32,9 +32,9 @@ expression: diagnostics
         }
       },
       "severity": 1,
-      "code": "no-such-method",
+      "code": "compiler.err.cant.resolve.location",
       "source": "caffeine-ls",
-      "message": "cannot find method 'noSuchMethod'"
+      "message": "cannot find symbol\n  symbol:   method noSuchMethod()"
     },
     {
       "range": {
@@ -48,9 +48,9 @@ expression: diagnostics
         }
       },
       "severity": 1,
-      "code": "cannot-resolve-symbol",
+      "code": "compiler.err.cant.resolve.location",
       "source": "caffeine-ls",
-      "message": "cannot resolve symbol 'unknown'"
+      "message": "cannot find symbol\n  symbol:   variable unknown"
     }
   ],
   "kind": "full"

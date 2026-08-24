@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_conversions.rs
-assertion_line: 168
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -18,4 +17,6 @@ class Body {
 method m(java.lang.Integer, java.lang.Long): void
   locals: l0: java.lang.Integer | l1: java.lang.Long | l2: int | l3: java.lang.Number | l4: boolean | l5: int
   exprs: e0: boolean | e1: int | e2: java.lang.Integer | e3: int | e4: boolean | e5: java.lang.Integer | e6: java.lang.Long | e7: java.lang.Number | e8: boolean | e9: boolean | e13: java.lang.Boolean | e14: boolean | e15: boolean | e16: boolean | e17: int | e18: <error>
-  diags: e18@7:17: incompatible-operand: bad operand type for operator '?:'
+  diags: e18@7:17: incompatible-operand: bad operand types for binary operator '?:'
+  first type:  boolean
+  second type: int

@@ -21,7 +21,7 @@ expression: "(diag_empty, diag_garbage)"
           }
         },
         "severity": 1,
-        "code": "unexpected-char",
+        "code": "compiler.err.illegal.char",
         "source": "caffeine-ls",
         "message": "Unexpected character '#' found in source code"
       },

@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_exceptions.rs
-assertion_line: 61
 expression: out
 ---
 FILE /src/com/example/Exc.java:
@@ -20,4 +19,4 @@ method risky(): void
 method caller(): void
   locals: 
   exprs: e0: void
-  diags: e0@7:20: unreported-exception: unreported exception java.io.IOException; must be caught or declared to be thrown
+  diags: e0@7:20: unreported-exception: unreported exception IOException; must be caught or declared to be thrown

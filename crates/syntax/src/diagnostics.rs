@@ -143,6 +143,65 @@ impl DiagnosticCode {
 }
 
 impl JavaDiagnosticCode {
+    /// The javac `compiler.*` code this diagnostic maps to, when the
+    /// underlying construct has a 1:1 javac twin ([`crate::java::JavacCode`]).
+    /// `None` for recovery-only or preview-restricted diagnostics that javac
+    /// never emits in this form — those keep the custom code from
+    /// [`Self::as_str`].
+    pub fn javac_code(&self) -> Option<&'static str> {
+        use JavaDiagnosticCode::*;
+        match self {
+            VarWithoutInitializer => Some("compiler.err.cant.infer.local.var.type"),
+            VarArrayInitializer => Some("compiler.err.cant.infer.local.var.type"),
+            CannotResolveName => Some("compiler.err.cant.resolve.location"),
+            CannotResolveType => Some("compiler.err.cant.resolve.location"),
+            AmbiguousName => Some("compiler.err.ref.ambiguous"),
+            UnresolvedImport => Some("compiler.err.doesnt.exist"),
+            ConflictingImport => Some("compiler.err.already.defined.single.import"),
+            ModuleNotAccessible => Some("compiler.err.package.not.visible"),
+            NoSuchField => Some("compiler.err.cant.resolve.location"),
+            NoSuchMethod => Some("compiler.err.cant.resolve.location"),
+            WrongArity => Some("compiler.err.cant.apply.symbol"),
+            IncompatibleTypes => Some("compiler.err.prob.found.req"),
+            NonBooleanCondition => Some("compiler.err.prob.found.req"),
+            IncompatibleOperand => Some("compiler.err.operator.cant.be.applied.1"),
+            IncomparableTypes => Some("compiler.err.operator.cant.be.applied.1"),
+            NonIterableForEach => Some("compiler.err.foreach.not.applicable.to.type"),
+            BadCast => Some("compiler.err.prob.found.req"),
+            GenericArrayCreation => Some("compiler.err.generic.array.creation"),
+            CannotInstantiateTypeVar => Some("compiler.err.abstract.cant.be.instantiated"),
+            SwitchSelectorType => None,
+            IncompatibleOverride => Some("compiler.err.override.incompatible.ret"),
+            ConflictingDefaults => Some("compiler.err.types.incompatible"),
+            NotAFunctionalInterface => Some("compiler.err.prob.found.req"),
+            UnreportedException => Some("compiler.err.unreported.exception.need.to.catch.or.throw"),
+            AlreadyCaught => Some("compiler.err.except.already.caught"),
+            IllegalForwardReference => Some("compiler.err.illegal.forward.ref"),
+            VariableMightNotHaveBeenInitialized => {
+                Some("compiler.err.var.might.not.have.been.initialized")
+            }
+            NotExhaustive => Some("compiler.err.not.exhaustive"),
+            NonConstantCaseLabel => Some("compiler.err.const.expr.req"),
+            DuplicateCaseLabel => Some("compiler.err.duplicate.case.label"),
+            RawTypeUse => Some("compiler.warn.raw.class.use"),
+            UncheckedConversion => Some("compiler.warn.unchecked.assign"),
+            MethodDoesNotOverride => Some("compiler.err.method.does.not.override.superclass"),
+            NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
+            UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
+            UnterminatedString => Some("compiler.err.unclosed.str.lit"),
+            UnterminatedComment => Some("compiler.err.unclosed.comment"),
+            IllegalTextBlockOpen => Some("compiler.err.illegal.text.block.open"),
+            UnterminatedTextBlock => Some("compiler.err.unclosed.text.block"),
+            InvalidNumber => None,
+            InvalidUnicodeEscape => Some("compiler.err.illegal.unicode.esc"),
+            UnterminatedChar => Some("compiler.err.unclosed.char.lit"),
+            InvalidEscapeSequence => Some("compiler.err.illegal.esc.char"),
+            UnterminatedTemplate => None,
+            ExpectedToken | ExpectedKeyword | ExpectedConstruct => None,
+            NotAStatement => Some("compiler.err.not.stmt"),
+        }
+    }
+
     /// The stable machine-readable code string; kept `'static` so it can be
     /// cheaply embedded in an LSP `code`/code-action `data` payload.
     pub fn as_str(&self) -> &'static str {

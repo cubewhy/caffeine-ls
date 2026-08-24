@@ -26,4 +26,5 @@ method describe(): void
 method use(): void
   locals: l0: com.example.Circle
   exprs: e1: void | e2: com.example.Circle | e3: com.example.Circle | e4: <error>
-  diags: e4@13:8: no-such-method: cannot find method 'describe'
+  diags: e4@13:8: no-such-method: cannot find symbol
+  symbol:   method describe()

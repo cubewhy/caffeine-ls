@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/javac_parity.rs
+expression: out
+---
+FILE /src/Static.java:
+class Static {
+    void m() {}
+
+    static void t() {
+        m();
+    }
+}
+
+LSP (ours):
+4:8: compiler.err.non-static.cant.be.ref: non-static method m() cannot be referenced from a static context
+JAVAC:
+4:8: compiler.err.non-static.cant.be.ref: non-static method m() cannot be referenced from a static context
+VERDICT:
+  matched: 1 · javac-only: 0 · ours-only: 0

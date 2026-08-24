@@ -27,4 +27,5 @@ method i(): void
 method use(): void
   locals: l0: com.example.Body
   exprs: e1: void | e2: com.example.Body | e3: com.example.Body | e4: void | e5: com.example.Body | e6: void | e8: <error>
-  diags: e8@11:8: no-such-method: cannot find method 'i'
+  diags: e8@11:8: no-such-method: cannot find symbol
+  symbol:   method i()

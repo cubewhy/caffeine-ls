@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_conversions.rs
-assertion_line: 145
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -15,4 +14,4 @@ class Body {
 method m(): void
   locals: l0: java.lang.Integer
   exprs: e0: <error> | e1: java.lang.Integer
-  diags: e0@4:31: bad-cast: inconvertible types: java.lang.String cannot be cast to java.lang.Integer
+  diags: e0@4:31: bad-cast: inconvertible types: String cannot be cast to Integer

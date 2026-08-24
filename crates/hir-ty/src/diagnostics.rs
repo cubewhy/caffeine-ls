@@ -103,14 +103,20 @@ pub enum TypeError {
     },
     /// §14.9, §14.11, §14.12.1, §14.16, §15.25.1: the condition of an
     /// `if`/`while`/`do`/`for`/`assert`/`? :`/`&&`/`||`/`!` is not `boolean`.
-    NonBooleanCondition { expr: ExprId },
+    NonBooleanCondition { expr: ExprId, found: String },
     /// §15.15, §15.17, §15.18, §15.19, §15.22: a unary, binary or shift
     /// operator applied to a non-numeric operand.
-    IncompatibleOperand { expr: ExprId, op: &'static str },
+    IncompatibleOperand {
+        expr: ExprId,
+        op: &'static str,
+        found: String,
+        other: Option<String>,
+    },
     /// §15.20/§15.21: an equality or relational operator between operands that
     /// are not comparable.
     IncomparableTypes {
         expr: ExprId,
+        op: &'static str,
         found: String,
         other: String,
     },
@@ -137,7 +143,7 @@ pub enum TypeError {
     UnreportedException { expr: ExprId, thrown: String },
     /// §11.2.3/§14.20: a catch clause's parameter is shadowed by an earlier
     /// clause whose type is a superclass — the clause is unreachable.
-    AlreadyCaught { local: LocalId },
+    AlreadyCaught { local: LocalId, caught: String },
     /// §9.8/§15.27.3: a lambda or method reference target is not a functional
     /// interface.
     NotAFunctionalInterface { expr: ExprId, target: String },
@@ -239,7 +245,7 @@ impl TypeError {
             | NonStaticMethodFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
             | IncompatibleTypes { expr, .. }
-            | NonBooleanCondition { expr }
+            | NonBooleanCondition { expr, .. }
             | IncompatibleOperand { expr, .. }
             | IncomparableTypes { expr, .. }
             | NonIterableForEach { expr, .. }
@@ -258,7 +264,7 @@ impl TypeError {
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. } => location.clone(),
-            AlreadyCaught { local } => DiagLocation::Local(*local),
+            AlreadyCaught { local, .. } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
     }
@@ -276,43 +282,51 @@ impl TypeError {
     }
 
     /// The human-readable message, rendered against the body IR the error
-    /// occurred in (for the local's name).
+    /// occurred in (for the local's name). Wherever javac has a 1:1 message
+    /// for the construct (see `compiler.properties` / the `-XDrawDiagnostics`
+    /// probe harness in `crates/hir-ty/tests/javac_parity.rs`), this text
+    /// mirrors it verbatim, using javac's *simple* class-name rendering.
     pub fn message(&self, tree: &BodyTree) -> String {
         use TypeError::*;
         match self {
             VarWithoutInitializer { local } => {
                 let name = tree.local(*local).name.as_str();
-                format!("variable '{name}' is declared with 'var' but has no initializer")
+                format!(
+                    "cannot infer type for local variable {name}\n  (cannot use 'var' on variable without initializer)"
+                )
             }
             VarArrayInitializer { local } => {
                 let name = tree.local(*local).name.as_str();
                 format!(
-                    "array initializer needs an explicit target-type, but variable '{name}' is declared with 'var'"
+                    "cannot infer type for local variable {name}\n  (array initializer needs an explicit target-type)"
                 )
             }
             CannotResolveName { name, .. } => {
-                format!("cannot resolve symbol '{name}'")
+                format!("cannot find symbol\n  symbol:   variable {}", name.as_str())
             }
             CannotResolveType { name, .. } => {
-                format!("cannot resolve symbol '{name}'")
+                format!("cannot find symbol\n  symbol:   class {}", name.as_str())
             }
             AmbiguousName { name, .. } => {
-                format!("reference to '{name}' is ambiguous; both are imported on demand")
+                format!("reference to '{}' is ambiguous", name.as_str())
             }
             ModuleNotAccessible { name, .. } => {
                 format!(
-                    "package in which '{name}' is declared is not visible from the current module"
+                    "package in which '{}' is declared is not visible from the current module",
+                    name.as_str()
                 )
             }
             NoSuchField { name, .. } => {
-                format!("cannot find field '{name}'")
+                format!("cannot find symbol\n  symbol:   variable {}", name.as_str())
             }
             NoSuchMethod { name, .. } => {
-                format!("cannot find method '{name}'")
+                format!("cannot find symbol\n  symbol:   method {}()", name.as_str())
             }
             NonStaticMethodFromStaticContext { name, .. } => {
-                let name = name.as_str();
-                format!("non-static method '{name}' cannot be referenced from a static context")
+                format!(
+                    "non-static method {}() cannot be referenced from a static context",
+                    name.as_str()
+                )
             }
             WrongArity {
                 name,
@@ -321,52 +335,83 @@ impl TypeError {
                 ..
             } => {
                 format!(
-                    "method '{name}' is not applicable to the arguments (expected {expected}, found {found})"
+                    "method '{}' is not applicable to the arguments (expected {expected}, found {found})",
+                    name.as_str()
                 )
             }
             IncompatibleTypes {
                 found, expected, ..
             } => {
-                format!("incompatible types: {found} cannot be converted to {expected}")
+                format!(
+                    "incompatible types: {} cannot be converted to {}",
+                    simple_display(found),
+                    simple_display(expected)
+                )
             }
-            NonBooleanCondition { .. } => {
-                "incompatible types: the condition must be a boolean".to_owned()
+            NonBooleanCondition { found, .. } => {
+                format!(
+                    "incompatible types: {} cannot be converted to boolean",
+                    simple_display(found)
+                )
             }
-            IncompatibleOperand { op, .. } => {
-                format!("bad operand type for operator '{op}'")
-            }
-            IncomparableTypes { found, other, .. } => {
-                format!("incomparable types: {found} and {other}")
-            }
-            NonIterableForEach { found, .. } => {
-                format!("for-each requires an array or an Iterable, found {found}")
-            }
+            IncompatibleOperand {
+                op, found, other, ..
+            } => match other {
+                Some(other) => format!(
+                    "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
+                    simple_display(found),
+                    simple_display(other)
+                ),
+                None => format!(
+                    "bad operand type {} for unary operator '{op}'",
+                    simple_display(found)
+                ),
+            },
+            IncomparableTypes {
+                op, found, other, ..
+            } => format!(
+                "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
+                simple_display(found),
+                simple_display(other)
+            ),
+            NonIterableForEach { found, .. } => format!(
+                "for-each not applicable to expression type\n  required: array or java.lang.Iterable\n  found:    {}",
+                simple_display(found)
+            ),
             BadCast { found, target, .. } => {
-                format!("inconvertible types: {found} cannot be cast to {target}")
+                format!(
+                    "inconvertible types: {} cannot be cast to {}",
+                    simple_display(found),
+                    simple_display(target)
+                )
             }
-            GenericArrayCreation { ty, .. } => {
-                format!("generic array creation: cannot create array of {ty}")
-            }
+            GenericArrayCreation { .. } => "generic array creation".to_owned(),
             CannotInstantiateTypeVar { name, .. } => {
-                format!("{name} is abstract; cannot be instantiated")
+                format!(
+                    "{} is abstract; cannot be instantiated",
+                    simple_display(name)
+                )
             }
             SwitchSelectorType { found, .. } => {
-                format!("switch selector type {found} is not convertible to int, String or an enum")
+                format!("switch selector type {}", simple_display(found))
             }
             UnreportedException { thrown, .. } => {
-                format!("unreported exception {thrown}; must be caught or declared to be thrown")
+                format!(
+                    "unreported exception {}; must be caught or declared to be thrown",
+                    simple_display(thrown)
+                )
             }
-            AlreadyCaught { local } => {
-                let name = tree.local(*local).name.as_str();
-                format!("exception {name} has already been caught")
+            AlreadyCaught { caught, .. } => {
+                format!(
+                    "exception {} has already been caught",
+                    simple_display(caught)
+                )
             }
-            NotAFunctionalInterface { target, .. } => {
-                format!("{target} is not a functional interface")
-            }
-            IllegalForwardReference { name, .. } => {
-                let name = name.as_str();
-                format!("illegal forward reference: '{name}' is declared later")
-            }
+            NotAFunctionalInterface { target, .. } => format!(
+                "incompatible types: {} is not a functional interface",
+                simple_display(target)
+            ),
+            IllegalForwardReference { .. } => "illegal forward reference".to_owned(),
             NotDefinitelyAssigned { name, .. } => {
                 let name = name.as_str();
                 format!("variable '{name}' might not have been initialized")
@@ -374,10 +419,8 @@ impl TypeError {
             NotExhaustive { .. } => {
                 "the switch expression does not cover all possible input values".to_owned()
             }
-            NonConstantCaseLabel { .. } => "case label must be a constant expression".to_owned(),
-            DuplicateCaseLabel { value, .. } => {
-                format!("duplicate case label: '{value}' has already been covered")
-            }
+            NonConstantCaseLabel { .. } => "constant expression required".to_owned(),
+            DuplicateCaseLabel { .. } => "duplicate case label".to_owned(),
             RawTypeUse { name, .. } => {
                 format!("raw type '{name}' is used without type arguments")
             }
@@ -386,4 +429,19 @@ impl TypeError {
             }
         }
     }
+}
+
+/// Strips the package prefix from a rendered type so javac's default-mode
+/// *simple* class-name display is reproduced (`java.lang.Object` →
+/// `Object`), while keeping arrays (`java.lang.String[]` → `String[]`).
+fn simple_display(rendered: &str) -> String {
+    let (base, arrays) = match rendered.strip_suffix("[]") {
+        Some(base) => (base, "[]"),
+        None => (rendered, ""),
+    };
+    let base = match base.rfind('.') {
+        Some(idx) => &base[idx + 1..],
+        None => base,
+    };
+    format!("{base}{arrays}")
 }

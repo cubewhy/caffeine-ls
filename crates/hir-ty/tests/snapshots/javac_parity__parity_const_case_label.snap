@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/javac_parity.rs
+expression: out
+---
+FILE /src/Case.java:
+class Case {
+    void t(int x) {
+        int y = x;
+        switch (x) {
+            case y:
+                break;
+            default:
+        }
+    }
+}
+
+LSP (ours):
+4:16: compiler.err.const.expr.req: constant expression required
+JAVAC:
+4:17: compiler.err.const.expr.req: constant expression required
+VERDICT:
+  matched: 0 · javac-only: 1 · ours-only: 1
+MISMATCH:
+  ours-only @(4, 16): compiler.err.const.expr.req

@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_interfaces.rs
-assertion_line: 124
 expression: out
 ---
 FILE /src/com/example/NotFI.java:
@@ -23,4 +22,4 @@ class UsesFI {
 method m(): void
   locals: l0: com.example.NotFI
   exprs: e1: <error>
-  diags: e1@4:19: not-a-functional-interface: com.example.NotFI is not a functional interface
+  diags: e1@4:19: not-a-functional-interface: incompatible types: NotFI is not a functional interface

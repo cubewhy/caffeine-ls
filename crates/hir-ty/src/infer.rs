@@ -433,7 +433,10 @@ impl<'a> InferCtx<'a> {
         let ty = self.infer_expr(cond);
         if !self.is_boolean(ty) {
             self.types.insert(cond, self.error());
-            self.report(TypeError::NonBooleanCondition { expr: cond });
+            self.report(TypeError::NonBooleanCondition {
+                expr: cond,
+                found: ty.display(self.db).to_string(),
+            });
         }
     }
 
@@ -1081,7 +1084,12 @@ impl<'a> InferCtx<'a> {
                         && !then_ty.is_error(self.db)
                         && !els_ty.is_error(self.db)
                     {
-                        self.report(TypeError::IncompatibleOperand { expr: id, op: "?:" });
+                        self.report(TypeError::IncompatibleOperand {
+                            expr: id,
+                            op: "?:",
+                            found: then_ty.display(self.db).to_string(),
+                            other: Some(els_ty.display(self.db).to_string()),
+                        });
                     }
                     ty
                 }
@@ -2358,7 +2366,10 @@ impl<'a> InferCtx<'a> {
                 if !self.is_boolean(inner) {
                     if !inner.is_error(self.db) {
                         self.types.insert(expr, self.error());
-                        self.report(TypeError::NonBooleanCondition { expr });
+                        self.report(TypeError::NonBooleanCondition {
+                            expr,
+                            found: inner.display(self.db).to_string(),
+                        });
                     }
                     self.error()
                 } else {
@@ -2374,6 +2385,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr,
                             op: unary_op_symbol(op),
+                            found: inner.display(self.db).to_string(),
+                            other: None,
                         });
                     }
                     self.error()
@@ -2510,9 +2523,16 @@ impl<'a> InferCtx<'a> {
                             rhs
                         };
                         self.types.insert(bad, self.error());
+                        let (bad_ty, other_ty) = if bad == lhs {
+                            (lhs_ty, rhs_ty)
+                        } else {
+                            (rhs_ty, lhs_ty)
+                        };
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
+                            found: bad_ty.display(self.db).to_string(),
+                            other: Some(other_ty.display(self.db).to_string()),
                         });
                     }
                     self.error()
@@ -2533,9 +2553,16 @@ impl<'a> InferCtx<'a> {
                     if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
                         let bad = if a_bool { rhs } else { lhs };
                         self.types.insert(bad, self.error());
+                        let (bad_ty, other_ty) = if bad == lhs {
+                            (lhs_ty, rhs_ty)
+                        } else {
+                            (rhs_ty, lhs_ty)
+                        };
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
+                            found: bad_ty.display(self.db).to_string(),
+                            other: Some(other_ty.display(self.db).to_string()),
                         });
                     }
                     return self.error();
@@ -2549,9 +2576,16 @@ impl<'a> InferCtx<'a> {
                             rhs
                         };
                         self.types.insert(bad, self.error());
+                        let (bad_ty, other_ty) = if bad == lhs {
+                            (lhs_ty, rhs_ty)
+                        } else {
+                            (rhs_ty, lhs_ty)
+                        };
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
+                            found: bad_ty.display(self.db).to_string(),
+                            other: Some(other_ty.display(self.db).to_string()),
                         });
                     }
                     self.error()
@@ -2570,9 +2604,16 @@ impl<'a> InferCtx<'a> {
                     if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
                         let bad = if promoted.is_error(self.db) { lhs } else { rhs };
                         self.types.insert(bad, self.error());
+                        let (bad_ty, other_ty) = if bad == lhs {
+                            (lhs_ty, rhs_ty)
+                        } else {
+                            (rhs_ty, lhs_ty)
+                        };
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
+                            found: bad_ty.display(self.db).to_string(),
+                            other: Some(other_ty.display(self.db).to_string()),
                         });
                     }
                     self.error()
@@ -2596,6 +2637,7 @@ impl<'a> InferCtx<'a> {
                     self.types.insert(lhs, self.error());
                     self.report(TypeError::IncomparableTypes {
                         expr: lhs,
+                        op: binary_op_symbol(op),
                         found: lhs_ty.display(self.db).to_string(),
                         other: rhs_ty.display(self.db).to_string(),
                     });
@@ -3208,6 +3250,7 @@ impl<'a> InferCtx<'a> {
                             // §11.2.3: already caught by an earlier clause.
                             self.report(TypeError::AlreadyCaught {
                                 local: clause.param,
+                                caught: clause_ty.display(self.db).to_string(),
                             });
                         } else {
                             self.thrown.retain(|(thrown, _)| {

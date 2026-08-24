@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_exceptions.rs
-assertion_line: 83
 expression: out
 ---
 FILE /src/com/example/Exc.java:
@@ -26,4 +25,4 @@ method risky(): void
 method m(): void
   locals: l0: java.lang.Exception | l1: java.io.IOException
   exprs: e0: void
-  diags: l1@11:17: already-caught: exception e has already been caught
+  diags: l1@11:17: already-caught: exception IOException has already been caught

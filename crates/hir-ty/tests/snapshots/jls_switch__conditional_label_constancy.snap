@@ -23,7 +23,7 @@ class Sw {
 method m(int): void
   locals: l0: int | l1: boolean | l2: int
   exprs: e0: boolean | e1: boolean | e2: boolean | e3: int | e4: int | e5: boolean | e6: int | e7: int | e8: int | e9: boolean | e10: int | e11: int | e12: int | e13: int | e14: int | e15: void | e16: <error>
-  diags: e8@7:16: non-constant-case-label: case label must be a constant expression | e13@9:16: duplicate-case-label: duplicate case label: '2' has already been covered
+  diags: e8@7:16: non-constant-case-label: constant expression required | e13@9:16: duplicate-case-label: duplicate case label
 method f(int): void
   locals: l3: int
   exprs:

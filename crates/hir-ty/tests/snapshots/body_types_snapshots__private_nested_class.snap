@@ -27,4 +27,5 @@ method use(com.example.Outer): void
 method use(com.example.Outer): void
   locals: l1: com.example.Outer
   exprs: e4: com.example.Outer | e5: <error> | e6: int | e7: <error>
-  diags: e5@14:8: no-such-field: cannot find field 'secret'
+  diags: e5@14:8: no-such-field: cannot find symbol
+  symbol:   variable secret

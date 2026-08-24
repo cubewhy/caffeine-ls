@@ -22,11 +22,11 @@ class Main {
 field s
   locals: 
   exprs: e0: java.lang.String
-  diags: e0@1:21: non-static-method-from-static-context: non-static method 'helper' cannot be referenced from a static context
+  diags: e0@1:21: non-static-method-from-static-context: non-static method helper() cannot be referenced from a static context
 static {}
   locals: 
   exprs: e1: java.lang.String
-  diags: e1@4:8: non-static-method-from-static-context: non-static method 'helper' cannot be referenced from a static context
+  diags: e1@4:8: non-static-method-from-static-context: non-static method helper() cannot be referenced from a static context
 instance {}
   locals: 
   exprs: e2: java.lang.String

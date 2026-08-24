@@ -15,4 +15,6 @@ class Body {
 method m(): void
   locals: l0: <error> | l1: <error>
   exprs: 
-  diags: l0@4:12: var-without-initializer: variable 'missing' is declared with 'var' but has no initializer | l1@5:12: var-array-initializer: array initializer needs an explicit target-type, but variable 'arrayInit' is declared with 'var'
+  diags: l0@4:12: var-without-initializer: cannot infer type for local variable missing
+  (cannot use 'var' on variable without initializer) | l1@5:12: var-array-initializer: cannot infer type for local variable arrayInit
+  (array initializer needs an explicit target-type)
