@@ -922,3 +922,10 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_package_modifier,
+    indoc! {r#"
+        @Annotation package com.example;
+    "#}
+);

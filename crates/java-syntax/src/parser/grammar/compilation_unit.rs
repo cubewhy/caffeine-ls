@@ -1,7 +1,7 @@
 use crate::{
     parser::{
         Parser,
-        grammar::{decl, names::qualified_name},
+        grammar::{decl, modifiers::modifiers, names::qualified_name},
     },
     syntax_kind::SyntaxKind::*,
 };
@@ -21,10 +21,52 @@ fn item(p: &mut Parser) {
     match p.current() {
         Some(PACKAGE_KW) => package_decl(p),
         Some(IMPORT_KW) => import_decl(p),
+        // [JLS §7.4] a compilation unit may start with package annotations:
+        // `@NullMarked package org.example;`
+        Some(AT) if at_annotated_package(p) => {
+            modifiers(p);
+            package_decl(p);
+        }
         Some(EOF) => {}
         Some(_) => decl::decl(p),
         None => {}
     }
+}
+
+/// Whether the annotations starting at the current `@` are directly followed
+/// by a `package` declaration ([JLS §7.4]). Skips balanced annotation
+/// arguments so element values containing parens do not confuse the scan.
+fn at_annotated_package(p: &Parser) -> bool {
+    let mut i = 0;
+    while p.nth(i) == Some(AT) {
+        i += 1;
+        if !matches!(p.nth(i), Some(IDENTIFIER)) {
+            return false;
+        }
+        i += 1;
+        while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+            i += 2;
+        }
+        if p.nth(i) == Some(L_PAREN) {
+            let mut depth = 0;
+            loop {
+                match p.nth(i) {
+                    Some(L_PAREN) => depth += 1,
+                    Some(R_PAREN) => {
+                        depth -= 1;
+                        if depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    Some(EOF) | None => return false,
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+    }
+    p.nth(i) == Some(PACKAGE_KW)
 }
 
 fn package_decl(p: &mut Parser) {

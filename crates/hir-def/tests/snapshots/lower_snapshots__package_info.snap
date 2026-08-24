@@ -8,6 +8,6 @@ SOURCE:
 package com.example;
 
 PARSE_ERRORS:
-Expected a declaration (e.g., class, variable, or method) here @13..20
+<none>
 ITEM_TREE:
 file (java) package com.example
