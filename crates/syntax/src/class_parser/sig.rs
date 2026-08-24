@@ -113,7 +113,13 @@ impl<'a> SigParser<'a> {
                 TypeRef::Primitive(PrimitiveType::Void)
             }
             Some('[') | Some('T') | Some('L') => self.parse_reference_type_signature(),
-            _ => TypeRef::Error,
+            // Unrecognized signature character: consume it so malformed
+            // signatures always make progress and the enclosing loops cannot
+            // spin.
+            _ => {
+                self.consume();
+                TypeRef::Error
+            }
         }
     }
 
@@ -161,7 +167,12 @@ impl<'a> SigParser<'a> {
                 self.consume(); // '['
                 TypeRef::Array(Box::new(self.parse_type_signature()))
             }
-            _ => TypeRef::Error,
+            // Unrecognized signature character: consume it so the caller's
+            // loops always make progress.
+            _ => {
+                self.consume();
+                TypeRef::Error
+            }
         }
     }
 
@@ -236,4 +247,48 @@ pub fn get_signature(attributes: &[AttributeInfo], cp: &[CpInfo]) -> Option<Stri
             None
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Malformed input must always terminate: every error path consumes at
+    /// least one character, so the enclosing loops cannot spin.
+    #[test]
+    fn malformed_signatures_recover_without_hanging() {
+        let interner = ThreadedRodeo::default();
+        let cases = [
+            "Lmap<X;>;",           // unrecognized type argument
+            "Ljava/lang/Object;X", // garbage after the superclass
+            "(X)V",                // garbage parameter
+            "X",                   // garbage return type
+            "<T:X>",               // garbage type-parameter bound
+            "()V",                 // valid, control
+        ];
+        for &sig in &cases {
+            let mut parser = SigParser::new(sig, &interner);
+            assert!(!sig.is_empty());
+            // Method signature path.
+            let (_, params, ret, _) = parser.parse_method_signature();
+            // The reference path (class signature) too.
+            let mut parser = SigParser::new(sig, &interner);
+            let (_, sc, _) = parser.parse_class_signature();
+            // No assertion on recovered values — just ensure no hang / panic.
+            let _ = (params, ret, sc);
+        }
+    }
+
+    #[test]
+    fn valid_nested_generics_parse() {
+        let interner = ThreadedRodeo::default();
+        let mut parser = SigParser::new(
+            "<T:Ljava/lang/Object;>()Ljava/util/Map<Ljava/lang/String;Ljava/util/List<TT;>;>;",
+            &interner,
+        );
+        let (type_params, params, ret, _) = parser.parse_method_signature();
+        assert_eq!(type_params.len(), 1);
+        assert!(params.is_empty());
+        assert!(matches!(ret, TypeRef::Reference { .. }));
+    }
 }
