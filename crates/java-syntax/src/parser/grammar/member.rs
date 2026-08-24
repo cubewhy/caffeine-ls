@@ -40,6 +40,10 @@ pub fn at_member_start(p: &Parser) -> bool {
         SYNCHRONIZED_KW,
         FINAL_KW,
         ABSTRACT_KW,
+        NATIVE_KW,
+        TRANSIENT_KW,
+        VOLATILE_KW,
+        STRICTFP_KW,
         AT,
         LESS, // type parameters (generics)
     ]) || p.at_contextual_kw(ContextualKeyword::Record)
