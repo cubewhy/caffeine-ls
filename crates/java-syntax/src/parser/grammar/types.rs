@@ -344,8 +344,9 @@ pub fn wildcard_type(p: &mut Parser) -> Result<(), ()> {
     p.expect(QUESTION); // ?
 
     // extends or super
-    if p.at(EXTENDS_KW) || p.at(SUPER_KW) {
-        wildcard_bounds(p)?;
+    if (p.at(EXTENDS_KW) || p.at(SUPER_KW)) && wildcard_bounds(p).is_err() {
+        m.abandon(p);
+        return Err(());
     }
 
     m.complete(p, WILDCARD_TYPE);
