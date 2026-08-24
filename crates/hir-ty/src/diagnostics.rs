@@ -81,6 +81,11 @@ pub enum TypeError {
     NoSuchField { expr: ExprId, name: Name },
     /// §15.12.1: no method of the name on the receiver's type.
     NoSuchMethod { expr: ExprId, name: Name },
+    /// §15.12.3/[§8.1.3]: the form is a simple name (`MethodName`) and the
+    /// chosen compile-time declaration is an instance method, but the
+    /// invocation occurs in a static context — a static method body, a static
+    /// field initializer or a static initializer, where `this` is unavailable.
+    NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
     /// §15.12.2: members of the name exist but none is applicable to the
     /// actual arguments.
     WrongArity {
@@ -177,6 +182,9 @@ impl TypeError {
             TypeError::ModuleNotAccessible { .. } => DiagnosticCode::Java(ModuleNotAccessible),
             TypeError::NoSuchField { .. } => DiagnosticCode::Java(NoSuchField),
             TypeError::NoSuchMethod { .. } => DiagnosticCode::Java(NoSuchMethod),
+            TypeError::NonStaticMethodFromStaticContext { .. } => {
+                DiagnosticCode::Java(NonStaticMethodFromStaticContext)
+            }
             TypeError::WrongArity { .. } => DiagnosticCode::Java(WrongArity),
             TypeError::IncompatibleTypes { .. } => DiagnosticCode::Java(IncompatibleTypes),
             TypeError::NonBooleanCondition { .. } => DiagnosticCode::Java(NonBooleanCondition),
@@ -228,6 +236,7 @@ impl TypeError {
             CannotResolveName { expr, .. }
             | NoSuchField { expr, .. }
             | NoSuchMethod { expr, .. }
+            | NonStaticMethodFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
             | IncompatibleTypes { expr, .. }
             | NonBooleanCondition { expr }
@@ -300,6 +309,10 @@ impl TypeError {
             }
             NoSuchMethod { name, .. } => {
                 format!("cannot find method '{name}'")
+            }
+            NonStaticMethodFromStaticContext { name, .. } => {
+                let name = name.as_str();
+                format!("non-static method '{name}' cannot be referenced from a static context")
             }
             WrongArity {
                 name,

@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/diagnostics_snapshots.rs
+expression: out
+---
+FILE /src/Main.java:
+class Main {
+    static void s() {}
+    void i() {}
+
+    static void test() {
+        s();
+        new Main().i();
+    }
+
+    void use() {
+        i();
+        s();
+    }
+}
+
+method s(): void
+  locals: 
+  exprs: 
+method i(): void
+  locals: 
+  exprs: 
+method test(): void
+  locals: 
+  exprs: e0: void | e1: Main | e2: void
+method use(): void
+  locals: 
+  exprs: e3: void | e4: void

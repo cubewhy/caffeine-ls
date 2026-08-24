@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/diagnostics_snapshots.rs
+expression: out
+---
+FILE /src/Main.java:
+import java.util.ArrayList;
+import java.util.List;
+
+public class Main {
+    public static void main(String[] args) {
+        printStrings(new ArrayList<>());
+    }
+
+    private void printStrings(List<String> a) {}
+}
+
+method main(java.lang.String[]): void
+  locals: l0: java.lang.String[]
+  exprs: e0: java.util.ArrayList | e1: void
+  diags: e1@5:8: non-static-method-from-static-context: non-static method 'printStrings' cannot be referenced from a static context
+method printStrings(java.util.List<java.lang.String>): void
+  locals: l1: java.util.List<java.lang.String>
+  exprs:

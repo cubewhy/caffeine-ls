@@ -1229,6 +1229,8 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                 }
                 ItemData::Field(field) => format!("field {}", field.name),
                 ItemData::EnumConstant(constant) => format!("constant {}", constant.name),
+                ItemData::StaticInit(_) => "static {}".to_owned(),
+                ItemData::InstanceInit(_) => "instance {}".to_owned(),
                 _ => continue,
             };
             let Some(types) = hir_ty::body_types(&db, file_id, id) else {

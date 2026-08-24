@@ -106,6 +106,9 @@ pub enum JavaDiagnosticCode {
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method.
     MethodDoesNotOverride,
+    /// §15.12.3: an unqualified invocation of an instance method from a static
+    /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
+    NonStaticMethodFromStaticContext,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -179,6 +182,9 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::RawTypeUse => "raw-type-use",
             JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
             JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
+            JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
+                "non-static-method-from-static-context"
+            }
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

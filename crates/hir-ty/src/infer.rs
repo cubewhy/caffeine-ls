@@ -111,6 +111,7 @@ pub(crate) fn body_types_impl(
         enclosing_throws: Vec::new(),
         thrown: Vec::new(),
         forward_names: Vec::new(),
+        static_context: static_context_of(&tree, item),
         definite: FxHashSet::default(),
         exited: false,
         writing: false,
@@ -294,6 +295,13 @@ struct InferCtx<'a> {
     /// static/instance kind ([§8.3.3]): reading one by simple name is an
     /// illegal forward reference.
     forward_names: Vec<Name>,
+    /// Whether the body is in a static context
+    /// ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
+    /// the body of a static method, a static field initializer or a static
+    /// initializer, where `this` is unavailable. An unqualified invocation of
+    /// an instance method from such a body is a compile-time error
+    /// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
+    static_context: bool,
     /// The locals definitely assigned at the current position
     /// ([§16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html)):
     /// parameters start assigned; a declarator with an initializer or the
@@ -1493,7 +1501,7 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        let (receiver_ty, mode) = self.receiver_info(receiver, &name);
+        let (receiver_ty, mode, method_name_form) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         // §15.12.1: no member of the name on the receiver is a compile-time
@@ -1507,6 +1515,18 @@ impl<'a> InferCtx<'a> {
                 // reference or nested invocation is re-inferred against the
                 // instantiated formal ([JLS §18.5.2.4]).
                 self.reinfer_deferred(&method, &deferred);
+                // §15.12.3: an unqualified invocation (`MethodName` form) of an
+                // instance method from a static context — where `this` is
+                // unavailable ([§8.1.3]) — is a compile-time error; javac
+                // rejects the selected instance method here rather than
+                // excluding it from the member set, so an overload that is less
+                // specific than a static candidate still resolves first.
+                if self.static_context && method_name_form && !method.is_static {
+                    self.report(TypeError::NonStaticMethodFromStaticContext {
+                        expr,
+                        name: name.clone(),
+                    });
+                }
                 // §11.2.1: an invocation of a method that declares checked
                 // exceptions adds them to the enclosing liability.
                 for thrown in &method.throws {
@@ -1549,25 +1569,34 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The receiver type and invocation mode of an invocation
+    /// The receiver type, invocation mode and *form* of an invocation
     /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)):
     /// a bare type name in receiver position is a static invocation whose
     /// receiver is a type, not a value; an unqualified call is an implicit
     /// `this` invocation; a `super` receiver is the superclass of the
-    /// enclosing class.
-    fn receiver_info(&mut self, receiver: Option<ExprId>, name: &Name) -> (Ty, InvocationMode) {
+    /// enclosing class. The third element reports whether the invocation has
+    /// the simple `MethodName` form — an unqualified name that is not a static
+    /// import ([§7.5.4]) — which §15.12.3 restricts in static contexts
+    /// ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
+    fn receiver_info(
+        &mut self,
+        receiver: Option<ExprId>,
+        name: &Name,
+    ) -> (Ty, InvocationMode, bool) {
         match receiver {
             Some(receiver) => {
                 // `Type.method(...)` — a static invocation whose receiver
                 // expression is a pure type name ([§15.12.1]): a bare name or
                 // a qualified name such as `java.util.Collections`.
                 if let Some(ty) = self.dotted_type_name(receiver) {
-                    return (ty, InvocationMode::Static);
+                    return (ty, InvocationMode::Static, false);
                 }
                 match self.tree.expr(receiver).clone() {
                     // `super.method(...)` — a super invocation whose receiver is
                     // the superclass of the enclosing class ([§15.12.1]).
-                    ExprData::Super { qualifier: None } => (self.super_ty(), InvocationMode::Super),
+                    ExprData::Super { qualifier: None } => {
+                        (self.super_ty(), InvocationMode::Super, false)
+                    }
                     // §15.11.2/§15.12.1: `I.super.m(...)` — a qualified-super
                     // invocation selects the default method of the *named*
                     // interface; the receiver type is `I` itself and the mode
@@ -1577,21 +1606,24 @@ impl<'a> InferCtx<'a> {
                     } => (
                         resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier),
                         InvocationMode::Interface,
+                        false,
                     ),
-                    _ => (self.infer_expr(receiver), InvocationMode::Virtual),
+                    _ => (self.infer_expr(receiver), InvocationMode::Virtual, false),
                 }
             }
             // An unqualified call is an implicit `this` invocation
             // ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)),
             // unless a static import ([§7.5.4]) names the method through its
-            // declaring type.
+            // declaring type. The simple `MethodName` form is subject to
+            // §15.12.3's static-context restriction ([§8.1.3]).
             None => {
                 if let Some(ty) = self.static_import_method_receiver(name.as_str()) {
-                    return (ty, InvocationMode::Static);
+                    return (ty, InvocationMode::Static, false);
                 }
                 (
                     self.enclosing_class.unwrap_or_else(|| self.error()),
                     InvocationMode::Virtual,
+                    true,
                 )
             }
         }
@@ -1947,7 +1979,7 @@ impl<'a> InferCtx<'a> {
         else {
             return true;
         };
-        let (receiver_ty, mode) = self.receiver_info(receiver, &name);
+        let (receiver_ty, mode, _) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);
@@ -3276,6 +3308,25 @@ fn forward_field_names(
         }
     }
     Vec::new()
+}
+
+/// Whether the innermost enclosing declaration of the item is a static
+/// context ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
+/// a construct occurs in a static context when the innermost method, field,
+/// constructor, instance initializer or static initializer that encloses it is
+/// a static method, a static field or a static initializer. Constructors and
+/// instance initializers are never static contexts. An enum constant is an
+/// implicitly static field, so its argument expressions are a static context.
+fn static_context_of(tree: &hir_expand::item_tree::ItemTree, item: ItemId) -> bool {
+    match tree.data(item) {
+        ItemData::Method(method) => method.modifiers.static_,
+        ItemData::Field(field) => field.modifiers.static_,
+        ItemData::StaticInit(_) | ItemData::EnumConstant(_) => true,
+        // Instance methods, constructors, instance initializers and instance
+        // fields: `this` is available, so unqualified instance invocations are
+        // legal ([§15.12.3]).
+        _ => false,
+    }
 }
 
 /// The source symbol of a unary operator, for [`TypeError::IncompatibleOperand`].
