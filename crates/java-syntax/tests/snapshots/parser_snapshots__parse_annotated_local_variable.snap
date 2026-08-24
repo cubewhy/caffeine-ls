@@ -1,0 +1,143 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        @Nullable String name = null;
+        final @NotNull List<String> items = null;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+AT "@"
+IDENTIFIER "Nullable"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "name"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NULL_LITERAL "null"
+SEMICOLON ";"
+WHITESPACE "\n        "
+FINAL_KW "final"
+WHITESPACE " "
+AT "@"
+IDENTIFIER "NotNull"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "items"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NULL_LITERAL "null"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..127
+  CLASS_DECL@0..126
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..126
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..124
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..124
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..68
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..67
+              MODIFIER_LIST@39..48
+                MARKER_ANNOTATION@39..48
+                  AT@39..40 "@"
+                  QUALIFIED_NAME@40..48
+                    IDENTIFIER@40..48 "Nullable"
+              TYPE@48..55
+                WHITESPACE@48..49 " "
+                QUALIFIED_NAME@49..55
+                  IDENTIFIER@49..55 "String"
+              VARIABLE_DECLARATOR_LIST@55..67
+                WHITESPACE@55..56 " "
+                VARIABLE_DECLARATOR@56..67
+                  IDENTIFIER@56..60 "name"
+                  WHITESPACE@60..61 " "
+                  EQUAL@61..62 "="
+                  LITERAL@62..67
+                    WHITESPACE@62..63 " "
+                    NULL_LITERAL@63..67 "null"
+            SEMICOLON@67..68 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@68..118
+            WHITESPACE@68..77 "\n        "
+            LOCAL_VARIABLE_DECLARATION@77..117
+              MODIFIER_LIST@77..91
+                FINAL_KW@77..82 "final"
+                MARKER_ANNOTATION@82..91
+                  WHITESPACE@82..83 " "
+                  AT@83..84 "@"
+                  QUALIFIED_NAME@84..91
+                    IDENTIFIER@84..91 "NotNull"
+              TYPE@91..104
+                WHITESPACE@91..92 " "
+                QUALIFIED_NAME@92..96
+                  IDENTIFIER@92..96 "List"
+                TYPE_ARGUMENTS@96..104
+                  LESS@96..97 "<"
+                  TYPE_ARGUMENT@97..103
+                    TYPE@97..103
+                      QUALIFIED_NAME@97..103
+                        IDENTIFIER@97..103 "String"
+                  GREATER@103..104 ">"
+              VARIABLE_DECLARATOR_LIST@104..117
+                WHITESPACE@104..105 " "
+                VARIABLE_DECLARATOR@105..117
+                  IDENTIFIER@105..110 "items"
+                  WHITESPACE@110..111 " "
+                  EQUAL@111..112 "="
+                  LITERAL@112..117
+                    WHITESPACE@112..113 " "
+                    NULL_LITERAL@113..117 "null"
+            SEMICOLON@117..118 ";"
+          WHITESPACE@118..123 "\n    "
+          R_BRACE@123..124 "}"
+      WHITESPACE@124..125 "\n"
+      R_BRACE@125..126 "}"
+  WHITESPACE@126..127 "\n"

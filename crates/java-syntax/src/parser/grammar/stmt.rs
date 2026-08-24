@@ -961,9 +961,15 @@ pub fn is_local_variable_declaration(p: &Parser) -> bool {
         if p.nth(i) == Some(AT) {
             i += 1; // skip '@'
 
-            // skip annotation fqn
-            while p.nth(i) == Some(IDENTIFIER) || p.nth(i) == Some(DOT) {
-                i += 1;
+            // skip the annotation's dotted name ([JLS §9.7.4]); only
+            // DOT-separated segments belong to it — the identifier right
+            // after a segment is the declared type, not part of the name.
+            if !matches!(p.nth(i), Some(IDENTIFIER)) {
+                return false;
+            }
+            i += 1;
+            while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+                i += 2;
             }
 
             // skip annotation arguments

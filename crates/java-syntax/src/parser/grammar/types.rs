@@ -7,7 +7,10 @@ use crate::{
     },
     parser::{
         ExpectedConstruct, Parser,
-        grammar::{error_recover::recover_parameter, modifiers::modifiers},
+        grammar::{
+            error_recover::recover_parameter,
+            modifiers::{annotation, modifiers},
+        },
     },
     syntax_kind::SyntaxKind::*,
     tokenset,
@@ -125,7 +128,11 @@ fn parameter(p: &mut Parser) {
 }
 
 pub fn at_type_start(p: &Parser) -> bool {
-    at_primitive_type(p) || p.at(IDENTIFIER)
+    at_primitive_type(p)
+        || p.at(IDENTIFIER)
+        // [JLS §9.7.4] a type use may begin with its annotations
+        // (`@Nullable Object field`).
+        || (p.at(AT) && p.nth(1) != Some(INTERFACE_KW))
 }
 
 pub fn at_primitive_type(p: &Parser) -> bool {
@@ -142,12 +149,16 @@ pub fn is_primitive_type(kind: SyntaxKind) -> bool {
 }
 
 pub fn dimensions(p: &mut Parser) {
-    if !p.at(L_BRACKET) {
+    if !p.at(L_BRACKET) && !at_annotated_dimension(p) {
         return;
     }
 
     let m = p.start();
-    while p.at(L_BRACKET) {
+    while p.at(L_BRACKET) || at_annotated_dimension(p) {
+        // [JLS §9.7.4] an array dimension may carry annotations
+        // (`int @Nullable []`).
+        type_annotations_opt(p);
+
         let m_inner = p.start();
         p.expect(L_BRACKET);
 
@@ -159,6 +170,40 @@ pub fn dimensions(p: &mut Parser) {
         m_inner.complete(p, DIMENSION);
     }
     m.complete(p, DIMENSIONS);
+}
+
+/// Whether the tokens ahead form annotations directly followed by an array
+/// dimension (`@Nullable []`) — used to distinguish dimension annotations
+/// ([JLS §10.1], [§9.7.4]) from modifiers of the next construct.
+fn at_annotated_dimension(p: &Parser) -> bool {
+    if !p.at(AT) {
+        return false;
+    }
+    let mut i = 0;
+    while p.nth(i) == Some(AT) && p.nth(i + 1) != Some(INTERFACE_KW) {
+        i += 1;
+        if !matches!(p.nth(i), Some(IDENTIFIER)) {
+            return false;
+        }
+        i += 1;
+        while p.nth(i) == Some(DOT) && p.nth(i + 1) == Some(IDENTIFIER) {
+            i += 2;
+        }
+        if p.nth(i) == Some(L_PAREN) {
+            let mut depth = 1;
+            i += 1;
+            while depth > 0 {
+                match p.nth(i) {
+                    Some(L_PAREN) => depth += 1,
+                    Some(R_PAREN) => depth -= 1,
+                    Some(EOF) | None => return false,
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+    }
+    p.nth(i) == Some(L_BRACKET)
 }
 
 pub fn type_or_void(p: &mut Parser) -> Result<(), ()> {
@@ -266,6 +311,11 @@ pub fn type_bound(p: &mut Parser) {
 pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
+    // [JLS §9.7.4] annotations may decorate any type use, including the type
+    // itself (`@Nullable String`) and every qualifier segment of a nested
+    // type (`Connection.@Nullable Response`).
+    type_annotations_opt(p);
+
     if !p.at(IDENTIFIER) {
         p.error_expected_construct(ExpectedConstruct::Type);
         m.complete(p, ERROR);
@@ -276,6 +326,7 @@ pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
     type_arguments_opt(p);
 
     while p.eat(DOT) {
+        type_annotations_opt(p);
         p.expect(IDENTIFIER);
         type_arguments_opt(p);
     }
@@ -284,6 +335,18 @@ pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
 
     m.complete(p, TYPE);
     Ok(())
+}
+
+/// The leading annotations of a type use ([JLS §9.7.4]); parsed into a
+/// `MODIFIER_LIST` so downstream lowering treats them like other modifiers.
+pub fn type_annotations_opt(p: &mut Parser) {
+    if p.at(AT) && p.nth(1) != Some(INTERFACE_KW) {
+        let m = p.start();
+        while p.at(AT) && p.nth(1) != Some(INTERFACE_KW) {
+            annotation(p);
+        }
+        m.complete(p, MODIFIER_LIST);
+    }
 }
 
 pub fn type_arguments_opt(p: &mut Parser) {
@@ -321,8 +384,17 @@ pub fn type_arguments(p: &mut Parser) {
 pub fn type_argument(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
+    // An array-of-primitive (`List<byte[]>`) is a reference type ([JLS §4.3])
+    // and a legal type argument; a bare primitive is not, which the type
+    // layer reports.
     let res = if p.at(QUESTION) {
         wildcard_type(p)
+    } else if at_primitive_type(p) {
+        let m_inner = p.start();
+        p.bump();
+        dimensions(p);
+        m_inner.complete(p, TYPE);
+        Ok(())
     } else {
         reference_type(p)
     };

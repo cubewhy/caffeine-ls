@@ -929,3 +929,51 @@ parser_snapshot!(
         @Annotation package com.example;
     "#}
 );
+
+// [JLS §9.7.4] annotations may decorate any type use: the type itself and
+// every qualifier segment of a nested type.
+parser_snapshot!(
+    parse_annotated_local_variable,
+    indoc! {r#"
+        class Test {
+            void func() {
+                @Nullable String name = null;
+                final @NotNull List<String> items = null;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_qualified_annotated_type_field,
+    indoc! {r#"
+        class Test {
+            static Outer.@Nullable Inner field;
+            java.util.@Deprecated Map<@NonNull String, ? extends @Number Number> map;
+        }
+    "#}
+);
+
+// An array-of-primitive type argument (`byte[]`) is a reference type
+// ([JLS §4.3]); a bare primitive is not.
+parser_snapshot!(
+    parse_primitive_array_type_argument,
+    indoc! {r#"
+        class Test {
+            static final Pool<byte[]> POOL = new Pool<>(() -> new byte[8]);
+        }
+    "#}
+);
+
+// [JLS §8.1.3]/[§9.7.4]: `volatile`, `native`, `transient` and `strictfp`
+// members, and annotations on array dimensions.
+parser_snapshot!(
+    parse_annotated_dimension_members,
+    indoc! {r#"
+        class Test {
+            private byte @Nullable [] buf;
+            volatile @Nullable Object state;
+            native int @Nullable [] consume(boolean inAttribute);
+        }
+    "#}
+);

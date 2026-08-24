@@ -1,0 +1,148 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    static Outer.@Nullable Inner field;
+    java.util.@Deprecated Map<@NonNull String, ? extends @Number Number> map;
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+STATIC_KW "static"
+WHITESPACE " "
+IDENTIFIER "Outer"
+DOT "."
+AT "@"
+IDENTIFIER "Nullable"
+WHITESPACE " "
+IDENTIFIER "Inner"
+WHITESPACE " "
+IDENTIFIER "field"
+SEMICOLON ";"
+WHITESPACE "\n    "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+AT "@"
+IDENTIFIER "Deprecated"
+WHITESPACE " "
+IDENTIFIER "Map"
+LESS "<"
+AT "@"
+IDENTIFIER "NonNull"
+WHITESPACE " "
+IDENTIFIER "String"
+COMMA ","
+WHITESPACE " "
+QUESTION "?"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+AT "@"
+IDENTIFIER "Number"
+WHITESPACE " "
+IDENTIFIER "Number"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "map"
+SEMICOLON ";"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..133
+  CLASS_DECL@0..132
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..132
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      FIELD_DECL@12..52
+        WHITESPACE@12..17 "\n    "
+        MODIFIER_LIST@17..23
+          STATIC_KW@17..23 "static"
+        TYPE@23..45
+          WHITESPACE@23..24 " "
+          QUALIFIED_NAME@24..29
+            IDENTIFIER@24..29 "Outer"
+          DOT@29..30 "."
+          MODIFIER_LIST@30..39
+            MARKER_ANNOTATION@30..39
+              AT@30..31 "@"
+              QUALIFIED_NAME@31..39
+                IDENTIFIER@31..39 "Nullable"
+          WHITESPACE@39..40 " "
+          IDENTIFIER@40..45 "Inner"
+        VARIABLE_DECLARATOR_LIST@45..51
+          WHITESPACE@45..46 " "
+          VARIABLE_DECLARATOR@46..51
+            IDENTIFIER@46..51 "field"
+        SEMICOLON@51..52 ";"
+      FIELD_DECL@52..130
+        WHITESPACE@52..57 "\n    "
+        TYPE@57..125
+          QUALIFIED_NAME@57..66
+            IDENTIFIER@57..61 "java"
+            DOT@61..62 "."
+            IDENTIFIER@62..66 "util"
+          DOT@66..67 "."
+          MODIFIER_LIST@67..78
+            MARKER_ANNOTATION@67..78
+              AT@67..68 "@"
+              QUALIFIED_NAME@68..78
+                IDENTIFIER@68..78 "Deprecated"
+          WHITESPACE@78..79 " "
+          IDENTIFIER@79..82 "Map"
+          TYPE_ARGUMENTS@82..125
+            LESS@82..83 "<"
+            TYPE_ARGUMENT@83..98
+              TYPE@83..98
+                MODIFIER_LIST@83..91
+                  MARKER_ANNOTATION@83..91
+                    AT@83..84 "@"
+                    QUALIFIED_NAME@84..91
+                      IDENTIFIER@84..91 "NonNull"
+                QUALIFIED_NAME@91..98
+                  WHITESPACE@91..92 " "
+                  IDENTIFIER@92..98 "String"
+            COMMA@98..99 ","
+            TYPE_ARGUMENT@99..124
+              WHITESPACE@99..100 " "
+              WILDCARD_TYPE@100..124
+                QUESTION@100..101 "?"
+                WILDCARD_BOUNDS@101..124
+                  WHITESPACE@101..102 " "
+                  EXTENDS_KW@102..109 "extends"
+                  TYPE@109..124
+                    WHITESPACE@109..110 " "
+                    MODIFIER_LIST@110..117
+                      MARKER_ANNOTATION@110..117
+                        AT@110..111 "@"
+                        QUALIFIED_NAME@111..117
+                          IDENTIFIER@111..117 "Number"
+                    QUALIFIED_NAME@117..124
+                      WHITESPACE@117..118 " "
+                      IDENTIFIER@118..124 "Number"
+            GREATER@124..125 ">"
+        VARIABLE_DECLARATOR_LIST@125..129
+          WHITESPACE@125..126 " "
+          VARIABLE_DECLARATOR@126..129
+            IDENTIFIER@126..129 "map"
+        SEMICOLON@129..130 ";"
+      WHITESPACE@130..131 "\n"
+      R_BRACE@131..132 "}"
+  WHITESPACE@132..133 "\n"

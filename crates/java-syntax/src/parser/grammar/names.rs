@@ -5,8 +5,12 @@ pub fn qualified_name(p: &mut Parser) {
 
     if p.at(IDENTIFIER) {
         p.bump();
-        while p.eat(DOT) {
-            p.expect(IDENTIFIER);
+        // Stop before a `.` that does not start another name segment —
+        // notably `Outer.@Anno Inner`, where the annotated segment belongs
+        // to the enclosing *type* production ([JLS §9.7.4]).
+        while p.at(DOT) && p.nth(1) == Some(IDENTIFIER) {
+            p.bump();
+            p.bump();
         }
     } else {
         p.error_expected(&[IDENTIFIER]);
