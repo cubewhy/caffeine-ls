@@ -4,6 +4,52 @@
 
 The next-gen LSP for JVM family languages
 
+## Usage
+
+### Language server
+
+Editors launch the binary without arguments (or with `serve`); it communicates
+over stdio using LSP.
+
+```sh
+caffeine-ls            # start the language server over stdio
+caffeine-ls serve      # same thing, explicitly
+```
+
+### Headless diagnostics
+
+`diagnostics` analyzes a repository without an editor by driving the same
+server lifecycle an IDE would (workspace probe → build-system sync → file
+scan → library indexing), then pulling diagnostics for every source file.
+
+```sh
+# human-readable report on stdout
+caffeine-ls diagnostics path/to/project
+
+# JSON report for tooling, written to a file
+caffeine-ls diagnostics . --format json -o report.json
+
+# count warnings as findings too (see exit codes)
+caffeine-ls diagnostics . --min-severity warning
+
+# resolve ambiguous workspaces (e.g. gradle + maven files in one root)
+caffeine-ls diagnostics . --build-system maven
+```
+
+Options:
+
+| Flag | Description |
+|---|---|
+| `--format <text\|json>` | Report format (default `text`) |
+| `-o, --output <FILE>` | Write the report to a file instead of stdout |
+| `--min-severity <error\|warning\|all>` | Threshold for reported diagnostics and the exit code (default `error`) |
+| `--build-system <gradle\|maven\|eclipse\|idea>` | Pick a build system when the layout is ambiguous |
+| `--java-home <PATH>` | JDK used for workspace loading and library indexing |
+| `--log-file <FILE>` | Also write server logs to a file |
+
+Exit codes: `0` no findings at or above the threshold · `1` findings found ·
+`2` analysis failed (bad path, no JDK, build-system sync failure, timeout).
+
 ## Contribute
 
 The development of the LSP is in very early stage, please contribute!
