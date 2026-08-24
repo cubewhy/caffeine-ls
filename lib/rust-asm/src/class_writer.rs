@@ -2767,6 +2767,12 @@ fn write_attribute(
             }
             write_attribute_with_info(out, name_index, &info);
         }
+        AttributeInfo::AnnotationDefault { default_value } => {
+            let name_index = ensure_utf8(cp, "AnnotationDefault");
+            let mut info = Vec::new();
+            write_element_value(&mut info, default_value);
+            write_attribute_with_info(out, name_index, &info);
+        }
         AttributeInfo::Unknown { name, info } => {
             let name_index = ensure_utf8(cp, name);
             write_attribute_with_info(out, name_index, info);
@@ -3090,6 +3096,7 @@ fn collect_attribute_names(attributes: &[AttributeInfo], names: &mut Vec<String>
                 names.push("PermittedSubclasses".to_string())
             }
             AttributeInfo::Record { .. } => names.push("Record".to_string()),
+            AttributeInfo::AnnotationDefault { .. } => names.push("AnnotationDefault".to_string()),
             AttributeInfo::Unknown { name, .. } => names.push(name.clone()),
         }
     }

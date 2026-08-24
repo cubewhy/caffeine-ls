@@ -3,7 +3,7 @@ use lasso::ThreadedRodeo;
 use rust_asm::{
     class_reader::{Annotation, AttributeInfo, ClassReader, ElementValue},
     constant_pool::{ConstantPoolExt, CpInfo},
-    constants::ACC_STATIC,
+    constants::{ACC_MANDATED, ACC_STATIC, ACC_SYNTHETIC, ACC_VARARGS},
     nodes::{ClassNode, FieldNode, MethodNode, ModuleNode},
 };
 
@@ -148,6 +148,27 @@ impl<'a> ClassParser<'a> {
             .iter()
             .any(|attr| matches!(attr, AttributeInfo::Record { .. }));
 
+        // A variable-arity record component ([JLS §8.10.1]) is encoded as an
+        // array descriptor with `ACC_VARARGS` on the canonical constructor
+        // ([JVMS §4.7.22]); the `Record` attribute itself carries no varargs
+        // flag, so the constructor's flag is the authoritative signal. Varargs
+        // is always the last formal ([JLS §8.4.1]), so only a trailing
+        // array-typed component is marked.
+        let record_varargs = if is_record {
+            node.methods.iter().any(|method_node| {
+                method_node.name == "<init>"
+                    && method_node.access_flags & ACC_VARARGS != 0
+                    && self
+                        .parse_method_descriptor(&method_node.descriptor)
+                        .0
+                        .len()
+                        == node.record_components.len()
+            })
+        } else {
+            false
+        };
+        let component_count = node.record_components.len();
+
         ClassStub {
             fqn: self.interner.get_or_intern(&fqn_str),
             name: self.interner.get_or_intern(simple_name),
@@ -178,7 +199,11 @@ impl<'a> ClassParser<'a> {
             record_components: node
                 .record_components
                 .iter()
-                .map(|rc| self.map_record_component(rc, &node.constant_pool))
+                .enumerate()
+                .map(|(i, rc)| {
+                    let is_last = component_count > 0 && i == component_count - 1;
+                    self.map_record_component(rc, &node.constant_pool, record_varargs && is_last)
+                })
                 .collect(),
 
             annotations: self.map_annotations(&node.attributes, &node.constant_pool),
@@ -189,6 +214,7 @@ impl<'a> ClassParser<'a> {
         &self,
         node: &rust_asm::nodes::RecordComponentNode,
         constant_pool: &[CpInfo],
+        varargs: bool,
     ) -> RecordComponentData<Symbol> {
         let mut chars = node.descriptor.chars().peekable();
         let mut component_type = self.parse_type_ref(&mut chars);
@@ -198,10 +224,11 @@ impl<'a> ClassParser<'a> {
             component_type = parser.parse_reference_type_signature();
         }
 
+        let varargs = varargs && matches!(&component_type, TypeRef::Array(_));
         RecordComponentData {
             name: self.interner.get_or_intern(&node.name),
             component_type,
-            varargs: false,
+            varargs,
             annotations: self.map_annotations(&node.attributes, constant_pool),
         }
     }
@@ -260,10 +287,22 @@ impl<'a> ClassParser<'a> {
             let (tp, param_types, ret_type, throws) = parser.parse_method_signature();
             type_params = tp;
 
-            if param_types.len() == params.len() {
-                for (p, p_type) in params.iter_mut().zip(param_types) {
-                    p.param_type = p_type;
-                }
+            // The generic `Signature` lists only the *declared* parameters; a
+            // synthetic leading descriptor parameter — the implicit outer
+            // instance of a non-static inner-class constructor ([JLS §8.1.3]) or
+            // the implicit `name`/`ordinal` of an enum constructor ([JLS §8.9.2]) —
+            // has no place in the signature. Align the signature types onto the
+            // trailing (declared) descriptor parameters, counting the synthetic
+            // prefix from the `MethodParameters` flags when present and falling
+            // back to the length difference otherwise.
+            let synthetic = leading_synthetic_params(node, params.len(), param_types.len());
+            for (param, p_type) in params
+                .iter_mut()
+                .skip(synthetic)
+                .take(param_types.len())
+                .zip(param_types)
+            {
+                param.param_type = p_type;
             }
             return_type = ret_type;
             if !throws.is_empty() {
@@ -309,6 +348,14 @@ impl<'a> ClassParser<'a> {
             }
         }
 
+        let default_value = node.attributes.iter().find_map(|attr| {
+            if let AttributeInfo::AnnotationDefault { default_value } = attr {
+                Some(self.map_element_value(default_value, constant_pool))
+            } else {
+                None
+            }
+        });
+
         MethodStub {
             flags: node.access_flags,
             name: self.interner.get_or_intern(&node.name),
@@ -317,7 +364,7 @@ impl<'a> ClassParser<'a> {
             throws_list,
             type_params,
             annotations: self.map_annotations(&node.attributes, constant_pool),
-            default_value: None,
+            default_value,
         }
     }
 
@@ -509,5 +556,165 @@ impl<'a> ClassParser<'a> {
                 AnnotationValue::Array(mapped_elements)
             }
         }
+    }
+}
+
+/// The number of synthetic leading parameters of a method: the implicit `Outer`
+/// parameter of a non-static inner-class constructor or the implicit
+/// `name`/`ordinal` parameters of an enum constructor ([JVMS §4.7.24]). Such
+/// parameters appear in the descriptor but are absent from the generic
+/// `Signature` ([JVMS §4.7.9.1]). The count is taken from the `MethodParameters`
+/// flags when present, falling back to the descriptor/signature length
+/// difference; the two signals agree for classfiles javac emits.
+fn leading_synthetic_params(
+    node: &MethodNode,
+    descriptor_params: usize,
+    sig_params: usize,
+) -> usize {
+    let flagged = node
+        .method_parameters
+        .iter()
+        .take(descriptor_params)
+        .take_while(|param| param.access_flags & (ACC_SYNTHETIC | ACC_MANDATED) != 0)
+        .count();
+    // Prefer the flags when the attribute covers the whole descriptor; otherwise
+    // (missing or partial attribute) fall back to the length delta.
+    if node.method_parameters.len() == descriptor_params && flagged > 0 {
+        return flagged;
+    }
+    descriptor_params.saturating_sub(sig_params)
+}
+
+#[cfg(test)]
+mod tests {
+    use rust_asm::{
+        class_reader::{AttributeInfo, ElementValue},
+        class_writer::ClassWriter,
+        constant_pool::CpInfo,
+        constants::{ACC_PUBLIC, ACC_VARARGS},
+        nodes::MethodNode,
+    };
+
+    use super::*;
+    use crate::stub::ClassOrModuleStub;
+
+    #[test]
+    fn annotation_default_is_mapped() {
+        let interner = ThreadedRodeo::default();
+        let parser = ClassParser::new(&interner);
+        let node = MethodNode {
+            access_flags: 0x0001,
+            name: "value".to_owned(),
+            descriptor: "()Ljava/lang/String;".to_owned(),
+            has_code: false,
+            max_stack: 0,
+            max_locals: 0,
+            instructions: rust_asm::insn::InsnList::new(),
+            instruction_offsets: Vec::new(),
+            insn_nodes: Vec::new(),
+            exception_table: Vec::new(),
+            try_catch_blocks: Vec::new(),
+            line_numbers: Vec::new(),
+            local_variables: Vec::new(),
+            method_parameters: Vec::new(),
+            exceptions: Vec::new(),
+            signature: None,
+            code_attributes: Vec::new(),
+            attributes: vec![AttributeInfo::AnnotationDefault {
+                default_value: ElementValue::ConstValueIndex {
+                    tag: b's',
+                    const_value_index: 1,
+                },
+            }],
+        };
+        let cp = vec![CpInfo::Unusable, CpInfo::Utf8("default".to_owned())];
+        let stub = parser.map_method(&node, &cp);
+        assert_eq!(
+            stub.default_value,
+            Some(AnnotationValue::String(interner.get_or_intern("default")))
+        );
+    }
+
+    #[test]
+    fn no_annotation_default_yields_none() {
+        let interner = ThreadedRodeo::default();
+        let parser = ClassParser::new(&interner);
+        let node = MethodNode {
+            access_flags: 0x0001,
+            name: "value".to_owned(),
+            descriptor: "()I".to_owned(),
+            has_code: false,
+            max_stack: 0,
+            max_locals: 0,
+            instructions: rust_asm::insn::InsnList::new(),
+            instruction_offsets: Vec::new(),
+            insn_nodes: Vec::new(),
+            exception_table: Vec::new(),
+            try_catch_blocks: Vec::new(),
+            line_numbers: Vec::new(),
+            local_variables: Vec::new(),
+            method_parameters: Vec::new(),
+            exceptions: Vec::new(),
+            signature: None,
+            code_attributes: Vec::new(),
+            attributes: Vec::new(),
+        };
+        let stub = parser.map_method(&node, &[]);
+        assert_eq!(stub.default_value, None);
+    }
+
+    /// F4: a variable-arity record component is marked from the canonical
+    /// constructor's `ACC_VARARGS` ([JLS §8.10.1], [JVMS §4.6]).
+    #[test]
+    fn record_varargs_from_canonical_constructor() {
+        let mut cw = ClassWriter::new(0);
+        cw.visit(
+            52,
+            0,
+            ACC_PUBLIC,
+            "com/example/R",
+            Some("java/lang/Object"),
+            &[],
+        );
+        let rcv = cw.visit_record_component("names", "[Ljava/lang/String;");
+        rcv.visit_end(&mut cw);
+        let ctor = cw.visit_method(ACC_PUBLIC | ACC_VARARGS, "<init>", "([Ljava/lang/String;)V");
+        ctor.visit_end(&mut cw);
+
+        let interner = ThreadedRodeo::default();
+        let parser = ClassParser::new(&interner);
+        let stub = parser.parse_cafebabe(&cw.to_bytes().unwrap()).unwrap();
+        let ClassOrModuleStub::Class(class) = stub else {
+            panic!("expected a class");
+        };
+        assert_eq!(class.record_components.len(), 1);
+        assert!(class.record_components[0].varargs);
+    }
+
+    /// F4: a non-varargs canonical constructor leaves the array component
+    /// unmarked.
+    #[test]
+    fn record_array_component_not_varargs_without_constructor_flag() {
+        let mut cw = ClassWriter::new(0);
+        cw.visit(
+            52,
+            0,
+            ACC_PUBLIC,
+            "com/example/R",
+            Some("java/lang/Object"),
+            &[],
+        );
+        let rcv = cw.visit_record_component("values", "[I");
+        rcv.visit_end(&mut cw);
+        let ctor = cw.visit_method(ACC_PUBLIC, "<init>", "([I)V");
+        ctor.visit_end(&mut cw);
+
+        let interner = ThreadedRodeo::default();
+        let parser = ClassParser::new(&interner);
+        let stub = parser.parse_cafebabe(&cw.to_bytes().unwrap()).unwrap();
+        let ClassOrModuleStub::Class(class) = stub else {
+            panic!("expected a class");
+        };
+        assert!(!class.record_components[0].varargs);
     }
 }

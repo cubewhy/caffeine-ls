@@ -887,6 +887,7 @@ pub enum AttributeInfo {
     RuntimeInvisibleTypeAnnotations { annotations: Vec<TypeAnnotation> },
     PermittedSubclasses { classes: Vec<u16> },
     Record { components: Vec<RecordComponent> },
+    AnnotationDefault { default_value: ElementValue },
     Unknown { name: String, info: Vec<u8> },
 }
 
@@ -1574,6 +1575,9 @@ fn parse_attribute(
             }
             AttributeInfo::Record { components }
         }
+        "AnnotationDefault" => AttributeInfo::AnnotationDefault {
+            default_value: parse_element_value(&mut reader)?,
+        },
         _ => {
             return Ok(AttributeInfo::Unknown {
                 name: name.to_string(),
