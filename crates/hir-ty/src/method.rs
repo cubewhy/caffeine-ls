@@ -659,7 +659,13 @@ fn library_class_methods(
             .iter()
             .map(|tp| MethodTypeParam {
                 name: Name::new(interner.resolve(&tp.name)),
-                bounds: tp.bounds.iter().map(|b| ty_from_library(db, b)).collect(),
+                // The bound is instantiated with the declaring class's type
+                // arguments: a `<U extends T>` bound on a generic class
+                // references the class type parameter `T`, which resolves to
+                // the receiver's actual argument here (§18.5.2.2). A bound
+                // over the method's own type parameters is untouched by the
+                // class binding and stays a bare type variable.
+                bounds: tp.bounds.iter().map(&instantiate).collect(),
             })
             .collect();
         out.push(MethodData {
@@ -744,10 +750,15 @@ fn source_class_methods(
             .iter()
             .map(|tp| MethodTypeParam {
                 name: tp.name.clone(),
+                // Same rule as the library side ([`library_class_methods`]):
+                // a bound referencing the declaring class's type parameters is
+                // replaced by the class's actual type arguments; one over the
+                // method's own type parameters is untouched.
                 bounds: tp
                     .bounds
                     .iter()
                     .map(|bound| resolve_type_ref(db, &scope, &method_resolver, bound))
+                    .map(|bound| bound.substitute(db, &binding))
                     .collect(),
             })
             .collect();
