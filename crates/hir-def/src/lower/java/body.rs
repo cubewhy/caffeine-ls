@@ -24,6 +24,7 @@ use hir_expand::{
     },
     item_tree::ItemId,
     name::Name,
+    span::{NameRef, SpannedTypeRef},
 };
 
 use crate::lower::LowerCtx;
@@ -97,7 +98,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                 .children()
                 .find(|c| c.kind() == J::TYPE)
                 .map(|t| super::type_from(&t))
-                .unwrap_or(TypeRef::Error);
+                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             alloc_local(
                 ctx,
                 Local {
@@ -410,7 +411,11 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
                 ty: if is_var {
                     None
                 } else {
-                    Some(type_ref.clone().unwrap_or(TypeRef::Error))
+                    Some(
+                        type_ref
+                            .clone()
+                            .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error)),
+                    )
                 },
                 is_final,
             },
@@ -453,7 +458,7 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         .find(|t| t.kind() == CATCH_TYPE)
                         .and_then(|ct| ct.children().find(|t| t.kind() == TYPE))
                         .map(|t| super::type_from(&t))
-                        .unwrap_or(TypeRef::Error);
+                        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
                     alloc_local(
                         ctx,
                         Local {
@@ -533,7 +538,11 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                     ty: if is_var {
                         None
                     } else {
-                        Some(type_ref.clone().unwrap_or(TypeRef::Error))
+                        Some(
+                            type_ref
+                                .clone()
+                                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error)),
+                        )
                     },
                     is_final: true,
                 },
@@ -712,7 +721,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                 .children_with_tokens()
                 .find_map(|e| e.as_token().and_then(primitive_from_token))
                 .unwrap_or(PrimitiveType::Void);
-            ExprData::ClassLit(TypeRef::Primitive(prim))
+            ExprData::ClassLit(SpannedTypeRef::synthetic(TypeRef::Primitive(prim)))
         }
         CLASS_LITERAL => class_literal(node),
         // `Outer.this` — the THIS_EXPR node carries the qualifier identifier
@@ -721,10 +730,20 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             // The qualifier identifier of `Outer.this` is wrapped in a nested
             // LITERAL node ([JLS §15.8.3]); join the identifiers recursively.
             let qualifier = join_dotted(node);
+            let range = identifiers_range(node);
             ExprData::This {
-                qualifier: (qualifier.as_str() != "<missing>").then(|| TypeRef::Reference {
-                    name: qualifier,
-                    generic_args: Vec::new(),
+                qualifier: (qualifier.as_str() != "<missing>").then(|| {
+                    let refs = match range {
+                        Some(range) => vec![NameRef::new(Name::new(qualifier.as_str()), range)],
+                        None => Vec::new(),
+                    };
+                    SpannedTypeRef {
+                        ty: TypeRef::Reference {
+                            name: qualifier,
+                            generic_args: Vec::new(),
+                        },
+                        refs,
+                    }
                 }),
             }
         }
@@ -733,10 +752,20 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
         // qualifier of `Outer.this` ([§15.8.3]).
         SUPER_EXPR => {
             let qualifier = join_dotted(node);
+            let range = identifiers_range(node);
             ExprData::Super {
-                qualifier: (qualifier.as_str() != "<missing>").then(|| TypeRef::Reference {
-                    name: qualifier,
-                    generic_args: Vec::new(),
+                qualifier: (qualifier.as_str() != "<missing>").then(|| {
+                    let refs = match range {
+                        Some(range) => vec![NameRef::new(Name::new(qualifier.as_str()), range)],
+                        None => Vec::new(),
+                    };
+                    SpannedTypeRef {
+                        ty: TypeRef::Reference {
+                            name: qualifier,
+                            generic_args: Vec::new(),
+                        },
+                        refs,
+                    }
                 }),
             }
         }
@@ -848,7 +877,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                 .children()
                 .find(|c| c.kind() == TYPE)
                 .map(|t| super::type_from(&t))
-                .unwrap_or(TypeRef::Error);
+                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             let expr_ = first_expr(ctx, owner, node);
             ExprData::Cast { ty, expr: expr_ }
         }
@@ -1163,12 +1192,21 @@ fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
             .children_with_tokens()
             .find_map(|e| e.as_token().and_then(primitive_from_token))
             .unwrap_or(PrimitiveType::Void);
-        return ExprData::ClassLit(TypeRef::Primitive(p));
+        return ExprData::ClassLit(SpannedTypeRef::synthetic(TypeRef::Primitive(p)));
     }
     // `String.class`, `Foo.Bar.class`: rebuild the qualified name.
-    ExprData::ClassLit(TypeRef::Reference {
-        name: join_identifiers(node),
-        generic_args: Vec::new(),
+    let name = join_identifiers(node);
+    let range = identifiers_range(node);
+    let refs = match range {
+        Some(range) => vec![NameRef::new(Name::new(name.as_str()), range)],
+        None => Vec::new(),
+    };
+    ExprData::ClassLit(SpannedTypeRef {
+        ty: TypeRef::Reference {
+            name,
+            generic_args: Vec::new(),
+        },
+        refs,
     })
 }
 
@@ -1183,7 +1221,7 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
                 .collect()
         })
         .unwrap_or_default();
-    let type_args: Vec<TypeRef<Name>> = node
+    let type_args: Vec<SpannedTypeRef> = node
         .children()
         .find(|c| c.kind() == J::TYPE_ARGUMENTS)
         .map(|t| type_arguments_from(&t))
@@ -1257,24 +1295,36 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
                 .children_with_tokens()
                 .find_map(|e| e.as_token().and_then(primitive_from_token))
             {
-                return Some(TypeRef::Primitive(prim));
+                return Some(SpannedTypeRef::synthetic(TypeRef::Primitive(prim)));
             }
-            let name = node
-                .children()
-                .find(|c| c.kind() == QUALIFIED_NAME)
-                .map(|q| trimmed_text(&q))
+            let qual = node.children().find(|c| c.kind() == QUALIFIED_NAME);
+            let name = qual
+                .as_ref()
+                .map(trimmed_text)
                 .unwrap_or_else(|| "<missing>".to_owned());
             let generic_args = node
                 .children()
                 .find(|c| c.kind() == TYPE_ARGUMENTS)
                 .map(|t| type_arguments_from(&t))
                 .unwrap_or_default();
-            (name.as_str() != "<missing>").then(|| TypeRef::Reference {
-                name: Name::new(&name),
-                generic_args,
+            (name.as_str() != "<missing>").then(|| {
+                let mut refs: Vec<NameRef> = Vec::new();
+                if let Some(q) = qual
+                    && name.as_str() != "<missing>"
+                {
+                    refs.push(NameRef::new(Name::new(&name), q.text_range()));
+                }
+                refs.extend(generic_args.iter().flat_map(|arg| arg.refs.iter().cloned()));
+                SpannedTypeRef::new(
+                    TypeRef::Reference {
+                        name: Name::new(&name),
+                        generic_args: generic_args.into_iter().map(|spanned| spanned.ty).collect(),
+                    },
+                    refs,
+                )
             })
         })
-        .unwrap_or(TypeRef::Error);
+        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
     if let Some(args) = node.children().find(|c| c.kind() == ARGUMENT_LIST) {
         let args: Vec<ExprId> = args
             .children()
@@ -1310,7 +1360,11 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
         if let Some(size) = dimension.children().find(|c| is_expr_kind(c.kind())) {
             dims.push(expr(ctx, owner, &size));
         } else {
-            ty = TypeRef::Array(Box::new(ty));
+            let SpannedTypeRef { ty: inner, refs } = ty;
+            ty = SpannedTypeRef {
+                ty: TypeRef::Array(Box::new(inner)),
+                refs,
+            };
         }
     }
     // An array creation initializer ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6),
@@ -1360,13 +1414,13 @@ fn anonymous_members(class_body: &SyntaxNode<Lang>) -> Vec<AnonymousMethod> {
 
 fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     use J::*;
-    let mut params: Vec<(Name, Option<TypeRef<Name>>)> = Vec::new();
+    let mut params: Vec<(Name, Option<SpannedTypeRef>)> = Vec::new();
     // A single-parameter lambda `x -> body` lowers the parameter as a bare
     // identifier token ([JLS §15.27.1]); the other forms are parenthesized
     // node children (`FORMAL_PARAMETERS` for typed parameters,
     // `INFERRED_PARAMETERS` for `(a, b)`, each parameter nested one level
     // deep).
-    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<TypeRef<Name>>) {
+    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<SpannedTypeRef>) {
         let name = first_identifier(c).unwrap_or_else(missing_name);
         let ty = c
             .children()
@@ -1374,7 +1428,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
             .map(|t| super::type_from(&t));
         (name, ty)
     }
-    fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<(Name, Option<TypeRef<Name>>)>) {
+    fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<(Name, Option<SpannedTypeRef>)>) {
         for t in c.children_with_tokens() {
             match t {
                 rowan::NodeOrToken::Token(token) => {
@@ -1428,7 +1482,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                 .children()
                 .find(|c| c.kind() == TYPE)
                 .map(|t| super::type_from(&t))
-                .unwrap_or(TypeRef::Error);
+                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §14.30.1: `Foo f` binds the identifier, whose declared type is
             // the pattern type; `Foo _` binds nothing.
             let binding = node
@@ -1453,7 +1507,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                 .children()
                 .find(|c| c.kind() == TYPE)
                 .map(|t| super::type_from(&t))
-                .unwrap_or(TypeRef::Error);
+                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §14.30.2: `Point(int x, int y)` — each component is a nested
             // pattern node.
             let components = node
@@ -1540,6 +1594,30 @@ fn join_identifiers(node: &SyntaxNode<Lang>) -> Name {
     let mut parts = Vec::new();
     collect_identifiers(node, &mut parts);
     Name::new(&parts.join("."))
+}
+
+/// The source range spanning the identifier tokens of `node` — the qualified
+/// name of a class literal, `TypeName.this`, ... — for unknown-name
+/// diagnostics.
+fn identifiers_range(node: &SyntaxNode<Lang>) -> Option<TextRange> {
+    let mut ranges = Vec::new();
+    fn walk(node: &SyntaxNode<Lang>, ranges: &mut Vec<TextRange>) {
+        for element in node.children_with_tokens() {
+            match element {
+                NodeOrToken::Node(child) => walk(&child, ranges),
+                NodeOrToken::Token(token) => {
+                    if token_is(&token, J::IDENTIFIER) && token.text() != "new" {
+                        ranges.push(token.text_range());
+                    }
+                }
+            }
+        }
+    }
+    walk(node, &mut ranges);
+    Some(TextRange::new(
+        ranges.first()?.start(),
+        ranges.last()?.end(),
+    ))
 }
 
 fn collect_identifiers(node: &SyntaxNode<Lang>, parts: &mut Vec<String>) {
@@ -1632,7 +1710,7 @@ fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {
     Some(prim)
 }
 
-fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<TypeRef<Name>> {
+fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
     use J::*;
     node.children()
         .filter(|c| c.kind() == TYPE_ARGUMENT)
@@ -1640,28 +1718,32 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<TypeRef<Name>> {
             if let Some(ty) = c.children().find(|t| t.kind() == TYPE) {
                 super::type_from(&ty)
             } else if let Some(wild) = c.children().find(|w| w.kind() == WILDCARD_TYPE) {
-                let bound = wild
-                    .children()
-                    .find(|b| b.kind() == WILDCARD_BOUNDS)
-                    .map(|bounds| {
+                let (bound, refs) = match wild.children().find(|b| b.kind() == WILDCARD_BOUNDS) {
+                    Some(bounds) => {
                         let is_super = bounds
                             .children_with_tokens()
                             .any(|e| e.as_token().is_some_and(|t| token_text(t, "super")));
-                        let ty = bounds
+                        let inner = bounds
                             .children()
                             .find(|t| t.kind() == TYPE)
                             .map(|t| super::type_from(&t))
-                            .unwrap_or(TypeRef::Error);
+                            .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+                        let refs = inner.refs.clone();
                         let bound = if is_super {
-                            TypeBound::Lower(ty)
+                            TypeBound::Lower(inner.ty)
                         } else {
-                            TypeBound::Upper(ty)
+                            TypeBound::Upper(inner.ty)
                         };
-                        Box::new(bound)
-                    });
-                TypeRef::Wildcard { bound }
+                        (Some(Box::new(bound)), refs)
+                    }
+                    None => (None, Vec::new()),
+                };
+                SpannedTypeRef {
+                    ty: TypeRef::Wildcard { bound },
+                    refs,
+                }
             } else {
-                TypeRef::Error
+                SpannedTypeRef::synthetic(TypeRef::Error)
             }
         })
         .collect()

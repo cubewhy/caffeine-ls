@@ -7,17 +7,18 @@
 //! source ranges of every declaration are kept.
 
 use java_syntax::{Lang, SyntaxKind as J};
-use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
-use syntax::stub::{PrimitiveType, RecordComponentData, TypeBound, TypeParameter, TypeRef};
+use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange, TextSize};
+use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
     item_tree::{
         AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData,
         ItemData, ItemId, MethodData, ModuleData, ModuleExports, ModuleProvides, ModuleRequires,
-        Param, RecordData, Signature, StaticInitData,
+        Param, RecordComponent, RecordData, Signature, StaticInitData, TypeParam,
     },
     modifiers::Modifiers,
     name::Name,
+    span::{NameRef, SpannedTypeRef},
 };
 
 use crate::lower::LowerCtx;
@@ -222,7 +223,9 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let name = decl_identifier(node)?;
     let modifiers = child_modifiers(node);
     let ret = if token_is_direct(node, J::VOID_KW) {
-        Some(TypeRef::Primitive(PrimitiveType::Void))
+        Some(SpannedTypeRef::synthetic(TypeRef::Primitive(
+            PrimitiveType::Void,
+        )))
     } else {
         node.children()
             .find(|child| is(child, J::TYPE))
@@ -469,11 +472,8 @@ fn lower_module(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
             } else if is(&directive, J::OPENS_DIRECTIVE) {
                 opens.push(package_exports_from(&directive));
             } else if is(&directive, J::USES_DIRECTIVE) {
-                if let Some(ty) = qualified_name_text(&directive) {
-                    uses.push(TypeRef::Reference {
-                        name: ty,
-                        generic_args: Vec::new(),
-                    });
+                if let Some(child) = qualified_name_child(&directive) {
+                    uses.push(qualified_name_ref(&child));
                 }
             } else if is(&directive, J::PROVIDES_DIRECTIVE) {
                 provides.push(provides_from(&directive));
@@ -531,30 +531,37 @@ fn package_exports_from(directive: &SyntaxNode<Lang>) -> ModuleExports {
 }
 
 fn provides_from(directive: &SyntaxNode<Lang>) -> ModuleProvides {
-    let names: Vec<Name> = directive
+    let names: Vec<SpannedTypeRef> = directive
         .children()
         .filter(|child| is(child, J::QUALIFIED_NAME))
-        .map(|child| Name::new(&trimmed_text(&child)))
+        .map(|child| qualified_name_ref(&child))
         .collect();
     let service = names
         .first()
         .cloned()
-        .map(|name| TypeRef::Reference {
-            name,
-            generic_args: Vec::new(),
-        })
-        .unwrap_or(TypeRef::Error);
-    let implementations = names
-        .into_iter()
-        .skip(1)
-        .map(|name| TypeRef::Reference {
-            name,
-            generic_args: Vec::new(),
-        })
-        .collect();
+        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+    let implementations = names.into_iter().skip(1).collect();
     ModuleProvides {
         service,
         implementations,
+    }
+}
+
+/// A single fully qualified *type* name child of a syntax node.
+fn qualified_name_child(node: &SyntaxNode<Lang>) -> Option<SyntaxNode<Lang>> {
+    node.children().find(|child| is(child, J::QUALIFIED_NAME))
+}
+
+/// A `TypeRef::Reference` over a qualified-name syntax node, carrying the
+/// node's source range.
+fn qualified_name_ref(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
+    let name = &trimmed_text(node);
+    SpannedTypeRef {
+        ty: TypeRef::Reference {
+            name: Name::new(name),
+            generic_args: Vec::new(),
+        },
+        refs: vec![NameRef::new(Name::new(name), node.text_range())],
     }
 }
 
@@ -639,21 +646,21 @@ fn child_modifiers(node: &SyntaxNode<Lang>) -> Modifiers {
         .unwrap_or_default()
 }
 
-fn child_type_params(node: &SyntaxNode<Lang>) -> Vec<TypeParameter<Name>> {
+fn child_type_params(node: &SyntaxNode<Lang>) -> Vec<TypeParam> {
     node.children()
         .find(|child| is(child, J::TYPE_PARAMETERS))
         .map(|child| type_params_from(&child))
         .unwrap_or_default()
 }
 
-fn type_params_from(node: &SyntaxNode<Lang>) -> Vec<TypeParameter<Name>> {
+fn type_params_from(node: &SyntaxNode<Lang>) -> Vec<TypeParam> {
     node.children()
         .filter(|child| is(child, J::TYPE_PARAMETER))
         .map(|child| type_param_from(&child))
         .collect()
 }
 
-fn type_param_from(node: &SyntaxNode<Lang>) -> TypeParameter<Name> {
+fn type_param_from(node: &SyntaxNode<Lang>) -> TypeParam {
     let name = first_token(node, J::IDENTIFIER)
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(missing_name);
@@ -668,7 +675,7 @@ fn type_param_from(node: &SyntaxNode<Lang>) -> TypeParameter<Name> {
                 .collect()
         })
         .unwrap_or_default();
-    TypeParameter {
+    TypeParam {
         name,
         bounds,
         annotations: Vec::new(),
@@ -694,7 +701,7 @@ fn param_from(node: &SyntaxNode<Lang>) -> Param {
         .children()
         .find(|child| is(child, J::TYPE))
         .map(|child| type_from(&child))
-        .unwrap_or(TypeRef::Error);
+        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
     if let Some(dims) = node.children().find(|child| is(child, J::DIMENSIONS)) {
         ty = wrap_dims(ty, &dims);
     }
@@ -704,22 +711,22 @@ fn param_from(node: &SyntaxNode<Lang>) -> Param {
     Param { name, ty, varargs }
 }
 
-fn component_from(node: &SyntaxNode<Lang>) -> RecordComponentData<Name> {
+fn component_from(node: &SyntaxNode<Lang>) -> RecordComponent {
     let name = first_token(node, J::IDENTIFIER)
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(missing_name);
-    let component_type = node
+    let ty = node
         .children()
         .find(|child| is(child, J::TYPE))
         .map(|child| type_from(&child))
-        .unwrap_or(TypeRef::Error);
+        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
     let varargs = node.children_with_tokens().any(|element| match element {
         NodeOrToken::Token(token) => token.kind() == J::ELLIPSIS,
         NodeOrToken::Node(_) => false,
     });
-    RecordComponentData {
+    RecordComponent {
         name,
-        component_type,
+        ty,
         varargs,
         annotations: Vec::new(),
     }
@@ -727,7 +734,7 @@ fn component_from(node: &SyntaxNode<Lang>) -> RecordComponentData<Name> {
 
 /// The types listed in the named clause (`THROWS_CLAUSE`, `IMPLEMENTS_CLAUSE`,
 /// ...).
-fn clause_types(node: &SyntaxNode<Lang>, clause_kind: J) -> Vec<TypeRef<Name>> {
+fn clause_types(node: &SyntaxNode<Lang>, clause_kind: J) -> Vec<SpannedTypeRef> {
     node.children()
         .find(|child| is(child, clause_kind))
         .map(|clause| {
@@ -761,9 +768,9 @@ fn token_range_after(node: &SyntaxNode<Lang>, start_kind: J, end_kind: J) -> Opt
     Some(TextRange::new(start, end))
 }
 
-pub(super) fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
+pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     if !is(node, J::TYPE) {
-        return TypeRef::Error;
+        return SpannedTypeRef::synthetic(TypeRef::Error);
     }
 
     // primitive
@@ -775,21 +782,30 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
         return node
             .children()
             .filter(|child| is(child, J::DIMENSIONS))
-            .fold(ty, |ty, dims| wrap_dims(ty, &dims));
+            .fold(SpannedTypeRef::synthetic(ty), |spanned, dims| {
+                wrap_dims(spanned, &dims)
+            });
     }
 
     // reference type: QUALIFIED_NAME [TYPE_ARGUMENTS] (DOT IDENTIFIER TYPE_ARGUMENTS)* [DIMENSIONS]
     let mut name = String::new();
     let mut generic_args = Vec::new();
     let mut saw_dot = false;
+    // The source range of the reference name being built: from the start of
+    // the first segment (the `QUALIFIED_NAME`) to the end of the last
+    // identifier, excluding type arguments and dimensions.
+    let mut name_start: Option<TextSize> = None;
+    let mut name_end: TextSize = node.text_range().start();
     for element in node.children_with_tokens() {
         match element {
             NodeOrToken::Node(child) => {
                 if is(&child, J::ERROR) {
-                    return TypeRef::Error;
+                    return SpannedTypeRef::synthetic(TypeRef::Error);
                 }
                 if is(&child, J::QUALIFIED_NAME) {
                     name.push_str(&trimmed_text(&child));
+                    name_start = Some(name_start.unwrap_or(child.text_range().start()));
+                    name_end = child.text_range().end();
                     saw_dot = false;
                 } else if is(&child, J::TYPE_ARGUMENTS) {
                     generic_args.extend(type_arguments_from(&child));
@@ -802,6 +818,7 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
                 } else if saw_dot && token_is(&token, J::IDENTIFIER) {
                     name.push('.');
                     name.push_str(token.text());
+                    name_end = token.text_range().end();
                     saw_dot = false;
                 }
             }
@@ -809,63 +826,87 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
     }
 
     if name.is_empty() {
-        return TypeRef::Error;
+        return SpannedTypeRef::synthetic(TypeRef::Error);
+    }
+
+    // Reference names of the type: its own name first, then those of its
+    // (recursively) generic arguments, depth-first.
+    let mut refs = Vec::with_capacity(1 + generic_args.len());
+    if let Some(start) = name_start {
+        refs.push(NameRef::new(
+            Name::new(&name.clone()),
+            TextRange::new(start, name_end),
+        ));
+    }
+    for arg in &generic_args {
+        refs.extend(arg.refs.iter().cloned());
     }
 
     let ty = TypeRef::Reference {
         name: Name::new(&name),
-        generic_args,
+        generic_args: generic_args.into_iter().map(|spanned| spanned.ty).collect(),
     };
     node.children()
         .filter(|child| is(child, J::DIMENSIONS))
-        .fold(ty, |ty, dims| wrap_dims(ty, &dims))
+        .fold(SpannedTypeRef::new(ty, refs), |spanned, dims| {
+            wrap_dims(spanned, &dims)
+        })
 }
 
-fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<TypeRef<Name>> {
+fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
     node.children()
         .filter(|child| is(child, J::TYPE_ARGUMENT))
         .map(|child| type_argument_from(&child))
         .collect()
 }
 
-fn type_argument_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
+fn type_argument_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     if let Some(wildcard) = node.children().find(|child| is(child, J::WILDCARD_TYPE)) {
         wildcard_from(&wildcard)
     } else if let Some(ty) = node.children().find(|child| is(child, J::TYPE)) {
         type_from(&ty)
     } else {
-        TypeRef::Error
+        SpannedTypeRef::synthetic(TypeRef::Error)
     }
 }
 
-fn wildcard_from(node: &SyntaxNode<Lang>) -> TypeRef<Name> {
-    let bound = node
-        .children()
-        .find(|child| is(child, J::WILDCARD_BOUNDS))
-        .map(|bounds| {
+fn wildcard_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
+    let (bound, refs) = match node.children().find(|child| is(child, J::WILDCARD_BOUNDS)) {
+        Some(bounds) => {
             let is_super = bounds
                 .children_with_tokens()
                 .any(|element| element.as_token().is_some_and(|t| token_text(t, "super")));
-            let ty = bounds
+            let inner = bounds
                 .children()
                 .find(|child| is(child, J::TYPE))
                 .map(|child| type_from(&child))
-                .unwrap_or(TypeRef::Error);
+                .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+            let refs = inner.refs.clone();
             let bound = if is_super {
-                TypeBound::Lower(ty)
+                TypeBound::Lower(inner.ty)
             } else {
-                TypeBound::Upper(ty)
+                TypeBound::Upper(inner.ty)
             };
-            Box::new(bound)
-        });
-    TypeRef::Wildcard { bound }
+            (Some(Box::new(bound)), refs)
+        }
+        None => (None, Vec::new()),
+    };
+    SpannedTypeRef {
+        ty: TypeRef::Wildcard { bound },
+        refs,
+    }
 }
 
-/// Wraps `ty` in one `Array` per `DIMENSION` child of `dims`.
-fn wrap_dims(ty: TypeRef<Name>, dims: &SyntaxNode<Lang>) -> TypeRef<Name> {
-    dims.children()
+/// Wraps `spanned` in one `Array` per `DIMENSION` child of `dims`.
+fn wrap_dims(spanned: SpannedTypeRef, dims: &SyntaxNode<Lang>) -> SpannedTypeRef {
+    let ty = dims
+        .children()
         .filter(|child| is(child, J::DIMENSION))
-        .fold(ty, |ty, _| TypeRef::Array(Box::new(ty)))
+        .fold(spanned.ty, |ty, _| TypeRef::Array(Box::new(ty)));
+    SpannedTypeRef {
+        ty,
+        refs: spanned.refs,
+    }
 }
 
 fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {

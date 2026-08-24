@@ -108,6 +108,14 @@ impl Analysis {
         self.with_db(|db| ide_diagnostics::type_diagnostics(db, file_id))
     }
 
+    /// The declaration-level diagnostics of the file — unknown-type/ambiguity
+    /// and import reports ([JLS §6.5.5.1], [§7.5]) and the inheritance check
+    /// of every class-like declaration ([§8.4.8.3], [§9.4.1.3], [§9.6.4.4]) —
+    /// see [`ide_diagnostics::declaration_diagnostics`].
+    pub fn declaration_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::declaration_diagnostics(db, file_id))
+    }
+
     /// Gets the file's `LineIndex`: data structure to convert between absolute
     /// offsets and line/column representation.
     pub fn file_line_index(&self, file_id: FileId) -> Cancellable<Arc<LineIndex>> {

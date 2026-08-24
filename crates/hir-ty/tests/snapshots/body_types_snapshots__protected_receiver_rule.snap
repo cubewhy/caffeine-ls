@@ -13,7 +13,7 @@ FILE /src/org/other/C.java:
 package org.other;
 
 class C extends com.example.A {
-    A a = new A();
+    com.example.A a = new com.example.A();
     C c = new C();
 
     void use() {
@@ -29,11 +29,11 @@ method pro(): void
   exprs: 
 field a
   locals: 
-  exprs: e0: org.other.A
+  exprs: e0: com.example.A
 field c
   locals: 
   exprs: e1: org.other.C
 method use(): void
   locals: 
-  exprs: e2: org.other.A | e3: <error> | e4: org.other.C | e5: void | e7: void | e8: void
+  exprs: e2: com.example.A | e3: <error> | e4: org.other.C | e5: void | e7: void | e8: void
   diags: e3@7:8: no-such-method: cannot find method 'pro'

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/resolve_type_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(Object o) {
+        org.example.List<java.lang.String> a = new org.example.List<java.lang.String>();
+        org.example.List<java.lang.String> b;
+        Object c = (org.example.NoSuch) o;
+        Class<?> k = org.example.MissingClass.class;
+    }
+}
+
+method m(java.lang.Object): void
+  locals: l0: java.lang.Object | l1: org.example.List<java.lang.String> | l2: org.example.List<java.lang.String> | l3: java.lang.Object | l4: java.lang.Class<?>
+  exprs: e0: org.example.List<java.lang.String> | e1: java.lang.Object | e2: org.example.NoSuch | e3: java.lang.Class<org.example.MissingClass>
+  diags: e2@6:18: incompatible-types: incompatible types: org.example.NoSuch cannot be converted to java.lang.Object | l1@4:8: cannot-resolve-type: cannot resolve symbol 'org.example.List' | e0@4:50: cannot-resolve-type: cannot resolve symbol 'org.example.List' | l2@5:8: cannot-resolve-type: cannot resolve symbol 'org.example.List' | e2@6:20: cannot-resolve-type: cannot resolve symbol 'org.example.NoSuch' | e3@7:21: cannot-resolve-type: cannot resolve symbol 'org.example.MissingClass'

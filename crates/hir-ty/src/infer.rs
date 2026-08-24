@@ -45,6 +45,7 @@ use hir_expand::{
     },
     item_tree::{ItemData, ItemId},
     name::Name,
+    span::SpannedTypeRef,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
@@ -124,6 +125,10 @@ pub(crate) fn body_types_impl(
         case_values: Vec::new(),
     };
     let mut body = None;
+    // §6.5.5.1: the expression forests of body-less items (field
+    // initializers, enum constant arguments, annotation element defaults),
+    // walked for their type references by [`crate::name_check`].
+    let mut ctx_orphan_exprs = Vec::new();
     match item_data(&tree, item)? {
         // A method or constructor body ([§8.4]); the return type is the
         // target of a `return` ([§14.17], [§18.5.2.4]).
@@ -158,6 +163,7 @@ pub(crate) fn body_types_impl(
                 None => {
                     let default = method.default_expr?;
                     let _ = ctx.with_target(ctx.enclosing_ret, |this| this.infer_expr(default));
+                    ctx_orphan_exprs.push(default);
                 }
             }
         }
@@ -194,6 +200,7 @@ pub(crate) fn body_types_impl(
             // textually after it.
             ctx.forward_names = forward_field_names(&tree, item, field.modifiers.static_);
             let _ = ctx.with_target(Some(target), |this| this.infer_expr(initializer));
+            ctx_orphan_exprs.push(initializer);
         }
         // Enum constant arguments ([§8.9.1]) — inferred standalone (the
         // constructor resolution is out of scope here).
@@ -204,9 +211,56 @@ pub(crate) fn body_types_impl(
             for &arg in &constant.argument_exprs {
                 let _ = ctx.infer_expr(arg);
             }
+            ctx_orphan_exprs.extend(constant.argument_exprs.iter().copied());
         }
         _ => return None,
     }
+    // §6.5.5.1/[§7.5.2]: the unknown-name and on-demand-ambiguity reports of
+    // the body's *own* type references (locals it declares, patterns and
+    // expression type references; the signature types are covered by the
+    // declaration pass). Body-owned references resolve against the same
+    // resolver the inference used.
+    let mut resolved_diags = Vec::new();
+    let body_refs: Vec<(
+        crate::diagnostics::DiagLocation,
+        hir_expand::span::SpannedTypeRef,
+    )> = match body {
+        Some(body) => crate::name_check::body_type_refs(&ctx.tree, body),
+        // A field initializer, enum constant arguments or an annotation
+        // element default carry their type references as expression
+        // forests rather than a [`Body`].
+        None => crate::name_check::expr_forest_type_refs(&ctx.tree, &ctx_orphan_exprs),
+    };
+    for (location, spanned) in body_refs {
+        let mut issues = Vec::new();
+        crate::name_check::check_spanned(db, &ctx.scope, &ctx.resolver, &spanned, &mut issues);
+        for issue in issues {
+            match issue {
+                crate::name_check::TypeRefDiag::CannotResolve { name, range } => {
+                    resolved_diags.push(TypeError::CannotResolveType {
+                        location: location.clone(),
+                        name,
+                        range,
+                    });
+                }
+                crate::name_check::TypeRefDiag::Ambiguous { name, range } => {
+                    resolved_diags.push(TypeError::AmbiguousName {
+                        location: location.clone(),
+                        name,
+                        range,
+                    });
+                }
+                crate::name_check::TypeRefDiag::ModuleNotAccessible { name, range } => {
+                    resolved_diags.push(TypeError::ModuleNotAccessible {
+                        location: location.clone(),
+                        name,
+                        range,
+                    });
+                }
+            }
+        }
+    }
+    ctx.diagnostics.extend(resolved_diags);
     Some(BodyTypes {
         body,
         exprs: ctx.types,
@@ -2008,7 +2062,7 @@ impl<'a> InferCtx<'a> {
     fn new_expr(
         &mut self,
         expr: ExprId,
-        ty: TypeRef<Name>,
+        ty: SpannedTypeRef,
         diamond: bool,
         args: &[ExprId],
         target: Option<Ty>,
@@ -2135,7 +2189,7 @@ impl<'a> InferCtx<'a> {
     fn lambda_type(
         &mut self,
         expr: ExprId,
-        params: &[(Name, Option<TypeRef<Name>>)],
+        params: &[(Name, Option<SpannedTypeRef>)],
         body: LambdaBody,
     ) -> Ty {
         let Some(target) = self.target else {
@@ -2188,7 +2242,7 @@ impl<'a> InferCtx<'a> {
         &mut self,
         expr: ExprId,
         qualifier: Option<ExprId>,
-        type_name: Option<&TypeRef<Name>>,
+        type_name: Option<&SpannedTypeRef>,
         name: &Name,
     ) -> Ty {
         let Some(target) = self.target else {
@@ -2217,7 +2271,7 @@ impl<'a> InferCtx<'a> {
     fn resolve_method_ref(
         &mut self,
         qualifier: Option<ExprId>,
-        type_name: Option<&TypeRef<Name>>,
+        type_name: Option<&SpannedTypeRef>,
         name: &Name,
         sam_params: &[Ty],
     ) {

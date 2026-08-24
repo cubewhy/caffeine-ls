@@ -26,6 +26,17 @@ pub enum JavaDiagnosticCode {
     VarWithoutInitializer,
     /// §6.5: a simple name resolves to nothing.
     CannotResolveName,
+    /// §6.5.5.1: a reference type name resolves to nothing on the classpath.
+    CannotResolveType,
+    /// §6.5.5.1/[§7.5.2]: a simple type name is ambiguous between on-demand
+    /// imports.
+    AmbiguousName,
+    /// §7.5.1: a single-type import names a class that cannot be found.
+    UnresolvedImport,
+    /// §7.5.1: two imports conflict for the same simple name.
+    ConflictingImport,
+    /// §7.4.3/[§7.7.2]: a package is not visible from the current module.
+    ModuleNotAccessible,
     /// §15.11: no field of the name on the receiver.
     NoSuchField,
     /// §15.12.1: no method of the name on the receiver.
@@ -135,6 +146,11 @@ impl JavaDiagnosticCode {
         match self {
             JavaDiagnosticCode::VarWithoutInitializer => "var-without-initializer",
             JavaDiagnosticCode::CannotResolveName => "cannot-resolve-symbol",
+            JavaDiagnosticCode::CannotResolveType => "cannot-resolve-type",
+            JavaDiagnosticCode::AmbiguousName => "ambiguous-name",
+            JavaDiagnosticCode::UnresolvedImport => "unresolved-import",
+            JavaDiagnosticCode::ConflictingImport => "conflicting-import",
+            JavaDiagnosticCode::ModuleNotAccessible => "module-not-accessible",
             JavaDiagnosticCode::NoSuchField => "no-such-field",
             JavaDiagnosticCode::NoSuchMethod => "no-such-method",
             JavaDiagnosticCode::WrongArity => "wrong-argument-count",

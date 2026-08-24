@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/resolve_type_snapshots.rs
+expression: out
+---
+FILE /src/com/example/App.java:
+package com.example;
+
+import org.missing.Thing;
+
+class App {
+    Thing field;
+}
+
+method : cannot-resolve-type: @5:4cannot resolve symbol 'Thing'
+method : unresolved-import: @0:20cannot find symbol 'org.missing.Thing' in the single-type import

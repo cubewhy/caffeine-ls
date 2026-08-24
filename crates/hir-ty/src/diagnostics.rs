@@ -9,7 +9,7 @@
 //! [`crate::body_types`] for each body-carrying item and flattening the
 //! [`crate::BodyTypes::diagnostics`].
 
-use hir_expand::body::{BodyTree, ExprId, LocalId};
+use hir_expand::body::{BodyTree, ExprId, LocalId, PatternId};
 use hir_expand::name::Name;
 use rowan::TextRange;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
@@ -22,6 +22,8 @@ pub enum DiagLocation {
     Expr(ExprId),
     /// A local (parameter or declared local) of the enclosing body.
     Local(LocalId),
+    /// A pattern of the enclosing body ([JLS §14.30]).
+    Pattern(PatternId),
 }
 
 impl DiagLocation {
@@ -33,6 +35,7 @@ impl DiagLocation {
         match self {
             DiagLocation::Expr(id) => tree.expr_range(*id),
             DiagLocation::Local(id) => tree.local_range(*id),
+            DiagLocation::Pattern(id) => tree.pattern_range(*id),
         }
     }
 }
@@ -50,6 +53,29 @@ pub enum TypeError {
     /// §6.5: a simple name resolves to nothing — no local variable, no
     /// statically imported member, no field of the implicit receiver.
     CannotResolveName { expr: ExprId, name: Name },
+    /// §6.5.5.1: a reference type name in *body* position — a local's
+    /// declared type, a class-instance creation, a cast, an array creation, a
+    /// class literal, a method reference or lambda parameter type — resolves
+    /// to nothing on the classpath.
+    CannotResolveType {
+        location: DiagLocation,
+        name: Name,
+        range: Option<TextRange>,
+    },
+    /// §6.5.5.1/[§7.5.2]: a simple type name is available through two or more
+    /// on-demand imports that denote different types — the use is ambiguous.
+    AmbiguousName {
+        location: DiagLocation,
+        name: Name,
+        range: Option<TextRange>,
+    },
+    /// §7.4.3/[§7.7.2]: a class exists on the classpath, but its package is
+    /// not visible from the resolving source set's module.
+    ModuleNotAccessible {
+        location: DiagLocation,
+        name: Name,
+        range: Option<TextRange>,
+    },
     /// §15.11: no (accessible) field of the name on the receiver expression's
     /// type.
     NoSuchField { expr: ExprId, name: Name },
@@ -146,6 +172,9 @@ impl TypeError {
             TypeError::VarWithoutInitializer { .. } => DiagnosticCode::Java(VarWithoutInitializer),
             TypeError::VarArrayInitializer { .. } => DiagnosticCode::Java(VarArrayInitializer),
             TypeError::CannotResolveName { .. } => DiagnosticCode::Java(CannotResolveName),
+            TypeError::CannotResolveType { .. } => DiagnosticCode::Java(CannotResolveType),
+            TypeError::AmbiguousName { .. } => DiagnosticCode::Java(AmbiguousName),
+            TypeError::ModuleNotAccessible { .. } => DiagnosticCode::Java(ModuleNotAccessible),
             TypeError::NoSuchField { .. } => DiagnosticCode::Java(NoSuchField),
             TypeError::NoSuchMethod { .. } => DiagnosticCode::Java(NoSuchMethod),
             TypeError::WrongArity { .. } => DiagnosticCode::Java(WrongArity),
@@ -217,15 +246,24 @@ impl TypeError {
             | NonConstantCaseLabel { expr, .. }
             | DuplicateCaseLabel { expr, .. }
             | UncheckedConversion { expr, .. } => DiagLocation::Expr(*expr),
+            CannotResolveType { location, .. }
+            | AmbiguousName { location, .. }
+            | ModuleNotAccessible { location, .. } => location.clone(),
             AlreadyCaught { local } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
     }
 
     /// The source range of the error within its file, when the construct was
-    /// lowered from a syntax node.
+    /// lowered from a syntax node. Unknown-type and ambiguity reports carry
+    /// the exact range of the offending reference name.
     pub fn range(&self, tree: &BodyTree) -> Option<TextRange> {
-        self.location().range(tree)
+        match self {
+            TypeError::CannotResolveType { range, .. }
+            | TypeError::AmbiguousName { range, .. }
+            | TypeError::ModuleNotAccessible { range, .. } => *range,
+            _ => self.location().range(tree),
+        }
     }
 
     /// The human-readable message, rendered against the body IR the error
@@ -245,6 +283,17 @@ impl TypeError {
             }
             CannotResolveName { name, .. } => {
                 format!("cannot resolve symbol '{name}'")
+            }
+            CannotResolveType { name, .. } => {
+                format!("cannot resolve symbol '{name}'")
+            }
+            AmbiguousName { name, .. } => {
+                format!("reference to '{name}' is ambiguous; both are imported on demand")
+            }
+            ModuleNotAccessible { name, .. } => {
+                format!(
+                    "package in which '{name}' is declared is not visible from the current module"
+                )
             }
             NoSuchField { name, .. } => {
                 format!("cannot find field '{name}'")

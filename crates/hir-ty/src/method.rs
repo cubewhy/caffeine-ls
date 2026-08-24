@@ -33,10 +33,12 @@
 //! through the `target` argument of [`pick_method`].
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use syntax::stub::TypeParameter;
 use vfs::FileId;
 
-use hir_expand::{item_tree::ItemData, item_tree::ItemId, name::Name};
+use hir_expand::{
+    item_tree::{ItemData, ItemId, TypeParam},
+    name::Name,
+};
 
 use crate::{
     db::{
@@ -706,7 +708,7 @@ fn source_class_methods(
     let Some(class_data) = item_data(&tree, source.item) else {
         return Vec::new();
     };
-    let declared: &[TypeParameter<Name>] = match class_data {
+    let declared: &[TypeParam] = match class_data {
         ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
         ItemData::Record(d) => &d.type_params,
         _ => &[],
@@ -1487,7 +1489,7 @@ fn source_class_fields(
     let Some(class_data) = item_data(&tree, source.item) else {
         return Vec::new();
     };
-    let declared: &[TypeParameter<Name>] = match class_data {
+    let declared: &[TypeParam] = match class_data {
         ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
         ItemData::Record(d) => &d.type_params,
         _ => &[],

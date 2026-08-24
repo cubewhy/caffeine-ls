@@ -636,7 +636,7 @@ public class A {
 package org.other;
 
 class C extends com.example.A {
-    A a = new A();
+    com.example.A a = new com.example.A();
     C c = new C();
 
     void use() {

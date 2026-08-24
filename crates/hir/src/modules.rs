@@ -13,17 +13,19 @@
 
 use std::sync::Arc;
 
-use rust_asm::constants::ACC_TRANSITIVE;
+use lasso::ThreadedRodeo;
+use rust_asm::constants::{ACC_STATIC_PHASE, ACC_TRANSITIVE};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     db::{
         HirDatabase, LibraryId, ProjectGraph, ResolutionScope, Resolved, classpath_libraries,
-        fqn_resolve, library_name_index, module_record,
+        fqn_resolve, jdk_builtin_libraries, library_name_index, module_record,
     },
     project::SourceSetId,
-    stubs::{ClassOrModuleStub, ModuleStub, Symbol},
+    stubs::{ClassOrModuleStub, ModuleExports, ModuleOpens, ModuleRequires, ModuleStub, Symbol},
 };
+use hir_expand::name::Name;
 
 /// A module descriptor resolved to a specific library and index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +114,7 @@ impl ModuleGraph {
 /// The aggregate module path of a source set: module name → descriptor (the
 /// first declaration on the classpath wins), plus package → owning module
 /// descriptors.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspaceModuleGraph {
     /// module name → descriptor. The first declaration wins; duplicates are
     /// logged as warnings.
@@ -136,6 +138,19 @@ impl WorkspaceModuleGraph {
 
     pub fn iter(&self) -> impl Iterator<Item = (&Symbol, &ModuleDescriptor)> {
         self.modules.iter()
+    }
+
+    /// Inserts a module descriptor and the package it owns (used to add a
+    /// source module to the path).
+    fn insert(&mut self, descriptor: ModuleDescriptor, packages: &[Symbol]) {
+        let name = descriptor.stub.name;
+        self.modules.insert(name, descriptor);
+        for &package in packages {
+            let owners = self.package_to_modules.entry(package).or_default();
+            if !owners.iter().any(|d| d.stub.name == name) {
+                owners.push(self.modules[&name].clone());
+            }
+        }
     }
 
     /// The modules owning `package` on this module path.
@@ -413,6 +428,206 @@ pub fn is_package_visible_from_unnamed(workspace: &WorkspaceModuleGraph, package
         .any(|owner| is_package_exported(&owner.stub, package, None))
 }
 
+// --- module context of a source file -----------------------------------------
+
+/// The module context a file's name resolution runs against
+/// ([JLS §7.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.3)):
+/// the module its source set declares via `module-info.java`, or the *unnamed
+/// module* ([§7.7.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7.5))
+/// when the source set declares none — plus the source-set-scoped module path
+/// made of its classpath libraries *and* its own module. Name resolution gates
+/// classpath candidates with [`ModuleCtx::package_visible`]
+/// ([§7.4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.3),
+/// [§7.7.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7.2)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleCtx {
+    /// The name of the source set's own module, when the source set declares
+    /// one; `None` marks the unnamed module.
+    pub module: Option<Symbol>,
+    /// The module path: the classpath libraries plus the source module.
+    pub graph: WorkspaceModuleGraph,
+}
+
+impl ModuleCtx {
+    /// Whether `package` is visible from this context ([§7.4.3]): for the
+    /// unnamed module a classpath (non-modular) package is always accessible
+    /// and a module-owned package must be exported
+    /// ([`is_package_visible_from_unnamed`]); for a named module the owning
+    /// module must be readable ([§7.7.2]) and the package exported to it
+    /// ([`is_package_visible`]).
+    pub fn package_visible(&self, interner: &ThreadedRodeo, package: &str) -> bool {
+        let package = interner.get_or_intern(package);
+        match self.module {
+            None => is_package_visible_from_unnamed(&self.graph, package),
+            Some(from) => {
+                let Some(from_descriptor) = self.graph.module(from) else {
+                    return false;
+                };
+                is_package_visible(&self.graph, from_descriptor, package)
+            }
+        }
+    }
+}
+
+/// The descriptor of a source module synthesized from its `module-info.java`.
+/// The `library`/`module_idx` fields are unused by the visibility helpers (the
+/// descriptor's stub name is the key), so a sentinel id is fine.
+fn source_module_descriptor(stub: Arc<ModuleStub<Symbol>>) -> ModuleDescriptor {
+    ModuleDescriptor {
+        library: crate::db::LibraryId(u64::MAX),
+        module_idx: 0,
+        stub,
+    }
+}
+
+/// The module context of a source set: its classpath module path plus its own
+/// `module-info.java` (if it has one) synthesized into the graph.
+#[salsa::tracked(returns(ref))]
+fn source_set_module_ctx_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    source_set: SourceSetId,
+) -> Arc<ModuleCtx> {
+    let interner = &db.hir_state().interner;
+    let mut graph =
+        workspace_module_graph_for_libraries(db, &classpath_libraries(db, source_set.clone()));
+    let Some(pg) = ProjectGraph::try_get(db) else {
+        return Arc::new(ModuleCtx {
+            module: None,
+            graph,
+        });
+    };
+
+    let mut packages: FxHashSet<Symbol> = FxHashSet::default();
+    let mut source_module: Option<(Name, bool, hir_expand::item_tree::ModuleData)> = None;
+    let roots: Vec<base_db::SourceRootId> = pg
+        .source_root_to_source_set(db)
+        .iter()
+        .filter(|(_, owner)| **owner == source_set)
+        .map(|(root, _)| *root)
+        .collect();
+    for root in roots {
+        let source_root = db.source_root(root).source_root(db);
+        for file in source_root.iter() {
+            let tree = crate::db::file_item_tree(db, file);
+            if let Some(package) = &tree.package {
+                packages.insert(interner.get_or_intern(package.as_str()));
+            }
+            for &top in &tree.top {
+                if let hir_expand::item_tree::ItemData::Module(data) = tree.data(top)
+                    && source_module.is_none()
+                {
+                    source_module = Some((data.name.clone(), data.is_open, data.clone()));
+                }
+            }
+        }
+    }
+
+    let module = source_module
+        .as_ref()
+        .map(|(name, _, _)| interner.get_or_intern(name.as_str()));
+    if let Some((name, is_open, data)) = source_module {
+        let module_symbol = interner.get_or_intern(name.as_str());
+        let mut exports: Vec<ModuleExports<Symbol>> = data
+            .exports
+            .iter()
+            .map(|e| ModuleExports {
+                package_name: interner.get_or_intern(e.package.as_str()),
+                flags: 0,
+                to_modules: e
+                    .to
+                    .iter()
+                    .map(|t| interner.get_or_intern(t.as_str()))
+                    .collect(),
+            })
+            .collect();
+        // An `open` module exports every package
+        // ([§7.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7.1)).
+        if is_open {
+            for &package in &packages {
+                if !exports.iter().any(|e| e.package_name == package) {
+                    exports.push(ModuleExports {
+                        package_name: package,
+                        flags: 0,
+                        to_modules: Vec::new(),
+                    });
+                }
+            }
+        }
+        let stub = Arc::new(ModuleStub {
+            name: module_symbol,
+            flags: 0,
+            version: None,
+            requires: data
+                .requires
+                .iter()
+                .map(|r| ModuleRequires {
+                    module_name: interner.get_or_intern(r.name.as_str()),
+                    flags: ((r.transitive as u16) * ACC_TRANSITIVE)
+                        | ((r.statik as u16) * ACC_STATIC_PHASE),
+                    compiled_version: None,
+                })
+                .collect(),
+            exports,
+            opens: data
+                .opens
+                .iter()
+                .map(|o| ModuleOpens {
+                    package_name: interner.get_or_intern(o.package.as_str()),
+                    flags: 0,
+                    to_modules: o
+                        .to
+                        .iter()
+                        .map(|t| interner.get_or_intern(t.as_str()))
+                        .collect(),
+                })
+                .collect(),
+            uses: Vec::new(),
+            provides: Vec::new(),
+        });
+        let packages: Vec<Symbol> = packages.into_iter().collect();
+        graph.insert(source_module_descriptor(stub), &packages);
+    }
+
+    Arc::new(ModuleCtx { module, graph })
+}
+
+/// The module context of an explicit library list (an unnamed module).
+#[salsa::tracked(returns(ref))]
+fn libraries_module_ctx_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    libraries: Vec<LibraryId>,
+) -> Arc<ModuleCtx> {
+    Arc::new(ModuleCtx {
+        module: None,
+        graph: workspace_module_graph_for_libraries(db, &libraries),
+    })
+}
+
+/// The module context of a resolution scope: for a source set, its own module
+/// (or the unnamed module) gated over its classpath; for a bare library list
+/// or the JDK built-ins, the unnamed module over those libraries.
+pub fn module_ctx_for_scope(db: &dyn HirDatabase, scope: &ResolutionScope) -> Arc<ModuleCtx> {
+    let Some(project_graph) = ProjectGraph::try_get(db) else {
+        return Arc::new(ModuleCtx {
+            module: None,
+            graph: WorkspaceModuleGraph::default(),
+        });
+    };
+    match scope {
+        ResolutionScope::SourceSet(source_set) => {
+            source_set_module_ctx_query(db, project_graph, source_set.clone()).clone()
+        }
+        ResolutionScope::Classpath(libraries) => {
+            libraries_module_ctx_query(db, project_graph, libraries.clone()).clone()
+        }
+        ResolutionScope::JdkBuiltins => {
+            libraries_module_ctx_query(db, project_graph, jdk_builtin_libraries(db)).clone()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use lasso::ThreadedRodeo;
@@ -661,5 +876,71 @@ mod tests {
             &workspace,
             interner.get_or_intern("com.example.plain")
         ));
+    }
+
+    #[test]
+    fn module_ctx_gates_candidates_like_a_named_module() {
+        let interner = ThreadedRodeo::default();
+        // A library module exporting `lib.api` unqualified and `lib.internal`
+        // only to `app`.
+        let lib = module_stub(
+            &interner,
+            "lib.mod",
+            &[],
+            &[
+                ("lib.api", 0, Vec::new()),
+                ("lib.internal", 0, vec!["app.mod"]),
+            ],
+        );
+        // The source set's own module, requiring `lib.mod`.
+        let app = module_stub(&interner, "app.mod", &[("lib.mod", ACC_TRANSITIVE)], &[]);
+
+        let mut graph = WorkspaceModuleGraph {
+            modules: FxHashMap::from_iter([(lib.name, owner(&lib, 2)), (app.name, owner(&app, 1))]),
+            package_to_modules: FxHashMap::default(),
+        };
+        for package in ["lib.api", "lib.internal"] {
+            graph
+                .package_to_modules
+                .entry(interner.get_or_intern(package))
+                .or_default()
+                .push(graph.modules[&interner.get_or_intern("lib.mod")].clone());
+        }
+
+        // The source set behaves as a named module: only packages it reads
+        // from readable, exporting modules are visible ([§7.7.2], [§7.4.3]).
+        let ctx = ModuleCtx {
+            module: Some(interner.get_or_intern("app.mod")),
+            graph: graph.clone(),
+        };
+        assert!(ctx.package_visible(&interner, "lib.api"));
+        assert!(ctx.package_visible(&interner, "lib.internal"));
+
+        // Without the `requires`, `lib.mod` is not readable and its packages
+        // are invisible.
+        let no_reads = ModuleCtx {
+            module: Some(interner.get_or_intern("app.mod")),
+            graph: {
+                let mut graph = graph.clone();
+                let no_read = owner(&module_stub(&interner, "app.mod", &[], &[]), 1);
+                graph
+                    .modules
+                    .insert(interner.get_or_intern("app.mod"), no_read);
+                graph
+            },
+        };
+        assert!(!no_reads.package_visible(&interner, "lib.api"));
+
+        // The unnamed module sees unqualified exports, but not qualified-only
+        // ones ([§7.7.5]).
+        let unnamed = ModuleCtx {
+            module: None,
+            graph,
+        };
+        assert!(unnamed.package_visible(&interner, "lib.api"));
+        assert!(!unnamed.package_visible(&interner, "lib.internal"));
+        // A non-modular (classpath) package is always visible from the unnamed
+        // module.
+        assert!(unnamed.package_visible(&interner, "com.example.plain"));
     }
 }

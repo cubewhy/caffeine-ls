@@ -13,3 +13,4 @@ pub mod item_tree;
 pub mod modifiers;
 pub mod name;
 pub mod pretty;
+pub mod span;

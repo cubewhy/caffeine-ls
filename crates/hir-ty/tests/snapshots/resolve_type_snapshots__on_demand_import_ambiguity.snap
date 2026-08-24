@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/resolve_type_snapshots.rs
+expression: out
+---
+FILE /src/com/example/App.java:
+package com.example;
+
+import com.a.*;
+import com.b.*;
+
+class App {
+    Widget w;
+}
+
+method : ambiguous-name: @6:4reference to 'Widget' is ambiguous; both are imported on demand

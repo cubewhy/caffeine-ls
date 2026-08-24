@@ -11,7 +11,7 @@ use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase,
     SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
 };
-use hir::{HirDatabase, HirState, LibraryId, LibraryKind};
+use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind};
 use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
@@ -236,6 +236,79 @@ pub fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
         walk(tree, top, &mut out);
     }
     out
+}
+
+/// A temporary jar holding `specs`, plus its registered [`LibraryId`].
+pub struct TempJar {
+    pub _dir: TempDir,
+    pub path: camino::Utf8PathBuf,
+    pub lib: LibraryId,
+}
+
+/// Builds a temporary library jar from class descriptions.
+pub fn temp_jar(name: &str, specs: &[ClassSpec]) -> TempJar {
+    let dir = TempDir::new().unwrap();
+    let base = camino::Utf8PathBuf::from_path_buf(dir.path().join(name)).unwrap();
+    std::fs::create_dir_all(&base).unwrap();
+    let path = base.join("lib.jar");
+    build_jar(&path, specs);
+    let lib = LibraryId::from_file_path(path.as_std_path()).unwrap();
+    TempJar {
+        _dir: dir,
+        path,
+        lib,
+    }
+}
+
+/// Registers a source set owning a single source root with `files`, like
+/// [`register_source_set`], but with an explicit ordered classpath and extra
+/// libraries (the JDK fixture should be one of the classpath entries).
+pub fn register_source_set_classpath(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    files: &[(&str, &str)],
+    classpath: Vec<hir::ClasspathEntry>,
+    extra: &[(LibraryId, LibraryInfo)],
+) -> hir::SourceSetId {
+    let mut file_set = FileSet::default();
+    for (i, (path, _)) in files.iter().enumerate() {
+        file_set.insert(
+            FileId::from_raw((i + 1) as u32),
+            VfsPath::from(AbsPathBuf::assert_utf8((*path).into())),
+        );
+    }
+    let root = SourceRoot::new(file_set);
+    let mut change = FileChange::default();
+    change.set_roots(vec![root]);
+    for (i, (_, text)) in files.iter().enumerate() {
+        change.change_file(FileId::from_raw((i + 1) as u32), Some((*text).to_owned()));
+    }
+    change.apply(db);
+
+    let source_set = hir::SourceSetId {
+        project: hir::ProjectId(0),
+        kind: hir::SourceSetKind::Main,
+    };
+    let mut data = hir::ProjectGraphData::default();
+    data.libraries.insert(
+        fixture.lib,
+        hir::LibraryInfo::new(
+            LibraryKind::Jar,
+            AbsPathBuf::assert_utf8(fixture.jar.as_std_path().to_owned()),
+        ),
+    );
+    for (library, info) in extra {
+        data.libraries.insert(*library, info.clone());
+    }
+    data.jdk_libraries.push(fixture.lib);
+    data.source_sets.insert(
+        source_set.clone(),
+        Arc::new(hir::Classpath { entries: classpath }),
+    );
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), source_set.clone());
+    hir::set_project_graph(db, data);
+    source_set
 }
 
 /// The access context ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
@@ -1192,6 +1265,7 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                             let loc = match diag.location() {
                                 hir_ty::DiagLocation::Expr(id) => format!("{id}"),
                                 hir_ty::DiagLocation::Local(id) => format!("{id}"),
+                                hir_ty::DiagLocation::Pattern(id) => format!("p{id}"),
                             };
                             let at = diag
                                 .range(&tree.bodies)
@@ -1225,13 +1299,22 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))
         .collect::<Vec<_>>();
-    for (i, _) in files.iter().enumerate() {
+    for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
+        let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::class_diagnostics(&db, file_id) {
+            let at = diag
+                .range()
+                .map(|r| {
+                    let lc = line_index.line_col(r.start());
+                    format!("@{line}:{col}", line = lc.line, col = lc.col)
+                })
+                .unwrap_or_default();
             lines.push(format!(
-                "method {}: {}: {}",
+                "method {}: {}: {}{}",
                 diag.method_name(),
                 diag.code(),
+                at,
                 diag.message()
             ));
         }

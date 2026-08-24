@@ -30,9 +30,9 @@
 //! and parameterized-type arguments.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use syntax::stub::{PrimitiveType, TypeParameter, TypeRef};
+use syntax::stub::{PrimitiveType, TypeRef};
 
-use hir_expand::{item_tree::ItemData, name::Name};
+use hir_expand::{item_tree::ItemData, item_tree::TypeParam, name::Name, span::SpannedTypeRef};
 
 use crate::{
     db::{ScopeId, ScopeKind, TyDatabase},
@@ -155,11 +155,13 @@ fn source_supertypes(db: &dyn TyDatabase, source: hir::SourceClass, args: &[Ty])
     let scope = scope_for_file(db, source.file);
     let type_params = crate::db::type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
-    let implicit = |fqn: &str| TypeRef::Reference {
-        name: Name::new(fqn),
-        generic_args: Vec::new(),
+    let implicit = |fqn: &str| {
+        SpannedTypeRef::synthetic(TypeRef::Reference {
+            name: Name::new(fqn),
+            generic_args: Vec::new(),
+        })
     };
-    let (super_class, interfaces): (Option<TypeRef<Name>>, Vec<TypeRef<Name>>) = match data {
+    let (super_class, interfaces): (Option<SpannedTypeRef>, Vec<SpannedTypeRef>) = match data {
         // A class (other than `java.lang.Object`) has exactly one direct
         // superclass; the implicit one is `java.lang.Object` (§8.1.4).
         ItemData::Class(d) => (
@@ -179,12 +181,12 @@ fn source_supertypes(db: &dyn TyDatabase, source: hir::SourceClass, args: &[Ty])
         ),
         _ => return Vec::new(),
     };
-    let declared: &[TypeParameter<Name>] = match data {
+    let declared: &[TypeParam] = match data {
         ItemData::Class(d) | ItemData::Interface(d) => &d.type_params,
         ItemData::Record(d) => &d.type_params,
         _ => &[],
     };
-    let instantiate = |tyref: &TypeRef<Name>| {
+    let instantiate = |tyref: &SpannedTypeRef| {
         let resolved = resolve_type_ref(db, &scope, &resolver, tyref);
         if args.is_empty() {
             resolved

@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/resolve_type_snapshots.rs
+expression: out
+---
+FILE /src/com/example/App.java:
+package com.example;
+
+import com.a.Widget;
+import com.b.Widget;
+
+class App {
+    Widget w;
+}
+
+method : conflicting-import: @0:20import conflicts with another declaration of 'com.a.Widget'
+method : conflicting-import: @2:20import conflicts with another declaration of 'com.b.Widget'

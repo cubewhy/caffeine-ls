@@ -81,6 +81,54 @@ pub fn type_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
     out
 }
 
+/// The declaration-level diagnostics of a file ([JLS §6.5.5.1], [§7.5], [§8],
+/// [§9]): the unknown-type/ambiguity/import reports and the override and
+/// default-method checks of [`hir_ty::class_diagnostics`]. Each reference
+/// carries its own source range; the hierarchy checks are keyed to the
+/// offending method's name.
+pub fn declaration_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for diagnostic in hir_ty::class_diagnostics(db, file_id) {
+        let Some(range) = diagnostic.range().or_else(|| {
+            // The hierarchy checks (incompatible override, conflicting
+            // defaults, missing `@Override`) are keyed to the declaring method
+            // name; point at the whole declaration when no reference range is
+            // recorded.
+            let tree = hir::file_item_tree(db, file_id);
+            let method_name = diagnostic.method_name();
+            let item = tree
+                .top
+                .iter()
+                .copied()
+                .find_map(|top| find_method(&tree, top, method_name));
+            item.map(|item| tree.data(item).range())
+        }) else {
+            continue;
+        };
+        out.push(make_diagnostic(
+            file_id,
+            &diagnostic.message(),
+            range,
+            Some(diagnostic.code()),
+            Severity::Error,
+        ));
+    }
+    out
+}
+
+fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
+    match tree.data(id) {
+        ItemData::Method(method) if method.name.as_str() == name => return Some(id),
+        _ => {}
+    }
+    for &child in tree.data(id).body() {
+        if let Some(found) = find_method(tree, child, name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 /// Every `(ItemId, &ItemData)` in the tree, parents before children.
 fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     fn walk<'a>(tree: &'a ItemTree, id: ItemId, out: &mut Vec<(ItemId, &'a ItemData)>) {

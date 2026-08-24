@@ -3,16 +3,19 @@
 //! CST order and every field renders through fixed helpers, the output is
 //! deterministic for a given source file.
 
-use syntax::stub::{PrimitiveType, TypeBound, TypeParameter, TypeRef};
+use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use crate::{
     body::{
         AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
         PatternId, PostfixOp, StmtData, StmtId, SwitchLabel, UnaryOp,
     },
-    item_tree::{ItemData, ItemId, ItemTree, LanguageKind, ModuleData, Signature},
+    item_tree::{
+        ItemData, ItemId, ItemTree, LanguageKind, ModuleData, RecordComponent, Signature, TypeParam,
+    },
     modifiers::Modifiers,
     name::Name,
+    span::SpannedTypeRef,
 };
 
 pub fn pretty_print(tree: &ItemTree) -> String {
@@ -96,7 +99,7 @@ fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out:
                 out.push_str(&format!(
                     "{}  implements {}\n",
                     indent,
-                    render_join(data.interfaces.iter().map(render_type), ", ")
+                    render_join(data.interfaces.iter().map(|ty| render_type(ty)), ", ")
                 ));
             }
             render_children(tree, &data.body, depth + 1, out);
@@ -110,7 +113,7 @@ fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out:
             if !data.interfaces.is_empty() {
                 out.push_str(&format!(
                     " implements {}",
-                    render_join(data.interfaces.iter().map(render_type), ", ")
+                    render_join(data.interfaces.iter().map(|ty| render_type(ty)), ", ")
                 ));
             }
             out.push_str(&render_mods(&data.modifiers));
@@ -194,9 +197,9 @@ fn render_type_like(
     label: &str,
     name: &Name,
     modifiers: &Modifiers,
-    super_class: Option<&TypeRef<Name>>,
-    interfaces: &[TypeRef<Name>],
-    type_params: &[TypeParameter<Name>],
+    super_class: Option<&SpannedTypeRef>,
+    interfaces: &[SpannedTypeRef],
+    type_params: &[TypeParam],
     range: rowan::TextRange,
     tree: &ItemTree,
     body: &[crate::item_tree::ItemId],
@@ -214,7 +217,7 @@ fn render_type_like(
     if !interfaces.is_empty() {
         out.push_str(&format!(
             " implements {}",
-            render_join(interfaces.iter().map(render_type), ", ")
+            render_join(interfaces.iter().map(|ty| render_type(ty)), ", ")
         ));
     }
     out.push_str(&render_mods(modifiers));
@@ -275,7 +278,10 @@ fn render_module(out: &mut String, indent: &str, data: &ModuleData) {
             "{}  provides {} with {}\n",
             indent,
             render_type(&provide.service),
-            render_join(provide.implementations.iter().map(render_type), ", "),
+            render_join(
+                provide.implementations.iter().map(|ty| render_type(ty)),
+                ", "
+            ),
         ));
     }
 }
@@ -306,40 +312,35 @@ fn render_signature(sig: &Signature, name: &Name) -> String {
     if !sig.throws.is_empty() {
         out.push_str(&format!(
             " throws {}",
-            render_join(sig.throws.iter().map(render_type), ", ")
+            render_join(sig.throws.iter().map(|ty| render_type(ty)), ", ")
         ));
     }
     out
 }
 
-fn render_type_params(params: &[TypeParameter<Name>]) -> String {
+fn render_type_params(params: &[TypeParam]) -> String {
     render_join(params.iter().map(render_type_param), ", ")
 }
 
-fn render_type_param(param: &TypeParameter<Name>) -> String {
+fn render_type_param(param: &TypeParam) -> String {
     if param.bounds.is_empty() {
         param.name.to_string()
     } else {
         format!(
             "{} extends {}",
             param.name,
-            render_join(param.bounds.iter().map(render_type), " & ")
+            render_join(param.bounds.iter().map(|ty| render_type(ty)), " & ")
         )
     }
 }
 
-fn render_components(components: &[syntax::stub::RecordComponentData<Name>]) -> String {
+fn render_components(components: &[RecordComponent]) -> String {
     format!(
         "({})",
         render_join(
             components.iter().map(|component| {
                 let dots = if component.varargs { "..." } else { "" };
-                format!(
-                    "{}{} {}",
-                    render_type(&component.component_type),
-                    dots,
-                    component.name
-                )
+                format!("{}{} {}", render_type(&component.ty), dots, component.name)
             }),
             ", "
         )
@@ -412,7 +413,12 @@ pub fn pretty_body(tree: &ItemTree) -> String {
             let local = bodies.local(param);
             out.push_str(&format!(
                 "  param {param}: {} {}\n",
-                render_type(&local.ty.clone().unwrap_or(TypeRef::Error)),
+                render_type(
+                    &local
+                        .ty
+                        .clone()
+                        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error))
+                ),
                 local.name,
             ));
         }
@@ -430,7 +436,12 @@ pub fn pretty_body(tree: &ItemTree) -> String {
             let id = LocalId(local_id);
             out.push_str(&format!(
                 "  {id}: {} {}\n",
-                render_type(&local.ty.clone().unwrap_or(TypeRef::Error)),
+                render_type(
+                    &local
+                        .ty
+                        .clone()
+                        .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error))
+                ),
                 local.name,
             ));
         }
@@ -659,11 +670,17 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
         ExprData::Null => out.push_str(&format!("{id}: null")),
         ExprData::This { qualifier } => out.push_str(&format!(
             "{id}: this {}",
-            qualifier.as_ref().map(render_type).unwrap_or_default()
+            qualifier
+                .as_ref()
+                .map(|ty| render_type(ty))
+                .unwrap_or_default()
         )),
         ExprData::Super { qualifier } => out.push_str(&format!(
             "{id}: super {}",
-            qualifier.as_ref().map(render_type).unwrap_or_default()
+            qualifier
+                .as_ref()
+                .map(|ty| render_type(ty))
+                .unwrap_or_default()
         )),
         ExprData::ClassLit(ty) => out.push_str(&format!("{id}: class-lit {}", render_type(ty))),
         ExprData::Var(name) => out.push_str(&format!("{id}: var {name}")),
@@ -779,7 +796,10 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 Some(p) => out.push_str(&format!(" pat {p}")),
                 None => out.push_str(&format!(
                     " {}",
-                    render_type(&ty.clone().unwrap_or(TypeRef::Error))
+                    render_type(
+                        &ty.clone()
+                            .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error))
+                    )
                 )),
             }
         }
@@ -807,7 +827,10 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             name,
         } => out.push_str(&format!(
             "{id}: method-ref {}\\::{name}",
-            type_name.as_ref().map(render_type).unwrap_or_default()
+            type_name
+                .as_ref()
+                .map(|ty| render_type(ty))
+                .unwrap_or_default()
         )),
         ExprData::Switch { scrutinee, arms } => out.push_str(&format!(
             "{id}: switch-expr {scrutinee} ({} arm(s))",

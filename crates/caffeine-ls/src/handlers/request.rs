@@ -19,6 +19,7 @@ pub fn on_diagnostic(
             .syntax_diagnostics(file_id, fallback_language_kind)?
             .into_iter()
             .chain(state.analysis.type_diagnostics(file_id)?)
+            .chain(state.analysis.declaration_diagnostics(file_id)?)
             .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
             .collect();
 

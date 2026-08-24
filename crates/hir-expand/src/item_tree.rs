@@ -10,13 +10,14 @@
 use std::sync::Arc;
 
 use rowan::TextRange;
-use syntax::stub::{RecordComponentData, TypeParameter, TypeRef};
+use syntax::stub::AnnotationSig;
 
 use crate::{
     arena::{Arena, ArenaId},
     body::{BodyId, BodyTree, ExprId},
     modifiers::Modifiers,
     name::Name,
+    span::SpannedTypeRef,
 };
 
 pub use base_db::LanguageKind;
@@ -136,9 +137,9 @@ impl ItemData {
 pub struct ClassData {
     pub name: Name,
     pub modifiers: Modifiers,
-    pub super_class: Option<TypeRef<Name>>,
-    pub interfaces: Vec<TypeRef<Name>>,
-    pub type_params: Vec<TypeParameter<Name>>,
+    pub super_class: Option<SpannedTypeRef>,
+    pub interfaces: Vec<SpannedTypeRef>,
+    pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
 }
@@ -147,7 +148,7 @@ pub struct ClassData {
 pub struct EnumData {
     pub name: Name,
     pub modifiers: Modifiers,
-    pub interfaces: Vec<TypeRef<Name>>,
+    pub interfaces: Vec<SpannedTypeRef>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
 }
@@ -156,9 +157,9 @@ pub struct EnumData {
 pub struct RecordData {
     pub name: Name,
     pub modifiers: Modifiers,
-    pub components: Vec<RecordComponentData<Name>>,
-    pub interfaces: Vec<TypeRef<Name>>,
-    pub type_params: Vec<TypeParameter<Name>>,
+    pub components: Vec<RecordComponent>,
+    pub interfaces: Vec<SpannedTypeRef>,
+    pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
 }
@@ -175,17 +176,17 @@ pub struct AnnotationData {
 /// exceptions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Signature {
-    pub type_params: Vec<TypeParameter<Name>>,
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
-    pub ret: Option<TypeRef<Name>>,
-    pub throws: Vec<TypeRef<Name>>,
+    pub ret: Option<SpannedTypeRef>,
+    pub throws: Vec<SpannedTypeRef>,
 }
 
 /// A formal parameter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Name,
-    pub ty: TypeRef<Name>,
+    pub ty: SpannedTypeRef,
     pub varargs: bool,
 }
 
@@ -208,7 +209,7 @@ pub struct MethodData {
 pub struct FieldData {
     pub name: Name,
     pub modifiers: Modifiers,
-    pub ty: TypeRef<Name>,
+    pub ty: SpannedTypeRef,
     pub initializer: Option<TextRange>,
     pub initializer_expr: Option<ExprId>,
     pub range: TextRange,
@@ -247,7 +248,7 @@ pub struct ModuleData {
     pub requires: Vec<ModuleRequires>,
     pub exports: Vec<ModuleExports>,
     pub opens: Vec<ModuleExports>,
-    pub uses: Vec<TypeRef<Name>>,
+    pub uses: Vec<SpannedTypeRef>,
     pub provides: Vec<ModuleProvides>,
     pub range: TextRange,
 }
@@ -267,6 +268,28 @@ pub struct ModuleExports {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleProvides {
-    pub service: TypeRef<Name>,
-    pub implementations: Vec<TypeRef<Name>>,
+    pub service: SpannedTypeRef,
+    pub implementations: Vec<SpannedTypeRef>,
+}
+
+/// A declared type parameter of a class or method
+/// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
+/// with source-spanned bounds.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeParam {
+    pub name: Name,
+    pub bounds: Vec<SpannedTypeRef>,
+    pub annotations: Vec<AnnotationSig<Name>>,
+}
+
+/// A record component declaration `T name`
+/// ([JLS §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1)),
+/// with the source-spanned component type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecordComponent {
+    pub name: Name,
+    pub ty: SpannedTypeRef,
+    /// Whether the component was declared varargs (`String... names`).
+    pub varargs: bool,
+    pub annotations: Vec<AnnotationSig<Name>>,
 }

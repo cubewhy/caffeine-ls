@@ -40,6 +40,39 @@ pub enum DeclDiagnostic {
     /// supertype method — either nothing matches, or the annotated method is
     /// `static` (static methods hide, they never override).
     MethodDoesNotOverride { method: Name },
+    /// §6.5.5.1: a reference type name in a *declaration* — a field type, a
+    /// method's parameter/return/`throws` type, a type-parameter bound, a
+    /// superclass or implemented interface, a record component type or a
+    /// module directive — resolves to nothing on the classpath.
+    CannotResolveType {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §6.5.5.1/[§7.5.2]: a simple type name is available through two or more
+    /// on-demand imports that denote different types.
+    AmbiguousName {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.5.1: a single-type import names a class or interface that cannot be
+    /// found (or is not accessible).
+    UnresolvedImport {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.5.1: two single-type imports name different classes with the same
+    /// simple name, or an import collides with a same-name top-level
+    /// declaration of the compilation unit.
+    ConflictingImport {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.4.3/[§7.7.2]: a class exists on the classpath, but its package is
+    /// not visible from the resolving source set's module.
+    ModuleNotAccessible {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -54,6 +87,21 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::MethodDoesNotOverride { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::MethodDoesNotOverride)
+            }
+            DeclDiagnostic::CannotResolveType { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CannotResolveType)
+            }
+            DeclDiagnostic::AmbiguousName { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AmbiguousName)
+            }
+            DeclDiagnostic::UnresolvedImport { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnresolvedImport)
+            }
+            DeclDiagnostic::ConflictingImport { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ConflictingImport)
+            }
+            DeclDiagnostic::ModuleNotAccessible { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ModuleNotAccessible)
             }
         }
     }
@@ -76,6 +124,33 @@ impl DeclDiagnostic {
                     "method {name}() annotated @Override does not override or implement a method from a supertype"
                 )
             }
+            DeclDiagnostic::CannotResolveType { name, .. } => {
+                format!("cannot resolve symbol '{}'", name.as_str())
+            }
+            DeclDiagnostic::AmbiguousName { name, .. } => {
+                format!(
+                    "reference to '{}' is ambiguous; both are imported on demand",
+                    name.as_str()
+                )
+            }
+            DeclDiagnostic::UnresolvedImport { name, .. } => {
+                format!(
+                    "cannot find symbol '{}' in the single-type import",
+                    name.as_str()
+                )
+            }
+            DeclDiagnostic::ConflictingImport { name, .. } => {
+                format!(
+                    "import conflicts with another declaration of '{}'",
+                    name.as_str()
+                )
+            }
+            DeclDiagnostic::ModuleNotAccessible { name, .. } => {
+                format!(
+                    "package in which '{}' is declared is not visible from the current module",
+                    name.as_str()
+                )
+            }
         }
     }
 
@@ -85,6 +160,24 @@ impl DeclDiagnostic {
             DeclDiagnostic::IncompatibleOverride { method, .. }
             | DeclDiagnostic::ConflictingDefaults { method }
             | DeclDiagnostic::MethodDoesNotOverride { method } => method.as_str(),
+            DeclDiagnostic::CannotResolveType { .. }
+            | DeclDiagnostic::AmbiguousName { .. }
+            | DeclDiagnostic::UnresolvedImport { .. }
+            | DeclDiagnostic::ConflictingImport { .. }
+            | DeclDiagnostic::ModuleNotAccessible { .. } => "",
+        }
+    }
+
+    /// The source range of a reference-position diagnostic (unknown type,
+    /// ambiguous name, import), when it has one.
+    pub fn range(&self) -> Option<rowan::TextRange> {
+        match self {
+            DeclDiagnostic::CannotResolveType { range, .. }
+            | DeclDiagnostic::AmbiguousName { range, .. }
+            | DeclDiagnostic::UnresolvedImport { range, .. }
+            | DeclDiagnostic::ConflictingImport { range, .. }
+            | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
+            _ => None,
         }
     }
 }
@@ -102,6 +195,12 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     let scope = scope_for_file(db, file);
     let mut out = Vec::new();
 
+    // §6.5.5.1/[§7.5.1]: the unknown-reference and import diagnostics of the
+    // file's declarations (see [`crate::name_check`]).
+    out.extend(crate::name_check::declaration_type_diagnostics(
+        db, file, &tree,
+    ));
+
     fn walk(
         db: &dyn TyDatabase,
         file: FileId,
@@ -116,7 +215,7 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
             ItemData::Class(_) | ItemData::Interface(_) | ItemData::Enum(_) | ItemData::Record(_)
         ) && let Some(fqn) = hir::source_class_fqn(db, file, id)
         {
-            out.extend(check_class(db, file, scope, &tree, fqn.as_str(), id));
+            out.extend(check_class(db, file, scope, tree, fqn.as_str(), id));
         }
         for &child in data.body() {
             walk(db, file, scope, tree, child, out);

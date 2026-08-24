@@ -23,10 +23,10 @@ use rustc_hash::FxHashMap;
 use vfs::FileId;
 
 use hir_expand::{
-    item_tree::{ImportItem, ItemData, ItemId, ItemTree},
+    item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam},
     name::Name,
 };
-use syntax::stub::{TypeBound, TypeParameter, TypeRef};
+use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
     db::TyDatabase,
@@ -39,7 +39,7 @@ use crate::{
 pub struct Resolver {
     package: Option<Name>,
     imports: Vec<ImportItem>,
-    type_params: Vec<TypeParameter<Name>>,
+    type_params: Vec<TypeParam>,
 }
 
 impl Resolver {
@@ -48,7 +48,7 @@ impl Resolver {
     /// [`type_params_map`].
     pub fn new(
         tree: &ItemTree,
-        type_params: &FxHashMap<ItemId, Vec<TypeParameter<Name>>>,
+        type_params: &FxHashMap<ItemId, Vec<TypeParam>>,
         item_id: ItemId,
     ) -> Self {
         Self {
@@ -87,7 +87,7 @@ impl Resolver {
         None
     }
 
-    pub fn type_params(&self) -> &[TypeParameter<Name>] {
+    pub fn type_params(&self) -> &[TypeParam] {
         &self.type_params
     }
 }
@@ -97,12 +97,12 @@ impl Resolver {
 /// own parameters, with their declared bounds
 /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
 /// Computed in a single tree walk so each item's scope is a map lookup.
-pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<TypeParameter<Name>>> {
+pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<TypeParam>> {
     fn collect(
         tree: &ItemTree,
         id: ItemId,
-        outer: &[TypeParameter<Name>],
-        map: &mut FxHashMap<ItemId, Vec<TypeParameter<Name>>>,
+        outer: &[TypeParam],
+        map: &mut FxHashMap<ItemId, Vec<TypeParam>>,
     ) {
         let data = tree.data(id);
         let mut own = outer.to_vec();
@@ -254,6 +254,32 @@ pub(crate) fn candidate_fqns(resolver: &Resolver, name: &Name) -> Vec<Name> {
 /// [JLS §7.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5)
 /// precedence order.
 fn simple_candidates(resolver: &Resolver, simple: &str) -> Vec<Name> {
+    simple_candidates_with_kind(resolver, simple)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
+}
+
+/// The step ([JLS §6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1),
+/// [§7.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5))
+/// a simple-name candidate belongs to. The step drives the *checked*
+/// resolution ([`resolve_name_checked`]): whether a name may fall through to
+/// a later step, and whether two on-demand imports make it ambiguous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CandidateStep {
+    /// A single-type import whose simple name matches ([§7.5.1]).
+    SingleImport,
+    /// A type in the current package ([§7.4.2]).
+    CurrentPackage,
+    /// A type in `java.lang` (implicitly imported, [§7.3]).
+    JavaLang,
+    /// A type reachable through an on-demand import ([§7.5.2]).
+    OnDemand,
+    /// A type in the unnamed package ([§7.4.2]).
+    UnnamedPackage,
+}
+
+fn simple_candidates_with_kind(resolver: &Resolver, simple: &str) -> Vec<(CandidateStep, Name)> {
     let mut out = Vec::new();
 
     // 1. a single-type import whose simple name matches (§7.5.1)
@@ -262,16 +288,19 @@ fn simple_candidates(resolver: &Resolver, simple: &str) -> Vec<Name> {
             && !import.is_asterisk
             && import.name.as_str().rsplit('.').next() == Some(simple)
     }) {
-        out.push(import.name.clone());
+        out.push((CandidateStep::SingleImport, import.name.clone()));
     }
 
     // 2. a type in the current package (§7.4.2)
     if let Some(package) = &resolver.package {
-        out.push(join(package, simple));
+        out.push((CandidateStep::CurrentPackage, join(package, simple)));
     }
 
     // 3. a type in `java.lang`
-    out.push(Name::new(&format!("java.lang.{simple}")));
+    out.push((
+        CandidateStep::JavaLang,
+        Name::new(&format!("java.lang.{simple}")),
+    ));
 
     // 4. a type reachable through an on-demand import (§7.5.2)
     for import in resolver
@@ -279,12 +308,152 @@ fn simple_candidates(resolver: &Resolver, simple: &str) -> Vec<Name> {
         .iter()
         .filter(|import| !import.is_static && import.is_asterisk)
     {
-        out.push(join(&import.name, simple));
+        out.push((CandidateStep::OnDemand, join(&import.name, simple)));
     }
 
     // 5. a type in the unnamed package
-    out.push(Name::new(simple));
+    out.push((CandidateStep::UnnamedPackage, Name::new(simple)));
     out
+}
+
+/// The outcome of a *checked* name resolution ([JLS §6.5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5))
+/// — the primitive the unknown-type diagnostics are built from. Unlike
+/// [`resolve_reference_name`], which degrades an unresolvable name to its
+/// most-qualified candidate so the [`Ty`] stays displayable, this reports
+/// *whether* the name resolved, and the exact divergences from the JLS rules
+/// ([§6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1),
+/// [§7.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.2)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameResolution {
+    /// The name denotes a type variable of the enclosing scope
+    /// ([§6.5.5.1] step 1).
+    TypeVar,
+    /// Resolved to this canonical fully qualified name ([§6.7]).
+    Resolved(Name),
+    /// The simple name is accessible through two or more on-demand imports
+    /// that denote different types — a compile-time error ([§6.5.5.1],
+    /// [§7.5.2]).
+    Ambiguous(Vec<Name>),
+    /// A candidate class exists on the classpath, but its package is not
+    /// visible from the resolving source set's module
+    /// ([§7.4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.3),
+    /// [§7.7.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7.2)) —
+    /// the package is *observable* but not *visible*.
+    NotAccessible(Name),
+    /// No candidate resolves — either the name is shadowed by a broken
+    /// single-type import whose imported type does not exist ([§7.5.1],
+    /// in which case the name cannot fall through), or nothing on the
+    /// classpath provides it.
+    Unresolved,
+}
+
+/// Whether `fqn`'s package is visible from `module_ctx` ([§7.4.3], [§7.7.2]).
+/// Types in the unnamed package are never module-hidden.
+fn fqn_visible(db: &dyn TyDatabase, module_ctx: &hir::ModuleCtx, fqn: &str) -> bool {
+    match fqn.rsplit_once('.') {
+        Some((package, _)) => module_ctx.package_visible(&db.hir_state().interner, package),
+        None => true,
+    }
+}
+
+/// The checked resolution of `name` against `scope`'s classpath
+/// ([JLS §6.5.5.1], [§6.5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.2)).
+///
+/// A name in expression position that is *not* a type — a local or field of
+/// the implicit receiver — must not be reported here; callers only pass names
+/// from type-reference positions. A name shadowed by a single-type import
+/// that itself names a non-existent class (§7.5.1 makes the import a
+/// compile-time error) resolves to nothing rather than falling through to a
+/// same-package class.
+pub fn resolve_name_checked(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    name: &Name,
+) -> NameResolution {
+    let text = name.as_str();
+    // 1. a type parameter in scope wins over any type named the same (§6.5.5.1).
+    if resolver.type_params.iter().any(|tp| tp.name == *name) {
+        return NameResolution::TypeVar;
+    }
+
+    // The resolving source set's module context gates each candidate's package
+    // visibility ([§7.4.3], [§7.7.2]); a candidate whose package is not
+    // visible is not a resolution, but a class that *exists* invisibly is
+    // worth distinguishing from "nothing on the classpath" for diagnostics.
+    let module_ctx = hir::module_ctx_for_scope(db, scope);
+
+    // §6.5.5.2: a qualified name — tried as-is first, then with each
+    // simple-name resolution of its prefix. (On-demand ambiguity only applies
+    // to the *simple-name* step and is reported at the prefix's own use.)
+    if let Some((prefix, rest)) = text.split_once('.') {
+        let mut candidates = vec![name.clone()];
+        for candidate in simple_candidates(resolver, prefix) {
+            candidates.push(join(&candidate, rest));
+        }
+        let mut hidden: Option<Name> = None;
+        for candidate in &candidates {
+            if hir::fqn_resolve(db, scope, candidate.as_str()).is_none() {
+                continue;
+            }
+            if fqn_visible(db, &module_ctx, candidate.as_str()) {
+                return NameResolution::Resolved(candidate.clone());
+            }
+            hidden.get_or_insert_with(|| candidate.clone());
+        }
+        return match hidden {
+            Some(fqn) => NameResolution::NotAccessible(fqn),
+            None => NameResolution::Unresolved,
+        };
+    }
+
+    let candidates = simple_candidates_with_kind(resolver, text);
+    let mut hidden: Option<Name> = None;
+    for (idx, (step, candidate)) in candidates.iter().enumerate() {
+        // §7.5.1: a single-type import *shadows* the simple name; if it names
+        // a class that cannot be found the import is an error and the name
+        // does not fall through to a later step.
+        if *step == CandidateStep::SingleImport {
+            if hir::fqn_resolve(db, scope, candidate.as_str()).is_none() {
+                return NameResolution::Unresolved;
+            }
+            return if fqn_visible(db, &module_ctx, candidate.as_str()) {
+                NameResolution::Resolved(candidate.clone())
+            } else {
+                NameResolution::NotAccessible(candidate.clone())
+            };
+        }
+        if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+            if !fqn_visible(db, &module_ctx, candidate.as_str()) {
+                hidden.get_or_insert_with(|| candidate.clone());
+                continue;
+            }
+            if *step == CandidateStep::OnDemand {
+                // §6.5.5.1/[§7.5.2]: two or more on-demand imports that supply
+                // the simple name from different types make the name
+                // ambiguous — a compile-time error.
+                let mut conflicting = Vec::new();
+                for (later_step, later) in &candidates[idx + 1..] {
+                    if *later_step == CandidateStep::OnDemand
+                        && hir::fqn_resolve(db, scope, later.as_str()).is_some()
+                        && fqn_visible(db, &module_ctx, later.as_str())
+                        && later != candidate
+                    {
+                        conflicting.push(later.clone());
+                    }
+                }
+                if !conflicting.is_empty() {
+                    conflicting.insert(0, candidate.clone());
+                    return NameResolution::Ambiguous(conflicting);
+                }
+            }
+            return NameResolution::Resolved(candidate.clone());
+        }
+    }
+    match hidden {
+        Some(fqn) => NameResolution::NotAccessible(fqn),
+        None => NameResolution::Unresolved,
+    }
 }
 
 fn join(prefix: &Name, suffix: &str) -> Name {

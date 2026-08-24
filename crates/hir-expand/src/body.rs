@@ -16,12 +16,12 @@
 //! [`crate::Ty`]-level resolution happens later against the file's resolver.
 
 use rowan::TextRange;
-use syntax::stub::TypeRef;
 
 use crate::{
     arena::{Arena, ArenaId},
     item_tree::ItemId,
     name::Name,
+    span::SpannedTypeRef,
 };
 
 /// The id of an expression within its owning [`BodyTree`].
@@ -166,7 +166,7 @@ pub struct Body {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Local {
     pub name: Name,
-    pub ty: Option<TypeRef<Name>>,
+    pub ty: Option<SpannedTypeRef>,
     /// Whether the declaration carries the `final` modifier ([§4.12.4]):
     /// a `final` local whose initializer is a constant expression is a
     /// *constant variable*, and reads of it are constant expressions
@@ -180,7 +180,7 @@ pub struct Local {
 /// resolution and the type layer); `Foo _` and the match-all `_` bind nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypePattern {
-    pub ty: TypeRef<Name>,
+    pub ty: SpannedTypeRef,
     /// The pattern variable binding — `Foo f`; `Foo _` and `_` have none.
     pub binding: Option<LocalId>,
 }
@@ -191,7 +191,7 @@ pub struct TypePattern {
 /// variable.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordPattern {
-    pub ty: TypeRef<Name>,
+    pub ty: SpannedTypeRef,
     pub components: Vec<PatternId>,
 }
 
@@ -362,14 +362,14 @@ pub enum ExprData {
     /// inferred by the type layer.
     Template { args: Vec<ExprId> },
     /// `this` or `TypeName.this` ([§15.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.3)).
-    This { qualifier: Option<TypeRef<Name>> },
+    This { qualifier: Option<SpannedTypeRef> },
     /// `super` or `TypeName.super` — the latter only as the receiver of a
     /// method invocation ([§15.8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.4),
     /// [§15.11.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2)):
     /// the qualified form invokes the default method of the named interface.
-    Super { qualifier: Option<TypeRef<Name>> },
+    Super { qualifier: Option<SpannedTypeRef> },
     /// A class literal `Foo.class` ([§15.8.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.2)).
-    ClassLit(TypeRef<Name>),
+    ClassLit(SpannedTypeRef),
     /// A single name: a local variable or parameter reference, or — after
     /// resolution — a field of an implicit receiver.
     Var(Name),
@@ -386,12 +386,12 @@ pub enum ExprData {
     MethodCall {
         receiver: Option<ExprId>,
         name: Name,
-        type_args: Vec<TypeRef<Name>>,
+        type_args: Vec<SpannedTypeRef>,
         args: Vec<ExprId>,
     },
     /// A class instance creation `new Type(args)` ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
     New {
-        ty: TypeRef<Name>,
+        ty: SpannedTypeRef,
         args: Vec<ExprId>,
         /// `new Foo<>()` — the diamond operator
         /// ([§15.9.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.2)):
@@ -414,7 +414,7 @@ pub enum ExprData {
     /// ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6))
     /// carries the element expressions of an array initializer when present.
     NewArray {
-        ty: TypeRef<Name>,
+        ty: SpannedTypeRef,
         dims: Vec<ExprId>,
         initializer: Option<Vec<ExprId>>,
     },
@@ -438,7 +438,7 @@ pub enum ExprData {
         rhs: ExprId,
     },
     /// A cast `(Type) expr` ([§15.16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.16)).
-    Cast { ty: TypeRef<Name>, expr: ExprId },
+    Cast { ty: SpannedTypeRef, expr: ExprId },
     /// An `instanceof` test `expr instanceof Type` or, with a pattern,
     /// `expr instanceof Pattern` ([§15.20.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.20.2)).
     /// Exactly one of `ty` (a plain type test) and `pattern` (a pattern test,
@@ -447,7 +447,7 @@ pub enum ExprData {
     /// ([§14.30.3]).
     InstanceOf {
         expr: ExprId,
-        ty: Option<TypeRef<Name>>,
+        ty: Option<SpannedTypeRef>,
         pattern: Option<PatternId>,
     },
     /// A conditional expression `cond ? then : els` ([§15.25](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25)).
@@ -458,14 +458,14 @@ pub enum ExprData {
     },
     /// A lambda expression ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)).
     Lambda {
-        params: Vec<(Name, Option<TypeRef<Name>>)>,
+        params: Vec<(Name, Option<SpannedTypeRef>)>,
         body: LambdaBody,
     },
     /// A method reference `Type::name` / `expr::name` / `Type::new`
     /// ([§15.13](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13)).
     MethodRef {
         qualifier: Option<ExprId>,
-        type_name: Option<TypeRef<Name>>,
+        type_name: Option<SpannedTypeRef>,
         name: Name,
     },
     /// A switch expression ([§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)).

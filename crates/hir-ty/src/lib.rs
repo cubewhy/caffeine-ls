@@ -83,6 +83,7 @@ pub mod diagnostics;
 pub mod infer;
 pub mod inference;
 pub mod method;
+pub mod name_check;
 pub mod resolve;
 pub mod subtyping;
 pub mod ty;

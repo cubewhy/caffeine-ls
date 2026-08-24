@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/resolve_type_snapshots.rs
+expression: out
+---
+FILE /src/com/example/App.java:
+package com.example;
+
+import java.util.List;
+
+class App extends org.missing.Base implements org.missing.Marker {
+    org.missing.List<String> list;
+    org.missing.Missing nested;
+    org.missing.Widget method(org.missing.Param p, java.util.List<org.missing.Elem> es)
+        throws org.missing.Failure, org.missing.Outcome {
+        return null;
+    }
+}
+
+method : cannot-resolve-type: @4:18cannot resolve symbol 'org.missing.Base'
+method : cannot-resolve-type: @4:46cannot resolve symbol 'org.missing.Marker'
+method : cannot-resolve-type: @5:4cannot resolve symbol 'org.missing.List'
+method : cannot-resolve-type: @6:4cannot resolve symbol 'org.missing.Missing'
+method : cannot-resolve-type: @7:30cannot resolve symbol 'org.missing.Param'
+method : cannot-resolve-type: @7:66cannot resolve symbol 'org.missing.Elem'
+method : cannot-resolve-type: @7:4cannot resolve symbol 'org.missing.Widget'
+method : cannot-resolve-type: @8:15cannot resolve symbol 'org.missing.Failure'
+method : cannot-resolve-type: @8:36cannot resolve symbol 'org.missing.Outcome'

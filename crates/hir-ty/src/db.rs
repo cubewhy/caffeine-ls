@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 use base_db::{FileText, salsa};
 use hir_expand::{
-    item_tree::{ItemData, ItemId},
+    item_tree::{ItemData, ItemId, TypeParam},
     name::Name,
 };
 use rustc_hash::FxHashMap;
-use syntax::stub::{TypeParameter, TypeRef};
+use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use crate::{
@@ -120,7 +120,7 @@ impl ContextKey {
 pub(crate) fn type_params_map_query(
     db: &dyn TyDatabase,
     file: FileText,
-) -> Arc<FxHashMap<ItemId, Vec<TypeParameter<Name>>>> {
+) -> Arc<FxHashMap<ItemId, Vec<TypeParam>>> {
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
     Arc::new(resolve::type_params_map(&tree))

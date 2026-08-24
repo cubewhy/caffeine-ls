@@ -83,7 +83,7 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
                 type_targets(db, file, name)
             }
             ExprData::InstanceOf { ty, .. } => {
-                let Some(name) = ty.as_ref().and_then(type_ref_name) else {
+                let Some(name) = ty.as_ref().and_then(|t| type_ref_name(t)) else {
                     return Vec::new();
                 };
                 type_targets(db, file, name)

@@ -19,9 +19,10 @@ pub use db::{
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use modules::{
-    ModuleDescriptor, ModuleGraph, WorkspaceModuleGraph, is_package_exported, is_package_visible,
-    is_package_visible_from_unnamed, module_descriptor, module_for_class, module_graph,
-    module_graph_for_source_set, modules_for_package, readable_modules, required_modules,
+    ModuleCtx, ModuleDescriptor, ModuleGraph, WorkspaceModuleGraph, is_package_exported,
+    is_package_visible, is_package_visible_from_unnamed, module_ctx_for_scope, module_descriptor,
+    module_for_class, module_graph, module_graph_for_source_set, modules_for_package,
+    readable_modules, required_modules,
 };
 pub use project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId};
 pub use project_model::{ProjectId, SourceSetKind};
