@@ -544,7 +544,14 @@ impl GlobalState {
                     ?root,
                     "No build system detected, treating workspace root as a plain source root"
                 );
-                self.apply_loaded_graph(project_model::WorkspaceGraph::plain(root.clone()), root);
+                let graph = project_model::WorkspaceGraph::plain(
+                    root.clone(),
+                    self.config
+                        .client_config
+                        .as_ref()
+                        .and_then(|cfg| cfg.java_home.to_owned()),
+                );
+                self.apply_loaded_graph(graph, root);
             }
         }
     }
@@ -731,6 +738,17 @@ impl GlobalState {
                     }
                 }
             }
+
+            // The platform modules are implicitly on every compile classpath
+            // ([JLS §7.3]); a build tool reports them as an explicit SDK
+            // entry, plain workspaces fall back to the configured JDK.
+            for jdk in &data.jdk_libraries {
+                let entry = HirClasspathEntry::Library(*jdk);
+                if !entries.contains(&entry) {
+                    entries.push(entry);
+                }
+            }
+
             data.source_sets.insert(
                 source_set_id.clone(),
                 std::sync::Arc::new(Classpath { entries }),

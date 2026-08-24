@@ -1,7 +1,7 @@
 use std::{
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use rustc_hash::FxHashMap;
@@ -193,14 +193,31 @@ pub struct WorkspaceGraph {
 impl WorkspaceGraph {
     /// Builds a minimal graph for a workspace without any supported build
     /// system: the workspace root itself is treated as a single source root.
-    pub fn plain(root: AbsPathBuf) -> Self {
+    pub fn plain(root: AbsPathBuf, java_home: Option<PathBuf>) -> Self {
         let mut graph = WorkspaceGraph::default();
+
+        let sdk = if let Some(home_path) = java_home {
+            let id = SdkId(0);
+            graph.sdks.insert(
+                id,
+                Arc::new(SdkData {
+                    id,
+                    name: "jdk".into(),
+                    version: Default::default(),
+                    home_path: AbsPathBuf::assert_utf8(home_path),
+                    exploded_library_paths: Vec::new(),
+                }),
+            );
+            Some(id)
+        } else {
+            None
+        };
 
         let project = ProjectData {
             id: ProjectId(0),
             name: SmolStr::from("workspace"),
             root_path: root.clone(),
-            target_sdk: None,
+            target_sdk: sdk,
             source_sets: FxHashMap::from_iter([(
                 SourceSetKind::Main,
                 SourceSetData {
