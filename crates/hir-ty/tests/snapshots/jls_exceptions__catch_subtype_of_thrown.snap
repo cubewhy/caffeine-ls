@@ -1,0 +1,55 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Sax.java:
+package com.example;
+
+class Sax {
+    void parent() throws Exception { }
+
+    void io() throws java.io.IOException { }
+
+    // The catch covers the thrown type; nothing is left pending.
+    void covered() {
+        try {
+            parent();
+        } catch (Exception e) {
+        }
+    }
+
+    // A defensive catch of a *subclass* of a thrown checked exception is
+    // legal ([§11.2.3]) even though it discharges nothing — the supertype's
+    // liability remains and must still be declared.
+    void defensive() throws java.io.IOException {
+        try {
+            io();
+        } catch (java.io.FileNotFoundException e) {
+        }
+    }
+
+    // A precise rethrow of the caught subclass keeps its own liability.
+    void rethrowSubclass() throws java.io.FileNotFoundException {
+        try {
+            throw new java.io.FileNotFoundException("missing");
+        } catch (java.io.FileNotFoundException e) {
+            throw e;
+        }
+    }
+}
+
+method parent(): void
+  locals: 
+  exprs: 
+method io(): void
+  locals: 
+  exprs: 
+method covered(): void
+  locals: l0: java.lang.Exception
+  exprs: e0: void
+method defensive(): void
+  locals: l1: java.io.FileNotFoundException
+  exprs: e1: void
+method rethrowSubclass(): void
+  locals: l2: java.io.FileNotFoundException
+  exprs: e2: java.lang.String | e3: java.io.FileNotFoundException | e4: java.io.FileNotFoundException

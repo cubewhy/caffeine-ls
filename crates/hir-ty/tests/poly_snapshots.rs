@@ -289,3 +289,60 @@ class Poly {
 // arms are lambdas is a poly expression only when the target is a functional
 // interface ([§15.25.2]); against the non-functional `Object` target both
 // arms and the conditional infer to an error.
+
+// -- green: a generic method whose type variable is bounded by an interface ----
+// §18.4: with lower bounds `Bowl` and `Eater` (an interface `Bowl` implements),
+// the invocation variable instantiates to their least upper bound `Eater`; the
+// lambda body then constrains the downstream element type.
+
+snapshot!(
+    generic_invocation_interface_lub,
+    check_body_types(&[(
+        "/src/com/example/Feed.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Feed {
+    interface Eater { }
+
+    static class Bowl implements Eater { }
+
+    static <T> List<T> join(List<? extends T> a, List<? extends T> b) {
+        return null;
+    }
+
+    void feed(List<Bowl> bowls, List<Eater> eaters) {
+        join(bowls, eaters);
+    }
+}
+",
+    ),])
+);
+
+// -- green: a zero-argument generic method as a nested poly argument ------------
+// §18.5.2.4: `Collectors.toList()`'s own type variable is inferred from the
+// enclosing invocation's formal (`collect`), jointly with the outer target.
+// The standalone re-inference must not apply the enclosing context's target to
+// it, and its resolution must succeed so `collect` stays applicable.
+
+snapshot!(
+    collect_to_list_target_inference,
+    check_body_types(&[(
+        "/src/com/example/Poly.java",
+        "\
+package com.example;
+
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+class Poly {
+    List<String> go(Stream<String> s) {
+        return s.collect(Collectors.toList());
+    }
+}
+",
+    ),])
+);

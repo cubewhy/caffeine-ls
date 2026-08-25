@@ -359,7 +359,8 @@ pub fn fqn_resolve(db: &dyn HirDatabase, scope: &ResolutionScope, fqn: &str) -> 
             if let Some(resolved) = source_resolve(db, source_set, fqn) {
                 return Some(resolved);
             }
-            for entry in &classpath(db, source_set.clone()).entries {
+            let entries = classpath(db, source_set.clone());
+            for entry in &entries.entries {
                 match entry {
                     ClasspathEntry::SourceSet(internal) => {
                         if let Some(resolved) = source_resolve(db, internal, fqn) {
@@ -392,18 +393,30 @@ pub fn resolve_in_libraries(
     libraries: &[LibraryId],
     fqn: &str,
 ) -> Option<ResolvedClass> {
-    let symbol = db.hir_state().interner.get_or_intern(fqn);
-    for &library in libraries {
-        let index = library_name_index(db, library);
-        if let Some((entry_idx, entry)) = index.lookup(symbol) {
-            return Some(ResolvedClass {
-                library,
-                entry_idx,
-                entry: entry.clone(),
-            });
+    // Library classes are keyed by their *binary* names, whose nested types
+    // join with `$` ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html));
+    // source-side references use `.` (`Map.Entry`). Fold rightmost dots into
+    // `$` until a lookup hits or no dot remains — package segments never
+    // match when folded, so over-folding is indistinguishable from a miss.
+    let interner = &db.hir_state().interner;
+    let mut candidate = fqn.to_string();
+    loop {
+        let symbol = interner.get_or_intern(candidate.as_str());
+        for &library in libraries {
+            let index = library_name_index(db, library);
+            if let Some((entry_idx, entry)) = index.lookup(symbol) {
+                return Some(ResolvedClass {
+                    library,
+                    entry_idx,
+                    entry: entry.clone(),
+                });
+            }
+        }
+        match candidate.rfind('.') {
+            Some(dot) => candidate.replace_range(dot..dot + 1, "$"),
+            None => return None,
         }
     }
-    None
 }
 
 /// Best-effort path of `file` for diagnostics, `<no source root>` when the

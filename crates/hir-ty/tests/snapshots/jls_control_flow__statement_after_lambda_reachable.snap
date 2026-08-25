@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Lambda.java:
+package com.example;
+
+class Lambda {
+    interface IntMaker { int make(); }
+
+    void go() {
+        int n = first(() -> {
+            side();
+            return 1;
+        });
+        after(n);
+    }
+
+    int first(IntMaker maker) { return maker.make(); }
+    void side() { }
+    void after(int n) { }
+}
+
+method go(): void
+  locals: l0: int
+  exprs: e0: void | e1: int | e2: com.example.Lambda.IntMaker | e3: int | e4: int | e5: void
+method first(com.example.Lambda.IntMaker): int
+  locals: l1: com.example.Lambda.IntMaker
+  exprs: e6: com.example.Lambda.IntMaker | e7: int
+method side(): void
+  locals: 
+  exprs: 
+method after(int): void
+  locals: l2: int
+  exprs:

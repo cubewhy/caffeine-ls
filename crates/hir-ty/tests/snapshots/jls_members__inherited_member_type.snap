@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+public class Base {
+    public enum Mode { ON, OFF }
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+public class Derived extends Base {
+    int use(Derived d) {
+        Mode m = Mode.ON;
+        if (d == null) {
+            m = Base.Mode.OFF;
+        }
+        return m == Mode.ON ? 1 : 0;
+    }
+}
+
+method use(com.example.Derived): int
+  locals: l0: com.example.Derived | l1: com.example.Base.Mode
+  exprs: e1: com.example.Base.Mode | e2: com.example.Derived | e3: null | e4: boolean | e5: boolean | e6: com.example.Base.Mode | e9: com.example.Base.Mode | e10: com.example.Base.Mode | e11: com.example.Base.Mode | e13: com.example.Base.Mode | e14: boolean | e15: int | e16: int | e17: int

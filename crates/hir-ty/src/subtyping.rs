@@ -77,9 +77,19 @@ pub(crate) fn supertypes_impl(
             let Some(resolved) = resolve_name(db, scope, name) else {
                 return Vec::new();
             };
+            // §4.10.2: the direct supertypes of an interface type include
+            // `java.lang.Object` — an interface has no superclass to carry
+            // it transitively, so it is added explicitly below.
+            let object = Ty::reference(db, "java.lang.Object", Vec::new());
             match resolved {
                 hir::Resolved::Library(resolved) => {
-                    if let Some(info) =
+                    let is_interface = hir::class_record(db, &resolved)
+                        .map(|record| match &*record {
+                            hir::ClassOrModuleRecord::Class(class) => class.flags & 0x0200 != 0,
+                            hir::ClassOrModuleRecord::Module(_) => false,
+                        })
+                        .unwrap_or(false);
+                    let mut out = if let Some(info) =
                         hir::class_generic_info(db, &hir::Resolved::Library(resolved.clone()))
                     {
                         if info.type_params.is_empty() || !args.is_empty() {
@@ -126,9 +136,19 @@ pub(crate) fn supertypes_impl(
                                 Ty::reference(db, Name::new(interner.resolve(&fqn)), Vec::new())
                             })
                             .collect()
+                    };
+                    if is_interface && !out.iter().any(|t| *t == object) {
+                        out.push(object);
                     }
+                    out
                 }
-                hir::Resolved::Source(source) => source_supertypes(db, source, args),
+                hir::Resolved::Source(source) => {
+                    let mut out = source_supertypes(db, source, args);
+                    if is_source_interface(db, source) && !out.iter().any(|t| *t == object) {
+                        out.push(object);
+                    }
+                    out
+                }
             }
         }
         TyKind::Array(_) => vec![
@@ -138,6 +158,17 @@ pub(crate) fn supertypes_impl(
         ],
         _ => Vec::new(),
     }
+}
+
+/// Whether the source class-like declaration is an `interface` (or
+/// `@interface`): its supertype set gains `java.lang.Object` explicitly
+/// ([JLS §4.10.2], [§9.1]).
+fn is_source_interface(db: &dyn TyDatabase, source: hir::SourceClass) -> bool {
+    let tree = hir::file_item_tree(db, source.file);
+    matches!(
+        item_data(&tree, source.item),
+        Some(ItemData::Interface(_)) | Some(ItemData::Annotation(_))
+    )
 }
 
 /// The direct supertypes of a source class, resolved against its own file's
@@ -562,6 +593,12 @@ pub fn is_assignable(
                 return false;
             };
             unboxed == *dst || widening_primitive(unboxed, *dst)
+        }
+        // §4.10.3/§5.2: an array converts to its class supertypes —
+        // `Object`, `Cloneable`, `Serializable` — and through them to any
+        // reference type by subtyping.
+        (TyKind::Array(_), TyKind::Reference { .. } | TyKind::TypeVar { .. }) => {
+            is_subtype(db, scope, src, dst)
         }
         // §5.1.4/§5.1.5: the null literal is assignable to any reference type.
         (TyKind::Null, _) => is_subtype(db, scope, src, dst),

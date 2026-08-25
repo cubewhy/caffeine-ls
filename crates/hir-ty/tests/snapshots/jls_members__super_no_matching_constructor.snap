@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    Base(int tag) {}
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    Derived() {
+        super();
+    }
+}
+
+method Base(int): <init>
+  locals: l0: int
+  exprs: 
+method Derived(): <init>
+  locals: 
+  exprs: e0: void
+  diags: e0@4:8: wrong-argument-count: method Base cannot be applied to given types;
+  required: int
+  found: 
+  reason: actual and formal argument lists differ in length

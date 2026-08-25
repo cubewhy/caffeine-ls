@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Conn.java:
+package com.example;
+
+public interface Conn {
+    Conn url(String u);
+}
+
+FILE /src/com/example/Anon.java:
+package com.example;
+
+class Anon {
+    Conn make() {
+        return new Conn() {
+            public Conn url(String u) { return this; }
+        };
+    }
+}
+
+method make(): com.example.Conn
+  locals: 
+  exprs: e0: com.example.Conn

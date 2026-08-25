@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Catch.java:
+package com.example;
+
+class Catch {
+    void plain() { }
+
+    void ok() {
+        try {
+            plain();
+        } catch (Exception e) {
+        } catch (Throwable t) {
+        }
+    }
+}
+
+method plain(): void
+  locals: 
+  exprs: 
+method ok(): void
+  locals: l0: java.lang.Exception | l1: java.lang.Throwable
+  exprs: e0: void

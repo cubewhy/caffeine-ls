@@ -102,6 +102,9 @@ pub struct BodyTree {
     pub local_ranges: Vec<TextRange>,
     /// The source range of every pattern, parallel to [`BodyTree::patterns`].
     pub pattern_ranges: Vec<TextRange>,
+    /// The source range of every statement, parallel to [`BodyTree::stmts`]:
+    /// index `n` is the range of the statement with arena id `n`.
+    pub stmt_ranges: Vec<TextRange>,
 }
 
 impl BodyTree {
@@ -117,6 +120,16 @@ impl BodyTree {
 
     pub fn stmt(&self, id: StmtId) -> &StmtData {
         self.stmts.get(id.0)
+    }
+
+    /// The source range of the statement, when the statement was lowered from
+    /// a syntax node (synthetic `Missing` statements have none — their empty
+    /// placeholder range reads as `None`).
+    pub fn stmt_range(&self, id: StmtId) -> Option<TextRange> {
+        self.stmt_ranges
+            .get(id.0.0 as usize)
+            .copied()
+            .filter(|range| !range.is_empty())
     }
 
     pub fn local(&self, id: LocalId) -> &Local {
@@ -303,6 +316,12 @@ pub enum StmtData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatchClause {
     pub param: LocalId,
+    /// The declared types of the catch parameter ([§14.20]): a *multi-catch*
+    /// `catch (A | B e)` lists every alternative, an ordinary catch exactly
+    /// one — whose resolution also types the parameter itself (the first
+    /// entry). Each alternative independently gates whether the clause may
+    /// name a checked exception and which thrown exceptions it discharges.
+    pub param_types: Vec<SpannedTypeRef>,
     pub body: StmtId,
 }
 
@@ -346,6 +365,16 @@ pub enum SwitchLabel {
     /// `case Foo f when cond` ([§14.11.1]). It is a boolean expression
     /// evaluated when its pattern matched, not a case label of its own.
     Guard(ExprId),
+}
+
+/// The target of an explicit constructor invocation
+/// ([JLS §8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
+/// `this(args)` delegates to a constructor of the same class, `super(args)`
+/// invokes a constructor of the direct superclass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CtorCallTarget {
+    This,
+    Super,
 }
 
 /// An expression, mirroring the expression forms of
@@ -404,11 +433,15 @@ pub enum ExprData {
         /// dropped. Empty for a plain instance creation.
         members: Vec<AnonymousMethod>,
     },
-    /// An explicit constructor invocation `this(args)` in a constructor body
+    /// An explicit constructor invocation in a constructor body
     /// ([§8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
-    /// it delegates to another constructor of the same class and, as a
-    /// statement form, has no value.
-    CtorCall { args: Vec<ExprId> },
+    /// `this(args)` delegates to another constructor of the same class,
+    /// `super(args)` invokes a direct superclass constructor; as a statement
+    /// form it has no value.
+    CtorCall {
+        args: Vec<ExprId>,
+        target: CtorCallTarget,
+    },
     /// An array creation `new Type[dims]` ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)),
     /// or — with empty `dims` — `new Type[] { ... }`, whose `initializer`
     /// ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6))

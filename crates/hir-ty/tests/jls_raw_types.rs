@@ -58,3 +58,63 @@ class Raw {
 ",
     )])
 );
+
+// -- green: a raw `implements` with a non-generic override ([§4.8], [§8.4.8.1]) --
+// Implementing a generic interface *raw* erases its members: the override of
+// `<T> T convert(Class<T>, Object)` is `Object convert(Class, Object)`, which
+// the @Override check must accept, and calls through a raw-typed value resolve
+// against the erased signature.
+
+snapshot!(
+    raw_implements_generic_interface,
+    check_body_types(&[(
+        "/src/com/example/Conv.java",
+        "\
+package com.example;
+
+class Conv {
+    interface Converter<T> {
+        T convert(Class<T> type, Object value);
+    }
+
+    static class RawImpl implements Converter {
+        @Override
+        public Object convert(Class type, Object value) {
+            return value;
+        }
+    }
+
+    public static void use() {
+        Converter c = new RawImpl();
+        Object r = c.convert(String.class, \"x\");
+    }
+}
+",
+    ),])
+);
+
+// -- green: instance members of a raw generic superclass are erased -------------
+// A raw `AbstractList` subclass overrides and invokes erased members without
+// diagnostics; unchecked warnings stay out of the way of the resolution.
+
+snapshot!(
+    raw_superclass_erased_members,
+    check_body_types(&[(
+        "/src/com/example/Names.java",
+        "\
+package com.example;
+
+class Names extends java.util.AbstractList<String> {
+    @Override
+    public String get(int index) {
+        return get(index);
+    }
+
+    @Override
+    public int size() {
+        return 0;
+    }
+}
+",
+    ),])
+);

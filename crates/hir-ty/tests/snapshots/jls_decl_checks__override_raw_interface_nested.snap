@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Outer.java:
+package com.example;
+
+import org.apache.commons.beanutils.Converter;
+
+class Outer {
+    private static final class Conv implements Converter {
+        @Override
+        public Object convert(Class type, Object value) {
+            return value;
+        }
+    }
+}

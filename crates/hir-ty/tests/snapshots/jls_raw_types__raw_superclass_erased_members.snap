@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+expression: out
+---
+FILE /src/com/example/Names.java:
+package com.example;
+
+class Names extends java.util.AbstractList<String> {
+    @Override
+    public String get(int index) {
+        return get(index);
+    }
+
+    @Override
+    public int size() {
+        return 0;
+    }
+}
+
+method get(int): java.lang.String
+  locals: l0: int
+  exprs: e0: int | e1: java.lang.String
+method size(): int
+  locals: 
+  exprs: e2: int

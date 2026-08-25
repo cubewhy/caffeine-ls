@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Parse.java:
+package com.example;
+
+import java.io.IOException;
+
+class Parse {
+    int css(String arg) throws IOException {
+        final int step, offset;
+        if (arg.length() == 3) {
+            step = 2;
+            offset = 1;
+        } else {
+            if (arg.length() == 4) {
+                step = 5;
+                offset = 0;
+            } else if (arg.length() > 2) {
+                step = 0;
+                offset = 1;
+            } else {
+                throw new IOException("bad");
+            }
+        }
+        return step + offset;
+    }
+}
+
+method css(java.lang.String): int
+  locals: l0: java.lang.String | l1: int | l2: int
+  exprs: e0: java.lang.String | e1: int | e2: int | e3: boolean | e4: boolean | e5: int | e6: int | e7: int | e8: int | e9: int | e10: int | e11: java.lang.String | e12: int | e13: int | e14: boolean | e15: boolean | e16: int | e17: int | e18: int | e19: int | e20: int | e21: int | e22: java.lang.String | e23: int | e24: int | e25: boolean | e26: boolean | e27: int | e28: int | e29: int | e30: int | e31: int | e32: int | e33: java.lang.String | e34: java.io.IOException | e35: int | e36: int | e37: int

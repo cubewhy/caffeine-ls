@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Rethrow.java:
+package com.example;
+
+import java.io.IOException;
+
+class Rethrow {
+    void m() {
+        try {
+            io();
+        } catch (Exception exc) {
+            throw exc;
+        }
+    }
+
+    void io() throws IOException { }
+}
+
+method m(): void
+  locals: l0: java.lang.Exception
+  exprs: e0: void | e1: java.lang.Exception
+  diags: e1@9:17: unreported-exception: unreported exception IOException; must be caught or declared to be thrown
+method io(): void
+  locals: 
+  exprs:

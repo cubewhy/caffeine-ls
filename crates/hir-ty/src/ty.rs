@@ -215,6 +215,17 @@ impl Ty {
         matches!(self.kind(db), TyKind::Void)
     }
 
+    /// Whether the type is `void` in either representation: the dedicated
+    /// [`TyKind::Void`] or the `void` primitive (the declared return type of
+    /// a `void` method lowers to the primitive).
+    pub fn is_void_like(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::Void => true,
+            TyKind::Primitive(PrimitiveType::Void) => true,
+            _ => false,
+        }
+    }
+
     pub fn is_null(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Null)
     }

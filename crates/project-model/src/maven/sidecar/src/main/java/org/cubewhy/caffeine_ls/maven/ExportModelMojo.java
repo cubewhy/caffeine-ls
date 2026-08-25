@@ -111,6 +111,15 @@ public class ExportModelMojo extends AbstractMojo {
                 }
             }
 
+            // Generator plugins (annotation processors, ANTLR, protobuf, …)
+            // register their output as a compile source root while they run.
+            // When the reactor died before reaching them, no registration
+            // exists — but output written by an earlier build may still sit
+            // under <build>/../generated-*; those are real compile inputs the
+            // export must report, so pick up whatever exists on disk.
+            collectGeneratedDirectories(new File(proj.getBuild().getOutputDirectory()), generatedRoots);
+            collectGeneratedDirectories(new File(proj.getBuild().getTestOutputDirectory()), generatedRoots);
+
             Set<String> resourceRoots = new LinkedHashSet<>();
             for (Resource res : safeResources(proj.getResources())) {
                 String normalized = normalizePath(res.getDirectory());
@@ -167,6 +176,51 @@ public class ExportModelMojo extends AbstractMojo {
         System.out.println(MODEL_BEGIN);
         System.out.println(Json.write(model));
         System.out.println(MODEL_END);
+    }
+
+    /**
+     * Adds the per-plugin source roots under the build directory's
+     * {@code generated-sources} / {@code generated-test-sources} folders, when
+     * those folders exist. The build output path is
+     * {@code <build dir>/classes}, so its parent is the build directory.
+     */
+    private void collectGeneratedDirectories(File outputDirectory, List<String> generatedRoots) {
+        File classes = normalizeFile(outputDirectory);
+        File buildDir = classes == null ? null : classes.getParentFile();
+        if (buildDir == null || !buildDir.isDirectory()) {
+            return;
+        }
+        File[] children = buildDir.listFiles(File::isDirectory);
+        if (children == null) {
+            return;
+        }
+        for (File child : children) {
+            String name = child.getName();
+            if (!name.equals("generated-sources") && !name.equals("generated-test-sources")) {
+                continue;
+            }
+            File[] roots = child.listFiles(File::isDirectory);
+            if (roots == null) {
+                continue;
+            }
+            for (File root : roots) {
+                String normalized = normalizePath(root);
+                if (normalized != null) {
+                    generatedRoots.add(normalized);
+                }
+            }
+        }
+    }
+
+    private static File normalizeFile(File file) {
+        if (file == null) {
+            return null;
+        }
+        try {
+            return file.getAbsoluteFile();
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private void collectJarOrigins(MavenProject proj, Map<String, String> jarOriginMap) {

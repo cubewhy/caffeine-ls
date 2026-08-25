@@ -30,16 +30,21 @@ use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
     db::TyDatabase,
-    ty::{BoundKind, Ty, WildcardBound, ty_from_type_ref},
+    ty::{BoundKind, Ty, TyKind, WildcardBound, ty_from_type_ref},
 };
 
 /// The per-file name context of a single item: its package, the compilation
-/// unit's imports and the type parameters in scope at the item.
+/// unit's imports, the type parameters in scope at the item and the fully
+/// qualified names of every enclosing class-like declaration.
 #[derive(Debug, Clone)]
 pub struct Resolver {
     package: Option<Name>,
     imports: Vec<ImportItem>,
     type_params: Vec<TypeParam>,
+    /// The enclosing class-like declarations, innermost first, as canonical
+    /// FQNs ([JLS §6.7]): their *member types* are in scope by simple name
+    /// ([JLS §6.5.5.1]) ahead of any import.
+    enclosing: Vec<Name>,
 }
 
 impl Resolver {
@@ -55,6 +60,7 @@ impl Resolver {
             package: tree.package.clone(),
             imports: tree.imports.clone(),
             type_params: type_params.get(&item_id).cloned().unwrap_or_default(),
+            enclosing: enclosing_type_chain(tree, item_id),
         }
     }
 
@@ -71,25 +77,88 @@ impl Resolver {
     /// declaring type's FQN and the member's simple name, in declaration
     /// order (the first matching import wins, [JLS §7.5.4]).
     pub fn static_import_owner(&self, simple: &str) -> Option<(Name, String)> {
+        self.static_import_owners(simple).into_iter().next()
+    }
+
+    /// Every static import that could name `simple` as a member, in
+    /// declaration order. On-demand imports (`import static pkg.Type.*`)
+    /// contribute all their members to the scope ([JLS §7.5.4]), so several
+    /// may name the same member and each must be probed until one resolves.
+    pub fn static_import_owners(&self, simple: &str) -> Vec<(Name, String)> {
+        let mut out = Vec::new();
         for import in &self.imports {
             if !import.is_static {
                 continue;
             }
             let text = import.name.as_str();
             if import.is_asterisk {
-                return Some((import.name.clone(), simple.to_owned()));
-            }
-            let (owner, member) = text.rsplit_once('.')?;
-            if member == simple {
-                return Some((Name::new(owner), member.to_owned()));
+                out.push((import.name.clone(), simple.to_owned()));
+            } else if let Some((owner, member)) = text.rsplit_once('.') {
+                if member == simple {
+                    out.push((Name::new(owner), member.to_owned()));
+                }
             }
         }
-        None
+        out
     }
 
     pub fn type_params(&self) -> &[TypeParam] {
         &self.type_params
     }
+
+    /// The enclosing class-like declarations, innermost first, as FQNs.
+    pub fn enclosing(&self) -> &[Name] {
+        &self.enclosing
+    }
+}
+
+/// The enclosing class-like declarations of `item_id`, innermost first, as
+/// canonical fully qualified names ([JLS §6.7]): the package followed by the
+/// chain of nested type names. Member types of these declarations are in
+/// scope by simple name ([JLS §6.5.5.1], [§8.1], [§9.1]).
+pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name> {
+    // Parent links, one tree walk.
+    fn walk(tree: &ItemTree, id: ItemId, parents: &mut FxHashMap<ItemId, ItemId>) {
+        for &child in tree.data(id).body() {
+            parents.insert(child, id);
+            walk(tree, child, parents);
+        }
+    }
+    let mut parents = FxHashMap::default();
+    for &top in &tree.top {
+        walk(tree, top, &mut parents);
+    }
+
+    // The simple names of the class-like ancestors, outermost last.
+    let mut names = Vec::new();
+    let mut current = parents.get(&item_id).copied();
+    while let Some(id) = current {
+        let name = match tree.data(id) {
+            ItemData::Class(d) => Some(&d.name),
+            ItemData::Interface(d) => Some(&d.name),
+            ItemData::Enum(d) => Some(&d.name),
+            ItemData::Record(d) => Some(&d.name),
+            ItemData::Annotation(d) => Some(&d.name),
+            _ => None,
+        };
+        if let Some(name) = name {
+            names.push(name.clone());
+        }
+        current = parents.get(&id).copied();
+    }
+
+    // Accumulate FQNs from the outside in; the result is innermost first.
+    let mut acc = tree.package.clone();
+    let mut out = Vec::with_capacity(names.len());
+    for name in names.iter().rev() {
+        acc = Some(match &acc {
+            Some(prefix) => join(prefix, name.as_str()),
+            None => name.clone(),
+        });
+        let fqn = acc.clone().unwrap();
+        out.push(fqn);
+    }
+    out
 }
 
 /// The type parameters in scope at every item of `tree` ([JLS §6.3]):
@@ -221,16 +290,87 @@ fn resolve_reference_name(
     resolver: &Resolver,
     name: &Name,
 ) -> Name {
+    let text = name.as_str();
     let candidates = candidate_fqns(resolver, name);
     for candidate in &candidates {
         if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
             return candidate.clone();
         }
     }
-    candidates
-        .into_iter()
-        .next()
+    // §6.5.5.1: a member type *inherited* by an enclosing declaration is in
+    // scope by simple name too — `Sub` may name `Super.Nested`. Walk each
+    // enclosing type's supertype chain and offer `{super}.{simple}`
+    // candidates (and `{super-prefix}.{rest}` for qualified names).
+    for candidate in inherited_member_candidates(db, scope, resolver, text) {
+        if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+            return candidate;
+        }
+    }
+    // Nothing resolved (pre-workspace silence): degrade to the most
+    // qualified *non-member* candidate — an enclosing-member prefix would
+    // invent a nested type that was never declared.
+    let degraded = candidates.iter().find(|candidate| {
+        !resolver
+            .enclosing()
+            .iter()
+            .any(|enclosing| candidate.as_str().starts_with(&format!("{enclosing}.")))
+    });
+    degraded
+        .or_else(|| candidates.first())
+        .cloned()
         .unwrap_or_else(|| name.clone())
+}
+
+/// The candidates for a type name that a member type *inherited* by an
+/// enclosing declaration puts in scope
+/// ([JLS §6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1)):
+/// each enclosing type's transitive supertype chain joined with the simple
+/// name — or, for a qualified name, with its remainder after the prefix.
+fn inherited_member_candidates(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    text: &str,
+) -> Vec<Name> {
+    let mut out = Vec::new();
+    let mut seen: FxHashMap<Name, ()> = FxHashMap::default();
+    for enclosing in resolver.enclosing() {
+        let mut queue = vec![Ty::reference(db, enclosing.clone(), Vec::new())];
+        while let Some(ty) = queue.pop() {
+            for parent in crate::subtyping::supertypes_impl(db, scope, &ty) {
+                if parent.is_error(db) {
+                    continue;
+                }
+                let TyKind::Reference {
+                    name: super_name, ..
+                } = parent.kind(db)
+                else {
+                    continue;
+                };
+                if seen.insert(super_name.clone(), ()).is_some() {
+                    continue;
+                }
+                queue.push(parent);
+                let suffix = match text.split_once('.') {
+                    Some((prefix, rest)) => {
+                        // The inherited chain qualifies the *prefix*; keep any
+                        // deeper nesting after it (`Mode.CLOSE` against a
+                        // superclass that inherits `Mode` yields
+                        // `Super.Mode.CLOSE`).
+                        match super_name.as_str().ends_with(prefix)
+                            && super_name.as_str().len() > prefix.len()
+                        {
+                            true => continue,
+                            false => rest,
+                        }
+                    }
+                    None => text,
+                };
+                out.push(join(&super_name.clone(), suffix));
+            }
+        }
+    }
+    out
 }
 
 /// The candidate FQNs for a (possibly qualified) type name, most specific
@@ -267,6 +407,13 @@ fn simple_candidates(resolver: &Resolver, simple: &str) -> Vec<Name> {
 /// a later step, and whether two on-demand imports make it ambiguous.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CandidateStep {
+    /// A member type of an enclosing type declaration
+    /// ([§6.5.5.1], [§8.1]): the innermost declaration wins.
+    EnclosingMember,
+    /// A nested type named by a *single-static* import
+    /// ([§7.5.4]): `import static p.Outer.Nested` puts the simple name
+    /// `Nested` in scope as a type wherever it is used.
+    StaticImportType,
     /// A single-type import whose simple name matches ([§7.5.1]).
     SingleImport,
     /// A type in the current package ([§7.4.2]).
@@ -281,6 +428,22 @@ pub(crate) enum CandidateStep {
 
 fn simple_candidates_with_kind(resolver: &Resolver, simple: &str) -> Vec<(CandidateStep, Name)> {
     let mut out = Vec::new();
+
+    // 0. a member type of an enclosing class-like declaration (§6.5.5.1):
+    // innermost first; these shadow single-type imports ([§6.4.1]).
+    for enclosing in &resolver.enclosing {
+        out.push((CandidateStep::EnclosingMember, join(enclosing, simple)));
+    }
+
+    // 0.5. a nested type imported by a *single-static* import ([§7.5.4]):
+    // `import static p.Outer.Nested` makes the type usable by simple name.
+    for import in resolver.imports.iter().filter(|import| {
+        import.is_static
+            && !import.is_asterisk
+            && import.name.as_str().rsplit('.').next() == Some(simple)
+    }) {
+        out.push((CandidateStep::StaticImportType, import.name.clone()));
+    }
 
     // 1. a single-type import whose simple name matches (§7.5.1)
     if let Some(import) = resolver.imports.iter().find(|import| {
@@ -401,6 +564,17 @@ pub fn resolve_name_checked(
             }
             hidden.get_or_insert_with(|| candidate.clone());
         }
+        // §6.5.5.1: the prefix may name a member type *inherited* by an
+        // enclosing declaration.
+        for prefix_fqn in inherited_member_candidates(db, scope, resolver, prefix) {
+            let candidate = join(&prefix_fqn, rest);
+            if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+                if fqn_visible(db, &module_ctx, candidate.as_str()) {
+                    return NameResolution::Resolved(candidate);
+                }
+                hidden.get_or_insert(candidate);
+            }
+        }
         return match hidden {
             Some(fqn) => NameResolution::NotAccessible(fqn),
             None => NameResolution::Unresolved,
@@ -410,6 +584,22 @@ pub fn resolve_name_checked(
     let candidates = simple_candidates_with_kind(resolver, text);
     let mut hidden: Option<Name> = None;
     for (idx, (step, candidate)) in candidates.iter().enumerate() {
+        // §6.5.5.1: a member type of an enclosing declaration shadows
+        // everything below; the innermost enclosing class wins.
+        if *step == CandidateStep::EnclosingMember {
+            if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+                return NameResolution::Resolved(candidate.clone());
+            }
+            continue;
+        }
+        // §7.5.4: a single-static import may name a nested type; only counts
+        // when the imported name actually denotes one.
+        if *step == CandidateStep::StaticImportType {
+            if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+                return NameResolution::Resolved(candidate.clone());
+            }
+            continue;
+        }
         // §7.5.1: a single-type import *shadows* the simple name; if it names
         // a class that cannot be found the import is an error and the name
         // does not fall through to a later step.
@@ -448,6 +638,16 @@ pub fn resolve_name_checked(
                 }
             }
             return NameResolution::Resolved(candidate.clone());
+        }
+    }
+    // §6.5.5.1: a member type *inherited* by an enclosing declaration is in
+    // scope by simple name too — tried after every declared candidate.
+    for candidate in inherited_member_candidates(db, scope, resolver, text) {
+        if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
+            if fqn_visible(db, &module_ctx, candidate.as_str()) {
+                return NameResolution::Resolved(candidate);
+            }
+            hidden.get_or_insert(candidate);
         }
     }
     match hidden {

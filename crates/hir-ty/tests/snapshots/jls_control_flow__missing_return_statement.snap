@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/NoRet.java:
+package com.example;
+
+class NoRet {
+    int missing() {
+        int y = 1;
+    }
+}
+
+method missing(): int
+  locals: l0: int
+  exprs: e0: int
+  diags: method@5:5: missing-return-value: missing return statement

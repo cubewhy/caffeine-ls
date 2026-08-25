@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+
+class Outer {
+    Inner inner;
+    Request make() { return new Request(); }
+
+    class Inner {}
+
+    interface Request {}
+}
+
+RESOLVED:
+field inner: com.example.Inner
+method make: com.example.Request()

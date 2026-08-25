@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+expression: out
+---
+FILE /src/com/example/Conv.java:
+package com.example;
+
+class Conv {
+    interface Converter<T> {
+        T convert(Class<T> type, Object value);
+    }
+
+    static class RawImpl implements Converter {
+        @Override
+        public Object convert(Class type, Object value) {
+            return value;
+        }
+    }
+
+    public static void use() {
+        Converter c = new RawImpl();
+        Object r = c.convert(String.class, "x");
+    }
+}
+
+method convert(java.lang.Class, java.lang.Object): java.lang.Object
+  locals: l0: java.lang.Class | l1: java.lang.Object
+  exprs: e0: java.lang.Object
+method use(): void
+  locals: l2: com.example.Conv.Converter | l3: java.lang.Object
+  exprs: e1: com.example.Conv.RawImpl | e2: java.lang.Class<java.lang.String> | e3: java.lang.String | e4: com.example.Conv.Converter | e5: java.lang.Object
+  diags: l2@15:18: raw-type-use: raw type 'Converter' is used without type arguments

@@ -564,7 +564,7 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
         }
         Paren(expr) => walk_expr(bodies, *expr, out),
         Switch { scrutinee, arms } => walk_switch(bodies, *scrutinee, arms, out),
-        CtorCall { args } => {
+        CtorCall { args, .. } => {
             for &arg in args {
                 walk_expr(bodies, arg, out);
             }

@@ -106,6 +106,15 @@ pub enum JavaDiagnosticCode {
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method.
     MethodDoesNotOverride,
+    /// §14.22: a statement is unreachable — the preceding one cannot
+    /// complete normally.
+    UnreachableStatement,
+    /// §8.4.7: a method with a non-`void` return type can complete normally
+    /// without a `return`.
+    MissingReturnValue,
+    /// §11.2.3: a `catch` clause names a checked exception that the `try`
+    /// block cannot throw.
+    CatchNeverThrown,
     /// §15.12.3: an unqualified invocation of an instance method from a static
     /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     NonStaticMethodFromStaticContext,
@@ -186,6 +195,9 @@ impl JavaDiagnosticCode {
             RawTypeUse => Some("compiler.warn.raw.class.use"),
             UncheckedConversion => Some("compiler.warn.unchecked.assign"),
             MethodDoesNotOverride => Some("compiler.err.method.does.not.override.superclass"),
+            UnreachableStatement => Some("compiler.err.unreachable.stmt"),
+            MissingReturnValue => Some("compiler.err.missing.ret.stmt"),
+            CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
@@ -241,6 +253,9 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::RawTypeUse => "raw-type-use",
             JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
             JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
+            JavaDiagnosticCode::UnreachableStatement => "unreachable-statement",
+            JavaDiagnosticCode::MissingReturnValue => "missing-return-value",
+            JavaDiagnosticCode::CatchNeverThrown => "catch-never-thrown",
             JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
                 "non-static-method-from-static-context"
             }

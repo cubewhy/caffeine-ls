@@ -54,9 +54,12 @@ pub fn import_maven_workspace(
     };
 
     // The primary run compiles the reactor so that inter-module dependencies
-    // resolve. Projects with compile errors fail here; retry without the
-    // lifecycle phase, because the model only needs the resolved project
-    // metadata, not compiled output.
+    // resolve. Projects with compile errors fail here; the first retry runs
+    // only `generate-sources` — still executing the generator plugins
+    // (annotation processors, ANTLR, protobuf, …) whose output directories are
+    // registered as compile source roots the export must report — and the last
+    // resort runs the bare goal, because the model fundamentally needs only
+    // the resolved project metadata, not compiled output.
     let mut command = build_command(&["test-compile"]);
     let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
     if outcome.status.success() {
@@ -65,8 +68,18 @@ pub fn import_maven_workspace(
 
     let primary_failure = outcome;
     tracing::warn!(
-        "Maven test-compile failed (exit code {}); retrying the export goal without compilation",
+        "Maven test-compile failed (exit code {}); retrying with generate-sources only",
         primary_failure.status.code().unwrap_or(-1)
+    );
+    let mut command = build_command(&["generate-sources"]);
+    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    if outcome.status.success() {
+        return maven_workspace_from_outcome(outcome);
+    }
+
+    tracing::warn!(
+        "Maven generate-sources failed (exit code {}); retrying the export goal without a lifecycle phase",
+        outcome.status.code().unwrap_or(-1)
     );
     let mut command = build_command(&[]);
     let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;

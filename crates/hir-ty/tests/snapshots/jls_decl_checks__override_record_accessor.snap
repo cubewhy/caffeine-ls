@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Meta.java:
+package com.example;
+
+import java.util.List;
+import java.util.regex.Pattern;
+
+record Meta(List<Pattern> headerPatterns, List<String> lineContents) {
+    @Override
+    public List<Pattern> headerPatterns() {
+        return headerPatterns;
+    }
+}

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Poly.java:
+package com.example;
+
+import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+class Poly {
+    List<String> go(Stream<String> s) {
+        return s.collect(Collectors.toList());
+    }
+}
+
+method go(java.util.stream.Stream<java.lang.String>): java.util.List<java.lang.String>
+  locals: l0: java.util.stream.Stream<java.lang.String>
+  exprs: e1: java.util.stream.Collector<java.lang.String, ?, java.util.List<java.lang.String>> | e2: java.util.stream.Stream<java.lang.String> | e3: java.util.List<java.lang.String>

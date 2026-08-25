@@ -208,3 +208,73 @@ class Derived extends Base {
 ",
     )])
 );
+
+// -- red/green: overriding through a *raw* generic superinterface ([§4.8]) ------
+// `implements Converter` (bare) erases the interface's members: the override
+// of `<T> T convert(Class<T>, Object)` by `convert(Class, Object)` is exact
+// after erasure ([§8.4.8.1], [§8.4.2]).
+
+snapshot!(
+    override_raw_generic_interface,
+    check_class_diagnostics(&[(
+        "/src/com/example/Conv.java",
+        "\
+package com.example;
+
+import org.apache.commons.beanutils.Converter;
+
+class Conv implements Converter {
+    @Override
+    public Object convert(Class type, Object value) {
+        return value;
+    }
+}
+",
+    )])
+);
+
+// -- green/red: @Override on an explicitly declared record accessor ([§8.10.3]) -
+// The explicit accessor is the implicit accessor mandated by §8.10.3; javac
+// accepts @Override on it ([§9.6.4.4]).
+
+snapshot!(
+    override_record_accessor,
+    check_class_diagnostics(&[(
+        "/src/com/example/Meta.java",
+        "\
+package com.example;
+
+import java.util.List;
+import java.util.regex.Pattern;
+
+record Meta(List<Pattern> headerPatterns, List<String> lineContents) {
+    @Override
+    public List<Pattern> headerPatterns() {
+        return headerPatterns;
+    }
+}
+",
+    )])
+);
+
+// -- green/red: the same override from inside a *static nested* class -----------
+snapshot!(
+    override_raw_interface_nested,
+    check_class_diagnostics(&[(
+        "/src/com/example/Outer.java",
+        "\
+package com.example;
+
+import org.apache.commons.beanutils.Converter;
+
+class Outer {
+    private static final class Conv implements Converter {
+        @Override
+        public Object convert(Class type, Object value) {
+            return value;
+        }
+    }
+}
+",
+    )])
+);

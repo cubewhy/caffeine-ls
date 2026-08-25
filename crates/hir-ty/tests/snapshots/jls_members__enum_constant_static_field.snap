@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Syntax.java:
+package com.example;
+
+public enum Syntax {
+    xml, html;
+}
+
+FILE /src/com/example/Use.java:
+package com.example;
+
+import static com.example.Syntax.xml;
+
+class Use {
+    boolean isXml(com.example.Syntax syntax) {
+        return syntax == xml;
+    }
+}
+
+method isXml(com.example.Syntax): boolean
+  locals: l0: com.example.Syntax
+  exprs: e0: com.example.Syntax | e1: com.example.Syntax | e2: boolean

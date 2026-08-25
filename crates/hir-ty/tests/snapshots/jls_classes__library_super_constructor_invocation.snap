@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/Sub.java:
+package com.example;
+
+import java.io.PrintStream;
+
+class Sub extends PrintStream {
+    Sub() {
+        super(new java.io.ByteArrayOutputStream());
+    }
+}
+
+method Sub(): <init>
+  locals: 
+  exprs: e0: java.io.ByteArrayOutputStream | e1: void

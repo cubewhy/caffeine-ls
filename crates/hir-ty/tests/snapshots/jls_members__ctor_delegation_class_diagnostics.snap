@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    Base(int tag) {}
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    Derived() {
+        super(1);
+    }
+}

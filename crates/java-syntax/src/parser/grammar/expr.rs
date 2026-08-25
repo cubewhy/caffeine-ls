@@ -380,7 +380,19 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                 }
                 DOT => {
                     p.expect(DOT); // .
-                    if p.at(CLASS_KW) {
+                    if p.at(LESS) {
+                        // §15.12.1: an explicit type-argument list
+                        // `. <TypeArgs> Identifier (...)` — the invocation is
+                        // completed by the following L_PAREN iteration.
+                        type_arguments(p);
+                        if p.at(IDENTIFIER) {
+                            p.bump();
+                            left = m.complete(p, FIELD_ACCESS);
+                        } else {
+                            p.error_message("Expected identifier after '.'");
+                            left = m.complete(p, ERROR);
+                        }
+                    } else if p.at(CLASS_KW) {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-ClassLiteral
                         p.bump();
                         left = m.complete(p, CLASS_LITERAL);

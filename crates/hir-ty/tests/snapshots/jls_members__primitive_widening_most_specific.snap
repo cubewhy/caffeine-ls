@@ -1,0 +1,7 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+append-string: <none> [args: java.lang.String]
+valueof-int: <none> [args: int]
+append-char: <none> [args: char]

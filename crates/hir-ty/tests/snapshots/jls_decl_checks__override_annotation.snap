@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_decl_checks.rs
-assertion_line: 133
 expression: out
 ---
 FILE /src/com/example/Base.java:
@@ -22,5 +21,5 @@ class Derived extends Base {
     static void hide() {}
 }
 
-method run: method-does-not-override: method run() annotated @Override does not override or implement a method from a supertype
+method missing: method-does-not-override: method missing() annotated @Override does not override or implement a method from a supertype
 method hide: method-does-not-override: method hide() annotated @Override does not override or implement a method from a supertype

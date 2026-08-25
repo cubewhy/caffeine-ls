@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Exc.java:
+package com.example;
+
+import java.io.IOException;
+
+class Exc {
+    void io() throws IOException { }
+
+    void m() {
+        try {
+            io();
+        } catch (IOException | ClassNotFoundException e) {
+        }
+    }
+}
+
+method io(): void
+  locals: 
+  exprs: 
+method m(): void
+  locals: l0: java.io.IOException
+  exprs: e0: void
+  diags: l0@10:17: catch-never-thrown: exception ClassNotFoundException is never thrown in the corresponding try block

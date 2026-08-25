@@ -133,6 +133,7 @@ impl Inference {
     /// where nested poly invocations contribute their constraints to the
     /// enclosing invocation's table incrementally.
     pub(crate) fn add_constraint(&mut self, constraint: Constraint) {
+        // debug disabled (needs db)
         self.worklist.push_back(constraint);
     }
 
@@ -201,7 +202,10 @@ impl Inference {
         if !self.drain_worklist(db, scope, phase) {
             return false;
         }
-        self.incorporate(db, scope, phase)
+        if !self.incorporate(db, scope, phase) {
+            return false;
+        }
+        true
     }
 
     /// A snapshot of the table state for speculative candidate probing: the
@@ -279,20 +283,58 @@ impl Inference {
         t: &Ty,
         worklist: &mut VecDeque<Constraint>,
     ) -> bool {
+        // §5.1.10/§18.2.2: a wildcard on the *source* side stands for its
+        // capture's least bound (`? extends X` at least `X`, `? super X`
+        // exactly `X`, `?` at least `Object`) — containment does not apply
+        // to it, and the bare wildcard must not enter the bound set.
+        if let TyKind::Wildcard(bound) = s.kind(db) {
+            let object = Ty::reference(db, "java.lang.Object", Vec::new());
+            let minimum = match bound.as_deref().map(|b| (&b.kind, &b.ty)) {
+                Some((BoundKind::Upper, ty)) | Some((BoundKind::Lower, ty)) => *ty,
+                _ => object,
+            };
+            return self.reduce_sub(db, scope, phase, &minimum, t, worklist);
+        }
         // §18.2.1: ⟨S → α⟩ is the lower bound `S <: α`; ⟨α → T⟩ is the upper
-        // bound `α <: T`.
+        // bound `α <: T`. An inference variable constrained by a *wildcard*
+        // target is not an upper bound of the variable — §18.2.2/§18.2.3
+        // containment reduces it to bounds on θ (`⟨α <: ? extends θ⟩` bounds
+        // α from above by θ, `⟨α <: ? super θ⟩` from below), so it routes to
+        // the wildcard reduction below.
         if let Some(id) = t.as_infer_var(db) {
             self.bounds.entry(id).or_default().lower.push(*s);
             return true;
         }
         if let Some(id) = s.as_infer_var(db) {
+            if matches!(t.kind(db), TyKind::Wildcard(_)) {
+                return self.reduce_wildcard(db, s, t, worklist);
+            }
             self.bounds.entry(id).or_default().upper.push(*t);
             return true;
         }
         match (s.kind(db), t.kind(db)) {
-            // §18.2.1: ⟨S[] → T[]⟩ reduces to ⟨S → T⟩.
+            // §18.2.1: ⟨S[] → T[]⟩ reduces to ⟨S → T⟩ — except when either
+            // component is primitive ([§4.10.3], [§5.3]): primitive-array
+            // components are invariant, so `long[]` is unrelated to
+            // `double[]` even though `long` widens to `double`.
+            (TyKind::Array(si), TyKind::Array(ti))
+                if si.is_primitive(db) || ti.is_primitive(db) =>
+            {
+                si == ti
+            }
             (TyKind::Array(si), TyKind::Array(ti)) => {
                 worklist.push_back(Constraint::Sub(**si, **ti));
+                true
+            }
+            // §4.10.3: an array's reference supertypes are exactly `Object`,
+            // `Cloneable` and `Serializable`; the constraint holds against
+            // them even when the target still carries inference variables.
+            (TyKind::Array(_), TyKind::Reference { name, .. })
+                if matches!(
+                    name.as_str(),
+                    "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
+                ) =>
+            {
                 true
             }
             (
@@ -307,7 +349,14 @@ impl Inference {
                 if ta.is_empty() {
                     return true;
                 }
-                if sa.is_empty() || sa.len() != ta.len() {
+                if sa.is_empty() {
+                    // §4.8/§5.1.9/§15.12.2.3: a *raw* source is compatible
+                    // with any parameterization of its own class by
+                    // unchecked conversion — admitted in the loose phase
+                    // (`stream.flatMap(List::stream)`), rejected in strict.
+                    return phase == InvocationPhase::Loose;
+                }
+                if sa.len() != ta.len() {
                     return false;
                 }
                 if ta.iter().any(|arg| arg.is_wildcard(db)) {
@@ -327,21 +376,33 @@ impl Inference {
             (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
                 // Different erasures: against a proper source the constraint
                 // is checked directly; a source still carrying inference
-                // variables is reduced against the direct supertype with the
-                // target's erasure (§18.2.1).
+                // variables is reduced transitively — the first parameterized
+                // supertype of `s` named `tn` (through as many steps as the
+                // hierarchy needs, §18.2.1) becomes ⟨Supertype → T⟩.
                 if !s.contains_infer_var(db) && !t.contains_infer_var(db) {
                     return convertible(db, scope, &phase, s, t);
                 }
                 if let Some((tn, _)) = t.as_reference(db) {
-                    for parent in supertypes_impl(db, scope, s) {
-                        if let Some((pn, _)) = parent.as_reference(db)
-                            && pn == tn
-                        {
-                            worklist.push_back(Constraint::Sub(parent, *t));
-                            return true;
+                    let mut stack = vec![s.clone()];
+                    let mut visited: FxHashSet<TyData> = FxHashSet::default();
+                    let mut found = false;
+                    while let Some(current) = stack.pop() {
+                        for parent in supertypes_impl(db, scope, &current) {
+                            if !visited.insert(parent.id) {
+                                continue;
+                            }
+                            let Some((pn, _)) = parent.as_reference(db) else {
+                                continue;
+                            };
+                            if pn == tn {
+                                worklist.push_back(Constraint::Sub(parent, *t));
+                                found = true;
+                            } else {
+                                stack.push(parent);
+                            }
                         }
                     }
-                    return false;
+                    return found;
                 }
                 false
             }
@@ -444,6 +505,25 @@ impl Inference {
                 }
                 if sa.is_empty() || ta.is_empty() || sa.len() != ta.len() {
                     return false;
+                }
+                // §18.2.1/§18.2.3: an argument position involving a wildcard
+                // does not equate — it *contains* (`Collector<T,?,C>` may be
+                // equal to a parameterization whose argument bounds it), so
+                // those positions reduce to the containment rules instead.
+                if sa.iter().any(|arg| arg.is_wildcard(db))
+                    || ta.iter().any(|arg| arg.is_wildcard(db))
+                {
+                    for (s_arg, t_arg) in sa.iter().zip(ta.iter()) {
+                        let both_wildcards = s_arg.is_wildcard(db) && t_arg.is_wildcard(db);
+                        if t_arg.is_wildcard(db) || both_wildcards {
+                            worklist.push_back(Constraint::Sub(*s_arg, *t_arg));
+                        } else if s_arg.is_wildcard(db) {
+                            return false;
+                        } else {
+                            worklist.push_back(Constraint::Eq(*s_arg, *t_arg));
+                        }
+                    }
+                    return true;
                 }
                 for (s_arg, t_arg) in sa.iter().zip(ta.iter()) {
                     worklist.push_back(Constraint::Eq(*s_arg, *t_arg));
@@ -1077,12 +1157,17 @@ fn pick_instantiation(
     equality: Option<Ty>,
     throws: bool,
 ) -> Option<Ty> {
+    // Bound validation uses *assignment* compatibility ([§5.2]), not strict
+    // subtyping: a raw lower bound (`ArrayDeque` from `ArrayDeque::new`) is
+    // compatible with a parameterized upper (`Collection<String>`) by
+    // unchecked conversion ([§5.1.9]), exactly as in javac's bound check.
+    let compatible = |inst: &Ty, upper: &Ty| {
+        is_subtype(db, scope, inst, upper)
+            || crate::subtyping::is_assignable(db, scope, inst, upper)
+    };
     if let Some(eq) = equality {
         for u in upper {
-            if !eq.contains_infer_var(db)
-                && !u.contains_infer_var(db)
-                && !is_subtype(db, scope, &eq, u)
-            {
+            if !eq.contains_infer_var(db) && !u.contains_infer_var(db) && !compatible(&eq, u) {
                 return None;
             }
         }
@@ -1091,7 +1176,7 @@ fn pick_instantiation(
     if !lower.is_empty() {
         let inst = least_upper_bound(db, scope, lower);
         for u in upper {
-            if !is_subtype(db, scope, &inst, u) {
+            if !compatible(&inst, u) {
                 return None;
             }
         }

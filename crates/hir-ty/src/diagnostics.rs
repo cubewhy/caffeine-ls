@@ -9,7 +9,7 @@
 //! [`crate::body_types`] for each body-carrying item and flattening the
 //! [`crate::BodyTypes::diagnostics`].
 
-use hir_expand::body::{BodyTree, ExprId, LocalId, PatternId};
+use hir_expand::body::{BodyTree, ExprId, LocalId, PatternId, StmtId};
 use hir_expand::name::Name;
 use rowan::TextRange;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
@@ -24,6 +24,10 @@ pub enum DiagLocation {
     Local(LocalId),
     /// A pattern of the enclosing body ([JLS §14.30]).
     Pattern(PatternId),
+    /// A statement of the enclosing body.
+    Stmt(StmtId),
+    /// The enclosing declaration itself (no finer location recorded).
+    Method,
 }
 
 impl DiagLocation {
@@ -36,6 +40,8 @@ impl DiagLocation {
             DiagLocation::Expr(id) => tree.expr_range(*id),
             DiagLocation::Local(id) => tree.local_range(*id),
             DiagLocation::Pattern(id) => tree.pattern_range(*id),
+            DiagLocation::Stmt(id) => tree.stmt_range(*id),
+            DiagLocation::Method => None,
         }
     }
 }
@@ -87,12 +93,17 @@ pub enum TypeError {
     /// field initializer or a static initializer, where `this` is unavailable.
     NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
     /// §15.12.2: members of the name exist but none is applicable to the
-    /// actual arguments.
+    /// actual arguments. `required` carries the parameter types of the
+    /// closest candidate and `found_tys` the actual argument types, so the
+    /// message can render javac's `required:/found:` block; both empty means
+    /// only the arity numbers are known.
     WrongArity {
         expr: ExprId,
         name: Name,
         found: usize,
         expected: usize,
+        required: Vec<String>,
+        found_tys: Vec<String>,
     },
     /// §14.18: the operand of a `throw` statement is not assignable to
     /// `Throwable` ([§5.2]).
@@ -173,6 +184,16 @@ pub enum TypeError {
         from: String,
         to: String,
     },
+    /// §14.22: a statement is unreachable — the statement before it cannot
+    /// complete normally (`return`, `throw`, `break`, `continue`).
+    UnreachableStatement { stmt: StmtId },
+    /// §8.4.7: a method with a non-`void` return type can complete normally
+    /// without executing a `return`. Reported against the method's
+    /// declaration range.
+    MissingReturnValue { range: Option<TextRange> },
+    /// §11.2.3: a `catch` clause names a checked exception that the `try`
+    /// block cannot throw.
+    CatchNeverThrown { local: LocalId, caught: String },
 }
 
 impl TypeError {
@@ -219,6 +240,9 @@ impl TypeError {
             TypeError::DuplicateCaseLabel { .. } => DiagnosticCode::Java(DuplicateCaseLabel),
             TypeError::RawTypeUse { .. } => DiagnosticCode::Java(RawTypeUse),
             TypeError::UncheckedConversion { .. } => DiagnosticCode::Java(UncheckedConversion),
+            TypeError::UnreachableStatement { .. } => DiagnosticCode::Java(UnreachableStatement),
+            TypeError::MissingReturnValue { .. } => DiagnosticCode::Java(MissingReturnValue),
+            TypeError::CatchNeverThrown { .. } => DiagnosticCode::Java(CatchNeverThrown),
         }
     }
 
@@ -261,6 +285,9 @@ impl TypeError {
             | NonConstantCaseLabel { expr, .. }
             | DuplicateCaseLabel { expr, .. }
             | UncheckedConversion { expr, .. } => DiagLocation::Expr(*expr),
+            UnreachableStatement { stmt } => DiagLocation::Stmt(*stmt),
+            MissingReturnValue { .. } => DiagLocation::Method,
+            CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. } => location.clone(),
@@ -276,7 +303,8 @@ impl TypeError {
         match self {
             TypeError::CannotResolveType { range, .. }
             | TypeError::AmbiguousName { range, .. }
-            | TypeError::ModuleNotAccessible { range, .. } => *range,
+            | TypeError::ModuleNotAccessible { range, .. }
+            | TypeError::MissingReturnValue { range } => *range,
             _ => self.location().range(tree),
         }
     }
@@ -330,13 +358,23 @@ impl TypeError {
             }
             WrongArity {
                 name,
-                found,
-                expected,
+                required,
+                found_tys,
                 ..
             } => {
+                // javac's default-mode message block for
+                // `compiler.err.cant.apply.symbol`.
+                if required.is_empty() {
+                    return format!(
+                        "method '{}' cannot be applied to given types",
+                        name.as_str()
+                    );
+                }
                 format!(
-                    "method '{}' is not applicable to the arguments (expected {expected}, found {found})",
-                    name.as_str()
+                    "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  reason: actual and formal argument lists differ in length",
+                    name.as_str(),
+                    required.join(","),
+                    found_tys.join(",")
                 )
             }
             IncompatibleTypes {
@@ -427,6 +465,12 @@ impl TypeError {
             UncheckedConversion { from, to, .. } => {
                 format!("unchecked conversion: {from} converted to {to}")
             }
+            UnreachableStatement { .. } => "unreachable statement".to_owned(),
+            MissingReturnValue { .. } => "missing return statement".to_owned(),
+            CatchNeverThrown { caught, .. } => format!(
+                "exception {} is never thrown in the corresponding try block",
+                simple_display(caught)
+            ),
         }
     }
 }

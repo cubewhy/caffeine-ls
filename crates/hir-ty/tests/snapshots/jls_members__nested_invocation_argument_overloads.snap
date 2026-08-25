@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Assert.java:
+package com.example;
+
+class Assert {
+    static void assertEquals(int expected, int actual) {}
+    static void assertEquals(long expected, long actual) {}
+    static void assertEquals(Object expected, Object actual) {}
+}
+
+FILE /src/com/example/Use.java:
+package com.example;
+
+import java.util.List;
+
+import static com.example.Assert.assertEquals;
+
+class Use {
+    void t(List<String> list) {
+        assertEquals(3, list.size());
+    }
+}
+
+method assertEquals(int, int): void
+  locals: l0: int | l1: int
+  exprs: 
+method assertEquals(long, long): void
+  locals: l2: long | l3: long
+  exprs: 
+method assertEquals(java.lang.Object, java.lang.Object): void
+  locals: l4: java.lang.Object | l5: java.lang.Object
+  exprs: 
+method t(java.util.List<java.lang.String>): void
+  locals: l0: java.util.List<java.lang.String>
+  exprs: e0: int | e1: java.util.List<java.lang.String> | e2: int | e3: void

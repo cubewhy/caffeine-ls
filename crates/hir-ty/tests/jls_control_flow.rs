@@ -148,3 +148,74 @@ class Body {
 ",
     )])
 );
+
+// -- §14.22: unreachable statements --------------------------------------------
+// The statement after an abruptly-completing statement is a compile-time
+// error; §8.4.7 completion analysis still sees the exit.
+
+snapshot!(
+    unreachable_statement_after_return,
+    check_body_types(&[(
+        "/src/com/example/Dead.java",
+        "\
+package com.example;
+
+class Dead {
+    int dead() {
+        return 1;
+        System.out.println(2);
+    }
+}
+",
+    ),])
+);
+
+snapshot!(
+    missing_return_statement,
+    check_body_types(&[(
+        "/src/com/example/NoRet.java",
+        "\
+package com.example;
+
+class NoRet {
+    int missing() {
+        int y = 1;
+    }
+}
+",
+    ),])
+);
+
+// §8.4.7: a method with a non-`void` return type must not be able to
+// complete normally — reported against the method's closing brace.
+
+// -- green: statements after lambda-valued expressions are reachable -------------
+// §14.22: a `return` inside a lambda body returns from the *lambda*
+// ([§15.27.2]); it must not mark the enclosing method's following statements
+// unreachable.
+
+snapshot!(
+    statement_after_lambda_reachable,
+    check_body_types(&[(
+        "/src/com/example/Lambda.java",
+        "\
+package com.example;
+
+class Lambda {
+    interface IntMaker { int make(); }
+
+    void go() {
+        int n = first(() -> {
+            side();
+            return 1;
+        });
+        after(n);
+    }
+
+    int first(IntMaker maker) { return maker.make(); }
+    void side() { }
+    void after(int n) { }
+}
+",
+    ),])
+);

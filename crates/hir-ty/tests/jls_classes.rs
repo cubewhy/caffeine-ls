@@ -191,3 +191,51 @@ class Instantiate {
 ",
     )])
 );
+
+// -- green: explicit superclass constructor invocation against a library
+// superclass ([§8.8.7.1]) -------------------------------------------------------
+// Library constructors are classfile `<init>` entries ([JVMS §4.6]); the
+// lookup normalizes the target name so `super(args)` resolves over the same
+// overload set as `new Super(args)`.
+
+snapshot!(
+    library_super_constructor_invocation,
+    check_body_types(&[(
+        "/src/com/example/Sub.java",
+        "\
+package com.example;
+
+import java.io.PrintStream;
+
+class Sub extends PrintStream {
+    Sub() {
+        super(new java.io.ByteArrayOutputStream());
+    }
+}
+",
+    )])
+);
+
+// -- green: the canonical constructor of a record ([§8.10.4]) -------------------
+// A record body may declare an additional constructor delegating with
+// `this(...)` to the canonical one, whose parameters mirror the component
+// list with generic component types substituted.
+
+snapshot!(
+    record_canonical_constructor,
+    check_body_types(&[(
+        "/src/com/example/Pair.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.Iterator;
+
+record Pair(Iterator<String> first, Iterator<String> second) {
+    private Pair() {
+        this(Collections.emptyIterator(), Collections.emptyIterator());
+    }
+}
+",
+    )])
+);

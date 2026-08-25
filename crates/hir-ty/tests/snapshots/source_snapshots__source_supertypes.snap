@@ -43,11 +43,11 @@ class Nested {
 SUPERTYPES:
 A -> java.lang.Object
 B -> com.example.A
-I -> 
+I -> java.lang.Object
 C -> com.example.A, com.example.I, java.io.Serializable
 E -> java.lang.Enum
 R -> java.lang.Record
-Anno -> java.lang.annotation.Annotation
+Anno -> java.lang.annotation.Annotation, java.lang.Object
 Nested.Inner -> com.example.A
 Box raw -> java.lang.Object, java.util.List<T>
 Box<String> -> java.lang.Object, java.util.List<java.lang.String>

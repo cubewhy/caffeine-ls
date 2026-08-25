@@ -18,9 +18,10 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
     body::{
-        AnonymousMethod, AssignOp, BinaryOp, Body, BodyId, CatchClause, ExprData, ExprId, Label,
-        LabelId, LambdaBody, Literal, Local, LocalId, PatternData, PatternId, PostfixOp,
-        RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern, UnaryOp,
+        AnonymousMethod, AssignOp, BinaryOp, Body, BodyId, CatchClause, CtorCallTarget, ExprData,
+        ExprId, Label, LabelId, LambdaBody, Literal, Local, LocalId, PatternData, PatternId,
+        PostfixOp, RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern,
+        UnaryOp,
     },
     item_tree::ItemId,
     name::Name,
@@ -94,11 +95,19 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
         .filter(|child| child.kind() == J::FORMAL_PARAMETER || child.kind() == J::SPREAD_PARAMETER)
         .map(|child| {
             let name = first_identifier(&child).unwrap_or_else(missing_name);
-            let ty = child
+            let mut ty = child
                 .children()
                 .find(|c| c.kind() == J::TYPE)
                 .map(|t| super::type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+            // §8.4.1: `T... last` is exactly equivalent to `T[] last` — in
+            // the body the parameter is read as an array.
+            if child.kind() == J::SPREAD_PARAMETER {
+                ty = SpannedTypeRef {
+                    ty: TypeRef::Array(Box::new(ty.ty)),
+                    refs: ty.refs,
+                };
+            }
             alloc_local(
                 ctx,
                 Local {
@@ -157,7 +166,25 @@ fn lower_statement_list(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lan
 }
 
 fn alloc_stmt(ctx: &mut LowerCtx, data: StmtData) -> StmtId {
-    StmtId(ctx.bodies.stmts.alloc(data))
+    // The statement ranges vector stays parallel to the statement arena, so
+    // the new entry's index is the arena length before allocation.
+    let range_idx = ctx.bodies.stmts.len();
+    let arena_id = ctx.bodies.stmts.alloc(data);
+    debug_assert_eq!(ctx.bodies.stmt_ranges.len(), range_idx);
+    // Synthetic statements (lowered `Missing`) have no source range; the
+    // empty range marks them so [`BodyTree::stmt_range`] reports `None`.
+    ctx.bodies
+        .stmt_ranges
+        .push(rowan::TextRange::empty(0.into()));
+    StmtId(arena_id)
+}
+
+/// Allocates a statement lowered from `node`, recording its source range.
+fn alloc_stmt_with_range(ctx: &mut LowerCtx, data: StmtData, range: rowan::TextRange) -> StmtId {
+    let id = alloc_stmt(ctx, data);
+    let last = ctx.bodies.stmt_ranges.last_mut().expect("just pushed");
+    *last = range;
+    id
 }
 
 /// Lowers a block node into a single [`StmtData::Block`] statement.
@@ -168,7 +195,7 @@ fn block_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stm
 
 fn stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtId {
     let data = stmt_data(ctx, owner, node);
-    alloc_stmt(ctx, data)
+    alloc_stmt_with_range(ctx, data, node.text_range())
 }
 
 fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtData {
@@ -453,13 +480,25 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                 .find(|p| p.kind() == CATCH_FORMAL_PARAMETER)
                 .map(|p| {
                     let name = first_identifier(&p).unwrap_or_else(missing_name);
-                    let ty = p
+                    // A multi-catch parameter (`catch (A | B e)`, [§14.20])
+                    // declares several alternative types under one `CATCH_TYPE`
+                    // node; every one is carried so the type layer can gate the
+                    // clause and discharge thrown exceptions per alternative.
+                    let types: Vec<SpannedTypeRef> = p
                         .children()
                         .find(|t| t.kind() == CATCH_TYPE)
-                        .and_then(|ct| ct.children().find(|t| t.kind() == TYPE))
-                        .map(|t| super::type_from(&t))
+                        .map(|ct| {
+                            ct.children()
+                                .filter(|t| t.kind() == TYPE)
+                                .map(|t| super::type_from(&t))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let ty = types
+                        .first()
+                        .cloned()
                         .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
-                    alloc_local(
+                    let param = alloc_local(
                         ctx,
                         Local {
                             name,
@@ -467,15 +506,20 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                             is_final: false,
                         },
                         p.text_range(),
-                    )
+                    );
+                    (param, types)
                 })
-                .unwrap_or_else(|| alloc_local_missing(ctx));
+                .unwrap_or_else(|| (alloc_local_missing(ctx), Vec::new()));
             let body = c
                 .children()
                 .find(|b| b.kind() == BLOCK)
                 .map(|b| block_stmt(ctx, owner, &b))
                 .unwrap_or_else(|| alloc_stmt(ctx, StmtData::Missing));
-            CatchClause { param, body }
+            CatchClause {
+                param: param.0,
+                param_types: param.1,
+                body,
+            }
         })
         .collect();
     let resources: Vec<Resource> = node
@@ -1224,6 +1268,13 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
     let type_args: Vec<SpannedTypeRef> = node
         .children()
         .find(|c| c.kind() == J::TYPE_ARGUMENTS)
+        .or_else(|| {
+            // `. <T> m(...)` — the explicit type arguments live inside the
+            // FIELD_ACCESS that names the method ([JLS §15.12.1]).
+            node.children()
+                .find(|c| c.kind() == J::FIELD_ACCESS)
+                .and_then(|field| field.children().find(|c| c.kind() == J::TYPE_ARGUMENTS))
+        })
         .map(|t| type_arguments_from(&t))
         .unwrap_or_default();
 
@@ -1259,7 +1310,19 @@ fn method_call(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ex
                 };
             }
             ExprData::This { .. } => {
-                return ExprData::CtorCall { args };
+                // `this(args)` delegates to a same-class constructor;
+                // `super(args)` invokes the direct superclass constructor
+                // ([§8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)).
+                return ExprData::CtorCall {
+                    args,
+                    target: CtorCallTarget::This,
+                };
+            }
+            ExprData::Super { .. } => {
+                return ExprData::CtorCall {
+                    args,
+                    target: CtorCallTarget::Super,
+                };
             }
             _ => {}
         }

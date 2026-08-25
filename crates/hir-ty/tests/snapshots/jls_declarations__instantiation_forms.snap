@@ -24,7 +24,7 @@ class Body {
 
 field a
   locals: 
-  exprs: e0: java.util.ArrayList
+  exprs: e0: java.util.ArrayList<java.lang.String>
 field b
   locals: 
   exprs: e1: java.util.ArrayList<java.lang.String>

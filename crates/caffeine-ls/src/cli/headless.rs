@@ -77,7 +77,8 @@ impl HeadlessServer {
 
         let mut initialization_options = serde_json::json!({});
         if let Some(java_home) = java_home {
-            initialization_options["javaHome"] =
+            // The key matches `ClientConfig`'s serde field name.
+            initialization_options["java_home"] =
                 serde_json::Value::String(java_home.to_string_lossy().into_owned());
         }
 

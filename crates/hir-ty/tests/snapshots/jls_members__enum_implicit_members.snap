@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Color.java:
+package com.example;
+
+enum Color {
+    RED, GREEN;
+
+    public static int total() {
+        return values().length + valueOf("RED").ordinal() + Color.GREEN.name().length();
+    }
+}
+
+method total(): int
+  locals: 
+  exprs: e0: com.example.Color[] | e1: int | e2: java.lang.String | e3: com.example.Color | e4: int | e5: int | e7: com.example.Color | e8: java.lang.String | e9: int | e10: int

@@ -1,4 +1,18 @@
+use syntax::{DiagnosticCode, JavaDiagnosticCode};
+
 use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics, lsp::symbols, lsp::to_proto};
+
+/// Whether a diagnostic passes the client's lint configuration: the gated
+/// warnings (`rawtypes`, `unchecked`) are suppressed unless their lint is
+/// enabled; everything else always passes.
+fn lint_allows(lints: &[String], diagnostic: &ide::Diagnostic) -> bool {
+    let gated = match diagnostic.code {
+        Some(DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)) => "rawtypes",
+        Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedConversion)) => "unchecked",
+        _ => return true,
+    };
+    lints.iter().any(|lint| lint == gated)
+}
 
 use ide::LanguageKind;
 use lsp_types::*;
@@ -14,12 +28,17 @@ pub fn on_diagnostic(
         // Before the workspace is loaded, files are not part of any source
         // root, so fall back to the language kind inferred from the path.
         let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
+        // javac reports `rawtypes`/`unchecked` only under an explicit
+        // `-Xlint` flag ([JLS-adjacent]); the same lints gate the matching
+        // warnings here, so the default stream matches plain `javac`.
+        let lints = state.config.client_lints();
         let diagnostics = state
             .analysis
             .syntax_diagnostics(file_id, fallback_language_kind)?
             .into_iter()
             .chain(state.analysis.type_diagnostics(file_id)?)
             .chain(state.analysis.declaration_diagnostics(file_id)?)
+            .filter(|diagnostic| lint_allows(lints, diagnostic))
             .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
             .collect();
 

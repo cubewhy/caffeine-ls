@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Feed.java:
+package com.example;
+
+import java.util.List;
+
+class Feed {
+    interface Eater { }
+
+    static class Bowl implements Eater { }
+
+    static <T> List<T> join(List<? extends T> a, List<? extends T> b) {
+        return null;
+    }
+
+    void feed(List<Bowl> bowls, List<Eater> eaters) {
+        join(bowls, eaters);
+    }
+}
+
+method join(java.util.List<? extends T>, java.util.List<? extends T>): java.util.List<T>
+  locals: l0: java.util.List<? extends T> | l1: java.util.List<? extends T>
+  exprs: e0: null
+method feed(java.util.List<com.example.Feed.Bowl>, java.util.List<com.example.Feed.Eater>): void
+  locals: l2: java.util.List<com.example.Feed.Bowl> | l3: java.util.List<com.example.Feed.Eater>
+  exprs: e1: java.util.List<com.example.Feed.Bowl> | e2: java.util.List<com.example.Feed.Eater> | e3: java.util.List<com.example.Feed.Eater>

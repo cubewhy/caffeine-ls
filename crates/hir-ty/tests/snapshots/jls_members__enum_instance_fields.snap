@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Sep.java:
+package com.example;
+
+enum Sep {
+    A("#"),
+    B(System.lineSeparator());
+
+    private final String sep;
+
+    Sep(String s) {
+        sep = s;
+    }
+
+    public int length() {
+        return sep.length();
+    }
+}
+
+constant A
+  locals: 
+  exprs: e0: java.lang.String
+constant B
+  locals: 
+  exprs: e1: <error> | e2: <error>
+  diags: e1@4:6: cannot-resolve-symbol: cannot find symbol
+  symbol:   variable System | e2@4:6: no-such-method: cannot find symbol
+  symbol:   method lineSeparator()
+method Sep(java.lang.String): <init>
+  locals: l0: java.lang.String
+  exprs: e3: java.lang.String | e4: java.lang.String | e5: java.lang.String
+method length(): int
+  locals: 
+  exprs: e6: java.lang.String | e7: int

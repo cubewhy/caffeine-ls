@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    Base self() { return this; }
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    Derived self() { return this; }
+    void onlyDerived() {}
+}
+
+METHODS:
+receiver-derived-self: com.example.Derived.self() -> com.example.Derived [args: ]
+receiver-base-self: com.example.Base.self() -> com.example.Base [args: ]

@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_types.rs
+expression: out
+---
+FILE /src/com/example/Arrays.java:
+package com.example;
+
+class Arrays {
+    int[] copy(int[] a) {
+        return a.clone();
+    }
+
+    int size(String[] names) {
+        return names.length;
+    }
+}
+
+method copy(int[]): int[]
+  locals: l0: int[]
+  exprs: e0: int[] | e1: int[]
+method size(java.lang.String[]): int
+  locals: l1: java.lang.String[]
+  exprs: e2: java.lang.String[] | e3: int

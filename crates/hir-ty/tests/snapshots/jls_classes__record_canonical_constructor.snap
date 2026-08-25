@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/Pair.java:
+package com.example;
+
+import java.util.Collections;
+import java.util.Iterator;
+
+record Pair(Iterator<String> first, Iterator<String> second) {
+    private Pair() {
+        this(Collections.emptyIterator(), Collections.emptyIterator());
+    }
+}
+
+method Pair(): <init>
+  locals: 
+  exprs: e1: java.util.Iterator<java.lang.String> | e3: java.util.Iterator<java.lang.String> | e4: void

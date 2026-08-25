@@ -77,6 +77,14 @@ impl Config {
         (self, errors, config_changed)
     }
 
+    /// The client-enabled lint keys (`rawtypes`, `unchecked`, ...).
+    pub fn client_lints(&self) -> &[String] {
+        self.client_config
+            .as_ref()
+            .map(|config| config.lints.as_slice())
+            .unwrap_or_default()
+    }
+
     pub fn get_java_home(&self) -> Option<PathBuf> {
         if let Some(java_home) = self
             .client_config
@@ -140,6 +148,11 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 pub struct ClientConfig {
     pub cache_dir: PathBuf,
     pub java_home: Option<PathBuf>,
+    /// Enabled `-Xlint`-style warnings ([JLS-adjacent]; javac emits
+    /// `rawtypes` and `unchecked` only with an explicit flag). Recognized
+    /// keys today: `rawtypes`, `unchecked`. Empty (the default) matches
+    /// plain `javac`, which reports neither.
+    pub lints: Vec<String>,
 }
 
 #[derive(Debug, Default)]

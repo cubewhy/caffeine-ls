@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Rethrow.java:
+package com.example;
+
+class Rethrow {
+    class CheckstyleException extends Exception { }
+
+    int process(String file) throws CheckstyleException {
+        try {
+            work(file);
+        } catch (java.io.IOException ioe) {
+            report(ioe);
+        } catch (Exception exc) {
+            throw exc;
+        }
+        return 1;
+    }
+
+    void work(String f) throws CheckstyleException, java.io.IOException { }
+    void report(java.io.IOException ioe) { }
+}
+
+method process(java.lang.String): int
+  locals: l0: java.lang.String | l1: java.io.IOException | l2: java.lang.Exception
+  exprs: e0: java.lang.String | e1: void | e2: java.io.IOException | e3: void | e4: java.lang.Exception | e5: int
+method work(java.lang.String): void
+  locals: l3: java.lang.String
+  exprs: 
+method report(java.io.IOException): void
+  locals: l4: java.io.IOException
+  exprs:

@@ -439,6 +439,30 @@ pub fn class_with_methods(
     }
 }
 
+/// Like [`class_with_methods_access`], with a class-level `Signature`
+/// attribute so the supertypes are parameterized.
+pub fn class_with_methods_access_sig(
+    fqn: &'static str,
+    super_class: Option<&'static str>,
+    interfaces: &'static [&'static str],
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+    method_access: &'static [u16],
+    sig: Option<&'static str>,
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class,
+        interfaces,
+        access: 0x0021, // ACC_PUBLIC | ACC_SUPER
+        fields: &[],
+        methods,
+        method_sigs,
+        method_access,
+        sig,
+    }
+}
+
 /// Like [`class_with_methods`], with explicit per-method access flags
 /// (parallel to `methods`).
 pub fn class_with_methods_access(
@@ -598,21 +622,123 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("get", "()Ljava/lang/Object;")],
             &["()TT;"],
         ),
+        // Both `collect` overloads in real classfile order (the 3-arg form is
+        // emitted first by javac), so overload resolution exercises the same
+        // member set a real jimage produces ([JLS §15.12.2]).
+        interface_with_methods(
+            "java/util/stream/Stream",
+            &[],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+            &[
+                (
+                    "collect",
+                    "(Ljava/util/function/Supplier;Ljava/util/function/BiConsumer;Ljava/util/function/BiConsumer;)Ljava/lang/Object;",
+                ),
+                (
+                    "collect",
+                    "(Ljava/util/stream/Collector;)Ljava/lang/Object;",
+                ),
+            ],
+            &[
+                "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/function/Supplier<TR;>;Ljava/util/function/BiConsumer<TR;-TT;>;Ljava/util/function/BiConsumer<TR;TR;>;)TR;",
+                "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/stream/Collector<-TT;TA;TR;>;)TR;",
+            ],
+        ),
+        // commons-beanutils-shaped raw-implementable interface used by the
+        // override tests ([JLS §4.8] erasure of members).
+        interface_with_methods(
+            "org/apache/commons/beanutils/Converter",
+            &[],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+            &[(
+                "convert",
+                "(Ljava/lang/Class;Ljava/lang/Object;)Ljava/lang/Object;",
+            )],
+            &["<R:Ljava/lang/Object;>(Ljava/lang/Class<TR;>;Ljava/lang/Object;)TR;"],
+        ),
+        ClassSpec {
+            fqn: "java/util/Map",
+            super_class: None,
+            interfaces: &[],
+            access: 0x0601,
+            fields: &[],
+            methods: &[
+                ("get", "(Ljava/lang/Object;)Ljava/lang/Object;"),
+                (
+                    "put",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+                ),
+                ("size", "()I"),
+            ],
+            method_sigs: &["(TO;)TV;", "(TK;TV;)TV;", ""],
+            method_access: &[0x0401, 0x0401, 0x0401],
+            sig: Some("<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;"),
+        },
+        class_sig(
+            "java/util/HashMap",
+            Some("java/lang/Object"),
+            &["java/util/Map"],
+            Some(
+                "<K:Ljava/lang/Object;V:Ljava/lang/Object;>java/lang/Object;\
+                 Ljava/util/Map<TK;TV;>;",
+            ),
+        ),
+        functional_interface(
+            "java/util/function/BiConsumer",
+            "<T:Ljava/lang/Object;U:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("accept", "(Ljava/lang/Object;Ljava/lang/Object;)V")],
+            &["(TT;TU;)V"],
+        ),
+        interface_sig(
+            "java/util/stream/Collector",
+            &[],
+            Some(
+                "<T:Ljava/lang/Object;A:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+            ),
+        ),
+        class_with_methods_access(
+            "java/util/stream/Collectors",
+            Some("java/lang/Object"),
+            &[],
+            &[("toList", "()Ljava/util/stream/Collector;")],
+            &[
+                // Real classfile shape (JVMS §4.7.9.1): the accumulator
+                // position is an unbounded wildcard (`*`, no bound), so
+                // inference must contain `α = ?` when reducing
+                // ⟨Collector<T,?,List<T>> → Collector<? super T,A,R⟩.
+                "<T:Ljava/lang/Object;>()Ljava/util/stream/Collector<TT;*Ljava/util/List<TT;>;>;",
+            ],
+            &[0x0009], // ACC_PUBLIC | ACC_STATIC
+        ),
         class("java/lang/Throwable", Some("java/lang/Object"), &[]),
         class("java/lang/Exception", Some("java/lang/Throwable"), &[]),
+        class("java/io/IOException", Some("java/lang/Exception"), &[]),
         class(
-            "java/lang/RuntimeException",
+            "java/io/FileNotFoundException",
+            Some("java/io/IOException"),
+            &[],
+        ),
+        class(
+            "java/lang/ClassNotFoundException",
             Some("java/lang/Exception"),
             &[],
         ),
-        class("java/io/IOException", Some("java/lang/Exception"), &[]),
+        class_with_methods_access_sig(
+            "java/lang/Enum",
+            Some("java/lang/Object"),
+            &["java/io/Serializable", "java/lang/Comparable"],
+            &[("name", "()Ljava/lang/String;"), ("ordinal", "()I")],
+            &["", ""],
+            &[0x0001, 0x0001], // ACC_PUBLIC (methods)
+            Some("<E:Ljava/lang/Enum<TE;>;Ljava/lang/Object;"),
+        ),
         class_with_methods_access(
             "java/lang/Math",
             Some("java/lang/Object"),
             &[],
-            &[("max", "(II)I"), ("min", "(II)I")],
-            &["", ""],
-            &[0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
+            &[("max", "(II)I"), ("min", "(II)I"), ("sqrt", "(D)D")],
+            &["", "", ""],
+            &[0x0009, 0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
         ),
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
@@ -637,27 +763,39 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("iterator", "()Ljava/util/Iterator;")],
             &["()Ljava/util/Iterator<TE;>;"],
         ),
-        interface_with_methods(
-            "java/util/List",
-            &["java/util/Collection"],
-            Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),
-            &[
+        // Explicit spec so the varargs factory carries ACC_STATIC
+        // ([JLS §9.4.4] interface static methods).
+        ClassSpec {
+            fqn: "java/util/List",
+            super_class: None,
+            interfaces: &["java/util/Collection"],
+            access: 0x0601,
+            fields: &[],
+            methods: &[
                 ("add", "(Ljava/lang/Object;)Z"),
                 ("get", "(I)Ljava/lang/Object;"),
                 ("size", "()I"),
                 ("isEmpty", "()Z"),
                 ("subList", "(II)Ljava/util/List;"),
                 ("iterator", "()Ljava/util/Iterator;"),
+                // `List.of(E...)` ([JLS §15.12.2.4] varargs phase).
+                ("of", "([Ljava/lang/Object;)Ljava/util/List;"),
             ],
-            &[
+            method_sigs: &[
                 "(TE;)Z",
                 "(I)TE;",
                 "",
                 "",
                 "(II)Ljava/util/List<TE;>;",
                 "()Ljava/util/Iterator<TE;>;",
+                "<E:Ljava/lang/Object;>(TE...)Ljava/util/List<TE;>;",
             ],
-        ),
+            method_access: &[
+                0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001,
+                0x0409, // ACC_PUBLIC | ACC_STATIC
+            ],
+            sig: Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),
+        },
         class_sig(
             "java/util/AbstractList",
             Some("java/lang/Object"),
@@ -684,13 +822,76 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[
                 ("emptyList", "()Ljava/util/List;"),
                 ("sort", "(Ljava/util/List;)V"),
+                ("emptyIterator", "()Ljava/util/Iterator;"),
             ],
             &[
                 "<T:Ljava/lang/Object;>()Ljava/util/List<TT;>;",
                 "<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)V",
+                "<T:Ljava/lang/Object;>()Ljava/util/Iterator<TT;>;",
             ],
-            &[0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
+            &[0x0009, 0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
         ),
+        class_with_methods_access_sig(
+            "java/lang/ref/WeakReference",
+            Some("java/lang/Object"),
+            &[],
+            &[("get", "()Ljava/lang/Object;")],
+            &["()TT;"],
+            &[0x0001],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+        ),
+        class_with_methods_access_sig(
+            "java/util/Optional",
+            Some("java/lang/Object"),
+            &[],
+            &[("get", "()Ljava/lang/Object;")],
+            &["()TT;"],
+            &[0x0001],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+        ),
+        // Constructors the explicit-`super(args)` tests resolve against
+        // ([JLS §8.8.7.1]); library ctors are classfile `<init>` entries.
+        class_with_methods_access(
+            "java/io/OutputStream",
+            Some("java/lang/Object"),
+            &[],
+            &[],
+            &[],
+            &[],
+        ),
+        class_with_methods_access(
+            "java/io/ByteArrayOutputStream",
+            Some("java/io/OutputStream"),
+            &[],
+            &[],
+            &[],
+            &[],
+        ),
+        class_with_methods_access(
+            "java/io/PrintStream",
+            Some("java/io/OutputStream"), // real JDK: FilterOutputStream chain
+            &[],
+            &[("<init>", "(Ljava/io/OutputStream;)V")],
+            &[""],
+            &[0x0001],
+        ),
+        class_with_methods_access(
+            "java/lang/RuntimeException",
+            Some("java/lang/Exception"),
+            &[],
+            &[("<init>", "(Ljava/lang/String;)V")],
+            &[""],
+            &[0x0001],
+        ),
+        class_with_methods_access(
+            "java/io/File",
+            Some("java/lang/Object"),
+            &[],
+            &[("<init>", "(Ljava/lang/String;)V")],
+            &[""],
+            &[0x0001],
+        ),
+        class("java/util/regex/Pattern", Some("java/lang/Object"), &[]),
     ]
 }
 
@@ -1280,6 +1481,8 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                                 hir_ty::DiagLocation::Expr(id) => format!("{id}"),
                                 hir_ty::DiagLocation::Local(id) => format!("{id}"),
                                 hir_ty::DiagLocation::Pattern(id) => format!("p{id}"),
+                                hir_ty::DiagLocation::Stmt(id) => format!("s{id}"),
+                                hir_ty::DiagLocation::Method => "method".to_owned(),
                             };
                             let at = diag
                                 .range(&tree.bodies)

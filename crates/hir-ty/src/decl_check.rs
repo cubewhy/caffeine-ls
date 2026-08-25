@@ -240,10 +240,13 @@ fn check_class(
     // a member enumeration, not an invocation from outside.
     let ctx = crate::method::access_context(db, file, item);
     let mut out = Vec::new();
-    // Every member visible from the class, most-derived first ([§8.4.8.1]);
-    // split into the class's own declarations and the inherited set.
+    // Every member visible from the class, most-derived first ([§8.4.8.1]),
+    // *without* the most-derived dedup: an override must still see the super
+    // declaration it hides — both for the return-type-substitutability check
+    // and for `@Override` ([§9.6.4.4]). Split into the class's own
+    // declarations and the inherited set.
     let self_ty = Ty::reference(db, fqn, Vec::new());
-    let all = method::all_methods(db, scope, &self_ty, &ctx);
+    let all = method::all_methods_raw(db, scope, &self_ty, &ctx);
     let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == fqn).collect();
     let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != fqn).collect();
     for method in &declared {
@@ -304,7 +307,13 @@ fn check_class(
     // §9.6.4.4: a method annotated `@Override` must override or implement an
     // instance method declared in a supertype — otherwise the annotation is a
     // compile-time error. A `static` method never overrides ([§8.4.8.2]: it
-    // *hides*), so its annotation always fails.
+    // *hides*), so its annotation always fails. An explicitly declared
+    // record accessor is the accessor mandated by its component ([§8.10.3]),
+    // so `@Override` is accepted on it ([§9.6.4.4]).
+    let record_components: &[hir_expand::item_tree::RecordComponent] = match tree.data(item) {
+        ItemData::Record(record) => &record.components,
+        _ => &[],
+    };
     let resolver = crate::resolve::Resolver::new(
         tree,
         crate::db::type_params_map_query(db, db.file_text(file)),
@@ -324,9 +333,13 @@ fn check_class(
             else {
                 continue;
             };
-            let overrides = inherited
+            let is_record_accessor = record_components
                 .iter()
-                .any(|s| !s.is_static && same_signature(db, method, s));
+                .any(|component| component.name.as_str() == method.name);
+            let overrides = is_record_accessor
+                || inherited
+                    .iter()
+                    .any(|s| !s.is_static && same_signature(db, method, s));
             if method.is_static || !overrides {
                 out.push(DeclDiagnostic::MethodDoesNotOverride {
                     method: Name::new(&method.name),

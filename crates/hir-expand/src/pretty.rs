@@ -733,8 +733,12 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                 ));
             }
         }
-        ExprData::CtorCall { args } => out.push_str(&format!(
-            "{id}: ctor-call({})",
+        ExprData::CtorCall { args, target } => out.push_str(&format!(
+            "{id}: ctor-call({})({})",
+            match target {
+                crate::body::CtorCallTarget::This => "this",
+                crate::body::CtorCallTarget::Super => "super",
+            },
             args.iter()
                 .map(|a| a.to_string())
                 .collect::<Vec<_>>()

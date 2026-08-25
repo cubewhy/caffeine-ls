@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+
+class A {
+    class B {
+        class C {}
+    }
+
+    B.C field;
+}
+
+RESOLVED:
+field field: B.C

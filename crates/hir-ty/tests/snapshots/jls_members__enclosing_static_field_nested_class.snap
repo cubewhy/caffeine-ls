@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+SOURCE:
+
+package com.example;
+
+class Outer {
+    static final int LIMIT = 8;
+
+    class Inner {
+        int doubled() { return LIMIT * 2; }
+    }
+}
+
+RESOLVED:
+field LIMIT: int
+method doubled: int()

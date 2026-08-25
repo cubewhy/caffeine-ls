@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Pt.java:
+package com.example;
+
+record Pt(int x, int y) {
+    double dist() {
+        return Math.sqrt(x * x + y * y);
+    }
+}
+
+class UsePt {
+    double use(Pt p) {
+        return p.x() + p.y();
+    }
+}
+
+method dist(): double
+  locals: 
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int | e8: double
+method use(com.example.Pt): double
+  locals: l0: com.example.Pt
+  exprs: e9: com.example.Pt | e10: int | e11: com.example.Pt | e12: int | e13: int

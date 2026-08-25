@@ -320,7 +320,20 @@ pub fn all_methods(
     receiver: &Ty,
     ctx: &InvocationContext,
 ) -> Vec<MethodData> {
-    member_set_impl(db, scope, receiver, "", ctx)
+    member_set_impl(db, scope, receiver, "", ctx, true)
+}
+
+/// Every member visible from `receiver` **without** the most-derived dedup
+/// ([JLS §8.4.8.1]): the declaration-level checks ([§8.4.8.3], [§9.6.4.4])
+/// must see the super declaration an override hides — a deduped member set
+/// would report every correct `@Override` as orphaned.
+pub fn all_methods_raw(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    ctx: &InvocationContext,
+) -> Vec<MethodData> {
+    member_set_impl(db, scope, receiver, "", ctx, false)
 }
 
 /// The default methods `receiver` inherits, **without** the most-derived
@@ -374,6 +387,7 @@ pub(crate) fn member_set_query<'db>(
         &Ty { id: receiver },
         name.as_str(),
         &InvocationContext::from_key(db, ctx),
+        true,
     )
 }
 
@@ -384,6 +398,7 @@ fn member_set_impl(
     receiver: &Ty,
     name: &str,
     ctx: &InvocationContext,
+    dedupe: bool,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, *receiver);
@@ -408,6 +423,28 @@ fn member_set_impl(
             stack.push(parent);
         }
     }
+    // §10.7: every array type has a public `clone` method with no parameters
+    // and no checked exceptions, whose return type is the array type itself.
+    // It overrides `Object.clone` (which is `protected`) as public, so it is
+    // invokable from anywhere the array is visible.
+    if name == "clone" && matches!(receiver.kind(db), TyKind::Array(_)) {
+        out.push(MethodData {
+            name: "clone".to_owned(),
+            owner: "java.lang.Object".to_owned(),
+            params: Vec::new(),
+            // The return type is the array type itself ([§10.7]).
+            ret: receiver,
+            throws: Vec::new(),
+            varargs: false,
+            is_static: false,
+            abstract_: false,
+            access: Access::Public,
+            declaring_package: Some("java.lang".to_owned()),
+            declaring_top_level: Some("Object".to_owned()),
+            declaring_interface: false,
+            type_params: Vec::new(),
+        });
+    }
     // §8.4.8.1: an overriding method replaces the overridden one in the
     // member set — a subtype's declaration of a method with the same signature
     // shadows the supertype's — so only the most-derived declaration of each
@@ -416,6 +453,9 @@ fn member_set_impl(
     // `Collection.iterator()`/`Iterable.iterator()`) would surface three
     // identical candidates that the most-specific tie-break reports as
     // ambiguous.
+    if !dedupe {
+        return out;
+    }
     let mut deduped: Vec<MethodData> = Vec::with_capacity(out.len());
     for method in out {
         if !deduped
@@ -513,7 +553,10 @@ fn abstract_methods_impl(
                     let Some(ItemData::Method(method)) = item_data(&tree, item) else {
                         continue;
                     };
-                    if !method.modifiers.abstract_ {
+                    // §9.4: an interface method is implicitly `abstract`
+                    // unless it is `static` or declares a body (`default` or
+                    // `private`) — the modifier keyword itself is optional.
+                    if method.modifiers.static_ || method.body.is_some() {
                         continue;
                     }
                     let name = method.name.as_str().to_owned();
@@ -629,6 +672,9 @@ fn library_class_methods(
         return Vec::new();
     };
     let interner = &db.hir_state().interner;
+    // JLS 4.8: a *raw* use of a generic class erases its members'
+    // signatures; the erasure is applied to each constructed member below.
+    let is_raw = args.is_empty() && !class.type_params.is_empty();
     let binding: FxHashMap<Name, Ty> = if args.is_empty() {
         FxHashMap::default()
     } else {
@@ -670,6 +716,17 @@ fn library_class_methods(
                 bounds: tp.bounds.iter().map(&instantiate).collect(),
             })
             .collect();
+        // JLS 4.8: the *instance* members of a raw type have erased
+        // signatures. A static member does not depend on the receiver's
+        // type arguments at all, so its own generics stay intact.
+        let is_static_member = method.flags & 0x0008 != 0;
+        let erase = |ty: Ty| {
+            if is_raw && !is_static_member {
+                ty.erasure(db)
+            } else {
+                ty
+            }
+        };
         out.push(MethodData {
             // The method's own name — not the lookup filter, which is the
             // empty wildcard in the declaration-level walk.
@@ -678,10 +735,15 @@ fn library_class_methods(
             params: method
                 .params
                 .iter()
-                .map(|param| instantiate(&param.param_type))
+                .map(|param| erase(instantiate(&param.param_type)))
                 .collect(),
-            ret: instantiate(&method.return_type),
-            throws: method.throws_list.iter().map(instantiate).collect(),
+            ret: erase(instantiate(&method.return_type)),
+            throws: method
+                .throws_list
+                .iter()
+                .map(instantiate)
+                .map(|ty| erase(ty))
+                .collect(),
             varargs: method.flags & 0x0080 != 0,   // ACC_VARARGS
             is_static: method.flags & 0x0008 != 0, // ACC_STATIC
             abstract_: method.flags & 0x0400 != 0, // ACC_ABSTRACT
@@ -713,6 +775,9 @@ fn source_class_methods(
         ItemData::Record(d) => &d.type_params,
         _ => &[],
     };
+    // JLS 4.8: a *raw* use of a generic class erases its members'
+    // signatures; the erasure is applied to each constructed member below.
+    let is_raw = args.is_empty() && !declared.is_empty();
     let binding: FxHashMap<Name, Ty> = if args.is_empty() {
         FxHashMap::default()
     } else {
@@ -766,17 +831,28 @@ fn source_class_methods(
             .collect();
         let key = ItemKey::new(db, source.file, item);
         let instantiate = |ty: &Ty| ty.substitute(db, &binding);
+        // JLS 4.8: the *instance* members of a raw type have erased
+        // signatures. A static member does not depend on the receiver's
+        // type arguments at all, so its own generics stay intact.
+        let erase = |ty: Ty| {
+            if is_raw && !method.modifiers.static_ {
+                ty.erasure(db)
+            } else {
+                ty
+            }
+        };
         let varargs = method.sig.params.last().is_some_and(|param| param.varargs);
         let mut params: Vec<Ty> = method_params_query(db, key)
             .iter()
             .map(instantiate)
+            .map(erase)
             .collect();
         // A variable-arity parameter `T...` is lowered as the element type
         // `T`; its formal type is the array `T[]` ([JLS §8.4.1]).
         if varargs && let Some(last) = params.last_mut() {
             *last = Ty::array(db, *last);
         }
-        let ret = instantiate(&item_ty_query(db, key));
+        let ret = erase(instantiate(&item_ty_query(db, key)));
         // The declared throws clause ([§8.4.6]): resolve and instantiate with
         // the declaring type's type arguments; method type parameters stay as
         // type variables for [`instantiate`] to solve.
@@ -786,8 +862,16 @@ fn source_class_methods(
             .iter()
             .map(|ex| resolve_type_ref(db, &scope, &method_resolver, ex))
             .map(|ty| instantiate(&ty))
+            .map(erase)
             .collect();
         throws.dedup();
+        // §9.4: an interface method without a body and without `static` is
+        // implicitly `abstract`, whether or not the keyword is written.
+        let abstract_ = if declaring_interface {
+            method.body.is_none() && !method.modifiers.static_
+        } else {
+            method.modifiers.abstract_
+        };
         out.push(MethodData {
             // The method's own name — not the lookup filter, which is the
             // empty wildcard in the declaration-level walk.
@@ -798,13 +882,158 @@ fn source_class_methods(
             throws,
             varargs,
             is_static: method.modifiers.static_,
-            abstract_: method.modifiers.abstract_,
-            access: access_of(&method.modifiers),
+            abstract_,
+            access: interface_access_of(declaring_interface, &method.modifiers),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface,
             type_params,
         });
+    }
+    // §8.9.3: every enum type has two implicit static members —
+    // `public static E[] values()` and `public static E valueOf(String name)`
+    // — unless the body declares a member of the same name itself.
+    if let ItemData::Enum(_) = class_data {
+        let declared: FxHashSet<String> = out.iter().map(|m| m.name.to_string()).collect();
+        // An enum type is never generic ([JLS §8.9]), so the implicit
+        // members' return type is the raw reference itself.
+        let self_ty = Ty::reference(db, Name::new(&fqn), Vec::new());
+        if !declared.contains("values") && (name.is_empty() || name == "values") {
+            out.push(MethodData {
+                name: "values".to_owned(),
+                owner: fqn.clone(),
+                params: Vec::new(),
+                ret: Ty::array(db, self_ty),
+                throws: Vec::new(),
+                varargs: false,
+                is_static: true,
+                abstract_: false,
+                access: Access::Public,
+                declaring_package: declaring_package.clone(),
+                declaring_top_level: declaring_top_level.clone(),
+                declaring_interface: false,
+                type_params: Vec::new(),
+            });
+        }
+        if !declared.contains("valueOf") && (name.is_empty() || name == "valueOf") {
+            out.push(MethodData {
+                name: "valueOf".to_owned(),
+                owner: fqn.clone(),
+                params: vec![Ty::reference(db, "java.lang.String", Vec::new())],
+                ret: self_ty,
+                throws: Vec::new(),
+                varargs: false,
+                is_static: true,
+                abstract_: false,
+                access: Access::Public,
+                declaring_package: declaring_package.clone(),
+                declaring_top_level: declaring_top_level.clone(),
+                declaring_interface: false,
+                type_params: Vec::new(),
+            });
+        }
+    }
+    // §8.10.3: every record component has a public accessor method named
+    // after it. An accessor explicitly declared by the record body *replaces*
+    // the implicit one only when it has the accessor signature itself (same
+    // name, zero parameters); a same-name method with parameters leaves the
+    // implicit accessor in place ([§8.10.3]). Its return type is the
+    // component type; a varargs component (`String... names`) is carried as
+    // the array type `String[]` ([§8.4.1]).
+    if let ItemData::Record(record) = class_data {
+        for component in &record.components {
+            let component_name = component.name.as_str();
+            if !name.is_empty() && component_name != name {
+                continue;
+            }
+            if out
+                .iter()
+                .any(|m| m.name.as_str() == component_name && m.params.is_empty())
+            {
+                continue;
+            }
+            let mut ty = resolve_type_ref(db, &scope, &resolver, &component.ty);
+            if component.varargs {
+                ty = Ty::array(db, ty);
+            }
+            let ty = ty.substitute(db, &binding);
+            // JLS 4.8: a raw record erases its component type.
+            let ty = if is_raw { ty.erasure(db) } else { ty };
+            out.push(MethodData {
+                name: component_name.to_owned(),
+                owner: fqn.clone(),
+                params: Vec::new(),
+                ret: ty,
+                throws: Vec::new(),
+                varargs: false,
+                is_static: false,
+                abstract_: false,
+                access: Access::Public,
+                declaring_package: declaring_package.clone(),
+                declaring_top_level: declaring_top_level.clone(),
+                declaring_interface: false,
+                type_params: Vec::new(),
+            });
+        }
+        // §8.10.4: a record has a *canonical constructor* whose parameters
+        // mirror the component list — same names, types and order — unless
+        // the body declares a constructor with that signature itself (a
+        // `@Singular`-style or compact form is still the canonical one, but
+        // an explicit full-form declaration of matching arity replaces the
+        // implicit member). Its access equals the record's own access.
+        let simple = fqn.rsplit('.').next().unwrap_or(fqn.as_str());
+        if name.is_empty() || name == simple {
+            let component_tys: Option<Vec<Ty>> = record
+                .components
+                .iter()
+                .map(|component| {
+                    let mut ty = resolve_type_ref(db, &scope, &resolver, &component.ty);
+                    // A varargs component's canonical parameter is the array
+                    // type ([§8.10.4], [§8.4.1]) — but it stays variable-arity.
+                    if component.varargs {
+                        ty = Ty::array(db, ty);
+                    }
+                    Some(ty.substitute(db, &binding))
+                })
+                .collect();
+            if let Some(component_tys) = component_tys {
+                let declares_canonical = out.iter().any(|method| {
+                    method.name.as_str() == simple
+                        && method.params.len() == component_tys.len()
+                        && method
+                            .params
+                            .iter()
+                            .zip(&component_tys)
+                            .all(|(declared, component)| declared == component)
+                });
+                if !declares_canonical {
+                    let varargs = record.components.last().is_some_and(|c| c.varargs);
+                    let mut params = component_tys;
+                    // JLS 4.8: a raw record erases its members.
+                    if is_raw {
+                        for param in &mut params {
+                            *param = param.erasure(db);
+                        }
+                    }
+                    out.push(MethodData {
+                        name: simple.to_owned(),
+                        owner: fqn.clone(),
+                        params,
+                        // Constructors carry no return type ([§8.8]).
+                        ret: Ty::error(db),
+                        throws: Vec::new(),
+                        varargs,
+                        is_static: false,
+                        abstract_: false,
+                        access: access_of(&record.modifiers),
+                        declaring_package: declaring_package.clone(),
+                        declaring_top_level: declaring_top_level.clone(),
+                        declaring_interface: false,
+                        type_params: Vec::new(),
+                    });
+                }
+            }
+        }
     }
     out
 }
@@ -818,6 +1047,19 @@ fn access_of(modifiers: &hir_expand::modifiers::Modifiers) -> Access {
         Access::Public
     } else {
         Access::Package
+    }
+}
+
+/// The access of an interface member: every member of an interface is
+/// implicitly `public` ([JLS §9.4], [§9.3]), whether or not the source
+/// spells the modifier out.
+fn interface_access_of(
+    declaring_interface: bool,
+    modifiers: &hir_expand::modifiers::Modifiers,
+) -> Access {
+    match access_of(modifiers) {
+        Access::Package if declaring_interface => Access::Public,
+        other => other,
     }
 }
 
@@ -1205,12 +1447,30 @@ pub(crate) fn more_specific(
                 .params
                 .iter()
                 .zip(&m2_params)
-                .all(|(param1, param2)| is_subtype(db, scope, param1, param2));
+                .all(|(param1, param2)| formal_subtype(db, scope, param1, param2));
     }
     m1.params
         .iter()
         .zip(&m2.params)
-        .all(|(param1, param2)| is_subtype(db, scope, param1, param2))
+        .all(|(param1, param2)| formal_subtype(db, scope, param1, param2))
+}
+
+/// Whether `param1` is a subtype of `param2` for the most-specific comparison
+/// ([JLS §15.12.2.5], [§4.10.1]): reference types by subtyping, primitive
+/// types by the primitive supertype order (double ≻ float ≻ long ≻ int ≻
+/// {char, short, byte}).
+fn formal_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, p1: &Ty, p2: &Ty) -> bool {
+    if let (TyKind::Primitive(a), TyKind::Primitive(b)) = (p1.kind(db), p2.kind(db)) {
+        return a == b || crate::subtyping::widening_primitive(*a, *b);
+    }
+    // §15.12.2.5 (loose invocation): a primitive formal boxes before the
+    // subtyping test, so `valueOf(int)` is more specific than
+    // `valueOf(long)` *and* than `valueOf(Object)`.
+    if let TyKind::Primitive(p) = p1.kind(db) {
+        let boxed = Ty::reference(db, boxed_type(*p), Vec::new());
+        return is_subtype(db, scope, &boxed, p2);
+    }
+    is_subtype(db, scope, p1, p2)
 }
 
 /// The most specific method among `candidates`, all applicable by the same
@@ -1218,27 +1478,57 @@ pub(crate) fn more_specific(
 /// invocation)` pair produced by [`instantiate`]; specificity is decided on the
 /// generic member. `None` when no candidate is strictly more specific than
 /// every other (an ambiguity error), or when the set is empty.
-fn choose_most_specific(
+pub(crate) fn choose_most_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     candidates: &[(MethodData, MethodData)],
 ) -> Option<MethodData> {
-    if candidates.len() == 1 {
-        return candidates.first().map(|(_, invocation)| invocation.clone());
-    }
-    let mut best: Option<usize> = None;
+    let mut winners: Vec<usize> = Vec::new();
     for (i, (candidate, _)) in candidates.iter().enumerate() {
         let wins = candidates
             .iter()
             .all(|(other, _)| other == candidate || more_specific(db, scope, candidate, other));
         if wins {
-            if best.is_some() {
-                return None;
-            }
-            best = Some(i);
+            winners.push(i);
         }
     }
-    best.map(|i| candidates[i].1.clone())
+
+    // §15.12.2.5/§8.4.8.1: several equally-most-specific candidates whose
+    // declared signatures are identical are one method seen through
+    // overriding paths (covariant returns defeat exact-signature dedup).
+    // Collapse them first, then prefer the most-derived declaring type;
+    // genuinely unrelated declarations stay ambiguous.
+    let mut unique: Vec<usize> = Vec::new();
+    'outer: for &i in &winners {
+        for &u in &unique {
+            let (a, b) = (&candidates[u].0, &candidates[i].0);
+            if a.params == b.params
+                && a.ret == b.ret
+                && a.is_static == b.is_static
+                && a.varargs == b.varargs
+            {
+                continue 'outer;
+            }
+        }
+        unique.push(i);
+    }
+
+    match unique.len() {
+        0 => None,
+        1 => Some(candidates[unique[0]].1.clone()),
+        _ => {
+            let chosen = unique.iter().copied().find(|&i| {
+                let owner = Ty::reference(db, candidates[i].0.owner.as_str(), Vec::new());
+                unique.iter().all(|&j| {
+                    j == i || {
+                        let other = Ty::reference(db, candidates[j].0.owner.as_str(), Vec::new());
+                        is_subtype(db, scope, &owner, &other)
+                    }
+                })
+            });
+            chosen.map(|i| candidates[i].1.clone())
+        }
+    }
 }
 
 /// Resolves a method call `receiver.name(args)` by the applicability phases of
@@ -1446,6 +1736,9 @@ fn library_class_fields(
         return Vec::new();
     };
     let interner = &db.hir_state().interner;
+    // JLS 4.8: a *raw* use of a generic class erases its members'
+    // signatures; the erasure is applied to each constructed member below.
+    let is_raw = args.is_empty() && !class.type_params.is_empty();
     let binding: FxHashMap<Name, Ty> = if args.is_empty() {
         FxHashMap::default()
     } else {
@@ -1464,10 +1757,15 @@ fn library_class_fields(
         if interner.resolve(&field.name) != name {
             continue;
         }
+        // JLS 4.8: the fields of a raw type have erased types.
+        let ty = {
+            let ty = ty_from_library(db, &field.field_type).substitute(db, &binding);
+            if is_raw { ty.erasure(db) } else { ty }
+        };
         out.push(FieldData {
             name: name.to_owned(),
             owner: fqn.clone(),
-            ty: ty_from_library(db, &field.field_type).substitute(db, &binding),
+            ty,
             is_static: field.flags & 0x0008 != 0, // ACC_STATIC
             access: Access::from_flags(field.flags),
             declaring_package: declaring_package.clone(),
@@ -1494,6 +1792,9 @@ fn source_class_fields(
         ItemData::Record(d) => &d.type_params,
         _ => &[],
     };
+    // JLS 4.8: a *raw* use of a generic class erases its members'
+    // signatures; the erasure is applied to each constructed member below.
+    let is_raw = args.is_empty() && !declared.is_empty();
     let binding: FxHashMap<Name, Ty> = if args.is_empty() {
         FxHashMap::default()
     } else {
@@ -1505,6 +1806,7 @@ fn source_class_fields(
     };
     let type_params = type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
+    let scope = scope_for_file(db, source.file);
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|fqn| fqn.as_str().to_owned())
         .unwrap_or_default();
@@ -1512,25 +1814,77 @@ fn source_class_fields(
     let declaring_package = Some(package.clone().unwrap_or_default());
     // Source names nest with dots: the top level is package + first type.
     let declaring_top_level = (!fqn.is_empty()).then(|| source_top_level(package.as_deref(), &fqn));
+    let declaring_interface =
+        matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
+    let declaring_enum = matches!(class_data, ItemData::Enum(_));
 
     let mut out = Vec::new();
     for &item in class_data.body() {
-        let Some(ItemData::Field(field)) = item_data(&tree, item) else {
-            continue;
-        };
-        if field.name.as_str() != name {
-            continue;
+        match item_data(&tree, item) {
+            Some(ItemData::Field(field)) => {
+                if field.name.as_str() != name {
+                    continue;
+                }
+                let key = ItemKey::new(db, source.file, item);
+                // JLS 4.8: the fields of a raw type have erased types.
+                let ty = {
+                    let ty = item_ty_query(db, key).substitute(db, &binding);
+                    if is_raw { ty.erasure(db) } else { ty }
+                };
+                out.push(FieldData {
+                    name: name.to_owned(),
+                    owner: fqn.clone(),
+                    ty,
+                    is_static: field.modifiers.static_,
+                    access: interface_access_of(declaring_interface, &field.modifiers),
+                    declaring_package: declaring_package.clone(),
+                    declaring_top_level: declaring_top_level.clone(),
+                });
+            }
+            // §8.9.2: each enum constant is an implicitly `public static
+            // final` field of the enum type, typed as the enum itself — a
+            // static import (`import static E.CONSTANT`) and qualified reads
+            // resolve through it.
+            Some(ItemData::EnumConstant(constant))
+                if declaring_enum && constant.name.as_str() == name =>
+            {
+                out.push(FieldData {
+                    name: name.to_owned(),
+                    owner: fqn.clone(),
+                    ty: Ty::reference(db, Name::new(&fqn), binding.values().copied().collect()),
+                    is_static: true,
+                    access: Access::Public,
+                    declaring_package: declaring_package.clone(),
+                    declaring_top_level: declaring_top_level.clone(),
+                });
+            }
+            _ => {}
         }
-        let key = ItemKey::new(db, source.file, item);
-        out.push(FieldData {
-            name: name.to_owned(),
-            owner: fqn.clone(),
-            ty: item_ty_query(db, key).substitute(db, &binding),
-            is_static: field.modifiers.static_,
-            access: access_of(&field.modifiers),
-            declaring_package: declaring_package.clone(),
-            declaring_top_level: declaring_top_level.clone(),
-        });
+    }
+    // §8.10.3: each record component declares a private instance field of the
+    // component type; a varargs component (`String... names`) is carried as
+    // the array type `String[]` ([§8.4.1]). Reads inside the record body and
+    // accessor synthesis resolve through it.
+    if let ItemData::Record(record) = class_data {
+        for component in &record.components {
+            let component_name = component.name.as_str();
+            if !name.is_empty() && component_name != name {
+                continue;
+            }
+            let mut ty = resolve_type_ref(db, &scope, &resolver, &component.ty);
+            if component.varargs {
+                ty = Ty::array(db, ty);
+            }
+            out.push(FieldData {
+                name: component_name.to_owned(),
+                owner: fqn.clone(),
+                ty: ty.substitute(db, &binding),
+                is_static: false,
+                access: Access::Private,
+                declaring_package: declaring_package.clone(),
+                declaring_top_level: declaring_top_level.clone(),
+            });
+        }
     }
     out
 }

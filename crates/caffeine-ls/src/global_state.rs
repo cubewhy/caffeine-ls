@@ -3,6 +3,7 @@ use crate::{
     line_index::{LineEndings, LineIndex},
     lsp::from_proto,
     mem_docs::MemDocs,
+    task_pool::TaskPool,
 };
 use lsp_types::Uri;
 use project_model::WorkspaceGraph;
@@ -116,7 +117,7 @@ pub struct GlobalState {
 
     pub(crate) task_sender: Sender<BackgroundTaskEvent>,
     pub(crate) task_receiver: Receiver<BackgroundTaskEvent>,
-    pub(crate) thread_pool: threadpool::ThreadPool,
+    pub(crate) thread_pool: TaskPool,
 
     pub(crate) config: Arc<Config>,
     pub(crate) config_errors: Option<ConfigErrors>,
@@ -151,7 +152,7 @@ impl GlobalState {
     pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
         let (task_sender, task_receiver) = unbounded();
 
-        let thread_pool = threadpool::ThreadPool::new(num_cpus::get());
+        let thread_pool = TaskPool::new("caffeine-task", num_cpus::get());
 
         let loader = {
             let (sender, receiver) = unbounded::<vfs::loader::Message>();

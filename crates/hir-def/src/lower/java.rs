@@ -426,6 +426,10 @@ fn enum_body_members(ctx: &mut LowerCtx, body: &SyntaxNode<Lang>) -> Vec<ItemId>
                 data.argument_exprs = exprs;
             }
             ids.push(constant_id);
+        } else if is(&child, J::FIELD_DECL) {
+            // §8.9.2: an enum body may declare fields (and initializers),
+            // exactly like a class body — they must not be dropped.
+            ids.extend(lower_field_decl(ctx, &child));
         } else if let Some(id) = lower_member(ctx, &child) {
             ids.push(id);
         }

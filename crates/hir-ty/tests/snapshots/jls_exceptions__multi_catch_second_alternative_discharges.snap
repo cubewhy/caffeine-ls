@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Exc.java:
+package com.example;
+
+import java.io.IOException;
+
+class Exc {
+    void risky() throws IOException { }
+
+    void m() {
+        try {
+            risky();
+        } catch (RuntimeException | IOException e) {
+        }
+    }
+}
+
+method risky(): void
+  locals: 
+  exprs: 
+method m(): void
+  locals: l0: java.lang.RuntimeException
+  exprs: e0: void

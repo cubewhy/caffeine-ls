@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/CatchUnrelated.java:
+package com.example;
+
+import java.io.FileNotFoundException;
+
+class CatchUnrelated {
+    void sax() throws ClassNotFoundException { }
+
+    void dead() {
+        try {
+            sax();
+        } catch (FileNotFoundException e) {
+        }
+    }
+}
+
+method sax(): void
+  locals: 
+  exprs: 
+method dead(): void
+  locals: l0: java.io.FileNotFoundException
+  exprs: e0: void
+  diags: l0@10:17: catch-never-thrown: exception FileNotFoundException is never thrown in the corresponding try block | e0@9:12: unreported-exception: unreported exception ClassNotFoundException; must be caught or declared to be thrown

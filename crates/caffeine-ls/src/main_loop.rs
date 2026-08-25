@@ -568,6 +568,9 @@ impl GlobalState {
         // `SourceRootId(i)` assigned by `FileChange::apply` (vector order)
         // lines up with `source_sets[i]`.
         let mut source_sets: Vec<(SourceSetId, Vec<AbsPathBuf>)> = Vec::new();
+        // Generated source roots (`target/generated-sources`, ...) hold real
+        // compile inputs even though they live under gitignored paths.
+        let mut generated_roots: FxHashSet<AbsPathBuf> = FxHashSet::default();
         let mut seen: FxHashSet<SourceSetId> = FxHashSet::default();
         for project in graph.projects.values() {
             for (kind, source_set) in &project.source_sets {
@@ -580,7 +583,10 @@ impl GlobalState {
                 }
                 let mut roots = Vec::new();
                 roots.extend(source_set.source_roots.iter().cloned());
-                roots.extend(source_set.generated_source_roots.iter().cloned());
+                for generated in &source_set.generated_source_roots {
+                    generated_roots.insert(generated.clone());
+                    roots.push(generated.clone());
+                }
                 source_sets.push((id, roots));
             }
         }
@@ -611,16 +617,26 @@ impl GlobalState {
         let entries: Vec<vfs::loader::Entry> = source_roots
             .iter()
             .map(|source_root| {
+                // A generated root lives under a gitignored directory
+                // (`target/`) yet holds real compile inputs ([JLS-adjacent]:
+                // annotation-processor and grammar-generator output is part
+                // of the compilation), so ignore rules do not apply to it.
+                let is_generated = generated_roots.contains(source_root);
                 let mut builder = ignore::WalkBuilder::new(source_root);
-                builder.standard_filters(true).require_git(false);
-                if let Some(matcher) = builder.build_matchers().into_iter().next() {
+                builder.standard_filters(!is_generated).require_git(false);
+                if !is_generated && let Some(matcher) = builder.build_matchers().into_iter().next()
+                {
                     matchers.push((source_root.clone(), matcher));
                 }
 
                 vfs::loader::Entry::Directories(vfs::loader::Directories {
                     extensions: vec!["java".into(), "kt".into(), "kts".into()],
                     include: vec![source_root.clone()],
-                    exclude: collect_ignored_paths(source_root),
+                    exclude: if is_generated {
+                        Vec::new()
+                    } else {
+                        collect_ignored_paths(source_root)
+                    },
                 })
             })
             .collect();

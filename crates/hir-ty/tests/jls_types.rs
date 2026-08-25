@@ -90,3 +90,27 @@ class Body {
 ",
     )])
 );
+
+// -- green: array builtin members ([§10.7]) -------------------------------------
+// Every array type has a public final field `length` and a public method
+// `clone` returning the array type itself, overriding `Object.clone`.
+
+snapshot!(
+    array_builtin_members,
+    check_body_types(&[(
+        "/src/com/example/Arrays.java",
+        "\
+package com.example;
+
+class Arrays {
+    int[] copy(int[] a) {
+        return a.clone();
+    }
+
+    int size(String[] names) {
+        return names.length;
+    }
+}
+",
+    )])
+);

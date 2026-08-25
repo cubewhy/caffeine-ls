@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Use.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Use {
+    int total(List<String> list) {
+        list.forEach(el -> {
+            if (el.isEmpty()) {}
+        });
+        return list.size();
+    }
+}
+
+method total(java.util.List<java.lang.String>): int
+  locals: l0: java.util.List<java.lang.String>
+  exprs: e3: <error> | e4: java.util.List<java.lang.String> | e5: <error> | e6: java.util.List<java.lang.String> | e7: int
+  diags: e5@7:8: no-such-method: cannot find symbol
+  symbol:   method forEach()

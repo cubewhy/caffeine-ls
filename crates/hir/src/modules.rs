@@ -373,10 +373,13 @@ fn workspace_module_graph_for_libraries(
 /// (readability graph per JLS §7.7.2).
 pub fn readable_modules(
     workspace: &WorkspaceModuleGraph,
+    interner: &ThreadedRodeo,
     from: &ModuleDescriptor,
 ) -> FxHashSet<Symbol> {
     let mut readable = FxHashSet::default();
-    let mut queue: Vec<Symbol> = vec![from.stub.name];
+    // §7.1: every module implicitly `requires java.base`, whether or not its
+    // declaration spells it out.
+    let mut queue: Vec<Symbol> = vec![from.stub.name, interner.get_or_intern("java.base")];
     while let Some(current) = queue.pop() {
         if !readable.insert(current) {
             continue;
@@ -401,10 +404,11 @@ pub fn readable_modules(
 /// own packages are always visible to it.
 pub fn is_package_visible(
     workspace: &WorkspaceModuleGraph,
+    interner: &ThreadedRodeo,
     from: &ModuleDescriptor,
     package: Symbol,
 ) -> bool {
-    let readable = readable_modules(workspace, from);
+    let readable = readable_modules(workspace, interner, from);
     workspace.modules_for_package(package).iter().any(|owner| {
         if owner.stub.name == from.stub.name {
             return true;
@@ -463,7 +467,7 @@ impl ModuleCtx {
                 let Some(from_descriptor) = self.graph.module(from) else {
                     return false;
                 };
-                is_package_visible(&self.graph, from_descriptor, package)
+                is_package_visible(&self.graph, interner, from_descriptor, package)
             }
         }
     }
@@ -734,7 +738,7 @@ mod tests {
             package_to_modules: FxHashMap::default(),
         };
 
-        let readable = readable_modules(&workspace, &app);
+        let readable = readable_modules(&workspace, &interner, &app);
         let s = |name: &str| interner.get_or_intern(name);
         // app reads its direct requires `lib` and `trans`. A transitive edge
         // propagates only the target module itself (JLS §7.7.2): `deep` is
@@ -764,7 +768,7 @@ mod tests {
             package_to_modules: FxHashMap::default(),
         };
 
-        let readable = readable_modules(&workspace, &app);
+        let readable = readable_modules(&workspace, &interner, &app);
         let s = |name: &str| interner.get_or_intern(name);
         // Chains of `requires transitive` do propagate (JLS §7.7.2 R3 rule).
         assert!(readable.contains(&s("mid")));
@@ -817,16 +821,19 @@ mod tests {
         // app requires lib (non-transitive) and trans (transitive).
         assert!(is_package_visible(
             &workspace,
+            &interner,
             &app,
             interner.get_or_intern("lib.api")
         ));
         assert!(is_package_visible(
             &workspace,
+            &interner,
             &app,
             interner.get_or_intern("lib.internal")
         ));
         assert!(is_package_visible(
             &workspace,
+            &interner,
             &app,
             interner.get_or_intern("trans.api")
         ));
@@ -845,6 +852,7 @@ mod tests {
         // A package with no owner module is invisible.
         assert!(!is_package_visible(
             &workspace,
+            &interner,
             &app,
             interner.get_or_intern("nowhere.here")
         ));
@@ -867,6 +875,7 @@ mod tests {
         // A module's own package is visible even though it is not exported.
         assert!(is_package_visible(
             &workspace,
+            &interner,
             &app,
             interner.get_or_intern("app.self")
         ));
