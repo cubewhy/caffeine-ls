@@ -137,14 +137,14 @@ pub(crate) fn supertypes_impl(
                             })
                             .collect()
                     };
-                    if is_interface && !out.iter().any(|t| *t == object) {
+                    if is_interface && !out.contains(&object) {
                         out.push(object);
                     }
                     out
                 }
                 hir::Resolved::Source(source) => {
                     let mut out = source_supertypes(db, source, args);
-                    if is_source_interface(db, source) && !out.iter().any(|t| *t == object) {
+                    if is_source_interface(db, source) && !out.contains(&object) {
                         out.push(object);
                     }
                     out

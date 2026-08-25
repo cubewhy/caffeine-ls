@@ -4082,7 +4082,7 @@ impl<'a> InferCtx<'a> {
                                     )
                                 })
                         })
-                        .map(|(ty, _)| ty.clone())
+                        .map(|(ty, _)| *ty)
                         .collect();
                     if !precise.is_empty() {
                         self.rethrow_sets.insert(clause.param, precise);

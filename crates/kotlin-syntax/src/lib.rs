@@ -28,7 +28,7 @@ impl SourceFile {
         let errors: Vec<SyntaxError> = lex_errors
             .into_iter()
             .map(|e| e.into())
-            .chain(parse_errors.into_iter().map(|e| e.into()))
+            .chain(parse_errors.into_iter().map(|e| e))
             .collect();
 
         Parse::new(green_node, errors)

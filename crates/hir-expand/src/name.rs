@@ -33,21 +33,6 @@ impl Name {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn simple_name_splits_dots_only() {
-        assert_eq!(Name::new("com.example.Outer.Inner").simple_name(), "Inner");
-        // §3.8: `$` is part of the identifier, not a nesting separator.
-        assert_eq!(Name::new("com.example.A$B").simple_name(), "A$B");
-        assert_eq!(Name::new("com.example.C.m$1").simple_name(), "m$1");
-        assert_eq!(Name::new("Foo").simple_name(), "Foo");
-        assert_eq!(Name::new("").simple_name(), "");
-    }
-}
-
 impl fmt::Debug for Name {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
@@ -75,5 +60,20 @@ impl From<String> for Name {
 impl PartialEq<str> for Name {
     fn eq(&self, other: &str) -> bool {
         self.0 == other
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simple_name_splits_dots_only() {
+        assert_eq!(Name::new("com.example.Outer.Inner").simple_name(), "Inner");
+        // §3.8: `$` is part of the identifier, not a nesting separator.
+        assert_eq!(Name::new("com.example.A$B").simple_name(), "A$B");
+        assert_eq!(Name::new("com.example.C.m$1").simple_name(), "m$1");
+        assert_eq!(Name::new("Foo").simple_name(), "Foo");
+        assert_eq!(Name::new("").simple_name(), "");
     }
 }

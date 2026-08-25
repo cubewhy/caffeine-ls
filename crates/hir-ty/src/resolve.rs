@@ -93,10 +93,10 @@ impl Resolver {
             let text = import.name.as_str();
             if import.is_asterisk {
                 out.push((import.name.clone(), simple.to_owned()));
-            } else if let Some((owner, member)) = text.rsplit_once('.') {
-                if member == simple {
-                    out.push((Name::new(owner), member.to_owned()));
-                }
+            } else if let Some((owner, member)) = text.rsplit_once('.')
+                && member == simple
+            {
+                out.push((Name::new(owner), member.to_owned()));
             }
         }
         out

@@ -383,7 +383,7 @@ impl Inference {
                     return convertible(db, scope, &phase, s, t);
                 }
                 if let Some((tn, _)) = t.as_reference(db) {
-                    let mut stack = vec![s.clone()];
+                    let mut stack = vec![*s];
                     let mut visited: FxHashSet<TyData> = FxHashSet::default();
                     let mut found = false;
                     while let Some(current) = stack.pop() {

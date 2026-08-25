@@ -160,10 +160,10 @@ pub(crate) fn enclosing_class_query(
                 | ItemData::Annotation(_)
         );
         let current = if is_type { Some(id) } else { enclosing };
-        if let Some(enclosing) = current {
-            if let Some(fqn) = hir::source_class_fqn(db, file_id, enclosing) {
-                map.insert(id, fqn);
-            }
+        if let Some(enclosing) = current
+            && let Some(fqn) = hir::source_class_fqn(db, file_id, enclosing)
+        {
+            map.insert(id, fqn);
         }
         for &child in data.body() {
             walk(db, file_id, tree, child, current, map);
@@ -253,8 +253,8 @@ pub(crate) fn body_types_query<'db>(
 /// of every class in `file`, memoized per file. See
 /// [`crate::decl_check::class_diagnostics_impl`].
 #[salsa::tracked(returns(clone))]
-pub(crate) fn class_diagnostics_query<'db>(
-    db: &'db dyn TyDatabase,
+pub(crate) fn class_diagnostics_query(
+    db: &dyn TyDatabase,
     file: FileText,
 ) -> Vec<crate::decl_check::DeclDiagnostic> {
     let file_id = *file.file_id(db);

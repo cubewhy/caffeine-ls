@@ -374,8 +374,8 @@ pub(crate) fn inherited_defaults(
 /// repeated member sets at the same call site hit the query cache instead of
 /// re-walking the class hierarchy.
 #[salsa::tracked(returns(clone))]
-pub(crate) fn member_set_query<'db>(
-    db: &'db dyn TyDatabase,
+pub(crate) fn member_set_query(
+    db: &dyn TyDatabase,
     scope: ScopeId,
     receiver: TyData,
     name: Name,
@@ -742,7 +742,7 @@ fn library_class_methods(
                 .throws_list
                 .iter()
                 .map(instantiate)
-                .map(|ty| erase(ty))
+                .map(erase)
                 .collect(),
             varargs: method.flags & 0x0080 != 0,   // ACC_VARARGS
             is_static: method.flags & 0x0008 != 0, // ACC_STATIC

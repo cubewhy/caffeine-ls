@@ -331,7 +331,7 @@ impl Ty {
     /// The lower bound of this (capture) type variable
     /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
     /// or `None` for ordinary type variables.
-    pub fn lower<'a>(&self, db: &'a dyn TyDatabase) -> Option<Ty> {
+    pub fn lower(&self, db: &dyn TyDatabase) -> Option<Ty> {
         match self.kind(db) {
             TyKind::TypeVar { lower, .. } => *lower,
             _ => None,
