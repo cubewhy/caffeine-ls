@@ -104,7 +104,7 @@ pub(crate) fn body_types_impl(
         tree: tree.bodies.clone(),
         resolver,
         access,
-        enclosing_class,
+        enclosing_class: enclosing_class.clone(),
         enclosing_chain: {
             // The chain of enclosing class-like declarations of `item`,
             // innermost first, as raw types ([§6.3], [§8.1.3]).
@@ -612,13 +612,13 @@ impl<'a> InferCtx<'a> {
         if sub || sup {
             return true;
         }
-        !matches!(
-            (
-                crate::subtyping::class_like_and_final(self.db, &self.scope, &from),
-                crate::subtyping::class_like_and_final(self.db, &self.scope, &to),
-            ),
-            (Some((true, _)), Some((true, _)))
-        )
+        match (
+            crate::subtyping::class_like_and_final(self.db, &self.scope, &from),
+            crate::subtyping::class_like_and_final(self.db, &self.scope, &to),
+        ) {
+            (Some((true, _)), Some((true, _))) => false,
+            _ => true,
+        }
     }
 
     /// Infers a `switch` selector and checks its type
@@ -698,7 +698,7 @@ impl<'a> InferCtx<'a> {
                 crate::subtyping::enum_constants(self.db, &self.scope, selector)
             && constants.iter().any(|constant| constant == &name)
         {
-            self.types.insert(label, *selector);
+            self.types.insert(label, selector.clone());
             return;
         }
         let ty = self.infer_expr(label);
@@ -712,7 +712,7 @@ impl<'a> InferCtx<'a> {
             // *constant* also narrows to a `byte`, `short` or `char`
             // selector when its value is representable there ([§5.1.3]) —
             // `case 16` of a `byte` selector is legal.
-            && !self.constant_narrowable(label, ty, *selector)
+            && !self.constant_narrowable(label, ty.clone(), selector.clone())
         {
             self.report(TypeError::IncompatibleTypes {
                 expr: label,
@@ -1205,7 +1205,7 @@ impl<'a> InferCtx<'a> {
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                self.infer_switch_label(*e, &selector);
+                                let _ = self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);
@@ -1531,6 +1531,11 @@ impl<'a> InferCtx<'a> {
         }
     }
 
+    fn pick_field_of(&mut self, receiver: Option<Ty>, name: &str) -> Option<FieldData> {
+        let receiver = receiver?;
+        pick_field(self.db, &self.scope, &receiver, name, &self.access)
+    }
+
     /// The statements of one block ([JLS §14.2]). §14.22: a statement is
     /// reachable only if the preceding statement can complete normally — a
     /// statement after an abruptly-completing one is a compile-time error.
@@ -1604,7 +1609,7 @@ impl<'a> InferCtx<'a> {
         target: hir_expand::body::CtorCallTarget,
     ) -> Ty {
         let receiver_ty = match target {
-            hir_expand::body::CtorCallTarget::This => self.enclosing_class,
+            hir_expand::body::CtorCallTarget::This => self.enclosing_class.clone(),
             // `super(args)`: the candidates are the constructors of the
             // direct superclass ([§8.8.7.1]), not of the enclosing class.
             hir_expand::body::CtorCallTarget::Super => Some(self.super_ty()),
@@ -1636,7 +1641,7 @@ impl<'a> InferCtx<'a> {
                 // to the enclosing liability.
                 for thrown in &method.throws {
                     if self.is_checked(thrown) {
-                        self.thrown.push((*thrown, expr));
+                        self.thrown.push((thrown.clone(), expr));
                     }
                 }
             }
@@ -1759,7 +1764,7 @@ impl<'a> InferCtx<'a> {
                 // exceptions adds them to the enclosing liability.
                 for thrown in &method.throws {
                     if self.is_checked(thrown) {
-                        self.thrown.push((*thrown, expr));
+                        self.thrown.push((thrown.clone(), expr));
                     }
                 }
                 method.ret
@@ -2558,7 +2563,7 @@ impl<'a> InferCtx<'a> {
             // enclosing liability exactly like a method invocation's.
             for thrown in &method.throws {
                 if self.is_checked(thrown) {
-                    self.thrown.push((*thrown, expr));
+                    self.thrown.push((thrown.clone(), expr));
                 }
             }
         } else {
@@ -3747,7 +3752,7 @@ impl<'a> InferCtx<'a> {
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                self.infer_switch_label(*e, &selector);
+                                let _ = self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);
@@ -3944,7 +3949,7 @@ impl<'a> InferCtx<'a> {
                     .thrown
                     .iter()
                     .filter(|(_, expr)| !thrown_before.contains(expr))
-                    .map(|(ty, _)| *ty)
+                    .map(|(ty, _)| ty.clone())
                     .collect();
                 let mut catch_tys: Vec<Ty> = Vec::new();
                 for clause in catches {
@@ -4082,7 +4087,7 @@ impl<'a> InferCtx<'a> {
                                     )
                                 })
                         })
-                        .map(|(ty, _)| *ty)
+                        .map(|(ty, _)| ty.clone())
                         .collect();
                     if !precise.is_empty() {
                         self.rethrow_sets.insert(clause.param, precise);
