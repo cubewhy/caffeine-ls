@@ -1,0 +1,115 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+assertion_line: 378
+expression: out
+---
+FILE /src/com/example/Truth.java:
+package com.example;
+
+class Subject {
+    static class Builder {
+        <C extends java.lang.Comparable<C>> ComparableSubject<C> that(C c) {
+            return null;
+        }
+
+        Subject that(Object o) {
+            return null;
+        }
+
+        <T> ObjectArraySubject<T> that(T[] a) {
+            return null;
+        }
+
+        PrimitiveIntArraySubject that(int[] a) {
+            return null;
+        }
+
+        IterableSubject that(java.lang.Iterable<?> a) {
+            return null;
+        }
+    }
+
+    static class ComparableSubject<C> extends Subject {
+    }
+
+    static class ObjectArraySubject<T> extends Subject {
+        ObjectArraySubject<T> asList() {
+            return null;
+        }
+
+        ObjectArraySubject<T> hasLength(int n) {
+            return null;
+        }
+    }
+
+    static class PrimitiveIntArraySubject extends Subject {
+        PrimitiveIntArraySubject hasLength(int n) {
+            return null;
+        }
+    }
+
+    static class IterableSubject extends Subject {
+        IterableSubject asList() {
+            return null;
+        }
+    }
+}
+
+class Bean {
+    String[] strings = {"a"};
+    int[] ints = {1};
+    java.util.List<String> list = null;
+    Object any = null;
+}
+
+class Use {
+    void chains(Bean bean, Subject.Builder b) {
+        b.that(bean.strings).asList().hasLength(1);
+        b.that(bean.ints).hasLength(2);
+        b.that(bean.list).asList();
+        b.that(bean.any);
+    }
+}
+
+method that(C): com.example.Subject.ComparableSubject<C>
+  locals: l0: C
+  exprs: e0: null
+method that(java.lang.Object): com.example.Subject
+  locals: l1: java.lang.Object
+  exprs: e1: null
+method that(T[]): com.example.Subject.ObjectArraySubject<T>
+  locals: l2: T[]
+  exprs: e2: null
+method that(int[]): com.example.Subject.PrimitiveIntArraySubject
+  locals: l3: int[]
+  exprs: e3: null
+method that(java.lang.Iterable<?>): com.example.Subject.IterableSubject
+  locals: l4: java.lang.Iterable<?>
+  exprs: e4: null
+method asList(): com.example.Subject.ObjectArraySubject<T>
+  locals: 
+  exprs: e5: null
+method hasLength(int): com.example.Subject.ObjectArraySubject<T>
+  locals: l5: int
+  exprs: e6: null
+method hasLength(int): com.example.Subject.PrimitiveIntArraySubject
+  locals: l6: int
+  exprs: e7: null
+method asList(): com.example.Subject.IterableSubject
+  locals: 
+  exprs: e8: null
+field strings
+  locals: 
+  exprs: e9: java.lang.String | e10: java.lang.String[]
+field ints
+  locals: 
+  exprs: e11: int | e12: int[]
+field list
+  locals: 
+  exprs: e13: null
+field any
+  locals: 
+  exprs: e14: null
+method chains(com.example.Bean, com.example.Subject.Builder): void
+  locals: l7: com.example.Bean | l8: com.example.Subject.Builder
+  exprs: e15: int | e16: com.example.Bean | e17: java.lang.String[] | e18: com.example.Subject.Builder | e19: com.example.Subject.ObjectArraySubject<java.lang.String> | e20: com.example.Subject.ObjectArraySubject<java.lang.String> | e21: com.example.Subject.ObjectArraySubject<java.lang.String> | e22: int | e23: com.example.Bean | e24: int[] | e25: com.example.Subject.Builder | e26: com.example.Subject.PrimitiveIntArraySubject | e27: com.example.Subject.PrimitiveIntArraySubject | e28: com.example.Bean | e29: java.util.List<java.lang.String> | e30: com.example.Subject.Builder | e31: com.example.Subject.IterableSubject | e32: com.example.Subject.IterableSubject | e33: com.example.Bean | e34: java.lang.Object | e35: com.example.Subject.Builder | e36: com.example.Subject

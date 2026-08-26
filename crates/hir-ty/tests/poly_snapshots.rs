@@ -368,3 +368,128 @@ class Repro {
 ",
     )])
 );
+
+// -- §15.12.2.5: only m2's genericity gates specificity --------------------------
+// A generic `<T> Subject that(T[])` is more specific than a non-generic
+// `that(Object)` for an array argument (`T[] <: Object`), even though the
+// reverse direction holds through §18.5.4 — javac resolves Truth's builder
+// chains to the array overload, whose subject carries `.asList()`/`.hasLength()`.
+
+snapshot!(
+    builder_array_overload_most_specific,
+    check_body_types(&[(
+        "/src/com/example/Truth.java",
+        "\
+package com.example;
+
+class Subject {
+    static class Builder {
+        <C extends java.lang.Comparable<C>> ComparableSubject<C> that(C c) {
+            return null;
+        }
+
+        Subject that(Object o) {
+            return null;
+        }
+
+        <T> ObjectArraySubject<T> that(T[] a) {
+            return null;
+        }
+
+        PrimitiveIntArraySubject that(int[] a) {
+            return null;
+        }
+
+        IterableSubject that(java.lang.Iterable<?> a) {
+            return null;
+        }
+    }
+
+    static class ComparableSubject<C> extends Subject {
+    }
+
+    static class ObjectArraySubject<T> extends Subject {
+        ObjectArraySubject<T> asList() {
+            return null;
+        }
+
+        ObjectArraySubject<T> hasLength(int n) {
+            return null;
+        }
+    }
+
+    static class PrimitiveIntArraySubject extends Subject {
+        PrimitiveIntArraySubject hasLength(int n) {
+            return null;
+        }
+    }
+
+    static class IterableSubject extends Subject {
+        IterableSubject asList() {
+            return null;
+        }
+    }
+}
+
+class Bean {
+    String[] strings = {\"a\"};
+    int[] ints = {1};
+    java.util.List<String> list = null;
+    Object any = null;
+}
+
+class Use {
+    void chains(Bean bean, Subject.Builder b) {
+        b.that(bean.strings).asList().hasLength(1);
+        b.that(bean.ints).hasLength(2);
+        b.that(bean.list).asList();
+        b.that(bean.any);
+    }
+}
+",
+    )])
+);
+
+// -- §15.27.3: a block body without valued returns only targets void -------------
+// `assertDoesNotThrow(exe, msg)` overloads on `(Executable, String)` and
+// `(ThrowingSupplier<T>, String)`. The void block lambda is congruent with
+// `Executable.accept()` alone; without the value-compatibility applicability
+// check it would also stay applicable to `ThrowingSupplier.get()` and leave
+// the two overloads ambiguous.
+
+snapshot!(
+    void_block_lambda_executable_only,
+    check_body_types(&[(
+        "/src/com/example/Assert.java",
+        "\
+package com.example;
+
+interface Executable {
+    void accept();
+}
+
+interface ThrowingSupplier<T> {
+    T get();
+}
+
+class Assert {
+    static void doesNotThrow(Executable exe, String message) {
+    }
+
+    static <T> T doesNotThrow(ThrowingSupplier<T> supplier, String message) {
+        return null;
+    }
+}
+
+class Use {
+    void check(String name) {
+        Assert.doesNotThrow(() -> {
+            int length = name.length();
+        }, \"should not throw\");
+    }
+}
+",
+    )])
+);
+// Resolves to the void `Executable` overload; a value-returning target such
+// as `ThrowingSupplier` is not applicable to the block body.

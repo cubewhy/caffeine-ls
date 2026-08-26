@@ -1452,9 +1452,15 @@ fn instantiate(
 
 /// Whether `m1` is more specific than `m2`
 /// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
-/// a non-variable-arity method beats a variable-arity one, a non-generic
-/// method beats a generic one, and otherwise every formal parameter of `m1` is
-/// a subtype of the corresponding formal of `m2`. For two generic methods the
+/// a non-variable-arity method beats a variable arity one, and otherwise every
+/// formal parameter of `m1` is more specific than the corresponding formal of
+/// `m2`. Only *m2's* genericity gates the comparison: when `m2` is generic,
+/// `m1` is more specific under some instantiation of *m2*'s type parameters
+/// ([§18.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.4))
+/// — approximated here by instantiating them to their declared bounds, so
+/// `<T> that(T[])` loses to nothing merely for being generic and beats
+/// `that(Object)` for an array argument (`T[] <: Object`) exactly as javac
+/// resolves Truth's builder. For two generic methods the
 /// type-parameter-relative signatures are compared: `m2`'s type parameters are
 /// substituted by `m1`'s (by position), and `m1`'s declared bounds must be at
 /// least as restrictive as `m2`'s, so `<T extends String>` is more specific
@@ -1471,16 +1477,25 @@ pub(crate) fn more_specific(
     if m1.varargs != m2.varargs {
         return !m1.varargs;
     }
-    // §15.12.2.5: a non-generic method is more specific than a generic one.
-    if m1.type_params.is_empty() != m2.type_params.is_empty() {
-        return m1.type_params.is_empty();
-    }
-    if !m1.type_params.is_empty() {
+    // §18.5.4 note: even when m1 is generic, its type parameters stay type
+    // variables during the comparison — no substitution is applied to its
+    // formals.
+    let object = Ty::reference(db, "java.lang.Object", Vec::new());
+    let m2_formals: Vec<Ty> = if m2.type_params.is_empty() || m1.type_params.is_empty() {
+        // Different genericity: m2's type parameters instantiate to their
+        // declared bounds (the §18.5.4 initial bound set); m1's formals keep
+        // their own type variables.
+        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+        for tp in &m2.type_params {
+            let bound = tp.bounds.first().copied().unwrap_or(object);
+            subst.insert(tp.name.clone(), bound);
+        }
+        m2.params.iter().map(|p| p.substitute(db, &subst)).collect()
+    } else {
         // Both generic: compare the type-parameter-relative signatures. m2's
         // type parameters are substituted by m1's (excess become `Object`),
         // and m1 must be at least as restrictive: its declared bounds are
         // subtypes of m2's, and its parameters are subtypes of m2's.
-        let object = Ty::reference(db, "java.lang.Object", Vec::new());
         let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
         for (i, tp2) in m2.type_params.iter().enumerate() {
             let t1 = match m1.type_params.get(i) {
@@ -1489,7 +1504,6 @@ pub(crate) fn more_specific(
             };
             subst.insert(tp2.name.clone(), t1);
         }
-        let m2_params: Vec<Ty> = m2.params.iter().map(|p| p.substitute(db, &subst)).collect();
         let bounds_ok = m1
             .type_params
             .iter()
@@ -1508,16 +1522,14 @@ pub(crate) fn more_specific(
                 b1.iter()
                     .all(|x| b2.iter().any(|y| is_subtype(db, scope, x, y)))
             });
-        return bounds_ok
-            && m1
-                .params
-                .iter()
-                .zip(&m2_params)
-                .all(|(param1, param2)| formal_subtype(db, scope, param1, param2));
-    }
+        if !bounds_ok {
+            return false;
+        }
+        m2.params.iter().map(|p| p.substitute(db, &subst)).collect()
+    };
     m1.params
         .iter()
-        .zip(&m2.params)
+        .zip(&m2_formals)
         .all(|(param1, param2)| formal_subtype(db, scope, param1, param2))
 }
 

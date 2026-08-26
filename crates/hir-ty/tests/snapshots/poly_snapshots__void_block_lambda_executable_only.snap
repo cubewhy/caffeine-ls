@@ -1,0 +1,42 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+assertion_line: 460
+expression: out
+---
+FILE /src/com/example/Assert.java:
+package com.example;
+
+interface Executable {
+    void accept();
+}
+
+interface ThrowingSupplier<T> {
+    T get();
+}
+
+class Assert {
+    static void doesNotThrow(Executable exe, String message) {
+    }
+
+    static <T> T doesNotThrow(ThrowingSupplier<T> supplier, String message) {
+        return null;
+    }
+}
+
+class Use {
+    void check(String name) {
+        Assert.doesNotThrow(() -> {
+            int length = name.length();
+        }, "should not throw");
+    }
+}
+
+method doesNotThrow(com.example.Executable, java.lang.String): void
+  locals: l0: com.example.Executable | l1: java.lang.String
+  exprs: 
+method doesNotThrow(com.example.ThrowingSupplier<T>, java.lang.String): T
+  locals: l2: com.example.ThrowingSupplier<T> | l3: java.lang.String
+  exprs: e0: null
+method check(java.lang.String): void
+  locals: l4: java.lang.String | l5: int
+  exprs: e1: java.lang.String | e2: int | e3: com.example.Executable | e4: java.lang.String | e6: void

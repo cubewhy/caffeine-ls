@@ -2141,13 +2141,30 @@ impl<'a> InferCtx<'a> {
                 break;
             };
             for kind in &info.leaves {
-                if let ArgKind::Lambda {
-                    arity: Some(arity), ..
+                let ArgKind::Lambda {
+                    arity: Some(arity),
+                    id,
                 } = kind
-                    && let Some(sam) = single_abstract_method(self.db, &self.scope, &formal)
-                    && sam.params.len() != *arity
-                {
-                    return None;
+                else {
+                    continue;
+                };
+                if let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) {
+                    if sam.params.len() != *arity {
+                        return None;
+                    }
+                    // §15.27.3: a block lambda that is not value-compatible
+                    // — no `return` statement carries a value — is congruent
+                    // only with a void function result. Without this check a
+                    // void body stays applicable to a value-returning target
+                    // (`assertDoesNotThrow(exe, msg)` would go ambiguous
+                    // against the `ThrowingSupplier` overload).
+                    if let ExprData::Lambda { body, .. } = self.tree.expr(*id).clone()
+                        && !sam.ret.is_void_like(self.db)
+                        && matches!(body, LambdaBody::Block(_))
+                        && !self.lambda_block_has_value(&body)
+                    {
+                        return None;
+                    }
                 }
             }
         }
@@ -4623,5 +4640,69 @@ fn poly_arity(tree: &BodyTree, id: ExprId) -> Option<usize> {
             poly_arity(tree, then).filter(|n| poly_arity(tree, els) == Some(*n))
         }
         _ => None,
+    }
+}
+
+impl InferCtx<'_> {
+    /// Whether a block lambda contains a `return` statement carrying a value —
+    /// the syntactic core of value compatibility
+    /// ([JLS §15.27.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.3),
+    /// [§14.17](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17)):
+    /// every path must return a value or throw. A block without any valued
+    /// `return` is only void-compatible, so it cannot target a functional
+    /// interface whose function type produces a result.
+    fn lambda_block_has_value(&self, body: &LambdaBody) -> bool {
+        let LambdaBody::Block(stmt) = *body else {
+            // An expression lambda's value compatibility is decided against
+            // its inferred result, not syntactically.
+            return true;
+        };
+        self.stmt_has_valued_return(stmt)
+    }
+
+    fn stmt_has_valued_return(&self, stmt: StmtId) -> bool {
+        match self.tree.stmt(stmt).clone() {
+            StmtData::Return(Some(_)) | StmtData::Yield(_) => true,
+            StmtData::Return(None)
+            | StmtData::Empty
+            | StmtData::Decl { .. }
+            | StmtData::Expr(_)
+            | StmtData::Break(_)
+            | StmtData::Continue(_)
+            | StmtData::Throw(_)
+            | StmtData::Assert { .. }
+            | StmtData::LocalClass { .. }
+            | StmtData::Missing => false,
+            StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
+                stmts.iter().any(|stmt| self.stmt_has_valued_return(*stmt))
+            }
+            StmtData::Labeled { stmt, .. }
+            | StmtData::While { body: stmt, .. }
+            | StmtData::DoWhile { body: stmt, .. }
+            | StmtData::ForEach { body: stmt, .. }
+            | StmtData::Synchronized { body: stmt, .. } => self.stmt_has_valued_return(stmt),
+            StmtData::If { then, els, .. } => {
+                self.stmt_has_valued_return(then)
+                    || els.is_some_and(|els| self.stmt_has_valued_return(els))
+            }
+            StmtData::For { body: stmt, .. } => self.stmt_has_valued_return(stmt),
+            StmtData::Switch { arms, .. } => arms.iter().any(|arm| {
+                arm.body
+                    .iter()
+                    .any(|stmt| self.stmt_has_valued_return(*stmt))
+            }),
+            StmtData::Try {
+                body,
+                catches,
+                finally,
+                ..
+            } => {
+                self.stmt_has_valued_return(body)
+                    || catches
+                        .iter()
+                        .any(|catch| self.stmt_has_valued_return(catch.body))
+                    || finally.is_some_and(|finally| self.stmt_has_valued_return(finally))
+            }
+        }
     }
 }
