@@ -27,8 +27,7 @@ constant B
   locals: 
   exprs: e1: <error> | e2: <error>
   diags: e1@4:6: cannot-resolve-symbol: cannot find symbol
-  symbol:   variable System | e2@4:6: no-such-method: cannot find symbol
-  symbol:   method lineSeparator()
+  symbol:   variable System
 method Sep(java.lang.String): <init>
   locals: l0: java.lang.String
   exprs: e3: java.lang.String | e4: java.lang.String | e5: java.lang.String

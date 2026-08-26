@@ -219,3 +219,44 @@ class Lambda {
 ",
     ),])
 );
+
+// -- §14.14.1: basic-for header slots ------------------------------------------
+// ForInit may be a statement expression list (`i = 0`, `j--, k++`), not only
+// a declaration: the initializer is checked as a statement, the condition —
+// and only the condition — must be `boolean`.
+
+snapshot!(
+    for_header_statement_expression_lists,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m(int i, int j) {
+        int acc = 0;
+        for (i = 0; i < 3; i++) { acc += i; }
+        for (i = 0, j = 9; i < j; i++, j--) { acc++; }
+        return acc;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    for_header_condition_checked,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m(int x) {
+        for (; x;) { break; }
+        for (; x < 3;) { break; }
+    }
+}
+",
+    )])
+);

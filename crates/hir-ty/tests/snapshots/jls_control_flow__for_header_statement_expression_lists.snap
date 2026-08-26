@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int m(int i, int j) {
+        int acc = 0;
+        for (i = 0; i < 3; i++) { acc += i; }
+        for (i = 0, j = 9; i < j; i++, j--) { acc++; }
+        return acc;
+    }
+}
+
+method m(int, int): int
+  locals: l0: int | l1: int | l2: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: boolean | e7: int | e8: int | e9: int | e10: int | e11: int | e12: int | e13: int | e14: int | e15: int | e16: int | e17: int | e18: int | e19: int | e20: boolean | e21: int | e22: int | e23: int | e24: int | e25: int | e26: int | e27: int

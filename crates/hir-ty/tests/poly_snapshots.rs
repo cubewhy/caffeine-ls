@@ -346,3 +346,25 @@ class Poly {
 ",
     ),])
 );
+
+// -- Optional.map/orElse chains with a boolean-producing lambda -------------------
+// `Optional<T>.map(v -> cond)` yields `Optional<Boolean>`; the subsequent
+// `orElse(Boolean.FALSE)` unboxes to `boolean`. Inference must solve the
+// wildcard SAM formal `Function<? super T, ? extends U>` so that `U` binds to
+// `Boolean`, not `Object` ([JLS §18.5.2] with §5.1.10 capture).
+
+snapshot!(
+    optional_map_or_else_boolean_chain,
+    check_body_types(&[(
+        "/src/com/example/Repro.java",
+        "\
+import java.util.Optional;
+
+class Repro {
+    boolean m(Optional<String> opt, String s) {
+        return opt.map(v -> v == s).orElse(Boolean.FALSE);
+    }
+}
+",
+    )])
+);

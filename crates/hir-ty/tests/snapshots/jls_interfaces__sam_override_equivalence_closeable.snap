@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/Repro.java:
+import java.io.Closeable;
+
+class Repro {
+    void withCloseable() throws Exception {
+        try (Closeable c = () -> {}) {
+        }
+    }
+}
+
+method withCloseable(): void
+  locals: l0: java.io.Closeable
+  exprs: e0: java.io.Closeable

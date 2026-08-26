@@ -712,9 +712,11 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             args,
             diamond,
             members,
+            receiver,
         } => {
             out.push_str(&format!(
-                "{id}: new {}{}({})",
+                "{id}: {}new {}{}({})",
+                receiver.map(|r| format!("e{r}.")).unwrap_or_default(),
                 render_type(ty),
                 if *diamond { "<>" } else { "" },
                 args.iter()

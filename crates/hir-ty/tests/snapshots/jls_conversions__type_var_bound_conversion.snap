@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body<T extends java.lang.Number> {
+    void m(T value, java.lang.Number num) {
+        java.lang.Number n = value;
+        Object o = value;
+        value = num;
+    }
+}
+
+method m(T, java.lang.Number): void
+  locals: l0: T | l1: java.lang.Number | l2: java.lang.Number | l3: java.lang.Object
+  exprs: e0: T | e1: T | e2: T | e3: java.lang.Number | e4: T
+  diags: e3@6:15: incompatible-types: incompatible types: Number cannot be converted to T

@@ -254,39 +254,72 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
             StmtData::DoWhile { body, cond }
         }
         FOR_STMT => {
-            // The initializer may be a `LOCAL_VARIABLE_DECLARATION` (a
-            // declaration without the trailing `;` — there is no `_STMT`
-            // wrapper in the header), or a statement.
-            let init: Vec<StmtId> = node
-                .children()
-                .filter(|c| {
-                    (is_stmt_kind(c.kind()) && c.kind() != BLOCK)
-                        || c.kind() == LOCAL_VARIABLE_DECLARATION
-                })
-                .map(|c| {
-                    if c.kind() == LOCAL_VARIABLE_DECLARATION {
-                        let data = local_declaration(ctx, owner, &c);
-                        alloc_stmt(ctx, data)
-                    } else {
-                        stmt(ctx, owner, &c)
+            // The basic-for header is `ForInit ; Expression ; ForUpdate`
+            // ([JLS §14.14.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.1)):
+            // ForInit may be a local-variable declaration *or* a statement
+            // expression list (`for (i = 0; ...)`), so the three slots are
+            // told apart by their `;` separators — not by kind. Braces nest
+            // (an anonymous class in the header contains `;`), so separators
+            // are only recognized at nesting depth zero.
+            #[derive(PartialEq, Clone, Copy)]
+            enum HeaderSection {
+                Init,
+                Condition,
+                Update,
+            }
+            let mut section = HeaderSection::Init;
+            let mut depth = 0u32;
+            let mut init: Vec<StmtId> = Vec::new();
+            let mut cond: Option<ExprId> = None;
+            let mut step: Vec<ExprId> = Vec::new();
+            for child in node.children_with_tokens() {
+                match child {
+                    rowan::NodeOrToken::Token(token) => match token.kind() {
+                        J::L_BRACE => depth += 1,
+                        J::R_BRACE => depth = depth.saturating_sub(1),
+                        J::SEMICOLON if depth == 0 => {
+                            section = match section {
+                                HeaderSection::Init => HeaderSection::Condition,
+                                _ => HeaderSection::Update,
+                            };
+                        }
+                        _ => {}
+                    },
+                    rowan::NodeOrToken::Node(child) => {
+                        let kind = child.kind();
+                        match section {
+                            HeaderSection::Init => {
+                                if kind == J::LOCAL_VARIABLE_DECLARATION {
+                                    let data = local_declaration(ctx, owner, &child);
+                                    init.push(alloc_stmt(ctx, data));
+                                } else if is_expr_kind(kind) {
+                                    // §14.14.1: a statement expression list
+                                    // initializer (`for (i = 0; ...)`) — its
+                                    // assignments participate in the flow
+                                    // analysis ([§16.1]).
+                                    let e = expr(ctx, owner, &child);
+                                    init.push(alloc_stmt(ctx, StmtData::Expr(e)));
+                                } else if is_stmt_kind(kind) && kind != J::BLOCK {
+                                    init.push(stmt(ctx, owner, &child));
+                                }
+                            }
+                            HeaderSection::Condition => {
+                                if is_expr_kind(kind) && cond.is_none() {
+                                    cond = Some(expr(ctx, owner, &child));
+                                }
+                            }
+                            HeaderSection::Update => {
+                                if is_expr_kind(kind) {
+                                    step.push(expr(ctx, owner, &child));
+                                }
+                            }
+                        }
                     }
-                })
-                .collect();
-            let exprs: Vec<ExprId> = node
-                .children()
-                .filter(|c| is_expr_kind(c.kind()))
-                .map(|c| expr(ctx, owner, &c))
-                .collect();
-            // The header is `init; cond; step`: the first expression belongs
-            // to the initializer, the last to the step.
-            let (cond, step) = match exprs.as_slice() {
-                [rest @ .., last] if !rest.is_empty() => (Some(rest[0]), vec![*last]),
-                [single] => (None, vec![*single]),
-                _ => (None, Vec::new()),
-            };
+                }
+            }
             let body = node
                 .children()
-                .find(|c| c.kind() == BLOCK)
+                .find(|c| c.kind() == J::BLOCK)
                 .map(|c| block_stmt(ctx, owner, &c))
                 .unwrap_or_else(|| alloc_stmt(ctx, StmtData::Missing));
             StmtData::For {
@@ -1394,6 +1427,13 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             .filter(|c| is_expr_kind(c.kind()))
             .map(|c| expr(ctx, owner, &c))
             .collect();
+        // §15.9: a *qualified* class instance creation `primary.new Inner(...)`
+        // carries its enclosing instance as an expression child of the
+        // NEW_EXPR; the unqualified form has none.
+        let receiver = node
+            .children()
+            .find(|c| is_expr_kind(c.kind()))
+            .map(|c| expr(ctx, owner, &c));
         // §15.9.5: an anonymous class body's member methods are carried by
         // name and arity so the body is not dropped.
         let members = node
@@ -1406,6 +1446,7 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             args,
             diamond,
             members,
+            receiver,
         };
     }
     // Array creation ([§15.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10)):

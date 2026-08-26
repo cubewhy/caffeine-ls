@@ -96,7 +96,11 @@ pub enum TypeError {
     /// actual arguments. `required` carries the parameter types of the
     /// closest candidate and `found_tys` the actual argument types, so the
     /// message can render javac's `required:/found:` block; both empty means
-    /// only the arity numbers are known.
+    /// only the arity numbers are known. `incompatible` carries the first
+    /// argument-to-formal mismatch against the closest candidate when the
+    /// arities *match* — javac then renders
+    /// `reason: incompatible types: … cannot be converted to …` instead of
+    /// the argument-list-length text.
     WrongArity {
         expr: ExprId,
         name: Name,
@@ -104,6 +108,7 @@ pub enum TypeError {
         expected: usize,
         required: Vec<String>,
         found_tys: Vec<String>,
+        incompatible: Option<(String, String)>,
     },
     /// §14.18: the operand of a `throw` statement is not assignable to
     /// `Throwable` ([§5.2]).
@@ -360,21 +365,34 @@ impl TypeError {
                 name,
                 required,
                 found_tys,
+                incompatible,
                 ..
             } => {
                 // javac's default-mode message block for
-                // `compiler.err.cant.apply.symbol`.
+                // `compiler.err.cant.apply.symbol`. The reason line mirrors
+                // javac's two shapes: the argument-list-length text when the
+                // arities differ, otherwise the first argument-to-formal
+                // conversion failure against the closest candidate.
                 if required.is_empty() {
                     return format!(
                         "method '{}' cannot be applied to given types",
                         name.as_str()
                     );
                 }
+                let reason = match incompatible {
+                    Some((found, expected)) => format!(
+                        "reason: incompatible types: {} cannot be converted to {}",
+                        simple_display(&found),
+                        simple_display(&expected)
+                    ),
+                    None => "reason: actual and formal argument lists differ in length".to_owned(),
+                };
                 format!(
-                    "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  reason: actual and formal argument lists differ in length",
+                    "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
                     name.as_str(),
                     required.join(","),
-                    found_tys.join(",")
+                    found_tys.join(","),
+                    reason
                 )
             }
             IncompatibleTypes {

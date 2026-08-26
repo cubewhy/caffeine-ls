@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/Repro.java:
+class Outer {
+    class Inner {}
+
+    static Outer make() {
+        return new Outer();
+    }
+
+    public static void main() {
+        Outer o = make();
+        Outer.Inner i = o.new Inner();
+    }
+}
+
+method make(): Outer
+  locals: 
+  exprs: e0: Outer
+method main(): void
+  locals: l0: Outer | l1: Outer.Inner
+  exprs: e1: Outer | e2: Outer | e3: Outer.Inner

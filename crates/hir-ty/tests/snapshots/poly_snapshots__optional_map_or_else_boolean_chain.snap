@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Repro.java:
+import java.util.Optional;
+
+class Repro {
+    boolean m(Optional<String> opt, String s) {
+        return opt.map(v -> v == s).orElse(Boolean.FALSE);
+    }
+}
+
+method m(java.util.Optional<java.lang.String>, java.lang.String): boolean
+  locals: l0: java.util.Optional<java.lang.String> | l1: java.lang.String
+  exprs: e1: java.lang.Boolean | e2: java.lang.String | e3: java.lang.String | e4: boolean | e5: java.util.function.Function<? super java.lang.String, ? extends java.lang.Boolean> | e6: java.util.Optional<java.lang.String> | e7: java.util.Optional<java.lang.Boolean> | e8: java.lang.Boolean

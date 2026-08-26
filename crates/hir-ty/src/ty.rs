@@ -277,6 +277,25 @@ impl Ty {
         }
     }
 
+    /// Whether any nested component is a capture variable (a `CAP#n` type
+    /// variable produced by [§5.1.10] capture conversion).
+    pub fn contains_type_var_named_capture(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::TypeVar { name, .. } => name.as_str().starts_with("CAP#"),
+            TyKind::Reference { args, .. } => args
+                .iter()
+                .any(|arg| arg.contains_type_var_named_capture(db)),
+            TyKind::Array(inner) => inner.contains_type_var_named_capture(db),
+            TyKind::Wildcard(bound) => bound
+                .as_deref()
+                .is_some_and(|b| b.ty.contains_type_var_named_capture(db)),
+            TyKind::Intersection(members) => members
+                .iter()
+                .any(|m| m.contains_type_var_named_capture(db)),
+            _ => false,
+        }
+    }
+
     /// Whether any nested component is a type variable.
     pub fn contains_type_var(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {

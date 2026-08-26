@@ -470,11 +470,15 @@ fn member_set_impl(
 
 /// Whether two methods declare the same overriding signature
 /// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)):
-/// identical parameter types and return type, both static or neither, and the
-/// same variable-arity behavior. Two such members differing only in declaring
-/// type are the same method inherited and overridden down the hierarchy.
+/// identical parameter types, both static or neither, and the same
+/// variable-arity behavior. Two such members differing only in declaring type
+/// are the same method inherited and overridden down the hierarchy — the
+/// return type is deliberately *not* compared: an override may narrow it
+/// (covariant returns, [§8.4.8.3]) and a static declaration hides the
+/// supertype one regardless of its result type ([§6.4.3.2], [§15.12.1]), so
+/// in both cases the most-derived declaration replaces the ancestor.
 fn same_overriding_signature(a: &MethodData, b: &MethodData) -> bool {
-    a.params == b.params && a.ret == b.ret && a.is_static == b.is_static && a.varargs == b.varargs
+    a.params == b.params && a.is_static == b.is_static && a.varargs == b.varargs
 }
 
 /// The abstract methods of the interface `ty` and its superinterfaces
@@ -572,7 +576,22 @@ fn abstract_methods_impl(
             stack.push(parent);
         }
     }
-    out
+    // §9.4.1.2/[§9.9]: abstract methods that override-equivalent one another
+    // (same signature, possibly redeclared down a superinterface chain —
+    // `Closeable.close` redeclaring `AutoCloseable.close`) are ONE abstract
+    // method. Keep the first (most-derived) declaration of each signature.
+    let mut deduped: Vec<MethodData> = Vec::with_capacity(out.len());
+    for method in out {
+        if !deduped.iter().any(|seen| {
+            seen.name == method.name
+                && seen.params == method.params
+                && seen.varargs == method.varargs
+                && seen.type_params.len() == method.type_params.len()
+        }) {
+            deduped.push(method);
+        }
+    }
+    deduped
 }
 
 /// The single abstract method of the functional interface `ty`
@@ -702,6 +721,7 @@ fn library_class_methods(
         if !name.is_empty() && interner.resolve(&method.name) != name {
             continue;
         }
+
         let type_params = method
             .type_params
             .iter()
@@ -888,6 +908,52 @@ fn source_class_methods(
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface,
             type_params,
+        });
+    }
+    // §8.8.9: a class with no constructor has an implicit *default*
+    // constructor — no parameters, same access as the class. Explicit
+    // `super(...)` delegation ([§8.8.7.1]) and instance creation expressions
+    // resolve against it; without it, a subclass of a constructor-less source
+    // base reports `cannot find symbol: method Base()`.
+    let declares_ctor = class_data.body().iter().any(|item| {
+        item_data(&tree, *item)
+            .is_some_and(|data| matches!(data, ItemData::Method(method) if method.is_constructor))
+    });
+    if !declares_ctor
+        && !declaring_interface
+        && matches!(class_data, ItemData::Class(_) | ItemData::Enum(_))
+        && (name.is_empty() || name == fqn.rsplit('.').next().unwrap_or(&fqn))
+    {
+        let modifiers = match class_data {
+            ItemData::Class(d) => Some(&d.modifiers),
+            ItemData::Enum(d) => Some(&d.modifiers),
+            _ => None,
+        };
+        let access = |public: bool| {
+            if public {
+                Access::Public
+            } else {
+                Access::Package
+            }
+        };
+        out.push(MethodData {
+            name: fqn.rsplit('.').next().unwrap_or(&fqn).to_owned(),
+            owner: fqn.clone(),
+            params: Vec::new(),
+            ret: Ty::reference(db, Name::new(&fqn), Vec::new()),
+            throws: Vec::new(),
+            varargs: false,
+            is_static: false,
+            abstract_: false,
+            // §8.8.9: the default constructor has the same access modifier
+            // as the class (package-private when the class has none).
+            access: modifiers
+                .map(|m| access(m.public))
+                .unwrap_or(Access::Package),
+            declaring_package: declaring_package.clone(),
+            declaring_top_level: declaring_top_level.clone(),
+            declaring_interface: false,
+            type_params: Vec::new(),
         });
     }
     // §8.9.3: every enum type has two implicit static members —

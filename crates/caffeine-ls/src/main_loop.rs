@@ -544,13 +544,13 @@ impl GlobalState {
                     ?root,
                     "No build system detected, treating workspace root as a plain source root"
                 );
-                let graph = project_model::WorkspaceGraph::plain(
-                    root.clone(),
-                    self.config
-                        .client_config
-                        .as_ref()
-                        .and_then(|cfg| cfg.java_home.to_owned()),
-                );
+                // The plain path has no build-system sync to resolve the JDK
+                // through, so it uses the same env-fallback-aware getter the
+                // build-system path does — otherwise a `JAVA_HOME` set only
+                // in the environment registers no SDK and resolution of every
+                // platform class degrades silently.
+                let graph =
+                    project_model::WorkspaceGraph::plain(root.clone(), self.config.get_java_home());
                 self.apply_loaded_graph(graph, root);
             }
         }

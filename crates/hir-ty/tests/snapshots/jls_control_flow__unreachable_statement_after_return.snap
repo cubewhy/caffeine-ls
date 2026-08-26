@@ -17,5 +17,4 @@ method dead(): int
   exprs: e0: int | e1: int | e2: <error> | e3: <error> | e4: <error>
   diags: ss1@4:17: unreachable-statement: unreachable statement | e2@5:8: cannot-resolve-symbol: cannot find symbol
   symbol:   variable System | e3@5:8: no-such-field: cannot find symbol
-  symbol:   variable out | e4@5:8: no-such-method: cannot find symbol
-  symbol:   method println()
+  symbol:   variable out

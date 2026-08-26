@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    int m(int kind, java.util.List<String> out) {
+        String start;
+        int len = switch (kind) {
+            case 1 -> {
+                start = "one";
+                yield out.size();
+            }
+            default -> out.size();
+        };
+        return start.length() + len;
+    }
+}
+
+method m(int, java.util.List<java.lang.String>): int
+  locals: l0: int | l1: java.util.List<java.lang.String> | l2: java.lang.String | l3: int
+  exprs: e0: int | e1: int | e2: java.lang.String | e3: java.lang.String | e4: java.lang.String | e5: java.util.List<java.lang.String> | e6: int | e7: <error> | e8: java.util.List<java.lang.String> | e9: int | e10: int | e11: <error> | e12: <error> | e13: int | e14: <error>
+  diags: e11@12:15: variable-might-not-have-been-initialized: variable 'start' might not have been initialized

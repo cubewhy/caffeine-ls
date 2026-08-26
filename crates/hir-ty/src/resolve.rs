@@ -293,8 +293,8 @@ fn resolve_reference_name(
     let text = name.as_str();
     let candidates = candidate_fqns(resolver, name);
     for candidate in &candidates {
-        if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
-            return candidate.clone();
+        if let Some(canonical) = canonical_type_name(db, scope, candidate) {
+            return canonical;
         }
     }
     // §6.5.5.1: a member type *inherited* by an enclosing declaration is in
@@ -302,8 +302,8 @@ fn resolve_reference_name(
     // enclosing type's supertype chain and offer `{super}.{simple}`
     // candidates (and `{super-prefix}.{rest}` for qualified names).
     for candidate in inherited_member_candidates(db, scope, resolver, text) {
-        if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
-            return candidate;
+        if let Some(canonical) = canonical_type_name(db, scope, &candidate) {
+            return canonical;
         }
     }
     // Nothing resolved (pre-workspace silence): degrade to the most
@@ -319,6 +319,27 @@ fn resolve_reference_name(
         .or_else(|| candidates.first())
         .cloned()
         .unwrap_or_else(|| name.clone())
+}
+
+/// The *canonical* name of the type `candidate` resolves to, or `None` when
+/// it does not resolve. A library class is keyed by its binary name whose
+/// nested segments join with `$` ([JVMS §4.2]) — returning that spelling
+/// makes a type reached through a single-type import (`picocli.CommandLine
+/// .ParseResult`) identical to the same class substituted from a library
+/// signature (`picocli.CommandLine$ParseResult`). Source-side declarations
+/// keep their dotted spelling.
+fn canonical_type_name(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    candidate: &Name,
+) -> Option<Name> {
+    match hir::fqn_resolve(db, scope, candidate.as_str())? {
+        hir::Resolved::Library(class) => {
+            let interner = &db.hir_state().interner;
+            Some(Name::new(interner.resolve(&class.entry.fqn)))
+        }
+        hir::Resolved::Source(_) => Some(candidate.clone()),
+    }
 }
 
 /// The candidates for a type name that a member type *inherited* by an

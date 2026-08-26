@@ -432,6 +432,10 @@ pub enum ExprData {
         /// each member's name and parameter count, so the body is not
         /// dropped. Empty for a plain instance creation.
         members: Vec<AnonymousMethod>,
+        /// §15.9: the enclosing instance of a *qualified* class instance
+        /// creation — `primary.new Inner(args)`. `None` for the unqualified
+        /// form.
+        receiver: Option<ExprId>,
     },
     /// An explicit constructor invocation in a constructor body
     /// ([§8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m() {
+        if (missing) { }
+        throw other;
+    }
+}
+
+method m(): void
+  locals: 
+  exprs: e0: <error> | e1: <error> | e2: <error>
+  diags: e0@4:12: cannot-resolve-symbol: cannot find symbol
+  symbol:   variable missing | e2@5:13: cannot-resolve-symbol: cannot find symbol
+  symbol:   variable other

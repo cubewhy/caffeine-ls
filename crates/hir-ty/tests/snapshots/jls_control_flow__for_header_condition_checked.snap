@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(int x) {
+        for (; x;) { break; }
+        for (; x < 3;) { break; }
+    }
+}
+
+method m(int): void
+  locals: l0: int
+  exprs: e0: <error> | e1: int | e2: int | e3: boolean
+  diags: e0@4:14: non-boolean-condition: incompatible types: int cannot be converted to boolean

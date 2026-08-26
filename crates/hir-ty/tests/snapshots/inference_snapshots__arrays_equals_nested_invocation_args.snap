@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Repro.java:
+import java.util.Arrays;
+
+class Repro {
+    boolean m(int[] a, int[] b) {
+        return Arrays.equals(Arrays.copyOf(a, 1), Arrays.copyOf(b, 1));
+    }
+}
+
+method m(int[], int[]): boolean
+  locals: l0: int[] | l1: int[]
+  exprs: e0: int[] | e1: int | e3: int[] | e4: int[] | e5: int | e7: int[] | e9: boolean

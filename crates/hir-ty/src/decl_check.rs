@@ -258,13 +258,13 @@ fn check_class(
         }
         for super_method in &inherited {
             if same_signature(db, method, super_method) {
+                // §8.4.8.3: the overriding return must be *substitutable*
+                // for the overridden one — `R1 <: R2`, or `R1 <: |R2|` against
+                // its ERASURE when the overridden return is a type variable
+                // ([§8.4.4] adaptation, [§4.6]).
+                let super_ret_erasure = super_method.ret.erasure(db);
                 if !super_method.ret.is_error(db)
-                    && !subtyping::is_subtype(
-                        db,
-                        scope,
-                        &method.ret.clone(),
-                        &super_method.ret.clone(),
-                    )
+                    && !subtyping::is_subtype(db, scope, &method.ret.clone(), &super_ret_erasure)
                 {
                     out.push(DeclDiagnostic::IncompatibleOverride {
                         method: Name::new(&method.name),
@@ -361,10 +361,19 @@ fn check_class(
 fn same_signature(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> bool {
     a.name == b.name
         && a.params.len() == b.params.len()
-        && a.params
-            .iter()
-            .zip(&b.params)
-            .all(|(x, y)| x.is_error(db) || y.is_error(db) || x == y)
+        && a.params.iter().zip(&b.params).all(|(x, y)| {
+            x.is_error(db)
+                || y.is_error(db)
+                || x == y
+                // [§8.4.8.1] with [§4.6]: a member inherited through a raw
+                // supertype may arrive with its type variables unerased when
+                // the stub record lacks the class `Signature`; the override
+                // is still exact after erasure. Captured types (`CAP#n`)
+                // never erase-match: they stand for unknown arguments.
+                || (x.erasure(db) == y.erasure(db)
+                    && !x.contains_type_var_named_capture(db)
+                    && !y.contains_type_var_named_capture(db))
+        })
 }
 
 /// §9.7.1/§6.5.5: whether an annotation name resolves to

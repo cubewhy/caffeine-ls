@@ -13,7 +13,7 @@ use base_db::{
 };
 use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind, lmdb_store::StubStore};
 use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
-use hir_ty::{Ty, TyDatabase, is_assignable, is_subtype, supertypes};
+use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
 use triomphe::Arc as Arc3;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -568,19 +568,27 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[],
             Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
         ),
-        interface_with_methods(
+        // Real-classfile shape: an interface's abstract methods carry
+        // ACC_PUBLIC | ACC_ABSTRACT ([JLS §9.4]), so `Closeable.close`
+        // redeclaring `AutoCloseable.close` makes both override-equivalent
+        // abstracts ([§9.4.1.2]) — one SAM.
+        class_with_methods_access_sig(
             "java/lang/AutoCloseable",
+            None,
             &[],
-            None,
             &[("close", "()V")],
             &[""],
+            &[0x0411],
+            None,
         ),
-        interface_with_methods(
+        class_with_methods_access_sig(
             "java/io/Closeable",
-            &["java/lang/AutoCloseable"],
             None,
+            &["java/lang/AutoCloseable"],
             &[("close", "()V")],
             &[""],
+            &[0x0411],
+            None,
         ),
         class_with_methods(
             "java/lang/String",
@@ -710,6 +718,47 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             ],
             &[0x0009], // ACC_PUBLIC | ACC_STATIC
         ),
+        // The primitive-array `equals` overloads plus the generic and
+        // primitive `copyOf` forms, in real-classfile order, so overload
+        // resolution over nested invocation arguments exercises the same
+        // candidate set the jimage produces ([JLS §15.12.2]).
+        ClassSpec {
+            fqn: "java/util/Arrays",
+            super_class: Some("java/lang/Object"),
+            interfaces: &[],
+            access: 0x0021,
+            methods: &[
+                ("equals", "([Ljava/lang/Object;[Ljava/lang/Object;)Z"),
+                ("equals", "([I[I)Z"),
+                ("equals", "([J[J)Z"),
+                ("equals", "([B[B)Z"),
+                ("equals", "([S[S)Z"),
+                ("equals", "([C[C)Z"),
+                ("equals", "([Z[Z)Z"),
+                ("equals", "([F[F)Z"),
+                ("equals", "([D[D)Z"),
+                ("copyOf", "([Ljava/lang/Object;I)[Ljava/lang/Object;"),
+                ("copyOf", "([II)[I"),
+                ("copyOf", "([JI)[J"),
+            ],
+            method_sigs: &[
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "<T:Ljava/lang/Object;>([TI;)[TT;",
+                "",
+                "",
+            ],
+            method_access: &[0x0009; 12], // ACC_PUBLIC | ACC_STATIC
+            sig: None,
+            fields: &[],
+        },
         class("java/lang/Throwable", Some("java/lang/Object"), &[]),
         class("java/lang/Exception", Some("java/lang/Throwable"), &[]),
         class("java/io/IOException", Some("java/lang/Exception"), &[]),
@@ -788,7 +837,10 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "",
                 "(II)Ljava/util/List<TE;>;",
                 "()Ljava/util/Iterator<TE;>;",
-                "<E:Ljava/lang/Object;>(TE...)Ljava/util/List<TE;>;",
+                // `List.of(E...)` ([JLS §15.12.2.4] varargs phase): the
+                // signature marks the varargs parameter as an array `[TE;`,
+                // matching what javac emits for `ACC_VARARGS` methods.
+                "<E:Ljava/lang/Object;>([TE;)Ljava/util/List<TE;>;",
             ],
             method_access: &[
                 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001,
@@ -844,9 +896,17 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             "java/util/Optional",
             Some("java/lang/Object"),
             &[],
-            &[("get", "()Ljava/lang/Object;")],
-            &["()TT;"],
-            &[0x0001],
+            &[
+                ("get", "()Ljava/lang/Object;"),
+                ("map", "(Ljava/util/function/Function;)Ljava/util/Optional;"),
+                ("orElse", "(Ljava/lang/Object;)Ljava/lang/Object;"),
+            ],
+            &[
+                "()TT;",
+                "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Optional<TU;>;",
+                "(TT;)TT;",
+            ],
+            &[0x0001, 0x0001, 0x0001],
             Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
         ),
         // Constructors the explicit-`super(args)` tests resolve against
@@ -1418,13 +1478,37 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
     let mut db = TestDatabase::new();
     register_source_set(&mut db, &fixture, files);
 
+    render_body_types(&db, files)
+}
+
+/// [`check_body_types`] with an extra third-party library jar (`specs`) on
+/// the compile classpath, next to the JDK fixture — the shape a maven
+/// workspace produces for external dependencies.
+pub fn check_body_types_with_libs(specs: &[ClassSpec<'static>], files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let extra = temp_jar("widgets", specs);
+    let mut db = TestDatabase::new();
+    let info = LibraryInfo::new(
+        LibraryKind::Jar,
+        AbsPathBuf::assert_utf8(extra.path.as_std_path().to_owned()),
+    );
+    let classpath = vec![
+        hir::ClasspathEntry::Library(fixture.lib),
+        hir::ClasspathEntry::Library(extra.lib),
+    ];
+    register_source_set_classpath(&mut db, &fixture, files, classpath, &[(extra.lib, info)]);
+
+    render_body_types(&db, files)
+}
+
+fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))
         .collect::<Vec<_>>();
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
-        let tree = hir::file_item_tree(&db, file_id);
+        let tree = hir::file_item_tree(db, file_id);
         let line_index = line_index::LineIndex::new(text);
         for (id, data) in all_items(&tree) {
             let header = match data {
@@ -1432,11 +1516,11 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                     let ret = if method.sig.ret.is_none() {
                         "<init>".to_owned()
                     } else {
-                        hir_ty::item_ty(&db, file_id, id).display(&db).to_string()
+                        hir_ty::item_ty(db, file_id, id).display(db).to_string()
                     };
-                    let params: Vec<String> = hir_ty::method_params(&db, file_id, id)
+                    let params: Vec<String> = hir_ty::method_params(db, file_id, id)
                         .iter()
-                        .map(|ty| ty.display(&db).to_string())
+                        .map(|ty| ty.display(db).to_string())
                         .collect();
                     format!("method {}({}): {ret}", method.name, params.join(", "))
                 }
@@ -1446,7 +1530,7 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                 ItemData::InstanceInit(_) => "instance {}".to_owned(),
                 _ => continue,
             };
-            let Some(types) = hir_ty::body_types(&db, file_id, id) else {
+            let Some(types) = hir_ty::body_types(db, file_id, id) else {
                 continue;
             };
             lines.push(header);
@@ -1456,7 +1540,7 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                 "  locals: {}",
                 locals
                     .iter()
-                    .map(|(id, ty)| format!("{id}: {}", ty.display(&db)))
+                    .map(|(id, ty)| format!("{id}: {}", ty.display(db)))
                     .collect::<Vec<_>>()
                     .join(" | ")
             ));
@@ -1466,7 +1550,7 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                 "  exprs: {}",
                 exprs
                     .iter()
-                    .map(|(id, ty)| format!("{id}: {}", ty.display(&db)))
+                    .map(|(id, ty)| format!("{id}: {}", ty.display(db)))
                     .collect::<Vec<_>>()
                     .join(" | ")
             ));
@@ -1478,11 +1562,11 @@ pub fn check_body_types(files: &[(&str, &str)]) -> String {
                         .iter()
                         .map(|diag| {
                             let loc = match diag.location() {
-                                hir_ty::DiagLocation::Expr(id) => format!("{id}"),
-                                hir_ty::DiagLocation::Local(id) => format!("{id}"),
-                                hir_ty::DiagLocation::Pattern(id) => format!("p{id}"),
-                                hir_ty::DiagLocation::Stmt(id) => format!("s{id}"),
-                                hir_ty::DiagLocation::Method => "method".to_owned(),
+                                DiagLocation::Expr(id) => format!("{id}"),
+                                DiagLocation::Local(id) => format!("{id}"),
+                                DiagLocation::Pattern(id) => format!("p{id}"),
+                                DiagLocation::Stmt(id) => format!("s{id}"),
+                                DiagLocation::Method => "method".to_owned(),
                             };
                             let at = diag
                                 .range(&tree.bodies)

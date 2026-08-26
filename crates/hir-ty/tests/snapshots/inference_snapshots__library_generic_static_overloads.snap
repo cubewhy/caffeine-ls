@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/App.java:
+import com.google.common.collect.ImmutableMap;
+
+class App {
+    void m(java.util.List<String> l) {
+        ImmutableMap<String, java.util.List<String>> m =
+            ImmutableMap.of("a", l, "b", l);
+    }
+}
+
+method m(java.util.List<java.lang.String>): void
+  locals: l0: java.util.List<java.lang.String> | l1: com.google.common.collect.ImmutableMap<java.lang.String, java.util.List<java.lang.String>>
+  exprs: e0: java.lang.String | e1: java.util.List<java.lang.String> | e2: java.lang.String | e3: java.util.List<java.lang.String> | e5: com.google.common.collect.ImmutableMap<java.lang.String, java.util.List<java.lang.String>>

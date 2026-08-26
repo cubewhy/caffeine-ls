@@ -392,6 +392,25 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                             p.error_message("Expected identifier after '.'");
                             left = m.complete(p, ERROR);
                         }
+                    } else if p.at(NEW_KW) {
+                        // §15.9: QualifiedClassInstanceCreationExpression —
+                        // `primary.new Inner(args) [ClassBody]`; the primary
+                        // is the enclosing instance of the created inner
+                        // object.
+                        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9
+                        p.bump(); // new
+                        qualified_name(p);
+                        type_arguments_opt(p);
+                        if p.at(L_PAREN) {
+                            argument_list(p);
+                            if p.at(L_BRACE) {
+                                class_body(p);
+                            }
+                            left = m.complete(p, NEW_EXPR);
+                        } else {
+                            p.error_expected(&[L_PAREN]);
+                            left = m.complete(p, ERROR);
+                        }
                     } else if p.at(CLASS_KW) {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-ClassLiteral
                         p.bump();

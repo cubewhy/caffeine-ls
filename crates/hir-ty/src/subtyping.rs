@@ -600,6 +600,37 @@ pub fn is_assignable(
         (TyKind::Array(_), TyKind::Reference { .. } | TyKind::TypeVar { .. }) => {
             is_subtype(db, scope, src, dst)
         }
+        // §5.1.8 with §5.1.10: an expression typed by a *captured* type
+        // variable with a lower bound `L` (the capture of `? super L`) holds
+        // an `L`, which unboxes to its primitive.
+        (
+            TyKind::TypeVar {
+                lower: Some(lower), ..
+            },
+            TyKind::Primitive(dst),
+        ) => match lower.kind(db) {
+            TyKind::Reference { name, .. } => {
+                let Some(unboxed) = unboxed_primitive(name.as_str()) else {
+                    return false;
+                };
+                unboxed == *dst || widening_primitive(unboxed, *dst)
+            }
+            _ => false,
+        },
+        // §5.2/§4.10.2: a type-variable-typed expression converts by the
+        // reference conversions of its declared bounds, and a target that is
+        // itself a type variable admits sources below its lower bound (the
+        // §5.1.10 capture of `? super L`). Both are exactly the subtyping
+        // judgments, so delegate; a primitive source boxes first (§5.1.7).
+        (TyKind::Primitive(src), TyKind::TypeVar { .. }) => {
+            let boxed = Ty::reference(db, boxed_type(*src), Vec::new());
+            is_subtype(db, scope, &boxed, dst)
+        }
+        (TyKind::TypeVar { .. }, _)
+        | (
+            TyKind::Reference { .. } | TyKind::Intersection(_) | TyKind::Null,
+            TyKind::TypeVar { .. },
+        ) => is_subtype(db, scope, src, dst),
         // §5.1.4/§5.1.5: the null literal is assignable to any reference type.
         (TyKind::Null, _) => is_subtype(db, scope, src, dst),
         _ => false,

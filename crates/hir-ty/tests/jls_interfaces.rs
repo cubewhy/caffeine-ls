@@ -130,3 +130,26 @@ class Impl implements Greets {
 ",
     )])
 );
+
+// -- §9.4.1.2 with §9.9: redeclared abstract methods count once -----------------
+// `Closeable.close` redeclares the inherited `AutoCloseable.close`; both are
+// ACC_ABSTRACT in the classfiles, but override-equivalent abstracts make the
+// interface functional with exactly one SAM — a try-with-resources lambda
+// target types against it.
+
+snapshot!(
+    sam_override_equivalence_closeable,
+    check_body_types(&[(
+        "/src/com/example/Repro.java",
+        "\
+import java.io.Closeable;
+
+class Repro {
+    void withCloseable() throws Exception {
+        try (Closeable c = () -> {}) {
+        }
+    }
+}
+",
+    )])
+);

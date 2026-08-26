@@ -239,3 +239,91 @@ record Pair(Iterator<String> first, Iterator<String> second) {
 ",
     )])
 );
+
+// -- §8.1.3/§6.5.5.1: enclosing-instance members resolve from inner bodies -----
+// An inner (and anonymous-shaped nested) class body holds an enclosing
+// instance, so a simple-name call resolves to the outer class's private or
+// package-private method ([§15.12.1]: the implicit receiver search walks the
+// lexically enclosing declarations, innermost first).
+
+snapshot!(
+    enclosing_instance_method_resolution,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    private int secret(int x) { return x; }
+
+    static class Inner {
+        int go(Body b) { return b.secret(1); }
+    }
+
+    class InnerNonStatic {
+        int go() { return secret(2); }
+    }
+}
+",
+    )])
+);
+
+// -- §8.8.7.1/§8.8.9: `super(...)` against a constructor-less source base -------
+// A base class that declares no constructor has an implicit default one
+// ([§8.8.9]), so an explicit `super(...)` delegation resolves instead of
+// reporting `cannot find symbol: method Base()`.
+
+snapshot!(
+    super_delegation_default_constructor,
+    check_body_types(&[
+        (
+            "/src/com/example/Base.java",
+            "\
+package com.example;
+
+class Base {
+    int ready() { return 1; }
+}
+",
+        ),
+        (
+            "/src/com/example/Derived.java",
+            "\
+package com.example;
+
+class Derived extends Base {
+    Derived() {
+        super();
+    }
+
+    int go() { return ready(); }
+}
+",
+        )
+    ])
+);
+
+// -- §15.9: qualified class instance creation `primary.new Inner(args)` ---------
+// The primary is the enclosing instance; the created type is the inner class
+// and the primary is inferred for its own effects ([JLS §15.9]).
+
+snapshot!(
+    qualified_instance_creation,
+    check_body_types(&[(
+        "/src/com/example/Repro.java",
+        "\
+class Outer {
+    class Inner {}
+
+    static Outer make() {
+        return new Outer();
+    }
+
+    public static void main() {
+        Outer o = make();
+        Outer.Inner i = o.new Inner();
+    }
+}
+",
+    )])
+);

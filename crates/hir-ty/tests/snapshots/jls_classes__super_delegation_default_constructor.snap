@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    int ready() { return 1; }
+}
+
+FILE /src/com/example/Derived.java:
+package com.example;
+
+class Derived extends Base {
+    Derived() {
+        super();
+    }
+
+    int go() { return ready(); }
+}
+
+method ready(): int
+  locals: 
+  exprs: e0: int
+method Derived(): <init>
+  locals: 
+  exprs: e0: void
+method go(): int
+  locals: 
+  exprs: e1: int

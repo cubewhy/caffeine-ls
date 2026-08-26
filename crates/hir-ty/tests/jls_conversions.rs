@@ -183,3 +183,73 @@ class Body {
 ",
     )])
 );
+
+// -- §4.10.2/§5.2: type variables convert through their bounds --------------------
+// An expression typed by a type variable is assignable to its declared upper
+// bound (and transitively beyond it), but an unrelated reference does not
+// convert *into* the variable's slot: javac rejects `T t = ...` from a plain
+// `Number` even when `T extends Number`.
+
+snapshot!(
+    type_var_bound_conversion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body<T extends java.lang.Number> {
+    void m(T value, java.lang.Number num) {
+        java.lang.Number n = value;
+        Object o = value;
+        value = num;
+    }
+}
+",
+    )])
+);
+
+// -- §5.1.10 with §5.2: captured values convert through their capture bounds -----
+// Reading from a wildcard-parameterized structure yields a captured type
+// variable: it converts to its upper bound (`? extends` captures) but not to
+// an unrelated type.
+
+snapshot!(
+    capture_assignment_context,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m(java.util.List<? extends java.lang.Number> up,
+           java.util.List<?> any) {
+        java.lang.Number n = up.get(0);
+        Object o = any.get(0);
+        String bad = up.get(0);
+    }
+}
+",
+    )])
+);
+
+// -- error degradation stops cascades ---------------------------------------------
+// A subexpression that already failed to type (unresolved name or method)
+// reports only its own error: the surrounding condition and throw checks must
+// not pile on `<error> cannot be converted to boolean/Throwable`.
+
+snapshot!(
+    no_error_cascades,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m() {
+        if (missing) { }
+        throw other;
+    }
+}
+",
+    )])
+);

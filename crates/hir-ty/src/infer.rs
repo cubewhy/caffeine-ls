@@ -62,7 +62,7 @@ use crate::{
     },
     resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     subtyping::supertypes_impl,
-    ty::{Ty, TyKind, boxed_type, numeric_promotion, unboxed_primitive},
+    ty::{Ty, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -486,6 +486,11 @@ impl<'a> InferCtx<'a> {
     /// error type and is reported.
     fn check_condition(&mut self, cond: ExprId) {
         let ty = self.infer_expr(cond);
+        // A condition that already failed to type (an unresolved name, a
+        // failed call) has reported its own error — do not cascade.
+        if ty.is_error(self.db) {
+            return;
+        }
         if !self.is_boolean(ty) {
             self.types.insert(cond, self.error());
             self.report(TypeError::NonBooleanCondition {
@@ -551,6 +556,14 @@ impl<'a> InferCtx<'a> {
         if from == to {
             return true;
         }
+        // §5.1.10: a wildcard is not a valid expression type — a value typed
+        // by one carries its capture instead, so the cast is decided against
+        // the captured type variable.
+        let from = if matches!(from.kind(self.db), TyKind::Wildcard(_)) {
+            capture_conversion(self.db, from)
+        } else {
+            from
+        };
         if from.is_null(self.db) && self.is_reference_like(to) {
             return true;
         }
@@ -969,8 +982,17 @@ impl<'a> InferCtx<'a> {
                 args,
                 diamond,
                 members,
+                receiver,
                 ..
-            } => self.new_expr(id, ty, diamond, &args, self.target, !members.is_empty()),
+            } => {
+                // §15.9: the enclosing instance of a qualified creation
+                // (`primary.new Inner(...)`) is inferred standalone; it has
+                // no effect on the created type's own inference here.
+                if let Some(receiver) = receiver {
+                    let _ = self.with_target(None, |this| this.infer_expr(receiver));
+                }
+                self.new_expr(id, ty, diamond, &args, self.target, !members.is_empty())
+            }
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
             // (§10.6) fills the element expressions. A non-reifiable component
@@ -1196,6 +1218,12 @@ impl<'a> InferCtx<'a> {
                 let before_exited = self.exited;
                 let before_definite = self.definite.clone();
                 let mut result_tys: Vec<Ty> = Vec::new();
+                // §16.1.9 extended to expressions ([§14.11.1], [§15.28]): a
+                // local assigned on every normal-completing arm is definitely
+                // assigned after the switch expression. Each arm's end state
+                // joins by intersection over the non-abrupt arms — the same
+                // join the statement form performs.
+                let mut arm_end_states: Vec<(FxHashSet<LocalId>, bool)> = Vec::new();
                 for arm in &arms {
                     self.exited = before_exited;
                     self.definite = before_definite.clone();
@@ -1248,11 +1276,30 @@ impl<'a> InferCtx<'a> {
                             _ => self.infer_stmt_data(&data),
                         }
                     }
-                    // Restore the pre-switch flow state: whatever the arm did,
-                    // it only ever affects this expression's own completion.
+                    // Record the arm's end state: abrupt completion (throw /
+                    // return) contributes no path; a normal-completing arm
+                    // contributes its definite-assignment set.
+                    arm_end_states.push((self.definite.clone(), self.exited));
                     self.definite = before_definite.clone();
                     self.exited = before_exited;
                     self.scopes.pop();
+                }
+                // §16.1.9: the join of the arm paths — locals assigned on
+                // *every* non-abrupt path are definitely assigned after the
+                // switch expression. With only abrupt arms the pre-switch
+                // state stands (the expression never completed normally).
+                let mut joined: Option<FxHashSet<LocalId>> = None;
+                for (end_state, exited) in &arm_end_states {
+                    if *exited {
+                        continue;
+                    }
+                    match &mut joined {
+                        None => joined = Some(end_state.clone()),
+                        Some(acc) => acc.retain(|local| end_state.contains(local)),
+                    }
+                }
+                if let Some(joined) = joined {
+                    self.definite.extend(joined);
                 }
                 self.case_values.pop();
                 self.switch_targets.pop();
@@ -1671,7 +1718,10 @@ impl<'a> InferCtx<'a> {
     /// Builds the `cant.apply.symbol` diagnostic for a failed invocation:
     /// the *closest* candidate by arity carries the `required:` list, and the
     /// inferred argument types carry the `found:` list — javac's verbatim
-    /// message block ([JLS §15.12.2]).
+    /// message block ([JLS §15.12.2]). When some candidate has exactly the
+    /// given arity, the reason is the first argument-to-formal conversion
+    /// failure against it (`incompatible types: …`); otherwise the arities
+    /// differ and javac's argument-list-length text applies.
     fn report_wrong_arity(
         &mut self,
         expr: ExprId,
@@ -1715,6 +1765,27 @@ impl<'a> InferCtx<'a> {
                     .unwrap_or_else(|| "<poly>".to_owned()),
             })
             .collect();
+        // The reason line: against a same-arity candidate, the first
+        // concrete argument that does not convert (loosely) to its formal.
+        let mut incompatible = None;
+        if let Some(best) = best.as_ref()
+            && best.params.len() == found
+        {
+            for (info, formal) in arg_kinds.iter().zip(&best.params) {
+                if info.poly {
+                    continue;
+                }
+                if let [ArgKind::Concrete(ty)] = info.leaves.as_slice()
+                    && !crate::subtyping::is_assignable(self.db, &self.scope, ty, formal)
+                {
+                    incompatible = Some((
+                        ty.display(self.db).to_string(),
+                        formal.display(self.db).to_string(),
+                    ));
+                    break;
+                }
+            }
+        }
         let _ = expected;
         self.report(TypeError::WrongArity {
             expr,
@@ -1723,6 +1794,7 @@ impl<'a> InferCtx<'a> {
             expected,
             required,
             found_tys,
+            incompatible,
         });
     }
 
@@ -1778,12 +1850,16 @@ impl<'a> InferCtx<'a> {
             // their diagnostics.
             None => {
                 reinfer_poly_standalone(self, &arg_kinds);
+                // §15.12.1: no method of the name on the receiver. A receiver
+                // that itself failed to type (an unassigned local, a failed
+                // call) has reported its own error — do not cascade.
                 if members.is_empty() {
-                    // §15.12.1: no method of the name on the receiver.
-                    self.report(TypeError::NoSuchMethod {
-                        expr,
-                        name: name.clone(),
-                    });
+                    if !receiver_ty.is_error(self.db) {
+                        self.report(TypeError::NoSuchMethod {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
                 } else {
                     // §15.12.2: members of the name exist but none is
                     // applicable to the actual arguments.
@@ -1857,12 +1933,36 @@ impl<'a> InferCtx<'a> {
                     return (ty, InvocationMode::Static, false);
                 }
                 (
-                    self.enclosing_class.unwrap_or_else(|| self.error()),
+                    self.unqualified_method_receiver(name.as_str()),
                     InvocationMode::Virtual,
                     true,
                 )
             }
         }
+    }
+
+    /// The receiver of a simple `MethodName` invocation
+    /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1),
+    /// [§6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1)):
+    /// the *innermost enclosing declaration* that has a member of the name —
+    /// not just the immediately enclosing class. An inner class holds an
+    /// enclosing instance ([§8.1.3]), so an instance method of an outer class
+    /// is invokable by simple name from an inner body (`log(...)` inside an
+    /// anonymous listener). Resolution stops at the first level declaring the
+    /// name; a subsequent illegal use is reported there rather than silently
+    /// skipped ([§15.12.3]).
+    fn unqualified_method_receiver(&self, name: &str) -> Ty {
+        let mut levels: Vec<Ty> = Vec::new();
+        if let Some(class) = &self.enclosing_class {
+            levels.push(class.clone());
+        }
+        levels.extend(self.enclosing_chain.iter().cloned());
+        for class in &levels {
+            if !member_set(self.db, &self.scope, class, name, &self.access).is_empty() {
+                return class.clone();
+            }
+        }
+        self.enclosing_class.unwrap_or_else(|| self.error())
     }
 
     /// The receiver of an unqualified call that names a statically imported
@@ -2032,7 +2132,6 @@ impl<'a> InferCtx<'a> {
         resolve: bool,
     ) -> Option<MethodData> {
         let (formals, ret, throws_formals) = inference.register_method(self.db, method);
-
         // §15.12.2.2/§15.12.2.3: a lambda is compatible with a function type
         // only when the parameter list has the same arity as the single
         // abstract method ([§15.27.3]). A candidate whose functional interface
@@ -2131,9 +2230,8 @@ impl<'a> InferCtx<'a> {
         // expression as a nested *argument* (the `resolve == false` probe of
         // [`Self::choose_nested_candidate`]), where its fixed return type must
         // still be compatible with the enclosing formal.
-        if let Some(target) = target
-            && (!method.type_params.is_empty() || !resolve)
-        {
+        let constrains_target = target.is_some() && (!method.type_params.is_empty() || !resolve);
+        if let (Some(target), true) = (target, constrains_target) {
             inference.add_constraint(Constraint::Sub(ret, target));
         }
 
@@ -2160,7 +2258,54 @@ impl<'a> InferCtx<'a> {
         };
         if resolve {
             let resolved = inference.solve_after(self.db, &self.scope, phase)?;
-            Some(build(&resolved))
+            // §18.5.4: the resolved invocation type must still satisfy the
+            // target — element-level bounds alone do not guarantee array- or
+            // parameterized-level compatibility after substitution
+            // (`copyOf(T[],int)` with `α=int` yields `int[]`, which does not
+            // convert to a `long[]` target).
+            let invocation = build(&resolved);
+            // A target still carrying inference variables or capture
+            // variables (a captured formal of an *enclosing* invocation) is
+            // not yet checkable — its own resolution validates it later.
+            let target_proper = target.is_some_and(|t| {
+                !t.contains_infer_var(self.db) && !t.contains_type_var_named_capture(self.db)
+            });
+            if let (Some(target), true) = (target, constrains_target && target_proper) {
+                let ok = invocation.ret == target
+                    || match phase {
+                        InvocationPhase::Strict => crate::subtyping::strict_conversion(
+                            self.db,
+                            &self.scope,
+                            &invocation.ret,
+                            &target,
+                        ),
+                        InvocationPhase::Loose => crate::subtyping::is_assignable(
+                            self.db,
+                            &self.scope,
+                            &invocation.ret,
+                            &target,
+                        ),
+                    };
+                if !ok {
+                    // A residual mismatch between two parameterizations of
+                    // the *same* generic type is wildcard/capture
+                    // representation noise left by joint inference — the
+                    // bound set has already constrained those arguments
+                    // ([§18.2.3]). Only genuinely different types (`int[]`
+                    // for a `long[]` target) reject the candidate.
+                    let lenient = match (invocation.ret.kind(self.db), target.kind(self.db)) {
+                        (
+                            TyKind::Reference { name: rn, .. },
+                            TyKind::Reference { name: tn, .. },
+                        ) => rn == tn,
+                        _ => false,
+                    };
+                    if !lenient {
+                        return None;
+                    }
+                }
+            }
+            Some(invocation)
         } else if inference.check_consistent(self.db, &self.scope, phase) {
             Some(build(&FxHashMap::default()))
         } else {
@@ -2464,38 +2609,39 @@ impl<'a> InferCtx<'a> {
                 applicable.push(member.clone());
             }
         }
+        // The probes are speculative: a failed consistency check leaves its
+        // partially reduced constraints in the shared worklist, so the base
+        // snapshot is *always* reinstalled before anything is lifted.
         if applicable.is_empty() {
             inference.restore(base);
             return false;
         }
-        if applicable.len() > 1 {
-            // The most specific applicable member ([§15.12.2.5]); identical
-            // signatures seen through overriding paths collapse to their
-            // most-derived declaration (see [`crate::method::choose_most_specific`]).
-            let pairs: Vec<(MethodData, MethodData)> =
-                applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-            let Some(winner) = crate::method::choose_most_specific(self.db, &self.scope, &pairs)
-            else {
-                inference.restore(base);
-                return false;
-            };
+        // The most specific applicable member ([§15.12.2.5]); identical
+        // signatures seen through overriding paths collapse to their
+        // most-derived declaration (see [`crate::method::choose_most_specific`]).
+        let pairs: Vec<(MethodData, MethodData)> =
+            applicable.iter().map(|m| (m.clone(), m.clone())).collect();
+        let Some(winner) = crate::method::choose_most_specific(self.db, &self.scope, &pairs) else {
             inference.restore(base);
-            // §18.5.2.1: lift the winner's constraints from the base
-            // snapshot — the losing candidates are discarded with it.
-            let mut deferred = Vec::new();
-            let _ = self.with_probing(|this| {
-                this.try_candidate(
-                    inference,
-                    &winner,
-                    arg_kinds,
-                    phase,
-                    varargs,
-                    Some(*formal),
-                    &mut deferred,
-                    false,
-                )
-            });
-        }
+            return false;
+        };
+        inference.restore(base);
+        // §18.5.2.1: lift the winner's constraints from the base snapshot —
+        // the losing candidates are discarded with it, and only the winner's
+        // argument/target constraints join the enclosing bound set (B3).
+        let mut deferred = Vec::new();
+        let _ = self.with_probing(|this| {
+            this.try_candidate(
+                inference,
+                &winner,
+                arg_kinds,
+                phase,
+                varargs,
+                Some(*formal),
+                &mut deferred,
+                false,
+            )
+        });
         true
     }
 
@@ -3060,7 +3206,15 @@ impl<'a> InferCtx<'a> {
         if els_ty.is_null(self.db) && then_ty.is_reference(self.db) {
             return then_ty;
         }
-        least_upper_bound(self.db, &self.scope, &[then_ty, els_ty])
+        // §5.1.10: the lub of two references is never a wildcard — a bare
+        // `?` from the lcta degenerates to its capture so the expression has
+        // a valid type.
+        let lub = least_upper_bound(self.db, &self.scope, &[then_ty, els_ty]);
+        if matches!(lub.kind(self.db), TyKind::Wildcard(_)) {
+            capture_conversion(self.db, lub)
+        } else {
+            lub
+        }
     }
 
     /// The operand of a conditional in its unboxed form ([JLS §5.1.8]): a
@@ -3849,7 +4003,9 @@ impl<'a> InferCtx<'a> {
                 // operand marks the expression as an error.
                 let ty = self.infer_expr(*expr);
                 let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
-                if !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable) {
+                if !ty.is_error(self.db)
+                    && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable)
+                {
                     self.types.insert(*expr, self.error());
                     // §14.18: a non-throwable operand is a compile-time error.
                     self.report(TypeError::IncompatibleTypes {

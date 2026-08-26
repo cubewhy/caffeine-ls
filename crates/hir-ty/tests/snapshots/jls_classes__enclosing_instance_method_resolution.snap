@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_classes.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    private int secret(int x) { return x; }
+
+    static class Inner {
+        int go(Body b) { return b.secret(1); }
+    }
+
+    class InnerNonStatic {
+        int go() { return secret(2); }
+    }
+}
+
+method secret(int): int
+  locals: l0: int
+  exprs: e0: int
+method go(com.example.Body): int
+  locals: l1: com.example.Body
+  exprs: e1: int | e2: com.example.Body | e3: int
+method go(): int
+  locals: 
+  exprs: e4: int | e5: int

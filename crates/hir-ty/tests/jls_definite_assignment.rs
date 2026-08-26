@@ -196,3 +196,62 @@ class Da {
 ",
     )])
 );
+
+// -- §16.1.9 with §14.11.1: assignments inside switch-expression arms ----------
+// A local assigned on every arm of a switch *expression* is definitely
+// assigned after the expression ([§14.11.1]: each arm block completes
+// normally through its `yield`), matching javac's flow analysis for the
+// common `startToken = ast; yield ...` pattern.
+
+snapshot!(
+    switch_expression_definite_assignment,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m(int kind, java.util.List<String> out) {
+        String start;
+        java.util.List<String> picked = switch (kind) {
+            case 1 -> {
+                start = \"one\";
+                yield out;
+            }
+            default -> {
+                start = \"rest\";
+                yield out;
+            }
+        };
+        return start.length() + picked.size();
+    }
+}
+",
+    )])
+);
+
+// -- red: an arm that skips the assignment keeps it unassigned ------------------
+
+snapshot!(
+    switch_expression_missing_arm_assignment,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m(int kind, java.util.List<String> out) {
+        String start;
+        int len = switch (kind) {
+            case 1 -> {
+                start = \"one\";
+                yield out.size();
+            }
+            default -> out.size();
+        };
+        return start.length() + len;
+    }
+}
+",
+    )])
+);

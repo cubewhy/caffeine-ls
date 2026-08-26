@@ -302,7 +302,17 @@ impl Inference {
         // α from above by θ, `⟨α <: ? super θ⟩` from below), so it routes to
         // the wildcard reduction below.
         if let Some(id) = t.as_infer_var(db) {
-            self.bounds.entry(id).or_default().lower.push(*s);
+            // §18.2.2: in a loose (or variable-arity) invocation a primitive
+            // source *boxes* before entering the bound set — `⟨int → α⟩`
+            // bounds α below by `Integer`, so the variable can only ever
+            // instantiate to a reference type.
+            let boxed = match (phase, s.kind(db)) {
+                (InvocationPhase::Loose, TyKind::Primitive(p)) => {
+                    Ty::reference(db, boxed_type(*p), Vec::new())
+                }
+                _ => *s,
+            };
+            self.bounds.entry(id).or_default().lower.push(boxed);
             return true;
         }
         if let Some(id) = s.as_infer_var(db) {
@@ -313,12 +323,16 @@ impl Inference {
             return true;
         }
         match (s.kind(db), t.kind(db)) {
-            // §18.2.1: ⟨S[] → T[]⟩ reduces to ⟨S → T⟩ — except when either
-            // component is primitive ([§4.10.3], [§5.3]): primitive-array
-            // components are invariant, so `long[]` is unrelated to
-            // `double[]` even though `long` widens to `double`.
+            // §18.2.1: ⟨S[] → T[]⟩ reduces to ⟨S → T⟩ — except when both
+            // components are *proper* and primitive ([§4.10.3], [§5.3]):
+            // primitive-array components are invariant, so `long[]` is
+            // unrelated to `double[]` even though `long` widens to `double`.
+            // A component that is still an inference variable is not proper:
+            // the array reduces to a component constraint regardless of the
+            // other side's primitiveness (`int[] <: α[]` bounds α from below
+            // by `int`, §18.2.1).
             (TyKind::Array(si), TyKind::Array(ti))
-                if si.is_primitive(db) || ti.is_primitive(db) =>
+                if si.is_primitive(db) && ti.is_primitive(db) =>
             {
                 si == ti
             }
@@ -1162,7 +1176,17 @@ fn pick_instantiation(
     // compatible with a parameterized upper (`Collection<String>`) by
     // unchecked conversion ([§5.1.9]), exactly as in javac's bound check.
     let compatible = |inst: &Ty, upper: &Ty| {
+        // Two primitive types relate only by identity here ([§4.10.1]): the
+        // widening order (`int` → `long`) is a *conversion*, not subtyping,
+        // so `⟨int ≤ α ≤ long⟩` is contradictory even though `int` widens.
+        if matches!(inst.kind(db), TyKind::Primitive(_))
+            && matches!(upper.kind(db), TyKind::Primitive(_))
+        {
+            return inst == upper;
+        }
         is_subtype(db, scope, inst, upper)
+            // A raw lower bound converts to a parameterized upper by
+            // unchecked conversion ([§5.1.9], §18.4 bound validation).
             || crate::subtyping::is_assignable(db, scope, inst, upper)
     };
     if let Some(eq) = equality {
@@ -1174,7 +1198,24 @@ fn pick_instantiation(
         return Some(eq);
     }
     if !lower.is_empty() {
-        let inst = least_upper_bound(db, scope, lower);
+        let mut inst = least_upper_bound(db, scope, lower);
+        // §18.4: a variable bounded below by a primitive but above by a
+        // reference type instantiates to its *boxed* class — the bound set
+        // arose from a loose invocation ([§18.2.2]), so `⟨boolean → α⟩`,
+        // `α <: Object` yields `Boolean`, never the invalid
+        // `Optional<boolean>`.
+        if matches!(inst.kind(db), TyKind::Primitive(_))
+            && upper.iter().any(|u| {
+                matches!(
+                    u.kind(db),
+                    TyKind::Reference { .. } | TyKind::Intersection(_)
+                )
+            })
+        {
+            if let TyKind::Primitive(p) = inst.kind(db) {
+                inst = Ty::reference(db, boxed_type(*p), Vec::new());
+            }
+        }
         for u in upper {
             if !compatible(&inst, u) {
                 return None;

@@ -11,7 +11,9 @@ mod common;
 use hir_ty::Ty;
 use syntax::stub::PrimitiveType;
 
-use crate::common::{TestDatabase, TyBuilder, check_source_methods_ctx};
+use crate::common::{
+    ClassSpec, TestDatabase, TyBuilder, check_body_types, check_source_methods_ctx,
+};
 
 type Sample = (&'static str, TyBuilder, &'static str, &'static [TyBuilder]);
 
@@ -170,3 +172,79 @@ snapshot! {
     generic_invocation,
     check_source_methods_ctx(GENERIC_SRC, inference_samples(), None),
 }
+
+// -- generic static factory overloads from a third-party jar ---------------------
+// A guava-shaped `ImmutableMap` (generic class, static generic `of`
+// overloads of arities 0..4 plus a varargs form): the 4-argument call must
+// instantiate `K`/`V` from the arguments ([JLS §18.5.2] applicability
+// inference), not reject against the declared type variables.
+
+snapshot!(
+    library_generic_static_overloads,
+    crate::common::check_body_types_with_libs(
+        &[ClassSpec {
+            fqn: "com/google/common/collect/ImmutableMap",
+            super_class: Some("java/lang/Object"),
+            interfaces: &[],
+            access: 0x0021,
+            methods: &[
+                (
+                    "of",
+                    "(Ljava/lang/Object;Ljava/lang/Object;)Lcom/google/common/collect/ImmutableMap;"
+                ),
+                (
+                    "of",
+                    "(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Lcom/google/common/collect/ImmutableMap;"
+                ),
+                (
+                    "of",
+                    "([Ljava/util/Map$Entry;)Lcom/google/common/collect/ImmutableMap;"
+                ),
+            ],
+            method_sigs: &[
+                "<K:Ljava/lang/Object;V:Ljava/lang/Object;>(TK;TV;)Lcom/google/common/collect/ImmutableMap<TK;TV;>;",
+                "<K:Ljava/lang/Object;V:Ljava/lang/Object;>(TK;TV;TK;TV;)Lcom/google/common/collect/ImmutableMap<TK;TV;>;",
+                "<K:Ljava/lang/Object;V:Ljava/lang/Object;>([Lcom/google/common/collect/ImmutableMap$Entry<TK;TV;>;)Lcom/google/common/collect/ImmutableMap<TK;TV;>;",
+            ],
+            method_access: &[0x0009, 0x0009, 0x0009],
+            sig: Some("<K:Ljava/lang/Object;V:Ljava/lang/Object;>java/lang/Object;"),
+            fields: &[],
+        }],
+        &[(
+            "/src/com/example/App.java",
+            "\
+import com.google.common.collect.ImmutableMap;
+
+class App {
+    void m(java.util.List<String> l) {
+        ImmutableMap<String, java.util.List<String>> m =
+            ImmutableMap.of(\"a\", l, \"b\", l);
+    }
+}
+",
+        )],
+    ),
+);
+
+// -- java.util.Arrays overloads with nested invocation arguments -----------------
+// Both arguments are poly invocations resolved jointly against each candidate:
+// only `equals(int[], int[])` applies, so the nested `copyOf(int[], int)`
+// invocations must constrain ⟨int[] → formal⟩ per candidate — and the generic
+// `copyOf(T[], int)` must die when its resolved return cannot satisfy the
+// target ([JLS §15.12.2.5] joint resolution through §18.5.4).
+
+snapshot!(
+    arrays_equals_nested_invocation_args,
+    check_body_types(&[(
+        "/src/com/example/Repro.java",
+        "\
+import java.util.Arrays;
+
+class Repro {
+    boolean m(int[] a, int[] b) {
+        return Arrays.equals(Arrays.copyOf(a, 1), Arrays.copyOf(b, 1));
+    }
+}
+",
+    )])
+);
