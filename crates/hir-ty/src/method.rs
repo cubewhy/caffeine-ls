@@ -1548,6 +1548,15 @@ fn formal_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, p1: &Ty, p2
         let boxed = Ty::reference(db, boxed_type(*p), Vec::new());
         return is_subtype(db, scope, &boxed, p2);
     }
+    // Arrays compare element-wise through the same rules ([§4.10.3]
+    // covariance for reference elements, boxing for primitive ones): the
+    // §18.5.4 probe instantiates `that(T[])`'s type parameter to its bound,
+    // so `that(int[])` is more specific than `<T> that(T[])` exactly when
+    // the *element* `int` is more specific than the bound — which boxing
+    // makes true against `Object`.
+    if let (TyKind::Array(e1), TyKind::Array(e2)) = (p1.kind(db), p2.kind(db)) {
+        return formal_subtype(db, scope, e1, e2);
+    }
     is_subtype(db, scope, p1, p2)
 }
 

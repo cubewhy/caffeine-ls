@@ -129,3 +129,34 @@ class Main {
 // Static contexts allow unqualified invocations of *static* methods and of
 // instance methods through an explicit receiver (a virtual invocation,
 // §15.12.3); a non-static context allows unqualified instance invocations.
+
+// -- §15.8.2: array class literals ---------------------------------------------
+// `int[].class`, `String[].class` and `int[][].class` lower through a `TYPE`
+// node whose brackets are bare tokens (no `DIMENSIONS` wrapper), so the type
+// must fold them into `TypeRef::Array`; dropping them produced
+// `Class<<error>>` and rejected every generic call taking the literal as a
+// `Class<T>` argument ([JLS §15.8.2], [§10.7]).
+
+snapshot!(
+    array_class_literals,
+    check_body_types(&[(
+        "/src/com/example/Lits.java",
+        "\
+package com.example;
+
+class Lits {
+    static <T> T pick(Class<T> c) {
+        return null;
+    }
+
+    void literals() {
+        Class<int[]> i = int[].class;
+        Class<String[]> s = String[].class;
+        Class<int[][]> ii = int[][].class;
+        int[] a = pick(int[].class);
+        String[] b = pick(String[].class);
+    }
+}
+",
+    )])
+);

@@ -777,18 +777,22 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
         return SpannedTypeRef::synthetic(TypeRef::Error);
     }
 
-    // primitive
+    // primitive: the keyword is a direct token in most positions
+    // (`int x`), but arrives wrapped in a `PRIMITIVE_TYPE_EXPR` node inside
+    // a class literal's `TYPE` (`int[].class`).
     if let Some(prim) = node
         .children_with_tokens()
         .find_map(|element| element.as_token().and_then(primitive_from_token))
+        .or_else(|| {
+            node.children()
+                .find_map(|child| primitive_from_node(&child))
+        })
     {
-        let ty = TypeRef::Primitive(prim);
-        return node
-            .children()
-            .filter(|child| is(child, J::DIMENSIONS))
-            .fold(SpannedTypeRef::synthetic(ty), |spanned, dims| {
-                wrap_dims(spanned, &dims)
-            });
+        let mut ty = TypeRef::Primitive(prim);
+        for _ in 0..dimension_count(node) {
+            ty = TypeRef::Array(Box::new(ty));
+        }
+        return SpannedTypeRef::synthetic(ty);
     }
 
     // reference type: QUALIFIED_NAME [TYPE_ARGUMENTS] (DOT IDENTIFIER TYPE_ARGUMENTS)* [DIMENSIONS]
@@ -813,6 +817,31 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
                     saw_dot = false;
                 } else if is(&child, J::TYPE_ARGUMENTS) {
                     generic_args.extend(type_arguments_from(&child));
+                    saw_dot = false;
+                } else if is(&child, J::LITERAL)
+                    && child.children_with_tokens().any(|element| {
+                        element
+                            .as_token()
+                            .is_some_and(|t| t.kind() == J::IDENTIFIER)
+                    })
+                    && let Some(ident) = child
+                        .children_with_tokens()
+                        .filter_map(|element| {
+                            element
+                                .as_token()
+                                .filter(|t| t.kind() == J::IDENTIFIER)
+                                .cloned()
+                        })
+                        .next()
+                {
+                    // A class literal reached through the *expression*
+                    // grammar (`pick(String[].class)`): the type name parses
+                    // as a primary expression, so its identifier arrives
+                    // wrapped in a `LITERAL` node instead of a
+                    // `QUALIFIED_NAME`.
+                    name.push_str(ident.text());
+                    name_start = Some(name_start.unwrap_or(child.text_range().start()));
+                    name_end = child.text_range().end();
                     saw_dot = false;
                 }
             }
@@ -850,11 +879,44 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
         name: Name::new(&name),
         generic_args: generic_args.into_iter().map(|spanned| spanned.ty).collect(),
     };
-    node.children()
+    let mut ty = ty;
+    for _ in 0..dimension_count(node) {
+        ty = TypeRef::Array(Box::new(ty));
+    }
+    SpannedTypeRef::new(ty, refs)
+}
+
+/// The number of array dimensions attached to `node`: explicit `DIMENSIONS`
+/// child nodes plus bare bracket-token pairs — the shape a class literal's
+/// `TYPE` carries (`int[].class`: `PRIMITIVE_TYPE_EXPR` followed by raw
+/// `[` `]` tokens, no `DIMENSIONS` wrapper).
+fn dimension_count(node: &SyntaxNode<Lang>) -> usize {
+    let mut dims = node
+        .children()
         .filter(|child| is(child, J::DIMENSIONS))
-        .fold(SpannedTypeRef::new(ty, refs), |spanned, dims| {
-            wrap_dims(spanned, &dims)
+        .map(|dims| {
+            dims.children()
+                .filter(|child| is(child, J::DIMENSION))
+                .count()
         })
+        .sum();
+    let mut open = 0usize;
+    for element in node.children_with_tokens() {
+        let Some(token) = element.as_token() else {
+            continue;
+        };
+        match token.kind() {
+            J::L_BRACKET => open += 1,
+            J::R_BRACKET => {
+                if open > 0 {
+                    open -= 1;
+                    dims += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    dims
 }
 
 fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
@@ -911,6 +973,15 @@ fn wrap_dims(spanned: SpannedTypeRef, dims: &SyntaxNode<Lang>) -> SpannedTypeRef
         ty,
         refs: spanned.refs,
     }
+}
+
+/// The keyword of a `PRIMITIVE_TYPE_EXPR` child node.
+fn primitive_from_node(node: &SyntaxNode<Lang>) -> Option<PrimitiveType> {
+    if !is(node, J::PRIMITIVE_TYPE_EXPR) {
+        return None;
+    }
+    node.children_with_tokens()
+        .find_map(|element| element.as_token().and_then(primitive_from_token))
 }
 
 fn primitive_from_token(token: &SyntaxToken<Lang>) -> Option<PrimitiveType> {

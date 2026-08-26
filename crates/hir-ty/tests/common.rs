@@ -751,7 +751,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "",
                 "",
                 "",
-                "<T:Ljava/lang/Object;>([TI;)[TT;",
+                "<T:Ljava/lang/Object;>([TT;I)[TT;",
                 "",
                 "",
             ],
