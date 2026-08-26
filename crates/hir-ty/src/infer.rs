@@ -2486,7 +2486,7 @@ impl<'a> InferCtx<'a> {
                 .expect("lambda param scope pushed")
                 .insert(name.clone(), ty);
         }
-        let saved_ret = self.enclosing_ret.replace(sam.ret);
+        let saved_ret = self.enclosing_ret.replace(self.decapture(&sam.ret));
         // The speculative body inference is its own flow context, exactly
         // like [`Self::lambda_type`]: nothing it does may leak into the
         // enclosing statement's state.
@@ -2504,18 +2504,29 @@ impl<'a> InferCtx<'a> {
         // produce a value that is simply discarded, and constraining it
         // against `void` would wrongly reject the candidate.
         let ret_is_void = sam.ret.is_void_like(self.db);
+        // §5.1.10: the SAM was extracted from a *captured* formal, so its
+        // return type may be a bare capture variable standing for the
+        // formal's wildcard. The body infers against the wildcard bound the
+        // capture stands for (`Seq<? extends R>`), not against `CAP#n` — a
+        // nested generic invocation constrained by ⟨R → CAP#n⟩ cannot reduce
+        // (a parameterized type never converts to an unrelated type variable)
+        // and would wrongly reject every applicable candidate. This is the
+        // same substitution [`Self::contribute_leaf`] applies to the body's
+        // *result* constraint; applying it to the body's *target* keeps both
+        // ends of the constraint in wildcard terms.
+        let body_target = self.decapture(&sam.ret);
         let result = match body {
             // §15.27.2: an expression lambda's body is a poly expression
             // whose target is the SAM's return type.
             LambdaBody::Expr(expr) if !ret_is_void => {
-                Some(self.with_target(Some(sam.ret), |this| this.infer_expr(expr)))
+                Some(self.with_target(Some(body_target), |this| this.infer_expr(expr)))
             }
             LambdaBody::Expr(expr) => {
                 self.with_target(None, |this| this.infer_expr(expr));
                 None
             }
             LambdaBody::Block(stmt) => {
-                self.with_target(Some(sam.ret), |this| this.infer_stmt(stmt));
+                self.with_target(Some(body_target), |this| this.infer_stmt(stmt));
                 // The block's value statements are the `return` expression
                 // types recorded while inferring; the last one wins, matching
                 // §14.17's single-value completion.
@@ -2930,8 +2941,7 @@ impl<'a> InferCtx<'a> {
                 .expect("lambda param scope pushed")
                 .insert(name.clone(), ty);
         }
-        let saved_ret = self.enclosing_ret;
-        self.enclosing_ret = Some(sam.ret);
+        let saved_ret = self.enclosing_ret.replace(self.decapture(&sam.ret));
         // The lambda body is its own flow context ([§15.27.2]): whether it
         // completes normally and which locals it definitely assigns say
         // nothing about the statement that contains the lambda. Its
@@ -2944,9 +2954,13 @@ impl<'a> InferCtx<'a> {
         let thrown_before: FxHashSet<ExprId> = self.thrown.iter().map(|(_, e)| *e).collect();
         match body {
             // §15.27.2: an expression lambda's body is a poly expression
-            // whose target is the SAM's return type.
+            // whose target is the SAM's return type — decaptured ([§5.1.10])
+            // like [`Self::infer_lambda_body_result`]'s target, so a nested
+            // generic invocation constrains the wildcard bound instead of
+            // dead-ending on the capture variable.
             LambdaBody::Expr(expr) => {
-                let _ = self.with_target(Some(sam.ret), |this| this.infer_expr(expr));
+                let _ =
+                    self.with_target(Some(self.decapture(&sam.ret)), |this| this.infer_expr(expr));
             }
             LambdaBody::Block(stmt) => self.infer_stmt(stmt),
         }

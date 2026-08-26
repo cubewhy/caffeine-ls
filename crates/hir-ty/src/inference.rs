@@ -378,8 +378,23 @@ impl Inference {
                         worklist.push_back(Constraint::Sub(*s_arg, *t_arg));
                     }
                 } else {
+                    // §18.2.1: the arguments are invariant (§4.10.2) and
+                    // reduce to equalities — including against an inference
+                    // variable in the target's argument position, whose
+                    // equality semantics pin the variable to the source
+                    // exactly (`<T> T id(Class<T>)` called with
+                    // `Class<String>` infers `T := String`). A *wildcard*
+                    // source argument is no instantiation ([§4.5.1]): it
+                    // reduces by containment instead (§18.2.3), so the
+                    // variable picks up the capture's bound rather than the
+                    // bare wildcard itself (`Class<? extends Number>` infers
+                    // `Number`, `Class<?>` infers its capture's bound).
                     for (s_arg, t_arg) in sa.iter().zip(ta.iter()) {
-                        worklist.push_back(Constraint::Eq(*s_arg, *t_arg));
+                        if s_arg.is_wildcard(db) {
+                            worklist.push_back(Constraint::Sub(*s_arg, *t_arg));
+                        } else {
+                            worklist.push_back(Constraint::Eq(*s_arg, *t_arg));
+                        }
                     }
                 }
                 true

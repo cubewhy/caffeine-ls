@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/varargs_snapshots.rs
+assertion_line: 56
+expression: out
+---
+FILE /src/com/example/Stream.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Seq<E> {
+    static <T> Seq<T> of(T a, T b) {
+        return null;
+    }
+
+    <R> Seq<R> map(Function<? super E, ? extends R> f) {
+        return null;
+    }
+
+    <R> Seq<R> flatMap(Function<? super E, ? extends Seq<? extends R>> f) {
+        return null;
+    }
+}
+
+class Use {
+    Seq<String> go(Seq<String> in) {
+        return in.map(p -> p + "Check")
+            .flatMap(cn -> Seq.of(cn, cn + "X"));
+    }
+}
+
+method of(T, T): com.example.Seq<T>
+  locals: l0: T | l1: T
+  exprs: e0: null
+method map(java.util.function.Function<? super E, ? extends R>): com.example.Seq<R>
+  locals: l2: java.util.function.Function<? super E, ? extends R>
+  exprs: e1: null
+method flatMap(java.util.function.Function<? super E, ? extends com.example.Seq<? extends R>>): com.example.Seq<R>
+  locals: l3: java.util.function.Function<? super E, ? extends com.example.Seq<? extends R>>
+  exprs: e2: null
+method go(com.example.Seq<java.lang.String>): com.example.Seq<java.lang.String>
+  locals: l4: com.example.Seq<java.lang.String>
+  exprs: e3: java.lang.String | e4: java.lang.String | e5: java.lang.String | e6: java.lang.String | e8: com.example.Seq<java.lang.String> | e9: java.util.function.Function<? super java.lang.String, ? extends com.example.Seq<? extends java.lang.String>> | e10: java.lang.String | e11: java.lang.String | e12: java.lang.String | e13: java.util.function.Function<? super java.lang.String, ? extends java.lang.String> | e14: com.example.Seq<java.lang.String> | e15: com.example.Seq<java.lang.String> | e16: com.example.Seq<java.lang.String>
