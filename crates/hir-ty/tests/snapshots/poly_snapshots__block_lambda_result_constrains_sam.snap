@@ -1,0 +1,51 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+assertion_line: 504
+expression: out
+---
+FILE /src/com/example/Scope.java:
+package com.example;
+
+import java.util.Optional;
+
+class Scope {
+    enum Kind {
+        A,
+        B
+    }
+
+    Optional<Kind> surrounding(Kind s) {
+        return null;
+    }
+
+    boolean exprBody(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> v == scope).orElse(Boolean.FALSE);
+    }
+
+    boolean blockBody(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> {
+            return v == scope;
+        }).orElse(Boolean.FALSE);
+    }
+
+    boolean multiCondition(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> {
+            return v == scope
+                && ast != Kind.A
+                && v != null;
+        }).orElse(Boolean.FALSE);
+    }
+}
+
+method surrounding(com.example.Scope.Kind): java.util.Optional<com.example.Scope.Kind>
+  locals: l0: com.example.Scope.Kind
+  exprs: e0: null
+method exprBody(com.example.Scope.Kind, com.example.Scope.Kind): boolean
+  locals: l1: com.example.Scope.Kind | l2: com.example.Scope.Kind
+  exprs: e2: java.lang.Boolean | e3: com.example.Scope.Kind | e4: com.example.Scope.Kind | e5: boolean | e6: java.util.function.Function<? super com.example.Scope.Kind, ? extends java.lang.Boolean> | e7: com.example.Scope.Kind | e8: java.util.Optional<com.example.Scope.Kind> | e9: java.util.Optional<java.lang.Boolean> | e10: java.lang.Boolean
+method blockBody(com.example.Scope.Kind, com.example.Scope.Kind): boolean
+  locals: l3: com.example.Scope.Kind | l4: com.example.Scope.Kind
+  exprs: e12: java.lang.Boolean | e13: com.example.Scope.Kind | e14: com.example.Scope.Kind | e15: boolean | e16: java.util.function.Function<? super com.example.Scope.Kind, ? extends java.lang.Boolean> | e17: com.example.Scope.Kind | e18: java.util.Optional<com.example.Scope.Kind> | e19: java.util.Optional<java.lang.Boolean> | e20: java.lang.Boolean
+method multiCondition(com.example.Scope.Kind, com.example.Scope.Kind): boolean
+  locals: l5: com.example.Scope.Kind | l6: com.example.Scope.Kind
+  exprs: e22: java.lang.Boolean | e23: com.example.Scope.Kind | e24: com.example.Scope.Kind | e25: boolean | e26: com.example.Scope.Kind | e28: com.example.Scope.Kind | e29: boolean | e30: boolean | e31: com.example.Scope.Kind | e32: null | e33: boolean | e34: boolean | e35: java.util.function.Function<? super com.example.Scope.Kind, ? extends java.lang.Boolean> | e36: com.example.Scope.Kind | e37: java.util.Optional<com.example.Scope.Kind> | e38: java.util.Optional<java.lang.Boolean> | e39: java.lang.Boolean

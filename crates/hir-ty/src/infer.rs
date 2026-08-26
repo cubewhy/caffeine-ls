@@ -126,6 +126,7 @@ pub(crate) fn body_types_impl(
         diagnostics: Vec::new(),
         scopes: vec![FxHashMap::default()],
         lambda_params: Vec::new(),
+        lambda_returns: Vec::new(),
         target: None,
         switch_targets: Vec::new(),
         const_locals: FxHashMap::default(),
@@ -353,6 +354,12 @@ struct InferCtx<'a> {
     /// locals declared inside. The lambda expression itself carries no
     /// [`LocalId`]s, so these are tracked separately from [`Self::scopes`].
     lambda_params: Vec<FxHashMap<Name, Ty>>,
+    /// The types of the valued `return` expressions seen so far in each
+    /// enclosing *block* lambda body, innermost frame last ([§15.27.3]):
+    /// the frame stack mirrors [`Self::lambda_params`]' nesting, and a
+    /// frame's contents are the result expressions from which the block
+    /// body's type is inferred during overload probing.
+    lambda_returns: Vec<Vec<Ty>>,
     /// The expected type of the expression currently being inferred — set
     /// where the context fixes the type: a declaration initializer, an
     /// assignment right-hand side, or a return statement.
@@ -2543,11 +2550,26 @@ impl<'a> InferCtx<'a> {
                 None
             }
             LambdaBody::Block(stmt) => {
+                // The block's valued `return` expressions are recorded while
+                // inferring ([§15.27.3]); their least upper bound is the
+                // body's type and constrains the SAM return exactly like an
+                // expression body's result — without this, a block lambda
+                // would leave the SAM's variables unconstrained (`U :=
+                // Object` for `map(v -> { return v == x; })`) and every
+                // downstream conversion against the instantiated `Optional`
+                // would fail.
+                self.lambda_returns.push(Vec::new());
                 self.with_target(Some(body_target), |this| this.infer_stmt(stmt));
-                // The block's value statements are the `return` expression
-                // types recorded while inferring; the last one wins, matching
-                // §14.17's single-value completion.
-                None
+                let returns = self.lambda_returns.pop().unwrap_or_default();
+                match returns.as_slice() {
+                    [] => None,
+                    [single] => Some(*single),
+                    many => Some(crate::inference::least_upper_bound(
+                        self.db,
+                        &self.scope,
+                        many,
+                    )),
+                }
             }
         };
         self.thrown.retain(|(_, expr)| thrown_before.contains(expr));
@@ -3989,6 +4011,15 @@ impl<'a> InferCtx<'a> {
                     self.enclosing_ret
                 };
                 let ty = self.with_target(target, |this| this.infer_expr(*expr));
+                // §15.27.3: inside a speculative block-lambda body the valued
+                // returns are its result expressions — record them so
+                // [`Self::infer_lambda_body_result`] can constrain the SAM
+                // return type.
+                if matches!(stmt, StmtData::Return(_))
+                    && let Some(frame) = self.lambda_returns.last_mut()
+                {
+                    frame.push(ty);
+                }
                 if matches!(stmt, StmtData::Return(_)) {
                     match self.enclosing_ret {
                         // §14.17: a value returned from a `void` method or a

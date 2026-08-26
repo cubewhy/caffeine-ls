@@ -493,3 +493,51 @@ class Use {
 );
 // Resolves to the void `Executable` overload; a value-returning target such
 // as `ThrowingSupplier` is not applicable to the block body.
+
+// -- §15.27.3: a block lambda's valued returns constrain the SAM return ----------
+// `Optional<Scope>.map(v -> { return v == x; })` must solve `U` from the
+// block's result expressions exactly like an expression body does; leaving
+// them unrecorded instantiated `U := Object` and broke every conversion
+// against the resulting `Optional<Object>` (`.orElse(Boolean.FALSE)` feeding
+// a `boolean`).
+
+snapshot!(
+    block_lambda_result_constrains_sam,
+    check_body_types(&[(
+        "/src/com/example/Scope.java",
+        "\
+package com.example;
+
+import java.util.Optional;
+
+class Scope {
+    enum Kind {
+        A,
+        B
+    }
+
+    Optional<Kind> surrounding(Kind s) {
+        return null;
+    }
+
+    boolean exprBody(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> v == scope).orElse(Boolean.FALSE);
+    }
+
+    boolean blockBody(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> {
+            return v == scope;
+        }).orElse(Boolean.FALSE);
+    }
+
+    boolean multiCondition(Kind ast, Kind scope) {
+        return surrounding(ast).map(v -> {
+            return v == scope
+                && ast != Kind.A
+                && v != null;
+        }).orElse(Boolean.FALSE);
+    }
+}
+",
+    )])
+);
