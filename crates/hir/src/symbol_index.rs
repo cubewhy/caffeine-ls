@@ -112,6 +112,9 @@ pub struct SourceSymbol {
     pub item: ItemId,
     /// The source range of the declaration.
     pub range: TextRange,
+    /// The source range of just the declared name (the identifier), for the
+    /// LSP `selectionRange`.
+    pub name_range: TextRange,
     pub kind: SourceSymbolKind,
     /// Whether the declaration is `public` ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
     pub public: bool,
@@ -247,6 +250,7 @@ mod tests {
             name: Name::new(name),
             item: ItemId(ArenaId(0)),
             range: rowan::TextRange::default(),
+            name_range: rowan::TextRange::default(),
             kind: SourceSymbolKind::Class,
             public: true,
         }

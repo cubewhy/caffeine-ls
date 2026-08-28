@@ -17,7 +17,7 @@ expression: normalized
         }
       }
     },
-    "name": "com.example.Foo",
+    "name": "Foo",
     "kind": 5,
     "containerName": "com.example"
   },
@@ -35,7 +35,7 @@ expression: normalized
         }
       }
     },
-    "name": "com.example.Foo.bar",
+    "name": "bar",
     "kind": 6,
     "containerName": "com.example.Foo"
   },
@@ -53,7 +53,7 @@ expression: normalized
         }
       }
     },
-    "name": "com.example.Foo.x",
+    "name": "x",
     "kind": 8,
     "containerName": "com.example.Foo"
   },
@@ -71,7 +71,7 @@ expression: normalized
         }
       }
     },
-    "name": "org.other.Bar",
+    "name": "Bar",
     "kind": 11,
     "containerName": "org.other"
   },
@@ -89,7 +89,7 @@ expression: normalized
         }
       }
     },
-    "name": "org.other.Bar.baz",
+    "name": "baz",
     "kind": 6,
     "containerName": "org.other.Bar"
   }

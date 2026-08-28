@@ -127,7 +127,8 @@ fn lower_member(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
 }
 
 fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = decl_identifier(node).unwrap_or_else(missing_name);
+    let (name, name_range) =
+        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let modifiers = child_modifiers(node);
     let type_params = child_type_params(node);
     let super_class = clause_types(node, J::EXTENDS_CLAUSE).into_iter().next();
@@ -135,6 +136,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let body = body_members(ctx, node, J::CLASS_BODY);
     ctx.alloc(ItemData::Class(ClassData {
         name,
+        name_range,
         modifiers,
         super_class,
         interfaces,
@@ -145,13 +147,15 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 }
 
 fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = decl_identifier(node).unwrap_or_else(missing_name);
+    let (name, name_range) =
+        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let modifiers = child_modifiers(node);
     let type_params = child_type_params(node);
     let interfaces = clause_types(node, J::INTERFACE_EXTENDS_CLAUSE);
     let body = body_members(ctx, node, J::INTERFACE_BODY);
     ctx.alloc(ItemData::Interface(ClassData {
         name,
+        name_range,
         modifiers,
         super_class: None,
         interfaces,
@@ -162,7 +166,8 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 }
 
 fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = decl_identifier(node).unwrap_or_else(missing_name);
+    let (name, name_range) =
+        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let modifiers = child_modifiers(node);
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
     let body = node
@@ -172,6 +177,7 @@ fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         .unwrap_or_default();
     ctx.alloc(ItemData::Enum(EnumData {
         name,
+        name_range,
         modifiers,
         interfaces,
         body,
@@ -180,7 +186,8 @@ fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 }
 
 fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = decl_identifier(node).unwrap_or_else(missing_name);
+    let (name, name_range) =
+        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let modifiers = child_modifiers(node);
     let type_params = child_type_params(node);
     let components = node
@@ -198,6 +205,7 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let body = body_members(ctx, node, J::RECORD_BODY);
     ctx.alloc(ItemData::Record(RecordData {
         name,
+        name_range,
         modifiers,
         components,
         interfaces,
@@ -208,11 +216,13 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 }
 
 fn lower_annotation_type(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = decl_identifier(node).unwrap_or_else(missing_name);
+    let (name, name_range) =
+        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let modifiers = child_modifiers(node);
     let body = body_members(ctx, node, J::ANNOTATION_TYPE_BODY);
     ctx.alloc(ItemData::Annotation(AnnotationData {
         name,
+        name_range,
         modifiers,
         body,
         range: node.text_range(),
@@ -220,7 +230,7 @@ fn lower_annotation_type(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId 
 }
 
 fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
-    let name = decl_identifier(node)?;
+    let (name, name_range) = decl_identifier(node)?;
     let modifiers = child_modifiers(node);
     let ret = if token_is_direct(node, J::VOID_KW) {
         Some(SpannedTypeRef::synthetic(TypeRef::Primitive(
@@ -240,6 +250,7 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let block = node.children().find(|child| is(child, J::BLOCK));
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
+        name_range,
         modifiers,
         sig,
         is_constructor: false,
@@ -262,7 +273,7 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
 }
 
 fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool) -> Option<ItemId> {
-    let name = decl_identifier(node)?;
+    let (name, name_range) = decl_identifier(node)?;
     let modifiers = child_modifiers(node);
     let sig = Signature {
         type_params: child_type_params(node),
@@ -281,6 +292,7 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
     let block = node.children().find(|child| is(child, J::BLOCK));
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
+        name_range,
         modifiers,
         sig,
         is_constructor: true,
@@ -306,7 +318,7 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
 }
 
 fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
-    let name = decl_identifier(node)?;
+    let (name, name_range) = decl_identifier(node)?;
     let modifiers = child_modifiers(node);
     let ret = node
         .children()
@@ -315,6 +327,7 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
     let default_value = token_range_after(node, J::DEFAULT_KW, J::SEMICOLON);
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
+        name_range,
         modifiers,
         sig: Signature {
             type_params: Vec::new(),
@@ -353,11 +366,11 @@ fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> 
         .flat_map(|list| list.children())
         .filter(|child| is(child, J::VARIABLE_DECLARATOR))
     {
-        let Some(name) = declarator
+        let Some((name, name_range)) = declarator
             .children_with_tokens()
             .filter_map(|element| element.as_token().cloned())
             .find(|token| token_is(token, J::IDENTIFIER))
-            .map(|token| Name::new(token.text()))
+            .map(|token| (Name::new(token.text()), token.text_range()))
         else {
             continue;
         };
@@ -373,6 +386,7 @@ fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> 
         let expr_slot = body::find_expression_child(&declarator);
         let field_id = ctx.alloc(ItemData::Field(FieldData {
             name,
+            name_range,
             modifiers: modifiers.clone(),
             ty,
             initializer,
@@ -396,9 +410,9 @@ fn enum_body_members(ctx: &mut LowerCtx, body: &SyntaxNode<Lang>) -> Vec<ItemId>
     let mut ids = Vec::new();
     for child in body.children() {
         if is(&child, J::ENUM_CONSTANT) {
-            let name = first_token(&child, J::IDENTIFIER)
-                .map(|token| Name::new(token.text()))
-                .unwrap_or_else(missing_name);
+            let (name, name_range) = first_token(&child, J::IDENTIFIER)
+                .map(|token| (Name::new(token.text()), token.text_range()))
+                .unwrap_or_else(|| (missing_name(), child.text_range()));
             let arguments = child
                 .children()
                 .find(|nested| is(nested, J::ARGUMENT_LIST))
@@ -409,6 +423,7 @@ fn enum_body_members(ctx: &mut LowerCtx, body: &SyntaxNode<Lang>) -> Vec<ItemId>
                 .map(|nested| nested.text_range());
             let constant_id = ctx.alloc(ItemData::EnumConstant(EnumConstantData {
                 name,
+                name_range,
                 arguments,
                 argument_exprs: Vec::new(),
                 class_body,
@@ -455,7 +470,9 @@ fn body_members(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, body_kind: J) -> Ve
 // --- module declarations ---
 
 fn lower_module(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
-    let name = qualified_name_text(node).unwrap_or_else(missing_name);
+    let (name, name_range) = qualified_name_child(node)
+        .map(|child| (Name::new(&trimmed_text(&child)), child.text_range()))
+        .unwrap_or_else(|| (missing_name(), node.text_range()));
     let is_open = node.children_with_tokens().next().is_some_and(|element| {
         element
             .as_token()
@@ -487,6 +504,7 @@ fn lower_module(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
     ctx.alloc(ItemData::Module(ModuleData {
         name,
+        name_range,
         modifiers: Modifiers::default(),
         is_open,
         requires,
@@ -588,8 +606,10 @@ pub(super) fn trimmed_text(node: &SyntaxNode<Lang>) -> String {
 }
 
 /// The first direct-child `IDENTIFIER` token that is not a contextual keyword
-/// (e.g. `record`, `open`). For a declaration this is the declared name.
-fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
+/// (e.g. `record`, `open`). For a declaration this is the declared name. The
+/// token's source range is returned alongside so the IDE can point the LSP
+/// `selectionRange` at the name (rather than the whole declaration).
+fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<(Name, TextRange)> {
     for element in node.children_with_tokens() {
         if let Some(token) = element.as_token()
             && token.kind() == J::IDENTIFIER
@@ -607,7 +627,7 @@ fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
                 "record" | "sealed" | "non-sealed" | "permits"
             )
         {
-            return Some(Name::new(token.text()));
+            return Some((Name::new(token.text()), token.text_range()));
         }
     }
     None

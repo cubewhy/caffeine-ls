@@ -6,7 +6,9 @@
 //! memoized; the `ide::Analysis` methods below funnel them through the
 //! cancellation boundary.
 
+use hir_expand::item_tree::ItemData;
 use rowan::TextRange;
+use rustc_hash::FxHashSet;
 use triomphe::Arc;
 use vfs::FileId;
 
@@ -20,6 +22,11 @@ pub struct DocumentSymbol {
     pub kind: hir::SourceSymbolKind,
     /// The source range of the declaration.
     pub range: TextRange,
+    /// The source range of just the declared name (the identifier).
+    pub name_range: TextRange,
+    /// The signature shown alongside the name: the package for a top-level
+    /// type, `name(params): ret` for a method, `name: type` for a field.
+    pub detail: Option<String>,
     /// The lowered item, for later HIR queries (e.g. [`crate::Analysis::item_ty`]).
     pub item: hir_expand::item_tree::ItemId,
 }
@@ -33,15 +40,70 @@ pub struct WorkspaceSymbol {
 
 /// The declared symbols of a file, in declaration order.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
-    hir::file_symbols(db, file_id)
+    let symbols = hir::file_symbols(db, file_id);
+    let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+    symbols
         .iter()
-        .map(|symbol| DocumentSymbol {
-            name: symbol.name.as_str().to_owned(),
-            kind: symbol.kind,
-            range: symbol.range,
-            item: symbol.item,
+        .map(|symbol| {
+            let top_level = symbol
+                .name
+                .as_str()
+                .rsplit_once('.')
+                .is_none_or(|(parent, _)| !names.contains(parent));
+            DocumentSymbol {
+                name: symbol.name.as_str().to_owned(),
+                kind: symbol.kind,
+                range: symbol.range,
+                name_range: symbol.name_range,
+                detail: symbol_detail(db, file_id, symbol, top_level),
+                item: symbol.item,
+            }
         })
         .collect()
+}
+
+/// The signature/detail of a symbol for the LSP `detail` field. Top-level
+/// types show their package (JDT.LS-style, `<default package>` for the
+/// unnamed package); members show their signature.
+fn symbol_detail(
+    db: &RootDatabase,
+    file_id: FileId,
+    symbol: &hir::SourceSymbol,
+    top_level: bool,
+) -> Option<String> {
+    let simple = symbol.name.simple_name();
+    if top_level {
+        // The unnamed package ([JLS §7.4.2]) is rendered explicitly.
+        let package = symbol
+            .name
+            .as_str()
+            .rsplit_once('.')
+            .map_or("<default package>", |(package, _)| package);
+        return Some(package.to_owned());
+    }
+    match symbol.kind {
+        hir::SourceSymbolKind::Method => {
+            let ret = item_ty(db, file_id, symbol.item);
+            let params = method_params(db, file_id, symbol.item);
+            // Constructors have no return type; the type layer would render
+            // it as `<error>`, so show only the parameter list.
+            let is_constructor = matches!(
+                hir::file_item_tree(db, file_id).data(symbol.item),
+                ItemData::Method(method) if method.is_constructor
+            );
+            if is_constructor {
+                Some(format!("{simple}({})", params.join(", ")))
+            } else {
+                Some(format!("{simple}({}): {ret}", params.join(", ")))
+            }
+        }
+        hir::SourceSymbolKind::Field => {
+            let ty = item_ty(db, file_id, symbol.item);
+            Some(format!("{simple}: {ty}"))
+        }
+        hir::SourceSymbolKind::EnumConstant => Some(simple.to_owned()),
+        kind => Some(format!("{} {simple}", kind.label())),
+    }
 }
 
 /// Symbols whose simple name matches `query` (case-insensitive substring,
@@ -74,6 +136,8 @@ pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol>
                 name: reference.symbol.name.as_str().to_owned(),
                 kind: reference.symbol.kind,
                 range: reference.symbol.range,
+                name_range: reference.symbol.name_range,
+                detail: None,
                 item: reference.symbol.item,
             },
         })

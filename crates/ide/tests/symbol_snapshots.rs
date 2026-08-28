@@ -127,6 +127,36 @@ fn document_symbols_snapshot() {
 }
 
 #[test]
+fn document_symbol_detail_is_the_package() {
+    let fixture = build(&[
+        (
+            main_source_set(0),
+            vec![(1, "/src/Foo.java", "class Foo {}\n")],
+        ),
+        (
+            main_source_set(1),
+            vec![(
+                2,
+                "/src/com/example/Bar.java",
+                "package com.example;\n\nclass Bar {}\n",
+            )],
+        ),
+    ]);
+    let analysis = fixture.analysis();
+
+    let foo = analysis.document_symbols(fixture.file(1)).unwrap();
+    let foo = foo.iter().find(|symbol| symbol.name == "Foo").unwrap();
+    assert_eq!(foo.detail.as_deref(), Some("<default package>"));
+
+    let bar = analysis.document_symbols(fixture.file(2)).unwrap();
+    let bar = bar
+        .iter()
+        .find(|symbol| symbol.name == "com.example.Bar")
+        .unwrap();
+    assert_eq!(bar.detail.as_deref(), Some("com.example"));
+}
+
+#[test]
 fn workspace_symbols_snapshot() {
     let fixture = build(&[
         (

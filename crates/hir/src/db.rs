@@ -484,6 +484,7 @@ fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
             name: name.clone(),
             item: id,
             range,
+            name_range: data.name_range(),
             kind,
             public,
         });

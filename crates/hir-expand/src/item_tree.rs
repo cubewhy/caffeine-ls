@@ -114,6 +114,24 @@ impl ItemData {
         }
     }
 
+    /// The source range of the item's declared name (the identifier), used by
+    /// the IDE to set the LSP `selectionRange`. Initializers are nameless and
+    /// fall back to their whole range.
+    pub fn name_range(&self) -> TextRange {
+        match self {
+            ItemData::Class(d) | ItemData::Interface(d) => d.name_range,
+            ItemData::Enum(d) => d.name_range,
+            ItemData::Record(d) => d.name_range,
+            ItemData::Annotation(d) => d.name_range,
+            ItemData::Module(d) => d.name_range,
+            ItemData::Method(d) => d.name_range,
+            ItemData::Field(d) => d.name_range,
+            ItemData::EnumConstant(d) => d.name_range,
+            ItemData::StaticInit(d) => d.range,
+            ItemData::InstanceInit(d) => d.range,
+        }
+    }
+
     /// A display label used by [`crate::pretty::pretty_print`].
     pub fn label(&self) -> &'static str {
         match self {
@@ -136,6 +154,7 @@ impl ItemData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub super_class: Option<SpannedTypeRef>,
     pub interfaces: Vec<SpannedTypeRef>,
@@ -147,6 +166,7 @@ pub struct ClassData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub interfaces: Vec<SpannedTypeRef>,
     pub body: Vec<ItemId>,
@@ -156,6 +176,7 @@ pub struct EnumData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub components: Vec<RecordComponent>,
     pub interfaces: Vec<SpannedTypeRef>,
@@ -167,6 +188,7 @@ pub struct RecordData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnnotationData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub body: Vec<ItemId>,
     pub range: TextRange,
@@ -196,6 +218,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub sig: Signature,
     pub is_constructor: bool,
@@ -208,6 +231,7 @@ pub struct MethodData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     pub ty: SpannedTypeRef,
     pub initializer: Option<TextRange>,
@@ -218,6 +242,7 @@ pub struct FieldData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumConstantData {
     pub name: Name,
+    pub name_range: TextRange,
     pub arguments: Option<TextRange>,
     pub argument_exprs: Vec<ExprId>,
     pub class_body: Option<TextRange>,
@@ -242,6 +267,7 @@ pub struct InstanceInitData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleData {
     pub name: Name,
+    pub name_range: TextRange,
     pub modifiers: Modifiers,
     /// Whether the module was declared `open`.
     pub is_open: bool,
