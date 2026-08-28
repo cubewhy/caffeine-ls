@@ -2,11 +2,12 @@ use crossbeam_channel::{bounded, unbounded};
 use dashmap::DashMap;
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::{
-    ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
-    InitializeParams, PartialResultParams, Position, Range, TextDocumentContentChangePartial,
-    TextDocumentIdentifier, TextDocumentItem, Uri, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams, WorkspaceFolder, WorkspaceFoldersInitializeParams,
+    ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
+    DocumentDiagnosticReport, FileChangeType, FileEvent, InitializeParams, PartialResultParams,
+    Position, Range, TextDocumentContentChangePartial, TextDocumentIdentifier, TextDocumentItem,
+    Uri, VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceFolder,
+    WorkspaceFoldersInitializeParams,
 };
 use std::{
     collections::HashMap,
@@ -258,6 +259,14 @@ impl LspHarness {
         Uri::from_file_path(path).unwrap()
     }
 
+    /// Deletes the fixture file at `relative_path` from the workspace root,
+    /// mirroring what an editor does when a file is removed on disk.
+    pub fn remove_file(&self, relative_path: &str) {
+        let relative_path = relative_path.trim_start_matches('/');
+        let path = self.workspace_root.path().join(relative_path);
+        fs::remove_file(&path).expect("Failed to remove file");
+    }
+
     pub fn write_fixture_file(&self, path_str: &str, content: &str) -> Uri {
         let normalized_path = path_str.trim_start_matches('/');
         let mut final_content = content.to_string();
@@ -382,6 +391,22 @@ impl LspHarness {
             serde_json::to_value(params).expect("Failed to serialize DidCloseTextDocumentParams");
 
         self.notify("textDocument/didClose", json_params);
+    }
+
+    /// Sends a `workspace/didChangeWatchedFiles` notification for `relative_path`.
+    /// Mirrors what client-editor watchers send when a file is created, changed,
+    /// or deleted on disk.
+    pub fn did_change_watched_files(&self, relative_path: &str, kind: FileChangeType) {
+        let params = DidChangeWatchedFilesParams {
+            changes: vec![FileEvent {
+                uri: self.uri(relative_path),
+                kind,
+            }],
+        };
+
+        let json_params =
+            serde_json::to_value(params).expect("Failed to serialize DidChangeWatchedFilesParams");
+        self.notify("workspace/didChangeWatchedFiles", json_params);
     }
 
     pub fn change_document_incremental(&self, relative_path: &str, range: Range, text: &str) {

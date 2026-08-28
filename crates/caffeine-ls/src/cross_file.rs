@@ -176,9 +176,37 @@ impl CrossFileDiagnostics {
     // ----- main-thread plumbing ---------------------------------------------
 
     /// Replaces the working set of the reverse index (called on source-root
-    /// repartition). Invalidates any previous build.
+    /// repartition, e.g. when files are created or deleted). Invalidates any
+    /// previous build and prunes the per-file state of files that left the set,
+    /// so a deleted file never resurfaces as a cross-file candidate.
     pub(crate) fn set_source_files(&self, files: Vec<FileId>) {
         let mut data = self.inner.lock();
+        let old: FxHashSet<FileId> = data.source_files.iter().copied().collect();
+        let new: FxHashSet<FileId> = files.iter().copied().collect();
+        let removed: Vec<FileId> = old.difference(&new).copied().collect();
+
+        for file in &removed {
+            data.deps_of.remove(file);
+            data.refs_of.remove(file);
+            data.seals.remove(file);
+        }
+        // A removed file is never a candidate anymore: drop its reverse rows.
+        for dep in &removed {
+            data.type_reverse.remove(dep);
+        }
+        // Files that left the set must also be removed from every dependent's
+        // row (as a value) and from the name->users maps, so a deleted file
+        // never resurfaces as a cross-file candidate.
+        let removed_set: FxHashSet<FileId> = removed.iter().copied().collect();
+        data.type_reverse.retain(|_, users| {
+            users.retain(|user| !removed_set.contains(user));
+            !users.is_empty()
+        });
+        data.name_reverse.retain(|_, users| {
+            users.retain(|user| !removed_set.contains(user));
+            !users.is_empty()
+        });
+
         data.source_files = files;
         data.built = false;
     }

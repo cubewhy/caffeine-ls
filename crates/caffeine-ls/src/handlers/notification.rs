@@ -171,8 +171,13 @@ pub fn on_did_change_watched_files(
     let mut roots_to_reload = HashSet::new();
 
     for event in params.changes {
-        if let Ok(abs_path) = abs_path(&event.uri)
-            && is_build_configuration_file(&abs_path)
+        let Ok(abs_path) = abs_path(&event.uri) else {
+            continue;
+        };
+
+        // An on-disk change to a build configuration requires re-syncing the
+        // project layout with the build tool.
+        if is_build_configuration_file(&abs_path)
             && let Some(root) = state
                 .config
                 .workspace_folders
@@ -180,6 +185,23 @@ pub fn on_did_change_watched_files(
                 .find(|root| abs_path.starts_with(root))
         {
             roots_to_reload.insert(root.clone());
+            continue;
+        }
+
+        // Source files are mirrored on disk by the client, so an editor-side
+        // delete/create/edit must be re-read through the loader. This mirrors
+        // rust-analyzer: every watched path is invalidated regardless of change
+        // type; a deleted file re-reads as `None` and flows into
+        // `Vfs::Change::Delete`, which drops the file from the source roots.
+        if is_watched_source_file(&abs_path)
+            || state
+                .vfs
+                .read()
+                .0
+                .file_id(&vfs::VfsPath::from(abs_path.clone()))
+                .is_some()
+        {
+            state.loader.handle.invalidate(abs_path);
         }
     }
 
@@ -211,6 +233,14 @@ fn is_build_configuration_file(path: &AbsPathBuf) -> bool {
     } else {
         false
     }
+}
+
+/// The source extensions tracked as live workspace files. Changes to these are
+/// re-read through the vfs loader so the database reflects on-disk deletion,
+/// recreation and modification coming from the client.
+fn is_watched_source_file(path: &AbsPathBuf) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "java" || ext == "kt" || ext == "kts")
 }
 
 pub fn on_did_change_configuration(

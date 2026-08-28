@@ -35,6 +35,7 @@ export function activate(context: ExtensionContext) {
     initializationOptions: initialConfig,
     synchronize: {
       fileEvents: [
+        workspace.createFileSystemWatcher("**/*.{java,kt,kts}"),
         workspace.createFileSystemWatcher(
           "**/{build.gradle,build.gradle.kts,settings.gradle,settings.gradle.kts,pom.xml}",
         ),

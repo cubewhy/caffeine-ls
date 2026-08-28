@@ -7,7 +7,7 @@ use caffeine_ls::{
 use camino::Utf8PathBuf;
 use lsp_test::{LspHarness, lsp_fixture};
 use lsp_types::{
-    Notification, Position, Range, ShowMessageNotification, WorkspaceFolders,
+    FileChangeType, Notification, Position, Range, ShowMessageNotification, WorkspaceFolders,
     WorkspaceFoldersInitializeParams,
 };
 use serde_json::json;
@@ -890,6 +890,54 @@ fn cross_file_reverts_when_method_removed() {
     insta::assert_json_snapshot!(
         "cross_file_revert_broken_b",
         normalize_and_sort(broken, &lsp)
+    );
+
+    lsp.shutdown();
+}
+
+/// Deleting a source file on disk (reported via the client's
+/// `didChangeWatchedFiles` watcher) must drop it from the VFS source roots, the
+/// reverse-dependency index, and the workspace diagnostics — not leave a stale
+/// entry behind.
+#[test]
+fn cross_file_deletes_when_source_file_removed_on_disk() {
+    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let a = "/src/p/A.java";
+    let b = "/src/p/B.java";
+    lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
+    lsp.write_fixture_file(
+        b,
+        "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
+    );
+    lsp.open_document(a);
+
+    // Seed the build; both A and B are part of the workspace file set.
+    lsp.change_at_mark(a, "// seed\n    <|>");
+    request_workspace_until(&lsp, json!([]), |report| {
+        report["items"].as_array().is_some_and(|items| {
+            items.len() == 2
+                && items
+                    .iter()
+                    .any(|it| it["uri"].as_str().is_some_and(|u| u.ends_with("/B.java")))
+        })
+    });
+
+    // Delete B on disk and report it through the watcher.
+    lsp.remove_file(b);
+    lsp.did_change_watched_files(b, FileChangeType::Deleted);
+
+    // B must be dropped from the workspace file set entirely.
+    let after = request_workspace_until(&lsp, json!([]), |report| {
+        report["items"].as_array().is_some_and(|items| {
+            items.len() == 1
+                && items
+                    .iter()
+                    .all(|it| !it["uri"].as_str().is_some_and(|u| u.ends_with("/B.java")))
+        })
+    });
+    insta::assert_json_snapshot!(
+        "cross_file_deleted_after_delete",
+        normalize_and_sort(after, &lsp)
     );
 
     lsp.shutdown();
