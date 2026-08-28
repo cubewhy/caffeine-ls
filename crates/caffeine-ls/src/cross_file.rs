@@ -199,7 +199,8 @@ impl CrossFileDiagnostics {
 
     // ----- reverse-index maintenance ----------------------------------------
 
-    fn source_files(&self) -> Vec<FileId> {
+    /// The source files the index covers (the working set of the reverse maps).
+    pub(crate) fn source_files(&self) -> Vec<FileId> {
         self.inner.lock().source_files.clone()
     }
 
@@ -401,6 +402,73 @@ pub(crate) fn run_cross_file_pass(
     }
     tracing::debug!(pushes = out.len(), "cross-file pass finished");
     Ok(out)
+}
+
+/// The `workspace/diagnostic` pull: one full or unchanged report per source
+/// file, sealed with the file's diagnostic digest. A document whose previous
+/// result id (*reported per URI*) matches its current seal is echoed as
+/// `Unchanged` (a `resultId` only); everything else is a full report. Delivered
+/// full states are sealed, so subsequent document pulls and pushes deduplicate
+/// against them. Items are sorted by URI for determinism.
+pub(crate) fn workspace_diagnostic_reports(
+    snapshot: &GlobalStateSnapshot,
+    previous_ids: &FxHashMap<lsp_types::Uri, String>,
+) -> Cancellable<Vec<lsp_types::WorkspaceDocumentDiagnosticReport>> {
+    let mut items = Vec::new();
+    for file in snapshot.cross_file.source_files() {
+        let Ok(uri) = snapshot.file_id_to_url(file) else {
+            continue;
+        };
+        let fallback = fallback_kind(&uri);
+        let seal = diagnostic_seal(&snapshot.analysis, file, fallback)?;
+        let version = crate::lsp::from_proto::vfs_path(&uri)
+            .ok()
+            .and_then(|path| snapshot.open_document_version(&path));
+        if previous_ids.get(&uri) == Some(&seal) {
+            items.push(
+                lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
+                    lsp_types::WorkspaceUnchangedDocumentDiagnosticReport {
+                        uri,
+                        version,
+                        unchanged_document_diagnostic_report: lsp_types::UnchangedDocumentDiagnosticReport {
+                            result_id: seal,
+                        },
+                    },
+                ),
+            );
+        } else {
+            let diagnostics = diagnostics_items(snapshot, file, fallback)?;
+            snapshot.cross_file.set_seal(file, seal.clone());
+            items.push(
+                lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceFullDocumentDiagnosticReport(
+                    lsp_types::WorkspaceFullDocumentDiagnosticReport {
+                        uri,
+                        version,
+                        full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
+                            result_id: Some(seal),
+                            items: diagnostics,
+                        },
+                    },
+                ),
+            );
+        }
+    }
+    let mut keyed: Vec<(String, lsp_types::WorkspaceDocumentDiagnosticReport)> = items
+        .into_iter()
+        .map(|item| {
+            let key = match &item {
+                lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceFullDocumentDiagnosticReport(
+                    report,
+                ) => report.uri.as_str().to_owned(),
+                lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
+                    report,
+                ) => report.uri.as_str().to_owned(),
+            };
+            (key, item)
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(keyed.into_iter().map(|(_, item)| item).collect())
 }
 
 fn trim(s: &str) -> Option<&str> {

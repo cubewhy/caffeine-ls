@@ -428,6 +428,12 @@ impl GlobalStateSnapshot {
         };
         Ok(res)
     }
+
+    /// The version of an open document (client-maintained), `None` for files
+    /// that are not open.
+    pub(crate) fn open_document_version(&self, path: &vfs::VfsPath) -> Option<i32> {
+        self.mem_docs.get(path).map(|doc| doc.version)
+    }
 }
 
 /// Returns `None` if the file was excluded.

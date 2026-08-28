@@ -641,6 +641,50 @@ fn create_lsp_with_config(client_config: serde_json::Value) -> LspHarness {
     LspHarness::start_with_setup(client_config, |_| {}, run_server)
 }
 
+/// Re-issues `workspace/diagnostic` until `pred` holds, returning the accepted
+/// raw report (the server cancels queries when a write lands mid-request).
+fn request_workspace_until(
+    lsp: &LspHarness,
+    previous_result_ids: serde_json::Value,
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let response = lsp.request(
+            "workspace/diagnostic",
+            json!({ "previousResultIds": previous_result_ids.clone() }),
+        );
+        if pred(&response) {
+            return response;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for a workspace diagnostic report"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// The `(uri, resultId)` pairs of a workspace report, to echo back as
+/// `previousResultIds`.
+fn extract_previous_ids(report: &serde_json::Value) -> serde_json::Value {
+    let items = report["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|it| {
+                    json!({
+                        "uri": it["uri"].clone(),
+                        "value": it["resultId"].clone(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!(items)
+}
+
 /// Pulls diagnostics until `pred` holds, re-issuing on the same cancellation/
 /// write retry the real clients do. Returns the accepted raw report.
 fn wait_until_pull(
@@ -923,6 +967,61 @@ fn cross_file_result_id_roundtrip() {
         second.get("items").is_none(),
         "Unchanged report must not re-serialize items"
     );
+    lsp.shutdown();
+}
+
+/// `workspace/diagnostic`: the whole-workspace pull returns one full report per
+/// source file; echoing the received `(uri, resultId)` pairs back yields all
+/// `Unchanged` entries; and fixing A turns B's previously-returned report into
+/// a fresh (empty) one.
+#[test]
+fn cross_file_workspace_pull() {
+    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let a = "/src/p/A.java";
+    lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
+    lsp.write_fixture_file(
+        "/src/p/B.java",
+        "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
+    );
+    lsp.open_document(a);
+
+    // First pull: a full report per workspace file (A clean, B with the
+    // undefined `go()` error) — no prior edit required.
+    let first = request_workspace_until(&lsp, json!([]), |report| {
+        report["items"]
+            .as_array()
+            .is_some_and(|items| items.len() == 2)
+    });
+    insta::assert_json_snapshot!(
+        "cross_file_workspace_pull_full",
+        normalize_and_sort(first.clone(), &lsp)
+    );
+
+    // Re-pull with the received result ids: every document is `unchanged`.
+    let previous_ids = extract_previous_ids(&first);
+    request_workspace_until(&lsp, previous_ids.clone(), |report| {
+        report["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .all(|it| it["kind"].as_str() == Some("unchanged"))
+        })
+    });
+
+    // Fix A (no save needed): B's stale report must come back full and empty.
+    lsp.change_at_mark(a, "public void go() {}\n    <|>");
+    let after_fix = request_workspace_until(&lsp, previous_ids.clone(), |report| {
+        report["items"].as_array().is_some_and(|items| {
+            items.iter().any(|it| {
+                it["uri"].as_str().is_some_and(|u| u.ends_with("/B.java"))
+                    && it["kind"].as_str() == Some("full")
+            })
+        })
+    });
+    insta::assert_json_snapshot!(
+        "cross_file_workspace_pull_after_fix",
+        normalize_and_sort(after_fix, &lsp)
+    );
+
     lsp.shutdown();
 }
 

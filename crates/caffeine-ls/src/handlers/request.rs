@@ -8,6 +8,7 @@ use crate::{
 
 use ide::LanguageKind;
 use lsp_types::*;
+use rustc_hash::FxHashMap;
 
 pub fn on_diagnostic(
     state: GlobalStateSnapshot,
@@ -70,6 +71,31 @@ pub fn on_diagnostic(
         },
     }
     .into())
+}
+
+/// The workspace-wide diagnostic report ([§Diagnostic]): one full or unchanged
+/// entry per source file, sealed with the file's diagnostic digest. Documents
+/// whose [`previousResultId`][WorkspaceDiagnosticParams#previous_result_ids]
+/// still matches are echoed as `Unchanged`; the rest come back in full, so the
+/// client can refresh its whole in-memory diagnostic store in a single round
+/// trip.
+pub fn on_workspace_diagnostic(
+    state: GlobalStateSnapshot,
+    params: WorkspaceDiagnosticParams,
+) -> anyhow::Result<WorkspaceDiagnosticReport> {
+    tracing::info!(
+        previous = params.previous_result_ids.len(),
+        "request workspace diagnostics"
+    );
+
+    let previous_ids: FxHashMap<Uri, String> = params
+        .previous_result_ids
+        .into_iter()
+        .map(|previous| (previous.uri, previous.value))
+        .collect();
+
+    let items = cross_file::workspace_diagnostic_reports(&state, &previous_ids)?;
+    Ok(WorkspaceDiagnosticReport::new(items))
 }
 
 pub fn on_document_symbol(
