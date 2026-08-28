@@ -1059,6 +1059,66 @@ fn cross_file_delete_refreshes_dependent_diagnostics() {
     lsp.shutdown();
 }
 
+/// Adding a file must refresh the diagnostics of the files that referenced it:
+/// an unopened B whose reference to a missing A was an error is re-pushed clean
+/// once A appears on disk.
+#[test]
+fn cross_file_add_refreshes_dependent_diagnostics() {
+    let lsp = create_lsp();
+    let a = "/src/p/A.java";
+    let b = "/src/p/B.java";
+    let c = "/src/p/C.java";
+    // B references A before A exists; C is the open seed file.
+    lsp.write_fixture_file(
+        b,
+        "package p;\npublic class B {\n    void m() { A a = null; a.go(); }\n}\n",
+    );
+    lsp.write_fixture_file(c, "package p;\npublic class C {\n    <|>\n}\n");
+    lsp.open_document(c);
+
+    // Seed the build; B is unopened and currently has an unresolved-A error.
+    lsp.change_at_mark(c, "// seed\n    <|>");
+    lsp.wait_notifications(
+        "textDocument/publishDiagnostics",
+        10,
+        std::time::Duration::from_millis(700),
+    );
+
+    // Add A on disk and report it through the watcher.
+    lsp.write_fixture_file(
+        a,
+        "package p;\npublic class A {\n    public void go() {}\n}\n",
+    );
+    lsp.did_change_watched_files(a, FileChangeType::Created);
+
+    // B must be re-pushed with the unresolved-A error cleared.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let pushes = lsp.wait_notifications(
+            "textDocument/publishDiagnostics",
+            4,
+            std::time::Duration::from_millis(400),
+        );
+        let hit = pushes.iter().find(|p| {
+            p.params["uri"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("/B.java"))
+                && p.params["diagnostics"]
+                    .as_array()
+                    .is_some_and(|d| d.is_empty())
+        });
+        if hit.is_some() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for B.java's cleared diagnostics after adding A"
+        );
+    }
+
+    lsp.shutdown();
+}
+
 /// Editing an unrelated file must not touch the diagnostics of A or B at all.
 #[test]
 fn cross_file_unrelated_edit_is_isolated() {

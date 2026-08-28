@@ -1048,18 +1048,33 @@ impl GlobalState {
         if vfs_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
             // The reverse-dependency index works over the same file set; refresh
-            // the files it covers, and get back any dependents whose diagnostics
-            // may have moved because a file they depended on was removed.
+            // the files it covers, and get back the files whose diagnostics may
+            // have moved because of the repartition.
             let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-            let affected = self.cross_file.set_source_files(source_files);
+            let delta = self.cross_file.set_source_files(source_files);
             change.set_roots(roots);
-            if !affected.is_empty() {
-                // A deletion can move the diagnostics of the deleted file's
-                // dependents; refresh them directly rather than waiting for a
-                // probe triggered by their own (non-existent) edit.
-                self.force_refresh.extend(affected);
-                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
-                self.arm_refresh_timer();
+
+            if self.config.cross_file_enabled() {
+                let mut needs_refresh = false;
+                if !delta.added.is_empty() {
+                    // A newly added file can resolve (or conflict with)
+                    // references in files that mention it; probing its dependents
+                    // refreshes those.
+                    self.pending_changes.extend(delta.added);
+                    needs_refresh = true;
+                }
+                if !delta.removed_dependents.is_empty() {
+                    // A deletion can move the diagnostics of the deleted file's
+                    // dependents; refresh them directly rather than waiting for a
+                    // probe triggered by their own (non-existent) edit.
+                    self.force_refresh.extend(delta.removed_dependents);
+                    needs_refresh = true;
+                }
+                if needs_refresh {
+                    self.refresh_deadline =
+                        Some(Instant::now() + self.config.cross_file_debounce());
+                    self.arm_refresh_timer();
+                }
             }
         }
 

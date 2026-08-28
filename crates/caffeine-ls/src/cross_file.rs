@@ -144,6 +144,15 @@ pub(crate) struct PublishPayload {
     pub(crate) diagnostics: Vec<lsp_types::Diagnostic>,
 }
 
+/// The files whose diagnostics may have moved after a source-file repartition
+/// (see [`CrossFileDiagnostics::set_source_files`]).
+pub(crate) struct SourceFileChanges {
+    /// Files that entered the working set.
+    pub(crate) added: Vec<FileId>,
+    /// Files that remain but depended on a file that left the set.
+    pub(crate) removed_dependents: Vec<FileId>,
+}
+
 #[derive(Default)]
 struct CrossFileDiagData {
     /// Every source file the index covers (the working set of the reverse
@@ -180,21 +189,30 @@ impl CrossFileDiagnostics {
     /// previous build and prunes the per-file state of files that left the set,
     /// so a deleted file never resurfaces as a cross-file candidate.
     ///
-    /// Returns the files that remain in the working set whose diagnostics may
-    /// have moved because a file they depended on was removed (its former
-    /// dependents). Callers use them to refresh that set directly.
-    pub(crate) fn set_source_files(&self, files: Vec<FileId>) -> Vec<FileId> {
+    /// Returns the files whose diagnostics may have moved because of the
+    /// repartition, so the caller can refresh them:
+    /// - `added`: files that entered the set. Their symbols may now resolve
+    ///   (or conflict) in files that referenced them, so those dependents are
+    ///   probed on the next cross-file pass.
+    /// - `removed_dependents`: files that remain but depended on a removed
+    ///   file, re-verified directly (their diagnostics likely regressed).
+    pub(crate) fn set_source_files(&self, files: Vec<FileId>) -> SourceFileChanges {
         let mut data = self.inner.lock();
         let old: FxHashSet<FileId> = data.source_files.iter().copied().collect();
         let new: FxHashSet<FileId> = files.iter().copied().collect();
         let removed: Vec<FileId> = old.difference(&new).copied().collect();
+        let added: Vec<FileId> = new.difference(&old).copied().collect();
+        // Only report `added` as a change to probe when the index was already
+        // built: the initial load populates every file as "added" without an
+        // edit ever happening, and probing that would swallow the real seed edit.
+        let was_built = data.built;
 
         // The dependents of a removed file may now have moved diagnostics.
         // Capture them before pruning the reverse rows.
-        let mut affected: FxHashSet<FileId> = FxHashSet::default();
+        let mut removed_dependents: FxHashSet<FileId> = FxHashSet::default();
         for dep in &removed {
             if let Some(users) = data.type_reverse.get(dep) {
-                affected.extend(users.iter().copied());
+                removed_dependents.extend(users.iter().copied());
             }
         }
 
@@ -220,10 +238,13 @@ impl CrossFileDiagnostics {
             !users.is_empty()
         });
 
-        affected.retain(|file| new.contains(file));
+        removed_dependents.retain(|file| new.contains(file));
         data.source_files = files;
         data.built = false;
-        affected.into_iter().collect()
+        SourceFileChanges {
+            added: if was_built { added } else { Vec::new() },
+            removed_dependents: removed_dependents.into_iter().collect(),
+        }
     }
 
     pub(crate) fn is_built(&self) -> bool {
