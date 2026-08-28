@@ -50,7 +50,9 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
     cmd!(sh, "{pnpm} run compile").env("CI", "true").run()?;
 
     sh.set_var("RUST_BACKTRACE", "1");
-    sh.set_var("CAFFEINE_LS_LOG", "debug");
+    if std::env::var_os("CAFFEINE_LS_LOG").is_none() {
+        sh.set_var("CAFFEINE_LS_LOG", "debug,salsa=off");
+    }
 
     let code_exec = code_exec
         .and_then(|name| which(name).ok())
