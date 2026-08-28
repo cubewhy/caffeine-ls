@@ -19,7 +19,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.not.stmt",
       "source": "caffeine-ls",
-      "message": "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed"
+      "message": "not a statement"
     },
     {
       "range": {

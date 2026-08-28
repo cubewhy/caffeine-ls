@@ -19,7 +19,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "Unexpected character '`' found in source code"
+      "message": "illegal character: '`'"
     },
     {
       "range": {
@@ -35,7 +35,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "Unexpected character '`' found in source code"
+      "message": "illegal character: '`'"
     },
     {
       "range": {
@@ -51,7 +51,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "Invalid character literal. Did you forget a closing quote \"'\"?"
+      "message": "illegal character literal"
     },
     {
       "range": {
@@ -82,7 +82,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "Expected ';'"
+      "message": "';' expected"
     },
     {
       "range": {

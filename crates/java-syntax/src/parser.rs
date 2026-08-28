@@ -385,38 +385,22 @@ pub enum ParseErrorKind {
 impl ParseErrorKind {
     pub fn desc(&self) -> String {
         match self {
-            ParseErrorKind::ExpectedToken { expected, found } => {
+            ParseErrorKind::ExpectedToken { expected, .. } => {
                 let expected_str = expected
                     .iter()
                     .map(|k| k.to_quoted_string())
                     .collect::<Vec<_>>()
                     .join(" or ");
 
-                let found_str = match found {
-                    None | Some(SyntaxKind::EOF) | Some(SyntaxKind::UNKNOWN) => return format!("Expected {}", expected_str),
-                    Some(f) => f.to_quoted_string(),
-                };
-
-                format!("Expected {}, found {}", expected_str, found_str)
+                format!("{} expected", expected_str)
             }
-            ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
-                let found_str = match found {
-                    None | Some(SyntaxKind::EOF) | Some(SyntaxKind::UNKNOWN) => return format!("Expected '{}'", keyword.as_str()),
-                    Some(f) => f.to_quoted_string(),
-                };
-
-                format!(
-                    "Expected keyword '{}', found {}",
-                    keyword.as_str(),
-                    found_str
-                )
+            ParseErrorKind::ExpectedContextualKeyword { keyword, .. } => {
+                format!("'{}' expected", keyword.as_str())
             }
             ParseErrorKind::ExpectedConstruct(construct) => {
                 format!("Expected {} here", construct)
             }
-            ParseErrorKind::NotAStatement => {
-                "Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed".to_string()
-            }
+            ParseErrorKind::NotAStatement => "not a statement".to_string(),
             ParseErrorKind::Message(msg) => msg.to_string(),
         }
     }

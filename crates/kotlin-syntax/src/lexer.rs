@@ -1042,41 +1042,39 @@ pub enum LexicalErrorKind {
 impl LexicalErrorKind {
     pub fn desc(&self) -> String {
         match self {
-            LexicalErrorKind::UnterminatedBlockComment => {
-                "Missing closing '*/' for block comment.".to_string()
-            }
-            LexicalErrorKind::UnterminatedString => {
-                "Missing closing quote '\"' for string literal.".to_string()
-            }
-            LexicalErrorKind::EmptyCharLiteral => "Empty character literal.".to_string(),
-            LexicalErrorKind::UnterminatedCharLiteral => {
-                "Missing closing quote ''' for character literal.".to_string()
-            }
+            LexicalErrorKind::UnterminatedBlockComment => "unclosed comment".to_string(),
+            LexicalErrorKind::UnterminatedString => "unclosed string literal".to_string(),
+            LexicalErrorKind::EmptyCharLiteral => "empty character literal".to_string(),
+            LexicalErrorKind::UnterminatedCharLiteral => "unclosed character literal".to_string(),
             LexicalErrorKind::TooManyCharsInCharLiteral => {
-                "Too many characters in character literal.".to_string()
+                "too many characters in character literal".to_string()
             }
             LexicalErrorKind::UnsupportedEscapeSequence => {
-                "Unsupported escape sequence inside string or char literal.".to_string()
+                "unsupported escape sequence in literal".to_string()
             }
-            LexicalErrorKind::EmptyIdentifier => "Empty identifier.".to_string(),
-            LexicalErrorKind::UnterminatedIdentifier => "Unterminated identifier.".to_string(),
+            LexicalErrorKind::EmptyIdentifier => "empty identifier".to_string(),
+            LexicalErrorKind::UnterminatedIdentifier => "unterminated identifier".to_string(),
             LexicalErrorKind::UnexpectedChar(c) => {
-                format!("Unexpected character '{c}' found in source code.")
+                if c.is_control() {
+                    format!("illegal character: '\\u{:04x}'", *c as u32)
+                } else {
+                    format!("illegal character: '{c}'")
+                }
             }
             LexicalErrorKind::LeadingZerosNotAllowed => {
-                "Leading zeros are not allowed in integer literals.".to_string()
+                "leading zeros are not allowed in integer literals".to_string()
             }
             LexicalErrorKind::WrongLongSuffixCase => {
-                "Use uppercase 'L' for the long literal suffix.".to_string()
+                "use uppercase 'L' for the long literal suffix".to_string()
             }
             LexicalErrorKind::IllegalUnderscore => {
-                "Illegal underscore in numeric literal.".to_string()
+                "illegal underscore in numeric literal".to_string()
             }
             LexicalErrorKind::MissingExponentDigits => {
-                "Missing digits after exponent in numeric literal.".to_string()
+                "missing digits after exponent in numeric literal".to_string()
             }
             LexicalErrorKind::MissingNumericDigits => {
-                "Missing digits in numeric literal.".to_string()
+                "missing digits in numeric literal".to_string()
             }
         }
     }

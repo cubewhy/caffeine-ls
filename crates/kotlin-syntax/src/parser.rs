@@ -356,11 +356,7 @@ pub enum ParseErrorKind {
 impl ParseErrorKind {
     pub fn desc(&self) -> String {
         match self {
-            ParseErrorKind::ExpectedToken { expected, found } => {
-                let found_str = found
-                    .map(|f| f.to_quoted_string())
-                    .unwrap_or_else(|| "end of file".to_string());
-
+            ParseErrorKind::ExpectedToken { expected, .. } => {
                 let expected_options = expected
                     .iter()
                     .map(|e| e.to_quoted_string())
@@ -372,16 +368,10 @@ impl ParseErrorKind {
                     expected_options.first().cloned().unwrap_or_default()
                 };
 
-                format!("Expected {expected_msg}, but found {found_str}")
+                format!("{expected_msg} expected")
             }
-            ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
-                let found_str = found
-                    .map(|kind| kind.to_quoted_string())
-                    .unwrap_or_else(|| "end of file".to_string());
-                format!(
-                    "Expected keyword '{}', but found {found_str}",
-                    keyword.as_str()
-                )
+            ParseErrorKind::ExpectedContextualKeyword { keyword, .. } => {
+                format!("'{}' expected", keyword.as_str())
             }
             ParseErrorKind::ExpectedConstruct(expected_construct) => {
                 let construct_str = expected_construct.to_string();

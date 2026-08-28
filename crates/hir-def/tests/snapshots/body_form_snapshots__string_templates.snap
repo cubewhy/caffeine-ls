@@ -11,7 +11,7 @@ class Foo {
 }
 
 PARSE_ERRORS:
-Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed @58..59
+not a statement @58..59
 ITEM_TREE:
 file (java)
 class Foo @1..67

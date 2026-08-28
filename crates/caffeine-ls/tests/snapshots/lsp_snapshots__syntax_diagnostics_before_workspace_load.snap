@@ -19,7 +19,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "Expected ';', found '}'"
+      "message": "';' expected"
     }
   ],
   "kind": "full"

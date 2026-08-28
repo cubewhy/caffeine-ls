@@ -11,9 +11,9 @@ class Foo {
 
 PARSE_ERRORS:
 Expected a type here @25..26
-Expected ')' @35..35
-Expected ';' @35..35
-Expected '}' @35..35
+')' expected @35..35
+';' expected @35..35
+'}' expected @35..35
 ITEM_TREE:
 file (java)
 class Foo @1..35

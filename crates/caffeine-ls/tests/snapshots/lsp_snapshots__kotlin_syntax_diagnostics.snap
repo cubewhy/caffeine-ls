@@ -18,7 +18,7 @@ expression: diagnostics
       },
       "severity": 1,
       "source": "caffeine-ls",
-      "message": "Missing closing quote '\"' for string literal."
+      "message": "unclosed string literal"
     }
   ],
   "kind": "full"
