@@ -86,34 +86,34 @@ ROOT@0..191
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..190
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..190
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..157
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..157
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..157
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..157
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..69
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..69
             LOCAL_VARIABLE_DECLARATION@39..68
               TYPE@39..45
                 QUALIFIED_NAME@39..45
                   IDENTIFIER@39..45 "String"
-              VARIABLE_DECLARATOR_LIST@45..68
-                WHITESPACE@45..46 " "
+              WHITESPACE@45..46 " "
+              VARIABLE_DECLARATOR_LIST@46..68
                 VARIABLE_DECLARATOR@46..68
                   IDENTIFIER@46..49 "str"
                   WHITESPACE@49..50 " "
                   EQUAL@50..51 "="
-                  TEMPLATE_EXPR@51..68
-                    WHITESPACE@51..52 " "
+                  WHITESPACE@51..52 " "
+                  TEMPLATE_EXPR@52..68
                     TEMPLATE_ARGUMENT@52..68
                       STRING_TEMPLATE_BEGIN@52..57 "\"a \\{"
                       METHOD_CALL@57..64
@@ -124,20 +124,20 @@ ROOT@0..191
                           R_PAREN@63..64 ")"
                       STRING_TEMPLATE_END@64..68 "} b\""
             SEMICOLON@68..69 ";"
-          LOCAL_VARIABLE_DECLARATION_STMT@69..151
-            WHITESPACE@69..78 "\n        "
+          WHITESPACE@69..78 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@78..151
             LOCAL_VARIABLE_DECLARATION@78..150
               TYPE@78..84
                 QUALIFIED_NAME@78..84
                   IDENTIFIER@78..84 "String"
-              VARIABLE_DECLARATOR_LIST@84..150
-                WHITESPACE@84..85 " "
+              WHITESPACE@84..85 " "
+              VARIABLE_DECLARATOR_LIST@85..150
                 VARIABLE_DECLARATOR@85..150
                   IDENTIFIER@85..93 "strBlock"
                   WHITESPACE@93..94 " "
                   EQUAL@94..95 "="
-                  TEMPLATE_EXPR@95..150
-                    WHITESPACE@95..96 " "
+                  WHITESPACE@95..96 " "
+                  TEMPLATE_EXPR@96..150
                     TEMPLATE_ARGUMENT@96..150
                       TEXT_BLOCK_TEMPLATE_BEGIN@96..128 "\"\"\"\n            a\n    ..."
                       METHOD_CALL@128..135
@@ -150,8 +150,8 @@ ROOT@0..191
             SEMICOLON@150..151 ";"
           WHITESPACE@151..156 "\n    "
           R_BRACE@156..157 "}"
-      METHOD_DECL@157..188
-        WHITESPACE@157..163 "\n\n    "
+      WHITESPACE@157..163 "\n\n    "
+      METHOD_DECL@163..188
         TYPE@163..166
           INT_KW@163..166 "int"
         WHITESPACE@166..167 " "
@@ -159,14 +159,14 @@ ROOT@0..191
         FORMAL_PARAMETERS@172..174
           L_PAREN@172..173 "("
           R_PAREN@173..174 ")"
-        BLOCK@174..188
-          WHITESPACE@174..175 " "
+        WHITESPACE@174..175 " "
+        BLOCK@175..188
           L_BRACE@175..176 "{"
-          RETURN_STMT@176..186
-            WHITESPACE@176..177 " "
+          WHITESPACE@176..177 " "
+          RETURN_STMT@177..186
             RETURN_KW@177..183 "return"
-            LITERAL@183..185
-              WHITESPACE@183..184 " "
+            WHITESPACE@183..184 " "
+            LITERAL@184..185
               INTEGER_LITERAL@184..185 "0"
             SEMICOLON@185..186 ";"
           WHITESPACE@186..187 " "

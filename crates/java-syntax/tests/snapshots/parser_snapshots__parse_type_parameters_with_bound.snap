@@ -33,15 +33,15 @@ ROOT@0..28
       LESS@7..8 "<"
       TYPE_PARAMETER@8..24
         IDENTIFIER@8..9 "T"
-        TYPE_BOUND@9..24
-          WHITESPACE@9..10 " "
+        WHITESPACE@9..10 " "
+        TYPE_BOUND@10..24
           EXTENDS_KW@10..17 "extends"
-          TYPE@17..24
-            WHITESPACE@17..18 " "
+          WHITESPACE@17..18 " "
+          TYPE@18..24
             QUALIFIED_NAME@18..24
               IDENTIFIER@18..24 "Number"
       GREATER@24..25 ">"
-    CLASS_BODY@25..28
-      WHITESPACE@25..26 " "
+    WHITESPACE@25..26 " "
+    CLASS_BODY@26..28
       L_BRACE@26..27 "{"
       R_BRACE@27..28 "}"

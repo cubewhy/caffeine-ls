@@ -66,11 +66,11 @@ ROOT@0..143
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..142
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..142
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..140
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..140
         MODIFIER_LIST@17..30
           PUBLIC_KW@17..23 "public"
           WHITESPACE@23..24 " "
@@ -92,18 +92,18 @@ ROOT@0..143
             WHITESPACE@49..50 " "
             IDENTIFIER@50..54 "args"
           R_PAREN@54..55 ")"
-        BLOCK@55..140
-          WHITESPACE@55..56 " "
+        WHITESPACE@55..56 " "
+        BLOCK@56..140
           L_BRACE@56..57 "{"
-          SYNCHRONIZED_STMT@57..134
-            WHITESPACE@57..66 "\n        "
+          WHITESPACE@57..66 "\n        "
+          SYNCHRONIZED_STMT@66..134
             SYNCHRONIZED_KW@66..78 "synchronized"
-            MISSING@78..79
-              WHITESPACE@78..79 " "
+            WHITESPACE@78..79 " "
+            MISSING@79..79
             BLOCK@79..134
               L_BRACE@79..80 "{"
-              EXPRESSION_STMT@80..124
-                WHITESPACE@80..93 "\n            "
+              WHITESPACE@80..93 "\n            "
+              EXPRESSION_STMT@93..124
                 METHOD_CALL@93..123
                   FIELD_ACCESS@93..111
                     FIELD_ACCESS@93..103

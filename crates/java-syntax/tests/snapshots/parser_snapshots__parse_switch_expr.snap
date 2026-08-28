@@ -77,65 +77,65 @@ ROOT@0..132
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..131
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..131
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..129
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..129
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..129
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..129
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..123
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..123
             LOCAL_VARIABLE_DECLARATION@39..122
               IDENTIFIER@39..42 "var"
-              VARIABLE_DECLARATOR_LIST@42..122
-                WHITESPACE@42..43 " "
+              WHITESPACE@42..43 " "
+              VARIABLE_DECLARATOR_LIST@43..122
                 VARIABLE_DECLARATOR@43..122
                   IDENTIFIER@43..44 "a"
                   WHITESPACE@44..45 " "
                   EQUAL@45..46 "="
-                  SWITCH_EXPR@46..122
-                    WHITESPACE@46..47 " "
+                  WHITESPACE@46..47 " "
+                  SWITCH_EXPR@47..122
                     SWITCH_KW@47..53 "switch"
                     WHITESPACE@53..54 " "
                     L_PAREN@54..55 "("
                     LITERAL@55..59
                       IDENTIFIER@55..59 "expr"
                     R_PAREN@59..60 ")"
-                    SWITCH_BLOCK@60..122
-                      WHITESPACE@60..61 " "
+                    WHITESPACE@60..61 " "
+                    SWITCH_BLOCK@61..122
                       L_BRACE@61..62 "{"
-                      SWITCH_RULE@62..87
-                        WHITESPACE@62..75 "\n            "
+                      WHITESPACE@62..75 "\n            "
+                      SWITCH_RULE@75..87
                         SWITCH_LABEL@75..81
                           CASE_KW@75..79 "case"
-                          LITERAL@79..81
-                            WHITESPACE@79..80 " "
+                          WHITESPACE@79..80 " "
+                          LITERAL@80..81
                             INTEGER_LITERAL@80..81 "1"
                         WHITESPACE@81..82 " "
                         ARROW@82..84 "->"
-                        BLOCK@84..87
-                          WHITESPACE@84..85 " "
+                        WHITESPACE@84..85 " "
+                        BLOCK@85..87
                           L_BRACE@85..86 "{"
                           R_BRACE@86..87 "}"
-                      SWITCH_RULE@87..112
-                        WHITESPACE@87..100 "\n            "
+                      WHITESPACE@87..100 "\n            "
+                      SWITCH_RULE@100..112
                         SWITCH_LABEL@100..106
                           CASE_KW@100..104 "case"
-                          LITERAL@104..106
-                            WHITESPACE@104..105 " "
+                          WHITESPACE@104..105 " "
+                          LITERAL@105..106
                             INTEGER_LITERAL@105..106 "2"
                         WHITESPACE@106..107 " "
                         ARROW@107..109 "->"
-                        BLOCK@109..112
-                          WHITESPACE@109..110 " "
+                        WHITESPACE@109..110 " "
+                        BLOCK@110..112
                           L_BRACE@110..111 "{"
                           R_BRACE@111..112 "}"
                       WHITESPACE@112..121 "\n        "

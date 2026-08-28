@@ -28,8 +28,8 @@ ROOT@0..38
     IMPORT_KW@0..6 "import"
     WHITESPACE@6..7 " "
     STATIC_KW@7..13 "static"
-    IMPORT_PATH@13..37
-      WHITESPACE@13..14 " "
+    WHITESPACE@13..14 " "
+    IMPORT_PATH@14..37
       IDENTIFIER@14..18 "java"
       DOT@18..19 "."
       IDENTIFIER@19..23 "util"

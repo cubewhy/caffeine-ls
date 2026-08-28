@@ -48,31 +48,31 @@ ROOT@0..64
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..63
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..63
       L_BRACE@8..9 "{"
-      METHOD_DECL@9..61
-        WHITESPACE@9..14 "\n    "
+      WHITESPACE@9..14 "\n    "
+      METHOD_DECL@14..61
         VOID_KW@14..18 "void"
         WHITESPACE@18..19 " "
         IDENTIFIER@19..23 "func"
         FORMAL_PARAMETERS@23..25
           L_PAREN@23..24 "("
           R_PAREN@24..25 ")"
-        BLOCK@25..61
-          WHITESPACE@25..26 " "
+        WHITESPACE@25..26 " "
+        BLOCK@26..61
           L_BRACE@26..27 "{"
-          WHILE_STMT@27..55
-            WHITESPACE@27..36 "\n        "
+          WHITESPACE@27..36 "\n        "
+          WHILE_STMT@36..55
             WHILE_KW@36..41 "while"
-            PARENTHESIZED_EXPR@41..48
-              WHITESPACE@41..42 " "
+            WHITESPACE@41..42 " "
+            PARENTHESIZED_EXPR@42..48
               L_PAREN@42..43 "("
               LITERAL@43..47
                 TRUE_LITERAL@43..47 "true"
               R_PAREN@47..48 ")"
-            BREAK_STMT@48..55
-              WHITESPACE@48..49 " "
+            WHITESPACE@48..49 " "
+            BREAK_STMT@49..55
               BREAK_KW@49..54 "break"
               SEMICOLON@54..55 ";"
           WHITESPACE@55..60 "\n    "

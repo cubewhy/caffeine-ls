@@ -44,11 +44,11 @@ ROOT@0..56
     INTERFACE_KW@1..10 "interface"
     WHITESPACE@10..11 " "
     IDENTIFIER@11..17 "MyAnno"
-    ANNOTATION_TYPE_BODY@17..55
-      WHITESPACE@17..18 " "
+    WHITESPACE@17..18 " "
+    ANNOTATION_TYPE_BODY@18..55
       L_BRACE@18..19 "{"
-      ANNOTATION_TYPE_ELEMENT_DECL@19..39
-        WHITESPACE@19..24 "\n    "
+      WHITESPACE@19..24 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@24..39
         TYPE@24..30
           QUALIFIED_NAME@24..30
             IDENTIFIER@24..30 "String"
@@ -57,8 +57,8 @@ ROOT@0..56
         L_PAREN@36..37 "("
         R_PAREN@37..38 ")"
         SEMICOLON@38..39 ";"
-      ANNOTATION_TYPE_ELEMENT_DECL@39..53
-        WHITESPACE@39..44 "\n    "
+      WHITESPACE@39..44 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@44..53
         TYPE@44..47
           INT_KW@44..47 "int"
         WHITESPACE@47..48 " "

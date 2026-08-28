@@ -40,11 +40,11 @@ ROOT@0..51
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..51
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..51
       L_BRACE@8..9 "{"
-      FIELD_DECL@9..49
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      FIELD_DECL@10..49
         TYPE@10..45
           QUALIFIED_NAME@10..13
             IDENTIFIER@10..13 "Map"
@@ -55,8 +55,8 @@ ROOT@0..51
                 QUALIFIED_NAME@14..20
                   IDENTIFIER@14..20 "String"
             COMMA@20..21 ","
-            TYPE_ARGUMENT@21..44
-              WHITESPACE@21..22 " "
+            WHITESPACE@21..22 " "
+            TYPE_ARGUMENT@22..44
               TYPE@22..44
                 QUALIFIED_NAME@22..26
                   IDENTIFIER@22..26 "List"
@@ -65,17 +65,17 @@ ROOT@0..51
                   TYPE_ARGUMENT@27..43
                     WILDCARD_TYPE@27..43
                       QUESTION@27..28 "?"
-                      WILDCARD_BOUNDS@28..43
-                        WHITESPACE@28..29 " "
+                      WHITESPACE@28..29 " "
+                      WILDCARD_BOUNDS@29..43
                         EXTENDS_KW@29..36 "extends"
-                        TYPE@36..43
-                          WHITESPACE@36..37 " "
+                        WHITESPACE@36..37 " "
+                        TYPE@37..43
                           QUALIFIED_NAME@37..43
                             IDENTIFIER@37..43 "Number"
                   RIGHT_SHIFT@43..44 ">"
             GREATER@44..45 ">"
-        VARIABLE_DECLARATOR_LIST@45..48
-          WHITESPACE@45..46 " "
+        WHITESPACE@45..46 " "
+        VARIABLE_DECLARATOR_LIST@46..48
           VARIABLE_DECLARATOR@46..48
             IDENTIFIER@46..48 "xs"
         SEMICOLON@48..49 ";"

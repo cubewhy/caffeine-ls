@@ -52,11 +52,11 @@ ROOT@0..91
     INTERFACE_KW@1..10 "interface"
     WHITESPACE@10..11 " "
     IDENTIFIER@11..17 "Config"
-    ANNOTATION_TYPE_BODY@17..90
-      WHITESPACE@17..18 " "
+    WHITESPACE@17..18 " "
+    ANNOTATION_TYPE_BODY@18..90
       L_BRACE@18..19 "{"
-      ANNOTATION_TYPE_ELEMENT_DECL@19..56
-        WHITESPACE@19..24 "\n    "
+      WHITESPACE@19..24 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@24..56
         TYPE@24..30
           QUALIFIED_NAME@24..30
             IDENTIFIER@24..30 "String"
@@ -66,12 +66,12 @@ ROOT@0..91
         R_PAREN@36..37 ")"
         WHITESPACE@37..38 " "
         DEFAULT_KW@38..45 "default"
-        LITERAL@45..55
-          WHITESPACE@45..46 " "
+        WHITESPACE@45..46 " "
+        LITERAL@46..55
           STRING_LITERAL@46..55 "\"unknown\""
         SEMICOLON@55..56 ";"
-      ANNOTATION_TYPE_ELEMENT_DECL@56..88
-        WHITESPACE@56..61 "\n    "
+      WHITESPACE@56..61 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@61..88
         TYPE@61..64
           INT_KW@61..64 "int"
         WHITESPACE@64..65 " "
@@ -80,8 +80,8 @@ ROOT@0..91
         R_PAREN@76..77 ")"
         WHITESPACE@77..78 " "
         DEFAULT_KW@78..85 "default"
-        LITERAL@85..87
-          WHITESPACE@85..86 " "
+        WHITESPACE@85..86 " "
+        LITERAL@86..87
           INTEGER_LITERAL@86..87 "3"
         SEMICOLON@87..88 ";"
       WHITESPACE@88..89 "\n"

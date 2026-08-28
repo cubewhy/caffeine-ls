@@ -61,22 +61,22 @@ ROOT@0..100
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..99
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..99
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..97
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..97
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..97
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..97
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..56
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..56
             LOCAL_VARIABLE_DECLARATION@39..55
               TYPE@39..47
                 QUALIFIED_NAME@39..45
@@ -85,29 +85,29 @@ ROOT@0..100
                   DIMENSION@45..47
                     L_BRACKET@45..46 "["
                     R_BRACKET@46..47 "]"
-              VARIABLE_DECLARATOR_LIST@47..55
-                WHITESPACE@47..48 " "
+              WHITESPACE@47..48 " "
+              VARIABLE_DECLARATOR_LIST@48..55
                 VARIABLE_DECLARATOR@48..55
                   IDENTIFIER@48..55 "strings"
             SEMICOLON@55..56 ";"
-          ENHANCED_FOR_STMT@56..91
-            WHITESPACE@56..65 "\n        "
+          WHITESPACE@56..65 "\n        "
+          ENHANCED_FOR_STMT@65..91
             FOR_KW@65..68 "for"
             WHITESPACE@68..69 " "
             L_PAREN@69..70 "("
             TYPE@70..76
               QUALIFIED_NAME@70..76
                 IDENTIFIER@70..76 "String"
-            VARIABLE_DECLARATOR@76..78
-              WHITESPACE@76..77 " "
+            WHITESPACE@76..77 " "
+            VARIABLE_DECLARATOR@77..78
               IDENTIFIER@77..78 "s"
             COLON@78..79 ":"
-            LITERAL@79..87
-              WHITESPACE@79..80 " "
+            WHITESPACE@79..80 " "
+            LITERAL@80..87
               IDENTIFIER@80..87 "strings"
             R_PAREN@87..88 ")"
-            BLOCK@88..91
-              WHITESPACE@88..89 " "
+            WHITESPACE@88..89 " "
+            BLOCK@89..91
               L_BRACE@89..90 "{"
               R_BRACE@90..91 "}"
           WHITESPACE@91..96 "\n    "

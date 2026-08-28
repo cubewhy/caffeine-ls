@@ -47,29 +47,29 @@ ROOT@0..67
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..66
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..66
       L_BRACE@8..9 "{"
-      METHOD_DECL@9..64
-        WHITESPACE@9..14 "\n    "
+      WHITESPACE@9..14 "\n    "
+      METHOD_DECL@14..64
         VOID_KW@14..18 "void"
         WHITESPACE@18..19 " "
         IDENTIFIER@19..23 "func"
         FORMAL_PARAMETERS@23..25
           L_PAREN@23..24 "("
           R_PAREN@24..25 ")"
-        BLOCK@25..64
-          WHITESPACE@25..26 " "
+        WHITESPACE@25..26 " "
+        BLOCK@26..64
           L_BRACE@26..27 "{"
-          ASSERT_STMT@27..58
-            WHITESPACE@27..36 "\n        "
+          WHITESPACE@27..36 "\n        "
+          ASSERT_STMT@36..58
             ASSERT_KW@36..42 "assert"
-            LITERAL@42..47
-              WHITESPACE@42..43 " "
+            WHITESPACE@42..43 " "
+            LITERAL@43..47
               TRUE_LITERAL@43..47 "true"
             COLON@47..48 ":"
-            LITERAL@48..57
-              WHITESPACE@48..49 " "
+            WHITESPACE@48..49 " "
+            LITERAL@49..57
               STRING_LITERAL@49..57 "\"failed\""
             SEMICOLON@57..58 ";"
           WHITESPACE@58..63 "\n    "

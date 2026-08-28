@@ -19,7 +19,7 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..229
-  method m() -> void throws Exception @12..227
+  method m() -> void throws Exception @17..227
 
 BODIES:
 body:

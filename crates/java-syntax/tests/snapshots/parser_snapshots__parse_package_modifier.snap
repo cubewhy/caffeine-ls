@@ -28,11 +28,11 @@ ROOT@0..33
       AT@0..1 "@"
       QUALIFIED_NAME@1..11
         IDENTIFIER@1..11 "Annotation"
-  PACKAGE_DECL@11..32
-    WHITESPACE@11..12 " "
+  WHITESPACE@11..12 " "
+  PACKAGE_DECL@12..32
     PACKAGE_KW@12..19 "package"
-    QUALIFIED_NAME@19..31
-      WHITESPACE@19..20 " "
+    WHITESPACE@19..20 " "
+    QUALIFIED_NAME@20..31
       IDENTIFIER@20..23 "com"
       DOT@23..24 "."
       IDENTIFIER@24..31 "example"

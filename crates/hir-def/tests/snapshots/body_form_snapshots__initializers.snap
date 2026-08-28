@@ -26,13 +26,13 @@ class Foo @1..263
   field c: int[] initializer @68..90 @65..90
   field d: int[] initializer @105..116 @102..116
   field s: String initializer @132..142 @129..142
-  static block @143..169
-  instance block @169..188
-  enum E @188..214
-    constant A arguments @203..206 @201..206
-    constant B arguments @209..212 @207..212
-  @interface Anno @214..261
-    method value() -> int default @256..258 @236..259
+  static block @148..169
+  instance block @174..188
+  enum E @193..214
+    constant A arguments @203..206 @202..206
+    constant B arguments @209..212 @208..212
+  @interface Anno @219..261
+    method value() -> int default @256..258 @237..259
 
 BODIES:
 body:

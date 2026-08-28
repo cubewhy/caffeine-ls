@@ -62,40 +62,40 @@ ROOT@0..88
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..87
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..87
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..85
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..85
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..85
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..85
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..49
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..49
             LOCAL_VARIABLE_DECLARATION@39..48
               TYPE@39..42
                 INT_KW@39..42 "int"
-              VARIABLE_DECLARATOR_LIST@42..48
-                WHITESPACE@42..43 " "
+              WHITESPACE@42..43 " "
+              VARIABLE_DECLARATOR_LIST@43..48
                 VARIABLE_DECLARATOR@43..48
                   IDENTIFIER@43..44 "i"
                   WHITESPACE@44..45 " "
                   EQUAL@45..46 "="
-                  LITERAL@46..48
-                    WHITESPACE@46..47 " "
+                  WHITESPACE@46..47 " "
+                  LITERAL@47..48
                     INTEGER_LITERAL@47..48 "0"
             SEMICOLON@48..49 ";"
-          DO_STMT@49..79
-            WHITESPACE@49..58 "\n        "
+          WHITESPACE@49..58 "\n        "
+          DO_STMT@58..79
             DO_KW@58..60 "do"
-            EXPRESSION_STMT@60..65
-              WHITESPACE@60..61 " "
+            WHITESPACE@60..61 " "
+            EXPRESSION_STMT@61..65
               POSTFIX_EXPR@61..64
                 LITERAL@61..62
                   IDENTIFIER@61..62 "i"
@@ -103,8 +103,8 @@ ROOT@0..88
               SEMICOLON@64..65 ";"
             WHITESPACE@65..66 " "
             WHILE_KW@66..71 "while"
-            PARENTHESIZED_EXPR@71..78
-              WHITESPACE@71..72 " "
+            WHITESPACE@71..72 " "
+            PARENTHESIZED_EXPR@72..78
               L_PAREN@72..73 "("
               LITERAL@73..77
                 TRUE_LITERAL@73..77 "true"

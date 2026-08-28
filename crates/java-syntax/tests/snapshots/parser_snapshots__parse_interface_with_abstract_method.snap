@@ -30,11 +30,11 @@ ROOT@0..25
     INTERFACE_KW@0..9 "interface"
     WHITESPACE@9..10 " "
     IDENTIFIER@10..11 "A"
-    INTERFACE_BODY@11..25
-      WHITESPACE@11..12 " "
+    WHITESPACE@11..12 " "
+    INTERFACE_BODY@12..25
       L_BRACE@12..13 "{"
-      METHOD_DECL@13..23
-        WHITESPACE@13..14 " "
+      WHITESPACE@13..14 " "
+      METHOD_DECL@14..23
         VOID_KW@14..18 "void"
         WHITESPACE@18..19 " "
         IDENTIFIER@19..20 "f"

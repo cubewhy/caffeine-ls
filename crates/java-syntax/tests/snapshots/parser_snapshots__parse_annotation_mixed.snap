@@ -64,11 +64,11 @@ ROOT@0..107
     INTERFACE_KW@1..10 "interface"
     WHITESPACE@10..11 " "
     IDENTIFIER@11..18 "Complex"
-    ANNOTATION_TYPE_BODY@18..106
-      WHITESPACE@18..19 " "
+    WHITESPACE@18..19 " "
+    ANNOTATION_TYPE_BODY@19..106
       L_BRACE@19..20 "{"
-      ANNOTATION_TYPE_ELEMENT_DECL@20..47
-        WHITESPACE@20..25 "\n    "
+      WHITESPACE@20..25 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@25..47
         TYPE@25..28
           INT_KW@25..28 "int"
         WHITESPACE@28..29 " "
@@ -77,12 +77,12 @@ ROOT@0..107
         R_PAREN@35..36 ")"
         WHITESPACE@36..37 " "
         DEFAULT_KW@37..44 "default"
-        LITERAL@44..46
-          WHITESPACE@44..45 " "
+        WHITESPACE@44..45 " "
+        LITERAL@45..46
           INTEGER_LITERAL@45..46 "0"
         SEMICOLON@46..47 ";"
-      ANNOTATION_TYPE_ELEMENT_DECL@47..78
-        WHITESPACE@47..52 "\n    "
+      WHITESPACE@47..52 "\n    "
+      ANNOTATION_TYPE_ELEMENT_DECL@52..78
         TYPE@52..60
           QUALIFIED_NAME@52..58
             IDENTIFIER@52..58 "String"
@@ -96,22 +96,22 @@ ROOT@0..107
         R_PAREN@66..67 ")"
         WHITESPACE@67..68 " "
         DEFAULT_KW@68..75 "default"
-        LITERAL@75..77
-          WHITESPACE@75..76 " "
+        WHITESPACE@75..76 " "
+        LITERAL@76..77
           INTEGER_LITERAL@76..77 "1"
         SEMICOLON@77..78 ";"
-      FIELD_DECL@78..104
-        WHITESPACE@78..83 "\n    "
+      WHITESPACE@78..83 "\n    "
+      FIELD_DECL@83..104
         TYPE@83..89
           DOUBLE_KW@83..89 "double"
-        VARIABLE_DECLARATOR_LIST@89..103
-          WHITESPACE@89..90 " "
+        WHITESPACE@89..90 " "
+        VARIABLE_DECLARATOR_LIST@90..103
           VARIABLE_DECLARATOR@90..103
             IDENTIFIER@90..97 "VERSION"
             WHITESPACE@97..98 " "
             EQUAL@98..99 "="
-            LITERAL@99..103
-              WHITESPACE@99..100 " "
+            WHITESPACE@99..100 " "
+            LITERAL@100..103
               FLOAT_LITERAL@100..103 "1.0"
         SEMICOLON@103..104 ";"
       WHITESPACE@104..105 "\n"

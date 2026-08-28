@@ -68,15 +68,15 @@ ROOT@0..133
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..132
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..132
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..52
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..52
         MODIFIER_LIST@17..23
           STATIC_KW@17..23 "static"
-        TYPE@23..45
-          WHITESPACE@23..24 " "
+        WHITESPACE@23..24 " "
+        TYPE@24..45
           QUALIFIED_NAME@24..29
             IDENTIFIER@24..29 "Outer"
           DOT@29..30 "."
@@ -87,13 +87,13 @@ ROOT@0..133
                 IDENTIFIER@31..39 "Nullable"
           WHITESPACE@39..40 " "
           IDENTIFIER@40..45 "Inner"
-        VARIABLE_DECLARATOR_LIST@45..51
-          WHITESPACE@45..46 " "
+        WHITESPACE@45..46 " "
+        VARIABLE_DECLARATOR_LIST@46..51
           VARIABLE_DECLARATOR@46..51
             IDENTIFIER@46..51 "field"
         SEMICOLON@51..52 ";"
-      FIELD_DECL@52..130
-        WHITESPACE@52..57 "\n    "
+      WHITESPACE@52..57 "\n    "
+      FIELD_DECL@57..130
         TYPE@57..125
           QUALIFIED_NAME@57..66
             IDENTIFIER@57..61 "java"
@@ -116,30 +116,30 @@ ROOT@0..133
                     AT@83..84 "@"
                     QUALIFIED_NAME@84..91
                       IDENTIFIER@84..91 "NonNull"
-                QUALIFIED_NAME@91..98
-                  WHITESPACE@91..92 " "
+                WHITESPACE@91..92 " "
+                QUALIFIED_NAME@92..98
                   IDENTIFIER@92..98 "String"
             COMMA@98..99 ","
-            TYPE_ARGUMENT@99..124
-              WHITESPACE@99..100 " "
+            WHITESPACE@99..100 " "
+            TYPE_ARGUMENT@100..124
               WILDCARD_TYPE@100..124
                 QUESTION@100..101 "?"
-                WILDCARD_BOUNDS@101..124
-                  WHITESPACE@101..102 " "
+                WHITESPACE@101..102 " "
+                WILDCARD_BOUNDS@102..124
                   EXTENDS_KW@102..109 "extends"
-                  TYPE@109..124
-                    WHITESPACE@109..110 " "
+                  WHITESPACE@109..110 " "
+                  TYPE@110..124
                     MODIFIER_LIST@110..117
                       MARKER_ANNOTATION@110..117
                         AT@110..111 "@"
                         QUALIFIED_NAME@111..117
                           IDENTIFIER@111..117 "Number"
-                    QUALIFIED_NAME@117..124
-                      WHITESPACE@117..118 " "
+                    WHITESPACE@117..118 " "
+                    QUALIFIED_NAME@118..124
                       IDENTIFIER@118..124 "Number"
             GREATER@124..125 ">"
-        VARIABLE_DECLARATOR_LIST@125..129
-          WHITESPACE@125..126 " "
+        WHITESPACE@125..126 " "
+        VARIABLE_DECLARATOR_LIST@126..129
           VARIABLE_DECLARATOR@126..129
             IDENTIFIER@126..129 "map"
         SEMICOLON@129..130 ";"

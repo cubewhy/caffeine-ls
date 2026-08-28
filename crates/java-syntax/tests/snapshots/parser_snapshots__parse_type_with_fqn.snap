@@ -43,11 +43,11 @@ ROOT@0..58
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..57
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..57
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..55
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..55
         TYPE@17..49
           QUALIFIED_NAME@17..31
             IDENTIFIER@17..21 "java"
@@ -66,8 +66,8 @@ ROOT@0..58
                   DOT@41..42 "."
                   IDENTIFIER@42..48 "String"
             GREATER@48..49 ">"
-        VARIABLE_DECLARATOR_LIST@49..54
-          WHITESPACE@49..50 " "
+        WHITESPACE@49..50 " "
+        VARIABLE_DECLARATOR_LIST@50..54
           VARIABLE_DECLARATOR@50..54
             IDENTIFIER@50..54 "list"
         SEMICOLON@54..55 ";"

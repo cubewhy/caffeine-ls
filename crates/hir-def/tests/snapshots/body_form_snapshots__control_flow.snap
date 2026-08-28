@@ -28,8 +28,8 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..433
-  method m(int a) -> void @12..397
-  method n() -> void throws Exception @397..431
+  method m(int a) -> void @17..397
+  method n() -> void throws Exception @402..431
 
 BODIES:
 body:

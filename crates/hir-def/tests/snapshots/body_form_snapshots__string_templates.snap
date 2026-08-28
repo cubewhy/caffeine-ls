@@ -15,7 +15,7 @@ not a statement @58..59
 ITEM_TREE:
 file (java)
 class Foo @1..67
-  method m(int x) -> void @12..65
+  method m(int x) -> void @17..65
 
 BODIES:
 body:

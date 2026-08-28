@@ -30,7 +30,7 @@ ROOT@0..13
       TYPE_PARAMETER@8..9
         IDENTIFIER@8..9 "T"
       GREATER@9..10 ">"
-    CLASS_BODY@10..13
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..13
       L_BRACE@11..12 "{"
       R_BRACE@12..13 "}"

@@ -42,28 +42,28 @@ ROOT@0..39
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..38
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..38
       L_BRACE@8..9 "{"
-      FIELD_DECL@9..20
-        WHITESPACE@9..14 "\n    "
+      WHITESPACE@9..14 "\n    "
+      FIELD_DECL@14..20
         TYPE@14..17
           INT_KW@14..17 "int"
-        VARIABLE_DECLARATOR_LIST@17..19
-          WHITESPACE@17..18 " "
+        WHITESPACE@17..18 " "
+        VARIABLE_DECLARATOR_LIST@18..19
           VARIABLE_DECLARATOR@18..19
             IDENTIFIER@18..19 "x"
         SEMICOLON@19..20 ";"
-      METHOD_DECL@20..36
-        WHITESPACE@20..25 "\n    "
+      WHITESPACE@20..25 "\n    "
+      METHOD_DECL@25..36
         VOID_KW@25..29 "void"
         WHITESPACE@29..30 " "
         IDENTIFIER@30..31 "f"
         FORMAL_PARAMETERS@31..33
           L_PAREN@31..32 "("
           R_PAREN@32..33 ")"
-        BLOCK@33..36
-          WHITESPACE@33..34 " "
+        WHITESPACE@33..34 " "
+        BLOCK@34..36
           L_BRACE@34..35 "{"
           R_BRACE@35..36 "}"
       WHITESPACE@36..37 "\n"

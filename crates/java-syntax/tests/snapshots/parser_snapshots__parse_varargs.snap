@@ -40,11 +40,11 @@ ROOT@0..45
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..44
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..44
       L_BRACE@8..9 "{"
-      METHOD_DECL@9..42
-        WHITESPACE@9..14 "\n    "
+      WHITESPACE@9..14 "\n    "
+      METHOD_DECL@14..42
         VOID_KW@14..18 "void"
         WHITESPACE@18..19 " "
         IDENTIFIER@19..23 "func"
@@ -58,8 +58,8 @@ ROOT@0..45
             WHITESPACE@33..34 " "
             IDENTIFIER@34..38 "args"
           R_PAREN@38..39 ")"
-        BLOCK@39..42
-          WHITESPACE@39..40 " "
+        WHITESPACE@39..40 " "
+        BLOCK@40..42
           L_BRACE@40..41 "{"
           R_BRACE@41..42 "}"
       WHITESPACE@42..43 "\n"

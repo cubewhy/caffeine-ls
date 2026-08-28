@@ -44,22 +44,22 @@ ROOT@0..59
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..58
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..58
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..56
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..56
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..56
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..56
           L_BRACE@29..30 "{"
-          EXPRESSION_STMT@30..50
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          EXPRESSION_STMT@39..50
             CLASS_LITERAL@39..49
               LITERAL@39..43
                 IDENTIFIER@39..43 "Test"

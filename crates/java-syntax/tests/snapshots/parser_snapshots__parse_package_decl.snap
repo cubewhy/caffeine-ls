@@ -20,8 +20,8 @@ SYNTAX_TREE:
 ROOT@0..12
   PACKAGE_DECL@0..12
     PACKAGE_KW@0..7 "package"
-    QUALIFIED_NAME@7..11
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    QUALIFIED_NAME@8..11
       IDENTIFIER@8..9 "a"
       DOT@9..10 "."
       IDENTIFIER@10..11 "b"

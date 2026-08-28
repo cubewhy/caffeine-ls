@@ -17,4 +17,4 @@ ITEM_TREE:
 file (java)
 class Box<T> @1..30
   field value: T @22..27
-class Foo<T extends Comparable<T> & Serializable, U> extends Bar<T> implements Runnable<T>, Serializable @30..140
+class Foo<T extends Comparable<T> & Serializable, U> extends Bar<T> implements Runnable<T>, Serializable @32..140

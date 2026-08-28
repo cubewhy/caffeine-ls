@@ -15,7 +15,7 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo<T> @1..59
-  method m() -> void @15..57
+  method m() -> void @20..57
 
 BODIES:
 body:

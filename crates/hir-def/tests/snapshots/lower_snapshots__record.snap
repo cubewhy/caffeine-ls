@@ -16,5 +16,5 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 record Point(int x, int y) implements Comparable<Point> [public] @1..125
-  constructor Point() [public] @65..90
-  method sum() -> int @90..123
+  constructor Point() [public] @70..90
+  method sum() -> int @96..123

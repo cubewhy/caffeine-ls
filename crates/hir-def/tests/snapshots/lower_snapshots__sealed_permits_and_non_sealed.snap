@@ -21,6 +21,6 @@ ITEM_TREE:
 file (java)
 class Shape [sealed] @1..90
   field Circle: permits @28..34
-  field Square: permits @35..42
+  field Square: permits @36..42
   instance block @43..46
-  class Circle extends Shape @58..89
+  class Circle extends Shape @59..89

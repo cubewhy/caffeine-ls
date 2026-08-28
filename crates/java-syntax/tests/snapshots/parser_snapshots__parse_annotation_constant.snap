@@ -48,36 +48,36 @@ ROOT@0..80
     INTERFACE_KW@1..10 "interface"
     WHITESPACE@10..11 " "
     IDENTIFIER@11..17 "Limits"
-    ANNOTATION_TYPE_BODY@17..79
-      WHITESPACE@17..18 " "
+    WHITESPACE@17..18 " "
+    ANNOTATION_TYPE_BODY@18..79
       L_BRACE@18..19 "{"
-      FIELD_DECL@19..43
-        WHITESPACE@19..24 "\n    "
+      WHITESPACE@19..24 "\n    "
+      FIELD_DECL@24..43
         TYPE@24..27
           INT_KW@24..27 "int"
-        VARIABLE_DECLARATOR_LIST@27..42
-          WHITESPACE@27..28 " "
+        WHITESPACE@27..28 " "
+        VARIABLE_DECLARATOR_LIST@28..42
           VARIABLE_DECLARATOR@28..42
             IDENTIFIER@28..36 "MAX_SIZE"
             WHITESPACE@36..37 " "
             EQUAL@37..38 "="
-            LITERAL@38..42
-              WHITESPACE@38..39 " "
+            WHITESPACE@38..39 " "
+            LITERAL@39..42
               INTEGER_LITERAL@39..42 "100"
         SEMICOLON@42..43 ";"
-      FIELD_DECL@43..77
-        WHITESPACE@43..48 "\n    "
+      WHITESPACE@43..48 "\n    "
+      FIELD_DECL@48..77
         TYPE@48..54
           QUALIFIED_NAME@48..54
             IDENTIFIER@48..54 "String"
-        VARIABLE_DECLARATOR_LIST@54..76
-          WHITESPACE@54..55 " "
+        WHITESPACE@54..55 " "
+        VARIABLE_DECLARATOR_LIST@55..76
           VARIABLE_DECLARATOR@55..76
             IDENTIFIER@55..67 "DEFAULT_TYPE"
             WHITESPACE@67..68 " "
             EQUAL@68..69 "="
-            LITERAL@69..76
-              WHITESPACE@69..70 " "
+            WHITESPACE@69..70 " "
+            LITERAL@70..76
               STRING_LITERAL@70..76 "\"JSON\""
         SEMICOLON@76..77 ";"
       WHITESPACE@77..78 "\n"

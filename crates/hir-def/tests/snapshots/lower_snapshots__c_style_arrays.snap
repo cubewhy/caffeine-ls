@@ -17,4 +17,4 @@ file (java)
 class Foo @1..69
   field a: int[] @21..24
   field args: String[] @37..43
-  method m(int[] b) -> void @44..67
+  method m(int[] b) -> void @49..67

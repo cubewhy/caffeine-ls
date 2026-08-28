@@ -56,47 +56,47 @@ ROOT@0..84
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..83
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..83
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..81
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..81
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..81
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..81
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..75
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..75
             LOCAL_VARIABLE_DECLARATION@39..74
               TYPE@39..42
                 QUALIFIED_NAME@39..42
                   IDENTIFIER@39..42 "Foo"
-              VARIABLE_DECLARATOR_LIST@42..74
-                WHITESPACE@42..43 " "
+              WHITESPACE@42..43 " "
+              VARIABLE_DECLARATOR_LIST@43..74
                 VARIABLE_DECLARATOR@43..74
                   IDENTIFIER@43..44 "a"
                   WHITESPACE@44..45 " "
                   EQUAL@45..46 "="
-                  CAST_EXPR@46..74
-                    WHITESPACE@46..47 " "
+                  WHITESPACE@46..47 " "
+                  CAST_EXPR@47..74
                     L_PAREN@47..48 "("
                     TYPE@48..56
                       QUALIFIED_NAME@48..56
                         IDENTIFIER@48..56 "Runnable"
                     WHITESPACE@56..57 " "
                     BIT_AND@57..58 "&"
-                    TYPE@58..71
-                      WHITESPACE@58..59 " "
+                    WHITESPACE@58..59 " "
+                    TYPE@59..71
                       QUALIFIED_NAME@59..71
                         IDENTIFIER@59..71 "Serializable"
                     R_PAREN@71..72 ")"
-                    LITERAL@72..74
-                      WHITESPACE@72..73 " "
+                    WHITESPACE@72..73 " "
+                    LITERAL@73..74
                       IDENTIFIER@73..74 "o"
             SEMICOLON@74..75 ";"
           WHITESPACE@75..80 "\n    "

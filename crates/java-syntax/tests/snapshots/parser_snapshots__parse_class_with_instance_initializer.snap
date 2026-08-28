@@ -26,11 +26,11 @@ ROOT@0..14
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..14
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..14
       L_BRACE@8..9 "{"
-      INSTANCE_INITIALIZER@9..12
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      INSTANCE_INITIALIZER@10..12
         BLOCK@10..12
           L_BRACE@10..11 "{"
           R_BRACE@11..12 "}"

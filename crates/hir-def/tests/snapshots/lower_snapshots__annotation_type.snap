@@ -16,6 +16,6 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 @interface Tag [public] @1..147
-  method name() -> String default @76..86 @50..87
-  method sizes() -> int[] default @113..123 @87..124
-  method type() -> Class<?> @124..145
+  method name() -> String default @76..86 @55..87
+  method sizes() -> int[] default @113..123 @92..124
+  method type() -> Class<?> @129..145

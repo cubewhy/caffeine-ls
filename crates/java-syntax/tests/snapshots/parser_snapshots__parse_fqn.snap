@@ -122,33 +122,33 @@ SYNTAX_TREE:
 ROOT@0..251
   PACKAGE_DECL@0..20
     PACKAGE_KW@0..7 "package"
-    QUALIFIED_NAME@7..19
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    QUALIFIED_NAME@8..19
       IDENTIFIER@8..11 "com"
       DOT@11..12 "."
       IDENTIFIER@12..19 "example"
     SEMICOLON@19..20 ";"
-  IMPORT_DECL@20..49
-    WHITESPACE@20..22 "\n\n"
+  WHITESPACE@20..22 "\n\n"
+  IMPORT_DECL@22..49
     IMPORT_KW@22..28 "import"
-    IMPORT_PATH@28..48
-      WHITESPACE@28..29 " "
+    WHITESPACE@28..29 " "
+    IMPORT_PATH@29..48
       IDENTIFIER@29..33 "java"
       DOT@33..34 "."
       IDENTIFIER@34..38 "util"
       DOT@38..39 "."
       IDENTIFIER@39..48 "ArrayList"
     SEMICOLON@48..49 ";"
-  CLASS_DECL@49..250
-    WHITESPACE@49..51 "\n\n"
+  WHITESPACE@49..51 "\n\n"
+  CLASS_DECL@51..250
     CLASS_KW@51..56 "class"
     WHITESPACE@56..57 " "
     IDENTIFIER@57..61 "Test"
-    CLASS_BODY@61..250
-      WHITESPACE@61..62 " "
+    WHITESPACE@61..62 " "
+    CLASS_BODY@62..250
       L_BRACE@62..63 "{"
-      METHOD_DECL@63..248
-        WHITESPACE@63..68 "\n    "
+      WHITESPACE@63..68 "\n    "
+      METHOD_DECL@68..248
         TYPE@68..100
           QUALIFIED_NAME@68..82
             IDENTIFIER@68..72 "java"
@@ -172,11 +172,11 @@ ROOT@0..251
         FORMAL_PARAMETERS@105..107
           L_PAREN@105..106 "("
           R_PAREN@106..107 ")"
-        BLOCK@107..248
-          WHITESPACE@107..108 " "
+        WHITESPACE@107..108 " "
+        BLOCK@108..248
           L_BRACE@108..109 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@109..173
-            WHITESPACE@109..118 "\n        "
+          WHITESPACE@109..118 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@118..173
             LOCAL_VARIABLE_DECLARATION@118..172
               TYPE@118..150
                 QUALIFIED_NAME@118..132
@@ -196,17 +196,17 @@ ROOT@0..251
                         DOT@142..143 "."
                         IDENTIFIER@143..149 "String"
                   GREATER@149..150 ">"
-              VARIABLE_DECLARATOR_LIST@150..172
-                WHITESPACE@150..151 " "
+              WHITESPACE@150..151 " "
+              VARIABLE_DECLARATOR_LIST@151..172
                 VARIABLE_DECLARATOR@151..172
                   IDENTIFIER@151..152 "l"
                   WHITESPACE@152..153 " "
                   EQUAL@153..154 "="
-                  NEW_EXPR@154..172
-                    WHITESPACE@154..155 " "
+                  WHITESPACE@154..155 " "
+                  NEW_EXPR@155..172
                     NEW_KW@155..158 "new"
-                    QUALIFIED_NAME@158..168
-                      WHITESPACE@158..159 " "
+                    WHITESPACE@158..159 " "
+                    QUALIFIED_NAME@159..168
                       IDENTIFIER@159..168 "ArrayList"
                     TYPE_ARGUMENTS@168..170
                       LESS@168..169 "<"
@@ -215,8 +215,8 @@ ROOT@0..251
                       L_PAREN@170..171 "("
                       R_PAREN@171..172 ")"
             SEMICOLON@172..173 ";"
-          EXPRESSION_STMT@173..223
-            WHITESPACE@173..182 "\n        "
+          WHITESPACE@173..182 "\n        "
+          EXPRESSION_STMT@182..223
             METHOD_CALL@182..222
               FIELD_ACCESS@182..187
                 LITERAL@182..183
@@ -229,8 +229,8 @@ ROOT@0..251
                   FIELD_ACCESS@188..219
                     NEW_EXPR@188..210
                       NEW_KW@188..191 "new"
-                      QUALIFIED_NAME@191..208
-                        WHITESPACE@191..192 " "
+                      WHITESPACE@191..192 " "
+                      QUALIFIED_NAME@192..208
                         IDENTIFIER@192..195 "com"
                         DOT@195..196 "."
                         IDENTIFIER@196..203 "example"
@@ -246,11 +246,11 @@ ROOT@0..251
                     R_PAREN@220..221 ")"
                 R_PAREN@221..222 ")"
             SEMICOLON@222..223 ";"
-          RETURN_STMT@223..242
-            WHITESPACE@223..233 "\n\n        "
+          WHITESPACE@223..233 "\n\n        "
+          RETURN_STMT@233..242
             RETURN_KW@233..239 "return"
-            LITERAL@239..241
-              WHITESPACE@239..240 " "
+            WHITESPACE@239..240 " "
+            LITERAL@240..241
               IDENTIFIER@240..241 "l"
             SEMICOLON@241..242 ";"
           WHITESPACE@242..247 "\n    "

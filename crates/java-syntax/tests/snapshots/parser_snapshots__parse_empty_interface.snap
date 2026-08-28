@@ -22,7 +22,7 @@ ROOT@0..14
     INTERFACE_KW@0..9 "interface"
     WHITESPACE@9..10 " "
     IDENTIFIER@10..11 "A"
-    INTERFACE_BODY@11..14
-      WHITESPACE@11..12 " "
+    WHITESPACE@11..12 " "
+    INTERFACE_BODY@12..14
       L_BRACE@12..13 "{"
       R_BRACE@13..14 "}"

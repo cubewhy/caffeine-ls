@@ -43,36 +43,36 @@ ROOT@0..35
     ENUM_KW@0..4 "enum"
     WHITESPACE@4..5 " "
     IDENTIFIER@5..6 "E"
-    ENUM_BODY@6..35
-      WHITESPACE@6..7 " "
+    WHITESPACE@6..7 " "
+    ENUM_BODY@7..35
       L_BRACE@7..8 "{"
-      ENUM_CONSTANT@8..10
-        WHITESPACE@8..9 " "
+      WHITESPACE@8..9 " "
+      ENUM_CONSTANT@9..10
         IDENTIFIER@9..10 "A"
       COMMA@10..11 ","
-      ENUM_CONSTANT@11..13
-        WHITESPACE@11..12 " "
+      WHITESPACE@11..12 " "
+      ENUM_CONSTANT@12..13
         IDENTIFIER@12..13 "B"
       SEMICOLON@13..14 ";"
-      FIELD_DECL@14..21
-        WHITESPACE@14..15 " "
+      WHITESPACE@14..15 " "
+      FIELD_DECL@15..21
         TYPE@15..18
           INT_KW@15..18 "int"
-        VARIABLE_DECLARATOR_LIST@18..20
-          WHITESPACE@18..19 " "
+        WHITESPACE@18..19 " "
+        VARIABLE_DECLARATOR_LIST@19..20
           VARIABLE_DECLARATOR@19..20
             IDENTIFIER@19..20 "x"
         SEMICOLON@20..21 ";"
-      METHOD_DECL@21..33
-        WHITESPACE@21..22 " "
+      WHITESPACE@21..22 " "
+      METHOD_DECL@22..33
         VOID_KW@22..26 "void"
         WHITESPACE@26..27 " "
         IDENTIFIER@27..28 "f"
         FORMAL_PARAMETERS@28..30
           L_PAREN@28..29 "("
           R_PAREN@29..30 ")"
-        BLOCK@30..33
-          WHITESPACE@30..31 " "
+        WHITESPACE@30..31 " "
+        BLOCK@31..33
           L_BRACE@31..32 "{"
           R_BRACE@32..33 "}"
       WHITESPACE@33..34 " "

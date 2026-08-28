@@ -99,11 +99,11 @@ ROOT@0..221
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..220
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..220
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..218
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..218
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
@@ -116,26 +116,26 @@ ROOT@0..221
             WHITESPACE@33..34 " "
             IDENTIFIER@34..37 "obj"
           R_PAREN@37..38 ")"
-        BLOCK@38..218
-          WHITESPACE@38..39 " "
+        WHITESPACE@38..39 " "
+        BLOCK@39..218
           L_BRACE@39..40 "{"
-          SWITCH_STMT@40..212
-            WHITESPACE@40..49 "\n        "
+          WHITESPACE@40..49 "\n        "
+          SWITCH_STMT@49..212
             SWITCH_KW@49..55 "switch"
             WHITESPACE@55..56 " "
             L_PAREN@56..57 "("
             LITERAL@57..60
               IDENTIFIER@57..60 "obj"
             R_PAREN@60..61 ")"
-            SWITCH_BLOCK@61..212
-              WHITESPACE@61..62 " "
+            WHITESPACE@61..62 " "
+            SWITCH_BLOCK@62..212
               L_BRACE@62..63 "{"
-              SWITCH_RULE@63..115
-                WHITESPACE@63..76 "\n            "
+              WHITESPACE@63..76 "\n            "
+              SWITCH_RULE@76..115
                 SWITCH_LABEL@76..89
                   CASE_KW@76..80 "case"
-                  TYPE_PATTERN@80..89
-                    WHITESPACE@80..81 " "
+                  WHITESPACE@80..81 " "
+                  TYPE_PATTERN@81..89
                     TYPE@81..87
                       QUALIFIED_NAME@81..87
                         IDENTIFIER@81..87 "String"
@@ -143,8 +143,8 @@ ROOT@0..221
                     IDENTIFIER@88..89 "s"
                 WHITESPACE@89..90 " "
                 ARROW@90..92 "->"
-                METHOD_CALL@92..114
-                  WHITESPACE@92..93 " "
+                WHITESPACE@92..93 " "
+                METHOD_CALL@93..114
                   FIELD_ACCESS@93..111
                     FIELD_ACCESS@93..103
                       LITERAL@93..99
@@ -159,12 +159,12 @@ ROOT@0..221
                       IDENTIFIER@112..113 "s"
                     R_PAREN@113..114 ")"
                 SEMICOLON@114..115 ";"
-              SWITCH_RULE@115..176
-                WHITESPACE@115..128 "\n            "
+              WHITESPACE@115..128 "\n            "
+              SWITCH_RULE@128..176
                 SWITCH_LABEL@128..142
                   CASE_KW@128..132 "case"
-                  TYPE_PATTERN@132..142
-                    WHITESPACE@132..133 " "
+                  WHITESPACE@132..133 " "
+                  TYPE_PATTERN@133..142
                     TYPE@133..140
                       QUALIFIED_NAME@133..140
                         IDENTIFIER@133..140 "Integer"
@@ -172,8 +172,8 @@ ROOT@0..221
                     UNDERSCORE@141..142 "_"
                 WHITESPACE@142..143 " "
                 ARROW@143..145 "->"
-                METHOD_CALL@145..175
-                  WHITESPACE@145..146 " "
+                WHITESPACE@145..146 " "
+                METHOD_CALL@146..175
                   FIELD_ACCESS@146..164
                     FIELD_ACCESS@146..156
                       LITERAL@146..152
@@ -188,14 +188,14 @@ ROOT@0..221
                       STRING_LITERAL@165..174 "\"Integer\""
                     R_PAREN@174..175 ")"
                 SEMICOLON@175..176 ";"
-              SWITCH_RULE@176..202
-                WHITESPACE@176..189 "\n            "
+              WHITESPACE@176..189 "\n            "
+              SWITCH_RULE@189..202
                 SWITCH_LABEL@189..196
                   DEFAULT_KW@189..196 "default"
                 WHITESPACE@196..197 " "
                 ARROW@197..199 "->"
-                BLOCK@199..202
-                  WHITESPACE@199..200 " "
+                WHITESPACE@199..200 " "
+                BLOCK@200..202
                   L_BRACE@200..201 "{"
                   R_BRACE@201..202 "}"
               WHITESPACE@202..211 "\n        "

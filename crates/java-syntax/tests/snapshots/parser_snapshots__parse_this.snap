@@ -69,32 +69,32 @@ ROOT@0..116
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..115
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..115
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..30
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..30
         TYPE@17..23
           QUALIFIED_NAME@17..23
             IDENTIFIER@17..23 "String"
-        VARIABLE_DECLARATOR_LIST@23..29
-          WHITESPACE@23..24 " "
+        WHITESPACE@23..24 " "
+        VARIABLE_DECLARATOR_LIST@24..29
           VARIABLE_DECLARATOR@24..29
             IDENTIFIER@24..29 "field"
         SEMICOLON@29..30 ";"
-      METHOD_DECL@30..85
-        WHITESPACE@30..35 "\n    "
+      WHITESPACE@30..35 "\n    "
+      METHOD_DECL@35..85
         VOID_KW@35..39 "void"
         WHITESPACE@39..40 " "
         IDENTIFIER@40..44 "test"
         FORMAL_PARAMETERS@44..46
           L_PAREN@44..45 "("
           R_PAREN@45..46 ")"
-        BLOCK@46..85
-          WHITESPACE@46..47 " "
+        WHITESPACE@46..47 " "
+        BLOCK@47..85
           L_BRACE@47..48 "{"
-          EXPRESSION_STMT@48..79
-            WHITESPACE@48..57 "\n        "
+          WHITESPACE@48..57 "\n        "
+          EXPRESSION_STMT@57..79
             METHOD_CALL@57..78
               FIELD_ACCESS@57..66
                 LITERAL@57..61
@@ -112,8 +112,8 @@ ROOT@0..116
             SEMICOLON@78..79 ";"
           WHITESPACE@79..84 "\n    "
           R_BRACE@84..85 "}"
-      METHOD_DECL@85..113
-        WHITESPACE@85..91 "\n\n    "
+      WHITESPACE@85..91 "\n\n    "
+      METHOD_DECL@91..113
         VOID_KW@91..95 "void"
         WHITESPACE@95..96 " "
         IDENTIFIER@96..100 "test"
@@ -126,8 +126,8 @@ ROOT@0..116
             WHITESPACE@107..108 " "
             IDENTIFIER@108..109 "s"
           R_PAREN@109..110 ")"
-        BLOCK@110..113
-          WHITESPACE@110..111 " "
+        WHITESPACE@110..111 " "
+        BLOCK@111..113
           L_BRACE@111..112 "{"
           R_BRACE@112..113 "}"
       WHITESPACE@113..114 "\n"

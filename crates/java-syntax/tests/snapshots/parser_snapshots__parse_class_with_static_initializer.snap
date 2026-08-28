@@ -28,14 +28,14 @@ ROOT@0..21
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..21
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..21
       L_BRACE@8..9 "{"
-      STATIC_INITIALIZER@9..19
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      STATIC_INITIALIZER@10..19
         STATIC_KW@10..16 "static"
-        BLOCK@16..19
-          WHITESPACE@16..17 " "
+        WHITESPACE@16..17 " "
+        BLOCK@17..19
           L_BRACE@17..18 "{"
           R_BRACE@18..19 "}"
       WHITESPACE@19..20 " "

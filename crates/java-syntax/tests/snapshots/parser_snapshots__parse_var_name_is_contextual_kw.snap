@@ -55,41 +55,41 @@ ROOT@0..90
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..89
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..89
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..87
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..87
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..87
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..87
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..53
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..53
             LOCAL_VARIABLE_DECLARATION@39..52
               TYPE@39..45
                 QUALIFIED_NAME@39..45
                   IDENTIFIER@39..45 "record"
-              VARIABLE_DECLARATOR_LIST@45..52
-                WHITESPACE@45..46 " "
+              WHITESPACE@45..46 " "
+              VARIABLE_DECLARATOR_LIST@46..52
                 VARIABLE_DECLARATOR@46..52
                   IDENTIFIER@46..52 "record"
             SEMICOLON@52..53 ";"
-          RECORD_DECL@53..80
-            WHITESPACE@53..62 "\n        "
+          WHITESPACE@53..62 "\n        "
+          RECORD_DECL@62..80
             IDENTIFIER@62..68 "record"
             WHITESPACE@68..69 " "
             IDENTIFIER@69..75 "record"
             FORMAL_PARAMETERS@75..77
               L_PAREN@75..76 "("
               R_PAREN@76..77 ")"
-            RECORD_BODY@77..80
-              WHITESPACE@77..78 " "
+            WHITESPACE@77..78 " "
+            RECORD_BODY@78..80
               L_BRACE@78..79 "{"
               R_BRACE@79..80 "}"
           EMPTY_STMT@80..81

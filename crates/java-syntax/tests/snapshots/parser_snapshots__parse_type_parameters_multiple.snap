@@ -33,11 +33,11 @@ ROOT@0..16
       TYPE_PARAMETER@8..9
         IDENTIFIER@8..9 "T"
       COMMA@9..10 ","
-      TYPE_PARAMETER@10..12
-        WHITESPACE@10..11 " "
+      WHITESPACE@10..11 " "
+      TYPE_PARAMETER@11..12
         IDENTIFIER@11..12 "U"
       GREATER@12..13 ">"
-    CLASS_BODY@13..16
-      WHITESPACE@13..14 " "
+    WHITESPACE@13..14 " "
+    CLASS_BODY@14..16
       L_BRACE@14..15 "{"
       R_BRACE@15..16 "}"

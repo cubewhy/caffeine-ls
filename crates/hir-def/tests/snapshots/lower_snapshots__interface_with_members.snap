@@ -18,7 +18,7 @@ ITEM_TREE:
 file (java)
 interface Shape [public] @1..164
   field SIDES: int initializer @41..43 @34..43
-  method draw() -> void @44..61
-  method outline() -> void [default] @61..91
-  method empty() -> Shape [static] @91..133
-  method helper() -> void [private] @133..162
+  method draw() -> void @49..61
+  method outline() -> void [default] @66..91
+  method empty() -> Shape [static] @96..133
+  method helper() -> void [private] @138..162

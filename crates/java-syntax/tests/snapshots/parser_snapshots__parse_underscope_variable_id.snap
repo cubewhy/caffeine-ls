@@ -44,28 +44,28 @@ ROOT@0..57
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..56
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..56
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..54
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..54
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..54
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..54
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..48
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..48
             LOCAL_VARIABLE_DECLARATION@39..47
               TYPE@39..45
                 QUALIFIED_NAME@39..45
                   IDENTIFIER@39..45 "String"
-              VARIABLE_DECLARATOR_LIST@45..47
-                WHITESPACE@45..46 " "
+              WHITESPACE@45..46 " "
+              VARIABLE_DECLARATOR_LIST@46..47
                 VARIABLE_DECLARATOR@46..47
                   UNDERSCORE@46..47 "_"
             SEMICOLON@47..48 ";"

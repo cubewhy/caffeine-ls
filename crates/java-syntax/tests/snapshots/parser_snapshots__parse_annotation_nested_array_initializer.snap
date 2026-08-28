@@ -49,8 +49,8 @@ ROOT@0..25
                 INTEGER_LITERAL@5..6 "1"
               R_BRACE@6..7 "}"
             COMMA@7..8 ","
-            ARRAY_INITIALIZER@8..12
-              WHITESPACE@8..9 " "
+            WHITESPACE@8..9 " "
+            ARRAY_INITIALIZER@9..12
               L_BRACE@9..10 "{"
               LITERAL@10..11
                 INTEGER_LITERAL@10..11 "2"
@@ -61,7 +61,7 @@ ROOT@0..25
     CLASS_KW@15..20 "class"
     WHITESPACE@20..21 " "
     IDENTIFIER@21..22 "B"
-    CLASS_BODY@22..25
-      WHITESPACE@22..23 " "
+    WHITESPACE@22..23 " "
+    CLASS_BODY@23..25
       L_BRACE@23..24 "{"
       R_BRACE@24..25 "}"

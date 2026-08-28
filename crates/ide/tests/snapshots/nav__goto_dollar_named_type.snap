@@ -3,6 +3,6 @@ source: crates/ide/tests/nav.rs
 expression: "render_nav(&fixture, \"new A$B\")"
 ---
 --- goto @"new A$B" ---
-A$B @20..116
+A$B @22..116
 --- hover ---
 com.example.A$B

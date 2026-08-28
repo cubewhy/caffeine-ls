@@ -48,8 +48,8 @@ ROOT@0..34
       TYPE_PARAMETER@16..17
         IDENTIFIER@16..17 "T"
       COMMA@17..18 ","
-      TYPE_PARAMETER@18..20
-        WHITESPACE@18..19 " "
+      WHITESPACE@18..19 " "
+      TYPE_PARAMETER@19..20
         IDENTIFIER@19..20 "U"
       GREATER@20..21 ">"
     FORMAL_PARAMETERS@21..31
@@ -61,15 +61,15 @@ ROOT@0..34
         WHITESPACE@23..24 " "
         IDENTIFIER@24..25 "x"
       COMMA@25..26 ","
-      FORMAL_PARAMETER@26..30
-        WHITESPACE@26..27 " "
+      WHITESPACE@26..27 " "
+      FORMAL_PARAMETER@27..30
         TYPE@27..28
           QUALIFIED_NAME@27..28
             IDENTIFIER@27..28 "U"
         WHITESPACE@28..29 " "
         IDENTIFIER@29..30 "y"
       R_PAREN@30..31 ")"
-    RECORD_BODY@31..34
-      WHITESPACE@31..32 " "
+    WHITESPACE@31..32 " "
+    RECORD_BODY@32..34
       L_BRACE@32..33 "{"
       R_BRACE@33..34 "}"

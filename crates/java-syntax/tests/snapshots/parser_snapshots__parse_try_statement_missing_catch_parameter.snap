@@ -56,40 +56,40 @@ ROOT@0..90
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..89
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..89
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..87
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..87
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..87
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..87
           L_BRACE@29..30 "{"
-          TRY_STMT@30..81
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          TRY_STMT@39..81
             TRY_KW@39..42 "try"
-            BLOCK@42..45
-              WHITESPACE@42..43 " "
+            WHITESPACE@42..43 " "
+            BLOCK@43..45
               L_BRACE@43..44 "{"
               R_BRACE@44..45 "}"
-            CATCH_CLAUSE@45..62
-              WHITESPACE@45..54 "\n        "
+            WHITESPACE@45..54 "\n        "
+            CATCH_CLAUSE@54..62
               CATCH_KW@54..59 "catch"
-              MISSING@59..60
-                WHITESPACE@59..60 " "
+              WHITESPACE@59..60 " "
+              MISSING@60..60
               BLOCK@60..62
                 L_BRACE@60..61 "{"
                 R_BRACE@61..62 "}"
-            FINALLY_CLAUSE@62..81
-              WHITESPACE@62..71 "\n        "
+            WHITESPACE@62..71 "\n        "
+            FINALLY_CLAUSE@71..81
               FINALLY_KW@71..78 "finally"
-              BLOCK@78..81
-                WHITESPACE@78..79 " "
+              WHITESPACE@78..79 " "
+              BLOCK@79..81
                 L_BRACE@79..80 "{"
                 R_BRACE@80..81 "}"
           WHITESPACE@81..86 "\n    "

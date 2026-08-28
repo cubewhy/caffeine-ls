@@ -35,11 +35,11 @@ ROOT@0..38
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..38
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..38
       L_BRACE@8..9 "{"
-      FIELD_DECL@9..36
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      FIELD_DECL@10..36
         TYPE@10..32
           QUALIFIED_NAME@10..14
             IDENTIFIER@10..14 "List"
@@ -48,16 +48,16 @@ ROOT@0..38
             TYPE_ARGUMENT@15..31
               WILDCARD_TYPE@15..31
                 QUESTION@15..16 "?"
-                WILDCARD_BOUNDS@16..31
-                  WHITESPACE@16..17 " "
+                WHITESPACE@16..17 " "
+                WILDCARD_BOUNDS@17..31
                   EXTENDS_KW@17..24 "extends"
-                  TYPE@24..31
-                    WHITESPACE@24..25 " "
+                  WHITESPACE@24..25 " "
+                  TYPE@25..31
                     QUALIFIED_NAME@25..31
                       IDENTIFIER@25..31 "Number"
             GREATER@31..32 ">"
-        VARIABLE_DECLARATOR_LIST@32..35
-          WHITESPACE@32..33 " "
+        WHITESPACE@32..33 " "
+        VARIABLE_DECLARATOR_LIST@33..35
           VARIABLE_DECLARATOR@33..35
             IDENTIFIER@33..35 "xs"
         SEMICOLON@35..36 ";"

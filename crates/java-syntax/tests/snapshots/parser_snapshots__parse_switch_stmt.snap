@@ -132,107 +132,107 @@ ROOT@0..336
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..335
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..335
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..333
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..333
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..333
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..333
           L_BRACE@29..30 "{"
-          SWITCH_STMT@30..327
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          SWITCH_STMT@39..327
             SWITCH_KW@39..45 "switch"
             WHITESPACE@45..46 " "
             L_PAREN@46..47 "("
             LITERAL@47..51
               IDENTIFIER@47..51 "expr"
             R_PAREN@51..52 ")"
-            SWITCH_BLOCK@52..327
-              WHITESPACE@52..53 " "
+            WHITESPACE@52..53 " "
+            SWITCH_BLOCK@53..327
               L_BRACE@53..54 "{"
-              SWITCH_BLOCK_STATEMENT_GROUP@54..135
-                WHITESPACE@54..67 "\n            "
+              WHITESPACE@54..67 "\n            "
+              SWITCH_BLOCK_STATEMENT_GROUP@67..135
                 SWITCH_LABEL@67..82
                   CASE_KW@67..71 "case"
-                  LITERAL@71..73
-                    WHITESPACE@71..72 " "
+                  WHITESPACE@71..72 " "
+                  LITERAL@72..73
                     INTEGER_LITERAL@72..73 "1"
                   COMMA@73..74 ","
-                  LITERAL@74..76
-                    WHITESPACE@74..75 " "
+                  WHITESPACE@74..75 " "
+                  LITERAL@75..76
                     INTEGER_LITERAL@75..76 "2"
                   COMMA@76..77 ","
-                  LITERAL@77..79
-                    WHITESPACE@77..78 " "
+                  WHITESPACE@77..78 " "
+                  LITERAL@78..79
                     INTEGER_LITERAL@78..79 "3"
                   COMMA@79..80 ","
-                  LITERAL@80..82
-                    WHITESPACE@80..81 " "
+                  WHITESPACE@80..81 " "
+                  LITERAL@81..82
                     INTEGER_LITERAL@81..82 "4"
                 COLON@82..83 ":"
-                SWITCH_LABEL@83..111
-                  WHITESPACE@83..96 "\n            "
+                WHITESPACE@83..96 "\n            "
+                SWITCH_LABEL@96..111
                   CASE_KW@96..100 "case"
-                  LITERAL@100..102
-                    WHITESPACE@100..101 " "
+                  WHITESPACE@100..101 " "
+                  LITERAL@101..102
                     INTEGER_LITERAL@101..102 "5"
                   COMMA@102..103 ","
-                  LITERAL@103..105
-                    WHITESPACE@103..104 " "
+                  WHITESPACE@103..104 " "
+                  LITERAL@104..105
                     INTEGER_LITERAL@104..105 "6"
                   COMMA@105..106 ","
-                  LITERAL@106..108
-                    WHITESPACE@106..107 " "
+                  WHITESPACE@106..107 " "
+                  LITERAL@107..108
                     INTEGER_LITERAL@107..108 "7"
                   COMMA@108..109 ","
-                  LITERAL@109..111
-                    WHITESPACE@109..110 " "
+                  WHITESPACE@109..110 " "
+                  LITERAL@110..111
                     INTEGER_LITERAL@110..111 "8"
                 COLON@111..112 ":"
-                BREAK_STMT@112..135
-                  WHITESPACE@112..129 "\n                "
+                WHITESPACE@112..129 "\n                "
+                BREAK_STMT@129..135
                   BREAK_KW@129..134 "break"
                   SEMICOLON@134..135 ";"
-              SWITCH_BLOCK_STATEMENT_GROUP@135..212
-                WHITESPACE@135..148 "\n            "
+              WHITESPACE@135..148 "\n            "
+              SWITCH_BLOCK_STATEMENT_GROUP@148..212
                 SWITCH_LABEL@148..161
                   CASE_KW@148..152 "case"
-                  TYPE_PATTERN@152..161
-                    WHITESPACE@152..153 " "
+                  WHITESPACE@152..153 " "
+                  TYPE_PATTERN@153..161
                     TYPE@153..159
                       QUALIFIED_NAME@153..159
                         IDENTIFIER@153..159 "String"
                     WHITESPACE@159..160 " "
                     UNDERSCORE@160..161 "_"
                 COLON@161..162 ":"
-                SWITCH_LABEL@162..188
-                  WHITESPACE@162..175 "\n            "
+                WHITESPACE@162..175 "\n            "
+                SWITCH_LABEL@175..188
                   CASE_KW@175..179 "case"
-                  TYPE_PATTERN@179..188
-                    WHITESPACE@179..180 " "
+                  WHITESPACE@179..180 " "
+                  TYPE_PATTERN@180..188
                     TYPE@180..186
                       QUALIFIED_NAME@180..186
                         IDENTIFIER@180..186 "String"
                     WHITESPACE@186..187 " "
                     IDENTIFIER@187..188 "s"
                 COLON@188..189 ":"
-                BREAK_STMT@189..212
-                  WHITESPACE@189..206 "\n                "
+                WHITESPACE@189..206 "\n                "
+                BREAK_STMT@206..212
                   BREAK_KW@206..211 "break"
                   SEMICOLON@211..212 ";"
-              SWITCH_BLOCK_STATEMENT_GROUP@212..273
-                WHITESPACE@212..225 "\n            "
+              WHITESPACE@212..225 "\n            "
+              SWITCH_BLOCK_STATEMENT_GROUP@225..273
                 SWITCH_LABEL@225..249
                   CASE_KW@225..229 "case"
-                  RECORD_PATTERN@229..249
-                    WHITESPACE@229..230 " "
+                  WHITESPACE@229..230 " "
+                  RECORD_PATTERN@230..249
                     TYPE@230..235
                       QUALIFIED_NAME@230..235
                         IDENTIFIER@230..235 "Point"
@@ -243,25 +243,25 @@ ROOT@0..336
                       WHITESPACE@239..240 " "
                       IDENTIFIER@240..241 "x"
                     COMMA@241..242 ","
-                    TYPE_PATTERN@242..248
-                      WHITESPACE@242..243 " "
+                    WHITESPACE@242..243 " "
+                    TYPE_PATTERN@243..248
                       TYPE@243..246
                         INT_KW@243..246 "int"
                       WHITESPACE@246..247 " "
                       UNDERSCORE@247..248 "_"
                     R_PAREN@248..249 ")"
                 COLON@249..250 ":"
-                BREAK_STMT@250..273
-                  WHITESPACE@250..267 "\n                "
+                WHITESPACE@250..267 "\n                "
+                BREAK_STMT@267..273
                   BREAK_KW@267..272 "break"
                   SEMICOLON@272..273 ";"
-              SWITCH_BLOCK_STATEMENT_GROUP@273..317
-                WHITESPACE@273..286 "\n            "
+              WHITESPACE@273..286 "\n            "
+              SWITCH_BLOCK_STATEMENT_GROUP@286..317
                 SWITCH_LABEL@286..293
                   DEFAULT_KW@286..293 "default"
                 COLON@293..294 ":"
-                BREAK_STMT@294..317
-                  WHITESPACE@294..311 "\n                "
+                WHITESPACE@294..311 "\n                "
+                BREAK_STMT@311..317
                   BREAK_KW@311..316 "break"
                   SEMICOLON@316..317 ";"
               WHITESPACE@317..326 "\n        "

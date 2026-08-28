@@ -20,5 +20,5 @@ class AbstractThing [public abstract] @1..230
   field CONST: int [public static final] initializer @74..76 @67..76
   field ready: boolean [private volatile] @107..112
   field cache: Object [protected transient] @145..150
-  method sync() -> void [native synchronized] @151..188
-  method legacy() -> void [public] @188..228
+  method sync() -> void [native synchronized] @156..188
+  method legacy() -> void [public] @193..228

@@ -51,11 +51,11 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Out @1..41
-  method close() -> void [public] @12..39
-class Body @41..952
-  method open() -> Out [static] @55..556
-  method otherName() -> Out [static] @556..831
-  method simple() -> Out [static] @831..950
+  method close() -> void [public] @17..39
+class Body @43..952
+  method open() -> Out [static] @249..556
+  method otherName() -> Out [static] @562..831
+  method simple() -> Out [static] @837..950
 
 BODIES:
 body:

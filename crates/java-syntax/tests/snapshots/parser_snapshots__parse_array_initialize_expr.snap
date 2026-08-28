@@ -46,11 +46,11 @@ ROOT@0..60
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..59
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..59
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..57
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..57
         TYPE@17..25
           QUALIFIED_NAME@17..23
             IDENTIFIER@17..23 "String"
@@ -58,24 +58,24 @@ ROOT@0..60
             DIMENSION@23..25
               L_BRACKET@23..24 "["
               R_BRACKET@24..25 "]"
-        VARIABLE_DECLARATOR_LIST@25..56
-          WHITESPACE@25..26 " "
+        WHITESPACE@25..26 " "
+        VARIABLE_DECLARATOR_LIST@26..56
           VARIABLE_DECLARATOR@26..56
             IDENTIFIER@26..38 "STRING_ARRAY"
             WHITESPACE@38..39 " "
             EQUAL@39..40 "="
-            ARRAY_INITIALIZER@40..56
-              WHITESPACE@40..41 " "
+            WHITESPACE@40..41 " "
+            ARRAY_INITIALIZER@41..56
               L_BRACE@41..42 "{"
               LITERAL@42..45
                 STRING_LITERAL@42..45 "\"a\""
               COMMA@45..46 ","
-              LITERAL@46..50
-                WHITESPACE@46..47 " "
+              WHITESPACE@46..47 " "
+              LITERAL@47..50
                 STRING_LITERAL@47..50 "\"b\""
               COMMA@50..51 ","
-              LITERAL@51..55
-                WHITESPACE@51..52 " "
+              WHITESPACE@51..52 " "
+              LITERAL@52..55
                 STRING_LITERAL@52..55 "\"c\""
               R_BRACE@55..56 "}"
         SEMICOLON@56..57 ";"

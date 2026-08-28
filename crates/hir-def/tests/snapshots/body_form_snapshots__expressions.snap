@@ -29,7 +29,7 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..504
-  method m() -> int @12..502
+  method m() -> int @17..502
 
 BODIES:
 body:

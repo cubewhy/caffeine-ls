@@ -1,6 +1,5 @@
 ---
 source: crates/hir-def/tests/lower_snapshots.rs
-assertion_line: 197
 expression: out
 ---
 SOURCE:
@@ -21,6 +20,6 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 enum Op @1..185
-  constant ADD @10..76
-  constant SUB @77..143
-  method apply(int a, int b) -> int [abstract] @144..183
+  constant ADD @15..76
+  constant SUB @82..143
+  method apply(int a, int b) -> int [abstract] @150..183

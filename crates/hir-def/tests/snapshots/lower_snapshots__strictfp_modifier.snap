@@ -13,4 +13,4 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..44
-  method strict() -> void [strictfp] @12..42
+  method strict() -> void [strictfp] @17..42

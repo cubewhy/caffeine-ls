@@ -35,7 +35,7 @@ ROOT@0..18
         WHITESPACE@12..13 " "
         IDENTIFIER@13..14 "x"
       R_PAREN@14..15 ")"
-    RECORD_BODY@15..18
-      WHITESPACE@15..16 " "
+    WHITESPACE@15..16 " "
+    RECORD_BODY@16..18
       L_BRACE@16..17 "{"
       R_BRACE@17..18 "}"

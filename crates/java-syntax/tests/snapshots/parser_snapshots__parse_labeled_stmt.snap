@@ -63,29 +63,29 @@ ROOT@0..119
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..118
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..118
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..116
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..116
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..116
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..116
           L_BRACE@29..30 "{"
-          LABELED_STMT@30..77
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LABELED_STMT@39..77
             IDENTIFIER@39..44 "label"
             COLON@44..45 ":"
-            BLOCK@45..77
-              WHITESPACE@45..46 " "
+            WHITESPACE@45..46 " "
+            BLOCK@46..77
               L_BRACE@46..47 "{"
-              EXPRESSION_STMT@47..67
-                WHITESPACE@47..60 "\n            "
+              WHITESPACE@47..60 "\n            "
+              EXPRESSION_STMT@60..67
                 METHOD_CALL@60..66
                   LITERAL@60..64
                     IDENTIFIER@60..64 "func"
@@ -95,12 +95,12 @@ ROOT@0..119
                 SEMICOLON@66..67 ";"
               WHITESPACE@67..76 "\n        "
               R_BRACE@76..77 "}"
-          LABELED_STMT@77..110
-            WHITESPACE@77..87 "\n\n        "
+          WHITESPACE@77..87 "\n\n        "
+          LABELED_STMT@87..110
             IDENTIFIER@87..101 "labelNoShortIf"
             COLON@101..102 ":"
-            EXPRESSION_STMT@102..110
-              WHITESPACE@102..103 " "
+            WHITESPACE@102..103 " "
+            EXPRESSION_STMT@103..110
               METHOD_CALL@103..109
                 LITERAL@103..107
                   IDENTIFIER@103..107 "func"

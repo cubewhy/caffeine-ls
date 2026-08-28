@@ -62,17 +62,17 @@ ROOT@0..83
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..82
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..82
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..80
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..80
         MODIFIER_LIST@17..29
           STATIC_KW@17..23 "static"
           WHITESPACE@23..24 " "
           FINAL_KW@24..29 "final"
-        TYPE@29..42
-          WHITESPACE@29..30 " "
+        WHITESPACE@29..30 " "
+        TYPE@30..42
           QUALIFIED_NAME@30..34
             IDENTIFIER@30..34 "Pool"
           TYPE_ARGUMENTS@34..42
@@ -85,17 +85,17 @@ ROOT@0..83
                     L_BRACKET@39..40 "["
                     R_BRACKET@40..41 "]"
             GREATER@41..42 ">"
-        VARIABLE_DECLARATOR_LIST@42..79
-          WHITESPACE@42..43 " "
+        WHITESPACE@42..43 " "
+        VARIABLE_DECLARATOR_LIST@43..79
           VARIABLE_DECLARATOR@43..79
             IDENTIFIER@43..47 "POOL"
             WHITESPACE@47..48 " "
             EQUAL@48..49 "="
-            NEW_EXPR@49..79
-              WHITESPACE@49..50 " "
+            WHITESPACE@49..50 " "
+            NEW_EXPR@50..79
               NEW_KW@50..53 "new"
-              QUALIFIED_NAME@53..58
-                WHITESPACE@53..54 " "
+              WHITESPACE@53..54 " "
+              QUALIFIED_NAME@54..58
                 IDENTIFIER@54..58 "Pool"
               TYPE_ARGUMENTS@58..60
                 LESS@58..59 "<"
@@ -108,8 +108,8 @@ ROOT@0..83
                     R_PAREN@62..63 ")"
                   WHITESPACE@63..64 " "
                   ARROW@64..66 "->"
-                  NEW_EXPR@66..78
-                    WHITESPACE@66..67 " "
+                  WHITESPACE@66..67 " "
+                  NEW_EXPR@67..78
                     NEW_KW@67..70 "new"
                     WHITESPACE@70..71 " "
                     BYTE_KW@71..75 "byte"

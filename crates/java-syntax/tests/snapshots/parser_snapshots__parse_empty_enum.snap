@@ -22,7 +22,7 @@ ROOT@0..9
     ENUM_KW@0..4 "enum"
     WHITESPACE@4..5 " "
     IDENTIFIER@5..6 "E"
-    ENUM_BODY@6..9
-      WHITESPACE@6..7 " "
+    WHITESPACE@6..7 " "
+    ENUM_BODY@7..9
       L_BRACE@7..8 "{"
       R_BRACE@8..9 "}"

@@ -84,11 +84,11 @@ ROOT@0..118
       TYPE_PARAMETER@11..12
         IDENTIFIER@11..12 "T"
       GREATER@12..13 ">"
-    EXTENDS_CLAUSE@13..26
-      WHITESPACE@13..14 " "
+    WHITESPACE@13..14 " "
+    EXTENDS_CLAUSE@14..26
       EXTENDS_KW@14..21 "extends"
-      TYPE@21..26
-        WHITESPACE@21..22 " "
+      WHITESPACE@21..22 " "
+      TYPE@22..26
         QUALIFIED_NAME@22..23
           IDENTIFIER@22..23 "A"
         TYPE_ARGUMENTS@23..26
@@ -98,11 +98,11 @@ ROOT@0..118
               QUALIFIED_NAME@24..25
                 IDENTIFIER@24..25 "T"
           GREATER@25..26 ">"
-    IMPLEMENTS_CLAUSE@26..45
-      WHITESPACE@26..27 " "
+    WHITESPACE@26..27 " "
+    IMPLEMENTS_CLAUSE@27..45
       IMPLEMENTS_KW@27..37 "implements"
-      TYPE@37..42
-        WHITESPACE@37..38 " "
+      WHITESPACE@37..38 " "
+      TYPE@38..42
         QUALIFIED_NAME@38..39
           IDENTIFIER@38..39 "B"
         TYPE_ARGUMENTS@39..42
@@ -113,36 +113,36 @@ ROOT@0..118
                 IDENTIFIER@40..41 "T"
           GREATER@41..42 ">"
       COMMA@42..43 ","
-      TYPE@43..45
-        WHITESPACE@43..44 " "
+      WHITESPACE@43..44 " "
+      TYPE@44..45
         QUALIFIED_NAME@44..45
           IDENTIFIER@44..45 "C"
-    CLASS_BODY@45..85
-      WHITESPACE@45..46 " "
+    WHITESPACE@45..46 " "
+    CLASS_BODY@46..85
       L_BRACE@46..47 "{"
-      METHOD_DECL@47..83
-        WHITESPACE@47..52 "\n    "
+      WHITESPACE@47..52 "\n    "
+      METHOD_DECL@52..83
         VOID_KW@52..56 "void"
         WHITESPACE@56..57 " "
         IDENTIFIER@57..61 "func"
         FORMAL_PARAMETERS@61..63
           L_PAREN@61..62 "("
           R_PAREN@62..63 ")"
-        THROWS_CLAUSE@63..80
-          WHITESPACE@63..64 " "
+        WHITESPACE@63..64 " "
+        THROWS_CLAUSE@64..80
           THROWS_KW@64..70 "throws"
-          TYPE@70..80
-            WHITESPACE@70..71 " "
+          WHITESPACE@70..71 " "
+          TYPE@71..80
             QUALIFIED_NAME@71..80
               IDENTIFIER@71..80 "Exception"
-        BLOCK@80..83
-          WHITESPACE@80..81 " "
+        WHITESPACE@80..81 " "
+        BLOCK@81..83
           L_BRACE@81..82 "{"
           R_BRACE@82..83 "}"
       WHITESPACE@83..84 "\n"
       R_BRACE@84..85 "}"
-  INTERFACE_DECL@85..117
-    WHITESPACE@85..87 "\n\n"
+  WHITESPACE@85..87 "\n\n"
+  INTERFACE_DECL@87..117
     INTERFACE_KW@87..96 "interface"
     WHITESPACE@96..97 " "
     IDENTIFIER@97..98 "C"
@@ -151,11 +151,11 @@ ROOT@0..118
       TYPE_PARAMETER@99..100
         IDENTIFIER@99..100 "T"
       GREATER@100..101 ">"
-    INTERFACE_EXTENDS_CLAUSE@101..114
-      WHITESPACE@101..102 " "
+    WHITESPACE@101..102 " "
+    INTERFACE_EXTENDS_CLAUSE@102..114
       EXTENDS_KW@102..109 "extends"
-      TYPE@109..114
-        WHITESPACE@109..110 " "
+      WHITESPACE@109..110 " "
+      TYPE@110..114
         QUALIFIED_NAME@110..111
           IDENTIFIER@110..111 "B"
         TYPE_ARGUMENTS@111..114
@@ -165,8 +165,8 @@ ROOT@0..118
               QUALIFIED_NAME@112..113
                 IDENTIFIER@112..113 "T"
           GREATER@113..114 ">"
-    INTERFACE_BODY@114..117
-      WHITESPACE@114..115 " "
+    WHITESPACE@114..115 " "
+    INTERFACE_BODY@115..117
       L_BRACE@115..116 "{"
       R_BRACE@116..117 "}"
   WHITESPACE@117..118 "\n"

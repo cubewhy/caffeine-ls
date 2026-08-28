@@ -70,66 +70,66 @@ ROOT@0..145
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..144
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..144
       L_BRACE@11..12 "{"
-      FIELD_DECL@12..47
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      FIELD_DECL@17..47
         MODIFIER_LIST@17..24
           PRIVATE_KW@17..24 "private"
-        TYPE@24..42
-          WHITESPACE@24..25 " "
+        WHITESPACE@24..25 " "
+        TYPE@25..42
           BYTE_KW@25..29 "byte"
-          DIMENSIONS@29..42
-            WHITESPACE@29..30 " "
+          WHITESPACE@29..30 " "
+          DIMENSIONS@30..42
             MODIFIER_LIST@30..39
               MARKER_ANNOTATION@30..39
                 AT@30..31 "@"
                 QUALIFIED_NAME@31..39
                   IDENTIFIER@31..39 "Nullable"
-            DIMENSION@39..42
-              WHITESPACE@39..40 " "
+            WHITESPACE@39..40 " "
+            DIMENSION@40..42
               L_BRACKET@40..41 "["
               R_BRACKET@41..42 "]"
-        VARIABLE_DECLARATOR_LIST@42..46
-          WHITESPACE@42..43 " "
+        WHITESPACE@42..43 " "
+        VARIABLE_DECLARATOR_LIST@43..46
           VARIABLE_DECLARATOR@43..46
             IDENTIFIER@43..46 "buf"
         SEMICOLON@46..47 ";"
-      FIELD_DECL@47..84
-        WHITESPACE@47..52 "\n    "
+      WHITESPACE@47..52 "\n    "
+      FIELD_DECL@52..84
         MODIFIER_LIST@52..70
           VOLATILE_KW@52..60 "volatile"
-          MARKER_ANNOTATION@60..70
-            WHITESPACE@60..61 " "
+          WHITESPACE@60..61 " "
+          MARKER_ANNOTATION@61..70
             AT@61..62 "@"
             QUALIFIED_NAME@62..70
               IDENTIFIER@62..70 "Nullable"
-        TYPE@70..77
-          WHITESPACE@70..71 " "
+        WHITESPACE@70..71 " "
+        TYPE@71..77
           QUALIFIED_NAME@71..77
             IDENTIFIER@71..77 "Object"
-        VARIABLE_DECLARATOR_LIST@77..83
-          WHITESPACE@77..78 " "
+        WHITESPACE@77..78 " "
+        VARIABLE_DECLARATOR_LIST@78..83
           VARIABLE_DECLARATOR@78..83
             IDENTIFIER@78..83 "state"
         SEMICOLON@83..84 ";"
-      METHOD_DECL@84..142
-        WHITESPACE@84..89 "\n    "
+      WHITESPACE@84..89 "\n    "
+      METHOD_DECL@89..142
         MODIFIER_LIST@89..95
           NATIVE_KW@89..95 "native"
-        TYPE@95..112
-          WHITESPACE@95..96 " "
+        WHITESPACE@95..96 " "
+        TYPE@96..112
           INT_KW@96..99 "int"
-          DIMENSIONS@99..112
-            WHITESPACE@99..100 " "
+          WHITESPACE@99..100 " "
+          DIMENSIONS@100..112
             MODIFIER_LIST@100..109
               MARKER_ANNOTATION@100..109
                 AT@100..101 "@"
                 QUALIFIED_NAME@101..109
                   IDENTIFIER@101..109 "Nullable"
-            DIMENSION@109..112
-              WHITESPACE@109..110 " "
+            WHITESPACE@109..110 " "
+            DIMENSION@110..112
               L_BRACKET@110..111 "["
               R_BRACKET@111..112 "]"
         WHITESPACE@112..113 " "

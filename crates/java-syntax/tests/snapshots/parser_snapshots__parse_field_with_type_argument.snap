@@ -31,11 +31,11 @@ ROOT@0..28
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..28
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..28
       L_BRACE@8..9 "{"
-      FIELD_DECL@9..26
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      FIELD_DECL@10..26
         TYPE@10..22
           QUALIFIED_NAME@10..14
             IDENTIFIER@10..14 "List"
@@ -46,8 +46,8 @@ ROOT@0..28
                 QUALIFIED_NAME@15..21
                   IDENTIFIER@15..21 "String"
             GREATER@21..22 ">"
-        VARIABLE_DECLARATOR_LIST@22..25
-          WHITESPACE@22..23 " "
+        WHITESPACE@22..23 " "
+        VARIABLE_DECLARATOR_LIST@23..25
           VARIABLE_DECLARATOR@23..25
             IDENTIFIER@23..25 "xs"
         SEMICOLON@25..26 ";"

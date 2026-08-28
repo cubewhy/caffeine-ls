@@ -41,14 +41,14 @@ ROOT@0..24
         WHITESPACE@12..13 " "
         IDENTIFIER@13..14 "x"
       R_PAREN@14..15 ")"
-    RECORD_BODY@15..24
-      WHITESPACE@15..16 " "
+    WHITESPACE@15..16 " "
+    RECORD_BODY@16..24
       L_BRACE@16..17 "{"
-      COMPACT_CONSTRUCTOR_DECL@17..22
-        WHITESPACE@17..18 " "
+      WHITESPACE@17..18 " "
+      COMPACT_CONSTRUCTOR_DECL@18..22
         IDENTIFIER@18..19 "R"
-        BLOCK@19..22
-          WHITESPACE@19..20 " "
+        WHITESPACE@19..20 " "
+        BLOCK@20..22
           L_BRACE@20..21 "{"
           R_BRACE@21..22 "}"
       WHITESPACE@22..23 " "

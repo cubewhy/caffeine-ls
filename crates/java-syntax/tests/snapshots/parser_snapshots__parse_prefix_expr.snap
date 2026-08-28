@@ -48,29 +48,29 @@ ROOT@0..65
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..64
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..64
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..62
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..62
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..62
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..62
           L_BRACE@29..30 "{"
-          EXPRESSION_STMT@30..43
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          EXPRESSION_STMT@39..43
             PREFIX_EXPR@39..42
               PLUS_PLUS@39..41 "++"
               LITERAL@41..42
                 IDENTIFIER@41..42 "i"
             SEMICOLON@42..43 ";"
-          EXPRESSION_STMT@43..56
-            WHITESPACE@43..52 "\n        "
+          WHITESPACE@43..52 "\n        "
+          EXPRESSION_STMT@52..56
             PREFIX_EXPR@52..55
               MINUS_MINUS@52..54 "--"
               LITERAL@54..55

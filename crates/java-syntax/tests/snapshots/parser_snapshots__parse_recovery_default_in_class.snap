@@ -34,11 +34,11 @@ ROOT@0..31
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..31
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..31
       L_BRACE@8..9 "{"
-      METHOD_DECL@9..29
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      METHOD_DECL@10..29
         MODIFIER_LIST@10..17
           DEFAULT_KW@10..17 "default"
         WHITESPACE@17..18 " "
@@ -48,8 +48,8 @@ ROOT@0..31
         FORMAL_PARAMETERS@24..26
           L_PAREN@24..25 "("
           R_PAREN@25..26 ")"
-        BLOCK@26..29
-          WHITESPACE@26..27 " "
+        WHITESPACE@26..27 " "
+        BLOCK@27..29
           L_BRACE@27..28 "{"
           R_BRACE@28..29 "}"
       WHITESPACE@29..30 " "

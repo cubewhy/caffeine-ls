@@ -57,22 +57,22 @@ ROOT@0..83
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..82
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..82
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..80
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..80
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..80
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..80
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..74
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..74
             LOCAL_VARIABLE_DECLARATION@39..73
               TYPE@39..51
                 QUALIFIED_NAME@39..43
@@ -84,17 +84,17 @@ ROOT@0..83
                       QUALIFIED_NAME@44..50
                         IDENTIFIER@44..50 "String"
                   GREATER@50..51 ">"
-              VARIABLE_DECLARATOR_LIST@51..73
-                WHITESPACE@51..52 " "
+              WHITESPACE@51..52 " "
+              VARIABLE_DECLARATOR_LIST@52..73
                 VARIABLE_DECLARATOR@52..73
                   IDENTIFIER@52..53 "l"
                   WHITESPACE@53..54 " "
                   EQUAL@54..55 "="
-                  NEW_EXPR@55..73
-                    WHITESPACE@55..56 " "
+                  WHITESPACE@55..56 " "
+                  NEW_EXPR@56..73
                     NEW_KW@56..59 "new"
-                    QUALIFIED_NAME@59..69
-                      WHITESPACE@59..60 " "
+                    WHITESPACE@59..60 " "
+                    QUALIFIED_NAME@60..69
                       IDENTIFIER@60..69 "ArrayList"
                     TYPE_ARGUMENTS@69..71
                       LESS@69..70 "<"

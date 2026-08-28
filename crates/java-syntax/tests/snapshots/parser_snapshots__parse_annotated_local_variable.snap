@@ -69,54 +69,54 @@ ROOT@0..127
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..126
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..126
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..124
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..124
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..124
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..124
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..68
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..68
             LOCAL_VARIABLE_DECLARATION@39..67
               MODIFIER_LIST@39..48
                 MARKER_ANNOTATION@39..48
                   AT@39..40 "@"
                   QUALIFIED_NAME@40..48
                     IDENTIFIER@40..48 "Nullable"
-              TYPE@48..55
-                WHITESPACE@48..49 " "
+              WHITESPACE@48..49 " "
+              TYPE@49..55
                 QUALIFIED_NAME@49..55
                   IDENTIFIER@49..55 "String"
-              VARIABLE_DECLARATOR_LIST@55..67
-                WHITESPACE@55..56 " "
+              WHITESPACE@55..56 " "
+              VARIABLE_DECLARATOR_LIST@56..67
                 VARIABLE_DECLARATOR@56..67
                   IDENTIFIER@56..60 "name"
                   WHITESPACE@60..61 " "
                   EQUAL@61..62 "="
-                  LITERAL@62..67
-                    WHITESPACE@62..63 " "
+                  WHITESPACE@62..63 " "
+                  LITERAL@63..67
                     NULL_LITERAL@63..67 "null"
             SEMICOLON@67..68 ";"
-          LOCAL_VARIABLE_DECLARATION_STMT@68..118
-            WHITESPACE@68..77 "\n        "
+          WHITESPACE@68..77 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@77..118
             LOCAL_VARIABLE_DECLARATION@77..117
               MODIFIER_LIST@77..91
                 FINAL_KW@77..82 "final"
-                MARKER_ANNOTATION@82..91
-                  WHITESPACE@82..83 " "
+                WHITESPACE@82..83 " "
+                MARKER_ANNOTATION@83..91
                   AT@83..84 "@"
                   QUALIFIED_NAME@84..91
                     IDENTIFIER@84..91 "NotNull"
-              TYPE@91..104
-                WHITESPACE@91..92 " "
+              WHITESPACE@91..92 " "
+              TYPE@92..104
                 QUALIFIED_NAME@92..96
                   IDENTIFIER@92..96 "List"
                 TYPE_ARGUMENTS@96..104
@@ -126,14 +126,14 @@ ROOT@0..127
                       QUALIFIED_NAME@97..103
                         IDENTIFIER@97..103 "String"
                   GREATER@103..104 ">"
-              VARIABLE_DECLARATOR_LIST@104..117
-                WHITESPACE@104..105 " "
+              WHITESPACE@104..105 " "
+              VARIABLE_DECLARATOR_LIST@105..117
                 VARIABLE_DECLARATOR@105..117
                   IDENTIFIER@105..110 "items"
                   WHITESPACE@110..111 " "
                   EQUAL@111..112 "="
-                  LITERAL@112..117
-                    WHITESPACE@112..113 " "
+                  WHITESPACE@112..113 " "
+                  LITERAL@113..117
                     NULL_LITERAL@113..117 "null"
             SEMICOLON@117..118 ";"
           WHITESPACE@118..123 "\n    "

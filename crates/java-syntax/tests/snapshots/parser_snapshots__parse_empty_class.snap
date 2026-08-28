@@ -22,7 +22,7 @@ ROOT@0..10
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..10
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..10
       L_BRACE@8..9 "{"
       R_BRACE@9..10 "}"

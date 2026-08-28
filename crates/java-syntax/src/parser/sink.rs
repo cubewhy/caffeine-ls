@@ -100,9 +100,17 @@ impl<'a> Sink<'a> {
                         };
                     }
 
+                    // Leading trivia belongs to the enclosing node, not the
+                    // node that follows it, so a node's range starts at its
+                    // first real token. Consume it once before starting the
+                    // outermost node of the (forward-parent) chain. The root
+                    // node (always the first event) has no enclosing node, so
+                    // its leading trivia stays inside it.
+                    if idx != 0 {
+                        self.eat_trivia();
+                    }
                     for kind in kinds.into_iter().rev() {
                         self.builder.start_node(kind.into());
-                        self.eat_trivia();
                     }
                 }
                 Event::FinishNode => {

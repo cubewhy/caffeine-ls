@@ -40,26 +40,26 @@ ROOT@0..51
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..50
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..50
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..48
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..48
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        THROWS_CLAUSE@28..45
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        THROWS_CLAUSE@29..45
           THROWS_KW@29..35 "throws"
-          TYPE@35..45
-            WHITESPACE@35..36 " "
+          WHITESPACE@35..36 " "
+          TYPE@36..45
             QUALIFIED_NAME@36..45
               IDENTIFIER@36..45 "Exception"
-        BLOCK@45..48
-          WHITESPACE@45..46 " "
+        WHITESPACE@45..46 " "
+        BLOCK@46..48
           L_BRACE@46..47 "{"
           R_BRACE@47..48 "}"
       WHITESPACE@48..49 "\n"

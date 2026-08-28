@@ -54,32 +54,32 @@ ROOT@0..77
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..76
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..76
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..74
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..74
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..74
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..74
           L_BRACE@29..30 "{"
-          DO_STMT@30..68
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          DO_STMT@39..68
             DO_KW@39..41 "do"
-            BLOCK@41..54
-              WHITESPACE@41..42 " "
+            WHITESPACE@41..42 " "
+            BLOCK@42..54
               L_BRACE@42..43 "{"
               WHITESPACE@43..53 "\n\n        "
               R_BRACE@53..54 "}"
             WHITESPACE@54..55 " "
             WHILE_KW@55..60 "while"
-            PARENTHESIZED_EXPR@60..67
-              WHITESPACE@60..61 " "
+            WHITESPACE@60..61 " "
+            PARENTHESIZED_EXPR@61..67
               L_PAREN@61..62 "("
               LITERAL@62..66
                 TRUE_LITERAL@62..66 "true"

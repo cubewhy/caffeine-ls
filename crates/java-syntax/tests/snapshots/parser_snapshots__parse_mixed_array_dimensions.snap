@@ -35,24 +35,24 @@ ROOT@0..25
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..7 "A"
-    CLASS_BODY@7..25
-      WHITESPACE@7..8 " "
+    WHITESPACE@7..8 " "
+    CLASS_BODY@8..25
       L_BRACE@8..9 "{"
-      FIELD_DECL@9..23
-        WHITESPACE@9..10 " "
+      WHITESPACE@9..10 " "
+      FIELD_DECL@10..23
         TYPE@10..15
           INT_KW@10..13 "int"
           DIMENSIONS@13..15
             DIMENSION@13..15
               L_BRACKET@13..14 "["
               R_BRACKET@14..15 "]"
-        VARIABLE_DECLARATOR_LIST@15..22
-          WHITESPACE@15..16 " "
+        WHITESPACE@15..16 " "
+        VARIABLE_DECLARATOR_LIST@16..22
           VARIABLE_DECLARATOR@16..17
             IDENTIFIER@16..17 "a"
           COMMA@17..18 ","
-          VARIABLE_DECLARATOR@18..22
-            WHITESPACE@18..19 " "
+          WHITESPACE@18..19 " "
+          VARIABLE_DECLARATOR@19..22
             IDENTIFIER@19..20 "b"
             DIMENSIONS@20..22
               DIMENSION@20..22

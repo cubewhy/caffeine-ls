@@ -16,7 +16,7 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..180
-  method <T> map(T t, java.util.function.Function<T, T> f) -> T @12..82
-  method m(Map<String, List<? extends Number>> x) -> void @82..135
+  method <T> map(T t, java.util.function.Function<T, T> f) -> T @17..82
+  method m(Map<String, List<? extends Number>> x) -> void @87..135
   field matrix: String[][] @151..157
   field clazz: Class<?> @172..177

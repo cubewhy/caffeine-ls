@@ -14,4 +14,4 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..88
-  method m(String s) -> void @12..86
+  method m(String s) -> void @17..86

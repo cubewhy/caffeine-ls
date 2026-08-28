@@ -28,9 +28,9 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..333
-  method m(Object o) -> void @12..331
-record Point(int x, int y) @333..398
-  method area() -> int @363..396
+  method m(Object o) -> void @17..331
+record Point(int x, int y) @335..398
+  method area() -> int @368..396
 
 BODIES:
 body:

@@ -17,8 +17,8 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 import java.util.List; @1..23
-class Foo @23..152
-  method m(List<String> strings) -> void @35..150
+class Foo @24..152
+  method m(List<String> strings) -> void @40..150
 
 BODIES:
 body:

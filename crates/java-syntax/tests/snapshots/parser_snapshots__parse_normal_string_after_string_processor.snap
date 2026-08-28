@@ -63,53 +63,53 @@ ROOT@0..115
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..114
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..114
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..112
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..112
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..112
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..112
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..59
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..59
             LOCAL_VARIABLE_DECLARATION@39..58
               TYPE@39..45
                 QUALIFIED_NAME@39..45
                   IDENTIFIER@39..45 "String"
-              VARIABLE_DECLARATOR_LIST@45..58
-                WHITESPACE@45..46 " "
+              WHITESPACE@45..46 " "
+              VARIABLE_DECLARATOR_LIST@46..58
                 VARIABLE_DECLARATOR@46..58
                   IDENTIFIER@46..49 "str"
                   WHITESPACE@49..50 " "
                   EQUAL@50..51 "="
-                  TEMPLATE_EXPR@51..58
-                    WHITESPACE@51..52 " "
+                  WHITESPACE@51..52 " "
+                  TEMPLATE_EXPR@52..58
                     LITERAL@52..55
                       IDENTIFIER@52..55 "STR"
                     DOT@55..56 "."
                     STRING_LITERAL@56..58 "\"\""
             SEMICOLON@58..59 ";"
-          LOCAL_VARIABLE_DECLARATION_STMT@59..106
-            WHITESPACE@59..68 "\n        "
+          WHITESPACE@59..68 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@68..106
             LOCAL_VARIABLE_DECLARATION@68..105
               TYPE@68..74
                 QUALIFIED_NAME@68..74
                   IDENTIFIER@68..74 "String"
-              VARIABLE_DECLARATOR_LIST@74..105
-                WHITESPACE@74..75 " "
+              WHITESPACE@74..75 " "
+              VARIABLE_DECLARATOR_LIST@75..105
                 VARIABLE_DECLARATOR@75..105
                   IDENTIFIER@75..83 "strBlock"
                   WHITESPACE@83..84 " "
                   EQUAL@84..85 "="
-                  TEMPLATE_EXPR@85..105
-                    WHITESPACE@85..86 " "
+                  WHITESPACE@85..86 " "
+                  TEMPLATE_EXPR@86..105
                     LITERAL@86..89
                       IDENTIFIER@86..89 "STR"
                     DOT@89..90 "."

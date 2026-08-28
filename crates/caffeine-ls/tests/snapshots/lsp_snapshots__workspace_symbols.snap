@@ -8,8 +8,8 @@ expression: normalized
       "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
       "range": {
         "start": {
-          "line": 0,
-          "character": 20
+          "line": 2,
+          "character": 0
         },
         "end": {
           "line": 5,
@@ -26,8 +26,8 @@ expression: normalized
       "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
       "range": {
         "start": {
-          "line": 3,
-          "character": 17
+          "line": 4,
+          "character": 4
         },
         "end": {
           "line": 4,
@@ -62,8 +62,8 @@ expression: normalized
       "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
       "range": {
         "start": {
-          "line": 0,
-          "character": 18
+          "line": 2,
+          "character": 0
         },
         "end": {
           "line": 4,
@@ -80,8 +80,8 @@ expression: normalized
       "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
       "range": {
         "start": {
-          "line": 2,
-          "character": 22
+          "line": 3,
+          "character": 4
         },
         "end": {
           "line": 3,

@@ -94,11 +94,11 @@ ROOT@0..223
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..222
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..222
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..220
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..220
         MODIFIER_LIST@17..30
           PUBLIC_KW@17..23 "public"
           WHITESPACE@23..24 " "
@@ -120,55 +120,55 @@ ROOT@0..223
             WHITESPACE@49..50 " "
             IDENTIFIER@50..54 "args"
           R_PAREN@54..55 ")"
-        BLOCK@55..220
-          WHITESPACE@55..56 " "
+        WHITESPACE@55..56 " "
+        BLOCK@56..220
           L_BRACE@56..57 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@57..86
-            WHITESPACE@57..66 "\n        "
+          WHITESPACE@57..66 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@66..86
             LOCAL_VARIABLE_DECLARATION@66..85
               TYPE@66..70
                 QUALIFIED_NAME@66..70
                   IDENTIFIER@66..70 "Test"
-              VARIABLE_DECLARATOR_LIST@70..85
-                WHITESPACE@70..71 " "
+              WHITESPACE@70..71 " "
+              VARIABLE_DECLARATOR_LIST@71..85
                 VARIABLE_DECLARATOR@71..85
                   IDENTIFIER@71..72 "t"
                   WHITESPACE@72..73 " "
                   EQUAL@73..74 "="
-                  NEW_EXPR@74..85
-                    WHITESPACE@74..75 " "
+                  WHITESPACE@74..75 " "
+                  NEW_EXPR@75..85
                     NEW_KW@75..78 "new"
-                    QUALIFIED_NAME@78..83
-                      WHITESPACE@78..79 " "
+                    WHITESPACE@78..79 " "
+                    QUALIFIED_NAME@79..83
                       IDENTIFIER@79..83 "Test"
                     ARGUMENT_LIST@83..85
                       L_PAREN@83..84 "("
                       R_PAREN@84..85 ")"
             SEMICOLON@85..86 ";"
-          SYNCHRONIZED_STMT@86..214
-            WHITESPACE@86..95 "\n        "
+          WHITESPACE@86..95 "\n        "
+          SYNCHRONIZED_STMT@95..214
             SYNCHRONIZED_KW@95..107 "synchronized"
             PARENTHESIZED_EXPR@107..110
               L_PAREN@107..108 "("
               LITERAL@108..109
                 IDENTIFIER@108..109 "t"
               R_PAREN@109..110 ")"
-            BLOCK@110..214
-              WHITESPACE@110..111 " "
+            WHITESPACE@110..111 " "
+            BLOCK@111..214
               L_BRACE@111..112 "{"
-              SYNCHRONIZED_STMT@112..204
-                WHITESPACE@112..125 "\n            "
+              WHITESPACE@112..125 "\n            "
+              SYNCHRONIZED_STMT@125..204
                 SYNCHRONIZED_KW@125..137 "synchronized"
                 PARENTHESIZED_EXPR@137..140
                   L_PAREN@137..138 "("
                   LITERAL@138..139
                     IDENTIFIER@138..139 "t"
                   R_PAREN@139..140 ")"
-                BLOCK@140..204
-                  WHITESPACE@140..141 " "
+                WHITESPACE@140..141 " "
+                BLOCK@141..204
                   L_BRACE@141..142 "{"
-                  EXPRESSION_STMT@142..190
-                    WHITESPACE@142..159 "\n                "
+                  WHITESPACE@142..159 "\n                "
+                  EXPRESSION_STMT@159..190
                     METHOD_CALL@159..189
                       FIELD_ACCESS@159..177
                         FIELD_ACCESS@159..169

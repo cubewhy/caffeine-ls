@@ -21,10 +21,10 @@ PARSE_ERRORS:
 ITEM_TREE:
 file (java)
 class Foo @1..187
-  static block @12..69
-  instance block @69..121
+  static block @17..69
+  instance block @74..121
   field x: int initializer @133..136 @130..136
   field a: int initializer @149..151 @146..151
-  field b: int initializer @156..158 @152..158
-  field c: int @159..161
+  field b: int initializer @156..158 @153..158
+  field c: int @160..161
   field y: int initializer @174..184 @171..184

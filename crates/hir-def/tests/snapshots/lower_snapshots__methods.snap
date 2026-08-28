@@ -18,7 +18,7 @@ ITEM_TREE:
 file (java)
 class Foo @1..150
   field x: int @21..22
-  method m() -> void @23..39
-  method abstractMethod() -> void [abstract] @39..75
-  method s() -> String [static] @75..112
-  method privateMethod() -> void [private] @112..148
+  method m() -> void @28..39
+  method abstractMethod() -> void [abstract] @44..75
+  method s() -> String [static] @80..112
+  method privateMethod() -> void [private] @117..148

@@ -57,34 +57,34 @@ ROOT@0..73
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..72
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..72
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..70
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..70
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "test"
         FORMAL_PARAMETERS@26..28
           L_PAREN@26..27 "("
           R_PAREN@27..28 ")"
-        BLOCK@28..70
-          WHITESPACE@28..29 " "
+        WHITESPACE@28..29 " "
+        BLOCK@29..70
           L_BRACE@29..30 "{"
-          LOCAL_VARIABLE_DECLARATION_STMT@30..64
-            WHITESPACE@30..39 "\n        "
+          WHITESPACE@30..39 "\n        "
+          LOCAL_VARIABLE_DECLARATION_STMT@39..64
             LOCAL_VARIABLE_DECLARATION@39..63
               TYPE@39..42
                 QUALIFIED_NAME@39..42
                   IDENTIFIER@39..42 "Foo"
-              VARIABLE_DECLARATOR_LIST@42..63
-                WHITESPACE@42..43 " "
+              WHITESPACE@42..43 " "
+              VARIABLE_DECLARATOR_LIST@43..63
                 VARIABLE_DECLARATOR@43..63
                   IDENTIFIER@43..44 "a"
                   WHITESPACE@44..45 " "
                   EQUAL@45..46 "="
-                  CAST_EXPR@46..63
-                    WHITESPACE@46..47 " "
+                  WHITESPACE@46..47 " "
+                  CAST_EXPR@47..63
                     L_PAREN@47..48 "("
                     TYPE@48..51
                       QUALIFIED_NAME@48..51
@@ -94,8 +94,8 @@ ROOT@0..73
                       L_PAREN@52..53 "("
                       NEW_EXPR@53..62
                         NEW_KW@53..56 "new"
-                        QUALIFIED_NAME@56..60
-                          WHITESPACE@56..57 " "
+                        WHITESPACE@56..57 " "
+                        QUALIFIED_NAME@57..60
                           IDENTIFIER@57..60 "Foo"
                         ARGUMENT_LIST@60..62
                           L_PAREN@60..61 "("

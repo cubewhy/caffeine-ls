@@ -34,11 +34,11 @@ ROOT@0..35
     INTERFACE_KW@0..9 "interface"
     WHITESPACE@9..10 " "
     IDENTIFIER@10..11 "A"
-    INTERFACE_BODY@11..35
-      WHITESPACE@11..12 " "
+    WHITESPACE@11..12 " "
+    INTERFACE_BODY@12..35
       L_BRACE@12..13 "{"
-      METHOD_DECL@13..33
-        WHITESPACE@13..14 " "
+      WHITESPACE@13..14 " "
+      METHOD_DECL@14..33
         MODIFIER_LIST@14..21
           DEFAULT_KW@14..21 "default"
         WHITESPACE@21..22 " "
@@ -48,8 +48,8 @@ ROOT@0..35
         FORMAL_PARAMETERS@28..30
           L_PAREN@28..29 "("
           R_PAREN@29..30 ")"
-        BLOCK@30..33
-          WHITESPACE@30..31 " "
+        WHITESPACE@30..31 " "
+        BLOCK@31..33
           L_BRACE@31..32 "{"
           R_BRACE@32..33 "}"
       WHITESPACE@33..34 " "

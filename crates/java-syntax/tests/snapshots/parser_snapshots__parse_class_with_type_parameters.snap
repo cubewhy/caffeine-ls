@@ -38,11 +38,11 @@ ROOT@0..23
       TYPE_PARAMETER@15..16
         IDENTIFIER@15..16 "A"
       COMMA@16..17 ","
-      TYPE_PARAMETER@17..19
-        WHITESPACE@17..18 " "
+      WHITESPACE@17..18 " "
+      TYPE_PARAMETER@18..19
         IDENTIFIER@18..19 "B"
       GREATER@19..20 ">"
-    CLASS_BODY@20..23
-      WHITESPACE@20..21 " "
+    WHITESPACE@20..21 " "
+    CLASS_BODY@21..23
       L_BRACE@21..22 "{"
       R_BRACE@22..23 "}"

@@ -89,11 +89,11 @@ ROOT@0..180
     CLASS_KW@0..5 "class"
     WHITESPACE@5..6 " "
     IDENTIFIER@6..10 "Test"
-    CLASS_BODY@10..179
-      WHITESPACE@10..11 " "
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..179
       L_BRACE@11..12 "{"
-      METHOD_DECL@12..177
-        WHITESPACE@12..17 "\n    "
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..177
         VOID_KW@17..21 "void"
         WHITESPACE@21..22 " "
         IDENTIFIER@22..26 "func"
@@ -106,26 +106,26 @@ ROOT@0..180
             WHITESPACE@33..34 " "
             IDENTIFIER@34..37 "obj"
           R_PAREN@37..38 ")"
-        BLOCK@38..177
-          WHITESPACE@38..39 " "
+        WHITESPACE@38..39 " "
+        BLOCK@39..177
           L_BRACE@39..40 "{"
-          SWITCH_STMT@40..171
-            WHITESPACE@40..49 "\n        "
+          WHITESPACE@40..49 "\n        "
+          SWITCH_STMT@49..171
             SWITCH_KW@49..55 "switch"
             WHITESPACE@55..56 " "
             L_PAREN@56..57 "("
             LITERAL@57..60
               IDENTIFIER@57..60 "obj"
             R_PAREN@60..61 ")"
-            SWITCH_BLOCK@61..171
-              WHITESPACE@61..62 " "
+            WHITESPACE@61..62 " "
+            SWITCH_BLOCK@62..171
               L_BRACE@62..63 "{"
-              SWITCH_RULE@63..135
-                WHITESPACE@63..76 "\n            "
+              WHITESPACE@63..76 "\n            "
+              SWITCH_RULE@76..135
                 SWITCH_LABEL@76..106
                   CASE_KW@76..80 "case"
-                  RECORD_PATTERN@80..106
-                    WHITESPACE@80..81 " "
+                  WHITESPACE@80..81 " "
+                  RECORD_PATTERN@81..106
                     TYPE@81..84
                       QUALIFIED_NAME@81..84
                         IDENTIFIER@81..84 "Box"
@@ -143,14 +143,14 @@ ROOT@0..180
                         IDENTIFIER@97..101 "name"
                       R_PAREN@101..102 ")"
                     COMMA@102..103 ","
-                    MATCH_ALL_PATTERN@103..105
-                      WHITESPACE@103..104 " "
+                    WHITESPACE@103..104 " "
+                    MATCH_ALL_PATTERN@104..105
                       UNDERSCORE@104..105 "_"
                     R_PAREN@105..106 ")"
                 WHITESPACE@106..107 " "
                 ARROW@107..109 "->"
-                METHOD_CALL@109..134
-                  WHITESPACE@109..110 " "
+                WHITESPACE@109..110 " "
+                METHOD_CALL@110..134
                   FIELD_ACCESS@110..128
                     FIELD_ACCESS@110..120
                       LITERAL@110..116
@@ -165,14 +165,14 @@ ROOT@0..180
                       IDENTIFIER@129..133 "name"
                     R_PAREN@133..134 ")"
                 SEMICOLON@134..135 ";"
-              SWITCH_RULE@135..161
-                WHITESPACE@135..148 "\n            "
+              WHITESPACE@135..148 "\n            "
+              SWITCH_RULE@148..161
                 SWITCH_LABEL@148..155
                   DEFAULT_KW@148..155 "default"
                 WHITESPACE@155..156 " "
                 ARROW@156..158 "->"
-                BLOCK@158..161
-                  WHITESPACE@158..159 " "
+                WHITESPACE@158..159 " "
+                BLOCK@159..161
                   L_BRACE@159..160 "{"
                   R_BRACE@160..161 "}"
               WHITESPACE@161..170 "\n        "
