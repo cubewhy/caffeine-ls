@@ -993,6 +993,72 @@ fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
     lsp.shutdown();
 }
 
+/// Deleting a file must refresh the diagnostics of its dependents: an unopened
+/// B that referenced the deleted A is re-pushed with the now-unresolved symbol
+/// error, not left stale.
+#[test]
+fn cross_file_delete_refreshes_dependent_diagnostics() {
+    let lsp = create_lsp();
+    let a = "/src/p/A.java";
+    let b = "/src/p/B.java";
+    lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
+    lsp.write_fixture_file(
+        b,
+        "package p;\npublic class B {\n    void m() { A a = null; a.go(); }\n}\n",
+    );
+    lsp.open_document(a);
+
+    // Seed the build. B is unopened and clean to start.
+    lsp.change_at_mark(a, "// seed\n    <|>");
+    lsp.wait_notifications(
+        "textDocument/publishDiagnostics",
+        10,
+        std::time::Duration::from_millis(700),
+    );
+
+    // Close A and delete it on disk, reporting the change to the server; only a
+    // closed file can be re-read as missing by the loader.
+    lsp.close_document(a);
+    lsp.remove_file(a);
+    lsp.did_change_watched_files(a, FileChangeType::Deleted);
+
+    // The dependent B must be re-pushed with at least one diagnostic.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let pushes = lsp.wait_notifications(
+            "textDocument/publishDiagnostics",
+            4,
+            std::time::Duration::from_millis(400),
+        );
+        let hit = pushes.iter().find(|p| {
+            p.params["uri"]
+                .as_str()
+                .is_some_and(|u| u.ends_with("/B.java"))
+                && p.params["diagnostics"]
+                    .as_array()
+                    .is_some_and(|d| !d.is_empty())
+        });
+        if hit.is_some() {
+            assert!(
+                hit.unwrap().params["diagnostics"]
+                    .as_array()
+                    .is_some_and(|d| d
+                        .iter()
+                        .any(|it| it["message"].as_str().is_some_and(|m| m.contains("A")))),
+                "B must report the unresolved A: {:#?}",
+                hit.unwrap().params
+            );
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for B.java's refreshed diagnostics after deleting A"
+        );
+    }
+
+    lsp.shutdown();
+}
+
 /// Editing an unrelated file must not touch the diagnostics of A or B at all.
 #[test]
 fn cross_file_unrelated_edit_is_isolated() {

@@ -67,10 +67,11 @@ pub enum BackgroundTaskEvent {
         pushes: Vec<crate::cross_file::PublishPayload>,
     },
     /// A cross-file diagnostics pass was cancelled by a pending write mid-run.
-    /// The changed-file set must be re-queued (and the debounce re-armed) once
-    /// the write has been applied.
+    /// The changed-file and force-refresh sets must be re-queued (and the
+    /// debounce re-armed) once the write has been applied.
     CrossFileRetry {
         changed: FxHashSet<FileId>,
+        force: FxHashSet<FileId>,
     },
 }
 
@@ -142,6 +143,10 @@ pub struct GlobalState {
     pub(crate) cross_file: CrossFileDiagnostics,
     /// Files with unsaved edits awaiting the debounced cross-file refresh pass.
     pub(crate) pending_changes: FxHashSet<FileId>,
+    /// Files whose diagnostics must be re-verified directly on the next
+    /// cross-file pass (dependents touched by a source-file deletion), rather
+    /// than only through a probe of their own dependents.
+    pub(crate) force_refresh: FxHashSet<FileId>,
     /// When the current debounce window ends, if a refresh is pending.
     pub(crate) refresh_deadline: Option<Instant>,
     /// The one-shot timer armed for the current debounce window.
@@ -208,6 +213,7 @@ impl GlobalState {
 
             cross_file: CrossFileDiagnostics::default(),
             pending_changes: FxHashSet::default(),
+            force_refresh: FxHashSet::default(),
             refresh_deadline: None,
             refresh_timer: None,
             never_rx: crossbeam_channel::never(),

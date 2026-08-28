@@ -179,11 +179,24 @@ impl CrossFileDiagnostics {
     /// repartition, e.g. when files are created or deleted). Invalidates any
     /// previous build and prunes the per-file state of files that left the set,
     /// so a deleted file never resurfaces as a cross-file candidate.
-    pub(crate) fn set_source_files(&self, files: Vec<FileId>) {
+    ///
+    /// Returns the files that remain in the working set whose diagnostics may
+    /// have moved because a file they depended on was removed (its former
+    /// dependents). Callers use them to refresh that set directly.
+    pub(crate) fn set_source_files(&self, files: Vec<FileId>) -> Vec<FileId> {
         let mut data = self.inner.lock();
         let old: FxHashSet<FileId> = data.source_files.iter().copied().collect();
         let new: FxHashSet<FileId> = files.iter().copied().collect();
         let removed: Vec<FileId> = old.difference(&new).copied().collect();
+
+        // The dependents of a removed file may now have moved diagnostics.
+        // Capture them before pruning the reverse rows.
+        let mut affected: FxHashSet<FileId> = FxHashSet::default();
+        for dep in &removed {
+            if let Some(users) = data.type_reverse.get(dep) {
+                affected.extend(users.iter().copied());
+            }
+        }
 
         for file in &removed {
             data.deps_of.remove(file);
@@ -207,8 +220,10 @@ impl CrossFileDiagnostics {
             !users.is_empty()
         });
 
+        affected.retain(|file| new.contains(file));
         data.source_files = files;
         data.built = false;
+        affected.into_iter().collect()
     }
 
     pub(crate) fn is_built(&self) -> bool {
@@ -374,12 +389,17 @@ impl CrossFileDiagnostics {
 /// verify each candidate's seal, and produce full push payloads for the files
 /// whose diagnostics actually moved.
 ///
+/// `force` holds files to re-verify directly (dependents touched by a source
+/// file deletion) in addition to the candidate dependents probed from the
+/// index; their own reports are emitted when their seal moved.
+///
 /// All salsa reads run through [`ide::Analysis`], whose query boundary returns
 /// [`Cancelled::PendingWrite`] when a concurrent write lands; the caller
 /// re-enqueues the same changed set once the write is applied.
 pub(crate) fn run_cross_file_pass(
     snapshot: &GlobalStateSnapshot,
     changed: &FxHashSet<FileId>,
+    force: &FxHashSet<FileId>,
 ) -> Cancellable<Vec<PublishPayload>> {
     let analysis = &snapshot.analysis;
     let cross = &snapshot.cross_file;
@@ -395,7 +415,9 @@ pub(crate) fn run_cross_file_pass(
             entries.push((file, deps, refs));
         }
     } else {
-        for &file in changed {
+        let mut refresh: FxHashSet<FileId> = changed.clone();
+        refresh.extend(force.iter().copied());
+        for file in refresh {
             let deps = analysis.file_resolved_deps(file)?;
             let refs = analysis.file_dependency_refs(file)?;
             entries.push((file, deps, refs));
@@ -404,13 +426,16 @@ pub(crate) fn run_cross_file_pass(
     cross.apply_entries(entries, !build_all);
 
     // 2. Candidate files.
-    let candidates = cross.candidates(changed, analysis)?;
+    let mut verify = cross.candidates(changed, analysis)?;
+    // 3. Files to verify directly (dependents touched by a deletion), in
+    //    addition to the probes' candidates.
+    verify.extend(force.iter().copied());
 
-    // 3. Verify each candidate's seal and build push payloads for the ones
-    //    that actually changed.
-    tracing::debug!(changed = ?changed, candidates = ?candidates, "cross-file pass candidates");
+    // 4. Verify each file's seal and build push payloads for the ones that
+    //    actually changed.
+    tracing::debug!(changed = ?changed, candidates = ?verify, "cross-file pass candidates");
     let mut out = Vec::new();
-    for file in candidates {
+    for file in verify {
         let Ok(uri) = snapshot.file_id_to_url(file) else {
             continue;
         };

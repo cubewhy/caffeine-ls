@@ -516,13 +516,14 @@ impl GlobalState {
             BackgroundTaskEvent::CrossFileReady { pushes } => {
                 self.handle_cross_file_ready(pushes);
             }
-            BackgroundTaskEvent::CrossFileRetry { changed } => {
+            BackgroundTaskEvent::CrossFileRetry { changed, force } => {
                 tracing::debug!(
                     "cross-file diagnostics pass cancelled by pending write; re-queueing"
                 );
                 for file in changed {
                     self.pending_changes.insert(file);
                 }
+                self.force_refresh.extend(force);
                 self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
                 self.arm_refresh_timer();
             }
@@ -1047,10 +1048,19 @@ impl GlobalState {
         if vfs_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
             // The reverse-dependency index works over the same file set; refresh
-            // the files it covers (a no-op when the partition is unchanged).
+            // the files it covers, and get back any dependents whose diagnostics
+            // may have moved because a file they depended on was removed.
             let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-            self.cross_file.set_source_files(source_files);
+            let affected = self.cross_file.set_source_files(source_files);
             change.set_roots(roots);
+            if !affected.is_empty() {
+                // A deletion can move the diagnostics of the deleted file's
+                // dependents; refresh them directly rather than waiting for a
+                // probe triggered by their own (non-existent) edit.
+                self.force_refresh.extend(affected);
+                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
+                self.arm_refresh_timer();
+            }
         }
 
         self.analysis_host.apply_change(change);
@@ -1102,22 +1112,25 @@ impl GlobalState {
     fn start_cross_file_pass(&mut self) {
         self.refresh_deadline = None;
         let changed = std::mem::take(&mut self.pending_changes);
+        // Files to re-verify directly (dependents touched by a deletion).
+        let force = std::mem::take(&mut self.force_refresh);
         // The very first pass also performs the initial full index build.
         let kick_build = !self.cross_file.is_built();
-        if changed.is_empty() && !kick_build {
+        if changed.is_empty() && force.is_empty() && !kick_build {
             return;
         }
 
         let snapshot = self.snapshot();
         let task_sender = self.task_sender.clone();
         self.thread_pool.execute(move || {
-            let result = cross_file::run_cross_file_pass(&snapshot, &changed);
+            let result = cross_file::run_cross_file_pass(&snapshot, &changed, &force);
             match result {
                 Ok(pushes) => {
                     let _ = task_sender.send(BackgroundTaskEvent::CrossFileReady { pushes });
                 }
                 Err(Cancelled::PendingWrite) => {
-                    let _ = task_sender.send(BackgroundTaskEvent::CrossFileRetry { changed });
+                    let _ =
+                        task_sender.send(BackgroundTaskEvent::CrossFileRetry { changed, force });
                 }
                 Err(cancelled) => {
                     tracing::debug!(?cancelled, "cross-file diagnostics pass aborted");
