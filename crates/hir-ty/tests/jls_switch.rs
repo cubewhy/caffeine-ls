@@ -366,3 +366,28 @@ class Sw {
 ",
     )])
 );
+
+snapshot!(
+    switch_expr_to_byte,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    enum Kind { ADDED, REMOVED }
+
+    byte code(Kind kind) {
+        return switch (kind) {
+            case ADDED -> 1;
+            case REMOVED -> -1;
+        };
+    }
+}
+",
+    )])
+);
+// §5.2 in an assignment/return context with a switch expression as its poly
+// ([§15.28]): every arm's result expression must independently be a
+// representable `byte` constant — the `-1`/`1` literals narrow, so the switch
+// expression as a whole is assignable to `byte`.

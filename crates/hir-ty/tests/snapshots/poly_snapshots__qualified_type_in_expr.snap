@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/org/example/model/Foo.java:
+package org.example.model;
+
+public class Foo {
+    public String name() { return "x"; }
+
+    public enum Kind { A, B }
+}
+
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    List<String> names() {
+        List<org.example.model.Foo> foos = new ArrayList<>();
+        List<String> out = new ArrayList<>();
+        for (org.example.model.Foo foo : foos) {
+            if (foo.name() != null && org.example.model.Foo.Kind.A != null) {
+                out.add(foo.name());
+            }
+        }
+        return out;
+    }
+
+    boolean check(org.example.model.Foo foo) {
+        return foo instanceof org.example.model.Foo f && f.name() == null;
+    }
+}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method names(): java.util.List<java.lang.String>
+  locals: l0: java.util.List<org.example.model.Foo> | l1: java.util.List<java.lang.String> | l2: org.example.model.Foo
+  exprs: e0: java.util.ArrayList<org.example.model.Foo> | e1: java.util.ArrayList<java.lang.String> | e2: java.util.List<org.example.model.Foo> | e3: org.example.model.Foo | e4: java.lang.String | e5: null | e6: boolean | e12: org.example.model.Foo.Kind | e13: null | e14: boolean | e15: boolean | e16: boolean | e17: org.example.model.Foo | e18: java.lang.String | e19: java.util.List<java.lang.String> | e20: boolean | e21: java.util.List<java.lang.String>
+method check(org.example.model.Foo): boolean
+  locals: l3: org.example.model.Foo | l4: org.example.model.Foo
+  exprs: e22: org.example.model.Foo | e23: boolean | e24: org.example.model.Foo | e25: java.lang.String | e26: null | e27: boolean | e28: boolean

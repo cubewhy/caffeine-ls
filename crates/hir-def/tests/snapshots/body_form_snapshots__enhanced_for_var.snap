@@ -1,0 +1,31 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+import java.util.List;
+class Foo {
+    void m(List<String> strings) {
+        for (var s : strings) { }
+        for (final var t : strings) { }
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+import java.util.List; @1..23
+class Foo @23..152
+  method m(List<String> strings) -> void @35..150
+
+BODIES:
+body:
+  param l0: List<String> strings
+  s1: for-each l1 in e0
+    s0: block
+  s3: for-each l2 in e1
+    s2: block
+  l1: <error> s
+  l2: <error> t

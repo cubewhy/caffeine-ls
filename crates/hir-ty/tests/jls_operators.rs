@@ -237,3 +237,58 @@ class Body {
 ",
     )])
 );
+
+snapshot!(
+    nested_ternary_string,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    String marker(boolean a, boolean c) {
+        return a ? \"+ \" : c ? \"~ \" : \"  \";
+    }
+
+    int nested(byte marker) {
+        return marker == 3 ? 3 : marker == 2 ? 2 : marker == 1 ? 1 : 0;
+    }
+}
+",
+    )])
+);
+// §15.25: `ConditionalExpression ::= ConditionalOrExpression ? Expression :
+// ConditionalExpression` is right-associative — `a ? b : c ? d : e` groups as
+// `a ? b : (c ? d : e)`, so the nested marker/tooltip ternaries type as
+// `String`/`int` and feed the enclosing return.
+
+snapshot!(
+    ternary_null_and_array,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    byte[] remap(int[] input, int factor) {
+        int[] copy = new int[input.length];
+        for (int i = 0; i < input.length; i++) {
+            copy[i] = input[i] * factor;
+        }
+        byte[] out = new byte[copy.length];
+        for (int i = 0; i < copy.length; i++) {
+            out[i] = (byte) copy[i];
+        }
+        return out;
+    }
+
+    byte[] pick(boolean excluded, int[] input, int factor) {
+        return excluded ? null : remap(input, factor);
+    }
+}
+",
+    )])
+);
+// §15.25: `cond ? null : T` has type `T`. An array is a reference type
+// ([§4.3.1]), so a null/array-arm pair keeps the array type instead of taking
+// a meaningless lub — `pick` returns `byte[]`.

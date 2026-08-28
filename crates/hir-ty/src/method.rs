@@ -347,7 +347,7 @@ pub(crate) fn inherited_defaults(
     receiver: &Ty,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture_conversion(db, *receiver);
+    let receiver = capture_conversion(db, scope, *receiver);
     let mut stack = vec![receiver];
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
     let mut out = Vec::new();
@@ -401,7 +401,7 @@ fn member_set_impl(
     dedupe: bool,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture_conversion(db, *receiver);
+    let receiver = capture_conversion(db, scope, *receiver);
     let mut stack = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
         _ => vec![receiver],
@@ -421,6 +421,30 @@ fn member_set_impl(
         );
         for parent in supertypes_query(db, scope_id, ty.id) {
             stack.push(parent);
+        }
+    }
+    // §8.4.8: a member whose result type is the class's own *SELF* type
+    // parameter — a parameter whose declared bound renames the class itself,
+    // the assertj idiom `SELF extends AbstractStringAssert<SELF>` resolved on a
+    // receiver parameterized by a *captured wildcard* — returns the receiver's
+    // captured type, not a bare capture variable. Re-pointing the result at
+    // the full receiver keeps assertion chains
+    // (`assertThat(s).contains(a).contains(b)`) member-resolution-capable: the
+    // bare capture's recursively-referencing bound degrades every subsequent
+    // chained call. A *plain* type-parameter return (`Enumeration<? extends
+    // ZipEntry>.nextElement()` returning `E`) is not a SELF channel and keeps
+    // the captured element type, which must stay assignable to `ZipEntry`.
+    let self_channel = matches!(receiver.kind(db), TyKind::Reference { name, .. } if {
+        self_referential_param(db, scope, name.as_str())
+    });
+    if self_channel {
+        for method in &mut out {
+            if matches!(
+                method.ret.kind(db),
+                TyKind::TypeVar { name, .. } if name.as_str().starts_with("CAP#")
+            ) {
+                method.ret = receiver;
+            }
         }
     }
     // §10.7: every array type has a public `clone` method with no parameters
@@ -512,7 +536,7 @@ fn abstract_methods_impl(
     ty: &Ty,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let ty = capture_conversion(db, *ty);
+    let ty = capture_conversion(db, scope, *ty);
     let mut stack = vec![ty];
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
     let mut out = Vec::new();
@@ -721,7 +745,6 @@ fn library_class_methods(
         if !name.is_empty() && interner.resolve(&method.name) != name {
             continue;
         }
-
         let type_params = method
             .type_params
             .iter()
@@ -1233,6 +1256,45 @@ fn member_accessible(
     }
 }
 
+/// Whether some declared type parameter of the class `fqn` has a bound that
+/// references the class itself — the *SELF* channel of a fluent API
+/// (`SELF extends AbstractStringAssert<SELF>`), as opposed to a plain element
+/// parameter (`Enumeration<E>`).
+fn self_referential_param(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &str) -> bool {
+    let Some(resolved) = hir::fqn_resolve(db, scope, fqn) else {
+        return false;
+    };
+    let params = match resolved {
+        hir::Resolved::Library(_) => match hir::class_generic_info(db, &resolved) {
+            Some(info) => info.type_params,
+            None => return false,
+        },
+        hir::Resolved::Source(_) => return false,
+    };
+    let mut mentions = false;
+    fn mention(
+        bound: &syntax::stub::TypeRef<hir::Symbol>,
+        self_fqn: &str,
+        interner: &dyn hir::HirDatabase,
+    ) -> bool {
+        match bound {
+            syntax::stub::TypeRef::Reference { name, generic_args } => {
+                interner.hir_state().interner.resolve(name) == self_fqn
+                    || generic_args
+                        .iter()
+                        .any(|arg| mention(arg, self_fqn, interner))
+            }
+            _ => false,
+        }
+    }
+    for param in &params {
+        if param.bounds.iter().any(|bound| mention(bound, fqn, db)) {
+            mentions = true;
+        }
+    }
+    mentions
+}
+
 /// Whether the class `enclosing` is the top-level class `declaring` or
 /// lexically inside it ([JLS §6.6.1]): a private member is accessible
 /// throughout the body of its top-level class, including from nested classes.
@@ -1499,7 +1561,16 @@ pub(crate) fn more_specific(
         let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
         for (i, tp2) in m2.type_params.iter().enumerate() {
             let t1 = match m1.type_params.get(i) {
-                Some(tp1) => Ty::type_var(db, tp1.name.clone(), tp1.bounds.clone()),
+                // §18.5.4: m2's type parameters are replaced by m1's type
+                // variables. The variables are interned *without* their
+                // declared bounds — that is exactly how the same variable is
+                // interned inside the method's own signature types (source
+                // and classfile alike), so substituting a bound-carrying copy
+                // would make `T` and `T` distinct ids and every identity
+                // comparison (`List<? extends T> <: List<? extends T>`) fail.
+                // The bound comparison is done on the declared bounds
+                // themselves, above ([§8.4.4], [§15.12.2.5]).
+                Some(tp1) => Ty::type_var(db, tp1.name.clone(), Vec::new()),
                 None => object,
             };
             subst.insert(tp2.name.clone(), t1);
@@ -1556,6 +1627,31 @@ fn formal_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, p1: &Ty, p2
     // makes true against `Object`.
     if let (TyKind::Array(e1), TyKind::Array(e2)) = (p1.kind(db), p2.kind(db)) {
         return formal_subtype(db, scope, e1, e2);
+    }
+    // §4.10.2/§15.12.2.5: in the most-specific test for two generic methods
+    // ([§18.5.4]) the less specific method's type parameters are substituted
+    // with the other's type variables, so the target formal can be a *bare*
+    // type variable (`<X> that(Object)` comparing `that(List)` against `that(T)`).
+    // A type variable is a subtype of its declared bound ([§4.10.2]) — the
+    // comparison goes through the bound, exactly as javac's `isSubtype`
+    // reduces a type-variable target to its upper bound. Otherwise
+    // `that(List<? extends E>)` would tie with `that(T)` and the overload
+    // resolution would report an ambiguity that javac resolves in favour of
+    // the List overload.
+    if let TyKind::TypeVar {
+        bounds,
+        lower: None,
+        ..
+    } = p2.kind(db)
+    {
+        // §4.4: an unbounded type parameter has `java.lang.Object` as its
+        // implicit upper bound; the resolution below fills the empty bound
+        // list with `Object` too.
+        let object = Ty::reference(db, "java.lang.Object", Vec::new());
+        if bounds.is_empty() {
+            return is_subtype(db, scope, p1, &object);
+        }
+        return bounds.iter().any(|bound| is_subtype(db, scope, p1, bound));
     }
     is_subtype(db, scope, p1, p2)
 }
@@ -1755,7 +1851,7 @@ pub fn pick_field(
     ctx: &InvocationContext,
 ) -> Option<FieldData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let receiver = capture_conversion(db, *receiver);
+    let receiver = capture_conversion(db, scope, *receiver);
     let mut stack = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
         _ => vec![receiver],

@@ -1,0 +1,67 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/org/example/model/Foo.java:
+package org.example.model;
+
+public class Foo {
+    private final String name;
+
+    public Foo(String name) { this.name = name; }
+
+    public String name() { return name; }
+}
+
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+class Body {
+    Function<org.example.model.Foo, String> f() {
+        return org.example.model.Foo::name;
+    }
+
+    String applyIt(org.example.model.Foo foo, java.util.function.Function<org.example.model.Foo, String> fn) {
+        return fn.apply(foo);
+    }
+
+    Supplier<HashMap<String, String>> fresh() {
+        return java.util.HashMap::new;
+    }
+
+    Supplier<HashMap<String, String>> freshImported() {
+        return HashMap::new;
+    }
+
+    String viaInstance(org.example.model.Foo foo) {
+        java.util.function.Function<org.example.model.Foo, String> fn = foo::name;
+        return fn.apply(foo);
+    }
+}
+
+method Foo(java.lang.String): <init>
+  locals: l0: java.lang.String
+  exprs: e0: org.example.model.Foo | e1: java.lang.String | e2: java.lang.String | e3: java.lang.String
+method name(): java.lang.String
+  locals: 
+  exprs: e4: java.lang.String
+method f(): java.util.function.Function<org.example.model.Foo, java.lang.String>
+  locals: 
+  exprs: e4: java.util.function.Function<org.example.model.Foo, java.lang.String>
+method applyIt(org.example.model.Foo, java.util.function.Function<org.example.model.Foo, java.lang.String>): java.lang.String
+  locals: l0: org.example.model.Foo | l1: java.util.function.Function<org.example.model.Foo, java.lang.String>
+  exprs: e5: org.example.model.Foo | e6: java.util.function.Function<org.example.model.Foo, java.lang.String> | e7: java.lang.String
+method fresh(): java.util.function.Supplier<java.util.HashMap<java.lang.String, java.lang.String>>
+  locals: 
+  exprs: e11: java.util.function.Supplier<java.util.HashMap<java.lang.String, java.lang.String>>
+method freshImported(): java.util.function.Supplier<java.util.HashMap<java.lang.String, java.lang.String>>
+  locals: 
+  exprs: e13: java.util.function.Supplier<java.util.HashMap<java.lang.String, java.lang.String>>
+method viaInstance(org.example.model.Foo): java.lang.String
+  locals: l2: org.example.model.Foo | l3: java.util.function.Function<org.example.model.Foo, java.lang.String>
+  exprs: e14: org.example.model.Foo | e15: java.util.function.Function<org.example.model.Foo, java.lang.String> | e16: org.example.model.Foo | e17: java.util.function.Function<org.example.model.Foo, java.lang.String> | e18: java.lang.String

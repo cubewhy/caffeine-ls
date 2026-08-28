@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    byte[] remap(int[] input, int factor) {
+        int[] copy = new int[input.length];
+        for (int i = 0; i < input.length; i++) {
+            copy[i] = input[i] * factor;
+        }
+        byte[] out = new byte[copy.length];
+        for (int i = 0; i < copy.length; i++) {
+            out[i] = (byte) copy[i];
+        }
+        return out;
+    }
+
+    byte[] pick(boolean excluded, int[] input, int factor) {
+        return excluded ? null : remap(input, factor);
+    }
+}
+
+method remap(int[], int): byte[]
+  locals: l0: int[] | l1: int | l2: int[] | l3: int | l4: byte[] | l5: int
+  exprs: e0: int[] | e1: int | e2: int[] | e3: int | e4: int | e5: int[] | e6: int | e7: boolean | e8: int | e9: int | e10: int[] | e11: int | e12: int | e13: int[] | e14: int | e15: int | e16: int | e17: int | e18: int | e19: int[] | e20: int | e21: byte[] | e22: int | e23: int | e24: int[] | e25: int | e26: boolean | e27: int | e28: int | e29: byte[] | e30: int | e31: byte | e32: int[] | e33: int | e34: int | e35: byte | e36: byte | e37: byte[]
+method pick(boolean, int[], int): byte[]
+  locals: l6: boolean | l7: int[] | l8: int
+  exprs: e38: boolean | e39: null | e40: int[] | e41: int | e42: byte[] | e43: byte[]

@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    interface Fn<S, R> { R apply(S s); }
+
+    static class Foo {
+        String name;
+        int size;
+        Foo(String name, int size) { this.name = name; this.size = size; }
+    }
+
+    static <T, U> Cmp<T> comparing(Fn<? super T, ? extends U> key) { return null; }
+
+    static class Cmp<T> {
+        <U> Cmp<T> thenComparing(Fn<? super T, ? extends U> key) { return this; }
+    }
+
+    Cmp<Foo> order() {
+        return comparing((Foo foo) -> foo.name)
+                .thenComparing(foo -> foo.size);
+    }
+}
+
+method Foo(java.lang.String, int): <init>
+  locals: l0: java.lang.String | l1: int
+  exprs: e0: com.example.Body.Foo | e1: java.lang.String | e2: java.lang.String | e3: java.lang.String | e4: com.example.Body.Foo | e5: int | e6: int | e7: int
+method comparing(com.example.Body.Fn<? super T, ? extends U>): com.example.Body.Cmp<T>
+  locals: l2: com.example.Body.Fn<? super T, ? extends U>
+  exprs: e8: null
+method thenComparing(com.example.Body.Fn<? super T, ? extends U>): com.example.Body.Cmp<T>
+  locals: l3: com.example.Body.Fn<? super T, ? extends U>
+  exprs: e9: com.example.Body.Cmp<T>
+method order(): com.example.Body.Cmp<com.example.Body.Foo>
+  locals: 
+  exprs: e10: com.example.Body.Foo | e11: int | e12: com.example.Body.Fn<? super com.example.Body.Foo, ? extends java.lang.Integer> | e13: com.example.Body.Foo | e14: java.lang.String | e15: com.example.Body.Fn<? super com.example.Body.Foo, ? extends java.lang.String> | e16: com.example.Body.Cmp<com.example.Body.Foo> | e17: com.example.Body.Cmp<com.example.Body.Foo>

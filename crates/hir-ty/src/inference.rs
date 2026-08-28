@@ -283,6 +283,14 @@ impl Inference {
         t: &Ty,
         worklist: &mut VecDeque<Constraint>,
     ) -> bool {
+        // §18.2.1: `⟨S → S⟩` is a tautology — most strikingly for an
+        // inference variable on both sides, which would otherwise record
+        // *itself* as a lower bound (`⟨U → U⟩` from the merge function
+        // `(first, ignored) -> first` of `Collectors.toMap`) and poison the
+        // bound set with a self-reference that no resolution order can break.
+        if s == t {
+            return true;
+        }
         // §5.1.10/§18.2.2: a wildcard on the *source* side stands for its
         // capture's least bound (`? extends X` at least `X`, `? super X`
         // exactly `X`, `?` at least `Object`) — containment does not apply
@@ -512,6 +520,9 @@ impl Inference {
         t: &Ty,
         worklist: &mut VecDeque<Constraint>,
     ) -> bool {
+        if s == t {
+            return true;
+        }
         if let Some(id) = t.as_infer_var(db) {
             self.bounds.entry(id).or_default().equality = Some(*s);
             return true;

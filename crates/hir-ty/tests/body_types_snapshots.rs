@@ -750,6 +750,47 @@ class Body {
 // `iterator.next()` invocations are resolved against the source class.
 
 snapshot!(
+    for_each_var,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Iterator;
+import java.util.List;
+
+class Source implements Iterable<String> {
+    public Iterator<String> iterator() {
+        return null;
+    }
+}
+
+class Body {
+    int m(Source src, List<Integer> list, int[] array) {
+        int sum = 0;
+        // §14.4.1/§14.14.2: a `var` enhanced-for variable has no written
+        // type; it is the iterable's element type.
+        for (var s : src) {
+            sum += s.length();
+        }
+        for (var n : list) {
+            sum += n;
+        }
+        for (var x : array) {
+            sum += x;
+        }
+        return sum;
+    }
+}
+",
+    )])
+);
+// A `var` enhanced-for declaration ([JLS §14.14.2], [§14.4.1]) writes no
+// type, so each loop variable binds the element type of its iterable — `String`
+// for an `Iterable<String>`, `Integer` for a `List<Integer>`, `int` for an
+// array — and the body reads resolve against those types.
+
+snapshot!(
     array_initializer_empty,
     check_body_types(&[(
         "/src/com/example/Body.java",

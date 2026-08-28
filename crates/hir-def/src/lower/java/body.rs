@@ -335,6 +335,14 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 .find(|c| c.kind() == J::TYPE)
                 .map(|ty| {
                     let ty = super::type_from(&ty);
+                    // §14.4.1/§14.14.2: `var` — a contextual keyword lexed as
+                    // an identifier — writes no type; the loop variable's type
+                    // is the element type of the iterable ([§14.14.2]). The
+                    // parser lowers it as a reference type named `var`; detect
+                    // it here like `local_declaration` does, so a `None` type
+                    // marks the local for the type layer.
+                    let is_var =
+                        matches!(&ty.ty, TypeRef::Reference { name, .. } if name.as_str() == "var");
                     let name = node
                         .children()
                         .find(|c| c.kind() == J::VARIABLE_DECLARATOR)
@@ -349,7 +357,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                         ctx,
                         Local {
                             name,
-                            ty: Some(ty),
+                            ty: if is_var { None } else { Some(ty) },
                             // §14.20.3: a resource variable is effectively
                             // final, so it may be a constant variable.
                             is_final: true,

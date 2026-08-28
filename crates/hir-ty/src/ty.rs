@@ -657,33 +657,130 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// the receiver before the member set walk of
 /// [`crate::method::member_set`], and only there: the capture variables never
 /// reach the memoized subtype queries.
-pub fn capture_conversion(db: &dyn TyDatabase, ty: Ty) -> Ty {
+pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
     let fresh = |bound: Ty| {
         let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ty::type_var(
             db,
             Name::new(&format!("CAP#{id}")),
-            vec![capture_conversion(db, bound)],
+            vec![capture_conversion(db, scope, bound)],
         )
     };
     match ty.kind(db) {
-        TyKind::Reference { name, args } => Ty::reference(
-            db,
-            name.clone(),
-            args.iter()
-                .map(|arg| capture_conversion(db, *arg))
-                .collect(),
-        ),
-        TyKind::Array(inner) => Ty::array(db, capture_conversion(db, **inner)),
+        TyKind::Reference { name, args } => {
+            // §5.1.10: the fresh variable of a *bare* `?` argument takes the
+            // upper bound of the type parameter it fills — `AbstractLongAssert<?>`
+            // captures to `AbstractLongAssert<CAP extends AbstractLongAssert<…>>`,
+            // not to `AbstractLongAssert<CAP extends Object>`. Without it a
+            // method returning the SELF type parameter (`as`, `contains`,
+            // `isInstanceOf`) yields a bare wildcard, and the next chained
+            // call degrades to "cannot find symbol" against the `Object`
+            // bound.
+            let placeholders: Vec<Option<Ty>> = args
+                .iter()
+                .map(|arg| {
+                    if matches!(arg.kind(db), TyKind::Wildcard(_)) {
+                        let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Some(Ty::type_var(
+                            db,
+                            Name::new(&format!("CAP#{id}")),
+                            Vec::new(),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let declared = type_param_upper_bounds(db, scope, name.as_str(), &args, &placeholders);
+            Ty::reference(
+                db,
+                name.clone(),
+                args.iter()
+                    .enumerate()
+                    .map(|(i, arg)| match arg.kind(db) {
+                        TyKind::Wildcard(Some(bound)) => match bound.kind {
+                            BoundKind::Upper => fresh(bound.ty),
+                            // `? super T`: a capture variable with the `Object`
+                            // upper bound and the `T` lower bound (§5.1.10).
+                            BoundKind::Lower => {
+                                Ty::captured_var(db, capture_conversion(db, scope, bound.ty))
+                            }
+                        },
+                        TyKind::Wildcard(None) => {
+                            let bound = declared.get(i).copied().unwrap_or_else(|| {
+                                Ty::reference(db, "java.lang.Object", Vec::new())
+                            });
+                            fresh(bound)
+                        }
+                        _ => capture_conversion(db, scope, *arg),
+                    })
+                    .collect(),
+            )
+        }
+        TyKind::Array(inner) => Ty::array(db, capture_conversion(db, scope, **inner)),
         TyKind::Wildcard(Some(bound)) => match bound.kind {
             BoundKind::Upper => fresh(bound.ty),
             // `? super T`: a capture variable with the `Object` upper bound
             // and the `T` lower bound (§5.1.10).
-            BoundKind::Lower => Ty::captured_var(db, capture_conversion(db, bound.ty)),
+            BoundKind::Lower => Ty::captured_var(db, capture_conversion(db, scope, bound.ty)),
         },
         TyKind::Wildcard(None) => fresh(Ty::reference(db, "java.lang.Object", Vec::new())),
         // Intersection and type-variable receivers are not parameterized by
         // wildcards; leave them as-is.
         _ => ty,
     }
+}
+
+/// The upper bound the type parameters of the resolved class declare, in
+/// declaration order — what a *bare* `?` in each argument position captures
+/// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)).
+/// The declared bounds may reference the class's own type parameters
+/// (`SELF extends AbstractAssert<SELF, …>`); those are substituted by the
+/// argument in the corresponding position — a concrete argument by itself, a
+/// wildcard argument by a fresh placeholder variable. A parameter without a
+/// declared bound yields `Object`. Source classes and unresolvable names
+/// (whose bounds need the source item tree) fall back to `Object`.
+fn type_param_upper_bounds(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &str,
+    args: &[Ty],
+    placeholders: &[Option<Ty>],
+) -> Vec<Ty> {
+    let object = Ty::reference(db, "java.lang.Object", Vec::new());
+    let Some(resolved) = hir::fqn_resolve(db, scope, fqn) else {
+        return Vec::new();
+    };
+    let interner = &db.hir_state().interner;
+    let params: Vec<(Name, Vec<syntax::stub::TypeRef<hir::Symbol>>)> = match resolved {
+        hir::Resolved::Library(_) => match hir::class_generic_info(db, &resolved) {
+            Some(info) => info
+                .type_params
+                .iter()
+                .map(|tp| (Name::new(interner.resolve(&tp.name)), tp.bounds.clone()))
+                .collect(),
+            None => return Vec::new(),
+        },
+        hir::Resolved::Source(_) => return Vec::new(),
+    };
+    let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
+    for (i, (name, _)) in params.iter().enumerate() {
+        let arg = match (args.get(i), placeholders.get(i)) {
+            (_, Some(Some(ph))) => *ph,
+            (Some(arg), _) => *arg,
+            _ => object,
+        };
+        binding.insert(name.clone(), arg);
+    }
+    params
+        .iter()
+        .map(|(_, bounds)| {
+            let bound = bounds
+                .first()
+                .map(|tr| crate::resolve::ty_from_library(db, tr).substitute(db, &binding))
+                .filter(|b| !b.is_object(db))
+                .unwrap_or(object);
+            bound
+        })
+        .collect()
 }

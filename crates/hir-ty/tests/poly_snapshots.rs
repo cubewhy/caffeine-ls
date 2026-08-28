@@ -18,7 +18,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_body_types;
+use crate::common::{check_body_types, check_body_types_with_libs, class_with_methods};
 
 snapshot!(
     lambda_initializer,
@@ -541,3 +541,373 @@ class Scope {
 ",
     )])
 );
+
+snapshot!(
+    method_ref_qualified,
+    check_body_types(&[
+        (
+            "/src/org/example/model/Foo.java",
+            "\
+package org.example.model;
+
+public class Foo {
+    private final String name;
+
+    public Foo(String name) { this.name = name; }
+
+    public String name() { return name; }
+}
+",
+        ),
+        (
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+class Body {
+    Function<org.example.model.Foo, String> f() {
+        return org.example.model.Foo::name;
+    }
+
+    String applyIt(org.example.model.Foo foo, java.util.function.Function<org.example.model.Foo, String> fn) {
+        return fn.apply(foo);
+    }
+
+    Supplier<HashMap<String, String>> fresh() {
+        return java.util.HashMap::new;
+    }
+
+    Supplier<HashMap<String, String>> freshImported() {
+        return HashMap::new;
+    }
+
+    String viaInstance(org.example.model.Foo foo) {
+        java.util.function.Function<org.example.model.Foo, String> fn = foo::name;
+        return fn.apply(foo);
+    }
+}
+",
+        ),
+    ])
+);
+// §15.13.1: a method-reference qualifier that is a *qualified type name* —
+// `pkg.Type::name`, `pkg.Type::new`, a nested `Outer.Inner::m` — is a type
+// qualifier resolved on the classpath, not an ordinary instance expression; a
+// bare-name type qualifier and an instance qualifier (`foo::name`) resolve
+// through their own paths.
+
+snapshot!(
+    array_ctor_ref,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    interface IntFn<R> { R apply(int n); }
+
+    String[] build() {
+        IntFn<String[]> f = String[]::new;
+        return f.apply(3);
+    }
+}
+",
+    )])
+);
+// §15.13.4: `T[]::new` is an array-creation method reference whose result is
+// the array type `T[]` — the bounds are the parameters, so `String[]::new` is
+// a `String[]`-producing `IntFn`.
+
+snapshot!(
+    super_ctor_call,
+    check_body_types_with_libs(
+        &[class_with_methods(
+            "org/example/Base",
+            None,
+            &[],
+            &[("<init>", "(I)V")],
+            &[""],
+        )],
+        &[(
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+class Body extends org.example.Base {
+    Body() {
+        super(1);
+    }
+
+    Body(int extra) {
+        super(extra);
+    }
+}
+",
+        )],
+    )
+);
+// §8.8.7.1/§15.12.1: an explicit `super(...)` delegation invokes the
+// superclass's constructor through the `super` invocation mode, so a
+// *protected* superclass constructor (`Base(int)`) is accessible from the
+// subclass.
+
+snapshot!(
+    comparator_chain_lambda,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    interface Fn<S, R> { R apply(S s); }
+
+    static class Foo {
+        String name;
+        int size;
+        Foo(String name, int size) { this.name = name; this.size = size; }
+    }
+
+    static <T, U> Cmp<T> comparing(Fn<? super T, ? extends U> key) { return null; }
+
+    static class Cmp<T> {
+        <U> Cmp<T> thenComparing(Fn<? super T, ? extends U> key) { return this; }
+    }
+
+    Cmp<Foo> order() {
+        return comparing((Foo foo) -> foo.name)
+                .thenComparing(foo -> foo.size);
+    }
+}
+",
+    )])
+);
+// §18.5.2.1/§15.27.3: a lambda with *declared* parameter types constrains the
+// target functional interface's type variables — `comparing((Foo foo) ->
+// ...)` binds `T := Foo`, so the following `thenComparing` keeps a
+// `Cmp<Foo>` receiver and `foo -> foo.size` types against `Foo`.
+
+snapshot!(
+    static_import_overloads,
+    check_body_types(&[
+        (
+            "/src/org/example/assertions/A.java",
+            "\
+package org.example.assertions;
+
+public class A {
+    public static <T> NA<T> assertThat(java.lang.Iterable<? extends T> actual) { return null; }
+    public static <T> NP<T> assertThat(java.util.function.Predicate<T> actual) { return null; }
+    public static <T> NT<T> assertThat(T actual) { return null; }
+    public static NB assertThat(boolean actual) { return null; }
+    public static NI assertThat(int actual) { return null; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NA.java",
+            "\
+package org.example.assertions;
+
+public class NA<T> {
+    public NA<T> hasSize(int n) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NP.java",
+            "\
+package org.example.assertions;
+
+public class NP<T> {
+    public NP<T> accepts(String s) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NT.java",
+            "\
+package org.example.assertions;
+
+public class NT<T> {
+    public NT<T> isEqualTo(Object o) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NB.java",
+            "\
+package org.example.assertions;
+
+public class NB {
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NI.java",
+            "\
+package org.example.assertions;
+
+public class NI {
+    public NI isEqualTo(int n) { return this; }
+}
+",
+        ),
+        (
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import static org.example.assertions.A.assertThat;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    void check(List<String> names) {
+        assertThat(names).hasSize(3);
+        assertThat(names.size()).isEqualTo(3);
+        int count = 10;
+        assertThat(count);
+    }
+}
+",
+        ),
+    ])
+);
+// §15.12.2.5/§18.5.4: among the generic overloads of a statically imported
+// `assertThat`, the *most specific* parameterization wins — `Iterable<? extends T>`
+// beats `T` for a `List<String>` argument, `boolean` beats `T` for a
+// `boolean`, `int` for an `int` — instead of an ambiguity that javac resolves.
+
+snapshot!(
+    overload_set_iterable_collection_list,
+    check_body_types(&[
+        (
+            "/src/org/example/assertions/A.java",
+            "\
+package org.example.assertions;
+
+public class A {
+    public static <T> NT<T> assertThat(T actual) { return null; }
+    public static <ELEMENT> NA<ELEMENT> assertThat(java.lang.Iterable<? extends ELEMENT> actual) { return null; }
+    public static <E> NB<E> assertThat(java.util.Collection<? extends E> actual) { return null; }
+    public static <ELEMENT> NC<ELEMENT> assertThat(java.util.List<? extends ELEMENT> actual) { return null; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NA.java",
+            "\
+package org.example.assertions;
+
+public class NA<T> {
+    public NA<T> hasSize(int n) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NB.java",
+            "\
+package org.example.assertions;
+
+public class NB<T> {
+    public NB<T> hasSize(int n) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NC.java",
+            "\
+package org.example.assertions;
+
+public class NC<T> {
+    public NC<T> hasSize(int n) { return this; }
+}
+",
+        ),
+        (
+            "/src/org/example/assertions/NT.java",
+            "\
+package org.example.assertions;
+
+public class NT<T> {
+    public NT<T> isEqualTo(Object o) { return this; }
+}
+",
+        ),
+        (
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import static org.example.assertions.A.assertThat;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    void check(List<String> names) {
+        assertThat(names).hasSize(3);
+    }
+}
+",
+        ),
+    ])
+);
+// §15.12.2.5: a chain of *related* collection overloads
+// (`T`/`Iterable<? extends E>`/`Collection<? extends E>`/`List<? extends E>`)
+// is resolved by the subtype relation between the formals — `List` is more
+// specific than `Collection` than `Iterable` than `T`.
+
+snapshot!(
+    qualified_type_in_expr,
+    check_body_types(&[
+        (
+            "/src/org/example/model/Foo.java",
+            "\
+package org.example.model;
+
+public class Foo {
+    public String name() { return \"x\"; }
+
+    public enum Kind { A, B }
+}
+",
+        ),
+        (
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    List<String> names() {
+        List<org.example.model.Foo> foos = new ArrayList<>();
+        List<String> out = new ArrayList<>();
+        for (org.example.model.Foo foo : foos) {
+            if (foo.name() != null && org.example.model.Foo.Kind.A != null) {
+                out.add(foo.name());
+            }
+        }
+        return out;
+    }
+
+    boolean check(org.example.model.Foo foo) {
+        return foo instanceof org.example.model.Foo f && f.name() == null;
+    }
+}
+",
+        ),
+    ])
+);
+// §6.5: fully qualified type names resolve in type positions (a for-each
+// variable), in expression positions as static receivers (`Foo.Kind.A`), and
+// as `instanceof` pattern types — without leaking "cannot find symbol">
+// errors for the package segments.

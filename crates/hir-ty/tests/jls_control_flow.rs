@@ -260,3 +260,96 @@ class Body {
 ",
     )])
 );
+
+snapshot!(
+    finally_always_runs,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class Body {
+    static class Guard {
+        void lock() {}
+        void unlock() {}
+    }
+
+    void run(Guard lock) throws IOException {
+        boolean acquired = false;
+        lock.lock();
+        try {
+            acquired = true;
+        } catch (RuntimeException exception) {
+            if (acquired) {
+                lock.unlock();
+            }
+            throw new IOException(\"Interrupted\", exception);
+        } finally {
+            if (acquired) {
+                lock.unlock();
+            }
+        }
+    }
+}
+",
+    )])
+);
+// §14.20.2/§16.1.8: a `finally` block always runs — even when the try block
+// returns and every catch clause throws again — so it is entered reachable,
+// and only the statement *after* the try takes the try's abrupt-completion
+// state. Reporting the finally's first statement as unreachable would be a
+// false positive.
+
+snapshot!(
+    pattern_var_negation_or,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    record Entry(String name) {}
+
+    int scan(Object value) {
+        if (!(value instanceof Entry entry) || entry.name() == null || entry.name().length() == 0) {
+            return 0;
+        }
+        return entry.name().length();
+    }
+}
+",
+    )])
+);
+// §14.30.3: in `a || b || c`, the right operands are reached only through the
+// left's *false* flow, so a negated pattern `!(value instanceof Entry entry)`
+// binds `entry` in every subsequent operand and in the guarded code.
+
+snapshot!(
+    conditional_instanceof_pattern,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static class Entry {
+        String stableKey() { return \"k\"; }
+        String label() { return \"l\"; }
+    }
+
+    static String key(Object value) {
+        return value instanceof Entry entry ? entry.stableKey() : \"\";
+    }
+
+    static String label(Object value) {
+        return !(value instanceof Entry entry) ? \"\" : entry.label();
+    }
+}
+",
+    )])
+);
+// §14.30.3: a pattern in a conditional condition binds its variables in the
+// arm where they are definitely matched — the condition's true flow in the
+// then-arm, its false flow (via `!`) in the else-arm.

@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Iterator;
+import java.util.List;
+
+class Source implements Iterable<String> {
+    public Iterator<String> iterator() {
+        return null;
+    }
+}
+
+class Body {
+    int m(Source src, List<Integer> list, int[] array) {
+        int sum = 0;
+        // §14.4.1/§14.14.2: a `var` enhanced-for variable has no written
+        // type; it is the iterable's element type.
+        for (var s : src) {
+            sum += s.length();
+        }
+        for (var n : list) {
+            sum += n;
+        }
+        for (var x : array) {
+            sum += x;
+        }
+        return sum;
+    }
+}
+
+method iterator(): java.util.Iterator<java.lang.String>
+  locals: 
+  exprs: e0: null
+method m(com.example.Source, java.util.List<java.lang.Integer>, int[]): int
+  locals: l0: com.example.Source | l1: java.util.List<java.lang.Integer> | l2: int[] | l3: int | l4: java.lang.String | l5: java.lang.Integer | l6: int
+  exprs: e1: int | e2: com.example.Source | e3: int | e4: java.lang.String | e5: int | e6: int | e7: java.util.List<java.lang.Integer> | e8: int | e9: java.lang.Integer | e10: int | e11: int[] | e12: int | e13: int | e14: int | e15: int

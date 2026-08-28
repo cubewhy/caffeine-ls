@@ -567,7 +567,7 @@ impl<'a> InferCtx<'a> {
         // by one carries its capture instead, so the cast is decided against
         // the captured type variable.
         let from = if matches!(from.kind(self.db), TyKind::Wildcard(_)) {
-            capture_conversion(self.db, from)
+            capture_conversion(self.db, &self.scope, from)
         } else {
             from
         };
@@ -764,8 +764,43 @@ impl<'a> InferCtx<'a> {
         {
             return false;
         }
+        // §5.2 in assignment context via a switch expression ([§15.28]): the
+        // switch is a poly expression and every *result expression* — each
+        // arrow-arm value and each `yield` value — is checked against the
+        // target on its own, so each must be a representable int constant.
+        if let ExprData::Switch { arms, .. } = self.tree.expr(expr) {
+            return self.switch_results_narrowable(arms, *d);
+        }
         self.const_int_value(expr)
             .is_some_and(|value| crate::subtyping::fits_primitive(value, *d))
+    }
+
+    /// Whether every result expression of `arms` is an int constant that
+    /// narrows to `d` ([JLS §5.2] applied per result expression of a switch
+    /// expression in assignment context, [§15.28]).
+    fn switch_results_narrowable(&self, arms: &[SwitchArm], d: PrimitiveType) -> bool {
+        let mut results = Vec::new();
+        for arm in arms {
+            self.collect_switch_results(&arm.body, &mut results);
+        }
+        !results.is_empty()
+            && results.into_iter().all(|expr| {
+                self.const_int_value(expr)
+                    .is_some_and(|value| crate::subtyping::fits_primitive(value, d))
+            })
+    }
+
+    /// The result expressions of a switch arm: an arrow arm's value
+    /// expression, and the `yield` values of a block arm.
+    fn collect_switch_results(&self, stmts: &[StmtId], out: &mut Vec<ExprId>) {
+        for &stmt in stmts {
+            match self.tree.stmt(stmt) {
+                StmtData::Expr(expr) => out.push(*expr),
+                StmtData::Yield(expr) => out.push(*expr),
+                StmtData::Block(inner) => self.collect_switch_results(inner, out),
+                _ => {}
+            }
+        }
     }
 
     /// The value of an int-typed constant expression
@@ -1164,6 +1199,12 @@ impl<'a> InferCtx<'a> {
             // they can resolve against it.
             ExprData::Conditional { cond, then, els } => {
                 self.check_condition(cond);
+                // §14.30.3: a pattern in a conditional condition binds its
+                // variables in the arm where they are definitely matched —
+                // the condition's true flow in the then-arm
+                // (`v instanceof T t ? t.f() : ...`), its false flow in the
+                // else-arm (`!(v instanceof T t) ? "" : t.f()`).
+                let (cond_true, cond_false) = self.pattern_flow(cond).unwrap_or_default();
                 let cond_is_poly =
                     expr_is_poly_ext(&self.tree, then) && expr_is_poly_ext(&self.tree, els);
                 let target_is_fi = self.target.is_some_and(|target| {
@@ -1175,12 +1216,32 @@ impl<'a> InferCtx<'a> {
                     // §15.25.2: a conditional whose arms are poly expressions
                     // is a poly expression with the target type; the target
                     // propagates into the arms so they are typed against it.
+                    self.scopes.push(FxHashMap::default());
+                    for binding in &cond_true {
+                        self.scope_binding(*binding);
+                    }
                     let _ = self.infer_expr(then);
+                    self.scopes.pop();
+                    self.scopes.push(FxHashMap::default());
+                    for binding in &cond_false {
+                        self.scope_binding(*binding);
+                    }
                     let _ = self.infer_expr(els);
+                    self.scopes.pop();
                     self.target.expect("target checked above")
                 } else {
+                    self.scopes.push(FxHashMap::default());
+                    for binding in &cond_true {
+                        self.scope_binding(*binding);
+                    }
                     let then_ty = self.infer_expr(then);
+                    self.scopes.pop();
+                    self.scopes.push(FxHashMap::default());
+                    for binding in &cond_false {
+                        self.scope_binding(*binding);
+                    }
                     let els_ty = self.infer_expr(els);
+                    self.scopes.pop();
                     let ty = self.conditional_type(then_ty, els_ty);
                     // §15.25: a boolean operand against an unrelated
                     // primitive makes the conditional ill-typed — report the
@@ -1503,6 +1564,20 @@ impl<'a> InferCtx<'a> {
                     parts.push(name.as_str().to_owned());
                     cur = t;
                 }
+                // A qualified name lowered to one `NamePath` node (`a.b.c` in
+                // a construct the parser joins together); every segment must
+                // be a plain name that is not a local variable.
+                ExprData::NamePath(name) => {
+                    let segments: Vec<&str> = name.as_str().split('.').collect();
+                    if segments
+                        .iter()
+                        .any(|segment| self.lookup_local(&Name::new(segment)).is_some())
+                    {
+                        return None;
+                    }
+                    parts.extend(segments.into_iter().map(str::to_owned));
+                    break;
+                }
                 ExprData::Var(name) => {
                     if self.lookup_local(&name).is_some() {
                         return None;
@@ -1686,7 +1761,17 @@ impl<'a> InferCtx<'a> {
                 Name::new(simple)
             }
         };
-        let access = self.access.with_mode(InvocationMode::Virtual);
+        // §8.8.7.1: an explicit `super(...)` delegation accesses the
+        // superclass's constructors through the `super` keyword, whose
+        // invocation mode is `Super` ([§15.12.1]) — a *protected* superclass
+        // constructor may be invoked from a subclass this way even when the
+        // receiver-type rule of [§6.6.2] would reject a virtual access.
+        // (`this(...)` delegation, by contrast, is a virtual invocation.)
+        let mode = match target {
+            hir_expand::body::CtorCallTarget::Super => InvocationMode::Super,
+            hir_expand::body::CtorCallTarget::This => InvocationMode::Virtual,
+        };
+        let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access) {
             Some((method, deferred)) => {
@@ -2139,39 +2224,62 @@ impl<'a> InferCtx<'a> {
         resolve: bool,
     ) -> Option<MethodData> {
         let (formals, ret, throws_formals) = inference.register_method(self.db, method);
-        // §15.12.2.2/§15.12.2.3: a lambda is compatible with a function type
-        // only when the parameter list has the same arity as the single
-        // abstract method ([§15.27.3]). A candidate whose functional interface
-        // does not fit a lambda argument is not applicable.
+        // §15.12.2.2/§15.12.2.3/§15.13.2: a lambda or method reference is a
+        // poly expression whose type *is* the target functional interface —
+        // be compatible with a formal parameter only when that formal is a
+        // functional interface ([§9.8]). Otherwise the candidate is not
+        // applicable at all: `Collection.toArray(T[])` must not appear
+        // applicable to the argument `T[]::new`, or the overload resolution
+        // would report an ambiguity javac resolves in favour of
+        // `toArray(IntFunction<T[]>)`. A lambda whose parameter list has a
+        // different arity than the SAM's is likewise inapplicable ([§15.27.3]).
         for (i, info) in arg_kinds.iter().enumerate() {
             let Some(formal) = formals.get(i).copied() else {
                 break;
             };
             for kind in &info.leaves {
-                let ArgKind::Lambda {
-                    arity: Some(arity),
-                    id,
-                } = kind
-                else {
+                let ArgKind::Lambda { id, arity } = kind else {
                     continue;
                 };
-                if let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) {
+                // §15.12.2.2/§15.12.2.3/§15.13.2: a lambda or method reference
+                // (a method reference has `arity == None`) is compatible with
+                // a formal parameter only when that formal is a functional
+                // interface ([§9.8]) — *or* when it is still an inference
+                // variable that the enclosing invocation may unify with one
+                // (`<T> T id(T)` probed against `Function<String,Integer>`
+                // for the argument `id(s -> s.length())`). A proper
+                // non-interface type — `Collection.toArray(T[])` for
+                // `T[]::new` — makes the candidate inapplicable, or the
+                // overload resolution would report an ambiguity javac
+                // resolves in favour of `toArray(IntFunction<T[]>)`.
+                let bare_var = matches!(
+                    formal.kind(self.db),
+                    TyKind::InferenceVar(_) | TyKind::TypeVar { .. }
+                );
+                let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
+                    if bare_var {
+                        continue;
+                    }
+                    return None;
+                };
+                if let Some(arity) = arity {
                     if sam.params.len() != *arity {
                         return None;
                     }
-                    // §15.27.3: a block lambda that is not value-compatible
-                    // — no `return` statement carries a value — is congruent
-                    // only with a void function result. Without this check a
-                    // void body stays applicable to a value-returning target
-                    // (`assertDoesNotThrow(exe, msg)` would go ambiguous
-                    // against the `ThrowingSupplier` overload).
-                    if let ExprData::Lambda { body, .. } = self.tree.expr(*id).clone()
-                        && !sam.ret.is_void_like(self.db)
-                        && matches!(body, LambdaBody::Block(_))
-                        && !self.lambda_block_has_value(&body)
-                    {
-                        return None;
-                    }
+                }
+                // §15.27.3: a block lambda that is not value-compatible — no
+                // `return` statement carries a value — is congruent only with
+                // a void function result. Without this check a void body stays
+                // applicable to a value-returning target
+                // (`assertDoesNotThrow(exe, msg)` would go ambiguous against
+                // the `ThrowingSupplier` overload).
+                if arity.is_some()
+                    && let ExprData::Lambda { body, .. } = self.tree.expr(*id).clone()
+                    && !sam.ret.is_void_like(self.db)
+                    && matches!(body, LambdaBody::Block(_))
+                    && !self.lambda_block_has_value(&body)
+                {
+                    return None;
                 }
             }
         }
@@ -2376,7 +2484,8 @@ impl<'a> InferCtx<'a> {
                     let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
                         return true;
                     };
-                    let ref_ret = self.method_ref_return(qualifier, type_name.as_ref(), &name);
+                    let ref_ret =
+                        self.method_ref_return(qualifier, type_name.as_ref(), &name, &sam.params);
                     // §15.13.2: a *void-compatible* reference constrains
                     // nothing — any result the referenced method produces is
                     // discarded (`attributeNode::getDepth` is compatible with
@@ -2423,6 +2532,32 @@ impl<'a> InferCtx<'a> {
                         // bounds, not the captures themselves.
                         let target = self.decapture(&sam.ret);
                         inference.add_constraint(Constraint::Sub(body_ty, target));
+                    }
+                    // §18.5.2.1/§15.27.3: a lambda with *declared* parameter
+                    // types constrains the target functional interface's
+                    // type variables — `⟨(P1..Pn) λ -> F⟩` reduces to the
+                    // per-parameter constraints `⟨Pᵢ -> Uᵢ⟩`, not to silence.
+                    // `Comparator.comparingInt((FieldPair p) -> ...)` binds
+                    // the `? super T` of the comparator through `p`'s type;
+                    // without it `T` would resolve to `Object` and every
+                    // later `thenComparing` in the chain would fail. The SAM
+                    // `Uᵢ` was extracted from the *captured* formal, so its
+                    // wildcards carry capture variables
+                    // ([§5.1.10]); [`Self::decapture`] recovers the bound the
+                    // declared type must conform to, exactly as for the return
+                    // side above.
+                    if sam.params.len() == params.len() {
+                        for (declared, formal_param) in params.iter().zip(&sam.params) {
+                            let Some(tyref) = &declared.1 else {
+                                continue;
+                            };
+                            let declared_ty =
+                                resolve_type_ref(self.db, &self.scope, &self.resolver, tyref);
+                            if !declared_ty.is_error(self.db) {
+                                let target = self.decapture(formal_param);
+                                inference.add_constraint(Constraint::Sub(declared_ty, target));
+                            }
+                        }
                     }
                 }
                 true
@@ -3085,14 +3220,18 @@ impl<'a> InferCtx<'a> {
         qualifier: Option<ExprId>,
         type_name: Option<&SpannedTypeRef>,
         name: &Name,
+        sam_params: &[Ty],
     ) -> Ty {
         let ref_ty = match (type_name, qualifier) {
             (Some(tyref), _) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-            // `Type::name` — a qualifier that is a bare name resolving to a
-            // type is a type qualifier ([§15.13.1]); otherwise it is an
-            // instance qualifier, inferred as an expression.
+            // `Type::name` — a qualifier that is a (possibly qualified) type
+            // name — a bare name, `pkg.Type` or a nested `Outer.Inner` — is a
+            // type qualifier ([§15.13.1]); otherwise it is an instance
+            // qualifier, inferred as an expression.
             (None, Some(expr)) => {
-                if let ExprData::Var(name) = self.tree.expr(expr).clone()
+                if let Some(ty) = self.dotted_type_name(expr) {
+                    ty
+                } else if let ExprData::Var(name) = self.tree.expr(expr).clone()
                     && let Some(ty) = self.type_name_ty(&name)
                 {
                     ty
@@ -3102,17 +3241,57 @@ impl<'a> InferCtx<'a> {
             }
             _ => return self.error(),
         };
+        // §15.13.1/§15.13.4: `Type::new` is a constructor reference whose
+        // "return" is the class itself — also an *array-creation* reference
+        // `T[]::new`, whose "return" is the array type (the bounds are the
+        // parameters, §15.13.4). The lowering records the `new` token of a
+        // constructor reference as `<missing>`, so a missing member name on a
+        // type qualifier is a constructor reference too.
+        if matches!(
+            ref_ty.kind(self.db),
+            TyKind::Reference { .. } | TyKind::Array(_)
+        ) && (name.as_str() == "new" || name.as_str() == "<missing>")
+        {
+            return ref_ty;
+        }
         if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
             return self.error();
         }
-        // §15.13.1: `Type::new` is a constructor reference; its "return" is
-        // the class itself. The lowering records the `new` token of a
-        // constructor reference as `<missing>`, so a missing member name on
-        // a *type* qualifier is a constructor reference too.
-        if name.as_str() == "new" || name.as_str() == "<missing>" {
-            return ref_ty;
-        }
-        let methods = member_set(self.db, &self.scope, &ref_ty, name.as_str(), &self.access);
+        // §15.13.3: for an unbound *instance* method reference, the receiver
+        // of the referenced method is the single abstract method's first
+        // parameter — which carries the type arguments the bare type name
+        // lacks. `List::stream` as a `Function<List<MatchDecision>, ? extends
+        // Stream<…>>` calls `stream()` on `List<MatchDecision>`, so its result
+        // is `Stream<MatchDecision>` rather than a raw `Stream` that would
+        // erase the element type and leave `R` unconstrained.
+        // §15.13.3: for an unbound *instance* method reference, the receiver
+        // of the referenced method is the single abstract method's first
+        // parameter — which carries the type arguments the bare type name
+        // lacks. `List::stream` as a `Function<List<MatchDecision>, ? extends
+        // Stream<…>>` calls `stream()` on `List<MatchDecision>`, so its result
+        // is `Stream<MatchDecision>` rather than a raw `Stream` that would
+        // erase the element type and leave `R` unconstrained.
+        let methods_on_type =
+            member_set(self.db, &self.scope, &ref_ty, name.as_str(), &self.access);
+        let is_static_ref = methods_on_type.iter().any(|m| m.is_static);
+        let receiver = if is_static_ref || sam_params.is_empty() {
+            ref_ty
+        } else {
+            let first = self.decapture(&sam_params[0]);
+            // Use the SAM receiver only when it is a *parameterized* reference
+            // once inference has made it concrete — an uninstantiated inference
+            // variable (`EntityId::externalName` probed against
+            // `Function<? super α, …>`) carries no members yet, and a plain or
+            // raw receiver (`? super EntityId`, `Object`) adds no type
+            // arguments, so the bare type-name lookup keeps the existing
+            // resolution (`EntityId::kind`, `String::length`) untouched.
+            if matches!(first.kind(self.db), TyKind::Reference { args, .. } if !args.is_empty()) {
+                first
+            } else {
+                ref_ty
+            }
+        };
+        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &self.access);
         methods
             .first()
             .map(|method| method.ret)
@@ -3128,11 +3307,14 @@ impl<'a> InferCtx<'a> {
     ) {
         let ref_ty = match (type_name, qualifier) {
             (Some(tyref), _) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-            // `Type::name` — a qualifier that is a bare name resolving to a
-            // type is a type qualifier ([§15.13.1]); otherwise it is an
-            // instance qualifier, inferred as an expression.
+            // `Type::name` — a qualifier that is a (possibly qualified) type
+            // name — a bare name, `pkg.Type` or a nested `Outer.Inner` — is a
+            // type qualifier ([§15.13.1]); otherwise it is an instance
+            // qualifier, inferred as an expression.
             (None, Some(expr)) => {
-                if let ExprData::Var(name) = self.tree.expr(expr).clone()
+                if let Some(ty) = self.dotted_type_name(expr) {
+                    ty
+                } else if let ExprData::Var(name) = self.tree.expr(expr).clone()
                     && let Some(ty) = self.type_name_ty(&name)
                 {
                     ty
@@ -3253,10 +3435,14 @@ impl<'a> InferCtx<'a> {
                 return self.binary_numeric_promotion(l, r);
             }
         }
-        if then_ty.is_null(self.db) && els_ty.is_reference(self.db) {
+        // §15.25: the null rules — `cond ? null : T` has type T (and
+        // symmetrically). An array is a reference type ([§4.3.1]), so a
+        // null/arm-array pair keeps the array type instead of taking a
+        // meaningless lub.
+        if then_ty.is_null(self.db) && (els_ty.is_reference(self.db) || els_ty.is_array(self.db)) {
             return els_ty;
         }
-        if els_ty.is_null(self.db) && then_ty.is_reference(self.db) {
+        if els_ty.is_null(self.db) && (then_ty.is_reference(self.db) || then_ty.is_array(self.db)) {
             return then_ty;
         }
         // §5.1.10: the lub of two references is never a wildcard — a bare
@@ -3264,7 +3450,7 @@ impl<'a> InferCtx<'a> {
         // a valid type.
         let lub = least_upper_bound(self.db, &self.scope, &[then_ty, els_ty]);
         if matches!(lub.kind(self.db), TyKind::Wildcard(_)) {
-            capture_conversion(self.db, lub)
+            capture_conversion(self.db, &self.scope, lub)
         } else {
             lub
         }
@@ -3313,8 +3499,18 @@ impl<'a> InferCtx<'a> {
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             self.check_condition(lhs);
             self.scopes.push(FxHashMap::default());
-            if let Some(bindings) = self.pattern_binding_ids(lhs) {
-                for binding in bindings {
+            // §6.3.2: the pattern variables of the left operand that are
+            // *definitely matched* when the right operand evaluates are in
+            // scope there — for `a && b` the true flow of `a` (b runs only
+            // when a matched), for `a || b` its false flow (b runs only when
+            // a failed, so a negated pattern `!(x instanceof T t)` has t
+            // matched there).
+            if let Some((lhs_true, lhs_false)) = self.pattern_flow(lhs) {
+                let matched = match op {
+                    BinaryOp::And => lhs_true,
+                    _ => lhs_false,
+                };
+                for binding in matched {
                     self.scope_binding(binding);
                 }
             }
@@ -4340,9 +4536,20 @@ impl<'a> InferCtx<'a> {
                 self.exited = all_exits;
                 self.scopes.pop();
                 if let Some(finally) = finally {
-                    // §16.1.8: the `finally` block always runs, so its
-                    // assignments override the joined state.
+                    // §16.1.8/§14.20.2: the `finally` block *always* runs, even
+                    // when the try block and every catch clause complete
+                    // abruptly — so it is entered *reachable* regardless of
+                    // `all_exits` (reporting its first statement as
+                    // unreachable would be a false positive). Its end state is
+                    // the try statement's end state: its assignments override
+                    // the joined set, and the statement completes abruptly iff
+                    // the finally completes abruptly, otherwise exactly as the
+                    // joined paths did.
+                    let before_finally_exited = self.exited;
+                    self.exited = false;
                     self.infer_stmt(*finally);
+                    let finally_exited = self.exited;
+                    self.exited = finally_exited || before_finally_exited;
                 }
             }
             StmtData::Assert { cond, msg } => {

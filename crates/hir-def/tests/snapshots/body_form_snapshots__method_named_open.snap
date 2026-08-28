@@ -1,0 +1,73 @@
+---
+source: crates/hir-def/tests/body_form_snapshots.rs
+expression: out
+---
+SOURCE:
+
+class Out {
+    public void close() {}
+}
+
+class Body {
+    // §3.9: `open` is a restricted identifier only in *module* positions; a
+    // member method named `open` is an ordinary declaration and must be
+    // lowered like any other method.
+    static Out open() {
+        Out zip = null;
+        java.io.InputStream input = null;
+        return new Out(input) {
+            @Override
+            public void close() {
+                try {
+                    super.close();
+                } finally {
+                }
+            }
+        };
+    }
+
+    static Out otherName() {
+        Out zip = null;
+        return new Out(null) {
+            @Override
+            public void close() {
+                try {
+                    super.close();
+                } finally {
+                }
+            }
+        };
+    }
+
+    static Out simple() {
+        return new Out(null) {
+            public int size() { return 0; }
+        };
+    }
+}
+
+PARSE_ERRORS:
+<none>
+ITEM_TREE:
+file (java)
+class Out @1..41
+  method close() -> void [public] @12..39
+class Body @41..952
+  method open() -> Out [static] @55..556
+  method otherName() -> Out [static] @556..831
+  method simple() -> Out [static] @831..950
+
+BODIES:
+body:
+body:
+  s0: decl l0 = e0
+  s1: decl l1 = e1
+  s2: return e3
+body:
+  s3: decl l2 = e4
+  s4: return e6
+body:
+  s5: return e8
+  l0: Out zip
+  l1: java.io.InputStream input
+  l2: Out zip

@@ -87,7 +87,13 @@ fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
         | UNSIGNED_RIGHT_SHIFT_EQUAL => (2, 1),
 
         // Conditional Operator
-        QUESTION => (3, 4),
+        //
+        // JLS §15.25: `ConditionalExpression ::= ConditionalOrExpression ?
+        // Expression : ConditionalExpression` — the else branch recurses into
+        // conditional expressions themselves (right-associative:
+        // `a ? b : c ? d : e` groups as `a ? b : (c ? d : e)`), while an
+        // assignment (`l_bp` 2) stays out of it.
+        QUESTION => (3, 3),
 
         // Conditional-or
         OR => (5, 6),

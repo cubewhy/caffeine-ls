@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    enum Kind { ADDED, REMOVED }
+
+    byte code(Kind kind) {
+        return switch (kind) {
+            case ADDED -> 1;
+            case REMOVED -> -1;
+        };
+    }
+}
+
+method code(com.example.Body.Kind): byte
+  locals: l0: com.example.Body.Kind
+  exprs: e0: com.example.Body.Kind | e1: com.example.Body.Kind | e2: int | e3: com.example.Body.Kind | e4: int | e5: int | e6: int

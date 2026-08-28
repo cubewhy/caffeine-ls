@@ -595,7 +595,16 @@ fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
             && token.kind() == J::IDENTIFIER
             && !matches!(
                 token.text(),
-                "record" | "sealed" | "non-sealed" | "open" | "module" | "permits"
+                // §3.9: the restricted identifiers `record`, `sealed`,
+                // `non-sealed` and `permits` may precede a type name but are
+                // not the declared name (and cannot name a type). `open` is
+                // only restricted in *module* positions (the module
+                // declaration is lowered separately), so a member method
+                // named `open` is a perfectly ordinary declaration — it must
+                // not be dropped here (an anonymous-class `close()` method is
+                // fine; a `static InputStream open(...)` that vanished would
+                // leave every call site reporting "cannot find symbol").
+                "record" | "sealed" | "non-sealed" | "permits"
             )
         {
             return Some(Name::new(token.text()));

@@ -216,3 +216,69 @@ class Foo {
 }
 "#,
 }
+
+// Enhanced-for loop variables typed with `var`
+// ([JLS §14.14.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2),
+// [§14.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4.1))
+// write no type: like a `var` local declaration, the local carries `ty: None`
+// so the type layer infers the iterable's element type from the expression.
+
+body_snapshot! {
+    enhanced_for_var,
+    r#"
+import java.util.List;
+class Foo {
+    void m(List<String> strings) {
+        for (var s : strings) { }
+        for (final var t : strings) { }
+    }
+}
+"#,
+}
+
+body_snapshot! {
+    method_named_open,
+    r#"
+class Out {
+    public void close() {}
+}
+
+class Body {
+    // §3.9: `open` is a restricted identifier only in *module* positions; a
+    // member method named `open` is an ordinary declaration and must be
+    // lowered like any other method.
+    static Out open() {
+        Out zip = null;
+        java.io.InputStream input = null;
+        return new Out(input) {
+            @Override
+            public void close() {
+                try {
+                    super.close();
+                } finally {
+                }
+            }
+        };
+    }
+
+    static Out otherName() {
+        Out zip = null;
+        return new Out(null) {
+            @Override
+            public void close() {
+                try {
+                    super.close();
+                } finally {
+                }
+            }
+        };
+    }
+
+    static Out simple() {
+        return new Out(null) {
+            public int size() { return 0; }
+        };
+    }
+}
+"#,
+}
