@@ -13,7 +13,7 @@ use vfs::{AnchoredPath, FileId, file_set::FileSet};
 
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 use rustc_hash::{FxHashSet, FxHasher};
 use salsa::{Durability, Setter};
 use triomphe::Arc;
@@ -54,13 +54,14 @@ impl Files {
 
     pub fn set_file_text(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId, text: &str) {
         self.ensure_file_source_root(db, file_id);
-        match self.files.entry(file_id) {
-            Entry::Occupied(mut occupied) => {
-                occupied.get_mut().set_text(db).to(Arc::from(text));
+        match self.files.get(&file_id) {
+            Some(current) => {
+                let current = *current;
+                current.set_text(db).to(Arc::from(text));
             }
-            Entry::Vacant(vacant) => {
+            None => {
                 let text = FileText::new(db, Arc::from(text), file_id);
-                vacant.insert(text);
+                self.files.insert(file_id, text);
             }
         };
     }
@@ -73,19 +74,19 @@ impl Files {
         durability: Durability,
     ) {
         self.ensure_file_source_root(db, file_id);
-        match self.files.entry(file_id) {
-            Entry::Occupied(mut occupied) => {
-                occupied
-                    .get_mut()
+        match self.files.get(&file_id) {
+            Some(current) => {
+                let current = *current;
+                current
                     .set_text(db)
                     .with_durability(durability)
                     .to(Arc::from(text));
             }
-            Entry::Vacant(vacant) => {
+            None => {
                 let text = FileText::builder(Arc::from(text), file_id)
                     .durability(durability)
                     .new(db);
-                vacant.insert(text);
+                self.files.insert(file_id, text);
             }
         };
     }
@@ -109,19 +110,19 @@ impl Files {
         source_root: Arc<SourceRoot>,
         durability: Durability,
     ) {
-        match self.source_roots.entry(source_root_id) {
-            Entry::Occupied(mut occupied) => {
-                occupied
-                    .get_mut()
+        match self.source_roots.get(&source_root_id) {
+            Some(current) => {
+                let current = *current;
+                current
                     .set_source_root(db)
                     .with_durability(durability)
                     .to(source_root);
             }
-            Entry::Vacant(vacant) => {
+            None => {
                 let source_root = SourceRootInput::builder(source_root)
                     .durability(durability)
                     .new(db);
-                vacant.insert(source_root);
+                self.source_roots.insert(source_root_id, source_root);
             }
         };
     }
@@ -195,19 +196,19 @@ impl Files {
         source_root_id: SourceRootId,
         durability: Durability,
     ) {
-        match self.file_source_roots.entry(id) {
-            Entry::Occupied(mut occupied) => {
-                occupied
-                    .get_mut()
+        match self.file_source_roots.get(&id) {
+            Some(current) => {
+                let current = *current;
+                current
                     .set_source_root_id(db)
                     .with_durability(durability)
                     .to(source_root_id);
             }
-            Entry::Vacant(vacant) => {
+            None => {
                 let file_source_root = FileSourceRootInput::builder(source_root_id)
                     .durability(durability)
                     .new(db);
-                vacant.insert(file_source_root);
+                self.file_source_roots.insert(id, file_source_root);
             }
         };
     }

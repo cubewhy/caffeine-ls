@@ -63,14 +63,23 @@ pub fn on_did_open(
         }
 
         let contents = params.text_document.text.into_bytes();
+        let changed = state
+            .vfs
+            .write()
+            .0
+            .set_file_contents(path.clone(), Some(contents));
+        // `set_file_contents` allocates the file id even for a file the loader
+        // hasn't scanned yet, so the id is available immediately after.
         let file_id = state.vfs.read().0.file_id(&path).map(|(id, _)| id);
-        // Opening a document can bring text in that differs from the on-disk
-        // copy the loader fed the vfs; treat that as an edit for the
-        // cross-file pipeline.
-        if state.vfs.write().0.set_file_contents(path, Some(contents))
-            && let Some(file_id) = file_id
-        {
-            state.record_source_edit(file_id);
+        if let Some(file_id) = file_id {
+            // Opening a document makes it watched: its diagnostics are now
+            // tracked across edits to the files it depends on.
+            state.diagnostics.mark_watched(file_id);
+            // Opening a document can bring text in that differs from the
+            // on-disk copy; treat that as an edit for the diagnostics pipeline.
+            if changed {
+                state.record_source_edit(file_id);
+            }
         }
     }
 
@@ -146,16 +155,10 @@ pub fn on_did_close(
             tracing::error!("orphan DidCloseTextDocument: {}", path);
         }
 
-        // TODO: uncomment those lines when we add diagnostic and semantic tokens support
-
-        // if let Some((file_id, _)) = state.vfs.read().file_id(&path) {
-        //     state.diagnostics.clear_native_for(file_id);
-        // }
-
-        // state
-        //     .semantic_tokens_cache
-        //     .lock()
-        //     .remove(&params.text_document.uri);
+        // Closing a document stops tracking its diagnostics across edits.
+        if let Some((file_id, _)) = state.vfs.read().0.file_id(&path) {
+            state.diagnostics.unwatch(file_id);
+        }
 
         if let Some(path) = path.as_path() {
             state.loader.handle.invalidate(path.to_path_buf());

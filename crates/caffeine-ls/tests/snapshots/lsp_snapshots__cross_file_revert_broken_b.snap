@@ -26,8 +26,8 @@ expression: "normalize_and_sort(broken, &lsp)"
         }
       ],
       "kind": "full",
-      "resultId": "0000000000000000-99be16fd8416479f"
+      "resultId": "2"
     }
   },
-  "resultId": "0000000000000000-d1fba762150c532c"
+  "resultId": "1"
 }

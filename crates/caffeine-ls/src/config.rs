@@ -93,16 +93,7 @@ impl Config {
             .unwrap_or(true)
     }
 
-    /// Whether affected unopened files get a `textDocument/publishDiagnostics`
-    /// push (the proactive channel of cross-file updates).
-    pub fn cross_file_push_unopened(&self) -> bool {
-        self.client_config
-            .as_ref()
-            .map(|config| config.diagnostics.push_unopened)
-            .unwrap_or(true)
-    }
-
-    /// Debounce window between a text edit and the cross-file refresh pass.
+    /// Debounce window between a text edit and the diagnostics refresh pass.
     pub fn cross_file_debounce(&self) -> Duration {
         let ms = self
             .client_config
@@ -188,14 +179,9 @@ pub struct ClientConfig {
 #[serde(default)]
 pub struct DiagnosticsConfig {
     /// Whether editing one file triggers recomputation of the diagnostics of
-    /// the files that depend on it (the reverse-dependency pipeline). When
+    /// the watched files that depend on it (the subscription pipeline). When
     /// disabled the server reverts to per-file diagnostics only.
     pub enable_cross_file: bool,
-    /// Push `textDocument/publishDiagnostics` for affected *unopened* files so
-    /// the client's problem/store is updated without a focus change. Open files
-    /// are always updated by the client re-pulling after a
-    /// `workspace/diagnosticRefresh`.
-    pub push_unopened: bool,
     /// Debounce window between a text change and the cross-file refresh pass.
     pub debounce_ms: u64,
 }
@@ -204,7 +190,6 @@ impl Default for DiagnosticsConfig {
     fn default() -> Self {
         Self {
             enable_cross_file: true,
-            push_unopened: true,
             debounce_ms: 150,
         }
     }

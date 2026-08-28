@@ -1,6 +1,5 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 938
 expression: "normalize_and_sort(after, &lsp)"
 ---
 {
@@ -8,7 +7,7 @@ expression: "normalize_and_sort(after, &lsp)"
     {
       "items": [],
       "kind": "full",
-      "resultId": "0000000000000000-d1fba762150c532c",
+      "resultId": "1",
       "uri": "file://<WORKSPACE_ROOT>/src/p/A.java",
       "version": 1
     }

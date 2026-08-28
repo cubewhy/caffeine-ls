@@ -19,7 +19,7 @@ use vfs::{AbsPathBuf, FileId};
 use crate::{
     GlobalState,
     config::Config,
-    cross_file::{self, PublishPayload},
+    diagnostics as diagnostics_store,
     global_state::{BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState},
     handlers::{
         self,
@@ -513,17 +513,12 @@ impl GlobalState {
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
 
-            BackgroundTaskEvent::CrossFileReady { pushes } => {
-                self.handle_cross_file_ready(pushes);
+            BackgroundTaskEvent::DiagnosticsReady { changed } => {
+                self.handle_diagnostics_ready(changed);
             }
-            BackgroundTaskEvent::CrossFileRetry { changed, force } => {
-                tracing::debug!(
-                    "cross-file diagnostics pass cancelled by pending write; re-queueing"
-                );
-                for file in changed {
-                    self.pending_changes.insert(file);
-                }
-                self.force_refresh.extend(force);
+            BackgroundTaskEvent::DiagnosticsRetry { changed } => {
+                tracing::debug!("diagnostics pass cancelled by pending write; re-queueing");
+                self.pending_changes.extend(changed);
                 self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
                 self.arm_refresh_timer();
             }
@@ -672,10 +667,10 @@ impl GlobalState {
         self.file_set_config = Some(file_set_config);
 
         let roots = self.partition_source_roots();
-        // The reverse-dependency index works over the exactly same file set as
-        // the database source roots.
+        // The diagnostics store covers the exactly same file set as the
+        // database source roots.
         let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-        self.cross_file.set_source_files(source_files);
+        self.diagnostics.set_source_files(source_files);
         let mut project_graph = self.build_project_graph(&graph, &source_set_ids);
         for (idx, source_set) in source_sets.iter().enumerate() {
             project_graph
@@ -1047,34 +1042,19 @@ impl GlobalState {
         // to be rebuilt to keep `file_language_kind` working.
         if vfs_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
-            // The reverse-dependency index works over the same file set; refresh
-            // the files it covers, and get back the files whose diagnostics may
+            // The diagnostics store covers the same file set; refresh the files
+            // it covers, and get back the watched files whose diagnostics may
             // have moved because of the repartition.
             let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-            let delta = self.cross_file.set_source_files(source_files);
+            let affected = self.diagnostics.set_source_files(source_files);
             change.set_roots(roots);
 
-            if self.config.cross_file_enabled() {
-                let mut needs_refresh = false;
-                if !delta.added.is_empty() {
-                    // A newly added file can resolve (or conflict with)
-                    // references in files that mention it; probing its dependents
-                    // refreshes those.
-                    self.pending_changes.extend(delta.added);
-                    needs_refresh = true;
-                }
-                if !delta.removed_dependents.is_empty() {
-                    // A deletion can move the diagnostics of the deleted file's
-                    // dependents; refresh them directly rather than waiting for a
-                    // probe triggered by their own (non-existent) edit.
-                    self.force_refresh.extend(delta.removed_dependents);
-                    needs_refresh = true;
-                }
-                if needs_refresh {
-                    self.refresh_deadline =
-                        Some(Instant::now() + self.config.cross_file_debounce());
-                    self.arm_refresh_timer();
-                }
+            if self.config.cross_file_enabled() && !affected.is_empty() {
+                // A file add/delete can resolve (or conflict with) references
+                // in watched files; re-verify them all.
+                self.pending_changes.extend(affected);
+                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
+                self.arm_refresh_timer();
             }
         }
 
@@ -1100,7 +1080,7 @@ impl GlobalState {
         self.refresh_timer = None;
         match self.refresh_deadline {
             Some(deadline) if Instant::now() >= deadline => {
-                self.start_cross_file_pass();
+                self.start_diagnostics_pass();
             }
             Some(_) => self.arm_refresh_timer(),
             None => {}
@@ -1118,82 +1098,50 @@ impl GlobalState {
         }
     }
 
-    /// Launches the debounced cross-file diagnostics pass on the worker pool.
-    /// The pass builds (or incrementally updates) the reverse-dependency index,
-    /// derives the candidate set and verifies each candidate's seal, returning
-    /// the full reports of the files whose diagnostics actually moved. A
-    /// concurrent write cancels the pass ([`Cancelled::PendingWrite`]) and the
-    /// worker hands the changed set back for a re-run after the write.
-    fn start_cross_file_pass(&mut self) {
+    /// Launches the debounced diagnostics refresh pass on the worker pool. The
+    /// pass recomputes the edited files and their watched dependents, returning
+    /// the files whose diagnostics actually moved. A concurrent write cancels
+    /// the pass ([`Cancelled::PendingWrite`]) and the worker hands the changed
+    /// set back for a re-run after the write.
+    fn start_diagnostics_pass(&mut self) {
         self.refresh_deadline = None;
         let changed = std::mem::take(&mut self.pending_changes);
-        // Files to re-verify directly (dependents touched by a deletion).
-        let force = std::mem::take(&mut self.force_refresh);
-        // The very first pass also performs the initial full index build.
-        let kick_build = !self.cross_file.is_built();
-        if changed.is_empty() && force.is_empty() && !kick_build {
+        if changed.is_empty() {
             return;
         }
 
         let snapshot = self.snapshot();
         let task_sender = self.task_sender.clone();
         self.thread_pool.execute(move || {
-            let result = cross_file::run_cross_file_pass(&snapshot, &changed, &force);
+            let result = diagnostics_store::run_diagnostics_pass(&snapshot, &changed);
             match result {
-                Ok(pushes) => {
-                    let _ = task_sender.send(BackgroundTaskEvent::CrossFileReady { pushes });
+                Ok(moved) => {
+                    let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsReady {
+                        changed: moved.into_iter().collect(),
+                    });
                 }
                 Err(Cancelled::PendingWrite) => {
-                    let _ =
-                        task_sender.send(BackgroundTaskEvent::CrossFileRetry { changed, force });
+                    let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsRetry { changed });
                 }
                 Err(cancelled) => {
-                    tracing::debug!(?cancelled, "cross-file diagnostics pass aborted");
+                    tracing::debug!(?cancelled, "diagnostics pass aborted");
                 }
             }
         });
     }
 
-    /// Applies a completed cross-file pass: pushes the changed reports for
-    /// *unopened* files and asks the client to re-pull when an open file's
-    /// diagnostics moved. The delivery seal is recorded per file so a racing
-    /// pull replies with `Unchanged` (a `resultId` comparison) instead of
-    /// duplicating the report.
-    fn handle_cross_file_ready(&mut self, pushes: Vec<PublishPayload>) {
+    /// Applies a completed diagnostics pass: asks the client to re-pull the
+    /// documents whose diagnostics moved via `workspace/diagnosticRefresh` (the
+    /// pull channel). Unopened files are never pushed.
+    fn handle_diagnostics_ready(&mut self, changed: FxHashSet<FileId>) {
         if !self.config.cross_file_enabled() {
             return;
         }
-        let mut any_open_changed = false;
-        let mut outgoing: Vec<PublishPayload> = Vec::new();
-        for payload in pushes {
-            // Open documents are re-pulled by the client after a
-            // `workspace/diagnosticRefresh`; only unopened ones need a push to
-            // keep their stored diagnostics current. The seal is recorded only
-            // when the report is actually delivered, so a disabled push still
-            // surfaces the change through the next pull's `related_documents`.
-            let is_open = crate::lsp::from_proto::vfs_path(&payload.uri)
-                .map(|path| self.mem_docs.contains(&path))
-                .unwrap_or(false);
-            if is_open {
-                any_open_changed = true;
-                self.cross_file.set_seal(payload.file, payload.seal.clone());
-            } else if self.config.cross_file_push_unopened() {
-                self.cross_file.set_seal(payload.file, payload.seal.clone());
-                outgoing.push(payload);
-            }
+        if changed.is_empty() {
+            return;
         }
-
-        for payload in outgoing {
-            self.notify::<PublishDiagnosticsNotification>(PublishDiagnosticsParams {
-                uri: payload.uri,
-                version: None,
-                diagnostics: payload.diagnostics,
-            });
-        }
-
-        if any_open_changed {
-            self.refresh_diagnostics();
-        }
+        tracing::debug!(changed = ?changed, "diagnostics moved; refreshing the client");
+        self.refresh_diagnostics();
     }
 }
 

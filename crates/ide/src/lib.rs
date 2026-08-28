@@ -129,12 +129,15 @@ impl Analysis {
         })
     }
 
-    /// A deterministic digest of the file's cross-file diagnostics, stable
-    /// across identical contents — the seal the LSP layer compares to detect
-    /// which files' diagnostics *actually* changed after a cross-file edit.
-    /// See [`ide_diagnostics::file_diagnostics_digest`].
-    pub fn file_diagnostics_digest(&self, file_id: FileId) -> Cancellable<String> {
-        self.with_db(|db| ide_diagnostics::file_diagnostics_digest(db, file_id))
+    /// The complete report of the file — its syntax diagnostics plus its merged
+    /// type and declaration diagnostics — the unit the LSP diagnostics store
+    /// tracks and diffs per file (see [`ide_diagnostics::file_report`]).
+    pub fn file_report(
+        &self,
+        file_id: FileId,
+        fallback_language_kind: LanguageKind,
+    ) -> Cancellable<std::sync::Arc<Vec<Diagnostic>>> {
+        self.with_db(|db| ide_diagnostics::file_report(db, file_id, fallback_language_kind))
     }
 
     /// The workspace source files whose declarations the file's type outputs

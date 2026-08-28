@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    cross_file,
+    diagnostics,
     global_state::GlobalStateSnapshot,
-    lsp::{diagnostics, symbols, to_proto},
+    lsp::{symbols, to_proto},
 };
 
 use ide::LanguageKind;
@@ -28,64 +28,49 @@ pub fn on_diagnostic(
         }
         .into());
     };
-    let line_index = state.file_line_index(file_id)?;
     // Before the workspace is loaded, files are not part of any source
     // root, so fall back to the language kind inferred from the path.
     let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
-    // javac reports `rawtypes`/`unchecked` only under an explicit
-    // `-Xlint` flag ([JLS-adjacent]); the same lints gate the matching
-    // warnings here, so the default stream matches plain `javac`.
-    let lints = state.config.client_lints();
-    let diagnostics = state
-        .analysis
-        .syntax_diagnostics(file_id, fallback_language_kind)?
-        .into_iter()
-        .chain(state.analysis.file_diagnostics(file_id)?)
-        .filter(|diagnostic| cross_file::lint_allows(lints, diagnostic))
-        .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
-        .collect();
+    // Track this file across edits and compute (or read back) its report.
+    state
+        .diagnostics
+        .ensure_subscribed(&state.analysis, file_id)?;
+    let (generation, report) =
+        state
+            .diagnostics
+            .file_report(&state.analysis, file_id, fallback_language_kind)?;
 
-    // The seal covers every reported item (syntax + type/declaration); the
-    // client echoes it back as `previous_result_id` to skip re-serialization
-    // when nothing changed.
-    let seal = cross_file::diagnostic_seal(&state.analysis, file_id, fallback_language_kind)?;
-    // Related documents: files whose diagnostics an edit to this file can move,
-    // sealed so a steady-state re-pull is a handful of `resultId` comparisons.
-    let related_documents: Option<HashMap<Uri, RelatedDocument>> = state
-        .cross_file
-        .related_for(&state, file_id)?
-        .map(|map| map.into_iter().collect());
+    // Related documents: watched files whose diagnostics an edit to this file
+    // can move, sealed with their generation.
+    let related_documents: Option<HashMap<Uri, RelatedDocument>> =
+        diagnostics::related_for(&state, file_id)?.map(|map| map.into_iter().collect());
 
-    tracing::debug!(
-        ?diagnostics,
-        related = related_documents.as_ref().map(|it| it.len()),
-        "finished collecting diagnostics"
-    );
-
-    if params.previous_result_id.as_deref() == Some(seal.as_str()) {
+    let id = generation.to_string();
+    if params.previous_result_id.as_deref() == Some(id.as_str()) {
         return Ok(RelatedUnchangedDocumentDiagnosticReport {
             related_documents,
             unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
-                result_id: seal,
+                result_id: id,
             },
         }
         .into());
     }
 
+    let items = diagnostics::convert_items(&state, file_id, &report)?;
     Ok(RelatedFullDocumentDiagnosticReport {
         related_documents,
         full_document_diagnostic_report: FullDocumentDiagnosticReport {
-            result_id: Some(seal),
-            items: diagnostics,
+            result_id: Some(id),
+            items,
         },
     }
     .into())
 }
 
 /// The workspace-wide diagnostic report ([§Diagnostic]): one full or unchanged
-/// entry per source file, sealed with the file's diagnostic digest. Documents
-/// whose [`previousResultId`][WorkspaceDiagnosticParams#previous_result_ids]
-/// still matches are echoed as `Unchanged`; the rest come back in full, so the
+/// entry per source file, sealed with the file's generation. Documents whose
+/// [`previousResultId`][WorkspaceDiagnosticParams#previous_result_ids] still
+/// matches are echoed as `Unchanged`; the rest come back in full, so the
 /// client can refresh its whole in-memory diagnostic store in a single round
 /// trip.
 pub fn on_workspace_diagnostic(
@@ -103,7 +88,7 @@ pub fn on_workspace_diagnostic(
         .map(|previous| (previous.uri, previous.value))
         .collect();
 
-    let items = cross_file::workspace_diagnostic_reports(&state, &previous_ids)?;
+    let items = diagnostics::workspace_diagnostic_reports(&state, &previous_ids)?;
     Ok(WorkspaceDiagnosticReport::new(items))
 }
 

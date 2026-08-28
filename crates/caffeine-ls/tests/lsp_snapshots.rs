@@ -636,11 +636,6 @@ class Nav {
     lsp.shutdown();
 }
 
-fn create_lsp_with_config(client_config: serde_json::Value) -> LspHarness {
-    LazyLock::force(&SETUP);
-    LspHarness::start_with_setup(client_config, |_| {}, run_server)
-}
-
 /// Re-issues `workspace/diagnostic` until `pred` holds, returning the accepted
 /// raw report (the server cancels queries when a write lands mid-request).
 fn request_workspace_until(
@@ -799,12 +794,12 @@ fn lsp_range_of(text: &str, needle: &str) -> Range {
     }
 }
 
-/// The IDEA experience, tested through the *pull* channel: `B.java` is never
-/// opened, yet typing a missing method into `A.java` resolves `B`'s undefined
-/// `go()` error in the diagnostics snapshot of `A`.
+/// The IDEA experience, tested through the *pull* channel: typing a missing
+/// method into `A.java` resolves `B`'s undefined `go()` error. `B` is watched
+/// (open), so its diagnostics surface in `A`'s related documents.
 #[test]
-fn cross_file_typing_resolves_unopened_error() {
-    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+fn cross_file_typing_resolves_dependent_error() {
+    let lsp = create_lsp();
     let a = "/src/p/A.java";
     lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
     lsp.write_fixture_file(
@@ -812,12 +807,13 @@ fn cross_file_typing_resolves_unopened_error() {
         "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
     );
     lsp.open_document(a);
+    lsp.open_document("/src/p/B.java");
 
-    // Seed a comment to trigger the initial reverse-index build pass. The
+    // Seed a comment to trigger the initial subscription build pass. The
     // trailing newline keeps the next edit on a fresh, un-commented line.
     lsp.change_at_mark(a, "// seed\n    <|>");
 
-    // B is not open, yet its `go()` error must surface in A's related docs.
+    // B is watched, so its `go()` error must surface in A's related docs.
     let before = wait_until_pull(&lsp, a, |report| related_entry(report, "B.java").is_some());
     assert!(
         related_entry(&before, "B.java").is_some_and(|entry| {
@@ -825,10 +821,10 @@ fn cross_file_typing_resolves_unopened_error() {
                 .as_array()
                 .is_some_and(|items| !items.is_empty())
         }),
-        "B's undefined `go()` error must appear while B is unopened"
+        "B's undefined `go()` error must appear while B is watched"
     );
     insta::assert_json_snapshot!(
-        "cross_file_typing_unopened_b_error",
+        "cross_file_typing_dependent_b_error",
         normalize_and_sort(before, &lsp)
     );
 
@@ -850,10 +846,10 @@ fn cross_file_typing_resolves_unopened_error() {
 }
 
 /// The inverse direction: deleting the method from `A` puts the error back into
-/// `B`.
+/// the watched `B`.
 #[test]
 fn cross_file_reverts_when_method_removed() {
-    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let lsp = create_lsp();
     let a = "/src/p/A.java";
     let a_text = "package p;\npublic class A {\n    public void go() {}\n    <|>\n}\n";
     lsp.write_fixture_file(a, a_text);
@@ -862,6 +858,7 @@ fn cross_file_reverts_when_method_removed() {
         "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
     );
     lsp.open_document(a);
+    lsp.open_document("/src/p/B.java");
 
     // Trigger the build; A and B are both clean.
     lsp.change_at_mark(a, "// seed\n    <|>");
@@ -896,12 +893,11 @@ fn cross_file_reverts_when_method_removed() {
 }
 
 /// Deleting a source file on disk (reported via the client's
-/// `didChangeWatchedFiles` watcher) must drop it from the VFS source roots, the
-/// reverse-dependency index, and the workspace diagnostics — not leave a stale
-/// entry behind.
+/// `didChangeWatchedFiles` watcher) must drop it from the VFS source roots and
+/// the workspace diagnostics — not leave a stale entry behind.
 #[test]
 fn cross_file_deletes_when_source_file_removed_on_disk() {
-    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let lsp = create_lsp();
     let a = "/src/p/A.java";
     let b = "/src/p/B.java";
     lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
@@ -948,7 +944,7 @@ fn cross_file_deletes_when_source_file_removed_on_disk() {
 /// empty report — not an internal error that surfaces to the user.
 #[test]
 fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
-    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let lsp = create_lsp();
     let a = "/src/p/A.java";
     let b = "/src/p/B.java";
     lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
@@ -993,9 +989,9 @@ fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
     lsp.shutdown();
 }
 
-/// Deleting a file must refresh the diagnostics of its dependents: an unopened
-/// B that referenced the deleted A is re-pushed with the now-unresolved symbol
-/// error, not left stale.
+/// Deleting a file must refresh the diagnostics of its watched dependents: a
+/// watched `B` that referenced the deleted `A` now reports the unresolved
+/// symbol, not a stale report.
 #[test]
 fn cross_file_delete_refreshes_dependent_diagnostics() {
     let lsp = create_lsp();
@@ -1007,14 +1003,10 @@ fn cross_file_delete_refreshes_dependent_diagnostics() {
         "package p;\npublic class B {\n    void m() { A a = null; a.go(); }\n}\n",
     );
     lsp.open_document(a);
+    lsp.open_document(b);
 
-    // Seed the build. B is unopened and clean to start.
+    // Seed the build. B is watched and currently has the undefined-`go()` error.
     lsp.change_at_mark(a, "// seed\n    <|>");
-    lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        10,
-        std::time::Duration::from_millis(700),
-    );
 
     // Close A and delete it on disk, reporting the change to the server; only a
     // closed file can be re-read as missing by the loader.
@@ -1022,66 +1014,54 @@ fn cross_file_delete_refreshes_dependent_diagnostics() {
     lsp.remove_file(a);
     lsp.did_change_watched_files(a, FileChangeType::Deleted);
 
-    // The dependent B must be re-pushed with at least one diagnostic.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let pushes = lsp.wait_notifications(
-            "textDocument/publishDiagnostics",
-            4,
-            std::time::Duration::from_millis(400),
-        );
-        let hit = pushes.iter().find(|p| {
-            p.params["uri"]
-                .as_str()
-                .is_some_and(|u| u.ends_with("/B.java"))
-                && p.params["diagnostics"]
-                    .as_array()
-                    .is_some_and(|d| !d.is_empty())
-        });
-        if hit.is_some() {
-            assert!(
-                hit.unwrap().params["diagnostics"]
-                    .as_array()
-                    .is_some_and(|d| d
-                        .iter()
-                        .any(|it| it["message"].as_str().is_some_and(|m| m.contains("A")))),
-                "B must report the unresolved A: {:#?}",
-                hit.unwrap().params
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for B.java's refreshed diagnostics after deleting A"
-        );
-    }
+    // The watched B must now report the unresolved `A` when pulled.
+    let report = wait_until_pull(&lsp, b, |r| {
+        r["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|it| it["message"].as_str().is_some_and(|m| m.contains("A")))
+        })
+    });
+    assert!(
+        report["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|it| it["message"].as_str().is_some_and(|m| m.contains("A")))
+        }),
+        "B must report the unresolved A: {report}"
+    );
 
     lsp.shutdown();
 }
 
-/// Adding a file must refresh the diagnostics of the files that referenced it:
-/// an unopened B whose reference to a missing A was an error is re-pushed clean
-/// once A appears on disk.
+/// Adding a file must refresh the diagnostics of the watched files that
+/// referenced it: a watched `B` whose reference to a missing `A` was an error
+/// is reported clean once `A` appears on disk.
 #[test]
 fn cross_file_add_refreshes_dependent_diagnostics() {
     let lsp = create_lsp();
     let a = "/src/p/A.java";
     let b = "/src/p/B.java";
     let c = "/src/p/C.java";
-    // B references A before A exists; C is the open seed file.
+    // B references A before A exists; C is the other watched seed file.
     lsp.write_fixture_file(
         b,
         "package p;\npublic class B {\n    void m() { A a = null; a.go(); }\n}\n",
     );
     lsp.write_fixture_file(c, "package p;\npublic class C {\n    <|>\n}\n");
+    lsp.open_document(b);
     lsp.open_document(c);
 
-    // Seed the build; B is unopened and currently has an unresolved-A error.
+    // Seed the build; B is watched and currently has an unresolved-A error.
     lsp.change_at_mark(c, "// seed\n    <|>");
-    lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        10,
-        std::time::Duration::from_millis(700),
+    let before = wait_until_pull(&lsp, b, |r| {
+        r["items"].as_array().is_some_and(|items| !items.is_empty())
+    });
+    assert!(
+        before["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "B must report the unresolved A before A exists: {before}"
     );
 
     // Add A on disk and report it through the watcher.
@@ -1091,30 +1071,16 @@ fn cross_file_add_refreshes_dependent_diagnostics() {
     );
     lsp.did_change_watched_files(a, FileChangeType::Created);
 
-    // B must be re-pushed with the unresolved-A error cleared.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let pushes = lsp.wait_notifications(
-            "textDocument/publishDiagnostics",
-            4,
-            std::time::Duration::from_millis(400),
-        );
-        let hit = pushes.iter().find(|p| {
-            p.params["uri"]
-                .as_str()
-                .is_some_and(|u| u.ends_with("/B.java"))
-                && p.params["diagnostics"]
-                    .as_array()
-                    .is_some_and(|d| d.is_empty())
-        });
-        if hit.is_some() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for B.java's cleared diagnostics after adding A"
-        );
-    }
+    // B must be reported clean once A appears.
+    let after = wait_until_pull(&lsp, b, |r| {
+        r["items"].as_array().is_some_and(|items| items.is_empty())
+    });
+    assert!(
+        after["items"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "B's diagnostics must clear after A appears: {after}"
+    );
 
     lsp.shutdown();
 }
@@ -1137,23 +1103,15 @@ fn cross_file_unrelated_edit_is_isolated() {
         c,
         "package p;\npublic class C {\n    void n() {\n        <|>\n    }\n}\n",
     );
+    lsp.open_document(a);
+    lsp.open_document("/src/p/B.java");
     lsp.open_document(c);
 
-    // The seed edit triggers the build without changing anything A/B depends on.
+    // The seed edit triggers the subscription build without changing anything
+    // A or B depends on.
     lsp.change_at_mark(c, "int local = 1;<|>");
 
-    // No diagnostics may be pushed for A or B.
-    let pushes = lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        1,
-        std::time::Duration::from_millis(700),
-    );
-    assert!(
-        pushes.is_empty(),
-        "unexpected cross-file pushes: {pushes:#?}"
-    );
-
-    // A's pull must not relate to C.
+    // A's pull must not relate to the unrelated C.
     let report = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
     assert!(
         related_entry(&report, "C.java").is_none(),
@@ -1174,6 +1132,7 @@ fn cross_file_result_id_roundtrip() {
         "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
     );
     lsp.open_document(a);
+    lsp.open_document("/src/p/B.java");
     lsp.change_at_mark(a, "// seed\n    <|>");
 
     let first = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
@@ -1200,7 +1159,7 @@ fn cross_file_result_id_roundtrip() {
 /// a fresh (empty) one.
 #[test]
 fn cross_file_workspace_pull() {
-    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let lsp = create_lsp();
     let a = "/src/p/A.java";
     lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
     lsp.write_fixture_file(
@@ -1249,10 +1208,10 @@ fn cross_file_workspace_pull() {
     lsp.shutdown();
 }
 
-/// Closing `B` and then editing `A` still updates `B`'s stored diagnostics via
-/// the push channel — no focus change required.
+/// Closing `B` stops tracking its diagnostics: a subsequent edit to `A` no
+/// longer surfaces B as a related document of `A`.
 #[test]
-fn cross_file_did_close_updates_unopened() {
+fn cross_file_closed_file_is_not_tracked() {
     let lsp = create_lsp();
     let a = "/src/p/A.java";
     let b = "/src/p/B.java";
@@ -1263,46 +1222,27 @@ fn cross_file_did_close_updates_unopened() {
     );
     lsp.open_document(a);
     lsp.open_document(b);
-
-    // Seed edit triggers the build. B is open, so nothing is pushed for it.
     lsp.change_at_mark(a, "// seed\n    <|>");
-    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    // B is related to A while watched.
+    let before = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
+    assert!(related_entry(&before, "B.java").is_some());
 
     lsp.close_document(b);
-    lsp.change_at_mark(a, "public void go() {}\n");
+    lsp.change_at_mark(a, "// other seed\n    <|>");
+    std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let pushes = lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        1,
-        std::time::Duration::from_secs(5),
-    );
-    assert_eq!(
-        pushes.len(),
-        1,
-        "expected exactly one push for the closed B.java"
-    );
-    assert_eq!(pushes[0].method, "textDocument/publishDiagnostics");
+    let after = lsp.pull_document_diagnostics_raw_with_previous(a, None);
     assert!(
-        pushes[0].params["uri"]
-            .as_str()
-            .unwrap()
-            .ends_with("/B.java"),
-        "push must target B.java: {:#?}",
-        pushes[0].params
-    );
-    assert!(
-        pushes[0].params["diagnostics"]
-            .as_array()
-            .is_some_and(|d| d.is_empty()),
-        "B's diagnostics must be cleared after A gains go(): {:#?}",
-        pushes[0].params
+        related_entry(&after, "B.java").is_none(),
+        "closed B must no longer be a related document of A: {after}"
     );
 
     lsp.shutdown();
 }
 
-/// A burst of body-only edits must neither re-push an unchanged file nor come
-/// back as a full related report: steady-state typing stays payload-cheap.
+/// A burst of body-only edits must not change a dependent's result id: it stays
+/// `unchanged`, keeping steady-state typing payload-cheap.
 #[test]
 fn cross_file_burst_no_duplicate_and_small_payloads() {
     let lsp = create_lsp();
@@ -1313,36 +1253,28 @@ fn cross_file_burst_no_duplicate_and_small_payloads() {
         "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
     );
     lsp.open_document(a);
-
-    // Seed edit triggers the build; the initial (broken) B is pushed exactly once.
+    lsp.open_document("/src/p/B.java");
     lsp.change_at_mark(a, "// seed\n    <|>");
-    let pushes = lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        1,
-        std::time::Duration::from_secs(5),
-    );
-    assert_eq!(
-        pushes.len(),
-        1,
-        "initial B report must be pushed exactly once"
-    );
 
-    // A burst of five body-only edits (no exported-name change, no dependency
-    // change) must not push B again.
+    // B's initial (broken) report is delivered exactly once.
+    let first = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
+
+    // A burst of body-only edits (no exported-name change, no dependency change)
+    // must not move B's result id.
     for i in 0..5 {
         lsp.change_at_mark(a, &format!("// burst {i}\n    <|>"));
     }
     std::thread::sleep(std::time::Duration::from_millis(600));
-    let extra = lsp.wait_notifications(
-        "textDocument/publishDiagnostics",
-        1,
-        std::time::Duration::from_millis(600),
-    );
-    assert!(extra.is_empty(), "no duplicate push expected: {extra:#?}");
-
     let report = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
-    let normalized = normalize_and_sort(report, &lsp);
-    insta::assert_json_snapshot!("cross_file_burst_related", normalized);
+
+    let b_first = related_entry(&first, "B.java").expect("B in first report");
+    let b_after = related_entry(&report, "B.java").expect("B in after report");
+    assert_eq!(
+        b_after["kind"].as_str(),
+        Some("unchanged"),
+        "B must be unchanged after body-only edits: {b_after}"
+    );
+    assert_eq!(b_after["resultId"].as_str(), b_first["resultId"].as_str());
 
     lsp.shutdown();
 }
@@ -1362,6 +1294,7 @@ fn cross_file_idle_edit_emits_unchanged_only() {
         "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
     );
     lsp.open_document(a);
+    lsp.open_document("/src/p/B.java");
     lsp.change_at_mark(a, "// seed\n    <|>");
     let _ = wait_until_pull(&lsp, a, |r| related_entry(r, "B.java").is_some());
 

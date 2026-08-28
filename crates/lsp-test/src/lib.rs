@@ -343,7 +343,11 @@ impl LspHarness {
 
         tracing::info!(method, "send request");
 
-        rx.recv().expect("Server dropped the request")
+        // Fail loudly instead of hanging forever when the server never answers
+        // (e.g. it is stuck or the connection was dropped): a diagnostic
+        // deadlock must surface as a clear failure, not an infinite timeout.
+        rx.recv_timeout(Duration::from_secs(30))
+            .unwrap_or_else(|e| panic!("server never answered {method}: {e}"))
     }
 
     pub fn open_document(&self, relative_path: &str) -> Uri {

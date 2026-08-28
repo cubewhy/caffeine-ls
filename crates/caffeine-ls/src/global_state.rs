@@ -1,6 +1,6 @@
 use crate::{
     config::ConfigErrors,
-    cross_file::CrossFileDiagnostics,
+    diagnostics::DiagnosticsMap,
     line_index::{LineEndings, LineIndex},
     lsp::from_proto,
     mem_docs::MemDocs,
@@ -60,18 +60,17 @@ pub enum BackgroundTaskEvent {
         typ: lsp_types::MessageType,
         message: String,
     },
-    /// A debounced cross-file diagnostics pass completed: the full reports for
-    /// the files whose diagnostics actually moved, ready to be pushed to
-    /// unopened documents (see [`crate::cross_file`]).
-    CrossFileReady {
-        pushes: Vec<crate::cross_file::PublishPayload>,
-    },
-    /// A cross-file diagnostics pass was cancelled by a pending write mid-run.
-    /// The changed-file and force-refresh sets must be re-queued (and the
-    /// debounce re-armed) once the write has been applied.
-    CrossFileRetry {
+    /// A debounced diagnostics refresh pass completed: the files whose
+    /// diagnostics actually moved, ready to be refreshed by the client (see
+    /// [`crate::diagnostics`]).
+    DiagnosticsReady {
         changed: FxHashSet<FileId>,
-        force: FxHashSet<FileId>,
+    },
+    /// A diagnostics refresh pass was cancelled by a pending write mid-run.
+    /// The changed-file set must be re-queued (and the debounce re-armed) once
+    /// the write has been applied.
+    DiagnosticsRetry {
+        changed: FxHashSet<FileId>,
     },
 }
 
@@ -138,15 +137,11 @@ pub struct GlobalState {
     pub(crate) analysis_host: AnalysisHost,
     pub(crate) mem_docs: MemDocs,
 
-    /// Reverse-dependency index + diagnostic seals shared with background
-    /// workers (see [`crate::cross_file`]).
-    pub(crate) cross_file: CrossFileDiagnostics,
-    /// Files with unsaved edits awaiting the debounced cross-file refresh pass.
+    /// Central diagnostics store + subscriptions shared with background
+    /// workers (see [`crate::diagnostics`]).
+    pub(crate) diagnostics: DiagnosticsMap,
+    /// Files with unsaved edits awaiting the debounced diagnostics refresh pass.
     pub(crate) pending_changes: FxHashSet<FileId>,
-    /// Files whose diagnostics must be re-verified directly on the next
-    /// cross-file pass (dependents touched by a source-file deletion), rather
-    /// than only through a probe of their own dependents.
-    pub(crate) force_refresh: FxHashSet<FileId>,
     /// When the current debounce window ends, if a refresh is pending.
     pub(crate) refresh_deadline: Option<Instant>,
     /// The one-shot timer armed for the current debounce window.
@@ -211,9 +206,8 @@ impl GlobalState {
             analysis_host,
             mem_docs: MemDocs::default(),
 
-            cross_file: CrossFileDiagnostics::default(),
+            diagnostics: DiagnosticsMap::default(),
             pending_changes: FxHashSet::default(),
-            force_refresh: FxHashSet::default(),
             refresh_deadline: None,
             refresh_timer: None,
             never_rx: crossbeam_channel::never(),
@@ -372,7 +366,7 @@ impl GlobalState {
             analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
-            cross_file: self.cross_file.clone(),
+            diagnostics: self.diagnostics.clone(),
         }
     }
 
@@ -401,7 +395,7 @@ pub struct GlobalStateSnapshot {
     pub(crate) analysis: Analysis,
     mem_docs: MemDocs,
     vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
-    pub(crate) cross_file: CrossFileDiagnostics,
+    pub(crate) diagnostics: DiagnosticsMap,
 }
 
 impl GlobalStateSnapshot {

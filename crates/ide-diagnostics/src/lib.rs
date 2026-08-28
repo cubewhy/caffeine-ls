@@ -4,6 +4,7 @@ use ide_db::{
     base_db::{self, FileText, LanguageKind, SourceDatabase, salsa},
 };
 use rowan::TextRange;
+use std::collections::HashMap;
 use syntax::DiagnosticCode;
 use vfs::FileId;
 
@@ -20,11 +21,49 @@ pub struct Diagnostic {
     pub code: Option<DiagnosticCode>,
 }
 
+/// The push-based collection point of a diagnostics run, mirroring the
+/// rust-analyzer `DiagnosticSink`: every check writes its findings into the
+/// sink keyed by the file the finding belongs to, so a single check invocation
+/// may produce diagnostics for several files (cross-file checks) and the caller
+/// gathers them uniformly.
+#[derive(Default)]
+pub struct DiagnosticSink {
+    pub(crate) per_file: HashMap<FileId, Vec<Diagnostic>>,
+}
+
+impl DiagnosticSink {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Records a diagnostic against the file it reports on.
+    pub fn push(&mut self, file_id: FileId, diagnostic: Diagnostic) {
+        self.per_file.entry(file_id).or_default().push(diagnostic);
+    }
+
+    /// The diagnostics collected for `file_id` (empty when none were pushed).
+    pub fn into_file(mut self, file_id: FileId) -> Vec<Diagnostic> {
+        self.per_file.remove(&file_id).unwrap_or_default()
+    }
+}
+
 pub fn syntax_diagnostics(
     db: &RootDatabase,
     file_id: FileId,
     fallback_language_kind: LanguageKind,
 ) -> Vec<Diagnostic> {
+    let mut sink = DiagnosticSink::new();
+    collect_syntax(&mut sink, db, file_id, fallback_language_kind);
+    sink.into_file(file_id)
+}
+
+/// Pushes the parse-level (syntax) diagnostics of `file_id` into `sink`.
+pub(crate) fn collect_syntax(
+    sink: &mut DiagnosticSink,
+    db: &RootDatabase,
+    file_id: FileId,
+    fallback_language_kind: LanguageKind,
+) {
     // Before the workspace is loaded the file is not part of any source root,
     // so `file_language_kind` can't resolve the language. Fall back to the
     // kind inferred from the file path to keep basic syntax diagnostics.
@@ -34,15 +73,16 @@ pub fn syntax_diagnostics(
         .unwrap_or(fallback_language_kind);
     if language_kind == LanguageKind::Unknown {
         tracing::warn!("unsupported language");
-        return vec![];
+        return;
     }
 
     let parse = base_db::parse(db, file_id, language_kind);
-    parse
-        .errors()
-        .iter()
-        .map(|e| make_diagnostic(file_id, &e.message, e.range, e.code, Severity::Error))
-        .collect()
+    for e in parse.errors() {
+        sink.push(
+            file_id,
+            make_diagnostic(file_id, &e.message, e.range, e.code, Severity::Error),
+        );
+    }
 }
 
 /// The type-layer diagnostics of a file ([JLS §6.5], [§14.18], [§15.11],
@@ -52,8 +92,17 @@ pub fn syntax_diagnostics(
 /// is the source range of the offending construct, computed from its body-IR
 /// arena id.
 pub fn type_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
+    let mut sink = DiagnosticSink::new();
+    collect_type_diagnostics(&mut sink, db, file_id);
+    sink.into_file(file_id)
+}
+
+pub(crate) fn collect_type_diagnostics(
+    sink: &mut DiagnosticSink,
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+) {
     let tree = hir::file_item_tree(db, file_id);
-    let mut out = Vec::new();
     for (item_id, _) in all_items(&tree) {
         let Some(body_types) = hir_ty::body_types(db, file_id, item_id) else {
             continue;
@@ -64,23 +113,25 @@ pub fn type_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Dia
                 // from broken source) has no range to point at.
                 continue;
             };
-            out.push(make_diagnostic(
+            sink.push(
                 file_id,
-                &diagnostic.message(&tree.bodies),
-                range,
-                Some(diagnostic.code()),
-                // Raw-type and unchecked-conversion reports are warnings
-                // ([JLS §4.12.2], [§5.1.9]): legal programs, flagged for
-                // their unsoundness.
-                if diagnostic.is_warning() {
-                    Severity::Warning
-                } else {
-                    Severity::Error
-                },
-            ));
+                make_diagnostic(
+                    file_id,
+                    &diagnostic.message(&tree.bodies),
+                    range,
+                    Some(diagnostic.code()),
+                    // Raw-type and unchecked-conversion reports are warnings
+                    // ([JLS §4.12.2], [§5.1.9]): legal programs, flagged for
+                    // their unsoundness.
+                    if diagnostic.is_warning() {
+                        Severity::Warning
+                    } else {
+                        Severity::Error
+                    },
+                ),
+            );
         }
     }
-    out
 }
 
 /// The declaration-level diagnostics of a file ([JLS §6.5.5.1], [§7.5], [§8],
@@ -89,7 +140,16 @@ pub fn type_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Dia
 /// carries its own source range; the hierarchy checks are keyed to the
 /// offending method's name.
 pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
-    let mut out = Vec::new();
+    let mut sink = DiagnosticSink::new();
+    collect_declaration_diagnostics(&mut sink, db, file_id);
+    sink.into_file(file_id)
+}
+
+pub(crate) fn collect_declaration_diagnostics(
+    sink: &mut DiagnosticSink,
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+) {
     for diagnostic in hir_ty::class_diagnostics(db, file_id) {
         let Some(range) = diagnostic.range().or_else(|| {
             // The hierarchy checks (incompatible override, conflicting
@@ -107,15 +167,17 @@ pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> 
         }) else {
             continue;
         };
-        out.push(make_diagnostic(
+        sink.push(
             file_id,
-            &diagnostic.message(),
-            range,
-            Some(diagnostic.code()),
-            Severity::Error,
-        ));
+            make_diagnostic(
+                file_id,
+                &diagnostic.message(),
+                range,
+                Some(diagnostic.code()),
+                Severity::Error,
+            ),
+        );
     }
-    out
 }
 
 /// The type-layer and declaration-level diagnostics of a file, merged into a
@@ -132,10 +194,10 @@ pub(crate) fn file_diagnostics_query(
     file: FileText,
 ) -> Arc<Vec<Diagnostic>> {
     let file_id = *file.file_id(db);
-    let mut out = Vec::with_capacity(8);
-    out.extend(type_diagnostics(db, file_id));
-    out.extend(declaration_diagnostics(db, file_id));
-    Arc::new(out)
+    let mut sink = DiagnosticSink::new();
+    collect_type_diagnostics(&mut sink, db, file_id);
+    collect_declaration_diagnostics(&mut sink, db, file_id);
+    Arc::new(sink.into_file(file_id))
 }
 
 /// The merged type + declaration diagnostics of a file.
@@ -143,20 +205,19 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec
     file_diagnostics_query(db, db.file_text(file_id))
 }
 
-/// A deterministic digest of the file's cross-file diagnostics, stable across
-/// identical contents: the seal the cross-file diagnostic pipeline compares to
-/// tell an *actually changed* report from an unchanged candidate. Rendered as
-/// the hex of a content hash, ready to be handed to the client as an LSP
-/// `resultId`.
-pub fn file_diagnostics_digest(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> String {
-    use std::hash::{Hash, Hasher};
-
-    let diagnostics = file_diagnostics(db, file_id);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for diagnostic in diagnostics.iter() {
-        diagnostic.hash(&mut hasher);
-    }
-    format!("{:016x}", hasher.finish())
+/// The complete report of a file: its syntax diagnostics plus its merged type
+/// and declaration diagnostics, collected into the same sink. This is the unit
+/// the LSP diagnostics store tracks and diffs per file.
+pub fn file_report(
+    db: &RootDatabase,
+    file_id: FileId,
+    fallback_language_kind: LanguageKind,
+) -> Arc<Vec<Diagnostic>> {
+    let mut sink = DiagnosticSink::new();
+    collect_syntax(&mut sink, db, file_id, fallback_language_kind);
+    collect_type_diagnostics(&mut sink, db, file_id);
+    collect_declaration_diagnostics(&mut sink, db, file_id);
+    Arc::new(sink.into_file(file_id))
 }
 
 fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {

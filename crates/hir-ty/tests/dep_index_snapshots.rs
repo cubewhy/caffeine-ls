@@ -6,9 +6,9 @@
 //! pipeline: they pin down that a file's *resolved dependencies* are the files
 //! its types actually resolve against (including members inherited from a
 //! different file), that its *reference names* are the sound name-level
-//! fallback, that resolved members carry their declaring file, and that the
-//! diagnostics digest stays stable for unrelated edits while the dependency's
-//! edit changes it.
+//! fallback, that resolved members carry their declaring file, and that a
+//! file's diagnostics report stays stable for unrelated edits while a
+//! dependency's edit changes it.
 
 #[macro_use]
 mod common;
@@ -224,7 +224,7 @@ fn file_dependency_refs_captures_type_and_member_names() {
 }
 
 #[test]
-fn diagnostics_digest_changes_when_dependency_edits() {
+fn diagnostics_report_changes_when_dependency_edits() {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     let files = [
@@ -241,7 +241,7 @@ fn diagnostics_digest_changes_when_dependency_edits() {
 
     let a = FileId::from_raw(1);
     let b = FileId::from_raw(2);
-    let digest_before = ide_diagnostics::file_diagnostics_digest(&db, b);
+    let diagnostics_before = ide_diagnostics::file_diagnostics(&db, b);
 
     // Edit `A`: `go()` becomes one-argument, breaking `B`'s call.
     let mut change = FileChange::default();
@@ -252,14 +252,14 @@ fn diagnostics_digest_changes_when_dependency_edits() {
     change.apply(&mut db);
 
     assert_ne!(
-        ide_diagnostics::file_diagnostics_digest(&db, b),
-        digest_before,
-        "B's diagnostics digest must change when A (its dependency) edits"
+        ide_diagnostics::file_diagnostics(&db, b),
+        diagnostics_before,
+        "B's diagnostics must change when A (its dependency) edits"
     );
 }
 
 #[test]
-fn diagnostics_digest_stable_for_unrelated_edit() {
+fn diagnostics_report_stable_for_unrelated_edit() {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     let files = [
@@ -280,11 +280,11 @@ fn diagnostics_digest_stable_for_unrelated_edit() {
 
     let b = FileId::from_raw(2);
     let c = FileId::from_raw(3);
-    let digest_b_before = ide_diagnostics::file_diagnostics_digest(&db, b);
-    let digest_c_before = ide_diagnostics::file_diagnostics_digest(&db, c);
+    let b_before = ide_diagnostics::file_diagnostics(&db, b);
+    let c_before = ide_diagnostics::file_diagnostics(&db, c);
 
     // Edit the unrelated `C` in a way that changes *its own* diagnostics (an
-    // undefined-name report appears/disappears); `B`'s digest must not move.
+    // undefined-name report appears/disappears); `B`'s report must not move.
     let mut change = FileChange::default();
     change.change_file(
         c,
@@ -293,13 +293,13 @@ fn diagnostics_digest_stable_for_unrelated_edit() {
     change.apply(&mut db);
 
     assert_eq!(
-        ide_diagnostics::file_diagnostics_digest(&db, b),
-        digest_b_before,
+        ide_diagnostics::file_diagnostics(&db, b),
+        b_before,
         "B must not be re-derived when an unrelated file edits"
     );
     assert_ne!(
-        ide_diagnostics::file_diagnostics_digest(&db, c),
-        digest_c_before,
-        "C's own digest moves with its own edit"
+        ide_diagnostics::file_diagnostics(&db, c),
+        c_before,
+        "C's own report moves with its own edit"
     );
 }
