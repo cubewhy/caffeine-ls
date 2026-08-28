@@ -2,5 +2,6 @@
 source: crates/ide/tests/symbol_snapshots.rs
 expression: render_document_symbols(&symbols)
 ---
+package    org.example @8..19
 class      org.example.Foo @22..67
 method     org.example.Foo.bar @45..65

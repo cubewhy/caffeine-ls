@@ -127,7 +127,7 @@ fn document_symbols_snapshot() {
 }
 
 #[test]
-fn document_symbol_detail_is_the_package() {
+fn document_symbol_package_item_and_fqn_detail() {
     let fixture = build(&[
         (
             main_source_set(0),
@@ -144,16 +144,31 @@ fn document_symbol_detail_is_the_package() {
     ]);
     let analysis = fixture.analysis();
 
+    // Default package: an explicit `<default package>` item above the type,
+    // whose detail is its (unqualified) name.
     let foo = analysis.document_symbols(fixture.file(1)).unwrap();
-    let foo = foo.iter().find(|symbol| symbol.name == "Foo").unwrap();
-    assert_eq!(foo.detail.as_deref(), Some("<default package>"));
+    let package = foo
+        .iter()
+        .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
+        .unwrap();
+    assert_eq!(package.name, "<default package>");
+    assert_eq!(package.item, None);
+    let foo_class = foo.iter().find(|symbol| symbol.name == "Foo").unwrap();
+    assert_eq!(foo_class.detail.as_deref(), Some("Foo"));
 
+    // A declared package gets an item with the qualified name, and the
+    // top-level type's detail is its fully qualified name.
     let bar = analysis.document_symbols(fixture.file(2)).unwrap();
-    let bar = bar
+    let package = bar
+        .iter()
+        .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
+        .unwrap();
+    assert_eq!(package.name, "com.example");
+    let bar_class = bar
         .iter()
         .find(|symbol| symbol.name == "com.example.Bar")
         .unwrap();
-    assert_eq!(bar.detail.as_deref(), Some("com.example"));
+    assert_eq!(bar_class.detail.as_deref(), Some("com.example.Bar"));
 }
 
 #[test]
@@ -216,7 +231,9 @@ fn item_ty_wired() {
 
     let mut lines = Vec::new();
     for symbol in &symbols {
-        let ty = analysis.item_ty(fixture.file(1), symbol.item).unwrap();
+        // The package symbol has no lowered item.
+        let Some(item) = symbol.item else { continue };
+        let ty = analysis.item_ty(fixture.file(1), item).unwrap();
         lines.push(format!(
             "{:<10} {} : {ty}",
             symbol.kind.label(),

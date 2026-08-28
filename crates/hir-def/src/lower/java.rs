@@ -43,6 +43,7 @@ pub(super) fn lower_file(ctx: &mut LowerCtx, file: &java_syntax::SourceFile) {
 fn lower_package(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) {
     if let Some(name) = qualified_name_text(node) {
         ctx.tree.package = Some(name);
+        ctx.tree.package_range = qualified_name_child(node).map(|child| child.text_range());
     }
 }
 

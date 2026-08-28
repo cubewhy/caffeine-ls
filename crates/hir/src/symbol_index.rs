@@ -63,6 +63,10 @@ pub enum SourceSymbolKind {
     Field,
     /// An enum constant ([JLS §8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)).
     EnumConstant,
+    /// A package declaration ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)):
+    /// synthesized by the IDE above a file's top-level types, not lowered from
+    /// `ItemData`.
+    Package,
 }
 
 impl SourceSymbolKind {
@@ -95,6 +99,7 @@ impl SourceSymbolKind {
             SourceSymbolKind::Method => "method",
             SourceSymbolKind::Field => "field",
             SourceSymbolKind::EnumConstant => "constant",
+            SourceSymbolKind::Package => "package",
         }
     }
 }

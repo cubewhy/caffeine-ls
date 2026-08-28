@@ -34,6 +34,7 @@ pub(crate) fn symbol_kind(kind: hir::SourceSymbolKind) -> SymbolKind {
         Kind::Method => SymbolKind::Method,
         Kind::Field => SymbolKind::Field,
         Kind::EnumConstant => SymbolKind::EnumMember,
+        Kind::Package => SymbolKind::Package,
     }
 }
 
@@ -52,8 +53,14 @@ pub(crate) fn document_symbol(
 ) -> LspDocumentSymbol {
     let range = to_proto::range(line_index, symbol.range);
     let selection_range = to_proto::range(line_index, symbol.name_range);
+    // A package is already qualified; the simple name would drop most of it.
+    let name = if symbol.kind == hir::SourceSymbolKind::Package {
+        symbol.name.clone()
+    } else {
+        simple_name(&symbol.name).to_owned()
+    };
     LspDocumentSymbol {
-        name: simple_name(&symbol.name).to_owned(),
+        name,
         detail: symbol.detail.clone(),
         kind: symbol_kind(symbol.kind),
         tags: None,
@@ -72,10 +79,13 @@ pub(crate) fn nest_document_symbols(
     line_index: &LineIndex,
     symbols: &[IdeDocumentSymbol],
 ) -> Vec<LspDocumentSymbol> {
-    // name → index into `symbols`, for parent lookup.
+    // name → index into `symbols`, for parent lookup. The package symbol is
+    // deliberately excluded: its name is a strict prefix of the top-level
+    // types', but it is an independent item above them, not their parent.
     let index: FxHashMap<&str, usize> = symbols
         .iter()
         .enumerate()
+        .filter(|(_, symbol)| symbol.kind != hir::SourceSymbolKind::Package)
         .map(|(idx, symbol)| (symbol.name.as_str(), idx))
         .collect();
 

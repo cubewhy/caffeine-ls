@@ -503,7 +503,8 @@ fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
             SourceSymbolKind::Module
             | SourceSymbolKind::Method
             | SourceSymbolKind::Field
-            | SourceSymbolKind::EnumConstant => prefix,
+            | SourceSymbolKind::EnumConstant
+            | SourceSymbolKind::Package => prefix,
         };
         for &child in data.body() {
             collect(tree, child, child_prefix, out);

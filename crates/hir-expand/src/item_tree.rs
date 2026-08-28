@@ -41,6 +41,10 @@ pub struct ImportItem {
 pub struct ItemTree {
     pub language: LanguageKind,
     pub package: Option<Name>,
+    /// The source range of the package declaration's name, when the file
+    /// declares a package; used by the IDE to surface a package symbol above
+    /// the file's top-level types.
+    pub package_range: Option<TextRange>,
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
     pub items: Arena<ItemData>,
@@ -56,6 +60,7 @@ impl Default for ItemTree {
         Self {
             language: LanguageKind::Unknown,
             package: None,
+            package_range: None,
             imports: Vec::new(),
             top: Vec::new(),
             items: Arena::default(),

@@ -24,11 +24,13 @@ pub struct DocumentSymbol {
     pub range: TextRange,
     /// The source range of just the declared name (the identifier).
     pub name_range: TextRange,
-    /// The signature shown alongside the name: the package for a top-level
-    /// type, `name(params): ret` for a method, `name: type` for a field.
+    /// The signature shown alongside the name: the fully qualified name for a
+    /// top-level type, `name(params): ret` for a method, `name: type` for a
+    /// field.
     pub detail: Option<String>,
     /// The lowered item, for later HIR queries (e.g. [`crate::Analysis::item_ty`]).
-    pub item: hir_expand::item_tree::ItemId,
+    /// `None` for synthesized symbols (the file's package).
+    pub item: Option<hir_expand::item_tree::ItemId>,
 }
 
 /// A document symbol plus the file it lives in.
@@ -38,33 +40,58 @@ pub struct WorkspaceSymbol {
     pub symbol: DocumentSymbol,
 }
 
-/// The declared symbols of a file, in declaration order.
+/// The declared symbols of a file, in declaration order, prefixed by a
+/// synthesized symbol for the file's package.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
-    symbols
-        .iter()
-        .map(|symbol| {
-            let top_level = symbol
-                .name
-                .as_str()
-                .rsplit_once('.')
-                .is_none_or(|(parent, _)| !names.contains(parent));
-            DocumentSymbol {
-                name: symbol.name.as_str().to_owned(),
-                kind: symbol.kind,
-                range: symbol.range,
-                name_range: symbol.name_range,
-                detail: symbol_detail(db, file_id, symbol, top_level),
-                item: symbol.item,
-            }
-        })
-        .collect()
+    let mut out = Vec::with_capacity(symbols.len() + 1);
+    if !symbols.is_empty() {
+        // The package is an independent item above the file's top-level
+        // types; it is not a container of them.
+        out.push(package_symbol(db, file_id));
+    }
+    out.extend(symbols.iter().map(|symbol| {
+        let top_level = symbol
+            .name
+            .as_str()
+            .rsplit_once('.')
+            .is_none_or(|(parent, _)| !names.contains(parent));
+        DocumentSymbol {
+            name: symbol.name.as_str().to_owned(),
+            kind: symbol.kind,
+            range: symbol.range,
+            name_range: symbol.name_range,
+            detail: symbol_detail(db, file_id, symbol, top_level),
+            item: Some(symbol.item),
+        }
+    }));
+    out
+}
+
+/// The synthesized symbol for the file's package declaration, shown above its
+/// top-level types. The unnamed package ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
+/// is rendered explicitly as `<default package>`.
+fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
+    let tree = hir::file_item_tree(db, file_id);
+    let name = tree
+        .package
+        .as_ref()
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_else(|| "<default package>".to_owned());
+    let range = tree.package_range.unwrap_or_default();
+    DocumentSymbol {
+        name,
+        kind: hir::SourceSymbolKind::Package,
+        range,
+        name_range: range,
+        detail: None,
+        item: None,
+    }
 }
 
 /// The signature/detail of a symbol for the LSP `detail` field. Top-level
-/// types show their package (JDT.LS-style, `<default package>` for the
-/// unnamed package); members show their signature.
+/// types show their fully qualified name; members show their signature.
 fn symbol_detail(
     db: &RootDatabase,
     file_id: FileId,
@@ -73,13 +100,7 @@ fn symbol_detail(
 ) -> Option<String> {
     let simple = symbol.name.simple_name();
     if top_level {
-        // The unnamed package ([JLS §7.4.2]) is rendered explicitly.
-        let package = symbol
-            .name
-            .as_str()
-            .rsplit_once('.')
-            .map_or("<default package>", |(package, _)| package);
-        return Some(package.to_owned());
+        return Some(symbol.name.as_str().to_owned());
     }
     match symbol.kind {
         hir::SourceSymbolKind::Method => {
@@ -138,7 +159,7 @@ pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol>
                 range: reference.symbol.range,
                 name_range: reference.symbol.name_range,
                 detail: None,
-                item: reference.symbol.item,
+                item: Some(reference.symbol.item),
             },
         })
         .collect()

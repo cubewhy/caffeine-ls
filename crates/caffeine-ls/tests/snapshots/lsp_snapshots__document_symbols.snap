@@ -4,8 +4,32 @@ expression: response
 ---
 [
   {
+    "name": "com.example",
+    "kind": 4,
+    "range": {
+      "start": {
+        "line": 0,
+        "character": 8
+      },
+      "end": {
+        "line": 0,
+        "character": 19
+      }
+    },
+    "selectionRange": {
+      "start": {
+        "line": 0,
+        "character": 8
+      },
+      "end": {
+        "line": 0,
+        "character": 19
+      }
+    }
+  },
+  {
     "name": "Foo",
-    "detail": "com.example",
+    "detail": "com.example.Foo",
     "kind": 5,
     "range": {
       "start": {

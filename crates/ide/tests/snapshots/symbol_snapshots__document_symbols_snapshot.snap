@@ -2,6 +2,7 @@
 source: crates/ide/tests/symbol_snapshots.rs
 expression: render_document_symbols(&symbols)
 ---
+package    com.example @8..19
 class      com.example.Foo @22..128
 field      com.example.Foo.count @57..62
 method     com.example.Foo.greet @69..91
