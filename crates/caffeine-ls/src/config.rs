@@ -1,4 +1,4 @@
-use std::{env, fmt, path::PathBuf};
+use std::{env, fmt, path::PathBuf, time::Duration};
 
 use directories::ProjectDirs;
 use ide_db::line_index::WideEncoding;
@@ -85,6 +85,33 @@ impl Config {
             .unwrap_or_default()
     }
 
+    /// Whether the cross-file diagnostic pipeline is enabled.
+    pub fn cross_file_enabled(&self) -> bool {
+        self.client_config
+            .as_ref()
+            .map(|config| config.diagnostics.enable_cross_file)
+            .unwrap_or(true)
+    }
+
+    /// Whether affected unopened files get a `textDocument/publishDiagnostics`
+    /// push (the proactive channel of cross-file updates).
+    pub fn cross_file_push_unopened(&self) -> bool {
+        self.client_config
+            .as_ref()
+            .map(|config| config.diagnostics.push_unopened)
+            .unwrap_or(true)
+    }
+
+    /// Debounce window between a text edit and the cross-file refresh pass.
+    pub fn cross_file_debounce(&self) -> Duration {
+        let ms = self
+            .client_config
+            .as_ref()
+            .map(|config| config.diagnostics.debounce_ms)
+            .unwrap_or(150);
+        Duration::from_millis(ms.max(10))
+    }
+
     pub fn get_java_home(&self) -> Option<PathBuf> {
         if let Some(java_home) = self
             .client_config
@@ -143,7 +170,7 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 #[serde(default)]
 pub struct ClientConfig {
     pub cache_dir: PathBuf,
@@ -153,6 +180,34 @@ pub struct ClientConfig {
     /// keys today: `rawtypes`, `unchecked`. Empty (the default) matches
     /// plain `javac`, which reports neither.
     pub lints: Vec<String>,
+    pub diagnostics: DiagnosticsConfig,
+}
+
+/// Real-time cross-file diagnostic configuration.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct DiagnosticsConfig {
+    /// Whether editing one file triggers recomputation of the diagnostics of
+    /// the files that depend on it (the reverse-dependency pipeline). When
+    /// disabled the server reverts to per-file diagnostics only.
+    pub enable_cross_file: bool,
+    /// Push `textDocument/publishDiagnostics` for affected *unopened* files so
+    /// the client's problem/store is updated without a focus change. Open files
+    /// are always updated by the client re-pulling after a
+    /// `workspace/diagnosticRefresh`.
+    pub push_unopened: bool,
+    /// Debounce window between a text change and the cross-file refresh pass.
+    pub debounce_ms: u64,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self {
+            enable_cross_file: true,
+            push_unopened: true,
+            debounce_ms: 150,
+        }
+    }
 }
 
 #[derive(Debug, Default)]

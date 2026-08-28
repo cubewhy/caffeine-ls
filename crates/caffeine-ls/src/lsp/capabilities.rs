@@ -17,8 +17,11 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
         diagnostic_provider: Some(
             DiagnosticRegistrationOptions {
                 diagnostic_options: DiagnosticOptions {
-                    inter_file_dependencies: false,
-                    workspace_diagnostics: false,
+                    // An edit in one file can change the diagnostics of another
+                    // (the cross-file diagnostic pipeline), and the client is
+                    // expected to re-pull open documents on refresh.
+                    inter_file_dependencies: true,
+                    workspace_diagnostics: true,
                     identifier: Some(crate::NAME.to_string()),
                     ..Default::default()
                 },

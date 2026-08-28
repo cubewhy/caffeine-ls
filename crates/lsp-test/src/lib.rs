@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicI32, Ordering},
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 use tempfile::TempDir;
 
@@ -89,6 +90,7 @@ impl LspHarness {
         let pending_requests = harness.pending_requests.clone();
         let notification_sender = harness.notification_sender.clone();
         let client_receiver = harness.client_connection.receiver.clone();
+        let client_sender = harness.client_connection.sender.clone();
 
         // Spawn a background thread to listen to messages coming from the server
         thread::spawn(move || {
@@ -105,7 +107,13 @@ impl LspHarness {
                         }
                     }
                     Message::Request(req) => {
-                        eprintln!("Received request from server: {}", req.method);
+                        if req.method == "workspace/diagnosticRefresh" {
+                            let _ = client_sender.send(Message::Response(
+                                lsp_server::Response::new_ok(req.id, serde_json::Value::Null),
+                            ));
+                        } else {
+                            eprintln!("Received request from server: {}", req.method);
+                        }
                     }
                 }
             }
@@ -182,7 +190,9 @@ impl LspHarness {
                         }
                     }
                     Message::Request(req) => {
-                        if req.method == "window/workDoneProgress/create" {
+                        if req.method == "window/workDoneProgress/create"
+                            || req.method == "workspace/diagnosticRefresh"
+                        {
                             let _ = client_sender.send(Message::Response(
                                 lsp_server::Response::new_ok(req.id, serde_json::Value::Null),
                             ));
@@ -438,10 +448,23 @@ impl LspHarness {
     }
 
     pub fn pull_document_diagnostics(&self, relative_path: &str) -> DocumentDiagnosticReport {
+        let raw = self.pull_document_diagnostics_raw_with_previous(relative_path, None);
+        serde_json::from_value(raw).expect("document diagnostic report")
+    }
+
+    /// Issues `textDocument/diagnostic` for `relative_path`, returning the raw
+    /// JSON response so tests can assert on `resultId` and `relatedDocuments`.
+    /// Retries while the server is cancelling (salsa raises `Cancelled` when a
+    /// write lands mid-query; real clients do the same).
+    pub fn pull_document_diagnostics_raw_with_previous(
+        &self,
+        relative_path: &str,
+        previous_result_id: Option<String>,
+    ) -> serde_json::Value {
         let uri = self.uri(relative_path);
         let params = DocumentDiagnosticParams {
             text_document: TextDocumentIdentifier { uri },
-            previous_result_id: None,
+            previous_result_id,
             identifier: None,
             work_done_progress_params: WorkDoneProgressParams {
                 work_done_token: None,
@@ -454,19 +477,37 @@ impl LspHarness {
         let json_params =
             serde_json::to_value(params).expect("failed to serialize document diagnostic params");
 
-        // The server may cancel a diagnostics request while a write is
-        // pending (salsa raises `Cancelled` when the database is modified
-        // mid-query). Real clients retry the pull diagnostics request, so
-        // retry here until the server answers.
         for _ in 0..100 {
             let response = self.request("textDocument/diagnostic", json_params.clone());
-            if let Ok(report) = serde_json::from_value(response) {
-                return report;
+            if response.is_null() {
+                thread::sleep(Duration::from_millis(10));
+                continue;
             }
-            thread::sleep(std::time::Duration::from_millis(10));
+            return response;
         }
+        panic!("server never answered a diagnostic pull")
+    }
 
-        panic!("Failed to deserialize diagnostic report after retries")
+    /// Drains `notification_receiver`, collecting at most `max` notifications
+    /// whose method matches `method`, within `timeout`.
+    pub fn wait_notifications(
+        &self,
+        method: &str,
+        max: usize,
+        timeout: Duration,
+    ) -> Vec<Notification> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut out = Vec::new();
+        while out.len() < max && std::time::Instant::now() < deadline {
+            if let Ok(notif) = self
+                .notification_receiver
+                .recv_timeout(Duration::from_millis(25))
+                && notif.method == method
+            {
+                out.push(notif);
+            }
+        }
+        out
     }
 
     pub fn shutdown(mut self) {

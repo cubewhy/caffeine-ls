@@ -1,18 +1,10 @@
-use syntax::{DiagnosticCode, JavaDiagnosticCode};
+use std::collections::HashMap;
 
-use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics, lsp::symbols, lsp::to_proto};
-
-/// Whether a diagnostic passes the client's lint configuration: the gated
-/// warnings (`rawtypes`, `unchecked`) are suppressed unless their lint is
-/// enabled; everything else always passes.
-fn lint_allows(lints: &[String], diagnostic: &ide::Diagnostic) -> bool {
-    let gated = match diagnostic.code {
-        Some(DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)) => "rawtypes",
-        Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedConversion)) => "unchecked",
-        _ => return true,
-    };
-    lints.iter().any(|lint| lint == gated)
-}
+use crate::{
+    cross_file,
+    global_state::GlobalStateSnapshot,
+    lsp::{diagnostics, symbols, to_proto},
+};
 
 use ide::LanguageKind;
 use lsp_types::*;
@@ -23,38 +15,61 @@ pub fn on_diagnostic(
 ) -> anyhow::Result<DocumentDiagnosticReport> {
     tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
 
-    if let Ok(Some(file_id)) = state.url_to_file_id(&params.text_document.uri) {
-        let line_index = state.file_line_index(file_id)?;
-        // Before the workspace is loaded, files are not part of any source
-        // root, so fall back to the language kind inferred from the path.
-        let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
-        // javac reports `rawtypes`/`unchecked` only under an explicit
-        // `-Xlint` flag ([JLS-adjacent]); the same lints gate the matching
-        // warnings here, so the default stream matches plain `javac`.
-        let lints = state.config.client_lints();
-        let diagnostics = state
-            .analysis
-            .syntax_diagnostics(file_id, fallback_language_kind)?
-            .into_iter()
-            .chain(state.analysis.type_diagnostics(file_id)?)
-            .chain(state.analysis.declaration_diagnostics(file_id)?)
-            .filter(|diagnostic| lint_allows(lints, diagnostic))
-            .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
-            .collect();
+    let file_id = state
+        .url_to_file_id(&params.text_document.uri)?
+        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let line_index = state.file_line_index(file_id)?;
+    // Before the workspace is loaded, files are not part of any source
+    // root, so fall back to the language kind inferred from the path.
+    let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
+    // javac reports `rawtypes`/`unchecked` only under an explicit
+    // `-Xlint` flag ([JLS-adjacent]); the same lints gate the matching
+    // warnings here, so the default stream matches plain `javac`.
+    let lints = state.config.client_lints();
+    let diagnostics = state
+        .analysis
+        .syntax_diagnostics(file_id, fallback_language_kind)?
+        .into_iter()
+        .chain(state.analysis.file_diagnostics(file_id)?)
+        .filter(|diagnostic| cross_file::lint_allows(lints, diagnostic))
+        .map(|diagnostic| diagnostics::convert_diagnostic(&line_index, diagnostic))
+        .collect();
 
-        tracing::debug!(?diagnostics, "finished collecting diagnostics");
+    // The seal covers every reported item (syntax + type/declaration); the
+    // client echoes it back as `previous_result_id` to skip re-serialization
+    // when nothing changed.
+    let seal = cross_file::diagnostic_seal(&state.analysis, file_id, fallback_language_kind)?;
+    // Related documents: files whose diagnostics an edit to this file can move,
+    // sealed so a steady-state re-pull is a handful of `resultId` comparisons.
+    let related_documents: Option<HashMap<Uri, RelatedDocument>> = state
+        .cross_file
+        .related_for(&state, file_id)?
+        .map(|map| map.into_iter().collect());
 
-        Ok(RelatedFullDocumentDiagnosticReport {
-            related_documents: None,
-            full_document_diagnostic_report: FullDocumentDiagnosticReport {
-                result_id: None,
-                items: diagnostics,
+    tracing::debug!(
+        ?diagnostics,
+        related = related_documents.as_ref().map(|it| it.len()),
+        "finished collecting diagnostics"
+    );
+
+    if params.previous_result_id.as_deref() == Some(seal.as_str()) {
+        return Ok(RelatedUnchangedDocumentDiagnosticReport {
+            related_documents,
+            unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
+                result_id: seal,
             },
         }
-        .into())
-    } else {
-        anyhow::bail!("failed to get vfs path from uri")
+        .into());
     }
+
+    Ok(RelatedFullDocumentDiagnosticReport {
+        related_documents,
+        full_document_diagnostic_report: FullDocumentDiagnosticReport {
+            result_id: Some(seal),
+            items: diagnostics,
+        },
+    }
+    .into())
 }
 
 pub fn on_document_symbol(

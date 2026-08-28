@@ -7,6 +7,7 @@ pub(crate) mod line_index;
 pub(crate) mod mem_docs;
 pub(crate) mod task_pool;
 
+pub(crate) mod cross_file;
 mod global_state;
 mod lsp;
 mod main_loop;

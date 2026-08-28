@@ -1,5 +1,6 @@
 use crate::{
     config::ConfigErrors,
+    cross_file::CrossFileDiagnostics,
     line_index::{LineEndings, LineIndex},
     lsp::from_proto,
     mem_docs::MemDocs,
@@ -7,7 +8,7 @@ use crate::{
 };
 use lsp_types::Uri;
 use project_model::WorkspaceGraph;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::time::Instant;
 use triomphe::Arc;
 
@@ -58,6 +59,18 @@ pub enum BackgroundTaskEvent {
     NotifyUser {
         typ: lsp_types::MessageType,
         message: String,
+    },
+    /// A debounced cross-file diagnostics pass completed: the full reports for
+    /// the files whose diagnostics actually moved, ready to be pushed to
+    /// unopened documents (see [`crate::cross_file`]).
+    CrossFileReady {
+        pushes: Vec<crate::cross_file::PublishPayload>,
+    },
+    /// A cross-file diagnostics pass was cancelled by a pending write mid-run.
+    /// The changed-file set must be re-queued (and the debounce re-armed) once
+    /// the write has been applied.
+    CrossFileRetry {
+        changed: FxHashSet<FileId>,
     },
 }
 
@@ -124,6 +137,19 @@ pub struct GlobalState {
     pub(crate) analysis_host: AnalysisHost,
     pub(crate) mem_docs: MemDocs,
 
+    /// Reverse-dependency index + diagnostic seals shared with background
+    /// workers (see [`crate::cross_file`]).
+    pub(crate) cross_file: CrossFileDiagnostics,
+    /// Files with unsaved edits awaiting the debounced cross-file refresh pass.
+    pub(crate) pending_changes: FxHashSet<FileId>,
+    /// When the current debounce window ends, if a refresh is pending.
+    pub(crate) refresh_deadline: Option<Instant>,
+    /// The one-shot timer armed for the current debounce window.
+    pub(crate) refresh_timer: Option<crossbeam_channel::Receiver<std::time::Instant>>,
+    /// A receiver that delivers nothing; used to park the `select!` when no
+    /// refresh is pending.
+    pub(crate) never_rx: crossbeam_channel::Receiver<std::time::Instant>,
+
     pub(crate) shutdown_requested: bool,
     pub(crate) exit_requested: bool,
 
@@ -179,6 +205,12 @@ impl GlobalState {
 
             analysis_host,
             mem_docs: MemDocs::default(),
+
+            cross_file: CrossFileDiagnostics::default(),
+            pending_changes: FxHashSet::default(),
+            refresh_deadline: None,
+            refresh_timer: None,
+            never_rx: crossbeam_channel::never(),
 
             shutdown_requested: false,
             exit_requested: false,
@@ -334,6 +366,7 @@ impl GlobalState {
             analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
+            cross_file: self.cross_file.clone(),
         }
     }
 
@@ -362,6 +395,7 @@ pub struct GlobalStateSnapshot {
     pub(crate) analysis: Analysis,
     mem_docs: MemDocs,
     vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
+    pub(crate) cross_file: CrossFileDiagnostics,
 }
 
 impl GlobalStateSnapshot {

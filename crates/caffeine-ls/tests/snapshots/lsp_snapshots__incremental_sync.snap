@@ -4,6 +4,7 @@ expression: "(diag_broken, diag_fixed)"
 ---
 [
   {
+    "resultId": "ed00724b7e79b324-d1fba762150c532c",
     "items": [
       {
         "range": {
@@ -40,6 +41,7 @@ expression: "(diag_broken, diag_fixed)"
     "kind": "full"
   },
   {
+    "resultId": "0000000000000000-d1fba762150c532c",
     "items": [],
     "kind": "full"
   }

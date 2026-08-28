@@ -14,11 +14,12 @@ use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError};
 use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
-use vfs::AbsPathBuf;
+use vfs::{AbsPathBuf, FileId};
 
 use crate::{
     GlobalState,
     config::Config,
+    cross_file::{self, PublishPayload},
     global_state::{BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState},
     handlers::{
         self,
@@ -48,6 +49,7 @@ impl GlobalState {
             .inspect_err(|err| tracing::error!(?err, "Failed to init lsp"))?;
 
         loop {
+            let refresh_rx = self.refresh_timer.as_ref().unwrap_or(&self.never_rx);
             crossbeam_channel::select! {
                 recv(receiver) -> msg => {
                     match msg? {
@@ -61,6 +63,9 @@ impl GlobalState {
                 }
                 recv(self.task_receiver) -> task => {
                     self.handle_background_task(task?);
+                }
+                recv(refresh_rx) -> _ => {
+                    self.collect_refresh_timer();
                 }
             }
 
@@ -506,6 +511,20 @@ impl GlobalState {
                 self.pending_requests.push(run);
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
+
+            BackgroundTaskEvent::CrossFileReady { pushes } => {
+                self.handle_cross_file_ready(pushes);
+            }
+            BackgroundTaskEvent::CrossFileRetry { changed } => {
+                tracing::debug!(
+                    "cross-file diagnostics pass cancelled by pending write; re-queueing"
+                );
+                for file in changed {
+                    self.pending_changes.insert(file);
+                }
+                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
+                self.arm_refresh_timer();
+            }
         }
     }
 
@@ -651,6 +670,10 @@ impl GlobalState {
         self.file_set_config = Some(file_set_config);
 
         let roots = self.partition_source_roots();
+        // The reverse-dependency index works over the exactly same file set as
+        // the database source roots.
+        let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
+        self.cross_file.set_source_files(source_files);
         let mut project_graph = self.build_project_graph(&graph, &source_set_ids);
         for (idx, source_set) in source_sets.iter().enumerate() {
             project_graph
@@ -860,7 +883,7 @@ impl GlobalState {
 
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {
         match task {
-            vfs::loader::Message::Loaded { files } | vfs::loader::Message::Changed { files } => {
+            vfs::loader::Message::Loaded { files } => {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
@@ -885,6 +908,48 @@ impl GlobalState {
                         }
                         vfs.0.set_file_contents(path.into(), contents);
                     }
+                }
+                self.process_changes();
+            }
+            vfs::loader::Message::Changed { files } => {
+                let mut recorded: Vec<FileId> = Vec::new();
+                {
+                    let mut vfs = self.vfs.write();
+                    for (path, contents) in files {
+                        // Open documents are maintained by the client via
+                        // didChange, so the loader's on-disk copy is stale and
+                        // must not overwrite the in-memory text.
+                        if self.mem_docs.contains(&path.clone().into()) {
+                            continue;
+                        }
+                        // Drop files that gitignore rules exclude; the loader's
+                        // exclude list only covers directories.
+                        let ignored = self
+                            .source_root_matchers
+                            .iter_mut()
+                            .find_map(|(root, matcher)| {
+                                let rel = path.as_path().strip_prefix(root.as_path())?;
+                                Some(matcher.matched(rel, false).is_ignore())
+                            })
+                            .unwrap_or(false);
+                        if ignored {
+                            continue;
+                        }
+                        let file_id = vfs.0.file_id(&path.clone().into()).map(|(id, _)| id);
+                        // `set_file_contents` reports whether the content truly
+                        // changed; a re-read after `didClose` with an unchanged
+                        // file yields `false` and must not be treated as an edit.
+                        if vfs.0.set_file_contents(path.into(), contents)
+                            && let Some(file_id) = file_id
+                        {
+                            recorded.push(file_id);
+                        }
+                    }
+                }
+                for file_id in recorded {
+                    // An on-disk edit to a source file can move the diagnostics
+                    // of its dependents.
+                    self.record_source_edit(file_id);
                 }
                 self.process_changes();
             }
@@ -979,10 +1044,127 @@ impl GlobalState {
         // Files were added to or removed from the vfs, so the source roots need
         // to be rebuilt to keep `file_language_kind` working.
         if vfs_changed && self.file_set_config.is_some() {
-            change.set_roots(self.partition_source_roots());
+            let roots = self.partition_source_roots();
+            // The reverse-dependency index works over the same file set; refresh
+            // the files it covers (a no-op when the partition is unchanged).
+            let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
+            self.cross_file.set_source_files(source_files);
+            change.set_roots(roots);
         }
 
         self.analysis_host.apply_change(change);
+    }
+
+    /// Queues a *client-visible* text edit for the debounced cross-file
+    /// refresh. The background pass redisplays only the files whose
+    /// diagnostics genuinely moved, so steady-state keystrokes are cheap.
+    pub(crate) fn record_source_edit(&mut self, file_id: FileId) {
+        if !self.config.cross_file_enabled() {
+            return;
+        }
+        self.pending_changes.insert(file_id);
+        self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
+        self.arm_refresh_timer();
+    }
+
+    /// Fired when the debounce timer wakes (or when a previous one-shot was
+    /// consumed): clears the armed timer and either starts the refresh pass or
+    /// re-arms for a later deadline.
+    fn collect_refresh_timer(&mut self) {
+        self.refresh_timer = None;
+        match self.refresh_deadline {
+            Some(deadline) if Instant::now() >= deadline => {
+                self.start_cross_file_pass();
+            }
+            Some(_) => self.arm_refresh_timer(),
+            None => {}
+        }
+    }
+
+    /// Arms a one-shot receiver that wakes the main loop when the debounce
+    /// deadline is reached (if one is pending and no timer is already armed).
+    fn arm_refresh_timer(&mut self) {
+        if self.refresh_timer.is_some() {
+            return;
+        }
+        if let Some(deadline) = self.refresh_deadline {
+            self.refresh_timer = Some(crossbeam_channel::at(deadline));
+        }
+    }
+
+    /// Launches the debounced cross-file diagnostics pass on the worker pool.
+    /// The pass builds (or incrementally updates) the reverse-dependency index,
+    /// derives the candidate set and verifies each candidate's seal, returning
+    /// the full reports of the files whose diagnostics actually moved. A
+    /// concurrent write cancels the pass ([`Cancelled::PendingWrite`]) and the
+    /// worker hands the changed set back for a re-run after the write.
+    fn start_cross_file_pass(&mut self) {
+        self.refresh_deadline = None;
+        let changed = std::mem::take(&mut self.pending_changes);
+        // The very first pass also performs the initial full index build.
+        let kick_build = !self.cross_file.is_built();
+        if changed.is_empty() && !kick_build {
+            return;
+        }
+
+        let snapshot = self.snapshot();
+        let task_sender = self.task_sender.clone();
+        self.thread_pool.execute(move || {
+            let result = cross_file::run_cross_file_pass(&snapshot, &changed);
+            match result {
+                Ok(pushes) => {
+                    let _ = task_sender.send(BackgroundTaskEvent::CrossFileReady { pushes });
+                }
+                Err(Cancelled::PendingWrite) => {
+                    let _ = task_sender.send(BackgroundTaskEvent::CrossFileRetry { changed });
+                }
+                Err(cancelled) => {
+                    tracing::debug!(?cancelled, "cross-file diagnostics pass aborted");
+                }
+            }
+        });
+    }
+
+    /// Applies a completed cross-file pass: pushes the changed reports for
+    /// *unopened* files and asks the client to re-pull when an open file's
+    /// diagnostics moved. The delivery seal is recorded per file so a racing
+    /// pull replies with `Unchanged` (a `resultId` comparison) instead of
+    /// duplicating the report.
+    fn handle_cross_file_ready(&mut self, pushes: Vec<PublishPayload>) {
+        if !self.config.cross_file_enabled() {
+            return;
+        }
+        let mut any_open_changed = false;
+        let mut outgoing: Vec<PublishPayload> = Vec::new();
+        for payload in pushes {
+            // Open documents are re-pulled by the client after a
+            // `workspace/diagnosticRefresh`; only unopened ones need a push to
+            // keep their stored diagnostics current. The seal is recorded only
+            // when the report is actually delivered, so a disabled push still
+            // surfaces the change through the next pull's `related_documents`.
+            let is_open = crate::lsp::from_proto::vfs_path(&payload.uri)
+                .map(|path| self.mem_docs.contains(&path))
+                .unwrap_or(false);
+            if is_open {
+                any_open_changed = true;
+                self.cross_file.set_seal(payload.file, payload.seal.clone());
+            } else if self.config.cross_file_push_unopened() {
+                self.cross_file.set_seal(payload.file, payload.seal.clone());
+                outgoing.push(payload);
+            }
+        }
+
+        for payload in outgoing {
+            self.notify::<PublishDiagnosticsNotification>(PublishDiagnosticsParams {
+                uri: payload.uri,
+                version: None,
+                diagnostics: payload.diagnostics,
+            });
+        }
+
+        if any_open_changed {
+            self.refresh_diagnostics();
+        }
     }
 }
 
