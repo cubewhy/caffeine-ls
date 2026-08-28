@@ -12,6 +12,7 @@ pub use ide_db::{
     line_index::{LineCol, LineIndex},
 };
 pub use ide_diagnostics::Diagnostic;
+use rustc_hash::FxHashSet;
 pub use syntax::{DiagnosticCode, JavaDiagnosticCode, KotlinDiagnosticCode};
 use triomphe::Arc;
 use vfs::FileId;
@@ -114,6 +115,45 @@ impl Analysis {
     /// see [`ide_diagnostics::declaration_diagnostics`].
     pub fn declaration_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
         self.with_db(|db| ide_diagnostics::declaration_diagnostics(db, file_id))
+    }
+
+    /// The type-layer and declaration-level diagnostics of the file, merged
+    /// and memoized as one salsa query (see
+    /// [`ide_diagnostics::file_diagnostics`]).
+    pub fn file_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| {
+            ide_diagnostics::file_diagnostics(db, file_id)
+                .iter()
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// A deterministic digest of the file's cross-file diagnostics, stable
+    /// across identical contents — the seal the LSP layer compares to detect
+    /// which files' diagnostics *actually* changed after a cross-file edit.
+    /// See [`ide_diagnostics::file_diagnostics_digest`].
+    pub fn file_diagnostics_digest(&self, file_id: FileId) -> Cancellable<String> {
+        self.with_db(|db| ide_diagnostics::file_diagnostics_digest(db, file_id))
+    }
+
+    /// The workspace source files whose declarations the file's type outputs
+    /// resolve against (see [`hir_ty::db::file_resolved_deps`]).
+    pub fn file_resolved_deps(
+        &self,
+        file_id: FileId,
+    ) -> Cancellable<std::sync::Arc<FxHashSet<FileId>>> {
+        self.with_db(|db| hir_ty::db::file_resolved_deps(db, file_id))
+    }
+
+    /// The resolution-relevant names of the file, the sound name-level
+    /// fallback of the cross-file dependency index (see
+    /// [`hir_ty::db::file_dependency_refs`]).
+    pub fn file_dependency_refs(
+        &self,
+        file_id: FileId,
+    ) -> Cancellable<std::sync::Arc<FxHashSet<hir_expand::name::Name>>> {
+        self.with_db(|db| hir_ty::db::file_dependency_refs(db, file_id))
     }
 
     /// Gets the file's `LineIndex`: data structure to convert between absolute

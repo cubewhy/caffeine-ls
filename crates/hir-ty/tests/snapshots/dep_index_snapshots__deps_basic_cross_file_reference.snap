@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/dep_index_snapshots.rs
+expression: out
+---
+FILE /src/p/A.java
+package p;
+public class A {
+    public String name() { return "a"; }
+}
+
+DEPS: 
+REFNAMES: String
+
+FILE /src/p/B.java
+package p;
+public class B {
+    void m(A a) {
+        a.name();
+        String s = a.name();
+    }
+}
+
+DEPS: /src/p/A.java
+REFNAMES: A, String, name
+
+FILE /src/p/C.java
+package p;
+public class C {
+    void m(String s) {}
+}
+
+DEPS: 
+REFNAMES: String

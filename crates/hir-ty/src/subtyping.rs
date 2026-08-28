@@ -178,7 +178,11 @@ fn is_source_interface(db: &dyn TyDatabase, source: hir::SourceClass) -> bool {
 /// superclass/interfaces; otherwise they are resolved raw. Enums, records and
 /// annotations gain their implicit superclass (`java.lang.Enum`,
 /// `java.lang.Record`, `java.lang.annotation.Annotation`).
-fn source_supertypes(db: &dyn TyDatabase, source: hir::SourceClass, args: &[Ty]) -> Vec<Ty> {
+pub(crate) fn source_supertypes(
+    db: &dyn TyDatabase,
+    source: hir::SourceClass,
+    args: &[Ty],
+) -> Vec<Ty> {
     let tree = hir::file_item_tree(db, source.file);
     let Some(data) = item_data(&tree, source.item) else {
         return Vec::new();

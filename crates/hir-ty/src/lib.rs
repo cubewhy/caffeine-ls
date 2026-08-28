@@ -79,6 +79,7 @@
 pub mod const_eval;
 pub mod db;
 pub mod decl_check;
+pub mod dep_index;
 pub mod diagnostics;
 pub mod infer;
 pub mod inference;

@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/dep_index_snapshots.rs
+expression: out
+---
+FILE /src/p/Base.java
+package p;
+public class Base {
+    public void inherited() {}
+}
+
+DEPS: 
+REFNAMES: 
+
+FILE /src/p/Sub.java
+package p;
+public class Sub extends Base {}
+
+DEPS: /src/p/Base.java
+REFNAMES: Base
+
+FILE /src/p/Use.java
+package p;
+public class Use {
+    void m(Sub s) {
+        s.inherited();
+    }
+}
+
+DEPS: /src/p/Base.java, /src/p/Sub.java
+REFNAMES: Sub, inherited

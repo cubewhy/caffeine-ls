@@ -1,13 +1,15 @@
 use hir::hir_expand::item_tree::{ItemData, ItemId, ItemTree};
 use ide_db::{
     FileRange, RootDatabase, Severity,
-    base_db::{self, LanguageKind, SourceDatabase},
+    base_db::{self, FileText, LanguageKind, SourceDatabase, salsa},
 };
 use rowan::TextRange;
 use syntax::DiagnosticCode;
 use vfs::FileId;
 
-#[derive(Debug)]
+use std::sync::Arc;
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Diagnostic {
     pub message: String,
     pub range: FileRange,
@@ -49,7 +51,7 @@ pub fn syntax_diagnostics(
 /// argument in the file (see [`hir_ty::body_types`]). Each diagnostic's range
 /// is the source range of the offending construct, computed from its body-IR
 /// arena id.
-pub fn type_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
+pub fn type_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
     let tree = hir::file_item_tree(db, file_id);
     let mut out = Vec::new();
     for (item_id, _) in all_items(&tree) {
@@ -86,7 +88,7 @@ pub fn type_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
 /// default-method checks of [`hir_ty::class_diagnostics`]. Each reference
 /// carries its own source range; the hierarchy checks are keyed to the
 /// offending method's name.
-pub fn declaration_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
+pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for diagnostic in hir_ty::class_diagnostics(db, file_id) {
         let Some(range) = diagnostic.range().or_else(|| {
@@ -114,6 +116,47 @@ pub fn declaration_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagno
         ));
     }
     out
+}
+
+/// The type-layer and declaration-level diagnostics of a file, merged into a
+/// single report. Unlike syntax diagnostics — which are strictly file-local —
+/// these can change when a *different* file, one this file's types resolve
+/// against, is edited, so salsa memoizes them per [`FileText`] and the LSP
+/// layer compares digests instead of recomputing them. A text edit to another
+/// file invalidates only the innermost queries whose inputs actually changed
+/// (`body_types_query`, `class_diagnostics_query`), so re-deriving an
+/// unaffected file's report here is a hash compare, not a re-inference.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn file_diagnostics_query(
+    db: &dyn hir_ty::TyDatabase,
+    file: FileText,
+) -> Arc<Vec<Diagnostic>> {
+    let file_id = *file.file_id(db);
+    let mut out = Vec::with_capacity(8);
+    out.extend(type_diagnostics(db, file_id));
+    out.extend(declaration_diagnostics(db, file_id));
+    Arc::new(out)
+}
+
+/// The merged type + declaration diagnostics of a file.
+pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec<Diagnostic>> {
+    file_diagnostics_query(db, db.file_text(file_id))
+}
+
+/// A deterministic digest of the file's cross-file diagnostics, stable across
+/// identical contents: the seal the cross-file diagnostic pipeline compares to
+/// tell an *actually changed* report from an unchanged candidate. Rendered as
+/// the hex of a content hash, ready to be handed to the client as an LSP
+/// `resultId`.
+pub fn file_diagnostics_digest(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let diagnostics = file_diagnostics(db, file_id);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for diagnostic in diagnostics.iter() {
+        diagnostic.hash(&mut hasher);
+    }
+    format!("{:016x}", hasher.finish())
 }
 
 fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {

@@ -1038,6 +1038,7 @@ dependencies = [
  "hir",
  "hir-def",
  "hir-expand",
+ "ide-diagnostics",
  "insta",
  "line-index",
  "ra_ap_vfs",
@@ -1204,6 +1205,7 @@ dependencies = [
  "ide-db",
  "ra_ap_vfs",
  "rowan",
+ "salsa",
  "syntax",
  "tracing",
 ]

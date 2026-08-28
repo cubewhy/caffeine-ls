@@ -18,6 +18,7 @@ vfs.workspace = true
 base-db.workspace = true
 camino.workspace = true
 hir-def.workspace = true
+ide-diagnostics.workspace = true
 insta.workspace = true
 line-index.workspace = true
 rustc-hash.workspace = true

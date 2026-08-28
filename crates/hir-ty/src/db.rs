@@ -19,7 +19,7 @@ use hir_expand::{
     item_tree::{ItemData, ItemId, TypeParam},
     name::Name,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::TypeRef;
 use vfs::FileId;
 
@@ -259,6 +259,45 @@ pub(crate) fn class_diagnostics_query(
 ) -> Vec<crate::decl_check::DeclDiagnostic> {
     let file_id = *file.file_id(db);
     crate::decl_check::class_diagnostics_impl(db, file_id)
+}
+
+/// The workspace source files whose declarations `file`'s type outputs resolve
+/// against — the exact cross-file dependency set of `file`. Tracked on the
+/// interned [`FileText`], so a text edit to `file` invalidates exactly its
+/// dependency set and leaves every other file's memo untouched. See
+/// [`crate::dep_index::file_resolved_deps_impl`].
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_resolved_deps_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashSet<FileId>> {
+    let file_id = *file.file_id(db);
+    Arc::new(crate::dep_index::file_resolved_deps_impl(db, file_id))
+}
+
+/// The workspace source files whose declarations `file`'s type outputs
+/// resolve against.
+pub fn file_resolved_deps(db: &dyn TyDatabase, file_id: FileId) -> Arc<FxHashSet<FileId>> {
+    let deps = file_resolved_deps_query(db, db.file_text(file_id));
+    deps.clone()
+}
+
+/// The resolution-relevant *names* of `file` — the sound name-level fallback
+/// of the cross-file dependency index. See
+/// [`crate::dep_index::file_dependency_refs_impl`].
+#[salsa::tracked(returns(ref))]
+pub(crate) fn file_dependency_refs_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashSet<Name>> {
+    let file_id = *file.file_id(db);
+    Arc::new(crate::dep_index::file_dependency_refs_impl(db, file_id))
+}
+
+/// The resolution-relevant names of `file`.
+pub fn file_dependency_refs(db: &dyn TyDatabase, file_id: FileId) -> Arc<FxHashSet<Name>> {
+    let refs = file_dependency_refs_query(db, db.file_text(file_id));
+    refs.clone()
 }
 
 /// The access-control context

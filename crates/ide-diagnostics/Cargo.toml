@@ -8,6 +8,7 @@ hir.workspace = true
 hir-ty.workspace = true
 ide-db.workspace = true
 rowan.workspace = true
+salsa.workspace = true
 syntax.workspace = true
 tracing.workspace = true
 vfs.workspace = true

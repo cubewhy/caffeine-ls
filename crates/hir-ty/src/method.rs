@@ -209,6 +209,11 @@ pub struct MethodData {
     pub name: String,
     /// The fully qualified name of the declaring class or interface.
     pub owner: String,
+    /// The workspace source file declaring this method, when it is a source
+    /// declaration (including the synthesized implicit constructors, enum
+    /// members and record accessors of a source class). `None` for library
+    /// members and the synthetic `Object.clone` of array types.
+    pub owner_file: Option<FileId>,
     /// The parameter types, instantiated with the declaring type's type
     /// arguments; the method's own type parameters are not yet instantiated.
     pub params: Vec<Ty>,
@@ -455,6 +460,7 @@ fn member_set_impl(
         out.push(MethodData {
             name: "clone".to_owned(),
             owner: "java.lang.Object".to_owned(),
+            owner_file: None,
             params: Vec::new(),
             // The return type is the array type itself ([§10.7]).
             ret: receiver,
@@ -775,6 +781,7 @@ fn library_class_methods(
             // empty wildcard in the declaration-level walk.
             name: interner.resolve(&method.name).to_owned(),
             owner: fqn.clone(),
+            owner_file: None,
             params: method
                 .params
                 .iter()
@@ -920,6 +927,7 @@ fn source_class_methods(
             // empty wildcard in the declaration-level walk.
             name: method.name.as_str().to_owned(),
             owner: fqn.clone(),
+            owner_file: Some(source.file),
             params,
             ret,
             throws,
@@ -962,6 +970,7 @@ fn source_class_methods(
         out.push(MethodData {
             name: fqn.rsplit('.').next().unwrap_or(&fqn).to_owned(),
             owner: fqn.clone(),
+            owner_file: Some(source.file),
             params: Vec::new(),
             ret: Ty::reference(db, Name::new(&fqn), Vec::new()),
             throws: Vec::new(),
@@ -991,6 +1000,7 @@ fn source_class_methods(
             out.push(MethodData {
                 name: "values".to_owned(),
                 owner: fqn.clone(),
+                owner_file: Some(source.file),
                 params: Vec::new(),
                 ret: Ty::array(db, self_ty),
                 throws: Vec::new(),
@@ -1008,6 +1018,7 @@ fn source_class_methods(
             out.push(MethodData {
                 name: "valueOf".to_owned(),
                 owner: fqn.clone(),
+                owner_file: Some(source.file),
                 params: vec![Ty::reference(db, "java.lang.String", Vec::new())],
                 ret: self_ty,
                 throws: Vec::new(),
@@ -1051,6 +1062,7 @@ fn source_class_methods(
             out.push(MethodData {
                 name: component_name.to_owned(),
                 owner: fqn.clone(),
+                owner_file: Some(source.file),
                 params: Vec::new(),
                 ret: ty,
                 throws: Vec::new(),
@@ -1107,6 +1119,7 @@ fn source_class_methods(
                     out.push(MethodData {
                         name: simple.to_owned(),
                         owner: fqn.clone(),
+                        owner_file: Some(source.file),
                         params,
                         // Constructors carry no return type ([§8.8]).
                         ret: Ty::error(db),
@@ -1492,6 +1505,7 @@ fn instantiate(
     Some(MethodData {
         name: method.name.clone(),
         owner: method.owner.clone(),
+        owner_file: method.owner_file,
         params: formals
             .iter()
             .map(|p| p.substitute_infer(db, &resolved))
@@ -1817,6 +1831,10 @@ pub struct FieldData {
     pub name: String,
     /// The fully qualified name of the declaring class or interface.
     pub owner: String,
+    /// The workspace source file declaring this field, when it is a source
+    /// declaration (including the implicit enum-constant and record-component
+    /// fields of a source class). `None` for library members.
+    pub owner_file: Option<FileId>,
     /// The field's type, instantiated with the declaring type's type arguments.
     pub ty: Ty,
     /// Whether the field is static.
@@ -1948,6 +1966,7 @@ fn library_class_fields(
         out.push(FieldData {
             name: name.to_owned(),
             owner: fqn.clone(),
+            owner_file: None,
             ty,
             is_static: field.flags & 0x0008 != 0, // ACC_STATIC
             access: Access::from_flags(field.flags),
@@ -2017,6 +2036,7 @@ fn source_class_fields(
                 out.push(FieldData {
                     name: name.to_owned(),
                     owner: fqn.clone(),
+                    owner_file: Some(source.file),
                     ty,
                     is_static: field.modifiers.static_,
                     access: interface_access_of(declaring_interface, &field.modifiers),
@@ -2034,6 +2054,7 @@ fn source_class_fields(
                 out.push(FieldData {
                     name: name.to_owned(),
                     owner: fqn.clone(),
+                    owner_file: Some(source.file),
                     ty: Ty::reference(db, Name::new(&fqn), binding.values().copied().collect()),
                     is_static: true,
                     access: Access::Public,
@@ -2061,6 +2082,7 @@ fn source_class_fields(
             out.push(FieldData {
                 name: component_name.to_owned(),
                 owner: fqn.clone(),
+                owner_file: Some(source.file),
                 ty: ty.substitute(db, &binding),
                 is_static: false,
                 access: Access::Private,

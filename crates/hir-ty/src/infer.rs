@@ -2370,6 +2370,7 @@ impl<'a> InferCtx<'a> {
         let build = |resolved: &FxHashMap<u64, Ty>| MethodData {
             name: method.name.clone(),
             owner: method.owner.clone(),
+            owner_file: method.owner_file,
             params: formals
                 .iter()
                 .map(|p| p.substitute_infer(self.db, resolved))

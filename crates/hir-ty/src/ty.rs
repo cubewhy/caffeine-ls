@@ -337,6 +337,42 @@ impl Ty {
         }
     }
 
+    /// Visits the canonical fully qualified name ([JLS §6.7]) of every
+    /// reference type reachable in `self`: the type itself, its type
+    /// arguments, array elements, type-variable bounds, wildcard bounds and
+    /// intersection members. Used by the cross-file dependency index
+    /// ([`crate::dep_index`]) to recover the source files a [`Ty`] refers to.
+    pub fn for_each_reference(&self, db: &dyn TyDatabase, f: &mut impl FnMut(&Name)) {
+        match self.kind(db) {
+            TyKind::Reference { name, args } => {
+                f(name);
+                for arg in args.iter() {
+                    arg.for_each_reference(db, f);
+                }
+            }
+            TyKind::Array(inner) => inner.for_each_reference(db, f),
+            TyKind::Wildcard(bound) => {
+                if let Some(bound) = bound.as_deref() {
+                    bound.ty.for_each_reference(db, f);
+                }
+            }
+            TyKind::TypeVar { bounds, lower, .. } => {
+                for bound_ty in bounds.iter() {
+                    bound_ty.for_each_reference(db, f);
+                }
+                if let Some(lower) = lower {
+                    lower.for_each_reference(db, f);
+                }
+            }
+            TyKind::Intersection(members) => {
+                for member in members.iter() {
+                    member.for_each_reference(db, f);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// The declared bounds of this type variable
     /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
     /// or an empty slice for non-type-variable types.

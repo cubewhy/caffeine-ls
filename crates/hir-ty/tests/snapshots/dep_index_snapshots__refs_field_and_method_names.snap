@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/dep_index_snapshots.rs
+expression: out
+---
+FILE /src/p/Holder.java
+package p;
+public class Holder {
+    public String s;
+    public String get() { return s; }
+}
+
+DEPS: 
+REFNAMES: String
+
+FILE /src/p/Reader.java
+package p;
+public class Reader {
+    String read(Holder h) {
+        return h.s + h.get();
+    }
+}
+
+DEPS: /src/p/Holder.java
+REFNAMES: Holder, String, get, s

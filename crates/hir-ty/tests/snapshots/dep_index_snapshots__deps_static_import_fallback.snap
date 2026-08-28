@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/dep_index_snapshots.rs
+expression: out
+---
+FILE /src/p/StaticLib.java
+package p;
+public class StaticLib {
+    public static void helper() {}
+}
+
+DEPS: 
+REFNAMES: 
+
+FILE /src/p/Caller.java
+package p;
+import static p.StaticLib.helper;
+public class Caller {
+    void m() {
+        helper();
+    }
+}
+
+DEPS: 
+REFNAMES: helper, p.StaticLib.helper
