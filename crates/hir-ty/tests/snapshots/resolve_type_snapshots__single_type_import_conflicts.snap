@@ -12,5 +12,5 @@ class App {
     Widget w;
 }
 
-method : conflicting-import: @0:20import conflicts with another declaration of 'com.a.Widget'
-method : conflicting-import: @2:20import conflicts with another declaration of 'com.b.Widget'
+method : conflicting-import: @2:0import conflicts with another declaration of 'com.a.Widget'
+method : conflicting-import: @3:0import conflicts with another declaration of 'com.b.Widget'

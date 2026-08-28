@@ -34,5 +34,5 @@ class Body {
 method m(java.lang.Object): void
   locals: l0: java.lang.Object | l1: java.lang.String | l2: int | l3: int | l4: int | l5: int | l6: int | l7: int | l8: com.example.Point
   exprs: e0: java.lang.Object | e1: boolean | e2: java.lang.String | e3: int | e4: int | e5: boolean | e6: boolean | e7: boolean | e8: java.lang.String | e9: int | e10: java.lang.Object | e11: boolean | e12: boolean | e13: int | e14: <error> | e15: java.lang.Object | e16: int | e17: com.example.Point | e18: int | e19: int | e20: int | e21: null | e22: <error>
-  diags: e14@17:21: cannot-resolve-symbol: cannot find symbol
+  diags: e14@17:22: cannot-resolve-symbol: cannot find symbol
   symbol:   variable v

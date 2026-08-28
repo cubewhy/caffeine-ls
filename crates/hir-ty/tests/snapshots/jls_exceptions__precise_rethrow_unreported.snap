@@ -22,7 +22,7 @@ class Rethrow {
 method m(): void
   locals: l0: java.lang.Exception
   exprs: e0: void | e1: java.lang.Exception
-  diags: e1@9:17: unreported-exception: unreported exception IOException; must be caught or declared to be thrown
+  diags: e1@9:18: unreported-exception: unreported exception IOException; must be caught or declared to be thrown
 method io(): void
   locals: 
   exprs:

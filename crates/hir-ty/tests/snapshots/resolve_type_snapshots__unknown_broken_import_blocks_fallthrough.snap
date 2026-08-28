@@ -12,4 +12,4 @@ class App {
 }
 
 method : cannot-resolve-type: @5:4cannot resolve symbol 'Thing'
-method : unresolved-import: @0:20cannot find symbol 'org.missing.Thing' in the single-type import
+method : unresolved-import: @2:0cannot find symbol 'org.missing.Thing' in the single-type import

@@ -45,7 +45,7 @@ method bitNot(): java.lang.String
 method shiftBad(): int
   locals: 
   exprs: e9: int | e10: <error> | e11: <error>
-  diags: e10@9:32: incompatible-operand: bad operand types for binary operator '<<'
+  diags: e10@9:33: incompatible-operand: bad operand types for binary operator '<<'
   first type:  String
   second type: int
 method notBad(): boolean
@@ -67,18 +67,18 @@ method ltBad(): boolean
 method boolAndBad(): boolean
   locals: 
   exprs: e20: boolean | e21: <error> | e22: boolean
-  diags: e21@13:41: non-boolean-condition: incompatible types: int cannot be converted to boolean
+  diags: e21@13:42: non-boolean-condition: incompatible types: int cannot be converted to boolean
 method boolOrBad(): boolean
   locals: 
   exprs: e23: boolean | e24: <error> | e25: boolean
-  diags: e24@14:41: non-boolean-condition: incompatible types: int cannot be converted to boolean
+  diags: e24@14:42: non-boolean-condition: incompatible types: int cannot be converted to boolean
 method castBad(): int
   locals: 
   exprs: e26: <error> | e27: int
-  diags: e26@15:32: bad-cast: inconvertible types: String cannot be cast to int
+  diags: e26@15:33: bad-cast: inconvertible types: String cannot be cast to int
 method mulBad(): int
   locals: 
   exprs: e28: int | e29: <error> | e30: <error>
-  diags: e29@16:29: incompatible-operand: bad operand types for binary operator '*'
+  diags: e29@16:30: incompatible-operand: bad operand types for binary operator '*'
   first type:  String
   second type: int

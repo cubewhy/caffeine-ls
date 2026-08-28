@@ -21,4 +21,4 @@ method m(java.lang.String, com.example.Body): void
   diags: e0@4:8: cannot-resolve-symbol: cannot find symbol
   symbol:   variable undefinedName | e2@5:8: no-such-field: cannot find symbol
   symbol:   variable missing | e4@6:8: no-such-method: cannot find symbol
-  symbol:   method missing() | e8@7:8: wrong-argument-count: method 'length' cannot be applied to given types | e9@8:13: incompatible-types: incompatible types: Object cannot be converted to Throwable
+  symbol:   method missing() | e8@7:8: wrong-argument-count: method 'length' cannot be applied to given types | e9@8:14: incompatible-types: incompatible types: Object cannot be converted to Throwable

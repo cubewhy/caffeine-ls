@@ -15,5 +15,5 @@ class Body {
 method m(): int
   locals: l0: int | l1: int | l2: <error>
   exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: <error> | e6: <error>
-  diags: l2@4:25: var-without-initializer: cannot infer type for local variable c
+  diags: l2@4:26: var-without-initializer: cannot infer type for local variable c
   (cannot use 'var' on variable without initializer)

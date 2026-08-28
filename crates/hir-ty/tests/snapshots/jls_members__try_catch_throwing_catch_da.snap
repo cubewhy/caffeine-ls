@@ -27,7 +27,7 @@ method read(): java.lang.String
 method len(java.io.Reader): int
   locals: l0: java.io.Reader | l1: java.lang.String | l2: java.io.UncheckedIOException | l3: java.io.Reader
   exprs: e1: java.lang.String | e2: java.lang.String | e3: java.lang.String | e4: java.io.UncheckedIOException | e5: <error> | e6: java.io.Reader | e7: java.lang.String | e8: int
-  diags: e5@12:17: no-such-method: cannot find symbol
+  diags: e5@12:18: no-such-method: cannot find symbol
   symbol:   method getCause() | l3@9:13: cannot-resolve-type: cannot find symbol
   symbol:   class java.io.Reader | l2@11:17: cannot-resolve-type: cannot find symbol
   symbol:   class java.io.UncheckedIOException

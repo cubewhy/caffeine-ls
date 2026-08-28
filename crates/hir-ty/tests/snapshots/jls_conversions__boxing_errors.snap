@@ -16,4 +16,4 @@ class Body {
 method m(java.lang.Object): void
   locals: l0: java.lang.Object | l1: java.lang.Integer | l2: int | l3: java.lang.Boolean
   exprs: e0: java.lang.String | e1: java.lang.Object | e2: int
-  diags: e0@4:22: incompatible-types: incompatible types: String cannot be converted to Integer | e1@5:18: incompatible-types: incompatible types: Object cannot be converted to int | e2@6:22: incompatible-types: incompatible types: int cannot be converted to Boolean
+  diags: e0@4:23: incompatible-types: incompatible types: String cannot be converted to Integer | e1@5:19: incompatible-types: incompatible types: Object cannot be converted to int | e2@6:23: incompatible-types: incompatible types: int cannot be converted to Boolean

@@ -24,7 +24,7 @@ class Sw {
 method m(int): void
   locals: l0: int
   exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: void | e6: int | e7: int | e8: void | e9: int | e10: int | e11: int | e12: int | e13: int | e14: void | e15: int | e16: int | e17: void | e18: int | e19: int | e20: int | e21: int | e22: void | e23: int | e24: int | e25: int | e26: void | e27: <error>
-  diags: e6@6:16: duplicate-case-label: duplicate case label | e15@8:16: duplicate-case-label: duplicate case label | e24@10:16: duplicate-case-label: duplicate case label
+  diags: e6@6:17: duplicate-case-label: duplicate case label | e15@8:17: duplicate-case-label: duplicate case label | e24@10:17: duplicate-case-label: duplicate case label
 method f(int): void
   locals: l1: int
   exprs:

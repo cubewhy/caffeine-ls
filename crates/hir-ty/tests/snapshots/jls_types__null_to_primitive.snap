@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_types.rs
-assertion_line: 77
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -16,4 +15,4 @@ class Body {
 method m(): void
   locals: l0: int | l1: java.lang.Object
   exprs: e0: null | e1: null
-  diags: e0@4:15: incompatible-types: incompatible types: null cannot be converted to int
+  diags: e0@4:16: incompatible-types: incompatible types: null cannot be converted to int

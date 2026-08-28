@@ -14,4 +14,4 @@ class Body {
 method m(): void
   locals: l0: java.lang.Integer
   exprs: e0: <error> | e1: java.lang.Integer
-  diags: e0@4:31: bad-cast: inconvertible types: String cannot be cast to Integer
+  diags: e0@4:32: bad-cast: inconvertible types: String cannot be cast to Integer

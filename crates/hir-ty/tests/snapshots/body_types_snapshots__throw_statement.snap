@@ -24,4 +24,4 @@ method makeEx(): T
 method checked(): java.lang.String
   locals: 
   exprs: e1: java.lang.RuntimeException | e2: java.lang.Exception | e3: <error> | e4: null
-  diags: ss2@8:37: unreachable-statement: unreachable statement | e3@10:13: incompatible-types: incompatible types: Object cannot be converted to Throwable
+  diags: ss2@9:8: unreachable-statement: unreachable statement | e3@10:14: incompatible-types: incompatible types: Object cannot be converted to Throwable

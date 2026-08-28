@@ -22,4 +22,4 @@ class Body {
 method boxing(java.lang.Integer, java.lang.Long, java.lang.Character): int
   locals: l0: java.lang.Integer | l1: java.lang.Long | l2: java.lang.Character | l3: int | l4: int | l5: int | l6: long | l7: int | l8: boolean | l9: int | l10: long
   exprs: e0: java.lang.Integer | e1: int | e2: int | e3: java.lang.Integer | e4: java.lang.Integer | e5: int | e6: java.lang.Integer | e7: int | e8: java.lang.Integer | e9: java.lang.Long | e10: long | e11: java.lang.Integer | e12: java.lang.Character | e13: int | e14: java.lang.Integer | e15: java.lang.Long | e16: boolean | e17: boolean | e18: java.lang.Integer | e19: java.lang.Integer | e20: java.lang.Integer | e21: boolean | e22: java.lang.Integer | e23: java.lang.Long | e24: java.lang.Number | e25: int | e26: int | e27: int | e28: int | e29: int | e30: int | e31: int
-  diags: e24@11:18: incompatible-types: incompatible types: Number cannot be converted to long
+  diags: e24@11:19: incompatible-types: incompatible types: Number cannot be converted to long

@@ -18,4 +18,4 @@ class Poly {
 method isolation(boolean): void
   locals: l0: boolean | l1: java.lang.Object | l2: java.lang.Object | l3: java.lang.Object
   exprs: e1: <error> | e3: <error> | e4: boolean | e7: <error> | e8: <error> | e10: <error> | e11: <error> | e12: <error>
-  diags: e1@6:18: not-a-functional-interface: incompatible types: Object is not a functional interface | e3@7:18: not-a-functional-interface: incompatible types: Object is not a functional interface | e7@8:27: not-a-functional-interface: incompatible types: Object is not a functional interface | e10@8:47: not-a-functional-interface: incompatible types: Object is not a functional interface
+  diags: e1@6:19: not-a-functional-interface: incompatible types: Object is not a functional interface | e3@7:19: not-a-functional-interface: incompatible types: Object is not a functional interface | e7@8:27: not-a-functional-interface: incompatible types: Object is not a functional interface | e10@8:47: not-a-functional-interface: incompatible types: Object is not a functional interface

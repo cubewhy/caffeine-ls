@@ -36,5 +36,5 @@ method read(): int
 method bad(): int
   locals: 
   exprs: e9: <error>
-  diags: e9@14:14: no-such-field: cannot find symbol
+  diags: e9@14:15: no-such-field: cannot find symbol
   symbol:   variable z
