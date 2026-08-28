@@ -943,6 +943,56 @@ fn cross_file_deletes_when_source_file_removed_on_disk() {
     lsp.shutdown();
 }
 
+/// After a source file is deleted, pulling diagnostics for its URI (e.g. the
+/// open-tab pull the client issues as the file disappears) must return a clean
+/// empty report — not an internal error that surfaces to the user.
+#[test]
+fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
+    let lsp = create_lsp_with_config(json!({ "diagnostics": { "push_unopened": false } }));
+    let a = "/src/p/A.java";
+    let b = "/src/p/B.java";
+    lsp.write_fixture_file(a, "package p;\npublic class A {\n    <|>\n}\n");
+    lsp.write_fixture_file(
+        b,
+        "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
+    );
+    lsp.open_document(a);
+    lsp.change_at_mark(a, "// seed\n    <|>");
+    request_workspace_until(&lsp, json!([]), |r| {
+        r["items"].as_array().is_some_and(|items| items.len() == 2)
+    });
+
+    lsp.remove_file(b);
+    lsp.did_change_watched_files(b, FileChangeType::Deleted);
+
+    // Wait until B is gone from the workspace file set.
+    request_workspace_until(&lsp, json!([]), |r| {
+        r["items"].as_array().is_some_and(|items| items.len() == 1)
+    });
+
+    // Pulling the deleted file's diagnostics must yield an empty full report.
+    let uri = lsp.uri(b);
+    let response = lsp.request(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    assert!(
+        !response.is_null(),
+        "deleted file pull must not be an internal error, got: {response}"
+    );
+    assert_eq!(
+        response["kind"].as_str(),
+        Some("full"),
+        "deleted file pull must be a full report: {response}"
+    );
+    assert_eq!(
+        response["items"].as_array().map(Vec::len),
+        Some(0),
+        "deleted file pull must carry no items: {response}"
+    );
+    lsp.shutdown();
+}
+
 /// Editing an unrelated file must not touch the diagnostics of A or B at all.
 #[test]
 fn cross_file_unrelated_edit_is_isolated() {

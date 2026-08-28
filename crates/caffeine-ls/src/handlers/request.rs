@@ -16,9 +16,18 @@ pub fn on_diagnostic(
 ) -> anyhow::Result<DocumentDiagnosticReport> {
     tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
 
-    let file_id = state
-        .url_to_file_id(&params.text_document.uri)?
-        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    // The file may have been deleted (e.g. an open tab whose file is removed on
+    // disk); report no problems rather than failing the request.
+    let Some(file_id) = state.url_to_file_id(&params.text_document.uri)? else {
+        return Ok(RelatedFullDocumentDiagnosticReport {
+            related_documents: None,
+            full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                result_id: None,
+                items: Vec::new(),
+            },
+        }
+        .into());
+    };
     let line_index = state.file_line_index(file_id)?;
     // Before the workspace is loaded, files are not part of any source
     // root, so fall back to the language kind inferred from the path.
@@ -104,9 +113,9 @@ pub fn on_document_symbol(
 ) -> anyhow::Result<Option<DocumentSymbolResponse>> {
     tracing::info!(uri = ?params.text_document.uri, "request document symbols");
 
-    let file_id = state
-        .url_to_file_id(&params.text_document.uri)?
-        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let Some(file_id) = state.url_to_file_id(&params.text_document.uri)? else {
+        return Ok(None);
+    };
     let line_index = state.file_line_index(file_id)?;
     let document_symbols = state.analysis.document_symbols(file_id)?;
     let nested = symbols::nest_document_symbols(&line_index, &document_symbols);
@@ -141,9 +150,9 @@ pub fn on_goto_definition(
     let pos = params.text_document_position_params;
     tracing::info!(uri = ?pos.text_document.uri, "request goto definition");
 
-    let file_id = state
-        .url_to_file_id(&pos.text_document.uri)?
-        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let Some(file_id) = state.url_to_file_id(&pos.text_document.uri)? else {
+        return Ok(None);
+    };
     let line_index = state.file_line_index(file_id)?;
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let targets = state.analysis.goto_definition(file_id, offset)?;
@@ -169,9 +178,9 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
     let pos = params.text_document_position_params;
     tracing::info!(uri = ?pos.text_document.uri, "request hover");
 
-    let file_id = state
-        .url_to_file_id(&pos.text_document.uri)?
-        .ok_or_else(|| anyhow::format_err!("failed to get vfs path from uri"))?;
+    let Some(file_id) = state.url_to_file_id(&pos.text_document.uri)? else {
+        return Ok(None);
+    };
     let line_index = state.file_line_index(file_id)?;
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let info = state.analysis.hover(file_id, offset)?;

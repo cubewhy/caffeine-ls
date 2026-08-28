@@ -442,14 +442,16 @@ pub(crate) fn url_to_file_id(vfs: &vfs::Vfs, url: &Uri) -> anyhow::Result<Option
     vfs_path_to_file_id(vfs, &path)
 }
 
-/// Returns `None` if the file was excluded.
+/// Returns `None` if the file was excluded or is no longer known to the vfs
+/// (e.g. it was deleted); callers respond with an empty result rather than an
+/// internal error.
 pub(crate) fn vfs_path_to_file_id(
     vfs: &vfs::Vfs,
     vfs_path: &VfsPath,
 ) -> anyhow::Result<Option<FileId>> {
-    let (file_id, excluded) = vfs
-        .file_id(vfs_path)
-        .ok_or_else(|| anyhow::format_err!("file not found: {vfs_path}"))?;
+    let Some((file_id, excluded)) = vfs.file_id(vfs_path) else {
+        return Ok(None);
+    };
     match excluded {
         vfs::FileExcluded::Yes => Ok(None),
         vfs::FileExcluded::No => Ok(Some(file_id)),
