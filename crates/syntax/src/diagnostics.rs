@@ -33,6 +33,12 @@ pub enum JavaDiagnosticCode {
     AmbiguousName,
     /// §7.5.1: a single-type import names a class that cannot be found.
     UnresolvedImport,
+    /// §7.5.1/[§7.5.2]: an on-demand import (`import pkg.*;`) names a package
+    /// that is not observable on the classpath.
+    UnresolvedImportPackage,
+    /// §7.5.4/[§7.5.2]: a static on-demand import (`import static pkg.Type.*;`)
+    /// names a class that cannot be found.
+    UnresolvedStaticImport,
     /// §7.5.1: two imports conflict for the same simple name.
     ConflictingImport,
     /// §7.4.3/[§7.7.2]: a package is not visible from the current module.
@@ -166,6 +172,8 @@ impl JavaDiagnosticCode {
             CannotResolveType => Some("compiler.err.cant.resolve.location"),
             AmbiguousName => Some("compiler.err.ref.ambiguous"),
             UnresolvedImport => Some("compiler.err.doesnt.exist"),
+            UnresolvedImportPackage => Some("compiler.err.doesnt.exist"),
+            UnresolvedStaticImport => Some("compiler.err.cant.resolve.location"),
             ConflictingImport => Some("compiler.err.already.defined.single.import"),
             ModuleNotAccessible => Some("compiler.err.package.not.visible"),
             NoSuchField => Some("compiler.err.cant.resolve.location"),
@@ -223,6 +231,8 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::CannotResolveType => "cannot-resolve-type",
             JavaDiagnosticCode::AmbiguousName => "ambiguous-name",
             JavaDiagnosticCode::UnresolvedImport => "unresolved-import",
+            JavaDiagnosticCode::UnresolvedImportPackage => "unresolved-import-package",
+            JavaDiagnosticCode::UnresolvedStaticImport => "unresolved-static-import",
             JavaDiagnosticCode::ConflictingImport => "conflicting-import",
             JavaDiagnosticCode::ModuleNotAccessible => "module-not-accessible",
             JavaDiagnosticCode::NoSuchField => "no-such-field",

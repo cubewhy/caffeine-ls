@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+assertion_line: 65
+expression: out
+---
+FILE /src/com/example/Widget.java:
+package com.example;
+
+public class Widget {}
+
+FILE /src/com/example/Imports.java:
+package com.example;
+
+import com.missing.dep.*;
+
+class Imports {
+    void m() {
+        com.missing.dep.Helper h = new com.missing.dep.Helper();
+    }
+}
+
+method : unresolved-import-package: @2:0package com.missing.dep does not exist

@@ -202,11 +202,17 @@ pub(crate) fn declaration_type_diagnostics(
     out
 }
 
-/// The single-type-import validation of a compilation unit ([JLS §7.5.1]):
-/// the imported class must exist; two single-type imports of the same simple
-/// name for different classes conflict; and a single-type import colliding
-/// with a same-name top-level declaration of the compilation unit is an
-/// error.
+/// The single-type-import validation of a compilation unit ([JLS §7.5.1])
+/// plus the on-demand-import validation of [JLS §7.5.2]:
+///
+/// - a single-type import must name an existing (accessible) class;
+///   two single-type imports of the same simple name for different classes
+///   conflict; a single-type import colliding with a same-name top-level
+///   declaration of the compilation unit is an error ([§7.5.1]);
+/// - a type-import-on-demand (`import pkg.*;`) must name an observable
+///   package ([§7.5.2]);
+/// - a static on-demand import (`import static pkg.Type.*;`) must name an
+///   existing class or interface ([§7.5.4]).
 pub(crate) fn import_diagnostics(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -224,6 +230,54 @@ pub(crate) fn import_diagnostics(
     for import in &single_imports {
         if hir::fqn_resolve(db, scope, import.name.as_str()).is_none() {
             out.push(DeclDiagnostic::UnresolvedImport {
+                name: import.name.clone(),
+                range: Some(import.range),
+            });
+        }
+    }
+
+    // §7.5.2: the package of an on-demand import must exist
+    // (`import java.*;` is rejected by javac). The stored name already has
+    // the trailing `.*` stripped at lowering.
+    for import in tree
+        .imports
+        .iter()
+        .filter(|import| !import.is_static && import.is_asterisk)
+    {
+        if !hir::package_exists(db, scope, import.name.as_str()) {
+            out.push(DeclDiagnostic::UnresolvedImportPackage {
+                name: import.name.clone(),
+                range: Some(import.range),
+            });
+        }
+    }
+
+    // §7.5.4: a static on-demand import names the *class or interface* whose
+    // members are imported on demand (`import static pkg.Type.*;`). Its
+    // package must exist ([§7.5.2] — javac: `package pkg does not exist`),
+    // and the declaring type must exist within it (javac: `cannot find
+    // symbol: class Type`). The stored name already has the trailing `.*`
+    // stripped, so it is the declaring type's FQN.
+    for import in tree
+        .imports
+        .iter()
+        .filter(|import| import.is_static && import.is_asterisk)
+    {
+        let text = import.name.as_str();
+        let Some((package, _)) = text.rsplit_once('.') else {
+            // `import static Type.*;` — a type of the unnamed package. There
+            // is nothing observable to check for the package half, and the
+            // type half resolves through the normal name-resolution of a
+            // same-unit reference (never reported here).
+            continue;
+        };
+        if !hir::package_exists(db, scope, package) {
+            out.push(DeclDiagnostic::UnresolvedImportPackage {
+                name: Name::new(package),
+                range: Some(import.range),
+            });
+        } else if hir::fqn_resolve(db, scope, text).is_none() {
+            out.push(DeclDiagnostic::UnresolvedStaticImport {
                 name: import.name.clone(),
                 range: Some(import.range),
             });

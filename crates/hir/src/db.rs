@@ -596,6 +596,102 @@ fn source_set_symbol_index_query(
     Arc::new(index)
 }
 
+/// The package names declared by the files of a source root, scoped to the
+/// root's own files ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)).
+/// Used by [`source_set_packages_query`] to answer whether an on-demand
+/// import's package ([JLS §7.5.2]) is observable in the workspace's own
+/// sources.
+#[salsa::tracked(returns(ref))]
+fn source_root_packages_query(db: &dyn HirDatabase, root: SourceRootInput) -> Arc<FxHashSet<Name>> {
+    let source_root = root.source_root(db);
+    let mut packages = FxHashSet::default();
+    for file in source_root.iter() {
+        if let Some(package) = &file_item_tree(db, file).package {
+            packages.insert(package.clone());
+        }
+    }
+    Arc::new(packages)
+}
+
+/// The package names observable in `source_set`'s *own* source roots
+/// ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)).
+/// Internal source-set dependencies on the classpath are consulted separately
+/// by the caller ([`package_exists`], mirroring [`fqn_resolve`]).
+#[salsa::tracked(returns(ref))]
+fn source_set_packages_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    source_set: SourceSetId,
+) -> Arc<FxHashSet<Name>> {
+    let graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    let mut packages = FxHashSet::default();
+    let mut roots: Vec<SourceRootId> = graph
+        .source_root_to_source_set(db)
+        .iter()
+        .filter(|(_, owner)| **owner == source_set)
+        .map(|(root, _)| *root)
+        .collect();
+    roots.sort();
+    for root in roots {
+        for package in source_root_packages_query(db, db.source_root(root)).iter() {
+            packages.insert(package.clone());
+        }
+    }
+    Arc::new(packages)
+}
+
+/// Whether any class of `library` belongs to `package`
+/// ([JLS §7.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.2)).
+fn library_has_package(db: &dyn HirDatabase, library: LibraryId, package: &str) -> bool {
+    let interner = &db.hir_state().interner;
+    library_name_index(db, library).has_class_in_package(interner.get_or_intern(package))
+}
+
+/// Whether `package` (as written in an on-demand import, [JLS §7.5.2]) is
+/// observable within `scope`: the source set's own packages, then each
+/// classpath entry in order (internal source sets, then libraries) — the same
+/// shadowing order as [`fqn_resolve`]. A package is observable when *any* of
+/// its classes resolves; packages never contain `module-info`-only descriptors
+/// in the stub index, so the class-index probe is exact.
+pub fn package_exists(db: &dyn HirDatabase, scope: &ResolutionScope, package: &str) -> bool {
+    match scope {
+        ResolutionScope::SourceSet(source_set) => {
+            let graph = ProjectGraph::try_get(db)
+                .unwrap_or_else(|| panic!("no project graph; this is a bug"));
+            if source_set_packages_query(db, graph, source_set.clone())
+                .contains(&Name::new(package))
+            {
+                return true;
+            }
+            let entries = classpath(db, source_set.clone());
+            for entry in &entries.entries {
+                match entry {
+                    ClasspathEntry::SourceSet(internal) => {
+                        if source_set_packages_query(db, graph, internal.clone())
+                            .contains(&Name::new(package))
+                        {
+                            return true;
+                        }
+                    }
+                    ClasspathEntry::Library(library) => {
+                        if library_has_package(db, *library, package) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+        ResolutionScope::Classpath(libraries) => libraries
+            .iter()
+            .any(|library| library_has_package(db, *library, package)),
+        ResolutionScope::JdkBuiltins => jdk_builtin_libraries(db)
+            .iter()
+            .any(|library| library_has_package(db, *library, package)),
+    }
+}
+
 /// The indexed symbols of a file.
 pub fn file_symbols(db: &dyn HirDatabase, file_id: FileId) -> Arc<Vec<SourceSymbol>> {
     let symbols = file_symbols_query(db, db.file_text(file_id));

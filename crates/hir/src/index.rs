@@ -106,6 +106,15 @@ impl NameIndex {
             .filter_map(|&idx| Some((idx, self.entries.get(idx as usize)?)))
     }
 
+    /// Whether any class of this archive belongs to `package`. Backs the
+    /// on-demand-import validation
+    /// ([JLS §7.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.2)):
+    /// `import pkg.*;` is a compile-time error when the package is not
+    /// observable on the classpath.
+    pub fn has_class_in_package(&self, package: Symbol) -> bool {
+        self.package_to_entries.contains_key(&package)
+    }
+
     pub fn modules(&self) -> &[ModuleEntry] {
         &self.modules
     }

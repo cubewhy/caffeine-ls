@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+assertion_line: 22
+expression: out
+---
+FILE /src/com/example/Imports.java:
+package com.example;
+
+import com.example.*;
+import java.util.*;
+import java.io.*;
+import static java.lang.Math.*;
+import static java.util.Collections.*;
+
+class Imports {}

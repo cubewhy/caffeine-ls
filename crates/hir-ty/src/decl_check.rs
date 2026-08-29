@@ -64,6 +64,20 @@ pub enum DeclDiagnostic {
         name: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §7.5.2: an on-demand import (`import pkg.*;`) names a package that is
+    /// not observable on the classpath — javac reports `package pkg does not
+    /// exist`. (The package may still be *empty* of the wanted simple name;
+    /// that is a name-resolution error at the use site.)
+    UnresolvedImportPackage {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.5.4: a static on-demand import (`import static pkg.Type.*;`) names
+    /// a class or interface that cannot be found.
+    UnresolvedStaticImport {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
     /// §7.5.1: two single-type imports name different classes with the same
     /// simple name, or an import collides with a same-name top-level
     /// declaration of the compilation unit.
@@ -100,6 +114,12 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::UnresolvedImport { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnresolvedImport)
+            }
+            DeclDiagnostic::UnresolvedImportPackage { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnresolvedImportPackage)
+            }
+            DeclDiagnostic::UnresolvedStaticImport { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnresolvedStaticImport)
             }
             DeclDiagnostic::ConflictingImport { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ConflictingImport)
@@ -153,6 +173,17 @@ impl DeclDiagnostic {
                     name.as_str()
                 )
             }
+            DeclDiagnostic::UnresolvedImportPackage { name, .. } => {
+                format!("package {} does not exist", name.as_str())
+            }
+            DeclDiagnostic::UnresolvedStaticImport { name, .. } => {
+                // javac's message for a static on-demand import of a missing
+                // type: `cannot find symbol: class Type`.
+                format!(
+                    "cannot find symbol\n  symbol:   class {}",
+                    name.simple_name()
+                )
+            }
             DeclDiagnostic::ConflictingImport { name, .. } => {
                 format!(
                     "import conflicts with another declaration of '{}'",
@@ -177,6 +208,8 @@ impl DeclDiagnostic {
             DeclDiagnostic::CannotResolveType { .. }
             | DeclDiagnostic::AmbiguousName { .. }
             | DeclDiagnostic::UnresolvedImport { .. }
+            | DeclDiagnostic::UnresolvedImportPackage { .. }
+            | DeclDiagnostic::UnresolvedStaticImport { .. }
             | DeclDiagnostic::ConflictingImport { .. }
             | DeclDiagnostic::ModuleNotAccessible { .. } => "",
         }
@@ -189,6 +222,8 @@ impl DeclDiagnostic {
             DeclDiagnostic::CannotResolveType { range, .. }
             | DeclDiagnostic::AmbiguousName { range, .. }
             | DeclDiagnostic::UnresolvedImport { range, .. }
+            | DeclDiagnostic::UnresolvedImportPackage { range, .. }
+            | DeclDiagnostic::UnresolvedStaticImport { range, .. }
             | DeclDiagnostic::ConflictingImport { range, .. }
             | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
             _ => None,

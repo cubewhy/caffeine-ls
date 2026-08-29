@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+assertion_line: 115
+expression: out
+---
+FILE /src/com/example/Widget.java:
+package com.example;
+
+public class Widget {
+    public static final int answer = 42;
+}
+
+FILE /src/com/example/Imports.java:
+package com.example;
+
+import static com.example.Widget.*;
+
+class Imports {
+    int a = answer;
+}
