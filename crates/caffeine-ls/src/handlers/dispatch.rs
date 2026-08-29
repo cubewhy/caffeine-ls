@@ -164,6 +164,24 @@ where
             {
                 let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestAborted { id });
             }
+            Err(err)
+                if err
+                    .downcast_ref::<Cancelled>()
+                    .is_some_and(|c| matches!(c, Cancelled::PropagatedPanic)) =>
+            {
+                let lsp_err = lsp_server::ResponseError {
+                    code: lsp_types::LspErrorCodes::ContentModified.into(),
+                    message:
+                        "Analysis aborted due to internal panic; state will reset on next edit"
+                            .to_string(),
+                    data: None,
+                };
+
+                let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
+                    id,
+                    result: Ok(serde_json::to_value(lsp_err).unwrap()),
+                });
+            }
             Err(err) => {
                 let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
                     id,
