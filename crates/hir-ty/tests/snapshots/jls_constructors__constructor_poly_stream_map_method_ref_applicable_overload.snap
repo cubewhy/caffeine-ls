@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_constructors.rs
+expression: out
+---
+FILE /src/com/example/Constr.java:
+package com.example;
+
+import java.util.List;
+
+class Store {
+    static Object pack(Integer n) { return null; }
+    static Store pack(String s) { return null; }
+}
+
+record R(List<Store> libs) {}
+
+class Body {
+    void m(List<String> names) {
+        new R(names.stream().map(Store::pack).toList());
+    }
+}
+
+method pack(java.lang.Integer): java.lang.Object
+  locals: l0: java.lang.Integer
+  exprs: e0: null
+method pack(java.lang.String): com.example.Store
+  locals: l1: java.lang.String
+  exprs: e1: null
+method m(java.util.List<java.lang.String>): void
+  locals: l2: java.util.List<java.lang.String>
+  exprs: e3: java.util.function.Function<? super java.lang.String, ? extends com.example.Store> | e4: java.util.List<java.lang.String> | e5: java.util.stream.Stream<java.lang.String> | e6: java.util.stream.Stream<com.example.Store> | e7: java.util.List<com.example.Store> | e8: com.example.R

@@ -3327,21 +3327,24 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         sam_params: &[Ty],
     ) -> Ty {
-        let ref_ty = match (type_name, qualifier) {
-            (Some(tyref), _) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-            // `Type::name` — a qualifier that is a (possibly qualified) type
-            // name — a bare name, `pkg.Type` or a nested `Outer.Inner` — is a
-            // type qualifier ([§15.13.1]); otherwise it is an instance
-            // qualifier, inferred as an expression.
+        // `Type::name` — a qualifier that is a (possibly qualified) type name —
+        // a bare name, `pkg.Type` or a nested `Outer.Inner` — is a type
+        // qualifier ([§15.13.1]); otherwise it is an instance qualifier,
+        // inferred as an expression.
+        let (ref_ty, type_qualified) = match (type_name, qualifier) {
+            (Some(tyref), _) => (
+                resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
+                true,
+            ),
             (None, Some(expr)) => {
                 if let Some(ty) = self.dotted_type_name(expr) {
-                    ty
+                    (ty, true)
                 } else if let ExprData::Var(name) = self.tree.expr(expr).clone()
                     && let Some(ty) = self.type_name_ty(&name)
                 {
-                    ty
+                    (ty, true)
                 } else {
-                    self.infer_expr(expr)
+                    (self.infer_expr(expr), false)
                 }
             }
             _ => return self.error(),
@@ -3362,6 +3365,17 @@ impl<'a> InferCtx<'a> {
         if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
             return self.error();
         }
+        // §15.13.1: a *type-qualified* reference (`Path::of`, `List::stream`)
+        // may resolve a static method of an interface as well as of a class,
+        // so the virtual-invocation member filter of §15.12.3 must not swallow
+        // it — the static members of `Path` (`of(String, String…)`,
+        // `of(URI)`) are invisible to `Virtual` mode, which left `map`'s `<R>`
+        // unbound and typed the chain `List<Object>`.
+        let member_ctx = if type_qualified {
+            self.access.with_mode(InvocationMode::TypeQualified)
+        } else {
+            self.access.clone()
+        };
         // §15.13.3: for an unbound *instance* method reference, the receiver
         // of the referenced method is the single abstract method's first
         // parameter — which carries the type arguments the bare type name
@@ -3369,15 +3383,7 @@ impl<'a> InferCtx<'a> {
         // Stream<…>>` calls `stream()` on `List<MatchDecision>`, so its result
         // is `Stream<MatchDecision>` rather than a raw `Stream` that would
         // erase the element type and leave `R` unconstrained.
-        // §15.13.3: for an unbound *instance* method reference, the receiver
-        // of the referenced method is the single abstract method's first
-        // parameter — which carries the type arguments the bare type name
-        // lacks. `List::stream` as a `Function<List<MatchDecision>, ? extends
-        // Stream<…>>` calls `stream()` on `List<MatchDecision>`, so its result
-        // is `Stream<MatchDecision>` rather than a raw `Stream` that would
-        // erase the element type and leave `R` unconstrained.
-        let methods_on_type =
-            member_set(self.db, &self.scope, &ref_ty, name.as_str(), &self.access);
+        let methods_on_type = member_set(self.db, &self.scope, &ref_ty, name.as_str(), &member_ctx);
         let is_static_ref = methods_on_type.iter().any(|m| m.is_static);
         let receiver = if is_static_ref || sam_params.is_empty() {
             ref_ty
@@ -3396,11 +3402,112 @@ impl<'a> InferCtx<'a> {
                 ref_ty
             }
         };
-        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &self.access);
-        methods
-            .first()
+        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &member_ctx);
+        // §15.13.1: an *inexact* reference to an overloaded method selects the
+        // applicable candidate by the target functional interface — the SAM's
+        // arity and per-parameter compatibility — not the first declared
+        // overload, whose result would otherwise steer the enclosing
+        // inference (`list.stream().map(P::of)` binding `map`'s `<R>`) to
+        // `Object` and reject a `List<P>` constructor argument.
+        self.pick_method_ref(&methods, sam_params, is_static_ref)
             .map(|method| method.ret)
             .unwrap_or_else(|| self.error())
+    }
+
+    /// The method of a method reference's member set that is a *potentially
+    /// applicable* candidate against the single abstract method's parameter
+    /// types ([JLS §15.13.1] inexact references): arity
+    /// — `sam_params.len()` value parameters for a static reference, one fewer
+    /// for an unbound instance reference whose receiver is the SAM's first
+    /// parameter ([§15.13.3]) — and each corresponding SAM parameter assignable
+    /// to the method's parameter in a loose invocation context
+    /// ([§15.12.2.3]). The most specific applicable candidate
+    /// ([§15.12.2.5]) wins; `None` when no overload is congruent, so the
+    /// reference does not steer inference with a result.
+    fn pick_method_ref(
+        &self,
+        methods: &[MethodData],
+        sam_params: &[Ty],
+        static_ref: bool,
+    ) -> Option<MethodData> {
+        let sam_count = sam_params.len();
+        // The value parameters the referenced method must accept: all the SAM's
+        // for a static reference, all but the leading receiver for an unbound
+        // instance reference.
+        let base = if static_ref {
+            sam_count
+        } else {
+            sam_count.saturating_sub(1)
+        };
+        let mut applicable: Vec<MethodData> = Vec::new();
+        for method in methods {
+            let params = &method.params;
+            // §15.12.2.4: a variable-arity method is applicable when the SAM
+            // supplies at least its fixed parameters; the remainder pack into
+            // the trailing array element.
+            let (fixed, tail) = if method.varargs {
+                if params.is_empty() || base < params.len() - 1 {
+                    continue;
+                }
+                let split = params.len() - 1;
+                match params[split].element(self.db) {
+                    Some(element) => (&params[..split], Some((*element, base - split))),
+                    None => continue,
+                }
+            } else {
+                if params.len() != base {
+                    continue;
+                }
+                (params.as_slice(), None)
+            };
+            let mut ok = true;
+            for (i, method_param) in fixed.iter().enumerate() {
+                let sam_index = if static_ref { i } else { i + 1 };
+                if !self.method_ref_param_compatible(sam_params.get(sam_index), method_param) {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok && let Some((element, tail_count)) = &tail {
+                for k in 0..*tail_count {
+                    let sam_index = if static_ref {
+                        fixed.len() + k
+                    } else {
+                        fixed.len() + k + 1
+                    };
+                    if !self.method_ref_param_compatible(sam_params.get(sam_index), element) {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                applicable.push(method.clone());
+            }
+        }
+        if applicable.is_empty() {
+            return None;
+        }
+        let pairs: Vec<(MethodData, MethodData)> =
+            applicable.iter().map(|m| (m.clone(), m.clone())).collect();
+        crate::method::choose_most_specific(self.db, &self.scope, &pairs)
+            .or_else(|| applicable.into_iter().next())
+    }
+
+    /// Whether the referenced method's parameter accepts the SAM's
+    /// corresponding parameter ([JLS §15.13.2]): the SAM type converts to the
+    /// method's type in a loose invocation context ([§15.12.2.3]). A SAM
+    /// parameter still carrying unresolved inference variables cannot be
+    /// decided — the candidate stays applicable rather than steering inference
+    /// away from a valid overload.
+    fn method_ref_param_compatible(&self, sam_param: Option<&Ty>, method_param: &Ty) -> bool {
+        let Some(decaptured) = sam_param.map(|sam_param| self.decapture(sam_param)) else {
+            return false;
+        };
+        if decaptured.contains_infer_var(self.db) || method_param.contains_infer_var(self.db) {
+            return true;
+        }
+        crate::subtyping::is_assignable(self.db, &self.scope, &decaptured, method_param)
     }
 
     fn resolve_method_ref(
@@ -3443,17 +3550,26 @@ impl<'a> InferCtx<'a> {
         } else {
             name.as_str().to_owned()
         };
-        let methods = member_set(self.db, &self.scope, &ref_ty, &candidate_name, &self.access);
-        for method in &methods {
-            let expected = if method.is_static {
-                sam_params.len()
-            } else {
-                sam_params.len().saturating_sub(1)
-            };
-            if method.params.len() == expected {
-                break;
-            }
-        }
+        // §15.13.1: a *type-qualified* reference may name a static method of an
+        // interface (`Path::of`), which the virtual-invocation member filter of
+        // §15.12.3 excludes — see [`Self::method_ref_return`].
+        let type_qualified = type_name.is_some()
+            || qualifier.is_some_and(|expr| {
+                self.dotted_type_name(expr).is_some()
+                    || matches!(self.tree.expr(expr).clone(), ExprData::Var(name) if self.type_name_ty(&name).is_some())
+            });
+        let member_ctx = if type_qualified {
+            self.access.with_mode(InvocationMode::TypeQualified)
+        } else {
+            self.access.clone()
+        };
+        let methods = member_set(self.db, &self.scope, &ref_ty, &candidate_name, &member_ctx);
+        // §15.13.1: resolve the applicable overload against the SAM — the same
+        // selection [`Self::method_ref_return`] feeds the inference constraints
+        // with — so a reference to a name that resolves only to inapplicable
+        // overloads does not silently type against the first declaration.
+        let is_static_ref = methods.iter().any(|m| m.is_static);
+        let _ = self.pick_method_ref(&methods, sam_params, is_static_ref);
     }
 
     fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {

@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_constructors.rs
+expression: out
+---
+FILE /src/com/example/Constr.java:
+package com.example;
+
+import java.util.List;
+
+interface PathLike {
+    static PathLike of(String first, String... more) { return null; }
+    static PathLike of(Object any) { return null; }
+}
+
+record R(List<PathLike> libs) {}
+
+class Body {
+    void m(List<String> names) {
+        new R(names.stream().map(PathLike::of).toList());
+    }
+}
+
+method of(java.lang.String, java.lang.String): com.example.PathLike
+  locals: l0: java.lang.String | l1: java.lang.String[]
+  exprs: e0: null
+method of(java.lang.Object): com.example.PathLike
+  locals: l2: java.lang.Object
+  exprs: e1: null
+method m(java.util.List<java.lang.String>): void
+  locals: l3: java.util.List<java.lang.String>
+  exprs: e3: java.util.function.Function<? super java.lang.String, ? extends com.example.PathLike> | e4: java.util.List<java.lang.String> | e5: java.util.stream.Stream<java.lang.String> | e6: java.util.stream.Stream<com.example.PathLike> | e7: java.util.List<com.example.PathLike> | e8: com.example.R

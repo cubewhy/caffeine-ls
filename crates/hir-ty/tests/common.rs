@@ -717,10 +717,17 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                     "collect",
                     "(Ljava/util/stream/Collector;)Ljava/lang/Object;",
                 ),
+                (
+                    "map",
+                    "(Ljava/util/function/Function;)Ljava/util/stream/Stream;",
+                ),
+                ("toList", "()Ljava/util/List;"),
             ],
             &[
                 "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/function/Supplier<TR;>;Ljava/util/function/BiConsumer<TR;-TT;>;Ljava/util/function/BiConsumer<TR;TR;>;)TR;",
                 "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/stream/Collector<-TT;TA;TR;>;)TR;",
+                "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Ljava/util/stream/Stream<TR;>;",
+                "()Ljava/util/List<TT;>;",
             ],
         ),
         // commons-beanutils-shaped raw-implementable interface used by the
@@ -893,8 +900,14 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             "java/util/Collection",
             &["java/lang/Iterable"],
             Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/lang/Iterable<TE;>;"),
-            &[("iterator", "()Ljava/util/Iterator;")],
-            &["()Ljava/util/Iterator<TE;>;"],
+            &[
+                ("iterator", "()Ljava/util/Iterator;"),
+                ("stream", "()Ljava/util/stream/Stream;"),
+            ],
+            &[
+                "()Ljava/util/Iterator<TE;>;",
+                "()Ljava/util/stream/Stream<TE;>;",
+            ],
         ),
         // Explicit spec so the varargs factory carries ACC_STATIC
         // ([JLS §9.4.4] interface static methods).

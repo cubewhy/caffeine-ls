@@ -61,6 +61,12 @@ use crate::{
 pub enum InvocationMode {
     /// `TypeName.m(...)`: only static members are candidates.
     Static,
+    /// `T::m` — a *type-qualified* method reference ([JLS §15.13.1]): the
+    /// reference resolves a static member (declared in a class *or* an
+    /// interface) or an unbound instance member, so no static/instance filter
+    /// applies — the §15.12.3 virtual-invocation restriction that excludes
+    /// static interface methods is specific to receiver-expression invocations.
+    TypeQualified,
     /// `super.m(...)`: only instance members are candidates.
     Super,
     /// `InterfaceName.super.m(...)`: only instance members are candidates.
@@ -1172,6 +1178,10 @@ fn mode_allows(method: &MethodData, ctx: &InvocationContext) -> bool {
     match ctx.mode {
         // A static invocation selects only static members.
         InvocationMode::Static => method.is_static,
+        // §15.13.1: a type-qualified method reference may reference a static or
+        // an unbound instance member, so every member of the name is a
+        // candidate.
+        InvocationMode::TypeQualified => true,
         // Super and interface invocations select only instance members.
         InvocationMode::Super | InvocationMode::Interface => !method.is_static,
         // A virtual invocation must not select a static method declared in an
