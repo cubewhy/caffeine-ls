@@ -27,6 +27,7 @@
 use std::{hash::Hash, sync::Arc};
 
 use hir::hir_expand::name::Name;
+use ide_db::base_db::{Nonce, SourceDatabase, salsa};
 use lsp_types::{RelatedDocument, Uri};
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -41,6 +42,12 @@ use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics as lsp_diagnosti
 /// single request can never balloon into a multi-megabyte payload even after a
 /// change to a widely-used declaration.
 const MAX_RELATED_DOCS: usize = 64;
+
+/// Cap on the number of per-file rows the store retains (rust-analyzer-style
+/// bounded diagnostics map). Rows for watched/subscribed files are never
+/// evicted; the least-recently-used unwatched rows are dropped past the cap and
+/// recomputed on demand from the memoized salsa query.
+const MAX_DIAGNOSTICS_FILES: usize = 4096;
 
 /// Whether a diagnostic passes the client's lint configuration; shared with
 /// the document-diagnostic handler.
@@ -108,6 +115,10 @@ struct FileDiagnostics {
     generation: u64,
     delivered_generation: u64,
     diagnostics: Arc<Vec<ide::Diagnostic>>,
+    /// `DiagnosticsInner::access_clock` value at the last read/write; used to
+    /// evict least-recently-used rows when the store outgrows
+    /// [`MAX_DIAGNOSTICS_FILES`].
+    last_access: u64,
 }
 
 /// The dependency edges a watched file subscribed for: the source files its
@@ -132,6 +143,12 @@ struct DiagnosticsInner {
     name_subs: FxHashMap<SmolStr, FxHashSet<FileId>>,
     /// The working set of the workspace (for `workspace/diagnostic`).
     source_files: Vec<FileId>,
+    /// Monotonic access counter for LRU eviction of [`Self::files`].
+    access_clock: u64,
+    /// The `(nonce, revision)` of the database every row of [`Self::files`] was
+    /// last derived against. A pull whose database still matches can serve all
+    /// cached generations without touching salsa (no input has changed since).
+    last_verified: Option<(Nonce, salsa::Revision)>,
 }
 
 /// Shared diagnostics store. Cheap to clone (one `Arc`), so it lives in both
@@ -187,6 +204,9 @@ impl DiagnosticsMap {
         });
 
         inner.source_files = files;
+        // The working set changed; cached reports must be re-derived against
+        // the new set before they can be served as authoritative again.
+        inner.last_verified = None;
 
         inner.watched.iter().copied().collect()
     }
@@ -196,10 +216,40 @@ impl DiagnosticsMap {
         self.inner.lock().source_files.clone()
     }
 
+    /// Whether the store is fully current with the database: the working set
+    /// and every cached generation were derived at `(nonce, revision)`, so a
+    /// pull can serve them without any salsa work. The `nonce` guards against
+    /// the database being replaced.
+    pub(crate) fn is_verified(&self, nonce: Nonce, revision: salsa::Revision) -> bool {
+        self.inner.lock().last_verified == Some((nonce, revision))
+    }
+
+    /// Records that every source-file row was derived from `(nonce, revision)`.
+    /// Only the workspace-wide pull may call this — it is the single code path
+    /// that covers *all* source files, so after it returns every cached report
+    /// is authoritative until the next input change.
+    pub(crate) fn mark_verified(&self, nonce: Nonce, revision: salsa::Revision) {
+        self.inner.lock().last_verified = Some((nonce, revision));
+    }
+
     /// Marks `file` as watched (an open document). Subscription edges are
     /// registered lazily by the refresh pass or the next pull.
     pub(crate) fn mark_watched(&self, file: FileId) {
         self.inner.lock().watched.insert(file);
+    }
+
+    /// Invalidates the cached diagnostic state of `file` immediately on a text
+    /// edit, before the debounced background pass runs. The edit makes any
+    /// cached report potentially stale: the file's delivered-generation is
+    /// reset so neither pull channel can echo `Unchanged` from pre-edit state,
+    /// and the store's verified marker is dropped so the workspace pull
+    /// re-derives instead of serving the stale row.
+    pub(crate) fn invalidate(&self, file: FileId) {
+        let mut inner = self.inner.lock();
+        inner.last_verified = None;
+        if let Some(entry) = inner.files.get_mut(&file) {
+            entry.delivered_generation = 0;
+        }
     }
 
     /// Stops tracking `file` (a closed document).
@@ -248,16 +298,26 @@ impl DiagnosticsMap {
     ) -> Cancellable<(u64, Arc<Vec<ide::Diagnostic>>)> {
         let report = analysis.file_report(file, fallback)?;
         let mut inner = self.inner.lock();
+        let clock = inner.access_clock;
         let generation = match inner.files.get_mut(&file) {
             Some(entry) => {
-                if entry.diagnostics == report {
+                // Salsa returns the identical `Arc` on a memo hit; fall back to
+                // a full equality diff only when the memo re-executed.
+                let unchanged =
+                    Arc::ptr_eq(&entry.diagnostics, &report) || entry.diagnostics == report;
+                let generation = if unchanged {
                     entry.generation
                 } else {
+                    // Persist the bump: `resultId` must advance whenever the
+                    // report moved, and stay put otherwise, so a client's
+                    // `previousResultId` can only ever match the same content.
                     entry.generation += 1;
                     entry.delivered_generation = 0;
                     entry.diagnostics = Arc::clone(&report);
                     entry.generation
-                }
+                };
+                entry.last_access = clock;
+                generation
             }
             None => {
                 inner.files.insert(
@@ -266,11 +326,14 @@ impl DiagnosticsMap {
                         generation: 1,
                         delivered_generation: 0,
                         diagnostics: Arc::clone(&report),
+                        last_access: clock,
                     },
                 );
                 1
             }
         };
+        inner.access_clock = clock + 1;
+        trim_to_capacity(&mut inner);
         Ok((generation, report))
     }
 
@@ -352,6 +415,30 @@ where
     }
 }
 
+/// Bounds the store's retained per-file rows to [`MAX_DIAGNOSTICS_FILES`]
+/// (rust-analyzer-style bounded diagnostics map). Only unwatched, unsubscribed
+/// rows are evicted, least-recently-used first; watched/subscribed files are
+/// kept so the background pass can keep them fresh. An evicted row restarts its
+/// generation at 1 on recompute, which can only force a full (never an
+/// incorrect `Unchanged`) re-delivery — the client's higher `resultId` will
+/// never match.
+fn trim_to_capacity(inner: &mut DiagnosticsInner) {
+    if inner.files.len() <= MAX_DIAGNOSTICS_FILES {
+        return;
+    }
+    let mut candidates: Vec<(u64, FileId)> = inner
+        .files
+        .iter()
+        .filter(|(file, _)| !inner.watched.contains(file) && !inner.subscribed.contains_key(file))
+        .map(|(file, entry)| (entry.last_access, *file))
+        .collect();
+    candidates.sort_unstable();
+    let overflow = inner.files.len() - MAX_DIAGNOSTICS_FILES;
+    for (_, file) in candidates.into_iter().take(overflow) {
+        inner.files.remove(&file);
+    }
+}
+
 /// The `relatedDocuments` of a document-diagnostic pull for `self_file`: every
 /// watched file whose diagnostics an edit to `self_file` can move, sealed with
 /// its generation. A candidate that already reached the client is reported as
@@ -423,17 +510,28 @@ pub(crate) fn related_for(
 /// id matches its current generation is echoed as `Unchanged`; everything else
 /// is a full report. Items are sorted by URI for determinism.
 ///
-/// Files the store already holds a current report for are served from the
-/// cache without re-deriving them through the analysis (the refresh pass and
-/// document pulls keep the store current); only files with no cached report
-/// are recomputed here. Steady-state pulls are therefore digest comparisons,
-/// not a full workspace re-inference.
+/// The pull evaluates against the *current* analysis snapshot (rust-analyzer
+/// model): a cached generation is only served verbatim when the whole store is
+/// verified against the exact revision in effect — that is, no input has
+/// changed since the last full pull. Otherwise every file is re-derived
+/// through the memoized salsa queries, which are O(1) cache hits for unaffected
+/// files and recompute only files whose inputs actually moved. The debounced
+/// background refresh pass never gates correctness here: a pull issued right
+/// after `didChange` always reflects the new text instead of echoing a stale
+/// pre-edit `resultId`.
 pub(crate) fn workspace_diagnostic_reports(
     snapshot: &GlobalStateSnapshot,
     previous_ids: &FxHashMap<lsp_types::Uri, String>,
 ) -> Cancellable<Vec<lsp_types::WorkspaceDocumentDiagnosticReport>> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
+
+    // No input changed since the last fully-verified pull: every cached
+    // generation is authoritative, so the whole pull is a digest comparison
+    // against `previous_result_ids` with zero salsa work. Once any `didChange`
+    // has been applied the revision differs and every report is re-derived.
+    let (nonce, revision) = analysis.raw_database().nonce_and_revision();
+    let verified = diag.is_verified(nonce, revision);
 
     let mut items = Vec::new();
     for file in diag.source_files() {
@@ -444,19 +542,24 @@ pub(crate) fn workspace_diagnostic_reports(
         let version = crate::lsp::from_proto::vfs_path(&uri)
             .ok()
             .and_then(|path| snapshot.open_document_version(&path));
-        // Serve the store's current report when it is guaranteed fresh: the
-        // background refresh pass recomputes *subscribed* (watched) files on
-        // every relevant edit and bumps their generation, so their cached
-        // reports are current. An unwatched file's cache may be stale after a
-        // dependency edit — the pass never recomputed it — so it must be
-        // re-derived through the analysis here.
+        // A cached generation is served only when it is provably current: the
+        // store was fully verified against this exact revision, so no input
+        // (text, roots, classpath) has moved since the reports were computed.
+        // An unverified file's cache may be stale — an edit to it or to a
+        // dependency — so it is re-derived through the analysis, a cheap memo
+        // hit unless the file's inputs actually moved.
         let cached = {
-            let inner = diag.inner.lock();
-            if inner.subscribed.contains_key(&file) {
-                inner
-                    .files
-                    .get(&file)
-                    .map(|entry| (entry.generation, Arc::clone(&entry.diagnostics)))
+            let mut inner = diag.inner.lock();
+            if verified {
+                let clock = inner.access_clock;
+                inner.access_clock += 1;
+                match inner.files.get_mut(&file) {
+                    Some(entry) => {
+                        entry.last_access = clock;
+                        Some((entry.generation, Arc::clone(&entry.diagnostics)))
+                    }
+                    None => None,
+                }
             } else {
                 None
             }
@@ -494,6 +597,9 @@ pub(crate) fn workspace_diagnostic_reports(
             );
         }
     }
+    // The pull loop covered every source file, so the store is now fully
+    // current with this revision — later pulls short-circuit until a change.
+    diag.mark_verified(nonce, revision);
     items.sort_by(|a, b| uri_of(a).cmp(uri_of(b)));
     Ok(items)
 }
@@ -586,15 +692,20 @@ pub(crate) fn run_diagnostics_pass(
     let mut changed_files: Vec<FileId> = Vec::new();
     {
         let mut inner = diag.inner.lock();
+        let clock = inner.access_clock;
         for (file, report) in reports {
             let moved = match inner.files.get_mut(&file) {
                 Some(entry) => {
-                    if entry.diagnostics == report {
+                    let unchanged =
+                        Arc::ptr_eq(&entry.diagnostics, &report) || entry.diagnostics == report;
+                    if unchanged {
+                        entry.last_access = clock;
                         false
                     } else {
                         entry.generation += 1;
                         entry.delivered_generation = 0;
                         entry.diagnostics = report;
+                        entry.last_access = clock;
                         true
                     }
                 }
@@ -605,6 +716,7 @@ pub(crate) fn run_diagnostics_pass(
                             generation: 1,
                             delivered_generation: 0,
                             diagnostics: report,
+                            last_access: clock,
                         },
                     );
                     true
@@ -614,6 +726,8 @@ pub(crate) fn run_diagnostics_pass(
                 changed_files.push(file);
             }
         }
+        inner.access_clock = clock + 1;
+        trim_to_capacity(&mut inner);
     }
     changed_files.sort();
     // Whether any moved file is a *dependent* (not one of the edited files):

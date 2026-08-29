@@ -421,7 +421,16 @@ impl GlobalStateSnapshot {
     }
 
     pub(crate) fn file_line_index(&self, file_id: FileId) -> Cancellable<LineIndex> {
-        let endings = self.vfs.read().1[&file_id];
+        // A file deleted mid-pull (removed from the source set, then reverted
+        // to empty text) may have lost its line-endings row; fall back rather
+        // than panic, so a workspace pull racing a deletion stays graceful.
+        let endings = self
+            .vfs
+            .read()
+            .1
+            .get(&file_id)
+            .copied()
+            .unwrap_or(LineEndings::Unix);
         let index = self.analysis.file_line_index(file_id)?;
         let res = LineIndex {
             index,

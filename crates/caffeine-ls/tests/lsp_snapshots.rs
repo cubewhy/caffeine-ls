@@ -1316,3 +1316,155 @@ fn cross_file_idle_edit_emits_unchanged_only() {
     }
     lsp.shutdown();
 }
+
+/// A `textDocument/diagnostic` pull issued immediately after `didChange` must
+/// reflect the new snapshot, never the pre-edit state: the diagnostic store may
+/// be updated by the *debounced* background pass, but the handler must not wait
+/// for it or echo a stale `Unchanged` `resultId`. Both directions are checked:
+/// fixing an error must clear it, and reintroducing it must surface it.
+#[test]
+fn document_pull_after_did_change_is_full_not_unchanged() {
+    let lsp = create_lsp();
+    let a = "/src/p/A.java";
+    let fixture = "\
+package p;
+public class A {
+    public void go() {
+        this.undefinedMethod();
+    }
+}
+";
+    lsp.write_fixture_file(a, fixture);
+    lsp.open_document(a);
+
+    // Baseline: the unresolved call is a full report with a result id.
+    let first = wait_until_pull(&lsp, a, |r| {
+        r["kind"].as_str() == Some("full")
+            && r["items"].as_array().is_some_and(|items| !items.is_empty())
+    });
+    let first_id = first["resultId"].as_str().expect("resultId").to_owned();
+
+    // Fix the call, then pull with the stale previous result id immediately —
+    // no wait for the background pass. The stale `unchanged` would retain the
+    // error, so this must come back full and empty.
+    let range = lsp_range_of(fixture, "this.undefinedMethod();");
+    lsp.change_document_incremental(a, range, "// fixed");
+    let after_fix = lsp.pull_document_diagnostics_raw_with_previous(a, Some(first_id.clone()));
+    assert_eq!(
+        after_fix["kind"].as_str(),
+        Some("full"),
+        "fix edit must re-derive a full report, not echo the stale unchanged id: {after_fix}"
+    );
+    assert_ne!(
+        after_fix["resultId"].as_str(),
+        Some(first_id.as_str()),
+        "resultId must advance after the edit"
+    );
+    assert_eq!(
+        after_fix["items"].as_array().map(Vec::len),
+        Some(0),
+        "the fixed report must no longer carry the unresolved-call error: {after_fix}"
+    );
+
+    // Reintroduce the error and pull with the just-delivered (clean) result id:
+    // the new syntax/type error must surface immediately.
+    let fixed_id = after_fix["resultId"].as_str().expect("resultId").to_owned();
+    let range = lsp_range_of(
+        &fixture.replace("this.undefinedMethod();", "// fixed"),
+        "// fixed",
+    );
+    lsp.change_document_incremental(a, range, "this.undefinedMethod();");
+    let after_break = lsp.pull_document_diagnostics_raw_with_previous(a, Some(fixed_id));
+    assert_eq!(
+        after_break["kind"].as_str(),
+        Some("full"),
+        "reintroduced error must come back full, not unchanged: {after_break}"
+    );
+    assert!(
+        after_break["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()),
+        "reintroduced error must be reported immediately: {after_break}"
+    );
+
+    lsp.shutdown();
+}
+
+/// `workspace/diagnostic` must behave like the single-document pull: a pull
+/// issued immediately after `didChange` must re-derive the edited (open) file
+/// from the current snapshot instead of serving its pre-edit cached generation
+/// as `Unchanged`. Previously the subscribed-file cache was trusted until the
+/// debounced pass ran, so the workspace channel retained stale errors the
+/// single-document channel had already cleared.
+#[test]
+fn workspace_pull_after_did_change_is_full_not_unchanged() {
+    let lsp = create_lsp();
+    let a = "/src/p/A.java";
+    let fixture = "\
+package p;
+public class A {
+    public void go() {
+        this.undefinedMethod();
+    }
+}
+";
+    lsp.write_fixture_file(a, fixture);
+    lsp.open_document(a);
+
+    // Subscribe A (open + first document pull) and settle on the error state.
+    let _ = wait_until_pull(&lsp, a, |r| {
+        r["kind"].as_str() == Some("full")
+            && r["items"].as_array().is_some_and(|items| !items.is_empty())
+    });
+
+    // Baseline workspace pull: capture the per-file result id of the error state.
+    let baseline = request_workspace_until(&lsp, json!([]), |report| {
+        report["items"].as_array().is_some_and(|items| {
+            items.iter().any(|it| {
+                it["uri"].as_str().is_some_and(|u| u.ends_with("/A.java"))
+                    && it["kind"].as_str() == Some("full")
+            })
+        })
+    });
+    let previous_ids = extract_previous_ids(&baseline);
+    let baseline_id = baseline["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|it| it["uri"].as_str().is_some_and(|u| u.ends_with("/A.java")))
+        .and_then(|it| it["resultId"].as_str())
+        .expect("A baseline resultId")
+        .to_owned();
+
+    // Fix the call and pull the workspace with the stale ids immediately.
+    let range = lsp_range_of(fixture, "this.undefinedMethod();");
+    lsp.change_document_incremental(a, range, "// fixed");
+    let after_fix = lsp.request(
+        "workspace/diagnostic",
+        json!({ "previousResultIds": previous_ids }),
+    );
+    let a_item = after_fix["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|it| it["uri"].as_str().is_some_and(|u| u.ends_with("/A.java")))
+        .expect("A present in workspace report")
+        .clone();
+    assert_eq!(
+        a_item["kind"].as_str(),
+        Some("full"),
+        "A must be re-derived full after the edit, not stale-unchanged: {after_fix}"
+    );
+    assert_ne!(
+        a_item["resultId"].as_str(),
+        Some(baseline_id.as_str()),
+        "workspace resultId must match the single-document resultId lifecycle"
+    );
+    assert_eq!(
+        a_item["items"].as_array().map(Vec::len),
+        Some(0),
+        "the fixed workspace report must be clean: {after_fix}"
+    );
+
+    lsp.shutdown();
+}

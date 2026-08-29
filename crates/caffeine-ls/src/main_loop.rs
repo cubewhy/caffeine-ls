@@ -1085,6 +1085,9 @@ impl GlobalState {
         if !self.config.cross_file_enabled() {
             return;
         }
+        // The edit makes the file's cached diagnostics stale immediately:
+        // neither pull channel may echo an `Unchanged` resultId from before it.
+        self.diagnostics.invalidate(file_id);
         self.pending_changes.insert(file_id);
         self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
         self.arm_refresh_timer();
