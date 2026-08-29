@@ -18,9 +18,13 @@ export function activate(context: ExtensionContext) {
     process.env.CAFFEINE_LS_PATH ||
     context.asAbsolutePath(path.join("bin", binaryName));
 
+  const logLevel = workspace
+    .getConfiguration("caffeine_ls")
+    .get<string>("logLevel", "warn");
+
   const run: Executable = {
     command,
-    options: { env: process.env },
+    options: { env: { ...process.env, CAFFEINE_LS_LOG: logLevel } },
   };
 
   const serverOptions: ServerOptions = { run, debug: run };
