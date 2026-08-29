@@ -1,0 +1,31 @@
+---
+source: crates/kotlin-syntax/src/parser/grammar/expr.rs
+expression: out
+---
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+StartNode(POSTFIX_UNARY_EXPRESSION)
+StartNode(CALLABLE_REFERENCE)
+StartNode(CALLABLE_REFERENCE)
+StartNode(USER_TYPE)
+AddToken
+FinishNode
+AddToken
+AddToken
+FinishNode
+FinishNode
+StartNode(NAVIGATION_SUFFIX)
+AddToken
+AddToken
+FinishNode
+FinishNode

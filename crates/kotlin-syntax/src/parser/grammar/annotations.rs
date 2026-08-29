@@ -1,5 +1,5 @@
 use crate::{
-    Parser, SyntaxKind,
+    Parser,
     SyntaxKind::*,
     grammar::{eat_nl, names::simple_identifier},
 };
@@ -51,34 +51,9 @@ fn at_annotation_body(p: &Parser) -> bool {
 
 /// `unescapedAnnotation`: constructorInvocation | userType
 /// [spec: grammar-rule-unescapedAnnotation] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-unescapedAnnotation
-///
-/// `constructorInvocation` needs `valueArguments`, which arrives with the
-/// expression grammar; a balanced-paren skip keeps the tree well-formed
-/// until then.
 pub(crate) fn unescaped_annotation(p: &mut Parser) {
     crate::parser::grammar::types::user_type(p);
     if p.at(L_PAREN) {
-        skip_balanced(p, L_PAREN, R_PAREN);
-    }
-}
-
-/// Consumes a balanced pair of delimiters (bail-out until the expression
-/// grammar provides `valueArguments`).
-fn skip_balanced(p: &mut Parser, open: SyntaxKind, close: SyntaxKind) {
-    let mut depth = 0usize;
-    loop {
-        match p.current() {
-            Some(k) if k == open => depth += 1,
-            Some(k) if k == close => {
-                depth -= 1;
-                if depth == 0 {
-                    p.bump();
-                    return;
-                }
-            }
-            Some(EOF) | None => return,
-            _ => {}
-        }
-        p.bump();
+        crate::parser::grammar::expr::value_arguments(p);
     }
 }

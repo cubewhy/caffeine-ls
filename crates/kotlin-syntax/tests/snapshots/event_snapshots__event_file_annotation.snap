@@ -30,11 +30,30 @@ AddToken
 StartNode(USER_TYPE, forward_parent=None)
 AddToken
 FinishNode
+StartNode(VALUE_ARGUMENTS, forward_parent=None)
+AddToken
+StartNode(VALUE_ARGUMENT, forward_parent=None)
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+Tombstone
+StartNode(STRING_LITERAL, forward_parent=None)
 AddToken
 AddToken
 AddToken
+FinishNode
+FinishNode
 AddToken
-AddToken
+FinishNode
 AddToken
 FinishNode
 StartNode(IMPORT_LIST, forward_parent=None)
