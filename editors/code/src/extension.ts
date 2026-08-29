@@ -1,5 +1,5 @@
 import * as path from "path";
-import { workspace, ExtensionContext, commands } from "vscode";
+import { window, workspace, ExtensionContext, commands } from "vscode";
 import {
   Executable,
   LanguageClient,
@@ -63,6 +63,24 @@ export function activate(context: ExtensionContext) {
   context.subscriptions.push(
     commands.registerCommand("caffeine_ls.restart", async () => {
       client.restart();
+    }),
+  );
+
+  context.subscriptions.push(
+    workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("caffeine_ls.logLevel")) {
+        const choice = "Restart";
+        window
+          .showInformationMessage(
+            "Caffeine LS log level changed. Restart the language server to apply it.",
+            choice,
+          )
+          .then((selected) => {
+            if (selected === choice) {
+              client.restart();
+            }
+          });
+      }
     }),
   );
 

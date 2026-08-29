@@ -18,14 +18,14 @@ If you have any requirements or dependencies, add a section describing those and
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
 This extension contributes the following settings:
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+* `caffeine_ls.logLevel`: Log level for the Caffeine LS server (tracing
+  `EnvFilter`, e.g. `trace`, `debug`, `info`, `warn`, `error`, `off`). Passed
+  to the server via the `CAFFEINE_LS_LOG` environment variable. Defaults to
+  `warn`. Changing this setting requires restarting the language server
+  (use the `Caffeine LS: Restart Language Server` command or the restart
+  prompt).
 
 ## Known Issues
 
