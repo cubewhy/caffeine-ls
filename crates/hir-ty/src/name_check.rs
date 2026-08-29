@@ -150,7 +150,51 @@ pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
     out
 }
 
-/// The unknown-type diagnostics of the *declaration* type references and the
+/// The package-declaration vs filesystem-path consistency check of a
+/// compilation unit ([JLS §7.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.2.1)):
+/// the file's *directory chain* must end with the declared package chain —
+/// the shape a conventional classpath looks the class up under. `module-info.java`
+/// (no package declaration, [JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7))
+/// and files with the default package are exempt; files without a resolvable
+/// path are skipped (see [`hir::file_path_segments`]).
+///
+/// The check is a *suffix* match rather than an exact one because the source
+/// root base directory is not recoverable from the file-set (a single top
+/// package tree has no shorter shared prefix); requiring the tail to equal
+/// the package is exactly the requirement that a classpath lookup finds the
+/// file. An IDE-style check: javac compiles such files fine, so it carries a
+/// custom code, not a `compiler.*` twin.
+pub(crate) fn package_path_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+) -> Vec<DeclDiagnostic> {
+    let Some(package) = tree.package.clone() else {
+        return Vec::new();
+    };
+    let Some(dir) = hir::file_path_segments(db, file) else {
+        return Vec::new();
+    };
+    let expected: Vec<&str> = package.as_str().split('.').collect();
+    let ok = dir.len() >= expected.len()
+        && dir[dir.len() - expected.len()..]
+            .iter()
+            .zip(&expected)
+            .all(|(part, want)| part == want);
+    if !ok {
+        return vec![DeclDiagnostic::UnexpectedPackagePath {
+            expected: package,
+            // IntelliJ-style root-relative package directory (`org.example`),
+            // with the full slash path as a fallback
+            // ([`hir::file_package_dir`]).
+            dir: hir::file_package_dir(db, file).unwrap_or_else(|| dir.join("/")),
+            name_range: tree.package_range,
+        }];
+    }
+    Vec::new()
+}
+
+/// The unknown-reference diagnostics of the *declaration* type references and the
 /// imports of a file ([JLS §6.5.5.1], [§7.5.1]).
 pub(crate) fn declaration_type_diagnostics(
     db: &dyn TyDatabase,

@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_packages.rs
+assertion_line: 118
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+public class A {}
+
+FILE /src/module-info.java:
+module com.example.app {
+    requires java.base;
+}

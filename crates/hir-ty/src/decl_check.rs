@@ -91,6 +91,20 @@ pub enum DeclDiagnostic {
         name: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §7.2.1/compilation-unit packaging (javadoc-classpath convention; no
+    /// javac `compiler.*` twin): the file's package directory under its
+    /// source root does not equal its declared package.
+    ///
+    /// [JLS §7.2.1]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.2.1
+    UnexpectedPackagePath {
+        /// The declared package as written.
+        expected: Name,
+        /// The file's directory chain under its source root, `/`-joined
+        /// (the package it resolves to on a conventional classpath).
+        dir: String,
+        /// The source range of the package declaration's name.
+        name_range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -126,6 +140,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ModuleNotAccessible { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ModuleNotAccessible)
+            }
+            DeclDiagnostic::UnexpectedPackagePath { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnexpectedPackagePath)
             }
         }
     }
@@ -196,6 +213,11 @@ impl DeclDiagnostic {
                     name.as_str()
                 )
             }
+            DeclDiagnostic::UnexpectedPackagePath { expected, dir, .. } => format!(
+                "Package name '{}' does not correspond to the file path '{}'",
+                expected.as_str(),
+                dir
+            ),
         }
     }
 
@@ -211,7 +233,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedImportPackage { .. }
             | DeclDiagnostic::UnresolvedStaticImport { .. }
             | DeclDiagnostic::ConflictingImport { .. }
-            | DeclDiagnostic::ModuleNotAccessible { .. } => "",
+            | DeclDiagnostic::ModuleNotAccessible { .. }
+            | DeclDiagnostic::UnexpectedPackagePath { .. } => "",
         }
     }
 
@@ -226,6 +249,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { range, .. }
             | DeclDiagnostic::ConflictingImport { range, .. }
             | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
+            DeclDiagnostic::UnexpectedPackagePath { name_range, .. } => *name_range,
             _ => None,
         }
     }
@@ -249,6 +273,10 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     out.extend(crate::name_check::declaration_type_diagnostics(
         db, file, &tree,
     ));
+
+    // §7.2.1: the file's package directory must match its declared package
+    // (see [`crate::name_check::package_path_diagnostics`]).
+    out.extend(crate::name_check::package_path_diagnostics(db, file, &tree));
 
     fn walk(
         db: &dyn TyDatabase,

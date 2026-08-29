@@ -121,6 +121,11 @@ pub enum JavaDiagnosticCode {
     /// §11.2.3: a `catch` clause names a checked exception that the `try`
     /// block cannot throw.
     CatchNeverThrown,
+    /// §7.2.1 (javadoc/classpath convention, no javac `compiler.*` twin): the
+    /// file's package directory under its source root does not equal its
+    /// declared package — the class will not resolve by FQN on a conventional
+    /// classpath.
+    UnexpectedPackagePath,
     /// §15.12.3: an unqualified invocation of an instance method from a static
     /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     NonStaticMethodFromStaticContext,
@@ -207,6 +212,7 @@ impl JavaDiagnosticCode {
             MissingReturnValue => Some("compiler.err.missing.ret.stmt"),
             CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
+            UnexpectedPackagePath => None,
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -266,6 +272,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::UnreachableStatement => "unreachable-statement",
             JavaDiagnosticCode::MissingReturnValue => "missing-return-value",
             JavaDiagnosticCode::CatchNeverThrown => "catch-never-thrown",
+            JavaDiagnosticCode::UnexpectedPackagePath => "package-path-mismatch",
             JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
                 "non-static-method-from-static-context"
             }

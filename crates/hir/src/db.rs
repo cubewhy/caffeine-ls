@@ -23,7 +23,7 @@ use hir_expand::name::Name;
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
-use vfs::FileId;
+use vfs::{AbsPath, FileId};
 
 use crate::{
     index::{ClassEntry, LibraryIndex, NameIndex},
@@ -690,6 +690,93 @@ pub fn package_exists(db: &dyn HirDatabase, scope: &ResolutionScope, package: &s
             .iter()
             .any(|library| library_has_package(db, *library, package)),
     }
+}
+
+/// The path segments of `file`'s parent directory, in order, as owned
+/// strings — `["src", "com", "example"]` for `/src/com/example/A.java`.
+/// `None` when the file has no source root or its path is virtual
+/// (unsaved buffers), so a caller cannot anchor the comparison.
+pub fn file_path_segments(db: &dyn HirDatabase, file: FileId) -> Option<Arc<Vec<String>>> {
+    let root = db.source_root_for_file(file)?;
+    let root = db.source_root(root);
+    let path = root.source_root(db).path_for_file(&file)?;
+    let abs = path.as_path()?;
+    Some(Arc::new(dir_segments(abs.parent()?)))
+}
+
+/// The package *directory* of `file` relative to its source root, rendered
+/// IntelliJ-style for the package-path diagnostic ([JLS §7.2.1]): the
+/// parent-directory segments left after the source root's base is stripped,
+/// joined with `.` — `org/example` renders as `org.example`.
+///
+/// The source root's base is recovered as the longest common directory prefix
+/// of every file in the root (there is no separate base-dir input in
+/// [`SourceRoot`]); a configured root that spans a whole package tree yields
+/// exactly the root directory. When no base can be recovered (fewer than two
+/// real-backed files) or the file's directory lies outside it, the full
+/// slash-joined parent directory is returned as a fallback.
+///
+/// [JLS §7.2.1]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.2.1
+pub fn file_package_dir(db: &dyn HirDatabase, file: FileId) -> Option<String> {
+    let root_id = db.source_root_for_file(file)?;
+    let root = db.source_root(root_id);
+    let path = root.source_root(db).path_for_file(&file)?;
+    let abs = path.as_path()?;
+    let dir = dir_segments(abs.parent()?);
+    match source_root_dir_anchor_query(db, root).as_deref() {
+        Some(base) if base.len() < dir.len() && dir[..base.len()] == base[..] => {
+            Some(dir[base.len()..].join("."))
+        }
+        _ => Some(dir.join("/")),
+    }
+}
+
+/// The normal (path) segments of an absolute path, in order, as owned
+/// strings: `["src", "com", "example"]` for `/src/com/example`.
+fn dir_segments(path: &AbsPath) -> Vec<String> {
+    path.components()
+        .filter_map(|component| match component {
+            camino::Utf8Component::Normal(segment) => Some(segment.to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The longest common directory prefix, segment by segment, of every real-file
+/// parent directory in the source root — the root's effective base directory
+/// ([JLS §7.2.1]). `None` when the root has fewer than two real-backed files
+/// (with one file there is nothing to anchor a base against).
+#[salsa::tracked(returns(ref))]
+fn source_root_dir_anchor_query(
+    db: &dyn HirDatabase,
+    root: SourceRootInput,
+) -> Option<Arc<Vec<String>>> {
+    let source_root = root.source_root(db);
+    let mut anchor: Option<Vec<String>> = None;
+    let mut real_count = 0usize;
+    for file in source_root.iter() {
+        let Some(path) = source_root.path_for_file(&file) else {
+            continue;
+        };
+        let Some(abs) = path.as_path() else { continue };
+        let Some(parent) = abs.parent() else { continue };
+        real_count += 1;
+        let dir = dir_segments(parent);
+        anchor = Some(match anchor {
+            None => dir,
+            Some(anchor) => common_dir_prefix(&anchor, &dir),
+        });
+    }
+    (real_count > 1).then_some(Arc::new(anchor?))
+}
+
+/// The longest common prefix of two path-segment lists.
+fn common_dir_prefix(a: &[String], b: &[String]) -> Vec<String> {
+    a.iter()
+        .zip(b)
+        .take_while(|(x, y)| x == y)
+        .map(|(x, _)| x.clone())
+        .collect()
 }
 
 /// The indexed symbols of a file.

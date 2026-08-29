@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_packages.rs
+assertion_line: 26
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+public class A {}
+
+FILE /src/com/example/sub/B.java:
+package com.example.sub;
+
+public class B {}
+
+FILE /src/default/DefaultPkg.java:
+public class DefaultPkg {}

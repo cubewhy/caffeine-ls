@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_packages.rs
+assertion_line: 145
+expression: out
+---
+FILE /proj/src/main/java/org/example/Widget.java:
+package org.example;
+
+public class Widget {}
+
+FILE /proj/src/main/java/com/acme/Other.java:
+package com.acme;
+
+public class Other {}
+
+FILE /proj/src/main/java/org/example/Unmatched.java:
+package org.example.unmatched.pkg;
+
+public class Unmatched {}
+
+method : package-path-mismatch: @0:8Package name 'org.example.unmatched.pkg' does not correspond to the file path 'org.example'

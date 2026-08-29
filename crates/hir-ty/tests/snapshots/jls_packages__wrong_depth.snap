@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_packages.rs
+assertion_line: 84
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+public class A {}
+
+FILE /src/com/example/sub/B.java:
+package com.example.sub;
+
+public class B {}
+
+FILE /src/com/example/sub/Shim.java:
+package com.example;
+
+public class Shim {}
+
+method : package-path-mismatch: @0:8Package name 'com.example' does not correspond to the file path 'sub'
