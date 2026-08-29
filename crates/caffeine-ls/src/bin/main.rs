@@ -32,7 +32,7 @@ fn main() -> ExitCode {
     // The headless subcommands report through stdout; keep stderr logging
     // quiet unless asked otherwise.
     let default_filter = match &flags.command {
-        Some(Command::Diagnostics(_)) => "warn",
+        Some(Command::Diagnostics(_)) | Some(Command::Parse(_)) => "warn",
         _ => "info",
     };
     if let Err(err) = setup_logging(flags.log_file, default_filter) {
@@ -43,6 +43,9 @@ fn main() -> ExitCode {
     let result = match flags.command {
         Some(Command::Diagnostics(args)) => {
             with_extra_thread("caffeine-diagnostics", move || cli::run(&args))
+        }
+        Some(Command::Parse(args)) => {
+            with_extra_thread("caffeine-parse", move || cli::run_parse(&args))
         }
         None | Some(Command::Serve) => with_extra_thread("lsp-main", run_stdio_server),
     };

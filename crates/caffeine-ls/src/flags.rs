@@ -21,6 +21,10 @@ pub enum Command {
 
     /// Analyze a repository headlessly and report its diagnostics
     Diagnostics(DiagnosticsArgs),
+
+    /// Parse one source file, a folder of source files or stdin and report
+    /// language, tree stats and syntax errors
+    Parse(ParseArgs),
 }
 
 #[derive(Debug, Args)]
@@ -54,6 +58,45 @@ pub struct DiagnosticsArgs {
 pub enum OutputFormat {
     Text,
     Json,
+}
+
+#[derive(Debug, Args)]
+pub struct ParseArgs {
+    /// Source file or folder to parse. Omitted (or `-`) to read from stdin.
+    pub path: Option<PathBuf>,
+
+    /// Language to parse with. Required when reading from stdin (which has no
+    /// extension to detect); otherwise overrides extension-based detection.
+    #[arg(long, value_enum)]
+    pub language: Option<ParseLanguage>,
+
+    /// Output format of the report
+    #[arg(long, value_enum, default_value_t = ParseOutputFormat::Text)]
+    pub format: ParseOutputFormat,
+
+    /// Write the report to this file instead of stdout
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ParseLanguage {
+    Java,
+    Kotlin,
+}
+
+/// Output formats of the `parse` subcommand. `Jsonl` emits one compact JSON
+/// object per parsed file on its own line, so tools can stream and aggregate
+/// the results with plain line readers (e.g. `jq -s`) without wrapping the
+/// whole report in one document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ParseOutputFormat {
+    /// Human-readable report with a syntax-tree dump
+    Text,
+    /// A single pretty-printed JSON document with a `files` array
+    Json,
+    /// JSON Lines: one compact JSON object per parsed file
+    Jsonl,
 }
 
 /// Ordered by increasing inclusion: `warning` keeps errors and warnings,

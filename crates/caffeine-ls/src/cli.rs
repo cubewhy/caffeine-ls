@@ -3,10 +3,12 @@
 
 pub(crate) mod diagnostics;
 pub(crate) mod headless;
+pub(crate) mod parse;
 pub(crate) mod report;
 pub mod serve;
 
 pub use diagnostics::run;
+pub use parse::run as run_parse;
 
 /// Process exit code: analysis succeeded and no findings passed the filter.
 pub const EXIT_CLEAN: i32 = 0;

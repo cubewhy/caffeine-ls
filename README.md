@@ -50,6 +50,46 @@ Options:
 Exit codes: `0` no findings at or above the threshold · `1` findings found ·
 `2` analysis failed (bad path, no JDK, build-system sync failure, timeout).
 
+### Headless parse
+
+`parse` parses one source file, a folder of source files or stdin and reports,
+per file, the detected language, the syntax-tree node count, the tree dump and
+any syntax errors. It reuses the same parsers the server uses for Java and
+Kotlin, so it works great as a dev/debugging tool and inside scripts.
+
+Language is detected by file extension (`.java` → Java, `.kt`/`.kts` →
+Kotlin). Stdin has no extension, so it requires `--language`.
+
+```sh
+# text report on stdout (tree dump + errors)
+caffeine-ls parse path/to/File.java
+
+# parse a folder, JSON report
+caffeine-ls parse path/to/project --format json
+
+# JSON Lines — one compact JSON object per parsed file, great for tools
+caffeine-ls parse path/to/project --format jsonl
+
+# pipe source code in with an explicit language (unix-pipe friendly)
+echo 'class Hello {}' | caffeine-ls parse --language java --format jsonl
+
+# stream and aggregate results line by line
+caffeine-ls parse . --format jsonl | jq -s 'map({file, node_count})'
+```
+
+Options:
+
+| Flag | Description |
+|---|---|
+| `<PATH>` | Source file or folder to parse; omit (or use `-`) to read from stdin |
+| `--language <java\|kotlin>` | Language to parse with; required for stdin, overrides extension detection |
+| `--format <text\|json\|jsonl>` | Report format (default `text`) |
+| `-o, --output <FILE>` | Write the report to a file instead of stdout |
+
+Exit codes: `0` every file parsed without syntax errors · `1` at least one
+syntax error was found · `2` parsing failed (bad path, missing `--language`,
+unreadable file).
+
 ## Contribute
 
 The development of the LSP is in very early stage, please contribute!
