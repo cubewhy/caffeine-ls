@@ -1,0 +1,76 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun interface Factory<out T> {
+    fun create(): T
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "Factory"
+LESS "<"
+IDENTIFIER "out"
+WHITESPACE " "
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "create"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "T"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..53
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..52
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    INTERFACE_KW@4..13 "interface"
+    WHITESPACE@13..14 " "
+    IDENTIFIER@14..21 "Factory"
+    TYPE_PARAMETERS@21..28
+      LESS@21..22 "<"
+      TYPE_PARAMETER@22..27
+        IDENTIFIER@22..25 "out"
+        WHITESPACE@25..26 " "
+        IDENTIFIER@26..27 "T"
+      GREATER@27..28 ">"
+    WHITESPACE@28..29 " "
+    CLASS_BODY@29..52
+      L_BRACE@29..30 "{"
+      NEWLINE@30..31 "\n"
+      WHITESPACE@31..35 "    "
+      FUNCTION_DECL@35..51
+        FUN_KW@35..38 "fun"
+        WHITESPACE@38..39 " "
+        IDENTIFIER@39..45 "create"
+        VALUE_PARAMETERS@45..47
+          L_PAREN@45..46 "("
+          R_PAREN@46..47 ")"
+        COLON@47..48 ":"
+        WHITESPACE@48..49 " "
+        TYPE@49..51
+          USER_TYPE@49..51
+            IDENTIFIER@49..50 "T"
+            NEWLINE@50..51 "\n"
+      R_BRACE@51..52 "}"
+  NEWLINE@52..53 "\n"

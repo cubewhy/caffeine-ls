@@ -1,0 +1,373 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Factory {
+    companion object {
+        const val DEFAULT = 1
+    }
+
+    init {
+        println("init")
+    }
+
+    constructor(size: Int) : this(size, 0)
+
+    var count: Int = 0
+        private set
+
+    val total: Int
+        get() = count + 1
+
+    fun onEach(block: (Int) -> Unit) {
+        for (i in 0..count) block(i)
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Factory"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "companion"
+WHITESPACE " "
+OBJECT_KW "object"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "const"
+WHITESPACE " "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "DEFAULT"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n\n"
+WHITESPACE "    "
+IDENTIFIER "init"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "init"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n\n"
+WHITESPACE "    "
+IDENTIFIER "constructor"
+L_PAREN "("
+IDENTIFIER "size"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+THIS_KW "this"
+L_PAREN "("
+IDENTIFIER "size"
+COMMA ","
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+NEWLINE "\n\n"
+WHITESPACE "    "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "count"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "private"
+WHITESPACE " "
+IDENTIFIER "set"
+NEWLINE "\n\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "total"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "get"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "count"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n\n"
+WHITESPACE "    "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "onEach"
+L_PAREN "("
+IDENTIFIER "block"
+COLON ":"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Int"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Unit"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+RANGE ".."
+IDENTIFIER "count"
+R_PAREN ")"
+WHITESPACE " "
+IDENTIFIER "block"
+L_PAREN "("
+IDENTIFIER "i"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..336
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..333
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..13 "Factory"
+    WHITESPACE@13..14 " "
+    CLASS_BODY@14..333
+      L_BRACE@14..15 "{"
+      NEWLINE@15..16 "\n"
+      WHITESPACE@16..20 "    "
+      COMPANION_OBJECT@20..74
+        IDENTIFIER@20..29 "companion"
+        WHITESPACE@29..30 " "
+        OBJECT_KW@30..36 "object"
+        WHITESPACE@36..37 " "
+        CLASS_BODY@37..74
+          L_BRACE@37..38 "{"
+          NEWLINE@38..39 "\n"
+          WHITESPACE@39..47 "        "
+          PROPERTY_DECL@47..69
+            MODIFIER_LIST@47..52
+              IDENTIFIER@47..52 "const"
+            WHITESPACE@52..53 " "
+            VAL_KW@53..56 "val"
+            WHITESPACE@56..57 " "
+            VARIABLE_DECLARATION@57..64
+              IDENTIFIER@57..64 "DEFAULT"
+            WHITESPACE@64..65 " "
+            EQUAL@65..66 "="
+            WHITESPACE@66..67 " "
+            PRIMARY_EXPRESSION@67..68
+              INTEGER_LITERAL@67..68 "1"
+            NEWLINE@68..69 "\n"
+          WHITESPACE@69..73 "    "
+          R_BRACE@73..74 "}"
+      NEWLINE@74..76 "\n\n"
+      WHITESPACE@76..80 "    "
+      ANONYMOUS_INITIALIZER@80..116
+        IDENTIFIER@80..84 "init"
+        WHITESPACE@84..85 " "
+        BLOCK@85..116
+          L_BRACE@85..86 "{"
+          NEWLINE@86..87 "\n"
+          WHITESPACE@87..95 "        "
+          EXPRESSION_STATEMENT@95..110
+            POSTFIX_UNARY_EXPRESSION@95..110
+              PRIMARY_EXPRESSION@95..102
+                IDENTIFIER@95..102 "println"
+              CALL_EXPRESSION@102..110
+                VALUE_ARGUMENTS@102..110
+                  L_PAREN@102..103 "("
+                  VALUE_ARGUMENT@103..109
+                    STRING_LITERAL@103..109
+                      OPEN_QUOTE@103..104 "\""
+                      STRING_CONTENT@104..108 "init"
+                      CLOSE_QUOTE@108..109 "\""
+                  R_PAREN@109..110 ")"
+          NEWLINE@110..111 "\n"
+          WHITESPACE@111..115 "    "
+          R_BRACE@115..116 "}"
+      NEWLINE@116..118 "\n\n"
+      WHITESPACE@118..122 "    "
+      SECONDARY_CONSTRUCTOR@122..162
+        IDENTIFIER@122..133 "constructor"
+        VALUE_PARAMETERS@133..144
+          L_PAREN@133..134 "("
+          VALUE_PARAMETER@134..143
+            IDENTIFIER@134..138 "size"
+            COLON@138..139 ":"
+            WHITESPACE@139..140 " "
+            TYPE@140..143
+              USER_TYPE@140..143
+                IDENTIFIER@140..143 "Int"
+          R_PAREN@143..144 ")"
+        WHITESPACE@144..145 " "
+        COLON@145..146 ":"
+        WHITESPACE@146..147 " "
+        CONSTRUCTOR_DELEGATION_CALL@147..160
+          THIS_KW@147..151 "this"
+          VALUE_ARGUMENTS@151..160
+            L_PAREN@151..152 "("
+            VALUE_ARGUMENT@152..156
+              PRIMARY_EXPRESSION@152..156
+                IDENTIFIER@152..156 "size"
+            COMMA@156..157 ","
+            WHITESPACE@157..158 " "
+            VALUE_ARGUMENT@158..159
+              PRIMARY_EXPRESSION@158..159
+                INTEGER_LITERAL@158..159 "0"
+            R_PAREN@159..160 ")"
+        NEWLINE@160..162 "\n\n"
+      WHITESPACE@162..166 "    "
+      PROPERTY_DECL@166..185
+        VAR_KW@166..169 "var"
+        WHITESPACE@169..170 " "
+        VARIABLE_DECLARATION@170..180
+          IDENTIFIER@170..175 "count"
+          COLON@175..176 ":"
+          WHITESPACE@176..177 " "
+          TYPE@177..180
+            USER_TYPE@177..180
+              IDENTIFIER@177..180 "Int"
+        WHITESPACE@180..181 " "
+        EQUAL@181..182 "="
+        WHITESPACE@182..183 " "
+        PRIMARY_EXPRESSION@183..184
+          INTEGER_LITERAL@183..184 "0"
+        NEWLINE@184..185 "\n"
+      WHITESPACE@185..193 "        "
+      IDENTIFIER@193..200 "private"
+      WHITESPACE@200..201 " "
+      IDENTIFIER@201..204 "set"
+      NEWLINE@204..206 "\n\n"
+      WHITESPACE@206..210 "    "
+      PROPERTY_DECL@210..252
+        VAL_KW@210..213 "val"
+        WHITESPACE@213..214 " "
+        VARIABLE_DECLARATION@214..225
+          IDENTIFIER@214..219 "total"
+          COLON@219..220 ":"
+          WHITESPACE@220..221 " "
+          TYPE@221..225
+            USER_TYPE@221..225
+              IDENTIFIER@221..224 "Int"
+              NEWLINE@224..225 "\n"
+        WHITESPACE@225..233 "        "
+        GETTER@233..250
+          IDENTIFIER@233..236 "get"
+          L_PAREN@236..237 "("
+          R_PAREN@237..238 ")"
+          WHITESPACE@238..239 " "
+          EQUAL@239..240 "="
+          WHITESPACE@240..241 " "
+          BINARY_EXPRESSION@241..250
+            PRIMARY_EXPRESSION@241..246
+              IDENTIFIER@241..246 "count"
+            WHITESPACE@246..247 " "
+            PLUS@247..248 "+"
+            WHITESPACE@248..249 " "
+            PRIMARY_EXPRESSION@249..250
+              INTEGER_LITERAL@249..250 "1"
+        NEWLINE@250..252 "\n\n"
+      WHITESPACE@252..256 "    "
+      FUNCTION_DECL@256..299
+        FUN_KW@256..259 "fun"
+        WHITESPACE@259..260 " "
+        IDENTIFIER@260..266 "onEach"
+        VALUE_PARAMETERS@266..288
+          L_PAREN@266..267 "("
+          VALUE_PARAMETER@267..287
+            IDENTIFIER@267..272 "block"
+            COLON@272..273 ":"
+            WHITESPACE@273..274 " "
+            TYPE@274..287
+              FUNCTION_TYPE@274..287
+                VALUE_PARAMETERS@274..279
+                  L_PAREN@274..275 "("
+                  TYPE@275..278
+                    USER_TYPE@275..278
+                      IDENTIFIER@275..278 "Int"
+                  R_PAREN@278..279 ")"
+                WHITESPACE@279..280 " "
+                ARROW@280..282 "->"
+                WHITESPACE@282..283 " "
+                TYPE@283..287
+                  USER_TYPE@283..287
+                    IDENTIFIER@283..287 "Unit"
+          R_PAREN@287..288 ")"
+        WHITESPACE@288..289 " "
+        BLOCK@289..299
+          L_BRACE@289..290 "{"
+          NEWLINE@290..291 "\n"
+          WHITESPACE@291..299 "        "
+          MISSING@299..299
+      FOR_KW@299..302 "for"
+      WHITESPACE@302..303 " "
+      L_PAREN@303..304 "("
+      IDENTIFIER@304..305 "i"
+      WHITESPACE@305..306 " "
+      IN_KW@306..308 "in"
+      WHITESPACE@308..309 " "
+      INTEGER_LITERAL@309..310 "0"
+      RANGE@310..312 ".."
+      IDENTIFIER@312..317 "count"
+      R_PAREN@317..318 ")"
+      WHITESPACE@318..319 " "
+      IDENTIFIER@319..324 "block"
+      L_PAREN@324..325 "("
+      IDENTIFIER@325..326 "i"
+      R_PAREN@326..327 ")"
+      NEWLINE@327..328 "\n"
+      WHITESPACE@328..332 "    "
+      R_BRACE@332..333 "}"
+  NEWLINE@333..334 "\n"
+  R_BRACE@334..335 "}"
+  NEWLINE@335..336 "\n"

@@ -1,21 +1,54 @@
 use crate::{
-    Parser,
+    ContextualKeyword, Parser, SyntaxKind,
     SyntaxKind::*,
-    grammar::{eat_nl, names::simple_identifier},
+    grammar::{
+        annotations::annotation,
+        eat_nl,
+        expr::{expression, value_arguments},
+        modifiers::{at_modifier, modifiers},
+        names::simple_identifier,
+        semis,
+        types::type_,
+    },
     parser::ExpectedConstruct,
+    tokenset,
 };
 
 /// `variableDeclaration`: {annotation} {NL} simpleIdentifier [{NL} ':' {NL} type]
 /// [spec: grammar-rule-variableDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-variableDeclaration
 pub(crate) fn variable_declaration(p: &mut Parser) {
     let m = p.start();
+    if p.at(AT) {
+        annotation(p);
+        eat_nl(p);
+    }
     simple_identifier(p);
     if p.at(COLON) {
         p.bump();
         eat_nl(p);
-        crate::parser::grammar::types::type_(p);
+        type_(p);
     }
     m.complete(p, VARIABLE_DECLARATION);
+}
+
+/// `multiVariableDeclaration`: '(' {NL} variableDeclaration {{NL} ',' {NL}
+///                              variableDeclaration} [{NL} ','] {NL} ')'
+/// [spec: grammar-rule-multiVariableDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-multiVariableDeclaration
+pub(crate) fn multi_variable_declaration(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+    eat_nl(p);
+    variable_declaration(p);
+    while p.eat(COMMA) {
+        eat_nl(p);
+        if p.at(R_PAREN) {
+            break;
+        }
+        variable_declaration(p);
+    }
+    eat_nl(p);
+    p.expect(R_PAREN);
+    m.complete(p, MULTI_VARIABLE_DECLARATION);
 }
 
 /// `declaration`: classDeclaration | objectDeclaration | functionDeclaration
@@ -23,21 +56,913 @@ pub(crate) fn variable_declaration(p: &mut Parser) {
 /// [spec: grammar-rule-declaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-declaration
 pub(crate) fn declaration(p: &mut Parser) {
     eat_nl(p);
+    match declaration_keyword(p) {
+        Some(CLASS_KW) => class_declaration(p),
+        Some(INTERFACE_KW) => class_declaration(p),
+        Some(FUN_KW) if at_fun_interface(p) => class_declaration(p),
+        Some(FUN_KW) => function_declaration(p),
+        Some(OBJECT_KW) => object_declaration(p),
+        Some(VAL_KW) | Some(VAR_KW) => property_declaration(p),
+        Some(TYPEALIAS_KW) => type_alias(p),
+        _ => {
+            p.error_expected_construct(ExpectedConstruct::Declaration);
+            p.bump();
+        }
+    }
+}
 
-    if p.at(CLASS_KW)
-        || p.at(INTERFACE_KW)
-        || p.at(OBJECT_KW)
-        || p.at(FUN_KW)
-        || p.at(VAL_KW)
-        || p.at(VAR_KW)
-        || p.at(TYPEALIAS_KW)
-    {
-        // Filled in by later milestones.
-        p.error_expected_construct(ExpectedConstruct::Declaration);
+/// Whether the current stream is `['fun'] 'interface'` (`fun interface X`).
+fn at_fun_interface(p: &Parser) -> bool {
+    let mut i = 0;
+    loop {
+        if p.nth(i) == Some(AT) {
+            i = skip_annotation(p, i);
+        } else if p.nth(i) == Some(NEWLINE)
+            || matches!(p.nth(i), Some(IN_KW))
+            || nth_is_modifier(p, i)
+        {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if p.nth(i) != Some(FUN_KW) {
+        return false;
+    }
+    i += 1;
+    while p.nth(i) == Some(NEWLINE) {
+        i += 1;
+    }
+    p.nth(i) == Some(INTERFACE_KW)
+}
+
+/// The keyword after any leading modifiers/annotations, or `None`.
+/// [spec: grammar-rule-declaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-declaration
+fn declaration_keyword(p: &Parser) -> Option<SyntaxKind> {
+    let mut i = 0;
+    loop {
+        if i > 256 {
+            return None;
+        }
+        if p.nth(i) == Some(AT) {
+            i = skip_annotation(p, i);
+            continue;
+        }
+        if p.nth(i) == Some(NEWLINE) {
+            i += 1;
+            continue;
+        }
+        if matches!(p.nth(i), Some(IN_KW)) || nth_is_modifier(p, i) {
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    p.nth(i)
+}
+
+/// Whether the current token stream starts a declaration (after optional
+/// modifiers and annotations), without consuming anything.
+pub(crate) fn at_declaration(p: &Parser) -> bool {
+    matches!(
+        declaration_keyword(p),
+        Some(CLASS_KW | INTERFACE_KW | OBJECT_KW | FUN_KW | VAL_KW | VAR_KW | TYPEALIAS_KW)
+    )
+}
+
+fn nth_is_modifier(p: &Parser, i: usize) -> bool {
+    p.nth(i) == Some(IDENTIFIER)
+        && matches!(
+            p.nth_lexeme(i),
+            Some(
+                "abstract"
+                    | "actual"
+                    | "annotation"
+                    | "const"
+                    | "crossinline"
+                    | "data"
+                    | "enum"
+                    | "expect"
+                    | "external"
+                    | "final"
+                    | "infix"
+                    | "inline"
+                    | "inner"
+                    | "internal"
+                    | "lateinit"
+                    | "noinline"
+                    | "open"
+                    | "operator"
+                    | "out"
+                    | "override"
+                    | "private"
+                    | "protected"
+                    | "public"
+                    | "reified"
+                    | "sealed"
+                    | "suspend"
+                    | "tailrec"
+                    | "vararg"
+                    | "value"
+            )
+        )
+}
+
+/// Skips a balanced `@Name`, `@Name(...)`, `@Name[...]` or `@target:Name`
+/// annotation starting at index `i` (pointing at `@`); returns the index
+/// after it.
+fn skip_annotation(p: &Parser, mut i: usize) -> usize {
+    i += 1; // @
+    if p.nth(i) == Some(IDENTIFIER) {
+        i += 1;
+        // annotationUseSiteTarget `get:` before the type name
+        if p.nth(i) == Some(COLON) {
+            i += 1;
+            if p.nth(i) == Some(IDENTIFIER) {
+                i += 1;
+            }
+        }
+    }
+    match p.nth(i) {
+        Some(L_PAREN) => skip_balanced(p, i, L_PAREN, R_PAREN),
+        Some(L_BRACKET) => skip_balanced(p, i, L_BRACKET, R_BRACKET),
+        _ => i,
+    }
+}
+
+fn skip_balanced(p: &Parser, mut i: usize, open: SyntaxKind, close: SyntaxKind) -> usize {
+    let mut depth = 0;
+    loop {
+        match p.nth(i) {
+            Some(k) if k == open => depth += 1,
+            Some(k) if k == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            Some(EOF) | None => return i,
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
+/// `classDeclaration`: [modifiers] ('class' | (['fun'] 'interface')) {NL}
+///                     simpleIdentifier [{NL} typeParameters] [{NL}
+///                     primaryConstructor] [{NL} ':' {NL}
+///                     delegationSpecifiers] [{NL} typeConstraints] [classBody |
+///                     enumClassBody]
+/// [spec: grammar-rule-classDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classDeclaration
+fn class_declaration(p: &mut Parser) {
+    let m = p.start();
+
+    let mut is_enum = modifiers_and_flag(p, |p| p.at_contextual_kw(ContextualKeyword::Enum));
+    eat_nl(p);
+
+    // 'fun interface' | 'interface' | 'class'
+    if p.at(FUN_KW) {
         p.bump();
+        eat_nl(p);
+    }
+    if p.at(INTERFACE_KW) {
+        is_enum = false;
+        p.bump();
+    } else {
+        p.expect(CLASS_KW);
+    }
+    eat_nl(p);
+
+    simple_identifier(p);
+    eat_nl(p);
+
+    if p.at(LESS) {
+        type_parameters(p);
+        eat_nl(p);
+    }
+
+    if p.at(L_PAREN) {
+        primary_constructor(p);
+        eat_nl(p);
+    }
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        delegation_specifiers(p);
+        eat_nl(p);
+    }
+
+    if p.at_contextual_kw(ContextualKeyword::Where) {
+        type_constraints(p);
+        eat_nl(p);
+    }
+
+    if p.at(L_BRACE) {
+        if is_enum {
+            enum_class_body(p);
+        } else {
+            class_body(p);
+        }
+    }
+
+    m.complete(p, CLASS_DECL);
+}
+
+/// `primaryConstructor`: [[modifiers] 'constructor' {NL}] classParameters
+/// [spec: grammar-rule-primaryConstructor] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-primaryConstructor
+fn primary_constructor(p: &mut Parser) {
+    let m = p.start();
+    if p.at_contextual_kw(ContextualKeyword::Constructor) {
+        p.bump();
+        eat_nl(p);
+    } else if p.at(AT) || at_modifier(p) {
+        let was_empty = !(p.at(AT) || at_modifier(p));
+        if !was_empty {
+            modifiers(p);
+            eat_nl(p);
+        }
+        p.expect_contextual_kw(ContextualKeyword::Constructor);
+        eat_nl(p);
+    }
+    class_parameters(p);
+    m.complete(p, PRIMARY_CONSTRUCTOR);
+}
+
+/// `classParameters`: '(' {NL} [classParameter {{NL} ',' {NL} classParameter}
+///                    [{NL} ',']] {NL} ')'
+/// [spec: grammar-rule-classParameters] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classParameters
+fn class_parameters(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+    eat_nl(p);
+    if !p.at(R_PAREN) {
+        class_parameter(p);
+        while p.eat(COMMA) {
+            eat_nl(p);
+            if p.at(R_PAREN) {
+                break;
+            }
+            class_parameter(p);
+        }
+    }
+    eat_nl(p);
+    p.expect(R_PAREN);
+    m.complete(p, CLASS_PARAMETERS);
+}
+
+/// `classParameter`: [modifiers] ['val' | 'var'] {NL} simpleIdentifier ':' type
+///                   ['=' expression]
+/// [spec: grammar-rule-classParameter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classParameter
+fn class_parameter(p: &mut Parser) {
+    let m = p.start();
+    modifiers_and_flag(p, |_| false);
+    eat_nl(p);
+    if p.at(VAL_KW) || p.at(VAR_KW) {
+        p.bump();
+        eat_nl(p);
+    }
+    simple_identifier(p);
+    p.expect(COLON);
+    eat_nl(p);
+    type_(p);
+    eat_nl(p);
+    if p.eat(EQUAL) {
+        eat_nl(p);
+        expression(p);
+    }
+    m.complete(p, CLASS_PARAMETER);
+}
+
+/// `delegationSpecifiers`: annotatedDelegationSpecifier {{NL} ',' {NL}
+///                         annotatedDelegationSpecifier}
+/// [spec: grammar-rule-delegationSpecifiers] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-delegationSpecifiers
+fn delegation_specifiers(p: &mut Parser) {
+    let m = p.start();
+    delegation_specifier(p);
+    while p.eat(COMMA) {
+        eat_nl(p);
+        delegation_specifier(p);
+    }
+    m.complete(p, DELEGATION_SPECIFIERS);
+}
+
+/// `delegationSpecifier`: constructorInvocation | explicitDelegation |
+///                        userType | functionType
+/// [spec: grammar-rule-delegationSpecifier] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-delegationSpecifier
+fn delegation_specifier(p: &mut Parser) {
+    let m = p.start();
+    if p.at(AT) {
+        annotation(p);
+        eat_nl(p);
+    }
+    // A function type (rare) or a user type head.
+    let cp = p.checkpoint();
+    let head = p.start();
+    type_(p);
+    eat_nl(p);
+    if p.at(L_PAREN) {
+        // constructorInvocation
+        head.complete(p, CONSTRUCTOR_INVOCATION);
+        value_arguments(p);
+    } else if p.at_contextual_kw(ContextualKeyword::By) {
+        // explicitDelegation: type 'by' expression
+        p.bump();
+        eat_nl(p);
+        expression(p);
+        head.complete(p, EXPLICIT_DELEGATION);
+    } else {
+        head.abandon(p);
+        let _ = cp;
+    }
+    m.complete(p, DELEGATION_SPECIFIER);
+}
+
+/// `typeParameters`: '<' {NL} typeParameter {{NL} ',' {NL} typeParameter}
+///                   [{NL} ','] {NL} '>'
+/// [spec: grammar-rule-typeParameters] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeParameters
+pub(crate) fn type_parameters(p: &mut Parser) {
+    let m = p.start();
+    p.expect(LESS);
+    eat_nl(p);
+    if !p.at(GREATER) {
+        type_parameter(p);
+        while p.eat(COMMA) {
+            eat_nl(p);
+            if p.at(GREATER) {
+                break;
+            }
+            type_parameter(p);
+        }
+    }
+    eat_nl(p);
+    p.expect(GREATER);
+    m.complete(p, TYPE_PARAMETERS);
+}
+
+/// `typeParameter`: [typeParameterModifiers] simpleIdentifier [':' type]
+/// [spec: grammar-rule-typeParameter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeParameter
+fn type_parameter(p: &mut Parser) {
+    let m = p.start();
+    // reified / in / out / annotations
+    while p.at_contextual_kw(ContextualKeyword::Reified)
+        || p.at(IN_KW)
+        || p.at_contextual_kw(ContextualKeyword::Out)
+        || p.at(AT)
+    {
+        if p.at(AT) {
+            annotation(p);
+        } else {
+            p.bump();
+        }
+        eat_nl(p);
+    }
+    simple_identifier(p);
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+    }
+    m.complete(p, TYPE_PARAMETER);
+}
+
+/// `typeConstraints`: 'where' typeConstraint {{NL} ',' {NL} typeConstraint}
+/// [spec: grammar-rule-typeConstraints] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeConstraints
+pub(crate) fn type_constraints(p: &mut Parser) {
+    let m = p.start();
+    p.expect_contextual_kw(ContextualKeyword::Where);
+    eat_nl(p);
+    type_constraint(p);
+    while p.eat(COMMA) {
+        eat_nl(p);
+        type_constraint(p);
+    }
+    m.complete(p, TYPE_CONSTRAINTS);
+}
+
+/// `typeConstraint`: {annotation} simpleIdentifier ':' type
+/// [spec: grammar-rule-typeConstraint] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeConstraint
+fn type_constraint(p: &mut Parser) {
+    let m = p.start();
+    if p.at(AT) {
+        annotation(p);
+        eat_nl(p);
+    }
+    simple_identifier(p);
+    p.expect(COLON);
+    eat_nl(p);
+    type_(p);
+    m.complete(p, TYPE_CONSTRAINT);
+}
+
+/// `functionDeclaration`: [modifiers] 'fun' [typeParameters] [receiverType '.']
+///                        simpleIdentifier functionValueParameters [':' type]
+///                        [typeConstraints] [functionBody]
+/// [spec: grammar-rule-functionDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionDeclaration
+fn function_declaration(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    p.expect(FUN_KW);
+    eat_nl(p);
+
+    if p.at(LESS) {
+        type_parameters(p);
+        eat_nl(p);
+    }
+
+    // receiverType '.'
+    if p.at(IDENTIFIER) {
+        let cp = p.checkpoint();
+        let r = p.start();
+        type_(p);
+        eat_nl(p);
+        if p.at(DOT) {
+            p.bump();
+            eat_nl(p);
+            r.complete(p, RECEIVER_TYPE);
+        } else {
+            r.abandon(p);
+            p.rewind(cp);
+        }
+    }
+
+    simple_identifier(p);
+    eat_nl(p);
+    function_value_parameters(p);
+    eat_nl(p);
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+        eat_nl(p);
+    }
+
+    if p.at_contextual_kw(ContextualKeyword::Where) {
+        type_constraints(p);
+        eat_nl(p);
+    }
+
+    function_body(p);
+
+    m.complete(p, FUNCTION_DECL);
+}
+
+/// `functionValueParameters`: '(' {NL} [functionValueParameter {{NL} ',' {NL}
+///                             functionValueParameter} [{NL} ',']] {NL} ')'
+/// [spec: grammar-rule-functionValueParameters] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameters
+pub(crate) fn function_value_parameters(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+    eat_nl(p);
+    if !p.at(R_PAREN) {
+        loop {
+            eat_nl(p);
+            if p.at(R_PAREN) {
+                break;
+            }
+            function_value_parameter(p);
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+    eat_nl(p);
+    p.expect(R_PAREN);
+    m.complete(p, VALUE_PARAMETERS);
+}
+
+/// `functionValueParameter`: [parameterModifiers] parameter ['=' expression]
+/// `parameter`: simpleIdentifier ':' type
+/// [spec: grammar-rule-functionValueParameter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameter
+fn function_value_parameter(p: &mut Parser) {
+    let m = p.start();
+    // parameterModifiers: annotations + vararg / noinline / crossinline
+    loop {
+        if p.at(AT) {
+            annotation(p);
+            eat_nl(p);
+        } else if p.at_contextual_kw_set(tokenset![
+            ContextualKeyword::Vararg,
+            ContextualKeyword::NoInline,
+            ContextualKeyword::CrossInline
+        ]) {
+            p.bump();
+            eat_nl(p);
+        } else {
+            break;
+        }
+    }
+    simple_identifier(p);
+    p.expect(COLON);
+    eat_nl(p);
+    type_(p);
+    eat_nl(p);
+    if p.eat(EQUAL) {
+        eat_nl(p);
+        expression(p);
+    }
+    m.complete(p, VALUE_PARAMETER);
+}
+
+/// `functionBody`: block | ('=' {NL} expression)
+/// [spec: grammar-rule-functionBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionBody
+pub(crate) fn function_body(p: &mut Parser) {
+    if p.at(L_BRACE) {
+        crate::parser::grammar::statements::block(p);
+    } else if p.at(EQUAL) {
+        p.bump();
+        eat_nl(p);
+        expression(p);
+    }
+}
+
+/// `propertyDeclaration`: [modifiers] ('val' | 'var') [typeParameters]
+///                        [receiverType '.'] (variableDeclaration |
+///                        multiVariableDeclaration) [typeConstraints]
+///                        [('=' expression) | propertyDelegate] [';']
+///                        [accessors]
+/// [spec: grammar-rule-propertyDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-propertyDeclaration
+fn property_declaration(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    if p.at(VAL_KW) {
+        p.bump();
+    } else {
+        p.expect(VAR_KW);
+    }
+    eat_nl(p);
+
+    if p.at(LESS) {
+        type_parameters(p);
+        eat_nl(p);
+    }
+
+    // receiverType '.'
+    if p.at(IDENTIFIER) {
+        let cp = p.checkpoint();
+        let r = p.start();
+        type_(p);
+        eat_nl(p);
+        if p.at(DOT) {
+            p.bump();
+            eat_nl(p);
+            r.complete(p, RECEIVER_TYPE);
+        } else {
+            r.abandon(p);
+            p.rewind(cp);
+        }
+    }
+
+    if p.at(L_PAREN) {
+        multi_variable_declaration(p);
+    } else {
+        variable_declaration(p);
+    }
+    eat_nl(p);
+
+    if p.at_contextual_kw(ContextualKeyword::Where) {
+        type_constraints(p);
+        eat_nl(p);
+    }
+
+    if p.eat(EQUAL) {
+        eat_nl(p);
+        expression(p);
+        eat_nl(p);
+    } else if p.at_contextual_kw(ContextualKeyword::By) {
+        let d = p.start();
+        p.bump();
+        eat_nl(p);
+        expression(p);
+        d.complete(p, PROPERTY_DELEGATE);
+        eat_nl(p);
+    }
+
+    if p.at(SEMICOLON) {
+        p.bump();
+    }
+
+    loop {
+        if p.at_contextual_kw(ContextualKeyword::Get) {
+            getter(p);
+            eat_nl(p);
+        } else if p.at_contextual_kw(ContextualKeyword::Set) {
+            setter(p);
+            eat_nl(p);
+        } else {
+            break;
+        }
+    }
+
+    m.complete(p, PROPERTY_DECL);
+}
+
+/// `getter`: [modifiers] 'get' ['(' {NL} ')' [':' type]] functionBody
+/// [spec: grammar-rule-getter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-getter
+fn getter(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    p.expect_contextual_kw(ContextualKeyword::Get);
+    if p.at(L_PAREN) {
+        p.bump();
+        eat_nl(p);
+        p.expect(R_PAREN);
+        eat_nl(p);
+    }
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+        eat_nl(p);
+    }
+    function_body(p);
+    m.complete(p, GETTER);
+}
+
+/// `setter`: [modifiers] 'set' ['(' functionValueParameterWithOptionalType
+///            [{NL} ','] ')' [':' type]] functionBody
+/// [spec: grammar-rule-setter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-setter
+fn setter(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    p.expect_contextual_kw(ContextualKeyword::Set);
+    if p.at(L_PAREN) {
+        p.bump();
+        eat_nl(p);
+        if !p.at(R_PAREN) {
+            simple_identifier(p);
+            if p.at(COLON) {
+                p.bump();
+                eat_nl(p);
+                type_(p);
+            }
+            eat_nl(p);
+            if p.eat(COMMA) {
+                eat_nl(p);
+            }
+        }
+        eat_nl(p);
+        p.expect(R_PAREN);
+        eat_nl(p);
+    }
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+        eat_nl(p);
+    }
+    function_body(p);
+    m.complete(p, SETTER);
+}
+
+/// `objectDeclaration`: [modifiers] 'object' simpleIdentifier [':' {NL}
+///                      delegationSpecifiers] [classBody]
+/// [spec: grammar-rule-objectDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-objectDeclaration
+fn object_declaration(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    p.expect(OBJECT_KW);
+    eat_nl(p);
+    simple_identifier(p);
+    eat_nl(p);
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        delegation_specifiers(p);
+        eat_nl(p);
+    }
+
+    if p.at(L_BRACE) {
+        class_body(p);
+    }
+
+    m.complete(p, OBJECT_DECL);
+}
+
+/// `typeAlias`: [modifiers] 'typealias' simpleIdentifier [typeParameters]
+///              {NL} '=' {NL} type
+/// [spec: grammar-rule-typeAlias] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-typeAlias
+fn type_alias(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    p.expect(TYPEALIAS_KW);
+    eat_nl(p);
+    simple_identifier(p);
+    eat_nl(p);
+    if p.at(LESS) {
+        type_parameters(p);
+        eat_nl(p);
+    }
+    p.expect(EQUAL);
+    eat_nl(p);
+    type_(p);
+    m.complete(p, TYPE_ALIAS);
+}
+
+/// `classBody`: '{' {NL} classMemberDeclarations {NL} '}'
+/// [spec: grammar-rule-classBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classBody
+fn class_body(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_BRACE);
+    eat_nl(p);
+    while !p.at(R_BRACE) && !p.is_at_end() {
+        if p.at(SEMICOLON) || p.at(NEWLINE) {
+            semis(p);
+            eat_nl(p);
+            continue;
+        }
+        class_member_declaration(p);
+        semis(p);
+        eat_nl(p);
+    }
+    semis(p);
+    eat_nl(p);
+    p.expect(R_BRACE);
+    m.complete(p, CLASS_BODY);
+}
+
+/// `classMemberDeclaration`: declaration | companionObject |
+///                           anonymousInitializer | secondaryConstructor
+/// [spec: grammar-rule-classMemberDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-classMemberDeclaration
+fn class_member_declaration(p: &mut Parser) {
+    eat_nl(p);
+
+    if p.at_contextual_kw(ContextualKeyword::Companion) {
+        companion_object(p);
+        return;
+    }
+    if p.at_contextual_kw(ContextualKeyword::Init) {
+        anonymous_initializer(p);
+        return;
+    }
+    if p.at_contextual_kw(ContextualKeyword::Constructor) {
+        secondary_constructor(p);
         return;
     }
 
-    p.error_expected_construct(ExpectedConstruct::Declaration);
-    p.bump();
+    declaration(p);
+}
+
+/// `companionObject`: [modifiers] 'companion' ['data'] 'object' [name]
+///                    [':' delegationSpecifiers] [classBody]
+/// [spec: grammar-rule-companionObject] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-companionObject
+fn companion_object(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    p.expect_contextual_kw(ContextualKeyword::Companion);
+    eat_nl(p);
+    if p.at_contextual_kw(ContextualKeyword::Data) {
+        p.bump();
+        eat_nl(p);
+    }
+    p.expect(OBJECT_KW);
+    eat_nl(p);
+    if p.at(IDENTIFIER) {
+        simple_identifier(p);
+        eat_nl(p);
+    }
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        delegation_specifiers(p);
+        eat_nl(p);
+    }
+    if p.at(L_BRACE) {
+        class_body(p);
+    }
+    m.complete(p, COMPANION_OBJECT);
+}
+
+/// `anonymousInitializer`: 'init' {NL} block
+/// [spec: grammar-rule-anonymousInitializer] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-anonymousInitializer
+fn anonymous_initializer(p: &mut Parser) {
+    let m = p.start();
+    p.expect_contextual_kw(ContextualKeyword::Init);
+    eat_nl(p);
+    crate::parser::grammar::statements::block(p);
+    m.complete(p, ANONYMOUS_INITIALIZER);
+}
+
+/// `secondaryConstructor`: [modifiers] 'constructor' functionValueParameters
+///                         [':' constructorDelegationCall] [block]
+/// [spec: grammar-rule-secondaryConstructor] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-secondaryConstructor
+fn secondary_constructor(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+    eat_nl(p);
+    p.expect_contextual_kw(ContextualKeyword::Constructor);
+    eat_nl(p);
+    function_value_parameters(p);
+    eat_nl(p);
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        // constructorDelegationCall: 'this' | 'super' valueArguments
+        let dm = p.start();
+        if p.at(THIS_KW) || p.at(SUPER_KW) {
+            p.bump();
+            eat_nl(p);
+            value_arguments(p);
+        }
+        dm.complete(p, CONSTRUCTOR_DELEGATION_CALL);
+        eat_nl(p);
+    }
+
+    if p.at(L_BRACE) {
+        crate::parser::grammar::statements::block(p);
+    }
+
+    m.complete(p, SECONDARY_CONSTRUCTOR);
+}
+
+/// `enumClassBody`: '{' [enumEntries] [';' classMemberDeclarations] '}'
+/// [spec: grammar-rule-enumClassBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-enumClassBody
+fn enum_class_body(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_BRACE);
+    eat_nl(p);
+    if !p.at(R_BRACE) && !p.at(SEMICOLON) {
+        enum_entries(p);
+    }
+    if p.at(SEMICOLON) {
+        semis(p);
+        eat_nl(p);
+        while !p.at(R_BRACE) && !p.is_at_end() {
+            class_member_declaration(p);
+            semis(p);
+            eat_nl(p);
+        }
+    }
+    semis(p);
+    eat_nl(p);
+    p.expect(R_BRACE);
+    m.complete(p, ENUM_CLASS_BODY);
+}
+
+/// `enumEntries`: enumEntry {{NL} ',' {NL} enumEntry} {NL} [',']
+/// [spec: grammar-rule-enumEntries] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-enumEntries
+fn enum_entries(p: &mut Parser) {
+    let m = p.start();
+    enum_entry(p);
+    while p.eat(COMMA) {
+        eat_nl(p);
+        if p.at(R_BRACE) || p.at(SEMICOLON) {
+            break;
+        }
+        enum_entry(p);
+    }
+    eat_nl(p);
+    m.complete(p, ENUM_ENTRIES);
+}
+
+/// `enumEntry`: [modifiers] simpleIdentifier [valueArguments] [classBody]
+/// [spec: grammar-rule-enumEntry] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-enumEntry
+fn enum_entry(p: &mut Parser) {
+    let m = p.start();
+    modifiers_and_flag(p, |_| false);
+    eat_nl(p);
+    simple_identifier(p);
+    eat_nl(p);
+    if p.at(L_PAREN) {
+        value_arguments(p);
+        eat_nl(p);
+    }
+    if p.at(L_BRACE) {
+        class_body(p);
+    }
+    m.complete(p, ENUM_ENTRY);
+}
+
+/// Parses a `MODIFIER_LIST`, invoking `flag` for each modifier token so the
+/// caller can record e.g. the `enum` class modifier.
+fn modifiers_and_flag(p: &mut Parser, mut flag: impl FnMut(&Parser) -> bool) -> bool {
+    let m = p.start();
+    let mut is_empty = true;
+    let mut has_flag = false;
+    while at_modifier(p) {
+        if p.at(AT) {
+            annotation(p);
+        } else {
+            if flag(p) {
+                has_flag = true;
+            }
+            p.bump();
+            eat_nl(p);
+        }
+        is_empty = false;
+    }
+    if is_empty {
+        m.abandon(p);
+    } else {
+        m.complete(p, MODIFIER_LIST);
+    }
+    has_flag
 }

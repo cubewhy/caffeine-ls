@@ -1,0 +1,70 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+data class User(val name: String, val age: Int)
+
+TOKENS:
+IDENTIFIER "data"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "User"
+L_PAREN "("
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "name"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+COMMA ","
+WHITESPACE " "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "age"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..48
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..48
+    MODIFIER_LIST@0..4
+      IDENTIFIER@0..4 "data"
+    WHITESPACE@4..5 " "
+    CLASS_KW@5..10 "class"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..15 "User"
+    PRIMARY_CONSTRUCTOR@15..47
+      CLASS_PARAMETERS@15..47
+        L_PAREN@15..16 "("
+        CLASS_PARAMETER@16..32
+          VAL_KW@16..19 "val"
+          WHITESPACE@19..20 " "
+          IDENTIFIER@20..24 "name"
+          COLON@24..25 ":"
+          WHITESPACE@25..26 " "
+          TYPE@26..32
+            USER_TYPE@26..32
+              IDENTIFIER@26..32 "String"
+        COMMA@32..33 ","
+        WHITESPACE@33..34 " "
+        CLASS_PARAMETER@34..46
+          VAL_KW@34..37 "val"
+          WHITESPACE@37..38 " "
+          IDENTIFIER@38..41 "age"
+          COLON@41..42 ":"
+          WHITESPACE@42..43 " "
+          TYPE@43..46
+            USER_TYPE@43..46
+              IDENTIFIER@43..46 "Int"
+        R_PAREN@46..47 ")"
+    NEWLINE@47..48 "\n"

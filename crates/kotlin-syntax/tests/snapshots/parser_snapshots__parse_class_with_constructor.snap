@@ -1,0 +1,74 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Point(val x: Int, var y: Int = 0)
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Point"
+L_PAREN "("
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "y"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..40
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..40
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..11 "Point"
+    PRIMARY_CONSTRUCTOR@11..39
+      CLASS_PARAMETERS@11..39
+        L_PAREN@11..12 "("
+        CLASS_PARAMETER@12..22
+          VAL_KW@12..15 "val"
+          WHITESPACE@15..16 " "
+          IDENTIFIER@16..17 "x"
+          COLON@17..18 ":"
+          WHITESPACE@18..19 " "
+          TYPE@19..22
+            USER_TYPE@19..22
+              IDENTIFIER@19..22 "Int"
+        COMMA@22..23 ","
+        WHITESPACE@23..24 " "
+        CLASS_PARAMETER@24..38
+          VAR_KW@24..27 "var"
+          WHITESPACE@27..28 " "
+          IDENTIFIER@28..29 "y"
+          COLON@29..30 ":"
+          WHITESPACE@30..31 " "
+          TYPE@31..34
+            USER_TYPE@31..34
+              IDENTIFIER@31..34 "Int"
+          WHITESPACE@34..35 " "
+          EQUAL@35..36 "="
+          WHITESPACE@36..37 " "
+          PRIMARY_EXPRESSION@37..38
+            INTEGER_LITERAL@37..38 "0"
+        R_PAREN@38..39 ")"
+    NEWLINE@39..40 "\n"

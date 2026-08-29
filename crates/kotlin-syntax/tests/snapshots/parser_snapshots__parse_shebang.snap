@@ -28,12 +28,15 @@ ROOT@0..36
   SHEBANG_LINE@0..21 "#!/usr/bin/env kotlin"
   NEWLINE@21..22 "\n"
   IMPORT_LIST@22..22
-  FUN_KW@22..25 "fun"
-  WHITESPACE@25..26 " "
-  IDENTIFIER@26..30 "main"
-  L_PAREN@30..31 "("
-  R_PAREN@31..32 ")"
-  WHITESPACE@32..33 " "
-  L_BRACE@33..34 "{"
-  R_BRACE@34..35 "}"
+  FUNCTION_DECL@22..35
+    FUN_KW@22..25 "fun"
+    WHITESPACE@25..26 " "
+    IDENTIFIER@26..30 "main"
+    VALUE_PARAMETERS@30..32
+      L_PAREN@30..31 "("
+      R_PAREN@31..32 ")"
+    WHITESPACE@32..33 " "
+    BLOCK@33..35
+      L_BRACE@33..34 "{"
+      R_BRACE@34..35 "}"
   NEWLINE@35..36 "\n"

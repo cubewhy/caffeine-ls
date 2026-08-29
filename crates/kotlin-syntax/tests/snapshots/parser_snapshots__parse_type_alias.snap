@@ -1,0 +1,113 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+typealias StringMap<V> = MutableMap<String, V>
+
+public typealias Predicate<T> = (T) -> Boolean
+
+TOKENS:
+TYPEALIAS_KW "typealias"
+WHITESPACE " "
+IDENTIFIER "StringMap"
+LESS "<"
+IDENTIFIER "V"
+GREATER ">"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "MutableMap"
+LESS "<"
+IDENTIFIER "String"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "V"
+GREATER ">"
+NEWLINE "\n\n"
+IDENTIFIER "public"
+WHITESPACE " "
+TYPEALIAS_KW "typealias"
+WHITESPACE " "
+IDENTIFIER "Predicate"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "T"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Boolean"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..95
+  IMPORT_LIST@0..0
+  TYPE_ALIAS@0..48
+    TYPEALIAS_KW@0..9 "typealias"
+    WHITESPACE@9..10 " "
+    IDENTIFIER@10..19 "StringMap"
+    TYPE_PARAMETERS@19..22
+      LESS@19..20 "<"
+      TYPE_PARAMETER@20..21
+        IDENTIFIER@20..21 "V"
+      GREATER@21..22 ">"
+    WHITESPACE@22..23 " "
+    EQUAL@23..24 "="
+    WHITESPACE@24..25 " "
+    TYPE@25..48
+      USER_TYPE@25..48
+        IDENTIFIER@25..35 "MutableMap"
+        TYPE_ARGUMENTS@35..46
+          LESS@35..36 "<"
+          TYPE_PROJECTION@36..42
+            TYPE@36..42
+              USER_TYPE@36..42
+                IDENTIFIER@36..42 "String"
+          COMMA@42..43 ","
+          WHITESPACE@43..44 " "
+          TYPE_PROJECTION@44..45
+            TYPE@44..45
+              USER_TYPE@44..45
+                IDENTIFIER@44..45 "V"
+          GREATER@45..46 ">"
+        NEWLINE@46..48 "\n\n"
+  TYPE_ALIAS@48..95
+    MODIFIER_LIST@48..54
+      IDENTIFIER@48..54 "public"
+    WHITESPACE@54..55 " "
+    TYPEALIAS_KW@55..64 "typealias"
+    WHITESPACE@64..65 " "
+    IDENTIFIER@65..74 "Predicate"
+    TYPE_PARAMETERS@74..77
+      LESS@74..75 "<"
+      TYPE_PARAMETER@75..76
+        IDENTIFIER@75..76 "T"
+      GREATER@76..77 ">"
+    WHITESPACE@77..78 " "
+    EQUAL@78..79 "="
+    WHITESPACE@79..80 " "
+    TYPE@80..95
+      FUNCTION_TYPE@80..95
+        VALUE_PARAMETERS@80..83
+          L_PAREN@80..81 "("
+          TYPE@81..82
+            USER_TYPE@81..82
+              IDENTIFIER@81..82 "T"
+          R_PAREN@82..83 ")"
+        WHITESPACE@83..84 " "
+        ARROW@84..86 "->"
+        WHITESPACE@86..87 " "
+        TYPE@87..95
+          USER_TYPE@87..95
+            IDENTIFIER@87..94 "Boolean"
+            NEWLINE@94..95 "\n"

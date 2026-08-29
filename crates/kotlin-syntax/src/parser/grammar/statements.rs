@@ -2,7 +2,6 @@ use crate::{
     Parser,
     SyntaxKind::*,
     grammar::{
-        decl::declaration,
         eat_nl,
         expr::{at_expression, expression},
         semis,
@@ -25,22 +24,15 @@ pub(crate) fn statements(p: &mut Parser) {
 
 /// Whether the current token can start a statement.
 pub(crate) fn at_statement(p: &Parser) -> bool {
-    at_declaration(p) || at_expression(p)
-}
-
-fn at_declaration(p: &Parser) -> bool {
-    matches!(
-        p.current(),
-        Some(CLASS_KW | INTERFACE_KW | OBJECT_KW | FUN_KW | VAL_KW | VAR_KW | TYPEALIAS_KW)
-    )
+    crate::parser::grammar::decl::at_declaration(p) || at_expression(p)
 }
 
 /// `statement`: {label | annotation} (declaration | assignment |
 ///              loopStatement | expression)
 /// [spec: grammar-rule-statement] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-statement
 pub(crate) fn statement(p: &mut Parser) {
-    if at_declaration(p) {
-        declaration(p);
+    if crate::parser::grammar::decl::at_declaration(p) {
+        crate::parser::grammar::decl::declaration(p);
         return;
     }
 

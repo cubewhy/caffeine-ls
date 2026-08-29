@@ -1,0 +1,25 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Foo
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Foo"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..10
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..10
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..9 "Foo"
+    NEWLINE@9..10 "\n"

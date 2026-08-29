@@ -1,0 +1,76 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+object Singleton : Runnable {
+    override fun run() {}
+}
+
+TOKENS:
+OBJECT_KW "object"
+WHITESPACE " "
+IDENTIFIER "Singleton"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Runnable"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "override"
+WHITESPACE " "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "run"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..58
+  IMPORT_LIST@0..0
+  OBJECT_DECL@0..57
+    OBJECT_KW@0..6 "object"
+    WHITESPACE@6..7 " "
+    IDENTIFIER@7..16 "Singleton"
+    WHITESPACE@16..17 " "
+    COLON@17..18 ":"
+    WHITESPACE@18..19 " "
+    DELEGATION_SPECIFIERS@19..27
+      DELEGATION_SPECIFIER@19..27
+        TYPE@19..27
+          USER_TYPE@19..27
+            IDENTIFIER@19..27 "Runnable"
+    WHITESPACE@27..28 " "
+    CLASS_BODY@28..57
+      L_BRACE@28..29 "{"
+      NEWLINE@29..30 "\n"
+      WHITESPACE@30..34 "    "
+      FUNCTION_DECL@34..55
+        MODIFIER_LIST@34..42
+          IDENTIFIER@34..42 "override"
+        WHITESPACE@42..43 " "
+        FUN_KW@43..46 "fun"
+        WHITESPACE@46..47 " "
+        IDENTIFIER@47..50 "run"
+        VALUE_PARAMETERS@50..52
+          L_PAREN@50..51 "("
+          R_PAREN@51..52 ")"
+        WHITESPACE@52..53 " "
+        BLOCK@53..55
+          L_BRACE@53..54 "{"
+          R_BRACE@54..55 "}"
+      NEWLINE@55..56 "\n"
+      R_BRACE@56..57 "}"
+  NEWLINE@57..58 "\n"

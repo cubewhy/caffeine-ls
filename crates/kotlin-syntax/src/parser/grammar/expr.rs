@@ -1,5 +1,5 @@
 use crate::{
-    ContextualKeyword, Parser, SyntaxKind,
+    ContextualKeyword, Parser,
     SyntaxKind::*,
     grammar::{
         annotations::annotation,
@@ -982,7 +982,7 @@ fn anonymous_function(p: &mut Parser) {
         eat_nl(p);
     }
 
-    function_value_parameters(p);
+    crate::parser::grammar::decl::function_value_parameters(p);
     eat_nl(p);
 
     if p.at(COLON) {
@@ -992,65 +992,8 @@ fn anonymous_function(p: &mut Parser) {
         eat_nl(p);
     }
 
-    function_body(p);
+    crate::parser::grammar::decl::function_body(p);
     m.complete(p, ANONYMOUS_FUNCTION);
-}
-
-/// `functionValueParameters`: '(' {NL} [functionValueParameter {{NL} ','} ...] ')'
-/// [spec: grammar-rule-functionValueParameters] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameters
-fn function_value_parameters(p: &mut Parser) {
-    let m = p.start();
-    p.expect(L_PAREN);
-    eat_nl(p);
-    if !p.at(R_PAREN) {
-        loop {
-            eat_nl(p);
-            if p.at(R_PAREN) {
-                break;
-            }
-            function_value_parameter(p);
-            eat_nl(p);
-            if !p.eat(COMMA) {
-                break;
-            }
-        }
-    }
-    eat_nl(p);
-    p.expect(R_PAREN);
-    m.complete(p, VALUE_PARAMETERS);
-}
-
-/// `functionValueParameter`: [parameterModifiers] parameter ['=' expression]
-/// [spec: grammar-rule-functionValueParameter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameter
-fn function_value_parameter(p: &mut Parser) {
-    let m = p.start();
-    if p.at(AT) {
-        annotation(p);
-        eat_nl(p);
-    }
-    eat_nl(p);
-    simple_identifier(p);
-    p.expect(COLON);
-    eat_nl(p);
-    type_(p);
-    eat_nl(p);
-    if p.eat(EQUAL) {
-        eat_nl(p);
-        expression(p);
-    }
-    m.complete(p, VALUE_PARAMETER);
-}
-
-/// `functionBody`: block | ('=' {NL} expression)
-/// [spec: grammar-rule-functionBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionBody
-fn function_body(p: &mut Parser) {
-    if p.at(L_BRACE) {
-        crate::parser::grammar::statements::block(p);
-    } else if p.at(EQUAL) {
-        p.bump();
-        eat_nl(p);
-        expression(p);
-    }
 }
 
 /// Whether `<` starts a `typeArguments` list rather than a comparison.

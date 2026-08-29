@@ -1,0 +1,182 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Box<T : Comparable<T>>(private val items: List<T>) : Iterable<T> {
+    override fun iterator(): Iterator<T> = items.iterator()
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Box"
+LESS "<"
+IDENTIFIER "T"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Comparable"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+GREATER ">"
+L_PAREN "("
+IDENTIFIER "private"
+WHITESPACE " "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "items"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+R_PAREN ")"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Iterable"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "override"
+WHITESPACE " "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "iterator"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Iterator"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "items"
+DOT "."
+IDENTIFIER "iterator"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..135
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..134
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..9 "Box"
+    TYPE_PARAMETERS@9..28
+      LESS@9..10 "<"
+      TYPE_PARAMETER@10..27
+        IDENTIFIER@10..11 "T"
+        WHITESPACE@11..12 " "
+        COLON@12..13 ":"
+        WHITESPACE@13..14 " "
+        TYPE@14..27
+          USER_TYPE@14..27
+            IDENTIFIER@14..24 "Comparable"
+            TYPE_ARGUMENTS@24..27
+              LESS@24..25 "<"
+              TYPE_PROJECTION@25..26
+                TYPE@25..26
+                  USER_TYPE@25..26
+                    IDENTIFIER@25..26 "T"
+              GREATER@26..27 ">"
+      GREATER@27..28 ">"
+    PRIMARY_CONSTRUCTOR@28..56
+      CLASS_PARAMETERS@28..56
+        L_PAREN@28..29 "("
+        CLASS_PARAMETER@29..55
+          MODIFIER_LIST@29..36
+            IDENTIFIER@29..36 "private"
+          WHITESPACE@36..37 " "
+          VAL_KW@37..40 "val"
+          WHITESPACE@40..41 " "
+          IDENTIFIER@41..46 "items"
+          COLON@46..47 ":"
+          WHITESPACE@47..48 " "
+          TYPE@48..55
+            USER_TYPE@48..55
+              IDENTIFIER@48..52 "List"
+              TYPE_ARGUMENTS@52..55
+                LESS@52..53 "<"
+                TYPE_PROJECTION@53..54
+                  TYPE@53..54
+                    USER_TYPE@53..54
+                      IDENTIFIER@53..54 "T"
+                GREATER@54..55 ">"
+        R_PAREN@55..56 ")"
+    WHITESPACE@56..57 " "
+    COLON@57..58 ":"
+    WHITESPACE@58..59 " "
+    DELEGATION_SPECIFIERS@59..70
+      DELEGATION_SPECIFIER@59..70
+        TYPE@59..70
+          USER_TYPE@59..70
+            IDENTIFIER@59..67 "Iterable"
+            TYPE_ARGUMENTS@67..70
+              LESS@67..68 "<"
+              TYPE_PROJECTION@68..69
+                TYPE@68..69
+                  USER_TYPE@68..69
+                    IDENTIFIER@68..69 "T"
+              GREATER@69..70 ">"
+    WHITESPACE@70..71 " "
+    CLASS_BODY@71..134
+      L_BRACE@71..72 "{"
+      NEWLINE@72..73 "\n"
+      WHITESPACE@73..77 "    "
+      FUNCTION_DECL@77..132
+        MODIFIER_LIST@77..85
+          IDENTIFIER@77..85 "override"
+        WHITESPACE@85..86 " "
+        FUN_KW@86..89 "fun"
+        WHITESPACE@89..90 " "
+        IDENTIFIER@90..98 "iterator"
+        VALUE_PARAMETERS@98..100
+          L_PAREN@98..99 "("
+          R_PAREN@99..100 ")"
+        COLON@100..101 ":"
+        WHITESPACE@101..102 " "
+        TYPE@102..113
+          USER_TYPE@102..113
+            IDENTIFIER@102..110 "Iterator"
+            TYPE_ARGUMENTS@110..113
+              LESS@110..111 "<"
+              TYPE_PROJECTION@111..112
+                TYPE@111..112
+                  USER_TYPE@111..112
+                    IDENTIFIER@111..112 "T"
+              GREATER@112..113 ">"
+        WHITESPACE@113..114 " "
+        EQUAL@114..115 "="
+        WHITESPACE@115..116 " "
+        POSTFIX_UNARY_EXPRESSION@116..132
+          PRIMARY_EXPRESSION@116..121
+            IDENTIFIER@116..121 "items"
+          NAVIGATION_SUFFIX@121..130
+            DOT@121..122 "."
+            IDENTIFIER@122..130 "iterator"
+          CALL_EXPRESSION@130..132
+            VALUE_ARGUMENTS@130..132
+              L_PAREN@130..131 "("
+              R_PAREN@131..132 ")"
+      NEWLINE@132..133 "\n"
+      R_BRACE@133..134 "}"
+  NEWLINE@134..135 "\n"

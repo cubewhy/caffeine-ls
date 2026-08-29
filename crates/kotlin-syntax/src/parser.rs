@@ -147,6 +147,10 @@ impl<'a> Parser<'a> {
         self.source.current_lexeme()
     }
 
+    pub(crate) fn nth_lexeme(&'a self, n: usize) -> Option<&'a str> {
+        self.source.nth_lexeme(n)
+    }
+
     pub(crate) fn nth(&self, n: usize) -> Option<SyntaxKind> {
         if let Some(over) = &self.override_token {
             if n == 0 {

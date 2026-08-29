@@ -1,0 +1,123 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Lazy {
+    val value: Int by lazy { 42 }
+    var cached: String? by mutableLazy()
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Lazy"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "value"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+IDENTIFIER "by"
+WHITESPACE " "
+IDENTIFIER "lazy"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+INTEGER_LITERAL "42"
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "cached"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+QUESTION "?"
+WHITESPACE " "
+IDENTIFIER "by"
+WHITESPACE " "
+IDENTIFIER "mutableLazy"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..90
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..89
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Lazy"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..89
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      PROPERTY_DECL@17..47
+        VAL_KW@17..20 "val"
+        WHITESPACE@20..21 " "
+        VARIABLE_DECLARATION@21..31
+          IDENTIFIER@21..26 "value"
+          COLON@26..27 ":"
+          WHITESPACE@27..28 " "
+          TYPE@28..31
+            USER_TYPE@28..31
+              IDENTIFIER@28..31 "Int"
+        WHITESPACE@31..32 " "
+        PROPERTY_DELEGATE@32..46
+          IDENTIFIER@32..34 "by"
+          WHITESPACE@34..35 " "
+          POSTFIX_UNARY_EXPRESSION@35..46
+            PRIMARY_EXPRESSION@35..39
+              IDENTIFIER@35..39 "lazy"
+            WHITESPACE@39..40 " "
+            CALL_EXPRESSION@40..46
+              LAMBDA_LITERAL@40..46
+                L_BRACE@40..41 "{"
+                WHITESPACE@41..42 " "
+                EXPRESSION_STATEMENT@42..44
+                  PRIMARY_EXPRESSION@42..44
+                    INTEGER_LITERAL@42..44 "42"
+                WHITESPACE@44..45 " "
+                R_BRACE@45..46 "}"
+        NEWLINE@46..47 "\n"
+      WHITESPACE@47..51 "    "
+      PROPERTY_DECL@51..88
+        VAR_KW@51..54 "var"
+        WHITESPACE@54..55 " "
+        VARIABLE_DECLARATION@55..70
+          IDENTIFIER@55..61 "cached"
+          COLON@61..62 ":"
+          WHITESPACE@62..63 " "
+          NULLABLE_TYPE@63..70
+            USER_TYPE@63..69
+              IDENTIFIER@63..69 "String"
+            QUESTION@69..70 "?"
+        WHITESPACE@70..71 " "
+        PROPERTY_DELEGATE@71..87
+          IDENTIFIER@71..73 "by"
+          WHITESPACE@73..74 " "
+          POSTFIX_UNARY_EXPRESSION@74..87
+            PRIMARY_EXPRESSION@74..85
+              IDENTIFIER@74..85 "mutableLazy"
+            CALL_EXPRESSION@85..87
+              VALUE_ARGUMENTS@85..87
+                L_PAREN@85..86 "("
+                R_PAREN@86..87 ")"
+        NEWLINE@87..88 "\n"
+      R_BRACE@88..89 "}"
+  NEWLINE@89..90 "\n"

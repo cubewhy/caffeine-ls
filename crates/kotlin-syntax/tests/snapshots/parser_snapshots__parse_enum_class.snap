@@ -1,0 +1,215 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+enum class Direction(val deg: Int) {
+    NORTH(0), EAST(90), SOUTH(180), WEST(270);
+
+    fun opposite(): Direction = Direction.values()[(this.ordinal + 2) % 4]
+}
+
+TOKENS:
+IDENTIFIER "enum"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Direction"
+L_PAREN "("
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "deg"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "NORTH"
+L_PAREN "("
+INTEGER_LITERAL "0"
+R_PAREN ")"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "EAST"
+L_PAREN "("
+INTEGER_LITERAL "90"
+R_PAREN ")"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "SOUTH"
+L_PAREN "("
+INTEGER_LITERAL "180"
+R_PAREN ")"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "WEST"
+L_PAREN "("
+INTEGER_LITERAL "270"
+R_PAREN ")"
+SEMICOLON ";"
+NEWLINE "\n\n"
+WHITESPACE "    "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "opposite"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Direction"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "Direction"
+DOT "."
+IDENTIFIER "values"
+L_PAREN "("
+R_PAREN ")"
+L_BRACKET "["
+L_PAREN "("
+THIS_KW "this"
+DOT "."
+IDENTIFIER "ordinal"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+INTEGER_LITERAL "2"
+R_PAREN ")"
+WHITESPACE " "
+MODULO "%"
+WHITESPACE " "
+INTEGER_LITERAL "4"
+R_BRACKET "]"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..162
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..161
+    MODIFIER_LIST@0..4
+      IDENTIFIER@0..4 "enum"
+    WHITESPACE@4..5 " "
+    CLASS_KW@5..10 "class"
+    WHITESPACE@10..11 " "
+    IDENTIFIER@11..20 "Direction"
+    PRIMARY_CONSTRUCTOR@20..34
+      CLASS_PARAMETERS@20..34
+        L_PAREN@20..21 "("
+        CLASS_PARAMETER@21..33
+          VAL_KW@21..24 "val"
+          WHITESPACE@24..25 " "
+          IDENTIFIER@25..28 "deg"
+          COLON@28..29 ":"
+          WHITESPACE@29..30 " "
+          TYPE@30..33
+            USER_TYPE@30..33
+              IDENTIFIER@30..33 "Int"
+        R_PAREN@33..34 ")"
+    WHITESPACE@34..35 " "
+    ENUM_CLASS_BODY@35..161
+      L_BRACE@35..36 "{"
+      NEWLINE@36..37 "\n"
+      WHITESPACE@37..41 "    "
+      ENUM_ENTRIES@41..82
+        ENUM_ENTRY@41..49
+          IDENTIFIER@41..46 "NORTH"
+          VALUE_ARGUMENTS@46..49
+            L_PAREN@46..47 "("
+            VALUE_ARGUMENT@47..48
+              PRIMARY_EXPRESSION@47..48
+                INTEGER_LITERAL@47..48 "0"
+            R_PAREN@48..49 ")"
+        COMMA@49..50 ","
+        WHITESPACE@50..51 " "
+        ENUM_ENTRY@51..59
+          IDENTIFIER@51..55 "EAST"
+          VALUE_ARGUMENTS@55..59
+            L_PAREN@55..56 "("
+            VALUE_ARGUMENT@56..58
+              PRIMARY_EXPRESSION@56..58
+                INTEGER_LITERAL@56..58 "90"
+            R_PAREN@58..59 ")"
+        COMMA@59..60 ","
+        WHITESPACE@60..61 " "
+        ENUM_ENTRY@61..71
+          IDENTIFIER@61..66 "SOUTH"
+          VALUE_ARGUMENTS@66..71
+            L_PAREN@66..67 "("
+            VALUE_ARGUMENT@67..70
+              PRIMARY_EXPRESSION@67..70
+                INTEGER_LITERAL@67..70 "180"
+            R_PAREN@70..71 ")"
+        COMMA@71..72 ","
+        WHITESPACE@72..73 " "
+        ENUM_ENTRY@73..82
+          IDENTIFIER@73..77 "WEST"
+          VALUE_ARGUMENTS@77..82
+            L_PAREN@77..78 "("
+            VALUE_ARGUMENT@78..81
+              PRIMARY_EXPRESSION@78..81
+                INTEGER_LITERAL@78..81 "270"
+            R_PAREN@81..82 ")"
+      SEMICOLON@82..83 ";"
+      NEWLINE@83..85 "\n\n"
+      WHITESPACE@85..89 "    "
+      FUNCTION_DECL@89..159
+        FUN_KW@89..92 "fun"
+        WHITESPACE@92..93 " "
+        IDENTIFIER@93..101 "opposite"
+        VALUE_PARAMETERS@101..103
+          L_PAREN@101..102 "("
+          R_PAREN@102..103 ")"
+        COLON@103..104 ":"
+        WHITESPACE@104..105 " "
+        TYPE@105..114
+          USER_TYPE@105..114
+            IDENTIFIER@105..114 "Direction"
+        WHITESPACE@114..115 " "
+        EQUAL@115..116 "="
+        WHITESPACE@116..117 " "
+        POSTFIX_UNARY_EXPRESSION@117..159
+          PRIMARY_EXPRESSION@117..126
+            IDENTIFIER@117..126 "Direction"
+          NAVIGATION_SUFFIX@126..133
+            DOT@126..127 "."
+            IDENTIFIER@127..133 "values"
+          CALL_EXPRESSION@133..135
+            VALUE_ARGUMENTS@133..135
+              L_PAREN@133..134 "("
+              R_PAREN@134..135 ")"
+          INDEXING_EXPRESSION@135..159
+            L_BRACKET@135..136 "["
+            BINARY_EXPRESSION@136..158
+              PARENTHESIZED_EXPRESSION@136..154
+                L_PAREN@136..137 "("
+                BINARY_EXPRESSION@137..153
+                  POSTFIX_UNARY_EXPRESSION@137..149
+                    THIS_EXPRESSION@137..141
+                      THIS_KW@137..141 "this"
+                    NAVIGATION_SUFFIX@141..149
+                      DOT@141..142 "."
+                      IDENTIFIER@142..149 "ordinal"
+                  WHITESPACE@149..150 " "
+                  PLUS@150..151 "+"
+                  WHITESPACE@151..152 " "
+                  PRIMARY_EXPRESSION@152..153
+                    INTEGER_LITERAL@152..153 "2"
+                R_PAREN@153..154 ")"
+              WHITESPACE@154..155 " "
+              MODULO@155..156 "%"
+              WHITESPACE@156..157 " "
+              PRIMARY_EXPRESSION@157..158
+                INTEGER_LITERAL@157..158 "4"
+            R_BRACKET@158..159 "]"
+      NEWLINE@159..160 "\n"
+      R_BRACE@160..161 "}"
+  NEWLINE@161..162 "\n"

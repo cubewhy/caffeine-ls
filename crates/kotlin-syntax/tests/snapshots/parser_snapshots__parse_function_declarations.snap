@@ -1,0 +1,375 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun add(a: Int, b: Int): Int = a + b
+
+fun greet(name: String = "world"): String {
+    return "Hello, $name"
+}
+
+suspend fun fetch(): List<String> = emptyList()
+
+fun <T> List<T>.second(): T? = getOrNull(1)
+
+fun <T> containsIf(where: (T) -> Boolean): Boolean where T : Comparable<T>
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "add"
+L_PAREN "("
+IDENTIFIER "a"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "b"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "b"
+NEWLINE "\n\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "greet"
+L_PAREN "("
+IDENTIFIER "name"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "world"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "Hello, "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "name"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n\n"
+IDENTIFIER "suspend"
+WHITESPACE " "
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "fetch"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "emptyList"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n\n"
+FUN_KW "fun"
+WHITESPACE " "
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+DOT "."
+IDENTIFIER "second"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "T"
+QUESTION "?"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "getOrNull"
+L_PAREN "("
+INTEGER_LITERAL "1"
+R_PAREN ")"
+NEWLINE "\n\n"
+FUN_KW "fun"
+WHITESPACE " "
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "containsIf"
+L_PAREN "("
+IDENTIFIER "where"
+COLON ":"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "T"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Boolean"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Boolean"
+WHITESPACE " "
+IDENTIFIER "where"
+WHITESPACE " "
+IDENTIFIER "T"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Comparable"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..280
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..36
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..7 "add"
+    VALUE_PARAMETERS@7..23
+      L_PAREN@7..8 "("
+      VALUE_PARAMETER@8..14
+        IDENTIFIER@8..9 "a"
+        COLON@9..10 ":"
+        WHITESPACE@10..11 " "
+        TYPE@11..14
+          USER_TYPE@11..14
+            IDENTIFIER@11..14 "Int"
+      COMMA@14..15 ","
+      WHITESPACE@15..16 " "
+      VALUE_PARAMETER@16..22
+        IDENTIFIER@16..17 "b"
+        COLON@17..18 ":"
+        WHITESPACE@18..19 " "
+        TYPE@19..22
+          USER_TYPE@19..22
+            IDENTIFIER@19..22 "Int"
+      R_PAREN@22..23 ")"
+    COLON@23..24 ":"
+    WHITESPACE@24..25 " "
+    TYPE@25..28
+      USER_TYPE@25..28
+        IDENTIFIER@25..28 "Int"
+    WHITESPACE@28..29 " "
+    EQUAL@29..30 "="
+    WHITESPACE@30..31 " "
+    BINARY_EXPRESSION@31..36
+      PRIMARY_EXPRESSION@31..32
+        IDENTIFIER@31..32 "a"
+      WHITESPACE@32..33 " "
+      PLUS@33..34 "+"
+      WHITESPACE@34..35 " "
+      PRIMARY_EXPRESSION@35..36
+        IDENTIFIER@35..36 "b"
+  NEWLINE@36..38 "\n\n"
+  FUNCTION_DECL@38..109
+    FUN_KW@38..41 "fun"
+    WHITESPACE@41..42 " "
+    IDENTIFIER@42..47 "greet"
+    VALUE_PARAMETERS@47..71
+      L_PAREN@47..48 "("
+      VALUE_PARAMETER@48..70
+        IDENTIFIER@48..52 "name"
+        COLON@52..53 ":"
+        WHITESPACE@53..54 " "
+        TYPE@54..60
+          USER_TYPE@54..60
+            IDENTIFIER@54..60 "String"
+        WHITESPACE@60..61 " "
+        EQUAL@61..62 "="
+        WHITESPACE@62..63 " "
+        STRING_LITERAL@63..70
+          OPEN_QUOTE@63..64 "\""
+          STRING_CONTENT@64..69 "world"
+          CLOSE_QUOTE@69..70 "\""
+      R_PAREN@70..71 ")"
+    COLON@71..72 ":"
+    WHITESPACE@72..73 " "
+    TYPE@73..79
+      USER_TYPE@73..79
+        IDENTIFIER@73..79 "String"
+    WHITESPACE@79..80 " "
+    BLOCK@80..109
+      L_BRACE@80..81 "{"
+      NEWLINE@81..82 "\n"
+      WHITESPACE@82..86 "    "
+      EXPRESSION_STATEMENT@86..107
+        JUMP_EXPRESSION@86..107
+          RETURN_KW@86..92 "return"
+          WHITESPACE@92..93 " "
+          STRING_LITERAL@93..107
+            OPEN_QUOTE@93..94 "\""
+            STRING_CONTENT@94..101 "Hello, "
+            STRING_TEMPLATE@101..106
+              TEMPLATE_SHORT_START@101..102 "$"
+              IDENTIFIER@102..106 "name"
+            CLOSE_QUOTE@106..107 "\""
+      NEWLINE@107..108 "\n"
+      R_BRACE@108..109 "}"
+  NEWLINE@109..111 "\n\n"
+  FUNCTION_DECL@111..158
+    MODIFIER_LIST@111..118
+      IDENTIFIER@111..118 "suspend"
+    WHITESPACE@118..119 " "
+    FUN_KW@119..122 "fun"
+    WHITESPACE@122..123 " "
+    IDENTIFIER@123..128 "fetch"
+    VALUE_PARAMETERS@128..130
+      L_PAREN@128..129 "("
+      R_PAREN@129..130 ")"
+    COLON@130..131 ":"
+    WHITESPACE@131..132 " "
+    TYPE@132..144
+      USER_TYPE@132..144
+        IDENTIFIER@132..136 "List"
+        TYPE_ARGUMENTS@136..144
+          LESS@136..137 "<"
+          TYPE_PROJECTION@137..143
+            TYPE@137..143
+              USER_TYPE@137..143
+                IDENTIFIER@137..143 "String"
+          GREATER@143..144 ">"
+    WHITESPACE@144..145 " "
+    EQUAL@145..146 "="
+    WHITESPACE@146..147 " "
+    POSTFIX_UNARY_EXPRESSION@147..158
+      PRIMARY_EXPRESSION@147..156
+        IDENTIFIER@147..156 "emptyList"
+      CALL_EXPRESSION@156..158
+        VALUE_ARGUMENTS@156..158
+          L_PAREN@156..157 "("
+          R_PAREN@157..158 ")"
+  NEWLINE@158..160 "\n\n"
+  FUNCTION_DECL@160..172
+    FUN_KW@160..163 "fun"
+    WHITESPACE@163..164 " "
+    TYPE_PARAMETERS@164..167
+      LESS@164..165 "<"
+      TYPE_PARAMETER@165..166
+        IDENTIFIER@165..166 "T"
+      GREATER@166..167 ">"
+    WHITESPACE@167..168 " "
+    IDENTIFIER@168..172 "List"
+    VALUE_PARAMETERS@172..172
+      MISSING@172..172
+      VALUE_PARAMETER@172..172
+        MISSING@172..172
+        MISSING@172..172
+        TYPE@172..172
+      MISSING@172..172
+  LESS@172..173 "<"
+  IDENTIFIER@173..174 "T"
+  GREATER@174..175 ">"
+  DOT@175..176 "."
+  IDENTIFIER@176..182 "second"
+  L_PAREN@182..183 "("
+  R_PAREN@183..184 ")"
+  COLON@184..185 ":"
+  WHITESPACE@185..186 " "
+  IDENTIFIER@186..187 "T"
+  QUESTION@187..188 "?"
+  WHITESPACE@188..189 " "
+  EQUAL@189..190 "="
+  WHITESPACE@190..191 " "
+  IDENTIFIER@191..200 "getOrNull"
+  L_PAREN@200..201 "("
+  INTEGER_LITERAL@201..202 "1"
+  R_PAREN@202..203 ")"
+  NEWLINE@203..205 "\n\n"
+  FUNCTION_DECL@205..280
+    FUN_KW@205..208 "fun"
+    WHITESPACE@208..209 " "
+    TYPE_PARAMETERS@209..212
+      LESS@209..210 "<"
+      TYPE_PARAMETER@210..211
+        IDENTIFIER@210..211 "T"
+      GREATER@211..212 ">"
+    WHITESPACE@212..213 " "
+    IDENTIFIER@213..223 "containsIf"
+    VALUE_PARAMETERS@223..246
+      L_PAREN@223..224 "("
+      VALUE_PARAMETER@224..245
+        IDENTIFIER@224..229 "where"
+        COLON@229..230 ":"
+        WHITESPACE@230..231 " "
+        TYPE@231..245
+          FUNCTION_TYPE@231..245
+            VALUE_PARAMETERS@231..234
+              L_PAREN@231..232 "("
+              TYPE@232..233
+                USER_TYPE@232..233
+                  IDENTIFIER@232..233 "T"
+              R_PAREN@233..234 ")"
+            WHITESPACE@234..235 " "
+            ARROW@235..237 "->"
+            WHITESPACE@237..238 " "
+            TYPE@238..245
+              USER_TYPE@238..245
+                IDENTIFIER@238..245 "Boolean"
+      R_PAREN@245..246 ")"
+    COLON@246..247 ":"
+    WHITESPACE@247..248 " "
+    TYPE@248..255
+      USER_TYPE@248..255
+        IDENTIFIER@248..255 "Boolean"
+    WHITESPACE@255..256 " "
+    TYPE_CONSTRAINTS@256..280
+      IDENTIFIER@256..261 "where"
+      WHITESPACE@261..262 " "
+      TYPE_CONSTRAINT@262..280
+        IDENTIFIER@262..263 "T"
+        WHITESPACE@263..264 " "
+        COLON@264..265 ":"
+        WHITESPACE@265..266 " "
+        TYPE@266..280
+          USER_TYPE@266..280
+            IDENTIFIER@266..276 "Comparable"
+            TYPE_ARGUMENTS@276..279
+              LESS@276..277 "<"
+              TYPE_PROJECTION@277..278
+                TYPE@277..278
+                  USER_TYPE@277..278
+                    IDENTIFIER@277..278 "T"
+              GREATER@278..279 ">"
+            NEWLINE@279..280 "\n"

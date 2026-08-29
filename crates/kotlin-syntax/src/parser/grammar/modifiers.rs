@@ -34,15 +34,15 @@ pub(crate) fn modifiers(p: &mut Parser) {
 /// [spec: grammar-rule-modifier] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-modifier
 ///
 /// All of these lex as IDENTIFIER (soft keywords) except `in` (variance),
-/// which is the hard `IN_KW`.
-fn at_modifier(p: &Parser) -> bool {
+/// which is the hard `IN_KW`. `companion` is deliberately excluded: it is
+/// only valid as part of `companion object`, a separate production.
+pub(crate) fn at_modifier(p: &Parser) -> bool {
     p.at(AT)
         || p.at(IN_KW)
         || p.at_contextual_kw_set(tokenset![
             ContextualKeyword::Abstract,
             ContextualKeyword::Actual,
             ContextualKeyword::Annotation,
-            ContextualKeyword::Companion,
             ContextualKeyword::Const,
             ContextualKeyword::CrossInline,
             ContextualKeyword::Data,
