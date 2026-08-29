@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_constructors.rs
+assertion_line: 66
+expression: out
+---
+FILE /src/com/example/Constr.java:
+package com.example;
+
+class Foo {
+    private Foo() {}
+}
+
+class Body {
+    void m() {
+        new Foo();
+    }
+}
+
+method Foo(): <init>
+  locals: 
+  exprs: 
+method m(): void
+  locals: 
+  exprs: e0: com.example.Foo
+  diags: e0@8:8: no-such-constructor: cannot find symbol
+  symbol:   constructor Foo()

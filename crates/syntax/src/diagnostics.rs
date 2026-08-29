@@ -47,6 +47,10 @@ pub enum JavaDiagnosticCode {
     NoSuchField,
     /// §15.12.1: no method of the name on the receiver.
     NoSuchMethod,
+    /// §15.9/[§8.8.7.1]: no constructor of the name on the class — an
+    /// unqualified `new`/`this(...)`/`super(...)` of a class that declares
+    /// none of that signature.
+    NoSuchConstructor,
     /// §15.12.2: no member is applicable to the actual arguments.
     WrongArity,
     /// §14.18: a `throw` operand is not assignable to `Throwable`; also used
@@ -183,6 +187,7 @@ impl JavaDiagnosticCode {
             ModuleNotAccessible => Some("compiler.err.package.not.visible"),
             NoSuchField => Some("compiler.err.cant.resolve.location"),
             NoSuchMethod => Some("compiler.err.cant.resolve.location"),
+            NoSuchConstructor => Some("compiler.err.cant.resolve.location"),
             WrongArity => Some("compiler.err.cant.apply.symbol"),
             IncompatibleTypes => Some("compiler.err.prob.found.req"),
             NonBooleanCondition => Some("compiler.err.prob.found.req"),
@@ -243,6 +248,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::ModuleNotAccessible => "module-not-accessible",
             JavaDiagnosticCode::NoSuchField => "no-such-field",
             JavaDiagnosticCode::NoSuchMethod => "no-such-method",
+            JavaDiagnosticCode::NoSuchConstructor => "no-such-constructor",
             JavaDiagnosticCode::WrongArity => "wrong-argument-count",
             JavaDiagnosticCode::IncompatibleTypes => "incompatible-types",
             JavaDiagnosticCode::NonBooleanCondition => "non-boolean-condition",

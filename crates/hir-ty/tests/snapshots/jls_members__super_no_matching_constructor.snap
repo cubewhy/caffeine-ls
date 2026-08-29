@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/jls_members.rs
+assertion_line: 52
 expression: out
 ---
 FILE /src/com/example/Base.java:
@@ -24,7 +25,7 @@ method Base(int): <init>
 method Derived(): <init>
   locals: 
   exprs: e0: void
-  diags: e0@4:8: wrong-argument-count: method Base cannot be applied to given types;
+  diags: e0@4:8: wrong-argument-count: constructor Base() cannot be applied to given types;
   required: int
   found: 
   reason: actual and formal argument lists differ in length

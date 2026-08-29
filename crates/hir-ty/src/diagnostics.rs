@@ -90,6 +90,9 @@ pub enum TypeError {
     NoSuchField { expr: ExprId, name: Name },
     /// §15.12.1: no method of the name on the receiver's type.
     NoSuchMethod { expr: ExprId, name: Name },
+    /// §15.9/[§8.8.7.1]: a class instance creation, `this(...)` or `super(...)`
+    /// invocation for which the class declares no constructor of the name.
+    NoSuchConstructor { expr: ExprId, name: Name },
     /// §15.12.3/[§8.1.3]: the form is a simple name (`MethodName`) and the
     /// chosen compile-time declaration is an instance method, but the
     /// invocation occurs in a static context — a static method body, a static
@@ -104,12 +107,16 @@ pub enum TypeError {
     /// first argument-to-formal mismatch against the closest candidate when
     /// the arities *match* — javac then renders
     /// `reason: incompatible types: … cannot be converted to …` instead of
-    /// the argument-list-length text. Types are stored unresolved (the
-    /// canonical FQN), rendered simple only in [`TypeError::message`], so
-    /// future quickfixes keep the full type.
+    /// the argument-list-length text. When `owner` is `Some` the invocation
+    /// is a *constructor* (`new`, `this(...)`, `super(...)`) of that class and
+    /// the message opens with javac's `constructor {owner}() cannot be applied
+    /// to given types;`. Types are stored unresolved (the canonical FQN),
+    /// rendered simple only in [`TypeError::message`], so future quickfixes
+    /// keep the full type.
     WrongArity {
         expr: ExprId,
         name: Name,
+        owner: Option<Name>,
         found: usize,
         expected: usize,
         required: Vec<Ty>,
@@ -213,6 +220,7 @@ impl TypeError {
             TypeError::ModuleNotAccessible { .. } => DiagnosticCode::Java(ModuleNotAccessible),
             TypeError::NoSuchField { .. } => DiagnosticCode::Java(NoSuchField),
             TypeError::NoSuchMethod { .. } => DiagnosticCode::Java(NoSuchMethod),
+            TypeError::NoSuchConstructor { .. } => DiagnosticCode::Java(NoSuchConstructor),
             TypeError::NonStaticMethodFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticMethodFromStaticContext)
             }
@@ -270,6 +278,7 @@ impl TypeError {
             CannotResolveName { expr, .. }
             | NoSuchField { expr, .. }
             | NoSuchMethod { expr, .. }
+            | NoSuchConstructor { expr, .. }
             | NonStaticMethodFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
             | IncompatibleTypes { expr, .. }
@@ -356,6 +365,9 @@ impl TypeError {
             NoSuchMethod { name, .. } => {
                 format!("cannot find symbol\n  symbol:   method {}()", name.as_str())
             }
+            NoSuchConstructor { name, .. } => {
+                format!("cannot find symbol\n  symbol:   constructor {name}()")
+            }
             NonStaticMethodFromStaticContext { name, .. } => {
                 format!(
                     "non-static method {}() cannot be referenced from a static context",
@@ -364,6 +376,7 @@ impl TypeError {
             }
             WrongArity {
                 name,
+                owner,
                 required,
                 found_tys,
                 incompatible,
@@ -373,39 +386,79 @@ impl TypeError {
                 // `compiler.err.cant.apply.symbol`. The reason line mirrors
                 // javac's two shapes: the argument-list-length text when the
                 // arities differ, otherwise the first argument-to-formal
-                // conversion failure against the closest candidate.
-                if required.is_empty() {
-                    return format!(
-                        "method '{}' cannot be applied to given types",
-                        name.as_str()
-                    );
+                // conversion failure against the closest candidate. A
+                // constructor invocation ([§15.9], [§8.8.7.1]) opens with
+                // javac's `constructor {Owner}() …`, a method invocation with
+                // `method {name} …` ([§15.12.2]).
+                match owner {
+                    Some(owner) => {
+                        let head = format!("constructor {owner}()");
+                        if required.is_empty() {
+                            return format!("{head} cannot be applied to given types");
+                        }
+                        let reason = match incompatible {
+                            Some((found, expected)) => format!(
+                                "reason: incompatible types: {} cannot be converted to {}",
+                                render_simple(db, *found),
+                                render_simple(db, *expected)
+                            ),
+                            None => "reason: actual and formal argument lists differ in length"
+                                .to_owned(),
+                        };
+                        format!(
+                            "{head} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
+                            required
+                                .iter()
+                                .map(|ty| render_simple(db, *ty))
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            found_tys
+                                .iter()
+                                .map(|ty| match ty {
+                                    Some(ty) => render_simple(db, *ty),
+                                    None => "<poly>".to_owned(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            reason
+                        )
+                    }
+                    None if required.is_empty() => {
+                        format!(
+                            "method '{}' cannot be applied to given types",
+                            name.as_str()
+                        )
+                    }
+                    None => {
+                        let reason = match incompatible {
+                            Some((found, expected)) => format!(
+                                "reason: incompatible types: {} cannot be converted to {}",
+                                render_simple(db, *found),
+                                render_simple(db, *expected)
+                            ),
+                            None => "reason: actual and formal argument lists differ in length"
+                                .to_owned(),
+                        };
+                        format!(
+                            "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
+                            name.as_str(),
+                            required
+                                .iter()
+                                .map(|ty| render_simple(db, *ty))
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            found_tys
+                                .iter()
+                                .map(|ty| match ty {
+                                    Some(ty) => render_simple(db, *ty),
+                                    None => "<poly>".to_owned(),
+                                })
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            reason
+                        )
+                    }
                 }
-                let reason = match incompatible {
-                    Some((found, expected)) => format!(
-                        "reason: incompatible types: {} cannot be converted to {}",
-                        render_simple(db, *found),
-                        render_simple(db, *expected)
-                    ),
-                    None => "reason: actual and formal argument lists differ in length".to_owned(),
-                };
-                format!(
-                    "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
-                    name.as_str(),
-                    required
-                        .iter()
-                        .map(|ty| render_simple(db, *ty))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    found_tys
-                        .iter()
-                        .map(|ty| match ty {
-                            Some(ty) => render_simple(db, *ty),
-                            None => "<poly>".to_owned(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(","),
-                    reason
-                )
             }
             IncompatibleTypes {
                 found, expected, ..

@@ -970,9 +970,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             "java/lang/RuntimeException",
             Some("java/lang/Exception"),
             &[],
-            &[("<init>", "(Ljava/lang/String;)V")],
-            &[""],
-            &[0x0001],
+            &[("<init>", "(Ljava/lang/String;)V"), ("<init>", "()V")],
+            &["", ""],
+            &[0x0001, 0x0001],
         ),
         class_with_methods_access(
             "java/io/File",

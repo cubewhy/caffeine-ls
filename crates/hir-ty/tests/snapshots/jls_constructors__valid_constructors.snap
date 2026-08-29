@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_constructors.rs
+assertion_line: 137
+expression: out
+---
+FILE /src/com/example/Constr.java:
+package com.example;
+
+class Foo {
+    Foo() {}
+    Foo(int x) {}
+}
+
+class Body {
+    void m() {
+        new Foo();
+        new Foo(7);
+        throw new RuntimeException();
+    }
+}
+
+method Foo(): <init>
+  locals: 
+  exprs: 
+method Foo(int): <init>
+  locals: l0: int
+  exprs: 
+method m(): void
+  locals: 
+  exprs: e0: com.example.Foo | e1: int | e2: com.example.Foo | e3: java.lang.RuntimeException

@@ -1748,12 +1748,10 @@ impl<'a> InferCtx<'a> {
         // library classes keep the JVMS `<init>` name ([JVMS §4.6]), so the
         // member lookup normalizes by how the target resolves ([§8.8.7.1]).
         let (fqn, _) = receiver_ty.as_reference(self.db).expect("class reference");
+        let owner = Name::new(fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str()));
         let name = match hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) {
             Some(hir::Resolved::Library(_)) => Name::new("<init>"),
-            _ => {
-                let simple = fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str());
-                Name::new(simple)
-            }
+            _ => owner.clone(),
         };
         // §8.8.7.1: an explicit `super(...)` delegation accesses the
         // superclass's constructors through the `super` keyword, whose
@@ -1787,14 +1785,14 @@ impl<'a> InferCtx<'a> {
                     member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
                 if members.is_empty() {
                     // §8.8.7.1: no constructor of that signature exists.
-                    self.report(TypeError::NoSuchMethod {
+                    self.report(TypeError::NoSuchConstructor {
                         expr,
                         name: name.clone(),
                     });
                 } else {
                     let name = name.clone();
                     let found = args.len();
-                    self.report_wrong_arity(expr, name, &members, &arg_kinds, found);
+                    self.report_wrong_arity(expr, name, Some(owner), &members, &arg_kinds, found);
                 }
             }
         }
@@ -1807,11 +1805,14 @@ impl<'a> InferCtx<'a> {
     /// message block ([JLS §15.12.2]). When some candidate has exactly the
     /// given arity, the reason is the first argument-to-formal conversion
     /// failure against it (`incompatible types: …`); otherwise the arities
-    /// differ and javac's argument-list-length text applies.
+    /// differ and javac's argument-list-length text applies. `owner` is
+    /// `Some` for a constructor invocation ([§15.9], [§8.8.7.1]) and opens
+    /// the message with javac's `constructor {Owner}() cannot be applied…`.
     fn report_wrong_arity(
         &mut self,
         expr: ExprId,
         name: Name,
+        owner: Option<Name>,
         members: &[crate::method::MethodData],
         arg_kinds: &[ArgInfo],
         found: usize,
@@ -1864,6 +1865,7 @@ impl<'a> InferCtx<'a> {
         self.report(TypeError::WrongArity {
             expr,
             name,
+            owner,
             found,
             expected,
             required,
@@ -1939,7 +1941,7 @@ impl<'a> InferCtx<'a> {
                     // applicable to the actual arguments.
                     let name = name.clone();
                     let found = args.len();
-                    self.report_wrong_arity(expr, name, &members, &arg_kinds, found);
+                    self.report_wrong_arity(expr, name, None, &members, &arg_kinds, found);
                 }
                 self.error()
             }
@@ -2852,9 +2854,11 @@ impl<'a> InferCtx<'a> {
         // class or an enum with `new` is a compile-time error — unless an
         // anonymous class body implements the interface or extends the
         // abstract class ([§15.9.5]).
-        if !anonymous_body {
-            self.check_instantiable(expr, class_ty);
-        }
+        let non_instantiable = if anonymous_body {
+            false
+        } else {
+            self.check_instantiable(expr, class_ty)
+        };
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
         };
@@ -2884,6 +2888,28 @@ impl<'a> InferCtx<'a> {
             for arg in args {
                 let _ = self.infer_expr(*arg);
             }
+            // §15.9/[§15.12.1]/[§15.12.2]: members of the name exist but none
+            // is applicable — a `cant.apply.symbol` at the `new` — or the
+            // class declares no constructor of the name at all. Non-
+            // instantiable types (interface/abstract/enum/type-var) already
+            // reported their own error; a failed/unknown class type reported
+            // the unknown type; library classes whose `<init>` stubs are
+            // absent (some test fixtures omit them) stay silent.
+            if !anonymous_body && !non_instantiable && !class_ty.is_error(self.db) {
+                let ctor = Name::new(&constructor_name);
+                let owner = Name::new(name.simple_name());
+                let members = member_set(self.db, &self.scope, &class_ty, ctor.as_str(), &access);
+                if members.is_empty() {
+                    if let Some(hir::Resolved::Source(_)) =
+                        hir::fqn_resolve(self.db, &self.scope, name.as_str())
+                    {
+                        self.report(TypeError::NoSuchConstructor { expr, name: ctor });
+                    }
+                } else {
+                    let found = args.len();
+                    self.report_wrong_arity(expr, ctor, Some(owner), &members, &arg_kinds, found);
+                }
+            }
         }
         class_ty
     }
@@ -2892,10 +2918,12 @@ impl<'a> InferCtx<'a> {
     /// type variable, an interface, an abstract class or an enum
     /// ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
     /// Source declarations are known directly; library classes are not flagged
-    /// (their access flags are not surfaced).
-    fn check_instantiable(&mut self, expr: ExprId, class_ty: Ty) {
+    /// (their access flags are not surfaced). Returns whether the creation was
+    /// rejected — the caller must not double-report a missing constructor on
+    /// top of the instantiation error.
+    fn check_instantiable(&mut self, expr: ExprId, class_ty: Ty) -> bool {
         let (TyKind::TypeVar { .. } | TyKind::Reference { .. }) = class_ty.kind(self.db) else {
-            return;
+            return false;
         };
         let non_instantiable = match class_ty.kind(self.db) {
             TyKind::TypeVar { .. } => true,
@@ -2903,11 +2931,11 @@ impl<'a> InferCtx<'a> {
                 let Some(hir::Resolved::Source(source)) =
                     hir::fqn_resolve(self.db, &self.scope, name.as_str())
                 else {
-                    return;
+                    return false;
                 };
                 let tree = hir::file_item_tree(self.db, source.file);
                 let Some(data) = crate::resolve::item_data(&tree, source.item) else {
-                    return;
+                    return false;
                 };
                 let non_instantiable = match data {
                     hir_expand::item_tree::ItemData::Interface(_)
@@ -2917,16 +2945,17 @@ impl<'a> InferCtx<'a> {
                     _ => false,
                 };
                 if !non_instantiable {
-                    return;
+                    return false;
                 }
                 true
             }
-            _ => return,
+            _ => return false,
         };
         if non_instantiable {
             self.types.insert(expr, self.error());
             self.report(TypeError::CannotInstantiateTypeVar { expr, ty: class_ty });
         }
+        non_instantiable
     }
 
     /// §15.9.2: the diamond operator — the created class's type arguments are
