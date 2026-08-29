@@ -1,0 +1,221 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    val (valueStr, _, unitRaw) = match.destructured
+
+    for ((key, _) in map) {
+        println(key)
+    }
+
+    map.mapValues { (_, value) -> "$value!" }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "valueStr"
+COMMA ","
+WHITESPACE " "
+UNDERSCORE "_"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "unitRaw"
+R_PAREN ")"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "match"
+DOT "."
+IDENTIFIER "destructured"
+NEWLINE "\n\n"
+WHITESPACE "    "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+L_PAREN "("
+IDENTIFIER "key"
+COMMA ","
+WHITESPACE " "
+UNDERSCORE "_"
+R_PAREN ")"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+IDENTIFIER "map"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "key"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n\n"
+WHITESPACE "    "
+IDENTIFIER "map"
+DOT "."
+IDENTIFIER "mapValues"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+L_PAREN "("
+UNDERSCORE "_"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "value"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+OPEN_QUOTE "\""
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "value"
+STRING_CONTENT "!"
+CLOSE_QUOTE "\""
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..170
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..169
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..169
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      PROPERTY_DECL@17..66
+        VAL_KW@17..20 "val"
+        WHITESPACE@20..21 " "
+        MULTI_VARIABLE_DECLARATION@21..43
+          L_PAREN@21..22 "("
+          VARIABLE_DECLARATION@22..30
+            IDENTIFIER@22..30 "valueStr"
+          COMMA@30..31 ","
+          WHITESPACE@31..32 " "
+          VARIABLE_DECLARATION@32..33
+            UNDERSCORE@32..33 "_"
+          COMMA@33..34 ","
+          WHITESPACE@34..35 " "
+          VARIABLE_DECLARATION@35..42
+            IDENTIFIER@35..42 "unitRaw"
+          R_PAREN@42..43 ")"
+        WHITESPACE@43..44 " "
+        EQUAL@44..45 "="
+        WHITESPACE@45..46 " "
+        POSTFIX_UNARY_EXPRESSION@46..64
+          PRIMARY_EXPRESSION@46..51
+            IDENTIFIER@46..51 "match"
+          NAVIGATION_SUFFIX@51..64
+            DOT@51..52 "."
+            IDENTIFIER@52..64 "destructured"
+        NEWLINE@64..66 "\n\n"
+      WHITESPACE@66..70 "    "
+      FOR_STATEMENT@70..120
+        FOR_KW@70..73 "for"
+        WHITESPACE@73..74 " "
+        L_PAREN@74..75 "("
+        MULTI_VARIABLE_DECLARATION@75..83
+          L_PAREN@75..76 "("
+          VARIABLE_DECLARATION@76..79
+            IDENTIFIER@76..79 "key"
+          COMMA@79..80 ","
+          WHITESPACE@80..81 " "
+          VARIABLE_DECLARATION@81..82
+            UNDERSCORE@81..82 "_"
+          R_PAREN@82..83 ")"
+        WHITESPACE@83..84 " "
+        IN_KW@84..86 "in"
+        WHITESPACE@86..87 " "
+        PRIMARY_EXPRESSION@87..90
+          IDENTIFIER@87..90 "map"
+        R_PAREN@90..91 ")"
+        WHITESPACE@91..92 " "
+        BLOCK@92..120
+          L_BRACE@92..93 "{"
+          NEWLINE@93..94 "\n"
+          WHITESPACE@94..102 "        "
+          EXPRESSION_STATEMENT@102..114
+            POSTFIX_UNARY_EXPRESSION@102..114
+              PRIMARY_EXPRESSION@102..109
+                IDENTIFIER@102..109 "println"
+              CALL_EXPRESSION@109..114
+                VALUE_ARGUMENTS@109..114
+                  L_PAREN@109..110 "("
+                  VALUE_ARGUMENT@110..113
+                    PRIMARY_EXPRESSION@110..113
+                      IDENTIFIER@110..113 "key"
+                  R_PAREN@113..114 ")"
+          NEWLINE@114..115 "\n"
+          WHITESPACE@115..119 "    "
+          R_BRACE@119..120 "}"
+      NEWLINE@120..122 "\n\n"
+      WHITESPACE@122..126 "    "
+      EXPRESSION_STATEMENT@126..167
+        POSTFIX_UNARY_EXPRESSION@126..167
+          PRIMARY_EXPRESSION@126..129
+            IDENTIFIER@126..129 "map"
+          NAVIGATION_SUFFIX@129..139
+            DOT@129..130 "."
+            IDENTIFIER@130..139 "mapValues"
+          WHITESPACE@139..140 " "
+          CALL_EXPRESSION@140..167
+            LAMBDA_LITERAL@140..167
+              L_BRACE@140..141 "{"
+              WHITESPACE@141..142 " "
+              LAMBDA_PARAMETERS@142..152
+                LAMBDA_PARAMETER@142..152
+                  L_PAREN@142..143 "("
+                  VARIABLE_DECLARATION@143..144
+                    UNDERSCORE@143..144 "_"
+                  COMMA@144..145 ","
+                  WHITESPACE@145..146 " "
+                  VARIABLE_DECLARATION@146..151
+                    IDENTIFIER@146..151 "value"
+                  R_PAREN@151..152 ")"
+              WHITESPACE@152..153 " "
+              ARROW@153..155 "->"
+              WHITESPACE@155..156 " "
+              EXPRESSION_STATEMENT@156..165
+                STRING_LITERAL@156..165
+                  OPEN_QUOTE@156..157 "\""
+                  STRING_TEMPLATE@157..163
+                    TEMPLATE_SHORT_START@157..158 "$"
+                    IDENTIFIER@158..163 "value"
+                  STRING_CONTENT@163..164 "!"
+                  CLOSE_QUOTE@164..165 "\""
+              WHITESPACE@165..166 " "
+              R_BRACE@166..167 "}"
+      NEWLINE@167..168 "\n"
+      R_BRACE@168..169 "}"
+  NEWLINE@169..170 "\n"

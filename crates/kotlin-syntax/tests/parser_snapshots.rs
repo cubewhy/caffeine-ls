@@ -401,6 +401,29 @@ parser_snapshot!(
 );
 
 // ————————————————————————————————————————————————————————————————
+// `_` as the placeholder for unused components of a destructuring
+// declaration ([spec: grammar-rule-Identifier] permits a bare `_`;
+// the docs call it the "unused component" placeholder) — in a
+// `multiVariableDeclaration`, in a `for` loop, and in a lambda
+// parameter list.
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_destructuring_with_underscore,
+    indoc! {r#"
+        fun main() {
+            val (valueStr, _, unitRaw) = match.destructured
+
+            for ((key, _) in map) {
+                println(key)
+            }
+
+            map.mapValues { (_, value) -> "$value!" }
+        }
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
 // Accessors on their own line after the initializer:
 // `var x = 0` / `private set` / `get() = …` ([spec: grammar-rule-getter],
 // [spec: grammar-rule-setter]).

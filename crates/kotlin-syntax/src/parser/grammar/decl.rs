@@ -16,13 +16,22 @@ use crate::{
 
 /// `variableDeclaration`: {annotation} {NL} simpleIdentifier [{NL} ':' {NL} type]
 /// [spec: grammar-rule-variableDeclaration] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-variableDeclaration
+///
+/// A bare `_` is accepted in place of the name. The `Identifier` lexical rule
+/// is `(Letter | '_') {Letter | '_' | UnicodeDigit}`, and `_` is the
+/// documented placeholder for unused components of a destructuring declaration
+/// — `val (_, status) = …`, `for ((_, value) in …)`, `{ (_, value) -> … }`.
 pub(crate) fn variable_declaration(p: &mut Parser) {
     let m = p.start();
     if p.at(AT) {
         annotation(p);
         eat_nl(p);
     }
-    simple_identifier(p);
+    if p.at(UNDERSCORE) {
+        p.bump();
+    } else {
+        simple_identifier(p);
+    }
     if p.at(COLON) {
         p.bump();
         eat_nl(p);
