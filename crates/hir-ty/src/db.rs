@@ -234,6 +234,35 @@ pub(crate) fn method_params_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db
     }
 }
 
+/// The types of the record components of `item` in `file`, memoized per
+/// (file, item). See [`resolve::record_component_types`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn record_component_types_query<'db>(
+    db: &'db dyn TyDatabase,
+    key: ItemKey<'db>,
+) -> Vec<Ty> {
+    let file_id = key.file(db);
+    let item_id = key.item(db);
+    let tree = hir::file_item_tree(db, file_id);
+    let Some(data) = item_data(&tree, item_id) else {
+        return Vec::new();
+    };
+    let scope = scope_for_file(db, file_id);
+    let type_params = type_params_map_query(db, db.file_text(file_id));
+    let resolver = Resolver::new(&tree, type_params, item_id);
+    let ItemData::Record(record) = data else {
+        return Vec::new();
+    };
+    // Each component's *element* type, in declaration order. Like a varargs
+    // parameter ([§8.4.1], cf. [`method_params_query`]), a varargs component
+    // resolves to its element type; the IDE renders the accessor's array form
+    // and the canonical constructor's ellipsis form from it.
+    record
+        .components
+        .iter()
+        .map(|component| resolve_type_ref(db, &scope, &resolver, &component.ty))
+        .collect()
+}
 /// The inferred types of the expressions and locals of the body of `item` in
 /// `file` ([JLS §15], [§14.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4)),
 /// memoized per (file, item). See [`crate::infer::body_types_impl`].

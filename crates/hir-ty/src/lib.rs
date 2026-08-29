@@ -104,7 +104,8 @@ pub use method::{
 };
 pub use resolve::scope_for_file as scope_for_test;
 pub use resolve::{
-    Resolver, item_ty, method_params, resolve_type_ref, scope_for_file, ty_from_library,
+    Resolver, item_ty, method_params, record_component_types, resolve_type_ref, scope_for_file,
+    ty_from_library,
 };
 pub use subtyping::{is_assignable, is_subtype, supertypes};
 pub use syntax::{DiagnosticCode, JavaDiagnosticCode};

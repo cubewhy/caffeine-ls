@@ -203,10 +203,32 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         })
         .unwrap_or_default();
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
+    // The component list `(int x, int y)` is the record's parameter
+    // declaration — the "definition" the outline selects.
+    let components_range = node
+        .children()
+        .find(|child| is(child, J::FORMAL_PARAMETERS))
+        .map(|params| params.text_range())
+        .unwrap_or(name_range);
+    // The header ends at the closing `)` of the component list, or the end of
+    // the `implements` clause when present — before the body `{ ... }`.
+    let header_end = node
+        .children()
+        .find(|child| is(child, J::FORMAL_PARAMETERS))
+        .map(|params| params.text_range().end())
+        .or_else(|| {
+            node.children()
+                .find(|child| is(child, J::IMPLEMENTS_CLAUSE))
+                .map(|clause| clause.text_range().end())
+        })
+        .unwrap_or(name_range.end());
+    let header_range = TextRange::new(node.text_range().start(), header_end);
     let body = body_members(ctx, node, J::RECORD_BODY);
     ctx.alloc(ItemData::Record(RecordData {
         name,
         name_range,
+        components_range,
+        header_range,
         modifiers,
         components,
         interfaces,
@@ -792,14 +814,18 @@ fn param_from(node: &SyntaxNode<Lang>) -> Param {
 }
 
 fn component_from(node: &SyntaxNode<Lang>) -> RecordComponent {
-    let name = first_token(node, J::IDENTIFIER)
+    let name_token = first_token(node, J::IDENTIFIER);
+    let name = name_token
+        .as_ref()
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(missing_name);
-    let ty = node
-        .children()
-        .find(|child| is(child, J::TYPE))
-        .map(|child| type_from(&child))
+    let name_range = name_token.map(|token| token.text_range());
+    let ty_node = node.children().find(|child| is(child, J::TYPE));
+    let ty = ty_node
+        .as_ref()
+        .map(|child| type_from(child))
         .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+    let ty_range = ty_node.map(|child| child.text_range());
     let varargs = node.children_with_tokens().any(|element| match element {
         NodeOrToken::Token(token) => token.kind() == J::ELLIPSIS,
         NodeOrToken::Node(_) => false,
@@ -813,7 +839,10 @@ fn component_from(node: &SyntaxNode<Lang>) -> RecordComponent {
         .unwrap_or_default();
     RecordComponent {
         name,
+        name_range: name_range.unwrap_or(node.text_range()),
+        range: node.text_range(),
         ty,
+        ty_range: ty_range.unwrap_or(node.text_range()),
         varargs,
         annotations,
     }

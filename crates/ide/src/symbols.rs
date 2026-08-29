@@ -51,6 +51,15 @@ pub struct WorkspaceSymbol {
 
 /// The declared symbols of a file, in declaration order, prefixed by a
 /// synthesized symbol for the file's package.
+///
+/// A record ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10))
+/// is expanded with its *implicit* members — a public accessor method per
+/// component ([§8.10.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.3))
+/// and its canonical constructor ([§8.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.4))
+/// — so the outline shows what the language synthesizes. These are synthetic
+/// (`item: None`) and carry no source ranges of their own: the accessor
+/// ranges target its record component, and the canonical constructor's
+/// ranges target the record declaration.
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
@@ -61,24 +70,130 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
         // types; it is not a container of them.
         out.push(package_symbol(db, file_id));
     }
-    out.extend(symbols.iter().map(|symbol| {
-        let top_level = symbol
+    out.extend(symbols.iter().flat_map(|source| {
+        let top_level = source
             .name
             .as_str()
             .rsplit_once('.')
             .is_none_or(|(parent, _)| !names.contains(parent));
-        let data = tree.data(symbol.item);
-        DocumentSymbol {
-            name: symbol.name.as_str().to_owned(),
-            kind: symbol.kind,
-            range: data.range(),
-            name_range: data.name_range(),
-            display_name: symbol_display_name(db, file_id, symbol, top_level),
-            detail: symbol_detail(symbol, top_level),
-            item: Some(symbol.item),
-        }
+        let data = tree.data(source.item);
+        // A record's outline range points at its declaration *header* (the
+        // definition, including the component list) rather than the whole
+        // body; its selection points at the component list itself — see
+        // [`hir_expand::item_tree::RecordData`].
+        let (range, name_range) = match data {
+            ItemData::Record(record) => (record.header_range, record.components_range),
+            _ => (data.range(), data.name_range()),
+        };
+        let symbol = DocumentSymbol {
+            name: source.name.as_str().to_owned(),
+            kind: source.kind,
+            range,
+            name_range,
+            display_name: symbol_display_name(db, file_id, source, top_level),
+            detail: symbol_detail(source, top_level),
+            item: Some(source.item),
+        };
+        // Records synthesize their implicit members right after themselves,
+        // so the name-prefix nesting (parent = name minus the last `.`-segment)
+        // groups each under the record.
+        std::iter::once(symbol.clone()).chain(record_members(db, file_id, &symbol, data))
     }));
     out
+}
+
+/// The implicit members of a record declaration, synthesized as `item: None`
+/// `DocumentSymbol`s: an accessor per component ([JLS §8.10.3]) and the
+/// canonical constructor ([JLS §8.10.4], skipped when the body declares an
+/// explicit full-form constructor of matching arity).
+fn record_members(
+    db: &RootDatabase,
+    file_id: FileId,
+    symbol: &DocumentSymbol,
+    data: &ItemData,
+) -> Vec<DocumentSymbol> {
+    let ItemData::Record(record) = data else {
+        return Vec::new();
+    };
+    let mut members = Vec::with_capacity(record.components.len() + 1);
+    let tree = hir::file_item_tree(db, file_id);
+    let component_tys: Arc<Vec<String>> = Arc::new(
+        hir_ty::record_component_types(db, file_id, symbol.item.unwrap())
+            .into_iter()
+            .map(|ty| ty.display_simple(db).to_string())
+            .collect(),
+    );
+
+    // §8.10.3: each component has a public accessor `component(): T`. For a
+    // varargs component the accessor returns the array type `T[]` (§8.4.1).
+    // An accessor explicitly declared by the body (same name, zero parameters)
+    // replaces the implicit one ([§8.10.3]).
+    for (index, component) in record.components.iter().enumerate() {
+        let simple = component.name.as_str().to_owned();
+        let declares_accessor = record.body.iter().any(|item| {
+            matches!(tree.data(*item), ItemData::Method(method)
+                if method.name.as_str() == simple && method.sig.params.is_empty())
+        });
+        if declares_accessor {
+            continue;
+        }
+        let ret = if component.varargs {
+            format!("{}[]", component_tys[index])
+        } else {
+            component_tys[index].clone()
+        };
+        members.push(DocumentSymbol {
+            name: format!("{}.{simple}", symbol.name),
+            kind: hir::SourceSymbolKind::Method,
+            // The accessor's range and selection range both target its whole
+            // component declaration (`int x`, not just the name) — the
+            // "definition" of the member.
+            range: component.range,
+            name_range: component.range,
+            display_name: format!("{simple}(): {ret}"),
+            detail: None,
+            item: None,
+        });
+    }
+
+    // §8.10.4: a record has a canonical constructor whose parameters mirror
+    // the components in order. An explicit full-form constructor of matching
+    // arity replaces it ([§8.10.4]).
+    let simple = symbol
+        .name
+        .rsplit('.')
+        .next()
+        .unwrap_or(&symbol.name)
+        .to_owned();
+    let declares_canonical = record.body.iter().any(|item| {
+        matches!(tree.data(*item), ItemData::Method(method) if method.is_constructor
+            && method.sig.params.len() == record.components.len())
+    });
+    if !declares_canonical {
+        let params = record
+            .components
+            .iter()
+            .enumerate()
+            .map(|(index, component)| {
+                if component.varargs {
+                    format!("{}...", component_tys[index])
+                } else {
+                    component_tys[index].clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        members.push(DocumentSymbol {
+            name: format!("{}.{simple}", symbol.name),
+            kind: hir::SourceSymbolKind::Method,
+            range: symbol.range,
+            name_range: symbol.name_range,
+            display_name: format!("{simple}({params})"),
+            detail: None,
+            item: None,
+        });
+    }
+    members
 }
 
 /// The synthesized symbol for the file's package declaration, shown above its

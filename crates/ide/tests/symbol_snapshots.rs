@@ -127,6 +127,76 @@ fn document_symbols_snapshot() {
 }
 
 #[test]
+fn document_symbols_record_members() {
+    let fixture = build(&[(
+        main_source_set(0),
+        vec![(
+            1,
+            "/src/com/example/Point.java",
+            "package com.example;\n\nrecord Point(int x, int y) {}\n",
+        )],
+    )]);
+    let analysis = fixture.analysis();
+    let symbols = analysis.document_symbols(fixture.file(1)).unwrap();
+
+    let names: Vec<&str> = symbols
+        .iter()
+        .filter(|s| s.kind != hir::SourceSymbolKind::Package)
+        .map(|s| s.display_name.as_str())
+        .collect();
+    // The record, its two accessors and its canonical constructor, in order.
+    assert_eq!(
+        names,
+        vec!["Point", "x(): int", "y(): int", "Point(int, int)"]
+    );
+
+    // Accessors are synthetic and point their range and selection both at
+    // their own record component; the constructor points at the record
+    // declaration.
+    let x = symbols
+        .iter()
+        .find(|s| s.display_name == "x(): int")
+        .unwrap();
+    assert_eq!(x.kind, hir::SourceSymbolKind::Method);
+    assert_eq!(x.item, None);
+    assert_eq!(x.range, x.name_range);
+    let point = symbols.iter().find(|s| s.display_name == "Point").unwrap();
+    assert_ne!(x.name_range, point.name_range);
+    let ctor = symbols
+        .iter()
+        .find(|s| s.display_name == "Point(int, int)")
+        .unwrap();
+    assert_eq!(ctor.item, None);
+    assert_eq!(ctor.name_range, point.name_range);
+}
+
+#[test]
+fn document_symbols_record_varargs_and_overrides() {
+    let fixture = build(&[(
+        main_source_set(0),
+        vec![(
+            1,
+            "/src/com/example/Group.java",
+            "package com.example;\n\nrecord Group(String... names) {\n    Group(String... names) { this.names = names; }\n\n    public String names() { return null; }\n}\n",
+        )],
+    )]);
+    let analysis = fixture.analysis();
+    let symbols = analysis.document_symbols(fixture.file(1)).unwrap();
+
+    let names: Vec<&str> = symbols
+        .iter()
+        .filter(|s| s.kind != hir::SourceSymbolKind::Package)
+        .map(|s| s.display_name.as_str())
+        .collect();
+    // The accessor renders the array form; the explicitly declared canonical
+    // constructor replaces the implicit one (it is not duplicated), and the
+    // explicit zero-param accessor suppresses the synthesized `names(): String[]`
+    // in favor of the declared `names(): String`.
+    assert_eq!(names, vec!["Group", "Group(String...)", "names(): String"]);
+    assert!(!names.contains(&"names(): String[]"));
+}
+
+#[test]
 fn document_symbols_varargs_and_simple_names() {
     let fixture = build(&[(
         main_source_set(0),

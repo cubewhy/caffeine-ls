@@ -192,6 +192,15 @@ pub struct EnumData {
 pub struct RecordData {
     pub name: Name,
     pub name_range: TextRange,
+    /// The source range of the component list — the record's parameter
+    /// declaration `(int x, int y)`. The record's outline selection points
+    /// here (its "definition").
+    pub components_range: TextRange,
+    /// The source range of the record declaration *header*: from the `record`
+    /// keyword through the closing `)` of the component list (and any
+    /// `implements` clause), excluding the body `{ ... }`. This is the
+    /// declaration's "definition" — what the outline should point at.
+    pub header_range: TextRange,
     pub modifiers: Modifiers,
     pub components: Vec<RecordComponent>,
     pub interfaces: Vec<SpannedTypeRef>,
@@ -331,7 +340,15 @@ pub struct TypeParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordComponent {
     pub name: Name,
+    /// The source range of the component's declared name (the identifier).
+    pub name_range: TextRange,
+    /// The full source range of the component declaration (`T name`, or
+    /// `T... name` for a varargs component). The record accessor's outline
+    /// selection points here.
+    pub range: TextRange,
     pub ty: SpannedTypeRef,
+    /// The source range of the component's declared type.
+    pub ty_range: TextRange,
     /// Whether the component was declared varargs (`String... names`).
     pub varargs: bool,
     pub annotations: Vec<NameRef>,

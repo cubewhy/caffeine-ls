@@ -425,6 +425,8 @@ public class Foo {
         private int y;
     }
 }
+
+record Point(int x, int y) {}
 "#,
     );
     lsp.open_document(path);

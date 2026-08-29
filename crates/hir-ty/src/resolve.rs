@@ -737,6 +737,16 @@ pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> V
     crate::db::method_params_query(db, crate::db::ItemKey::new(db, file_id, item_id))
 }
 
+/// The element types of the record components of `item` (a record
+/// declaration) in `file`, in declaration order, each resolved to its element
+/// type (a varargs component `String... names` resolves to `String`). The IDE
+/// renders the accessor's array form (`String[]`, [§8.10.3]) and the canonical
+/// constructor's ellipsis form (`String...`, [§8.10.4]) from these. Memoized
+/// per (file, item) by the tracked query in [`crate::db`].
+pub fn record_component_types(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
+    crate::db::record_component_types_query(db, crate::db::ItemKey::new(db, file_id, item_id))
+}
+
 /// Lowers a library [`TypeRef<Symbol>`] to a [`Ty`]. Library names are
 /// already fully qualified, so only the interner lookup is needed.
 pub fn ty_from_library(db: &dyn TyDatabase, tyref: &TypeRef<hir::Symbol>) -> Ty {

@@ -224,5 +224,104 @@ expression: response
         ]
       }
     ]
+  },
+  {
+    "name": "Point",
+    "detail": "com.example.Point",
+    "kind": 23,
+    "range": {
+      "start": {
+        "line": 17,
+        "character": 0
+      },
+      "end": {
+        "line": 17,
+        "character": 26
+      }
+    },
+    "selectionRange": {
+      "start": {
+        "line": 17,
+        "character": 12
+      },
+      "end": {
+        "line": 17,
+        "character": 26
+      }
+    },
+    "children": [
+      {
+        "name": "x(): int",
+        "kind": 6,
+        "range": {
+          "start": {
+            "line": 17,
+            "character": 13
+          },
+          "end": {
+            "line": 17,
+            "character": 18
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 17,
+            "character": 13
+          },
+          "end": {
+            "line": 17,
+            "character": 18
+          }
+        }
+      },
+      {
+        "name": "y(): int",
+        "kind": 6,
+        "range": {
+          "start": {
+            "line": 17,
+            "character": 20
+          },
+          "end": {
+            "line": 17,
+            "character": 25
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 17,
+            "character": 20
+          },
+          "end": {
+            "line": 17,
+            "character": 25
+          }
+        }
+      },
+      {
+        "name": "Point(int, int)",
+        "kind": 6,
+        "range": {
+          "start": {
+            "line": 17,
+            "character": 0
+          },
+          "end": {
+            "line": 17,
+            "character": 26
+          }
+        },
+        "selectionRange": {
+          "start": {
+            "line": 17,
+            "character": 12
+          },
+          "end": {
+            "line": 17,
+            "character": 26
+          }
+        }
+      }
+    ]
   }
 ]
