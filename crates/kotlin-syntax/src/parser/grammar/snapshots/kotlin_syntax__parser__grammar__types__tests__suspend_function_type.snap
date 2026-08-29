@@ -1,0 +1,20 @@
+---
+source: crates/kotlin-syntax/src/parser/grammar/types.rs
+expression: out
+---
+StartNode(TYPE)
+AddToken
+StartNode(FUNCTION_TYPE)
+StartNode(VALUE_PARAMETERS)
+AddToken
+AddToken
+FinishNode
+AddToken
+StartNode(TYPE)
+Tombstone
+StartNode(USER_TYPE)
+AddToken
+FinishNode
+FinishNode
+FinishNode
+FinishNode

@@ -815,16 +815,15 @@ impl<'a> Lexer<'a> {
     }
 
     fn handle_and(&mut self) {
-        let start_char = self.reader.advance(); // &
+        self.reader.advance(); // &
 
         if self.reader.peek() == '&' {
             self.reader.advance(); // &
             self.complete_token(AND);
         } else {
-            // Lone '&' is invalid. We report it and move on.
-            self.report_error(LexicalErrorKind::UnexpectedChar(start_char));
-            // We can emit a placeholder or just let the error stand
-            self.complete_token(ERROR);
+            // Lone '&' is allowed in type positions as the intersection /
+            // definitely-non-nullable operator: `A & B` ([spec §type-system]).
+            self.complete_token(BIT_AND);
         }
     }
 

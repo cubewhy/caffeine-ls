@@ -48,9 +48,10 @@ pub enum SyntaxKind {
     PLUS_PLUS,    // ++
     MINUS_MINUS,  // --
 
-    AND, // &&
-    OR,  // ||
-    NOT, // !
+    AND,     // &&
+    BIT_AND, // & (intersection / definitely-non-nullable types)
+    OR,      // ||
+    NOT,     // !
 
     EQUAL_EQUAL, // ==
     NOT_EQUAL,   // !=
@@ -190,6 +191,7 @@ pub enum SyntaxKind {
     DEFINITELY_NON_NULLABLE_TYPE,
     PARENTHESIZED_TYPE,
     FUNCTION_TYPE,
+    RECEIVER_TYPE,
     TYPE_ARGUMENTS,
     TYPE_PROJECTION,
 
