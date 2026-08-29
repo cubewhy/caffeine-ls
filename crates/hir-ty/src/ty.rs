@@ -516,6 +516,18 @@ impl Ty {
     pub fn display<'a>(&'a self, db: &'a dyn TyDatabase) -> TyDisplay<'a> {
         TyDisplay { ty: self, db }
     }
+
+    /// Formats this type for display with *simple* class names: reference
+    /// types render their last `.`-segment ([`Name::simple_name`]) instead of
+    /// the canonical fully qualified name, so `java.util.List<java.lang.String>`
+    /// becomes `List<String>`. `$` is an ordinary identifier character
+    /// ([JLS §3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)),
+    /// so a `$`-containing name keeps its `$`. Every non-reference kind
+    /// renders identically to [`Ty::display`]. Used where javac renders the
+    /// *simple* class name: LSP symbol signatures and diagnostic messages.
+    pub fn display_simple<'a>(&'a self, db: &'a dyn TyDatabase) -> TySimpleDisplay<'a> {
+        TySimpleDisplay { ty: self, db }
+    }
 }
 
 /// A displayable view of a [`Ty`], produced by [`Ty::display`].
@@ -567,6 +579,65 @@ impl fmt::Display for TyDisplay<'_> {
             }
             TyKind::InferenceVar(id) => write!(f, "?{id}"),
             TyKind::Error => f.write_str("<error>"),
+        }
+    }
+}
+
+/// A displayable view of a [`Ty`] with simple class names, produced by
+/// [`Ty::display_simple`].
+pub struct TySimpleDisplay<'a> {
+    ty: &'a Ty,
+    db: &'a dyn TyDatabase,
+}
+
+impl fmt::Display for TySimpleDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.ty.kind(self.db) {
+            TyKind::Reference { name, args } => {
+                f.write_str(name.simple_name())?;
+                if !args.is_empty() {
+                    f.write_str("<")?;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            f.write_str(", ")?;
+                        }
+                        write!(f, "{}", arg.display_simple(self.db))?;
+                    }
+                    f.write_str(">")?;
+                }
+                Ok(())
+            }
+            TyKind::Array(inner) => write!(f, "{}[]", inner.display_simple(self.db)),
+            TyKind::Intersection(members) => {
+                for (i, member) in members.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" & ")?;
+                    }
+                    write!(f, "{}", member.display_simple(self.db))?;
+                }
+                Ok(())
+            }
+            TyKind::Wildcard(bound) => {
+                f.write_str("?")?;
+                if let Some(bound) = bound {
+                    match bound.kind {
+                        BoundKind::Upper => {
+                            write!(f, " extends {}", bound.ty.display_simple(self.db))?
+                        }
+                        BoundKind::Lower => {
+                            write!(f, " super {}", bound.ty.display_simple(self.db))?
+                        }
+                    }
+                }
+                Ok(())
+            }
+            other => fmt::Display::fmt(
+                &TyDisplay {
+                    ty: self.ty,
+                    db: self.db,
+                },
+                f,
+            ),
         }
     }
 }

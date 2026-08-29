@@ -1,0 +1,55 @@
+---
+source: crates/hir-ty/tests/ty_snapshots.rs
+expression: out
+---
+--- int ---
+SIMPLE: int
+FQN:    int
+
+--- void ---
+SIMPLE: void
+FQN:    void
+
+--- java.lang.String ---
+SIMPLE: String
+FQN:    java.lang.String
+
+--- java.util.List<java.lang.String> ---
+SIMPLE: List<String>
+FQN:    java.util.List<java.lang.String>
+
+--- java.util.Map<java.lang.String, java.lang.Integer> ---
+SIMPLE: Map<String, Integer>
+FQN:    java.util.Map<java.lang.String, java.lang.Integer>
+
+--- java.lang.String[] ---
+SIMPLE: String[]
+FQN:    java.lang.String[]
+
+--- java.util.List<java.lang.String>[] ---
+SIMPLE: List<String>[]
+FQN:    java.util.List<java.lang.String>[]
+
+--- com.example.A$B ---
+SIMPLE: A$B
+FQN:    com.example.A$B
+
+--- com.example.Outer$Inner ---
+SIMPLE: Outer$Inner
+FQN:    com.example.Outer$Inner
+
+--- java.util.List<? extends java.lang.Number> ---
+SIMPLE: List<? extends Number>
+FQN:    java.util.List<? extends java.lang.Number>
+
+--- T ---
+SIMPLE: T
+FQN:    T
+
+--- NotFound ---
+SIMPLE: NotFound
+FQN:    NotFound
+
+--- <error> ---
+SIMPLE: <error>
+FQN:    <error>

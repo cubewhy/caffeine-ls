@@ -1274,6 +1274,25 @@ pub fn check_ty_model(samples: &[(&str, TyBuilder)]) -> String {
         .join("\n")
 }
 
+/// Renders each [`Ty`] sample with its simple-name display ([JLS §6.7]
+/// simple name — the last `.`-separated segment, `$` kept as an identifier
+/// character per [§3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)).
+pub fn check_ty_simple(samples: &[(&str, TyBuilder)]) -> String {
+    let db = TestDatabase::new();
+    samples
+        .iter()
+        .map(|(label, build)| {
+            let ty = build(&db);
+            format!(
+                "--- {label} ---\nSIMPLE: {}\nFQN:    {}\n",
+                ty.display_simple(&db),
+                ty.display(&db),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Renders the result of [`Relation`] for each `(sub, sup)` sample.
 pub fn check_relations(samples: &[(&str, TyBuilder, TyBuilder, Relation)]) -> String {
     let fixture = jdk_fixture();
