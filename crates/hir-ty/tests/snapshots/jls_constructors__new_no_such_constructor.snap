@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_constructors.rs
-assertion_line: 66
 expression: out
 ---
 FILE /src/com/example/Constr.java:
@@ -22,5 +21,4 @@ method Foo(): <init>
 method m(): void
   locals: 
   exprs: e0: com.example.Foo
-  diags: e0@8:8: no-such-constructor: cannot find symbol
-  symbol:   constructor Foo()
+  diags: e0@8:8: no-such-constructor: Cannot resolve constructor 'Foo()'

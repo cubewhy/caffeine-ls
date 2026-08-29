@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_constructors.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m() {
+        org.objectweb.asm.ClassWriter cr = new org.objectweb.asm.ClassWriter();
+        org.objectweb.asm.ClassWriter ok = new org.objectweb.asm.ClassWriter(0);
+    }
+}
+
+method m(): void
+  locals: l0: org.objectweb.asm.ClassWriter | l1: org.objectweb.asm.ClassWriter
+  exprs: e0: org.objectweb.asm.ClassWriter | e1: int | e2: org.objectweb.asm.ClassWriter
+  diags: e0@4:43: wrong-argument-count: constructor ClassWriter() cannot be applied to given types;
+  required: int
+  found: 
+  reason: actual and formal argument lists differ in length

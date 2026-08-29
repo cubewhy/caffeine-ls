@@ -366,7 +366,7 @@ impl TypeError {
                 format!("cannot find symbol\n  symbol:   method {}()", name.as_str())
             }
             NoSuchConstructor { name, .. } => {
-                format!("cannot find symbol\n  symbol:   constructor {name}()")
+                format!("Cannot resolve constructor '{}()'", name.as_str())
             }
             NonStaticMethodFromStaticContext { name, .. } => {
                 format!(

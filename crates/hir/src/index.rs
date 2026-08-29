@@ -136,6 +136,15 @@ pub struct LibraryIndex {
     pub archive: Utf8PathBuf,
     pub names: Arc<NameIndex>,
     strings: Arc<Vec<String>>,
+    /// The full tier-2 member records of every class, retained in memory.
+    /// Kept alongside (and preferred over) the persistent LMDB cache so that
+    /// member lookups — constructors, methods, static fields — work even when
+    /// the persistent cache is unavailable (no cache dir, read-only
+    /// filesystem): the records a freshly built index needs are the same ones
+    /// [`loader`](crate::loader) produced, so they are held here instead of
+    /// being dropped after a best-effort persist. Cache-loaded indexes keep
+    /// this empty and read tier-2 from the store.
+    records: Arc<Vec<DiskClassOrModuleRecord>>,
     store: lmdb_store::StubStore,
 }
 
@@ -146,6 +155,7 @@ impl LibraryIndex {
         archive: Utf8PathBuf,
         names: Arc<NameIndex>,
         strings: Arc<Vec<String>>,
+        records: Arc<Vec<DiskClassOrModuleRecord>>,
         store: lmdb_store::StubStore,
     ) -> Self {
         Self {
@@ -154,6 +164,7 @@ impl LibraryIndex {
             archive,
             names,
             strings,
+            records,
             store,
         }
     }
@@ -165,6 +176,7 @@ impl LibraryIndex {
             kind,
             archive,
             Arc::new(NameIndex::empty()),
+            Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             lmdb_store::StubStore::default(),
         )
@@ -198,8 +210,13 @@ impl LibraryIndex {
         interner: &ThreadedRodeo,
         record_idx: u32,
     ) -> Option<Arc<ClassOrModuleRecord>> {
-        let disk_record = self.store.with_record_bytes(self.id, record_idx, |bytes| {
-            from_bytes::<DiskClassOrModuleRecord>(bytes).ok()
+        // Prefer the retained in-memory records (available even without the
+        // persistent cache); fall back to the LMDB store for cache-loaded
+        // indexes that kept their tier-2 only on disk.
+        let disk_record = self.records.get(record_idx as usize).cloned().or_else(|| {
+            self.store.with_record_bytes(self.id, record_idx, |bytes| {
+                from_bytes::<DiskClassOrModuleRecord>(bytes).ok()
+            })
         })?;
         let resolver = DiskResolver::new(&self.strings, interner);
         Some(Arc::new(resolver.class_or_module(&disk_record)))

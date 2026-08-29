@@ -299,6 +299,9 @@ pub fn load_or_build(
         archive.to_owned(),
         Arc::new(names),
         Arc::new(meta.strings),
+        // Retain the full tier-2 records in memory so member lookups keep
+        // working even when persistence is unavailable (see [`LibraryIndex`]).
+        Arc::new(disk_records),
         store.clone(),
     ))
 }
@@ -347,6 +350,9 @@ pub fn load_from_cache(
         archive.to_owned(),
         Arc::new(names),
         Arc::new(meta.strings),
+        // A cache-loaded index has no in-memory records; tier-2 is read from
+        // the store (which holds them), so this stays empty.
+        Arc::new(Vec::new()),
         store.clone(),
     ))
 }
@@ -512,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn disabled_store_serves_tier_1_only() {
+    fn memory_only_store_serves_tier_2_from_retained_records() {
         let dir = tempfile::TempDir::new().unwrap();
         let jar_path = Utf8PathBuf::from_path_buf(dir.path().join("test.jar")).unwrap();
         build_jar(&jar_path);
@@ -527,7 +533,14 @@ mod tests {
             .lookup_fqn(interner.get_or_intern("com.example.Greeter"))
             .unwrap();
         assert!(!store.is_enabled());
-        assert!(index.class_record(&interner, entry_idx).is_none());
+        // Even without the persistent cache, the freshly built index retains
+        // its tier-2 member records in memory, so member lookups (constructors,
+        // methods, fields) stay available.
+        let record = index.class_record(&interner, entry_idx).unwrap();
+        let crate::stubs::ClassOrModuleStub::Class(class) = record.as_ref() else {
+            panic!("expected a class record");
+        };
+        assert_eq!(class.methods.len(), 2);
     }
 
     #[test]
@@ -633,6 +646,7 @@ mod tests {
             jar_path.clone(),
             Arc::new(names),
             Arc::new(meta.strings),
+            Arc::new(Vec::new()),
             store,
         );
 
