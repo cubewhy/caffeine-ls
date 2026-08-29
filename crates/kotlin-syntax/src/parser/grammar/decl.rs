@@ -566,6 +566,67 @@ fn function_value_parameter(p: &mut Parser) {
     m.complete(p, VALUE_PARAMETER);
 }
 
+/// `parametersWithOptionalType`: '(' {NL} [functionValueParameterWithOptionalType
+///                               {{NL} ',' {NL} functionValueParameterWithOptionalType}
+///                               [{NL} ',']] {NL} ')'
+/// [spec: grammar-rule-parametersWithOptionalType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-parametersWithOptionalType
+pub(crate) fn parameters_with_optional_type(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+    eat_nl(p);
+    if !p.at(R_PAREN) {
+        loop {
+            eat_nl(p);
+            if p.at(R_PAREN) {
+                break;
+            }
+            function_value_parameter_with_optional_type(p);
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+    eat_nl(p);
+    p.expect(R_PAREN);
+    m.complete(p, VALUE_PARAMETERS);
+}
+
+/// `functionValueParameterWithOptionalType`: [parameterModifiers]
+///   parameterWithOptionalType ['=' expression]
+/// `parameterWithOptionalType`: simpleIdentifier [':' type]
+/// [spec: grammar-rule-functionValueParameterWithOptionalType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameterWithOptionalType
+fn function_value_parameter_with_optional_type(p: &mut Parser) {
+    let m = p.start();
+    // parameterModifiers: annotations + vararg / noinline / crossinline
+    loop {
+        if p.at(AT) {
+            annotation(p);
+            eat_nl(p);
+        } else if p.at_contextual_kw_set(tokenset![
+            ContextualKeyword::Vararg,
+            ContextualKeyword::NoInline,
+            ContextualKeyword::CrossInline
+        ]) {
+            p.bump();
+            eat_nl(p);
+        } else {
+            break;
+        }
+    }
+    simple_identifier(p);
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+    }
+    eat_nl(p);
+    if p.eat(EQUAL) {
+        eat_nl(p);
+        expression(p);
+    }
+    m.complete(p, VALUE_PARAMETER);
+}
+
 /// `functionBody`: block | ('=' {NL} expression)
 /// [spec: grammar-rule-functionBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionBody
 pub(crate) fn function_body(p: &mut Parser) {
@@ -693,12 +754,7 @@ fn setter(p: &mut Parser) {
         p.bump();
         eat_nl(p);
         if !p.at(R_PAREN) {
-            simple_identifier(p);
-            if p.at(COLON) {
-                p.bump();
-                eat_nl(p);
-                type_(p);
-            }
+            function_value_parameter_with_optional_type(p);
             eat_nl(p);
             if p.eat(COMMA) {
                 eat_nl(p);

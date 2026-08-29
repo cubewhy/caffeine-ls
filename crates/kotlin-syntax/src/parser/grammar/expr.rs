@@ -279,14 +279,25 @@ fn as_expression(p: &mut Parser) {
 }
 
 /// `{unaryPrefix} postfixUnaryExpression`
+/// `unaryPrefix`: annotation | label | prefixUnaryOperator
 /// [spec: grammar-rule-prefixUnaryExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-prefixUnaryExpression
 fn prefix_unary_expression(p: &mut Parser) {
     let m = p.start();
     let mut wrapped = false;
-    while at_prefix_unary_operator(p) {
-        wrapped = true;
-        p.bump();
+    while at_prefix_unary_prefix(p) {
+        if p.at(AT) {
+            annotation(p);
+        } else if p.at(IDENTIFIER) && p.nth(1) == Some(AT) {
+            // label: simpleIdentifier AT
+            let l = p.start();
+            simple_identifier(p);
+            p.expect(AT);
+            l.complete(p, LABEL);
+        } else {
+            p.bump();
+        }
         eat_nl(p);
+        wrapped = true;
     }
     postfix_unary_expression(p);
     if wrapped {
@@ -296,13 +307,13 @@ fn prefix_unary_expression(p: &mut Parser) {
     }
 }
 
-/// `++` `--` `-` `+` `!`
+/// `++` `--` `-` `+` `!` or a label/annotation prefix.
 /// [spec: grammar-rule-prefixUnaryOperator] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-prefixUnaryOperator
-fn at_prefix_unary_operator(p: &Parser) -> bool {
+fn at_prefix_unary_prefix(p: &Parser) -> bool {
     matches!(
         p.current(),
-        Some(PLUS_PLUS | MINUS_MINUS | MINUS | PLUS | NOT)
-    )
+        Some(PLUS_PLUS | MINUS_MINUS | MINUS | PLUS | NOT | AT)
+    ) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT))
 }
 
 /// `primaryExpression {postfixUnarySuffix}`
@@ -329,9 +340,20 @@ fn postfix_unary_expression(p: &mut Parser) {
             indexing_suffix(p);
             s.complete(p, INDEXING_EXPRESSION);
             wrapped = true;
-        } else if p.at(L_BRACE) {
-            // callSuffix: annotatedLambda (trailing lambda)
+        } else if p.at(L_BRACE) || p.at(AT) || (p.at(IDENTIFIER) && p.nth(1) == Some(AT)) {
+            // callSuffix: annotatedLambda = {annotation} [label] lambdaLiteral
             let s = p.start();
+            while p.at(AT) {
+                annotation(p);
+                eat_nl(p);
+            }
+            if p.at(IDENTIFIER) && p.nth(1) == Some(AT) {
+                let l = p.start();
+                simple_identifier(p);
+                p.expect(AT);
+                eat_nl(p);
+                l.complete(p, LABEL);
+            }
             lambda_literal(p);
             s.complete(p, CALL_EXPRESSION);
             wrapped = true;
@@ -470,11 +492,28 @@ fn primary_expression(p: &mut Parser) {
         Some(THIS_KW) => {
             let m = p.start();
             p.bump();
+            // THIS_AT: 'this@' {NL} simpleIdentifier
+            if p.at(AT) && p.nth(1) == Some(IDENTIFIER) {
+                p.bump();
+                simple_identifier(p);
+            }
             m.complete(p, THIS_EXPRESSION);
         }
         Some(SUPER_KW) => {
             let m = p.start();
             p.bump();
+            // 'super' ['<' {NL} type {NL} '>'] ['@' simpleIdentifier]
+            if p.at(LESS) {
+                p.bump();
+                eat_nl(p);
+                type_(p);
+                eat_nl(p);
+                p.expect(GREATER);
+            }
+            if p.at(AT) && p.nth(1) == Some(IDENTIFIER) {
+                p.bump();
+                simple_identifier(p);
+            }
             m.complete(p, SUPER_EXPRESSION);
         }
         Some(TRUE_KW | FALSE_KW | NULL_KW | INTEGER_LITERAL | FLOAT_LITERAL | CHAR_LITERAL) => {
@@ -743,6 +782,10 @@ fn when_expression(p: &mut Parser) {
         let sub = p.start();
         p.bump();
         eat_nl(p);
+        while p.at(AT) {
+            annotation(p);
+            eat_nl(p);
+        }
         if p.at(VAL_KW) {
             p.bump();
             eat_nl(p);
@@ -863,7 +906,7 @@ fn catch_block(p: &mut Parser) {
     eat_nl(p);
     p.expect(L_PAREN);
     eat_nl(p);
-    if p.at(AT) {
+    while p.at(AT) {
         annotation(p);
         eat_nl(p);
     }
@@ -982,7 +1025,7 @@ fn anonymous_function(p: &mut Parser) {
         eat_nl(p);
     }
 
-    crate::parser::grammar::decl::function_value_parameters(p);
+    crate::parser::grammar::decl::parameters_with_optional_type(p);
     eat_nl(p);
 
     if p.at(COLON) {
@@ -1243,6 +1286,30 @@ mod tests {
     #[test]
     fn object_literal() {
         let out = parse_with(expression, "object : Runnable { override fun run() {} }");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn anonymous_function_optional_types() {
+        let out = parse_with(expression, "fun(x, y: Int, z = 2): Int = x + y + z");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn prefix_annotation_and_label() {
+        let out = parse_with(expression, "label@ !x");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn annotated_trailing_lambda() {
+        let out = parse_with(expression, "fold label@ { acc, x -> acc + x }");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn this_and_super_forms() {
+        let out = parse_with(expression, "this@outer.foo() + super<Any>.bar()");
         insta::assert_snapshot!(out);
     }
 }
