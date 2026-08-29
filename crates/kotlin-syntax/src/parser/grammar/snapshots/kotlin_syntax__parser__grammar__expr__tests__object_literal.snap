@@ -15,15 +15,13 @@ Tombstone
 Tombstone
 Tombstone
 Tombstone
-StartNode(LAMBDA_LITERAL)
+StartNode(OBJECT_LITERAL)
 AddToken
-StartNode(LAMBDA_PARAMETERS)
-StartNode(LAMBDA_PARAMETER)
-StartNode(VARIABLE_DECLARATION)
+AddToken
+StartNode(USER_TYPE)
 AddToken
 FinishNode
-FinishNode
-FinishNode
+StartNode(BLOCK)
 AddToken
 StartNode(EXPRESSION_STATEMENT)
 Tombstone
@@ -34,15 +32,7 @@ Tombstone
 Tombstone
 Tombstone
 Tombstone
-StartNode(BINARY_EXPRESSION)
 Tombstone
-Tombstone
-Tombstone
-Tombstone
-StartNode(PRIMARY_EXPRESSION)
-AddToken
-FinishNode
-AddToken
 Tombstone
 Tombstone
 Tombstone
@@ -51,6 +41,9 @@ StartNode(PRIMARY_EXPRESSION)
 AddToken
 FinishNode
 FinishNode
+Error(ParseError { kind: ExpectedToken { expected: [R_BRACE], found: Some(FUN_KW) }, range: 29..32 })
+StartNode(MISSING)
 FinishNode
-AddToken
 FinishNode
+FinishNode
+ERROR ParseError { kind: ExpectedToken { expected: [R_BRACE], found: Some(FUN_KW) }, range: 29..32 }

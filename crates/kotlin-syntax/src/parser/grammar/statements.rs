@@ -49,6 +49,16 @@ pub(crate) fn statement(p: &mut Parser) {
     m.complete(p, EXPRESSION_STATEMENT);
 }
 
+/// `controlStructureBody`: block | statement
+/// [spec: grammar-rule-controlStructureBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-controlStructureBody
+pub(crate) fn control_structure_body(p: &mut Parser) {
+    if p.at(L_BRACE) {
+        block(p);
+    } else {
+        statement(p);
+    }
+}
+
 /// `block`: '{' {NL} statements {NL} '}'
 /// [spec: grammar-rule-block] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-block
 pub(crate) fn block(p: &mut Parser) {

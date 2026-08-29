@@ -1,5 +1,5 @@
 use crate::{
-    Parser, SyntaxKind,
+    ContextualKeyword, Parser, SyntaxKind,
     SyntaxKind::*,
     grammar::{
         annotations::annotation,
@@ -453,45 +453,48 @@ fn parenthesized_expression(p: &mut Parser) {
 /// `primaryExpression` — the atomic cases.
 /// [spec: grammar-rule-primaryExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-primaryExpression
 fn primary_expression(p: &mut Parser) {
-    let m = p.start();
     match p.current() {
         Some(L_PAREN) => {
+            let m = p.start();
             parenthesized_expression(p);
             m.complete(p, PARENTHESIZED_EXPRESSION);
         }
-        Some(L_BRACKET) => {
-            collection_literal(p);
-            m.complete(p, COLLECTION_LITERAL);
-        }
-        Some(L_BRACE) => {
-            lambda_literal(p);
-            m.complete(p, LAMBDA_LITERAL);
-        }
-        Some(COLON_COLON) | Some(IDENTIFIER) if at_callable_reference(p) => {
-            callable_reference(p);
-            m.complete(p, CALLABLE_REFERENCE);
-        }
+        Some(L_BRACKET) => collection_literal(p),
+        Some(L_BRACE) => lambda_literal(p),
+        Some(COLON_COLON) | Some(IDENTIFIER) if at_callable_reference(p) => callable_reference(p),
         Some(IDENTIFIER) => {
+            let m = p.start();
             p.bump();
             m.complete(p, PRIMARY_EXPRESSION);
         }
         Some(THIS_KW) => {
+            let m = p.start();
             p.bump();
             m.complete(p, THIS_EXPRESSION);
         }
         Some(SUPER_KW) => {
+            let m = p.start();
             p.bump();
             m.complete(p, SUPER_EXPRESSION);
         }
         Some(TRUE_KW | FALSE_KW | NULL_KW | INTEGER_LITERAL | FLOAT_LITERAL | CHAR_LITERAL) => {
+            let m = p.start();
             p.bump();
             m.complete(p, PRIMARY_EXPRESSION);
         }
         Some(OPEN_QUOTE) | Some(OPEN_RAW_QUOTE) => {
+            let m = p.start();
             string_literal(p);
             m.complete(p, STRING_LITERAL);
         }
+        Some(IF_KW) => if_expression(p),
+        Some(WHEN_KW) => when_expression(p),
+        Some(TRY_KW) => try_expression(p),
+        Some(THROW_KW | RETURN_KW | CONTINUE_KW | BREAK_KW) => jump_expression(p),
+        Some(OBJECT_KW) => object_literal(p),
+        Some(FUN_KW) => anonymous_function(p),
         _ => {
+            let m = p.start();
             p.error_expected_construct(ExpectedConstruct::Expression);
             m.complete(p, PRIMARY_EXPRESSION);
         }
@@ -502,6 +505,7 @@ fn primary_expression(p: &mut Parser) {
 ///                       [{NL} ','] {NL}] ']'
 /// [spec: grammar-rule-collectionLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-collectionLiteral
 fn collection_literal(p: &mut Parser) {
+    let m = p.start();
     p.expect(L_BRACKET);
     eat_nl(p);
     if !p.at(R_BRACKET) {
@@ -516,6 +520,7 @@ fn collection_literal(p: &mut Parser) {
     }
     eat_nl(p);
     p.expect(R_BRACKET);
+    m.complete(p, COLLECTION_LITERAL);
 }
 
 /// `callableReference`: [receiverType] '::' {NL} (simpleIdentifier | 'class')
@@ -618,21 +623,433 @@ fn lambda_parameter(p: &mut Parser) {
 /// [spec: grammar-rule-stringLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-stringLiteral
 ///
 /// The lexer emits string content in full mode (including the tokens of a
-/// `${...}` interpolation), so the parser can simply walk tokens from the
-/// opening to the closing quote. Template entries are wrapped in M5.
+/// `${...}` interpolation), so the parser simply walks tokens from the
+/// opening to the closing quote, wrapping `$name` / `${...}` runs in
+/// STRING_TEMPLATE nodes.
 fn string_literal(p: &mut Parser) {
     if p.at(OPEN_RAW_QUOTE) {
         p.bump();
+        eat_nl(p);
         while !p.at(CLOSE_RAW_QUOTE) && !p.is_at_end() {
-            p.bump();
+            string_template_entry(p);
         }
         p.expect(CLOSE_RAW_QUOTE);
     } else {
         p.bump(); // OPEN_QUOTE
         while !p.at(CLOSE_QUOTE) && !p.is_at_end() {
-            p.bump();
+            string_template_entry(p);
         }
         p.expect(CLOSE_QUOTE);
+    }
+}
+
+/// One unit of string content: literal text, an escape, `$name` or `${...}`.
+fn string_template_entry(p: &mut Parser) {
+    if p.at(TEMPLATE_SHORT_START) {
+        // FieldIdentifier: '$' IdentifierOrSoftKey
+        let m = p.start();
+        p.bump();
+        if p.at(IDENTIFIER) {
+            simple_identifier(p);
+        }
+        m.complete(p, STRING_TEMPLATE);
+    } else if p.at(TEMPLATE_EXPR_START) {
+        // lineStringExpression / multiLineStringExpression: '${' expression '}'
+        let m = p.start();
+        p.bump();
+        eat_nl(p);
+        if !p.at(R_BRACE) {
+            expression(p);
+            eat_nl(p);
+        }
+        if p.at(R_BRACE) {
+            p.bump();
+        } else {
+            // Robustness: the lexer balances nested braces; consume until the
+            // matching `}` of this interpolation.
+            let mut depth = 1usize;
+            loop {
+                match p.current() {
+                    Some(TEMPLATE_EXPR_START) | Some(L_BRACE) => {
+                        depth += 1;
+                        p.bump();
+                    }
+                    Some(R_BRACE) => {
+                        p.bump();
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    Some(EOF) | None => break,
+                    _ => p.bump(),
+                }
+            }
+        }
+        m.complete(p, STRING_TEMPLATE);
+    } else {
+        p.bump();
+    }
+}
+
+/// `ifExpression`: 'if' {NL} '(' {NL} expression {NL} ')'
+///                 (controlStructureBody | ([';'] {NL} 'else' ...)) | ';'
+/// [spec: grammar-rule-ifExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-ifExpression
+fn if_expression(p: &mut Parser) {
+    let m = p.start();
+    p.expect(IF_KW);
+    eat_nl(p);
+    p.expect(L_PAREN);
+    eat_nl(p);
+    expression(p);
+    eat_nl(p);
+    p.expect(R_PAREN);
+    eat_nl(p);
+
+    // body
+    if p.at(L_BRACE) {
+        crate::parser::grammar::statements::block(p);
+    } else if p.at(SEMICOLON) {
+        p.bump();
+    } else if !p.at(ELSE_KW) {
+        crate::parser::grammar::statements::statement(p);
+    }
+    eat_nl(p);
+
+    if p.at(ELSE_KW) {
+        p.bump();
+        eat_nl(p);
+        if p.at(L_BRACE) {
+            crate::parser::grammar::statements::block(p);
+        } else if p.at(SEMICOLON) {
+            p.bump();
+        } else {
+            crate::parser::grammar::statements::statement(p);
+        }
+    }
+
+    m.complete(p, IF_EXPRESSION);
+}
+
+/// `whenExpression`: 'when' [whenSubject] {NL} '{' {whenEntry {NL}} '}'
+/// [spec: grammar-rule-whenExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-whenExpression
+fn when_expression(p: &mut Parser) {
+    let m = p.start();
+    p.expect(WHEN_KW);
+    eat_nl(p);
+
+    if p.at(L_PAREN) {
+        // whenSubject: '(' [{annotation} 'val' variableDeclaration '='] expression ')'
+        let sub = p.start();
+        p.bump();
+        eat_nl(p);
+        if p.at(VAL_KW) {
+            p.bump();
+            eat_nl(p);
+            crate::parser::grammar::decl::variable_declaration(p);
+            p.expect(EQUAL);
+            eat_nl(p);
+        }
+        expression(p);
+        eat_nl(p);
+        p.expect(R_PAREN);
+        sub.complete(p, WHEN_SUBJECT);
+    }
+
+    eat_nl(p);
+    p.expect(L_BRACE);
+    eat_nl(p);
+    while !p.at(R_BRACE) && !p.is_at_end() {
+        when_entry(p);
+        eat_nl(p);
+    }
+    eat_nl(p);
+    p.expect(R_BRACE);
+    m.complete(p, WHEN_EXPRESSION);
+}
+
+/// `whenEntry`: (whenCondition {',' [',']} '->' controlStructureBody [semi])
+///              | ('else' '->' controlStructureBody [semi])
+/// [spec: grammar-rule-whenEntry] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-whenEntry
+fn when_entry(p: &mut Parser) {
+    let m = p.start();
+    eat_nl(p);
+
+    if p.at(ELSE_KW) {
+        p.bump();
+        eat_nl(p);
+        p.expect(ARROW);
+        eat_nl(p);
+        crate::parser::grammar::statements::control_structure_body(p);
+        eat_nl(p);
+        if p.at(SEMICOLON) {
+            p.bump();
+        }
+    } else {
+        when_condition(p);
+        while p.eat(COMMA) {
+            eat_nl(p);
+            if p.at(ARROW) {
+                break;
+            }
+            when_condition(p);
+        }
+        eat_nl(p);
+        p.expect(ARROW);
+        eat_nl(p);
+        crate::parser::grammar::statements::control_structure_body(p);
+        eat_nl(p);
+        if p.at(SEMICOLON) {
+            p.bump();
+        }
+    }
+
+    m.complete(p, WHEN_ENTRY);
+}
+
+/// `whenCondition`: expression | rangeTest | typeTest
+/// [spec: grammar-rule-whenCondition] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-whenCondition
+fn when_condition(p: &mut Parser) {
+    if p.at(IN_KW) || p.at(NOT_IN) {
+        // rangeTest: inOperator expression
+        let m = p.start();
+        p.bump();
+        eat_nl(p);
+        expression(p);
+        m.complete(p, RANGE_TEST);
+    } else if p.at(IS_KW) || p.at(NOT_IS) {
+        // typeTest: isOperator type
+        let m = p.start();
+        p.bump();
+        eat_nl(p);
+        type_(p);
+        m.complete(p, TYPE_TEST);
+    } else {
+        expression(p);
+    }
+}
+
+/// `tryExpression`: 'try' block (((catchBlock {catchBlock}) finallyBlock?)
+///                   | finallyBlock)
+/// [spec: grammar-rule-tryExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-tryExpression
+fn try_expression(p: &mut Parser) {
+    let m = p.start();
+    p.expect(TRY_KW);
+    eat_nl(p);
+    crate::parser::grammar::statements::block(p);
+    eat_nl(p);
+
+    if p.at_contextual_kw(ContextualKeyword::Catch) {
+        while p.at_contextual_kw(ContextualKeyword::Catch) {
+            catch_block(p);
+            eat_nl(p);
+        }
+        if p.at_contextual_kw(ContextualKeyword::Finally) {
+            finally_block(p);
+        }
+    } else if p.at_contextual_kw(ContextualKeyword::Finally) {
+        finally_block(p);
+    }
+
+    m.complete(p, TRY_EXPRESSION);
+}
+
+/// `catchBlock`: 'catch' {NL} '(' {annotation} simpleIdentifier ':' type
+///               [{NL} ','] ')' {NL} block
+/// [spec: grammar-rule-catchBlock] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-catchBlock
+fn catch_block(p: &mut Parser) {
+    let m = p.start();
+    p.expect_contextual_kw(ContextualKeyword::Catch);
+    eat_nl(p);
+    p.expect(L_PAREN);
+    eat_nl(p);
+    if p.at(AT) {
+        annotation(p);
+        eat_nl(p);
+    }
+    simple_identifier(p);
+    p.expect(COLON);
+    eat_nl(p);
+    type_(p);
+    eat_nl(p);
+    if p.eat(COMMA) {
+        eat_nl(p);
+    }
+    p.expect(R_PAREN);
+    eat_nl(p);
+    crate::parser::grammar::statements::block(p);
+    m.complete(p, CATCH_BLOCK);
+}
+
+/// `finallyBlock`: 'finally' {NL} block
+/// [spec: grammar-rule-finallyBlock] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-finallyBlock
+fn finally_block(p: &mut Parser) {
+    let m = p.start();
+    p.expect_contextual_kw(ContextualKeyword::Finally);
+    eat_nl(p);
+    crate::parser::grammar::statements::block(p);
+    m.complete(p, FINALLY_BLOCK);
+}
+
+/// `jumpExpression`: ('throw' expression) |
+///                   (('return' | return@label) [expression]) |
+///                   'continue' | continue@label | 'break' | break@label
+/// [spec: grammar-rule-jumpExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-jumpExpression
+fn jump_expression(p: &mut Parser) {
+    let m = p.start();
+    match p.current() {
+        Some(THROW_KW) => {
+            p.bump();
+            eat_nl(p);
+            if at_expression(p) {
+                expression(p);
+            }
+        }
+        Some(RETURN_KW) => {
+            p.bump();
+            eat_nl(p);
+            if p.at(AT) {
+                label_suffix(p);
+                eat_nl(p);
+            }
+            if at_expression(p) {
+                expression(p);
+            }
+        }
+        Some(CONTINUE_KW) | Some(BREAK_KW) => {
+            p.bump();
+            if p.at(AT) {
+                label_suffix(p);
+            }
+        }
+        _ => {}
+    }
+    m.complete(p, JUMP_EXPRESSION);
+}
+
+/// `@label` consumed after a jump keyword (`return@foo`, `break@outer`).
+fn label_suffix(p: &mut Parser) {
+    p.expect(AT);
+    if p.at(IDENTIFIER) {
+        simple_identifier(p);
+    }
+}
+
+/// `objectLiteral`: ['data'] {NL} 'object' [: delegationSpecifiers] classBody
+/// [spec: grammar-rule-objectLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-objectLiteral
+fn object_literal(p: &mut Parser) {
+    let m = p.start();
+    if p.at_contextual_kw(ContextualKeyword::Data) {
+        p.bump();
+        eat_nl(p);
+    }
+    p.expect(OBJECT_KW);
+    eat_nl(p);
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        // delegationSpecifiers (simplified): userType + optional arguments
+        crate::parser::grammar::types::user_type(p);
+        if p.at(L_PAREN) {
+            value_arguments(p);
+        }
+        eat_nl(p);
+    }
+
+    crate::parser::grammar::statements::block(p);
+    m.complete(p, OBJECT_LITERAL);
+}
+
+/// `anonymousFunction`: ['suspend'] 'fun' [receiverType '.'] parameters
+///                      [':' type] [functionBody]
+/// [spec: grammar-rule-anonymousFunction] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-anonymousFunction
+fn anonymous_function(p: &mut Parser) {
+    let m = p.start();
+    if p.at_contextual_kw(ContextualKeyword::Suspend) {
+        p.bump();
+        eat_nl(p);
+    }
+    p.expect(FUN_KW);
+    eat_nl(p);
+
+    // Optional receiver type followed by `.` (rare in anonymous functions):
+    // `fun String.(x: Int): Unit {}`.
+    if p.at(IDENTIFIER) && p.nth(1) == Some(DOT) && p.nth(2) == Some(L_PAREN) {
+        crate::parser::grammar::types::user_type(p);
+        eat_nl(p);
+        p.expect(DOT);
+        eat_nl(p);
+    }
+
+    function_value_parameters(p);
+    eat_nl(p);
+
+    if p.at(COLON) {
+        p.bump();
+        eat_nl(p);
+        type_(p);
+        eat_nl(p);
+    }
+
+    function_body(p);
+    m.complete(p, ANONYMOUS_FUNCTION);
+}
+
+/// `functionValueParameters`: '(' {NL} [functionValueParameter {{NL} ','} ...] ')'
+/// [spec: grammar-rule-functionValueParameters] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameters
+fn function_value_parameters(p: &mut Parser) {
+    let m = p.start();
+    p.expect(L_PAREN);
+    eat_nl(p);
+    if !p.at(R_PAREN) {
+        loop {
+            eat_nl(p);
+            if p.at(R_PAREN) {
+                break;
+            }
+            function_value_parameter(p);
+            eat_nl(p);
+            if !p.eat(COMMA) {
+                break;
+            }
+        }
+    }
+    eat_nl(p);
+    p.expect(R_PAREN);
+    m.complete(p, VALUE_PARAMETERS);
+}
+
+/// `functionValueParameter`: [parameterModifiers] parameter ['=' expression]
+/// [spec: grammar-rule-functionValueParameter] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionValueParameter
+fn function_value_parameter(p: &mut Parser) {
+    let m = p.start();
+    if p.at(AT) {
+        annotation(p);
+        eat_nl(p);
+    }
+    eat_nl(p);
+    simple_identifier(p);
+    p.expect(COLON);
+    eat_nl(p);
+    type_(p);
+    eat_nl(p);
+    if p.eat(EQUAL) {
+        eat_nl(p);
+        expression(p);
+    }
+    m.complete(p, VALUE_PARAMETER);
+}
+
+/// `functionBody`: block | ('=' {NL} expression)
+/// [spec: grammar-rule-functionBody] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-functionBody
+fn function_body(p: &mut Parser) {
+    if p.at(L_BRACE) {
+        crate::parser::grammar::statements::block(p);
+    } else if p.at(EQUAL) {
+        p.bump();
+        eat_nl(p);
+        expression(p);
     }
 }
 
@@ -674,9 +1091,6 @@ fn at_type_arguments(p: &Parser) -> bool {
 }
 
 /// Ensures `SyntaxKind` is reachable for the `at_expression` signature.
-#[allow(unused_imports)]
-use SyntaxKind as _SyntaxKind;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -805,6 +1219,87 @@ mod tests {
     #[test]
     fn infix_function_call() {
         let out = parse_with(expression, "a to b + 1");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn if_expression() {
+        let out = parse_with(expression, "if (x > 0) 1 else -1");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn if_with_block() {
+        let out = parse_with(expression, "if (x > 0) { a() } else { b() }");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn when_expression() {
+        let out = parse_with(
+            expression,
+            "when (x) { 1 -> \"one\"; 2, 3 -> \"few\"; else -> \"many\" }",
+        );
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn when_with_type_tests() {
+        let out = parse_with(
+            expression,
+            "when (x) { is String -> x.length; !is Int -> 0 }",
+        );
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn when_with_subject_val() {
+        let out = parse_with(expression, "when (val y = f()) { y > 0 -> 1 }");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn try_catch_finally() {
+        let out = parse_with(
+            expression,
+            "try { risky() } catch (e: Exception) { 0 } finally { cleanup() }",
+        );
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn jump_expressions() {
+        let out = parse_with(expression, "return 1");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn throw_expression() {
+        let out = parse_with(expression, "throw IllegalArgumentException()");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn string_template_short() {
+        let out = parse_with(expression, "\"Hello, $name!\"");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn string_template_block() {
+        let out = parse_with(expression, "\"Length: ${name.length}\"");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn raw_string() {
+        let out = parse_with(expression, "\"\"\"\nline $x\n\"\"\"");
+        insta::assert_snapshot!(out);
+    }
+
+    #[test]
+    fn object_literal() {
+        let out = parse_with(expression, "object : Runnable { override fun run() {} }");
         insta::assert_snapshot!(out);
     }
 }
