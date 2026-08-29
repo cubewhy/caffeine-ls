@@ -392,15 +392,15 @@ impl ParseErrorKind {
                     .collect::<Vec<_>>()
                     .join(" or ");
 
-                format!("{} expected", expected_str)
+                format!("Expected {}", expected_str)
             }
             ParseErrorKind::ExpectedContextualKeyword { keyword, .. } => {
-                format!("'{}' expected", keyword.as_str())
+                format!("Expected '{}'", keyword.as_str())
             }
             ParseErrorKind::ExpectedConstruct(construct) => {
                 format!("Expected {} here", construct)
             }
-            ParseErrorKind::NotAStatement => "not a statement".to_string(),
+            ParseErrorKind::NotAStatement => "Not a statement".to_string(),
             ParseErrorKind::Message(msg) => msg.to_string(),
         }
     }

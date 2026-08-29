@@ -19,23 +19,23 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.not.stmt",
       "source": "caffeine-ls",
-      "message": "not a statement"
+      "message": "Not a statement"
     },
     {
       "range": {
         "start": {
           "line": 2,
-          "character": 12
+          "character": 14
         },
         "end": {
           "line": 2,
-          "character": 28
+          "character": 26
         }
       },
       "severity": 1,
       "code": "compiler.err.cant.resolve.location",
       "source": "caffeine-ls",
-      "message": "cannot find symbol\n  symbol:   method noSuchMethod()"
+      "message": "Cannot resolve method 'noSuchMethod()'"
     },
     {
       "range": {
@@ -51,7 +51,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.cant.resolve.location",
       "source": "caffeine-ls",
-      "message": "cannot find symbol\n  symbol:   variable unknown"
+      "message": "Cannot resolve symbol 'unknown'"
     }
   ],
   "kind": "full"

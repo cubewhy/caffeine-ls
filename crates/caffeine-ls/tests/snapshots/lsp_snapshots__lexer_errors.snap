@@ -19,7 +19,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "illegal character: '`'"
+      "message": "Illegal character: '`'"
     },
     {
       "range": {
@@ -35,7 +35,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "illegal character: '`'"
+      "message": "Illegal character: '`'"
     },
     {
       "range": {
@@ -51,7 +51,7 @@ expression: diagnostics
       "severity": 1,
       "code": "compiler.err.illegal.char",
       "source": "caffeine-ls",
-      "message": "illegal character literal"
+      "message": "Illegal character literal"
     },
     {
       "range": {
@@ -82,7 +82,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "';' expected"
+      "message": "Expected ';'"
     },
     {
       "range": {

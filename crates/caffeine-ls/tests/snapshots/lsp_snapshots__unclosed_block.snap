@@ -35,7 +35,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "'}' expected"
+      "message": "Expected '}'"
     },
     {
       "range": {
@@ -51,7 +51,7 @@ expression: diagnostics
       "severity": 1,
       "code": "expected-token",
       "source": "caffeine-ls",
-      "message": "'}' expected"
+      "message": "Expected '}'"
     }
   ],
   "kind": "full"

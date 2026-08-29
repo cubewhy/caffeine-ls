@@ -946,23 +946,23 @@ impl LexicalErrorKind {
         match self {
             LexicalErrorKind::UnexpectedChar(c) => {
                 if c.is_control() {
-                    format!("illegal character: '\\u{:04x}'", *c as u32)
+                    format!("Illegal character: '\\u{:04x}'", *c as u32)
                 } else {
-                    format!("illegal character: '{}'", c)
+                    format!("Illegal character: '{}'", c)
                 }
             }
-            LexicalErrorKind::UnterminatedString => "unclosed string literal".to_string(),
-            LexicalErrorKind::UnterminatedComment => "unclosed comment".to_string(),
-            LexicalErrorKind::InvalidChar => "illegal character literal".to_string(),
+            LexicalErrorKind::UnterminatedString => "Unclosed string literal".to_string(),
+            LexicalErrorKind::UnterminatedComment => "Unclosed comment".to_string(),
+            LexicalErrorKind::InvalidChar => "Illegal character literal".to_string(),
             LexicalErrorKind::IllegalTextBlockOpen => {
-                "illegal text block open delimiter sequence".to_string()
+                "Illegal text block open delimiter sequence".to_string()
             }
-            LexicalErrorKind::UnterminatedTextBlock => "unclosed text block".to_string(),
-            LexicalErrorKind::InvalidNumber => "malformed numeric literal".to_string(),
-            LexicalErrorKind::InvalidUnicodeEscape => "illegal unicode escape".to_string(),
-            LexicalErrorKind::UnterminatedChar => "unclosed character literal".to_string(),
-            LexicalErrorKind::InvalidEscapeSequence => "illegal escape character".to_string(),
-            LexicalErrorKind::UnterminatedTemplate => "unterminated string template".to_string(),
+            LexicalErrorKind::UnterminatedTextBlock => "Unclosed text block".to_string(),
+            LexicalErrorKind::InvalidNumber => "Malformed numeric literal".to_string(),
+            LexicalErrorKind::InvalidUnicodeEscape => "Illegal unicode escape".to_string(),
+            LexicalErrorKind::UnterminatedChar => "Unclosed character literal".to_string(),
+            LexicalErrorKind::InvalidEscapeSequence => "Illegal escape character".to_string(),
+            LexicalErrorKind::UnterminatedTemplate => "Unterminated string template".to_string(),
         }
     }
 }

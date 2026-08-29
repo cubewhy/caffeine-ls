@@ -25,7 +25,7 @@ expression: "(diag_empty, diag_garbage)"
         "severity": 1,
         "code": "compiler.err.illegal.char",
         "source": "caffeine-ls",
-        "message": "illegal character: '#'"
+        "message": "Illegal character: '#'"
       },
       {
         "range": {

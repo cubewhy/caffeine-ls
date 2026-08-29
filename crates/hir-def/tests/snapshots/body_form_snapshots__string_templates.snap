@@ -11,7 +11,7 @@ class Foo {
 }
 
 PARSE_ERRORS:
-not a statement @58..59
+Not a statement @58..59
 ITEM_TREE:
 file (java)
 class Foo @1..67
