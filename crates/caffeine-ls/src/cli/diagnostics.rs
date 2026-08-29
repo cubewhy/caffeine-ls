@@ -1,12 +1,15 @@
 //! The `caffeine-ls diagnostics` subcommand: analyzes a repository headlessly
 //! by driving the real server lifecycle over an in-memory LSP connection.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use lsp_types::{
-    DocumentDiagnosticParams, DocumentDiagnosticReport, PartialResultParams,
-    TextDocumentIdentifier, Uri, WorkDoneProgressParams,
+    PartialResultParams, Uri, WorkDoneProgressParams, WorkspaceDiagnosticParams,
+    WorkspaceDiagnosticReport, WorkspaceDocumentDiagnosticReport,
 };
 use vfs::AbsPathBuf;
 
@@ -15,14 +18,9 @@ use crate::{
     flags::{BuildSystemChoice, DiagnosticsArgs, OutputFormat},
 };
 
-/// Outcome of pulling diagnostics for a single file.
-enum PullOutcome {
-    Reported(Vec<lsp_types::Diagnostic>),
-    /// The server does not know the file: outside any loaded source root or
-    /// filtered by gitignore. Expected for candidate files that live outside
-    /// the build system's source sets.
-    Skipped,
-}
+/// Aggregates the single workspace-wide pull, keyed by source URI so candidate
+/// files can be matched back against the report.
+type WorkspaceReport = HashMap<Uri, Vec<lsp_types::Diagnostic>>;
 
 pub fn run(args: &DiagnosticsArgs) -> anyhow::Result<i32> {
     let root = resolve_root(&args.path)?;
@@ -156,36 +154,40 @@ fn analyze(
 
     let max_rank = args.min_severity.max_rank();
     let mut report = report::DiagnosticReport::default();
+    let by_uri = pull_workspace(server)?;
 
     for file in files {
-        match pull_document(server, file)? {
-            PullOutcome::Skipped => {
-                report.files_skipped += 1;
-            }
-            PullOutcome::Reported(diagnostics) => {
-                report.files_analyzed += 1;
-                let display = report::display_path(root, file);
-                report.diagnostics.extend(report::collect_entries(
-                    &display,
-                    file,
-                    &diagnostics,
-                    max_rank,
-                ));
-            }
-        }
+        let uri: Uri = Uri::from_file_path(file)
+            .map_err(|_| anyhow::format_err!("failed to build URI for {}", file.display()))?;
+
+        // Candidate files absent from the workspace report live outside any
+        // loaded source root or are filtered by gitignore; the server does not
+        // know them and they are not part of the analysis.
+        let Some(diagnostics) = by_uri.get(&uri) else {
+            report.files_skipped += 1;
+            continue;
+        };
+
+        report.files_analyzed += 1;
+        let display = report::display_path(root, file);
+        report.diagnostics.extend(report::collect_entries(
+            &display,
+            file,
+            diagnostics,
+            max_rank,
+        ));
     }
 
     check_server_errors(server)?;
     Ok(report)
 }
 
-fn pull_document(server: &HeadlessServer, file: &Path) -> anyhow::Result<PullOutcome> {
-    let uri: Uri = Uri::from_file_path(file)
-        .map_err(|_| anyhow::format_err!("failed to build URI for {}", file.display()))?;
-    let params = serde_json::to_value(DocumentDiagnosticParams {
-        text_document: TextDocumentIdentifier { uri },
+/// Pulls the whole-workspace diagnostic report in a single request, keyed by
+/// the URI of every source file the server has a report for.
+fn pull_workspace(server: &HeadlessServer) -> anyhow::Result<WorkspaceReport> {
+    let params = serde_json::to_value(WorkspaceDiagnosticParams {
         identifier: None,
-        previous_result_id: None,
+        previous_result_ids: Vec::new(),
         work_done_progress_params: WorkDoneProgressParams {
             work_done_token: None,
         },
@@ -196,42 +198,44 @@ fn pull_document(server: &HeadlessServer, file: &Path) -> anyhow::Result<PullOut
 
     let mut last_error = String::new();
     for attempt in 0..crate::cli::PULL_RETRIES {
-        let response = server.request("textDocument/diagnostic", params.clone())?;
+        let response = server.request("workspace/diagnostic", params.clone())?;
 
         if let Some(err) = response.error {
-            // A file outside the loaded source roots is not an error for the
-            // overall run; it is simply not part of the analysis.
-            if err.message.contains("vfs path") || err.message.contains("file not found") {
-                return Ok(PullOutcome::Skipped);
-            }
             last_error = err.message;
             tracing::debug!(
-                file = %file.display(),
                 attempt,
-                "diagnostics pull failed, retrying: {last_error}"
+                "workspace diagnostics pull failed, retrying: {last_error}"
             );
             continue;
         }
 
         let Some(result) = response.result else {
-            anyhow::bail!("empty diagnostic report for {}", file.display());
+            anyhow::bail!("empty workspace diagnostic report");
         };
-        let report: DocumentDiagnosticReport = serde_json::from_value(result)
-            .map_err(|e| anyhow::format_err!("invalid diagnostic report for {file:?}: {e}"))?;
+        let report: WorkspaceDiagnosticReport = serde_json::from_value(result)
+            .map_err(|e| anyhow::format_err!("invalid workspace diagnostic report: {e}"))?;
 
-        let items = match report {
-            DocumentDiagnosticReport::RelatedFullDocumentDiagnosticReport(full) => {
-                full.full_document_diagnostic_report.items
-            }
-            DocumentDiagnosticReport::RelatedUnchangedDocumentDiagnosticReport(_) => Vec::new(),
-        };
-        return Ok(PullOutcome::Reported(items));
+        let mut by_uri = HashMap::with_capacity(report.items.len());
+        for item in report.items {
+            // A fresh-request report is full by construction (no previous
+            // result ids were echoed back), but an unchanged entry still marks
+            // the file as known to the server.
+            let (uri, items) = match item {
+                WorkspaceDocumentDiagnosticReport::WorkspaceFullDocumentDiagnosticReport(full) => {
+                    (full.uri, full.full_document_diagnostic_report.items)
+                }
+                WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
+                    _,
+                ) => {
+                    continue;
+                }
+            };
+            by_uri.insert(uri, items);
+        }
+        return Ok(by_uri);
     }
 
-    anyhow::bail!(
-        "failed to pull diagnostics for {}: {last_error}",
-        file.display()
-    )
+    anyhow::bail!("failed to pull workspace diagnostics: {last_error}")
 }
 
 /// Surfaces messages the server sent via `window/showMessage` with severity

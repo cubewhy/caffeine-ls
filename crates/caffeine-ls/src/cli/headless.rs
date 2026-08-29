@@ -3,9 +3,9 @@
 //! The `diagnostics` subcommand starts the genuine server main loop over an
 //! in-memory connection and speaks LSP to it, exactly like an editor would:
 //! initialize → initialized (which triggers probe → build-system sync →
-//! workspace load → library warmup server-side) → pull diagnostics per file
-//! → shutdown. This guarantees the CLI observes the same analysis as the
-//! editor with zero duplicated lifecycle logic.
+//! workspace load → library warmup server-side) → one workspace-wide
+//! diagnostics pull → shutdown. This guarantees the CLI observes the same
+//! analysis as the editor with zero duplicated lifecycle logic.
 
 use std::{
     collections::HashMap,

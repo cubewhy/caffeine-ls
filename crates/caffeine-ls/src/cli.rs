@@ -18,5 +18,5 @@ pub const EXIT_FINDINGS: i32 = 1;
 /// setup, timed-out load, internal error).
 pub const EXIT_TOOL_FAILURE: i32 = 2;
 
-/// Retries for a single diagnostics pull before giving up on the file.
+/// Retries for a single diagnostics pull before giving up on the workspace.
 pub(crate) const PULL_RETRIES: usize = 5;
