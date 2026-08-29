@@ -1,0 +1,95 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun 问候(名字: String): String {
+    val 簡明 = 名字
+    return 簡明
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "问候"
+L_PAREN "("
+IDENTIFIER "名字"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "簡明"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "名字"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "簡明"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..81
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..80
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..10 "问候"
+    VALUE_PARAMETERS@10..26
+      L_PAREN@10..11 "("
+      VALUE_PARAMETER@11..25
+        IDENTIFIER@11..17 "名字"
+        COLON@17..18 ":"
+        WHITESPACE@18..19 " "
+        TYPE@19..25
+          USER_TYPE@19..25
+            IDENTIFIER@19..25 "String"
+      R_PAREN@25..26 ")"
+    COLON@26..27 ":"
+    WHITESPACE@27..28 " "
+    TYPE@28..34
+      USER_TYPE@28..34
+        IDENTIFIER@28..34 "String"
+    WHITESPACE@34..35 " "
+    BLOCK@35..80
+      L_BRACE@35..36 "{"
+      NEWLINE@36..37 "\n"
+      WHITESPACE@37..41 "    "
+      PROPERTY_DECL@41..61
+        VAL_KW@41..44 "val"
+        WHITESPACE@44..45 " "
+        VARIABLE_DECLARATION@45..51
+          IDENTIFIER@45..51 "簡明"
+        WHITESPACE@51..52 " "
+        EQUAL@52..53 "="
+        WHITESPACE@53..54 " "
+        PRIMARY_EXPRESSION@54..60
+          IDENTIFIER@54..60 "名字"
+        NEWLINE@60..61 "\n"
+      WHITESPACE@61..65 "    "
+      EXPRESSION_STATEMENT@65..78
+        JUMP_EXPRESSION@65..78
+          RETURN_KW@65..71 "return"
+          WHITESPACE@71..72 " "
+          PRIMARY_EXPRESSION@72..78
+            IDENTIFIER@72..78 "簡明"
+      NEWLINE@78..79 "\n"
+      R_BRACE@79..80 "}"
+  NEWLINE@80..81 "\n"

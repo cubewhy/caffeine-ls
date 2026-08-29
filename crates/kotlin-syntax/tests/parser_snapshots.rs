@@ -302,3 +302,13 @@ parser_snapshot!(
             val x = 1
     "#}
 );
+
+parser_snapshot!(
+    parse_unicode_identifiers,
+    indoc! {r#"
+        fun 问候(名字: String): String {
+            val 簡明 = 名字
+            return 簡明
+        }
+    "#}
+);

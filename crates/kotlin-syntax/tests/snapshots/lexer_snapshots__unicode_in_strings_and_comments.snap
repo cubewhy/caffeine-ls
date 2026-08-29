@@ -1,0 +1,77 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/**
+ * 添加两个数字
+ */
+fun add(a: Int, b: Int): Int {
+    // 注释包含中文
+    val msg = "欢乐 😀 世界"
+    val ch = '好'
+    return a + b
+}
+
+TOKENS:
+KDOC "/**\n * 添加两个数字\n */"
+NEWLINE "\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "add"
+L_PAREN "("
+IDENTIFIER "a"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "b"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+LINE_COMMENT "// 注释包含中文"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "msg"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "欢乐 😀 世界"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "ch"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'好'"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "b"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

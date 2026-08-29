@@ -1,0 +1,58 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+fun 问候(名字: String): String {
+    val 簡明 = "你好"
+    val x١ = 42
+    return 名字
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "问候"
+L_PAREN "("
+IDENTIFIER "名字"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "簡明"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "你好"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x١"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "42"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "名字"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

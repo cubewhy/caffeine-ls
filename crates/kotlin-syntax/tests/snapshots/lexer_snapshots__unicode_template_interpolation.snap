@@ -1,0 +1,60 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    val name = "世界"
+    println("你好, $name!")
+    println("$名称 是 $name")
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "name"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "世界"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "你好, "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "name"
+STRING_CONTENT "!"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "名称"
+STRING_CONTENT " 是 "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "name"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

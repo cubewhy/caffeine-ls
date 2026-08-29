@@ -194,7 +194,6 @@ impl<'a> Lexer<'a> {
 
                 c => {
                     self.report_error(LexicalErrorKind::UnexpectedChar(c));
-                    self.reader.advance();
                 }
             },
         }

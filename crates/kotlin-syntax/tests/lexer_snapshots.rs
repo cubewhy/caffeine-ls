@@ -316,3 +316,47 @@ lexer_snapshot!(
         'a
     "#}
 );
+
+lexer_snapshot!(
+    unicode_identifiers,
+    indoc! {r#"
+        fun 问候(名字: String): String {
+            val 簡明 = "你好"
+            val x١ = 42
+            return 名字
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    unicode_in_strings_and_comments,
+    indoc! {r#"
+        /**
+         * 添加两个数字
+         */
+        fun add(a: Int, b: Int): Int {
+            // 注释包含中文
+            val msg = "欢乐 😀 世界"
+            val ch = '好'
+            return a + b
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    unicode_template_interpolation,
+    indoc! {r#"
+        fun main() {
+            val name = "世界"
+            println("你好, $name!")
+            println("$名称 是 $name")
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    unicode_illegal_character,
+    indoc! {r#"
+        val face = 😀1
+    "#}
+);

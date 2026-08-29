@@ -1,0 +1,20 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val face = 😀1
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "face"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: UnexpectedChar('😀'), range: 11..15 }
