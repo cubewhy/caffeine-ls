@@ -330,6 +330,44 @@ class Use {
 // import anywhere ([§7.5.4]). Before constants surfaced as fields, both forms
 // reported `cant.resolve.location`.
 
+// -- red: an unknown enum constant is a missing static field ([§8.9.2]) ---------
+
+snapshot!(
+    unknown_enum_constant,
+    check_body_types(&[
+        (
+            "/src/com/example/Syntax.java",
+            "\
+package com.example;
+
+public enum Syntax {
+    xml, html;
+}
+",
+        ),
+        (
+            "/src/com/example/Use.java",
+            "\
+package com.example;
+
+class Use {
+    boolean isJson(com.example.Syntax syntax) {
+        return syntax == Syntax.json;
+    }
+
+    com.example.Syntax ok(com.example.Syntax syntax) {
+        return Syntax.xml;
+    }
+}
+",
+        ),
+    ])
+);
+// §8.9.2/[§15.11]: `Syntax.json` is a qualified name whose last component is
+// no member of the enum — no such constant exists — so it is a compile-time
+// error (`cannot find symbol: variable json`), exactly like a misspelled
+// static field. The valid `Syntax.xml` constant read stays silent.
+
 // -- green: anonymous class on an interface ([§15.9.5]) -------------------------
 
 snapshot!(

@@ -1640,9 +1640,33 @@ impl<'a> InferCtx<'a> {
         }
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => field.ty,
-            // `Type.name` read without a call — or used as the receiver of a
-            // `Type.method(...)` call — is the type itself.
-            None if is_static => receiver,
+            // `Type.Name` read without a call — or used as the receiver of a
+            // `Type.method(...)` call — is the type itself when `Name` is a
+            // *nested type* member of `Type` ([§6.5.5.2], [§15.11.1]). For a
+            // *source* receiver the member set is complete, so a `Type.Name`
+            // that is neither a field nor a nested type — an unknown enum
+            // constant ([§8.9.2]) or a misspelled static field — is reported
+            // like any missing member ([§15.11]). Library receivers keep the
+            // conservative fallback: their records may be partial, and real
+            // loaded libraries surface their static members through the
+            // member set ([`LibraryIndex`]).
+            None if is_static => {
+                let is_source = self.receiver_fqn(&receiver).is_some_and(|fqn| {
+                    matches!(
+                        hir::fqn_resolve(self.db, &self.scope, fqn),
+                        Some(hir::Resolved::Source(_))
+                    )
+                });
+                if !is_source || self.receiver_has_nested_type(&receiver, name.as_str()) {
+                    receiver
+                } else {
+                    self.report(TypeError::NoSuchField {
+                        expr,
+                        name: name.clone(),
+                    });
+                    self.error()
+                }
+            }
             None => {
                 // §15.11: no (accessible) field of the name on the receiver.
                 self.report(TypeError::NoSuchField {
@@ -1652,6 +1676,38 @@ impl<'a> InferCtx<'a> {
                 self.error()
             }
         }
+    }
+
+    /// Whether `name` is a *member type* (a nested class, interface, enum,
+    /// record or annotation, [JLS §6.5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.2))
+    /// of the class `receiver`. A qualified name `Type.Name` whose last
+    /// component is a nested type is itself a type, not a field access, so it
+    /// is not reported as a missing field. Source classes nest with dots
+    /// ([JLS §6.7]); library nested classes use the `Outer$Inner` binary name
+    /// ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)).
+    fn receiver_has_nested_type(&self, receiver: &Ty, name: &str) -> bool {
+        let Some(fqn) = self.receiver_fqn(receiver) else {
+            return false;
+        };
+        let is_library = matches!(
+            hir::fqn_resolve(self.db, &self.scope, fqn),
+            Some(hir::Resolved::Library(_))
+        );
+        let candidate = if is_library {
+            format!("{fqn}${name}")
+        } else {
+            format!("{fqn}.{name}")
+        };
+        hir::fqn_resolve(self.db, &self.scope, &candidate).is_some()
+    }
+
+    /// The canonical fully qualified name of a reference receiver type, or
+    /// `None` for a non-reference (array, type variable, primitive, error).
+    fn receiver_fqn(&self, receiver: &Ty) -> Option<&str> {
+        let TyKind::Reference { name, .. } = receiver.kind(self.db) else {
+            return None;
+        };
+        Some(name.as_str())
     }
 
     fn pick_field_of(&mut self, receiver: Option<Ty>, name: &str) -> Option<FieldData> {
@@ -2893,13 +2949,22 @@ impl<'a> InferCtx<'a> {
             // class declares no constructor of the name at all. Non-
             // instantiable types (interface/abstract/enum/type-var) already
             // reported their own error; a failed/unknown class type reported
-            // the unknown type; library classes whose `<init>` stubs are
-            // absent (some test fixtures omit them) stay silent.
+            // the unknown type.
             if !anonymous_body && !non_instantiable && !class_ty.is_error(self.db) {
                 let ctor = Name::new(&constructor_name);
                 let owner = Name::new(name.simple_name());
                 let members = member_set(self.db, &self.scope, &class_ty, ctor.as_str(), &access);
                 if members.is_empty() {
+                    // §8.8.9: a source class that declares *no* constructors
+                    // synthesizes its implicit no-arg default into the member
+                    // set ([`source_class_methods`]), so an empty set here
+                    // means the class declares constructors that are hidden
+                    // from this caller (a private constructor, [§6.6.1]) and
+                    // no implicit default applies — `cannot find symbol:
+                    // constructor {Foo}()` ([§15.9]). Library classes are
+                    // skipped: their member records now always surface `<init>`
+                    // when loaded ([`LibraryIndex`]), so an empty set there
+                    // means an incomplete fixture, not a missing constructor.
                     if let Some(hir::Resolved::Source(_)) =
                         hir::fqn_resolve(self.db, &self.scope, name.as_str())
                     {
