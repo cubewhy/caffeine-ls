@@ -161,8 +161,25 @@ pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
     out
 }
 
+/// The duplicate-package-declaration check of a compilation unit
+/// ([JLS §7.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.1)):
+/// a compilation unit declares at most one `package` declaration, so every
+/// declaration after the first is an error. Each is reported at its own name
+/// range. (javac treats a second `package` as a parse error — "class, interface,
+/// enum, or record expected" — so this carries a custom code, not a
+/// `compiler.*` twin.)
+pub(crate) fn duplicate_package_diagnostics(tree: &ItemTree) -> Vec<DeclDiagnostic> {
+    tree.package_decl_ranges
+        .iter()
+        .skip(1)
+        .map(|name_range| DeclDiagnostic::DuplicatePackage {
+            package: tree.package.clone().unwrap_or_else(|| Name::new("")),
+            name_range: Some(*name_range),
+        })
+        .collect()
+}
+
 /// The package-declaration vs filesystem-path consistency check of a
-/// compilation unit ([JLS §7.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.2.1)):
 /// the file's *directory chain* must end with the declared package chain —
 /// the shape a conventional classpath looks the class up under. `module-info.java`
 /// (no package declaration, [JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7))

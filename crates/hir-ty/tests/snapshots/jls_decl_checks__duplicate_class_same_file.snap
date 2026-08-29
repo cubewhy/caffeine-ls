@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 284
+expression: out
+---
+FILE /src/com/example/Two.java:
+package com.example;
+
+class Foo {}
+class Foo {}
+
+method : duplicate-class: @3:6duplicate class: com.example.Foo

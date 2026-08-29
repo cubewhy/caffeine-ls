@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 399
+expression: out
+---
+FILE /src/com/example/Zed.java:
+package com.example;
+
+class Zed {}
+class Other {}

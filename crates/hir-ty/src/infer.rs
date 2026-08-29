@@ -1657,7 +1657,17 @@ impl<'a> InferCtx<'a> {
                         Some(hir::Resolved::Source(_))
                     )
                 });
-                if !is_source || self.receiver_has_nested_type(&receiver, name.as_str()) {
+                // §8.9.2/[§15.11]: report a `Type.Name` that is neither a field
+                // nor a nested type as a missing member. For a *source*
+                // receiver the member set is complete, so this is sound. A
+                // *library* receiver keeps the conservative fallback EXCEPT for
+                // an enum: enum constants are guaranteed complete in a
+                // classfile, so an unknown constant is a real error, whereas a
+                // non-enum library class may carry partial static-field records.
+                let is_library_enum = self.receiver_is_library_enum(&receiver);
+                if !(is_source || is_library_enum)
+                    || self.receiver_has_nested_type(&receiver, name.as_str())
+                {
                     receiver
                 } else {
                     self.report(TypeError::NoSuchField {
@@ -1708,6 +1718,29 @@ impl<'a> InferCtx<'a> {
             return None;
         };
         Some(name.as_str())
+    }
+
+    /// Whether the reference receiver resolves to an *enum* class on the
+    /// classpath (a library class carrying ACC_ENUM, [JVMS §4.1]). Enum
+    /// constants are the only static members whose presence in a classfile is
+    /// guaranteed complete, so an unknown constant of a library enum is a
+    /// genuine §8.9.2/§15.11 error rather than a partial-record artifact.
+    fn receiver_is_library_enum(&self, receiver: &Ty) -> bool {
+        let Some(fqn) = self.receiver_fqn(receiver) else {
+            return false;
+        };
+        let resolved = hir::fqn_resolve(self.db, &self.scope, fqn);
+        let Some(hir::Resolved::Library(class)) = resolved else {
+            return false;
+        };
+        let Some(record) = hir::class_record(self.db, &class) else {
+            return false;
+        };
+        let hir::ClassOrModuleStub::Class(class) = record.as_ref() else {
+            return false;
+        };
+        syntax::stub::ClassKind::from_flags(class.flags, class.is_record)
+            == syntax::stub::ClassKind::Enum
     }
 
     fn pick_field_of(&mut self, receiver: Option<Ty>, name: &str) -> Option<FieldData> {

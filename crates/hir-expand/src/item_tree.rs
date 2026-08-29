@@ -46,6 +46,11 @@ pub struct ItemTree {
     /// declares a package; used by the IDE to surface a package symbol above
     /// the file's top-level types.
     pub package_range: Option<TextRange>,
+    /// The source range of every package declaration's name, in source order
+    /// ([JLS §7.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.1):
+    /// a compilation unit declares at most one package). More than one entry
+    /// is the duplicate-package error the declaration diagnostics report.
+    pub package_decl_ranges: Vec<TextRange>,
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
     pub items: Arena<ItemData>,
@@ -57,6 +62,7 @@ impl Default for ItemTree {
             language: LanguageKind::Unknown,
             package: None,
             package_range: None,
+            package_decl_ranges: Vec::new(),
             imports: Vec::new(),
             top: Vec::new(),
             items: Arena::default(),

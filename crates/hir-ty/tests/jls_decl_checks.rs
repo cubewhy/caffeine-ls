@@ -278,3 +278,135 @@ class Outer {
 ",
     )])
 );
+
+// -- §7.6: duplicate top-level classes (same file and cross-file) ----------------
+
+snapshot!(
+    duplicate_class_same_file,
+    check_class_diagnostics(&[(
+        "/src/com/example/Two.java",
+        "\
+package com.example;
+
+class Foo {}
+class Foo {}
+",
+    )])
+);
+// §7.6: two top-level declarations of the same simple name in one compilation
+// unit share the FQN `com.example.Foo` ([§6.7]); the non-first declaration is
+// reported (`duplicate class: com.example.Foo`), like javac.
+
+snapshot!(
+    duplicate_class_cross_file,
+    check_class_diagnostics(&[
+        (
+            "/src/com/example/A.java",
+            "\
+package com.example;
+
+class Foo {}
+",
+        ),
+        (
+            "/src/com/example/B.java",
+            "\
+package com.example;
+
+class Foo {}
+",
+        ),
+    ])
+);
+// §7.6: the duplicate spans files. `A.java`'s declaration is the first
+// occurrence (smallest file), so only `B.java`'s `Foo` is reported.
+
+snapshot!(
+    duplicate_class_no_duplicate,
+    check_class_diagnostics(&[(
+        "/src/com/example/A.java",
+        "\
+package com.example;
+
+class Foo {}
+class Bar {}
+",
+    )])
+);
+// Green: distinct top-level declarations in one file share no FQN.
+
+// -- §7.6: a public top-level type must be declared in a file of its name ------
+
+snapshot!(
+    single_public_class_ok,
+    check_class_diagnostics(&[(
+        "/src/com/example/Zed.java",
+        "\
+package com.example;
+
+public class Zed {}
+",
+    )])
+);
+// Green: `Zed.java` declares `public class Zed` — the file stem matches the
+// public type's simple name, so no error ([JLS §7.6]).
+
+snapshot!(
+    public_class_name_mismatch,
+    check_class_diagnostics(&[(
+        "/src/com/example/Foo.java",
+        "\
+package com.example;
+
+public class Zed {}
+",
+    )])
+);
+// §7.6: `Foo.java` declares `public class Zed`; a public top-level type must
+// be declared in a file named after its simple name, so it is reported
+// (`class Zed is public, should be declared in a file named Zed.java`).
+
+snapshot!(
+    multiple_public_classes,
+    check_class_diagnostics(&[(
+        "/src/com/example/A.java",
+        "\
+package com.example;
+
+public class A {}
+public class B {}
+",
+    )])
+);
+// §7.6: `A.java` declares two public top-level types. `B` is not declared in a
+// file named `B.java`, so it is reported; `A` matches the file and stays
+// silent — javac's "at most one public class per file".
+
+snapshot!(
+    public_class_wrong_file,
+    check_class_diagnostics(&[(
+        "/src/com/example/Zed.java",
+        "\
+package com.example;
+
+public class Zed {}
+public class Other {}
+",
+    )])
+);
+// §7.6: `Other` is public but the file is `Zed.java`, so it is reported.
+
+snapshot!(
+    package_private_class_ok,
+    check_class_diagnostics(&[(
+        "/src/com/example/Zed.java",
+        "\
+package com.example;
+
+class Zed {}
+class Other {}
+",
+    )])
+);
+// Green: package-private top-level types need not name the file ([§7.6]);
+// multiple package-private types per file are legal.

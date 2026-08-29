@@ -133,6 +133,16 @@ pub enum JavaDiagnosticCode {
     /// §15.12.3: an unqualified invocation of an instance method from a static
     /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     NonStaticMethodFromStaticContext,
+    /// §7.4.1: a compilation unit declares more than one `package` declaration
+    /// — the second and later are errors.
+    DuplicatePackage,
+    /// §7.6: two or more class-like declarations in the same package (across
+    /// one or several files) share a fully qualified name.
+    DuplicateClass,
+    /// §7.6: a `public` top-level class-like declaration must be declared in a
+    /// file named after its simple name — which also means at most one `public`
+    /// top-level type per file.
+    ClassPublicShouldBeInFile,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -218,6 +228,9 @@ impl JavaDiagnosticCode {
             CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
+            DuplicatePackage => None,
+            DuplicateClass => Some("compiler.err.duplicate.class"),
+            ClassPublicShouldBeInFile => Some("compiler.err.class.public.should.be.in.file"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -282,6 +295,9 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
                 "non-static-method-from-static-context"
             }
+            JavaDiagnosticCode::DuplicatePackage => "duplicate-package",
+            JavaDiagnosticCode::DuplicateClass => "duplicate-class",
+            JavaDiagnosticCode::ClassPublicShouldBeInFile => "class-public-should-be-in-file",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

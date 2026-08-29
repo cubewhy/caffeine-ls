@@ -199,3 +199,22 @@ public class Unmatched {}
         )]
     )
 );
+
+// -- red: a compilation unit declares more than one package (§7.4.1) ----------
+
+snapshot!(
+    duplicate_package_declaration,
+    check_class_diagnostics(&[(
+        "/src/com/example/A.java",
+        "\
+package com.example;
+package com.example.other;
+
+public class A {}
+",
+    )])
+);
+// §7.4.1: a compilation unit declares at most one package; the second and
+// later `package` declarations are errors, each reported at its own name.
+// (javac treats a second package as a parse error, so this carries a custom
+// code rather than a `compiler.*` twin.)

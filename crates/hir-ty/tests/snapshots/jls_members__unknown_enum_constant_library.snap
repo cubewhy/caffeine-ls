@@ -1,0 +1,35 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+assertion_line: 653
+expression: out
+---
+FILE /src/com/example/Use.java:
+package com.example;
+
+import com.lib.Syntax;
+
+class Use {
+    boolean isHtml(Syntax syntax) {
+        return syntax == Syntax.xml;
+    }
+
+    Syntax ok(Syntax syntax) {
+        return Syntax.html;
+    }
+
+    Syntax bad(Syntax syntax) {
+        return Syntax.json;
+    }
+}
+
+method isHtml(com.lib.Syntax): boolean
+  locals: l0: com.lib.Syntax
+  exprs: e0: com.lib.Syntax | e2: com.lib.Syntax | e3: boolean
+method ok(com.lib.Syntax): com.lib.Syntax
+  locals: l1: com.lib.Syntax
+  exprs: e5: com.lib.Syntax
+method bad(com.lib.Syntax): com.lib.Syntax
+  locals: l2: com.lib.Syntax
+  exprs: e7: <error>
+  diags: e7@14:15: no-such-field: cannot find symbol
+  symbol:   variable json

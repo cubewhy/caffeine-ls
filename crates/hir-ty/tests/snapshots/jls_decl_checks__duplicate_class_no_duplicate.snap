@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+assertion_line: 324
+expression: out
+---
+FILE /src/com/example/A.java:
+package com.example;
+
+class Foo {}
+class Bar {}

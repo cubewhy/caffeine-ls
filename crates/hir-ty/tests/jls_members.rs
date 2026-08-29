@@ -9,8 +9,8 @@
 mod common;
 
 use crate::common::{
-    check_body_types, check_class_diagnostics, check_methods, check_resolve_src,
-    check_source_methods,
+    ClassSpec, check_body_types, check_body_types_with_libs, check_class_diagnostics,
+    check_methods, check_resolve_src, check_source_methods,
 };
 use syntax::stub::PrimitiveType;
 
@@ -647,3 +647,50 @@ public class Derived extends Base {
         ),
     ])
 );
+
+// -- red: an unknown enum constant of a *library* enum ([§8.9.2]) --------------
+
+snapshot!(
+    unknown_enum_constant_library,
+    check_body_types_with_libs(
+        &[ClassSpec {
+            fqn: "com/lib/Syntax",
+            super_class: Some("java/lang/Enum"),
+            interfaces: &[],
+            access: 0x4021,
+            fields: &[("xml", "Lcom/lib/Syntax;"), ("html", "Lcom/lib/Syntax;")],
+            methods: &[("<init>", "(Ljava/lang/String;I)V")],
+            method_sigs: &[""],
+            method_access: &[0x0002], // ACC_PRIVATE, like a real enum ctor
+            sig: None,
+        }],
+        &[(
+            "/src/com/example/Use.java",
+            "\
+package com.example;
+
+import com.lib.Syntax;
+
+class Use {
+    boolean isHtml(Syntax syntax) {
+        return syntax == Syntax.xml;
+    }
+
+    Syntax ok(Syntax syntax) {
+        return Syntax.html;
+    }
+
+    Syntax bad(Syntax syntax) {
+        return Syntax.json;
+    }
+}
+",
+        )],
+    )
+);
+// §8.9.2/[§15.11]: `Syntax.json` is a qualified name whose last component is
+// no constant of the *library* enum `com.lib.Syntax` — reported exactly like a
+// misspelled static field (`cannot find symbol: variable json`). Enum
+// constants are guaranteed complete in a classfile, so unlike other library
+// static members the report is a genuine error rather than a partial-record
+// artifact. The valid `Syntax.xml` / `Syntax.html` constant reads stay silent.

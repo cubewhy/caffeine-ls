@@ -22,6 +22,7 @@ use crate::method::{self, MethodData};
 use crate::resolve::scope_for_file;
 use crate::subtyping;
 use crate::ty::Ty;
+use base_db::{LanguageKind, SourceDatabase};
 
 /// A declaration-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,29 @@ pub enum DeclDiagnostic {
         /// The source range of the package declaration's name.
         name_range: Option<rowan::TextRange>,
     },
+    /// §7.4.1: a compilation unit declares more than one `package` declaration
+    /// — the second and later are errors. Each reported declaration carries
+    /// its written package and the range of its name.
+    DuplicatePackage {
+        package: Name,
+        name_range: Option<rowan::TextRange>,
+    },
+    /// §7.6: two or more class-like declarations in the same package share a
+    /// fully qualified name ([JLS §6.7]). The non-first declaration of a
+    /// duplicate FQN is reported, cross-file as well as same-file; the message
+    /// mirrors javac's `duplicate class: {fqn}`.
+    DuplicateClass {
+        fqn: String,
+        name_range: Option<rowan::TextRange>,
+    },
+    /// §7.6: a `public` top-level class-like declaration must be declared in a
+    /// file named after its simple name — which also means at most one `public`
+    /// top-level type per compilation unit. The message mirrors javac's
+    /// `class {Simple} is public, should be declared in a file named {Simple}.java`.
+    ClassPublicShouldBeInFile {
+        name: Name,
+        name_range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -143,6 +167,15 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::UnexpectedPackagePath { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnexpectedPackagePath)
+            }
+            DeclDiagnostic::DuplicatePackage { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DuplicatePackage)
+            }
+            DeclDiagnostic::DuplicateClass { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DuplicateClass)
+            }
+            DeclDiagnostic::ClassPublicShouldBeInFile { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ClassPublicShouldBeInFile)
             }
         }
     }
@@ -218,6 +251,18 @@ impl DeclDiagnostic {
                 expected.as_str(),
                 dir
             ),
+            DeclDiagnostic::DuplicatePackage { package, .. } => {
+                format!("duplicate package declaration '{}'", package.as_str())
+            }
+            DeclDiagnostic::DuplicateClass { fqn, .. } => {
+                format!("duplicate class: {fqn}")
+            }
+            DeclDiagnostic::ClassPublicShouldBeInFile { name, .. } => {
+                let simple = name.simple_name();
+                format!(
+                    "class {simple} is public, should be declared in a file named {simple}.java"
+                )
+            }
         }
     }
 
@@ -234,7 +279,10 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { .. }
             | DeclDiagnostic::ConflictingImport { .. }
             | DeclDiagnostic::ModuleNotAccessible { .. }
-            | DeclDiagnostic::UnexpectedPackagePath { .. } => "",
+            | DeclDiagnostic::UnexpectedPackagePath { .. }
+            | DeclDiagnostic::DuplicatePackage { .. }
+            | DeclDiagnostic::DuplicateClass { .. }
+            | DeclDiagnostic::ClassPublicShouldBeInFile { .. } => "",
         }
     }
 
@@ -250,6 +298,9 @@ impl DeclDiagnostic {
             | DeclDiagnostic::ConflictingImport { range, .. }
             | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
             DeclDiagnostic::UnexpectedPackagePath { name_range, .. } => *name_range,
+            DeclDiagnostic::DuplicatePackage { name_range, .. }
+            | DeclDiagnostic::DuplicateClass { name_range, .. }
+            | DeclDiagnostic::ClassPublicShouldBeInFile { name_range, .. } => *name_range,
             _ => None,
         }
     }
@@ -277,6 +328,17 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // §7.2.1: the file's package directory must match its declared package
     // (see [`crate::name_check::package_path_diagnostics`]).
     out.extend(crate::name_check::package_path_diagnostics(db, file, &tree));
+
+    // §7.4.1: a compilation unit declares at most one package (see
+    // [`crate::name_check::duplicate_package_diagnostics`]).
+    out.extend(crate::name_check::duplicate_package_diagnostics(&tree));
+
+    // §7.6: at most one public top-level type per file, named after the file.
+    out.extend(public_type_diagnostics(db, file, &tree));
+
+    // §7.6: no two class-like declarations share a fully qualified name,
+    // across the source set (cross-file as well as same-file).
+    out.extend(duplicate_class_diagnostics(db, file, &tree));
 
     fn walk(
         db: &dyn TyDatabase,
@@ -475,6 +537,8 @@ fn is_override_annotation(
 /// makes their default methods an override chain rather than a conflict
 /// ([§9.4.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.1),
 /// [§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
+/// ([§9.4.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.1),
+/// [§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
 fn related(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -482,4 +546,157 @@ fn related(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &str, b: &str) 
     let a_ty = Ty::reference(db, a, Vec::new());
     let b_ty = Ty::reference(db, b, Vec::new());
     subtyping::is_subtype(db, scope, &a_ty, &b_ty) || subtyping::is_subtype(db, scope, &b_ty, &a_ty)
+}
+
+/// §7.6: the class-like declarations of a compilation unit that a package
+/// may hold more than one of — class, interface, enum, record and annotation
+/// ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)).
+fn is_class_like(data: &ItemData) -> bool {
+    matches!(
+        data,
+        ItemData::Class(_)
+            | ItemData::Interface(_)
+            | ItemData::Enum(_)
+            | ItemData::Record(_)
+            | ItemData::Annotation(_)
+    )
+}
+
+/// The `public` modifier and simple name of a class-like top-level declaration
+/// ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6),
+/// [§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+fn class_like_modifiers(data: &ItemData) -> Option<&hir_expand::modifiers::Modifiers> {
+    match data {
+        ItemData::Class(d) | ItemData::Interface(d) => Some(&d.modifiers),
+        ItemData::Enum(d) => Some(&d.modifiers),
+        ItemData::Record(d) => Some(&d.modifiers),
+        ItemData::Annotation(d) => Some(&d.modifiers),
+        _ => None,
+    }
+}
+
+/// The source-root-relative file name *without* its extension of `file` (e.g.
+/// `Zed` for `/src/com/example/Zed.java`), used to check the §7.6 rule that a
+/// public top-level type must name its file. `None` for files with no source
+/// root or a virtual (unsaved) path.
+fn file_stem(db: &dyn TyDatabase, file: FileId) -> Option<String> {
+    let root = db.source_root_for_file(file)?;
+    let root = db.source_root(root);
+    let path = root.source_root(db).path_for_file(&file)?;
+    let abs = path.as_path()?;
+    abs.file_stem().map(|stem| stem.to_owned())
+}
+
+/// §7.6: every `public` top-level class-like declaration must be declared in a
+/// file named after its simple name ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)).
+/// Because two top-level declarations cannot share a simple name within one
+/// compilation unit without duplicating their FQN ([§7.6] — caught separately
+/// by [`duplicate_class_diagnostics`]), "the public type must name the file"
+/// is exactly javac's "at most one public top-level type per file" rule. Files
+/// without a resolvable real path (unsaved buffers) are skipped.
+fn public_type_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_expand::item_tree::ItemTree,
+) -> Vec<DeclDiagnostic> {
+    if tree.language != LanguageKind::Java {
+        return Vec::new();
+    }
+    let Some(stem) = file_stem(db, file) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for &top in &tree.top {
+        let data = tree.data(top);
+        if !is_class_like(data) {
+            continue;
+        }
+        let Some(modifiers) = class_like_modifiers(data) else {
+            continue;
+        };
+        if !modifiers.public {
+            continue;
+        }
+        let simple = match data {
+            ItemData::Class(d) | ItemData::Interface(d) => d.name.clone(),
+            ItemData::Enum(d) => d.name.clone(),
+            ItemData::Record(d) => d.name.clone(),
+            ItemData::Annotation(d) => d.name.clone(),
+            _ => continue,
+        };
+        if simple.as_str() != stem {
+            out.push(DeclDiagnostic::ClassPublicShouldBeInFile {
+                name: simple,
+                name_range: Some(data.name_range()),
+            });
+        }
+    }
+    out
+}
+
+/// §7.6: no two class-like declarations of one source set share a fully
+/// qualified name ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7),
+/// [§7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)) —
+/// javac's `duplicate class` error, which spans files as well as a single
+/// file. For every top-level class-like declaration of `file`, the source-set
+/// symbol index answers the full set of declarations sharing its FQN; the
+/// *non-first* occurrences are reported, each in its own file, at the
+/// declaration's name range (matching javac, which reports on the later
+/// declaration).
+///
+/// The index is the salsa-tracked `source_set_symbols` aggregate, so the check
+/// recomputes soundly when a peer file is edited; the LSP layer re-pulls the
+/// affected file's diagnostics lazily ([`ide_diagnostics::file_report`]).
+fn duplicate_class_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_expand::item_tree::ItemTree,
+) -> Vec<DeclDiagnostic> {
+    if tree.language != LanguageKind::Java {
+        return Vec::new();
+    }
+    let Some(source_set) = hir::source_set_for_file(db, file) else {
+        return Vec::new();
+    };
+    let index = hir::source_set_symbols(db, source_set);
+    let mut out = Vec::new();
+    for &top in &tree.top {
+        let data = tree.data(top);
+        if !is_class_like(data) {
+            continue;
+        }
+        let Some(fqn) = hir::source_class_fqn(db, file, top) else {
+            continue;
+        };
+        let refs = index.resolve_fqn(&fqn);
+        let class_refs: Vec<_> = refs
+            .iter()
+            .filter(|reference| {
+                matches!(
+                    reference.symbol.kind,
+                    hir::SourceSymbolKind::Class
+                        | hir::SourceSymbolKind::Interface
+                        | hir::SourceSymbolKind::Enum
+                        | hir::SourceSymbolKind::Record
+                        | hir::SourceSymbolKind::Annotation
+                )
+            })
+            .collect();
+        if class_refs.len() < 2 {
+            continue;
+        }
+        // Deterministic first-occurrence: the smallest (file, item). The
+        // refs are walked in file/arena order, but sort defensively.
+        let mut sorted = class_refs.clone();
+        sorted.sort_by_key(|reference| (reference.file, reference.symbol.item));
+        let first = sorted[0];
+        if first.file == file && first.symbol.item == top {
+            continue;
+        }
+        out.push(DeclDiagnostic::DuplicateClass {
+            fqn: fqn.as_str().to_owned(),
+            name_range: Some(data.name_range()),
+        });
+    }
+    out
 }

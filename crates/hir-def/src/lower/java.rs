@@ -45,6 +45,11 @@ fn lower_package(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) {
         ctx.tree.package = Some(name);
         ctx.tree.package_range = qualified_name_child(node).map(|child| child.text_range());
     }
+    // Every package declaration, for the duplicate-package check
+    // ([JLS §7.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.1)).
+    if let Some(range) = qualified_name_child(node).map(|child| child.text_range()) {
+        ctx.tree.package_decl_ranges.push(range);
+    }
 }
 
 fn lower_import(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) {
