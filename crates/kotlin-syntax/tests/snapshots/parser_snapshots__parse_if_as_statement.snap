@@ -1,0 +1,115 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    if (a > 0) return
+    if (a < 0) ; else a
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "a"
+WHITESPACE " "
+GREATER ">"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+WHITESPACE " "
+RETURN_KW "return"
+NEWLINE "\n"
+WHITESPACE "    "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "a"
+WHITESPACE " "
+LESS "<"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+WHITESPACE " "
+SEMICOLON ";"
+WHITESPACE " "
+ELSE_KW "else"
+WHITESPACE " "
+IDENTIFIER "a"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..61
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..60
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..60
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      EXPRESSION_STATEMENT@17..59
+        IF_EXPRESSION@17..59
+          IF_KW@17..19 "if"
+          WHITESPACE@19..20 " "
+          L_PAREN@20..21 "("
+          BINARY_EXPRESSION@21..26
+            PRIMARY_EXPRESSION@21..22
+              IDENTIFIER@21..22 "a"
+            WHITESPACE@22..23 " "
+            GREATER@23..24 ">"
+            WHITESPACE@24..25 " "
+            PRIMARY_EXPRESSION@25..26
+              INTEGER_LITERAL@25..26 "0"
+          R_PAREN@26..27 ")"
+          WHITESPACE@27..28 " "
+          EXPRESSION_STATEMENT@28..58
+            JUMP_EXPRESSION@28..58
+              RETURN_KW@28..34 "return"
+              NEWLINE@34..35 "\n"
+              WHITESPACE@35..39 "    "
+              IF_EXPRESSION@39..58
+                IF_KW@39..41 "if"
+                WHITESPACE@41..42 " "
+                L_PAREN@42..43 "("
+                BINARY_EXPRESSION@43..48
+                  PRIMARY_EXPRESSION@43..44
+                    IDENTIFIER@43..44 "a"
+                  WHITESPACE@44..45 " "
+                  LESS@45..46 "<"
+                  WHITESPACE@46..47 " "
+                  PRIMARY_EXPRESSION@47..48
+                    INTEGER_LITERAL@47..48 "0"
+                R_PAREN@48..49 ")"
+                WHITESPACE@49..50 " "
+                SEMICOLON@50..51 ";"
+                WHITESPACE@51..52 " "
+                ELSE_KW@52..56 "else"
+                WHITESPACE@56..57 " "
+                EXPRESSION_STATEMENT@57..58
+                  PRIMARY_EXPRESSION@57..58
+                    IDENTIFIER@57..58 "a"
+          NEWLINE@58..59 "\n"
+      R_BRACE@59..60 "}"
+  NEWLINE@60..61 "\n"

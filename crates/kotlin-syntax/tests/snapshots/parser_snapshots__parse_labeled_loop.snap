@@ -1,0 +1,173 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    outer@ for (i in 0..2) {
+        for (j in 0..2) {
+            if (i == j) break@outer
+        }
+    }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "outer"
+AT "@"
+WHITESPACE " "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+RANGE ".."
+INTEGER_LITERAL "2"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "j"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+RANGE ".."
+INTEGER_LITERAL "2"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "            "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+EQUAL_EQUAL "=="
+WHITESPACE " "
+IDENTIFIER "j"
+R_PAREN ")"
+WHITESPACE " "
+BREAK_KW "break"
+AT "@"
+IDENTIFIER "outer"
+NEWLINE "\n"
+WHITESPACE "        "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..122
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..121
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..121
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      LABEL@17..23
+        IDENTIFIER@17..22 "outer"
+        AT@22..23 "@"
+      WHITESPACE@23..24 " "
+      FOR_STATEMENT@24..119
+        FOR_KW@24..27 "for"
+        WHITESPACE@27..28 " "
+        L_PAREN@28..29 "("
+        VARIABLE_DECLARATION@29..30
+          IDENTIFIER@29..30 "i"
+        WHITESPACE@30..31 " "
+        IN_KW@31..33 "in"
+        WHITESPACE@33..34 " "
+        RANGE_EXPRESSION@34..38
+          PRIMARY_EXPRESSION@34..35
+            INTEGER_LITERAL@34..35 "0"
+          RANGE@35..37 ".."
+          PRIMARY_EXPRESSION@37..38
+            INTEGER_LITERAL@37..38 "2"
+        R_PAREN@38..39 ")"
+        WHITESPACE@39..40 " "
+        BLOCK@40..119
+          L_BRACE@40..41 "{"
+          NEWLINE@41..42 "\n"
+          WHITESPACE@42..50 "        "
+          FOR_STATEMENT@50..113
+            FOR_KW@50..53 "for"
+            WHITESPACE@53..54 " "
+            L_PAREN@54..55 "("
+            VARIABLE_DECLARATION@55..56
+              IDENTIFIER@55..56 "j"
+            WHITESPACE@56..57 " "
+            IN_KW@57..59 "in"
+            WHITESPACE@59..60 " "
+            RANGE_EXPRESSION@60..64
+              PRIMARY_EXPRESSION@60..61
+                INTEGER_LITERAL@60..61 "0"
+              RANGE@61..63 ".."
+              PRIMARY_EXPRESSION@63..64
+                INTEGER_LITERAL@63..64 "2"
+            R_PAREN@64..65 ")"
+            WHITESPACE@65..66 " "
+            BLOCK@66..113
+              L_BRACE@66..67 "{"
+              NEWLINE@67..68 "\n"
+              WHITESPACE@68..80 "            "
+              EXPRESSION_STATEMENT@80..104
+                IF_EXPRESSION@80..104
+                  IF_KW@80..82 "if"
+                  WHITESPACE@82..83 " "
+                  L_PAREN@83..84 "("
+                  BINARY_EXPRESSION@84..90
+                    PRIMARY_EXPRESSION@84..85
+                      IDENTIFIER@84..85 "i"
+                    WHITESPACE@85..86 " "
+                    EQUAL_EQUAL@86..88 "=="
+                    WHITESPACE@88..89 " "
+                    PRIMARY_EXPRESSION@89..90
+                      IDENTIFIER@89..90 "j"
+                  R_PAREN@90..91 ")"
+                  WHITESPACE@91..92 " "
+                  EXPRESSION_STATEMENT@92..103
+                    JUMP_EXPRESSION@92..103
+                      BREAK_KW@92..97 "break"
+                      AT@97..98 "@"
+                      IDENTIFIER@98..103 "outer"
+                  NEWLINE@103..104 "\n"
+              WHITESPACE@104..112 "        "
+              R_BRACE@112..113 "}"
+          NEWLINE@113..114 "\n"
+          WHITESPACE@114..118 "    "
+          R_BRACE@118..119 "}"
+      NEWLINE@119..120 "\n"
+      R_BRACE@120..121 "}"
+  NEWLINE@121..122 "\n"

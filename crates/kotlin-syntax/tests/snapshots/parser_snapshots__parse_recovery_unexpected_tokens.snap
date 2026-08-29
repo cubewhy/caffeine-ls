@@ -1,0 +1,69 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    val x = ;
+    }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+SEMICOLON ";"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..35
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..32
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..32
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      PROPERTY_DECL@17..26
+        VAL_KW@17..20 "val"
+        WHITESPACE@20..21 " "
+        VARIABLE_DECLARATION@21..22
+          IDENTIFIER@21..22 "x"
+        WHITESPACE@22..23 " "
+        EQUAL@23..24 "="
+        WHITESPACE@24..25 " "
+        PRIMARY_EXPRESSION@25..25
+        SEMICOLON@25..26 ";"
+      NEWLINE@26..27 "\n"
+      WHITESPACE@27..31 "    "
+      R_BRACE@31..32 "}"
+  NEWLINE@32..33 "\n"
+  R_BRACE@33..34 "}"
+  NEWLINE@34..35 "\n"

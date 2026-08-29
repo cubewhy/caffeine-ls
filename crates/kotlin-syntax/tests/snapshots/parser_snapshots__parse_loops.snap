@@ -1,0 +1,316 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    for (i in 1..10) {
+        println(i)
+    }
+    for ((k, v) in map) {
+        println("$k=$v")
+    }
+    var x = 0
+    while (x < 10) {
+        x++
+    }
+    do {
+        x--
+    } while (x > 0)
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+RANGE ".."
+INTEGER_LITERAL "10"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "i"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+L_PAREN "("
+IDENTIFIER "k"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "v"
+R_PAREN ")"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+IDENTIFIER "map"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "k"
+STRING_CONTENT "="
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "v"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+NEWLINE "\n"
+WHITESPACE "    "
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "x"
+WHITESPACE " "
+LESS "<"
+WHITESPACE " "
+INTEGER_LITERAL "10"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "x"
+PLUS_PLUS "++"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+DO_KW "do"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "x"
+MINUS_MINUS "--"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+WHITESPACE " "
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "x"
+WHITESPACE " "
+GREATER ">"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..214
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..213
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..213
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      FOR_STATEMENT@17..60
+        FOR_KW@17..20 "for"
+        WHITESPACE@20..21 " "
+        L_PAREN@21..22 "("
+        VARIABLE_DECLARATION@22..23
+          IDENTIFIER@22..23 "i"
+        WHITESPACE@23..24 " "
+        IN_KW@24..26 "in"
+        WHITESPACE@26..27 " "
+        RANGE_EXPRESSION@27..32
+          PRIMARY_EXPRESSION@27..28
+            INTEGER_LITERAL@27..28 "1"
+          RANGE@28..30 ".."
+          PRIMARY_EXPRESSION@30..32
+            INTEGER_LITERAL@30..32 "10"
+        R_PAREN@32..33 ")"
+        WHITESPACE@33..34 " "
+        BLOCK@34..60
+          L_BRACE@34..35 "{"
+          NEWLINE@35..36 "\n"
+          WHITESPACE@36..44 "        "
+          EXPRESSION_STATEMENT@44..54
+            POSTFIX_UNARY_EXPRESSION@44..54
+              PRIMARY_EXPRESSION@44..51
+                IDENTIFIER@44..51 "println"
+              CALL_EXPRESSION@51..54
+                VALUE_ARGUMENTS@51..54
+                  L_PAREN@51..52 "("
+                  VALUE_ARGUMENT@52..53
+                    PRIMARY_EXPRESSION@52..53
+                      IDENTIFIER@52..53 "i"
+                  R_PAREN@53..54 ")"
+          NEWLINE@54..55 "\n"
+          WHITESPACE@55..59 "    "
+          R_BRACE@59..60 "}"
+      NEWLINE@60..61 "\n"
+      WHITESPACE@61..65 "    "
+      FOR_STATEMENT@65..117
+        FOR_KW@65..68 "for"
+        WHITESPACE@68..69 " "
+        L_PAREN@69..70 "("
+        MULTI_VARIABLE_DECLARATION@70..76
+          L_PAREN@70..71 "("
+          VARIABLE_DECLARATION@71..72
+            IDENTIFIER@71..72 "k"
+          COMMA@72..73 ","
+          WHITESPACE@73..74 " "
+          VARIABLE_DECLARATION@74..75
+            IDENTIFIER@74..75 "v"
+          R_PAREN@75..76 ")"
+        WHITESPACE@76..77 " "
+        IN_KW@77..79 "in"
+        WHITESPACE@79..80 " "
+        PRIMARY_EXPRESSION@80..83
+          IDENTIFIER@80..83 "map"
+        R_PAREN@83..84 ")"
+        WHITESPACE@84..85 " "
+        BLOCK@85..117
+          L_BRACE@85..86 "{"
+          NEWLINE@86..87 "\n"
+          WHITESPACE@87..95 "        "
+          EXPRESSION_STATEMENT@95..111
+            POSTFIX_UNARY_EXPRESSION@95..111
+              PRIMARY_EXPRESSION@95..102
+                IDENTIFIER@95..102 "println"
+              CALL_EXPRESSION@102..111
+                VALUE_ARGUMENTS@102..111
+                  L_PAREN@102..103 "("
+                  VALUE_ARGUMENT@103..110
+                    STRING_LITERAL@103..110
+                      OPEN_QUOTE@103..104 "\""
+                      STRING_TEMPLATE@104..106
+                        TEMPLATE_SHORT_START@104..105 "$"
+                        IDENTIFIER@105..106 "k"
+                      STRING_CONTENT@106..107 "="
+                      STRING_TEMPLATE@107..109
+                        TEMPLATE_SHORT_START@107..108 "$"
+                        IDENTIFIER@108..109 "v"
+                      CLOSE_QUOTE@109..110 "\""
+                  R_PAREN@110..111 ")"
+          NEWLINE@111..112 "\n"
+          WHITESPACE@112..116 "    "
+          R_BRACE@116..117 "}"
+      NEWLINE@117..118 "\n"
+      WHITESPACE@118..122 "    "
+      PROPERTY_DECL@122..132
+        VAR_KW@122..125 "var"
+        WHITESPACE@125..126 " "
+        VARIABLE_DECLARATION@126..127
+          IDENTIFIER@126..127 "x"
+        WHITESPACE@127..128 " "
+        EQUAL@128..129 "="
+        WHITESPACE@129..130 " "
+        PRIMARY_EXPRESSION@130..131
+          INTEGER_LITERAL@130..131 "0"
+        NEWLINE@131..132 "\n"
+      WHITESPACE@132..136 "    "
+      WHILE_STATEMENT@136..170
+        WHILE_KW@136..141 "while"
+        WHITESPACE@141..142 " "
+        L_PAREN@142..143 "("
+        BINARY_EXPRESSION@143..149
+          PRIMARY_EXPRESSION@143..144
+            IDENTIFIER@143..144 "x"
+          WHITESPACE@144..145 " "
+          LESS@145..146 "<"
+          WHITESPACE@146..147 " "
+          PRIMARY_EXPRESSION@147..149
+            INTEGER_LITERAL@147..149 "10"
+        R_PAREN@149..150 ")"
+        WHITESPACE@150..151 " "
+        BLOCK@151..170
+          L_BRACE@151..152 "{"
+          NEWLINE@152..153 "\n"
+          WHITESPACE@153..161 "        "
+          EXPRESSION_STATEMENT@161..164
+            POSTFIX_UNARY_EXPRESSION@161..164
+              PRIMARY_EXPRESSION@161..162
+                IDENTIFIER@161..162 "x"
+              PLUS_PLUS@162..164 "++"
+          NEWLINE@164..165 "\n"
+          WHITESPACE@165..169 "    "
+          R_BRACE@169..170 "}"
+      NEWLINE@170..171 "\n"
+      WHITESPACE@171..175 "    "
+      DO_WHILE_STATEMENT@175..211
+        DO_KW@175..177 "do"
+        WHITESPACE@177..178 " "
+        BLOCK@178..197
+          L_BRACE@178..179 "{"
+          NEWLINE@179..180 "\n"
+          WHITESPACE@180..188 "        "
+          EXPRESSION_STATEMENT@188..191
+            POSTFIX_UNARY_EXPRESSION@188..191
+              PRIMARY_EXPRESSION@188..189
+                IDENTIFIER@188..189 "x"
+              MINUS_MINUS@189..191 "--"
+          NEWLINE@191..192 "\n"
+          WHITESPACE@192..196 "    "
+          R_BRACE@196..197 "}"
+        WHITESPACE@197..198 " "
+        WHILE_KW@198..203 "while"
+        WHITESPACE@203..204 " "
+        L_PAREN@204..205 "("
+        BINARY_EXPRESSION@205..210
+          PRIMARY_EXPRESSION@205..206
+            IDENTIFIER@205..206 "x"
+          WHITESPACE@206..207 " "
+          GREATER@207..208 ">"
+          WHITESPACE@208..209 " "
+          PRIMARY_EXPRESSION@209..210
+            INTEGER_LITERAL@209..210 "0"
+        R_PAREN@210..211 ")"
+      NEWLINE@211..212 "\n"
+      R_BRACE@212..213 "}"
+  NEWLINE@213..214 "\n"

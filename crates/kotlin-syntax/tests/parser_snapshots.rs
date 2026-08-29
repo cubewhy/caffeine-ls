@@ -213,3 +213,92 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_assignments,
+    indoc! {r#"
+        fun main() {
+            var x = 1
+            x = 2
+            x += 1
+            x -= 1
+            x *= 2
+            x /= 2
+            x %= 3
+            obj.field = value
+            arr[0] = 1
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_loops,
+    indoc! {r#"
+        fun main() {
+            for (i in 1..10) {
+                println(i)
+            }
+            for ((k, v) in map) {
+                println("$k=$v")
+            }
+            var x = 0
+            while (x < 10) {
+                x++
+            }
+            do {
+                x--
+            } while (x > 0)
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_labeled_loop,
+    indoc! {r#"
+        fun main() {
+            outer@ for (i in 0..2) {
+                for (j in 0..2) {
+                    if (i == j) break@outer
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_if_as_statement,
+    indoc! {r#"
+        fun main() {
+            if (a > 0) return
+            if (a < 0) ; else a
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_recovery_unexpected_tokens,
+    indoc! {r#"
+        fun main() {
+            val x = ;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_recovery_missing_expr,
+    indoc! {r#"
+        fun main() {
+            while () {}
+            for (i in ) {}
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_error_ending,
+    indoc! {r#"
+        class Unclosed {
+            val x = 1
+    "#}
+);

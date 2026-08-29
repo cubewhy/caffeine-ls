@@ -1,0 +1,221 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    var x = 1
+    x = 2
+    x += 1
+    x -= 1
+    x *= 2
+    x /= 2
+    x %= 3
+    obj.field = value
+    arr[0] = 1
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "2"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+PLUS_EQUAL "+="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+MINUS_EQUAL "-="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+MUL_EQUAL "*="
+WHITESPACE " "
+INTEGER_LITERAL "2"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+DIV_EQUAL "/="
+WHITESPACE " "
+INTEGER_LITERAL "2"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+WHITESPACE " "
+MODULO_EQUAL "%="
+WHITESPACE " "
+INTEGER_LITERAL "3"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "obj"
+DOT "."
+IDENTIFIER "field"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "value"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "arr"
+L_BRACKET "["
+INTEGER_LITERAL "0"
+R_BRACKET "]"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..131
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..130
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..130
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      PROPERTY_DECL@17..27
+        VAR_KW@17..20 "var"
+        WHITESPACE@20..21 " "
+        VARIABLE_DECLARATION@21..22
+          IDENTIFIER@21..22 "x"
+        WHITESPACE@22..23 " "
+        EQUAL@23..24 "="
+        WHITESPACE@24..25 " "
+        PRIMARY_EXPRESSION@25..26
+          INTEGER_LITERAL@25..26 "1"
+        NEWLINE@26..27 "\n"
+      WHITESPACE@27..31 "    "
+      ASSIGNMENT_STATEMENT@31..36
+        PRIMARY_EXPRESSION@31..32
+          IDENTIFIER@31..32 "x"
+        WHITESPACE@32..33 " "
+        EQUAL@33..34 "="
+        WHITESPACE@34..35 " "
+        PRIMARY_EXPRESSION@35..36
+          INTEGER_LITERAL@35..36 "2"
+      NEWLINE@36..37 "\n"
+      WHITESPACE@37..41 "    "
+      ASSIGNMENT_STATEMENT@41..47
+        PRIMARY_EXPRESSION@41..42
+          IDENTIFIER@41..42 "x"
+        WHITESPACE@42..43 " "
+        PLUS_EQUAL@43..45 "+="
+        WHITESPACE@45..46 " "
+        PRIMARY_EXPRESSION@46..47
+          INTEGER_LITERAL@46..47 "1"
+      NEWLINE@47..48 "\n"
+      WHITESPACE@48..52 "    "
+      ASSIGNMENT_STATEMENT@52..58
+        PRIMARY_EXPRESSION@52..53
+          IDENTIFIER@52..53 "x"
+        WHITESPACE@53..54 " "
+        MINUS_EQUAL@54..56 "-="
+        WHITESPACE@56..57 " "
+        PRIMARY_EXPRESSION@57..58
+          INTEGER_LITERAL@57..58 "1"
+      NEWLINE@58..59 "\n"
+      WHITESPACE@59..63 "    "
+      ASSIGNMENT_STATEMENT@63..69
+        PRIMARY_EXPRESSION@63..64
+          IDENTIFIER@63..64 "x"
+        WHITESPACE@64..65 " "
+        MUL_EQUAL@65..67 "*="
+        WHITESPACE@67..68 " "
+        PRIMARY_EXPRESSION@68..69
+          INTEGER_LITERAL@68..69 "2"
+      NEWLINE@69..70 "\n"
+      WHITESPACE@70..74 "    "
+      ASSIGNMENT_STATEMENT@74..80
+        PRIMARY_EXPRESSION@74..75
+          IDENTIFIER@74..75 "x"
+        WHITESPACE@75..76 " "
+        DIV_EQUAL@76..78 "/="
+        WHITESPACE@78..79 " "
+        PRIMARY_EXPRESSION@79..80
+          INTEGER_LITERAL@79..80 "2"
+      NEWLINE@80..81 "\n"
+      WHITESPACE@81..85 "    "
+      ASSIGNMENT_STATEMENT@85..91
+        PRIMARY_EXPRESSION@85..86
+          IDENTIFIER@85..86 "x"
+        WHITESPACE@86..87 " "
+        MODULO_EQUAL@87..89 "%="
+        WHITESPACE@89..90 " "
+        PRIMARY_EXPRESSION@90..91
+          INTEGER_LITERAL@90..91 "3"
+      NEWLINE@91..92 "\n"
+      WHITESPACE@92..96 "    "
+      ASSIGNMENT_STATEMENT@96..113
+        POSTFIX_UNARY_EXPRESSION@96..105
+          PRIMARY_EXPRESSION@96..99
+            IDENTIFIER@96..99 "obj"
+          NAVIGATION_SUFFIX@99..105
+            DOT@99..100 "."
+            IDENTIFIER@100..105 "field"
+        WHITESPACE@105..106 " "
+        EQUAL@106..107 "="
+        WHITESPACE@107..108 " "
+        PRIMARY_EXPRESSION@108..113
+          IDENTIFIER@108..113 "value"
+      NEWLINE@113..114 "\n"
+      WHITESPACE@114..118 "    "
+      ASSIGNMENT_STATEMENT@118..128
+        POSTFIX_UNARY_EXPRESSION@118..124
+          PRIMARY_EXPRESSION@118..121
+            IDENTIFIER@118..121 "arr"
+          INDEXING_EXPRESSION@121..124
+            L_BRACKET@121..122 "["
+            PRIMARY_EXPRESSION@122..123
+              INTEGER_LITERAL@122..123 "0"
+            R_BRACKET@123..124 "]"
+        WHITESPACE@124..125 " "
+        EQUAL@125..126 "="
+        WHITESPACE@126..127 " "
+        PRIMARY_EXPRESSION@127..128
+          INTEGER_LITERAL@127..128 "1"
+      NEWLINE@128..129 "\n"
+      R_BRACE@129..130 "}"
+  NEWLINE@130..131 "\n"
