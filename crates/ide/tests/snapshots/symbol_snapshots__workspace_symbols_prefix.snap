@@ -2,4 +2,4 @@
 source: crates/ide/tests/symbol_snapshots.rs
 expression: render_workspace_symbols(&foo)
 ---
-class      com.example.Foo @file1
+class      Foo @file1

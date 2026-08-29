@@ -31,11 +31,11 @@ expression: normalized
         },
         "end": {
           "line": 4,
-          "character": 29
+          "character": 32
         }
       }
     },
-    "name": "bar",
+    "name": "bar(int...)",
     "kind": 6,
     "containerName": "com.example.Foo"
   },
@@ -89,7 +89,7 @@ expression: normalized
         }
       }
     },
-    "name": "baz",
+    "name": "baz()",
     "kind": 6,
     "containerName": "org.other.Bar"
   }

@@ -419,6 +419,8 @@ public class Foo {
 
     public void bar(int a) {}
 
+    public void many(int... xs) {}
+
     public static class Inner {
         private int y;
     }
@@ -447,7 +449,7 @@ fn test_workspace_symbols() {
 
 public class Foo {
     public int x;
-    public void bar(int a) {}
+    public void bar(int... a) {}
 }
 "#,
     );

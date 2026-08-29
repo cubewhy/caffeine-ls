@@ -3,7 +3,8 @@ source: crates/ide/tests/symbol_snapshots.rs
 expression: render_document_symbols(&symbols)
 ---
 package    com.example @8..19
-class      com.example.Foo @22..128
-field      com.example.Foo.count @57..62
-method     com.example.Foo.greet @69..91
-class      com.example.Foo.Nested @97..126
+class      Foo @22..164
+field      count: int @57..62
+method     greet(): void @69..91
+method     many(int...): void @97..127
+class      Nested @133..162

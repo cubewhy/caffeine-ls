@@ -82,7 +82,7 @@ fn render_document_symbols(symbols: &[DocumentSymbol]) -> String {
             format!(
                 "{:<10} {} @{:?}",
                 symbol.kind.label(),
-                symbol.name,
+                symbol.display_name,
                 symbol.range
             )
         })
@@ -97,7 +97,7 @@ fn render_workspace_symbols(symbols: &[WorkspaceSymbol]) -> String {
             format!(
                 "{:<10} {} @file{}",
                 symbol.symbol.kind.label(),
-                symbol.symbol.name,
+                symbol.symbol.display_name,
                 symbol.file.index()
             )
         })
@@ -113,7 +113,7 @@ fn document_symbols_snapshot() {
         vec![(
             1,
             "/src/main/java/com/example/Foo.java",
-            "package com.example;\n\npublic class Foo {\n    private int count;\n\n    public void greet() {}\n\n    public static class Nested {}\n}\n",
+            "package com.example;\n\npublic class Foo {\n    private int count;\n\n    public void greet() {}\n\n    public void many(int... xs) {}\n\n    public static class Nested {}\n}\n",
         )],
     )]);
     let symbols = fixture
@@ -124,6 +124,38 @@ fn document_symbols_snapshot() {
         "document_symbols_snapshot",
         render_document_symbols(&symbols)
     );
+}
+
+#[test]
+fn document_symbols_varargs_and_simple_names() {
+    let fixture = build(&[(
+        main_source_set(0),
+        vec![(
+            1,
+            "/src/com/example/Box.java",
+            "package com.example;\n\nclass Box {\n    int value;\n\n    Box(int... xs) {}\n\n    String join(java.util.List<String> items) { return null; }\n\n    class Inner {}\n}\n",
+        )],
+    )]);
+    let analysis = fixture.analysis();
+    let symbols = analysis.document_symbols(fixture.file(1)).unwrap();
+
+    let by_name = |name: &str| {
+        symbols
+            .iter()
+            .find(|symbol| symbol.display_name == name)
+            .expect("symbol")
+    };
+    // The simple name is the last `.`-segment, generics simple-rendered.
+    assert_eq!(by_name("Box").display_name, "Box");
+    assert_eq!(by_name("value: int").display_name, "value: int");
+    // Constructor: parameters only, no return type.
+    assert_eq!(by_name("Box(int...)").display_name, "Box(int...)");
+    // Varargs render with `...`; generic parameter/return types simple.
+    assert_eq!(
+        by_name("join(List<String>): String").display_name,
+        "join(List<String>): String"
+    );
+    assert_eq!(by_name("Inner").display_name, "Inner");
 }
 
 #[test]
@@ -152,8 +184,10 @@ fn document_symbol_package_item_and_fqn_detail() {
         .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
         .unwrap();
     assert_eq!(package.name, "<default package>");
+    assert_eq!(package.display_name, "<default package>");
     assert_eq!(package.item, None);
     let foo_class = foo.iter().find(|symbol| symbol.name == "Foo").unwrap();
+    assert_eq!(foo_class.display_name, "Foo");
     assert_eq!(foo_class.detail.as_deref(), Some("Foo"));
 
     // A declared package gets an item with the qualified name, and the
@@ -164,10 +198,12 @@ fn document_symbol_package_item_and_fqn_detail() {
         .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
         .unwrap();
     assert_eq!(package.name, "com.example");
+    assert_eq!(package.display_name, "com.example");
     let bar_class = bar
         .iter()
         .find(|symbol| symbol.name == "com.example.Bar")
         .unwrap();
+    assert_eq!(bar_class.display_name, "Bar");
     assert_eq!(bar_class.detail.as_deref(), Some("com.example.Bar"));
 }
 
@@ -179,7 +215,7 @@ fn workspace_symbols_snapshot() {
             vec![(
                 1,
                 "/a/src/main/java/com/example/Foo.java",
-                "package com.example;\n\nclass Foo {}\n",
+                "package com.example;\n\nclass Foo {\n    void many(int... xs) {}\n}\n",
             )],
         ),
         (

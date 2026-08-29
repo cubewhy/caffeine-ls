@@ -217,21 +217,13 @@ fn render_symbol_decl(
     let simple = symbol.name.simple_name();
     let value = match symbol.kind {
         hir::SourceSymbolKind::Method => {
-            let ret = hir_ty::item_ty(db, file, symbol.item)
-                .display(db)
-                .to_string();
-            let params = hir_ty::method_params(db, file, symbol.item)
-                .into_iter()
-                .map(|ty| ty.display(db).to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{simple}({params}): {ret}")
+            crate::symbols::method_signature(db, file, symbol.item, simple, true)
         }
         hir::SourceSymbolKind::Field => {
-            let ty = hir_ty::item_ty(db, file, symbol.item)
-                .display(db)
-                .to_string();
-            format!("{simple}: {ty}")
+            format!(
+                "{simple}: {}",
+                crate::symbols::item_ty(db, file, symbol.item)
+            )
         }
         hir::SourceSymbolKind::EnumConstant => simple.to_string(),
         kind => format!("{} {}", kind.label(), simple),

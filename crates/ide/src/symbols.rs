@@ -18,15 +18,24 @@ use crate::RootDatabase;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
     /// The canonical qualified name ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)).
+    /// Kept fully qualified so the LSP layer can nest members under their
+    /// enclosing type; the client-facing text is [`DocumentSymbol::display_name`].
     pub name: String,
     pub kind: hir::SourceSymbolKind,
     /// The source range of the declaration.
     pub range: TextRange,
     /// The source range of just the declared name (the identifier).
     pub name_range: TextRange,
+    /// The name shown to the client: the *simple* name (the last `.`-segment,
+    /// `$` kept as an identifier character per [JLS
+    /// §3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)),
+    /// plus the signature where javac/IntelliJ render it inline — `name(params): ret`
+    /// for a method (with `...` on a variable-arity parameter), `name: type`
+    /// for a field. The package symbol keeps its full package name.
+    pub display_name: String,
     /// The signature shown alongside the name: the fully qualified name for a
-    /// top-level type, `name(params): ret` for a method, `name: type` for a
-    /// field.
+    /// top-level type, `kind simple` for a nested type, `None` for methods,
+    /// fields, enum constants and the package.
     pub detail: Option<String>,
     /// The lowered item, for later HIR queries (e.g. [`crate::Analysis::item_ty`]).
     /// `None` for synthesized symbols (the file's package).
@@ -64,7 +73,8 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
             kind: symbol.kind,
             range: data.range(),
             name_range: data.name_range(),
-            detail: symbol_detail(db, file_id, symbol, top_level),
+            display_name: symbol_display_name(db, file_id, symbol, top_level),
+            detail: symbol_detail(symbol, top_level),
             item: Some(symbol.item),
         }
     }));
@@ -83,7 +93,8 @@ fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
         .unwrap_or_else(|| "<default package>".to_owned());
     let range = tree.package_range.unwrap_or_default();
     DocumentSymbol {
-        name,
+        name: name.clone(),
+        display_name: name,
         kind: hir::SourceSymbolKind::Package,
         range,
         name_range: range,
@@ -92,41 +103,88 @@ fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
     }
 }
 
-/// The signature/detail of a symbol for the LSP `detail` field. Top-level
-/// types show their fully qualified name; members show their signature.
-fn symbol_detail(
+/// The client-facing name of a document symbol: the simple name (the last
+/// `.`-segment, `$` kept per [JLS §3.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.8)),
+/// with the signature rendered inline — `name(params): ret` for a method,
+/// `name: type` for a field. The package keeps its full package name.
+fn symbol_display_name(
     db: &RootDatabase,
     file_id: FileId,
     symbol: &hir::SourceSymbol,
     top_level: bool,
-) -> Option<String> {
+) -> String {
+    let simple = symbol.name.simple_name();
+    if top_level {
+        return simple.to_owned();
+    }
+    match symbol.kind {
+        hir::SourceSymbolKind::Method => method_signature(db, file_id, symbol.item, simple, true),
+        hir::SourceSymbolKind::Field => {
+            format!("{simple}: {}", item_ty(db, file_id, symbol.item))
+        }
+        _ => simple.to_owned(),
+    }
+}
+
+/// The `detail` of a symbol for the LSP `detail` field. Top-level types show
+/// their fully qualified name; nested types show their kind and simple name;
+/// methods, fields, enum constants and the package show none — their signature
+/// is already part of [`DocumentSymbol::display_name`].
+fn symbol_detail(symbol: &hir::SourceSymbol, top_level: bool) -> Option<String> {
     let simple = symbol.name.simple_name();
     if top_level {
         return Some(symbol.name.as_str().to_owned());
     }
     match symbol.kind {
-        hir::SourceSymbolKind::Method => {
-            let ret = item_ty(db, file_id, symbol.item);
-            let params = method_params(db, file_id, symbol.item);
-            // Constructors have no return type; the type layer would render
-            // it as `<error>`, so show only the parameter list.
-            let is_constructor = matches!(
-                hir::file_item_tree(db, file_id).data(symbol.item),
-                ItemData::Method(method) if method.is_constructor
-            );
-            if is_constructor {
-                Some(format!("{simple}({})", params.join(", ")))
-            } else {
-                Some(format!("{simple}({}): {ret}", params.join(", ")))
-            }
-        }
-        hir::SourceSymbolKind::Field => {
-            let ty = item_ty(db, file_id, symbol.item);
-            Some(format!("{simple}: {ty}"))
-        }
-        hir::SourceSymbolKind::EnumConstant => Some(simple.to_owned()),
+        hir::SourceSymbolKind::Method
+        | hir::SourceSymbolKind::Field
+        | hir::SourceSymbolKind::EnumConstant => None,
         kind => Some(format!("{} {simple}", kind.label())),
     }
+}
+
+/// The rendered signature of a method or constructor: `simple(params)` with an
+/// optional `: ret` (skipped for constructors and when `include_return` is
+/// false). A variable-arity parameter renders its element type plus the
+/// ellipsis ([JLS §8.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.1)),
+/// so `String... names` is `String...`.
+pub fn method_signature(
+    db: &RootDatabase,
+    file_id: FileId,
+    item: hir_expand::item_tree::ItemId,
+    simple: &str,
+    include_return: bool,
+) -> String {
+    let is_constructor = matches!(
+        hir::file_item_tree(db, file_id).data(item),
+        ItemData::Method(method) if method.is_constructor
+    );
+    let ret = if include_return && !is_constructor {
+        format!(": {}", item_ty(db, file_id, item))
+    } else {
+        String::new()
+    };
+    format!("{simple}({}){ret}", render_params(db, file_id, item))
+}
+
+/// The parameter types of a method or constructor, in declaration order,
+/// simple-rendered and joined with `, `, with `...` appended to a
+/// variable-arity parameter.
+fn render_params(
+    db: &RootDatabase,
+    file_id: FileId,
+    item: hir_expand::item_tree::ItemId,
+) -> String {
+    let tree = hir::file_item_tree(db, file_id);
+    let varargs = matches!(
+        tree.data(item),
+        ItemData::Method(method) if method.sig.params.last().is_some_and(|param| param.varargs)
+    );
+    let mut params = method_params(db, file_id, item).to_vec();
+    if varargs && let Some(last) = params.last_mut() {
+        *last = format!("{}...", last);
+    }
+    params.join(", ")
 }
 
 /// Symbols whose simple name matches `query` (case-insensitive substring,
@@ -163,12 +221,28 @@ pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol>
                     kind: reference.symbol.kind,
                     range: data.range(),
                     name_range: data.name_range(),
+                    display_name: workspace_display_name(db, reference.file, &reference.symbol),
                     detail: None,
                     item: Some(reference.symbol.item),
                 },
             }
         })
         .collect()
+}
+
+/// The client-facing name of a workspace symbol: the simple name, with a
+/// method's parameter list rendered inline — `name(params)` (no return type —
+/// the workspace row's `container_name` already qualifies it).
+fn workspace_display_name(
+    db: &RootDatabase,
+    file_id: FileId,
+    symbol: &hir::SourceSymbol,
+) -> String {
+    let simple = symbol.name.simple_name();
+    match symbol.kind {
+        hir::SourceSymbolKind::Method => method_signature(db, file_id, symbol.item, simple, false),
+        _ => simple.to_owned(),
+    }
 }
 
 /// The registered source sets of the project graph, in unspecified order.
@@ -179,13 +253,16 @@ fn registered_source_sets(db: &RootDatabase) -> Vec<hir::SourceSetId> {
 }
 
 /// The declared type of an item — a field's type, a method's return type, or
-/// the type of a class-like declaration — rendered from the HIR type layer.
+/// the type of a class-like declaration — rendered from the HIR type layer
+/// with the *simple* class name (the last `.`-segment).
 pub fn item_ty(db: &RootDatabase, file_id: FileId, item: hir_expand::item_tree::ItemId) -> String {
-    hir_ty::item_ty(db, file_id, item).display(db).to_string()
+    hir_ty::item_ty(db, file_id, item)
+        .display_simple(db)
+        .to_string()
 }
 
 /// The parameter types of a method or constructor, in declaration order,
-/// rendered from the HIR type layer.
+/// simple-rendered from the HIR type layer.
 pub fn method_params(
     db: &RootDatabase,
     file_id: FileId,
@@ -194,7 +271,7 @@ pub fn method_params(
     Arc::new(
         hir_ty::method_params(db, file_id, item)
             .into_iter()
-            .map(|ty| ty.display(db).to_string())
+            .map(|ty| ty.display_simple(db).to_string())
             .collect(),
     )
 }

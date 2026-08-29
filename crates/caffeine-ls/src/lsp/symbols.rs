@@ -40,12 +40,9 @@ pub(crate) fn symbol_kind(kind: hir::SourceSymbolKind) -> SymbolKind {
 
 /// Converts one flat HIR document symbol into the LSP wire shape. The range
 /// is used as both the enclosing and the selection range (the whole
-/// declaration).
-/// The simple name of a qualified name: the last `.`-separated segment.
-fn simple_name(name: &str) -> &str {
-    name.rsplit_once('.').map_or(name, |(_, simple)| simple)
-}
-
+/// declaration). The name is the IDE-side [`ide::DocumentSymbol::display_name`]
+/// — the simple name (last `.`-segment, `$` kept), with the method signature
+/// and field type rendered inline.
 #[allow(deprecated)]
 pub(crate) fn document_symbol(
     line_index: &LineIndex,
@@ -53,14 +50,8 @@ pub(crate) fn document_symbol(
 ) -> LspDocumentSymbol {
     let range = to_proto::range(line_index, symbol.range);
     let selection_range = to_proto::range(line_index, symbol.name_range);
-    // A package is already qualified; the simple name would drop most of it.
-    let name = if symbol.kind == hir::SourceSymbolKind::Package {
-        symbol.name.clone()
-    } else {
-        simple_name(&symbol.name).to_owned()
-    };
     LspDocumentSymbol {
-        name,
+        name: symbol.display_name.clone(),
         detail: symbol.detail.clone(),
         kind: symbol_kind(symbol.kind),
         tags: None,
@@ -146,7 +137,7 @@ pub(crate) fn workspace_symbol(location: Location, symbol: &IdeWorkspaceSymbol) 
         location: WorkspaceSymbolLocation::Location(location),
         data: None,
         base_symbol_information: lsp_types::BaseSymbolInformation {
-            name: simple_name(&symbol.symbol.name).to_owned(),
+            name: symbol.symbol.display_name.clone(),
             kind: symbol_kind(symbol.symbol.kind),
             tags: None,
             // The enclosing type FQN (name minus the last segment), for the
