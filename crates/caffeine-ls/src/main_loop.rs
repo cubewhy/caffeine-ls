@@ -513,8 +513,11 @@ impl GlobalState {
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
 
-            BackgroundTaskEvent::DiagnosticsReady { changed } => {
-                self.handle_diagnostics_ready(changed);
+            BackgroundTaskEvent::DiagnosticsReady {
+                changed,
+                cross_file,
+            } => {
+                self.handle_diagnostics_ready(changed, cross_file);
             }
             BackgroundTaskEvent::DiagnosticsRetry { changed } => {
                 tracing::debug!("diagnostics pass cancelled by pending write; re-queueing");
@@ -1010,37 +1013,43 @@ impl GlobalState {
     fn process_changes(&mut self) {
         let mut change = FileChange::default();
 
-        let vfs_changed = {
+        // Whether any change added or removed a file from the workspace: only
+        // then must the source roots (and the `file → root` salsa inputs) be
+        // rebuilt. A pure text `Modify` never changes the file set, so it must
+        // not re-set every file's source root — salsa 0.28 records a write on
+        // every `set`, each of which is a new revision that invalidates every
+        // root-keyed memo (`source_root_symbols_query`, ...) workspace-wide.
+        let mut roots_changed = false;
+        {
             let mut vfs = self.vfs.write();
             let (vfs, line_endings_map) = &mut *vfs;
             let vfs_changes = vfs.take_changes();
 
-            if !vfs_changes.is_empty() {
-                for (file_id, changed_file) in vfs_changes {
-                    let new_text = match changed_file.change {
-                        vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
-                            String::from_utf8(items).ok().map(|text| {
-                                let (normalized_text, line_endings) = LineEndings::normalize(text);
-                                line_endings_map.insert(file_id, line_endings);
-                                normalized_text
-                            })
-                        }
-                        vfs::Change::Delete => {
-                            line_endings_map.remove(&file_id);
-                            None
-                        }
-                    };
-                    change.change_file(file_id, new_text);
+            for (file_id, changed_file) in vfs_changes {
+                match &changed_file.change {
+                    vfs::Change::Create(..) | vfs::Change::Delete => roots_changed = true,
+                    vfs::Change::Modify(..) => {}
                 }
-                true
-            } else {
-                false
+                let new_text = match changed_file.change {
+                    vfs::Change::Create(items, _) | vfs::Change::Modify(items, _) => {
+                        String::from_utf8(items).ok().map(|text| {
+                            let (normalized_text, line_endings) = LineEndings::normalize(text);
+                            line_endings_map.insert(file_id, line_endings);
+                            normalized_text
+                        })
+                    }
+                    vfs::Change::Delete => {
+                        line_endings_map.remove(&file_id);
+                        None
+                    }
+                };
+                change.change_file(file_id, new_text);
             }
         };
 
         // Files were added to or removed from the vfs, so the source roots need
         // to be rebuilt to keep `file_language_kind` working.
-        if vfs_changed && self.file_set_config.is_some() {
+        if roots_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
             // The diagnostics store covers the same file set; refresh the files
             // it covers, and get back the watched files whose diagnostics may
@@ -1115,9 +1124,10 @@ impl GlobalState {
         self.thread_pool.execute(move || {
             let result = diagnostics_store::run_diagnostics_pass(&snapshot, &changed);
             match result {
-                Ok(moved) => {
+                Ok((moved, cross_file)) => {
                     let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsReady {
                         changed: moved.into_iter().collect(),
+                        cross_file,
                     });
                 }
                 Err(Cancelled::PendingWrite) => {
@@ -1132,15 +1142,22 @@ impl GlobalState {
 
     /// Applies a completed diagnostics pass: asks the client to re-pull the
     /// documents whose diagnostics moved via `workspace/diagnosticRefresh` (the
-    /// pull channel). Unopened files are never pushed.
-    fn handle_diagnostics_ready(&mut self, changed: FxHashSet<FileId>) {
+    /// pull channel). Unopened files are never pushed. When only the edited
+    /// (active) files' diagnostics moved, the client already re-pulls
+    /// `textDocument/diagnostic` for them, so the workspace-wide refresh is
+    /// skipped; it is sent only when a *dependent* file's diagnostics moved.
+    fn handle_diagnostics_ready(&mut self, changed: FxHashSet<FileId>, cross_file: bool) {
         if !self.config.cross_file_enabled() {
             return;
         }
         if changed.is_empty() {
             return;
         }
-        tracing::debug!(changed = ?changed, "diagnostics moved; refreshing the client");
+        if !cross_file {
+            tracing::debug!(changed = ?changed, "active-file diagnostics moved; skipping workspace refresh");
+            return;
+        }
+        tracing::debug!(changed = ?changed, "cross-file diagnostics moved; refreshing the client");
         self.refresh_diagnostics();
     }
 }

@@ -103,12 +103,13 @@ pub(crate) fn collect_type_diagnostics(
     file_id: FileId,
 ) {
     let tree = hir::file_item_tree(db, file_id);
+    let bodies = hir::file_body_tree(db, file_id);
     for (item_id, _) in all_items(&tree) {
         let Some(body_types) = hir_ty::body_types(db, file_id, item_id) else {
             continue;
         };
         for diagnostic in &body_types.diagnostics {
-            let Some(range) = diagnostic.range(&tree.bodies) else {
+            let Some(range) = diagnostic.range(&bodies) else {
                 // A synthetic construct (e.g. a `Missing` expression lowered
                 // from broken source) has no range to point at.
                 continue;
@@ -117,7 +118,7 @@ pub(crate) fn collect_type_diagnostics(
                 file_id,
                 make_diagnostic(
                     file_id,
-                    &diagnostic.message(&tree.bodies),
+                    &diagnostic.message(&bodies),
                     range,
                     Some(diagnostic.code()),
                     // Raw-type and unchecked-conversion reports are warnings

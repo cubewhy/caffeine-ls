@@ -102,6 +102,11 @@ pub fn file_item_tree(
     hir_def::file_item_tree(db, file_id)
 }
 
+/// The lowered body tree of a source file (see `hir_def::file_body_tree`).
+pub fn file_body_tree(db: &dyn HirDatabase, file_id: FileId) -> Arc<hir_expand::body::BodyTree> {
+    hir_def::file_body_tree(db, file_id)
+}
+
 /// Applies a workspace project graph, replacing the previous one. Libraries
 /// no longer reachable are dropped from the per-library index cache.
 pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
@@ -432,7 +437,11 @@ fn debug_path(db: &dyn HirDatabase, file: FileId) -> String {
 /// of `file` as [`SourceSymbol`]s: class-like types get the package name then
 /// each enclosing simple name joined by `.` ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7));
 /// members get `EnclosingFqn.simple`. Keyed on the interned [`FileText`] so
-/// edits invalidate the symbol set of exactly the changed file.
+/// edits invalidate the symbol set of exactly the changed file. Symbols carry
+/// no source ranges (declarations get them from the item tree at IDE time), so
+/// an edit that only shifts positions — a whitespace change inside a method
+/// body — leaves the symbol set equal and salsa backdates every consumer,
+/// keeping the workspace symbol index and resolution caches intact.
 #[salsa::tracked(returns(ref))]
 fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<SourceSymbol>> {
     let file_id = *file.file_id(db);
@@ -455,19 +464,19 @@ fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
             // Initializers have no name and are not indexed.
             return;
         };
-        let (simple, public, range) = match data {
-            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.public, d.range),
-            ItemData::Enum(d) => (&d.name, d.modifiers.public, d.range),
-            ItemData::Record(d) => (&d.name, d.modifiers.public, d.range),
-            ItemData::Annotation(d) => (&d.name, d.modifiers.public, d.range),
+        let (simple, public) = match data {
+            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.public),
+            ItemData::Enum(d) => (&d.name, d.modifiers.public),
+            ItemData::Record(d) => (&d.name, d.modifiers.public),
+            ItemData::Annotation(d) => (&d.name, d.modifiers.public),
             // Enum constants are implicitly `public static final`
             // ([JLS §8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)).
-            ItemData::EnumConstant(d) => (&d.name, true, d.range),
+            ItemData::EnumConstant(d) => (&d.name, true),
             // A module declaration carries no access modifiers
             // ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)).
-            ItemData::Module(d) => (&d.name, false, d.range),
-            ItemData::Method(d) => (&d.name, d.modifiers.public, d.range),
-            ItemData::Field(d) => (&d.name, d.modifiers.public, d.range),
+            ItemData::Module(d) => (&d.name, false),
+            ItemData::Method(d) => (&d.name, d.modifiers.public),
+            ItemData::Field(d) => (&d.name, d.modifiers.public),
             ItemData::StaticInit(_) | ItemData::InstanceInit(_) => unreachable!(),
         };
         let name = match prefix {
@@ -483,8 +492,6 @@ fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
         out.push(SourceSymbol {
             name: name.clone(),
             item: id,
-            range,
-            name_range: data.name_range(),
             kind,
             public,
         });

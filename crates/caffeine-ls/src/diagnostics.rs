@@ -422,6 +422,12 @@ pub(crate) fn related_for(
 /// file, sealed with the file's generation. A document whose previous result
 /// id matches its current generation is echoed as `Unchanged`; everything else
 /// is a full report. Items are sorted by URI for determinism.
+///
+/// Files the store already holds a current report for are served from the
+/// cache without re-deriving them through the analysis (the refresh pass and
+/// document pulls keep the store current); only files with no cached report
+/// are recomputed here. Steady-state pulls are therefore digest comparisons,
+/// not a full workspace re-inference.
 pub(crate) fn workspace_diagnostic_reports(
     snapshot: &GlobalStateSnapshot,
     previous_ids: &FxHashMap<lsp_types::Uri, String>,
@@ -435,10 +441,30 @@ pub(crate) fn workspace_diagnostic_reports(
             continue;
         };
         let fallback = fallback_kind(&uri);
-        let (generation, report) = diag.file_report(analysis, file, fallback)?;
         let version = crate::lsp::from_proto::vfs_path(&uri)
             .ok()
             .and_then(|path| snapshot.open_document_version(&path));
+        // Serve the store's current report when it is guaranteed fresh: the
+        // background refresh pass recomputes *subscribed* (watched) files on
+        // every relevant edit and bumps their generation, so their cached
+        // reports are current. An unwatched file's cache may be stale after a
+        // dependency edit — the pass never recomputed it — so it must be
+        // re-derived through the analysis here.
+        let cached = {
+            let inner = diag.inner.lock();
+            if inner.subscribed.contains_key(&file) {
+                inner
+                    .files
+                    .get(&file)
+                    .map(|entry| (entry.generation, Arc::clone(&entry.diagnostics)))
+            } else {
+                None
+            }
+        };
+        let (generation, report) = match cached {
+            Some(cached) => cached,
+            None => diag.file_report(analysis, file, fallback)?,
+        };
         let id = render_id(generation);
         if previous_ids.get(&uri).map(String::as_str) == Some(id.as_str()) {
             items.push(
@@ -487,7 +513,9 @@ fn uri_of(item: &lsp_types::WorkspaceDocumentDiagnosticReport) -> &str {
 /// files: (re)subscribes watched files lazily and edited files eagerly, derives
 /// the candidate set (the edited files themselves plus their watched
 /// dependents), recomputes each candidate's report, and returns the files whose
-/// report actually moved (their generation changed).
+/// report actually moved (their generation changed) plus whether any *other*
+/// (dependent) file's report moved — the edited files alone do not warrant a
+/// workspace-wide refresh.
 ///
 /// All salsa reads run through [`ide::Analysis`]; a concurrent write cancels
 /// the pass ([`Cancelled::PendingWrite`]) and the caller re-enqueues the same
@@ -495,7 +523,7 @@ fn uri_of(item: &lsp_types::WorkspaceDocumentDiagnosticReport) -> &str {
 pub(crate) fn run_diagnostics_pass(
     snapshot: &GlobalStateSnapshot,
     changed: &FxHashSet<FileId>,
-) -> Cancellable<Vec<FileId>> {
+) -> Cancellable<(Vec<FileId>, bool)> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
 
@@ -588,8 +616,11 @@ pub(crate) fn run_diagnostics_pass(
         }
     }
     changed_files.sort();
+    // Whether any moved file is a *dependent* (not one of the edited files):
+    // only those moves can affect files the client is not already re-pulling.
+    let cross_file = changed_files.iter().any(|file| !changed.contains(file));
     tracing::debug!(changed = ?changed_files, "diagnostics pass finished");
-    Ok(changed_files)
+    Ok((changed_files, cross_file))
 }
 
 /// Renders a generation as the client-opaque LSP `resultId`.

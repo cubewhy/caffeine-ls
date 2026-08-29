@@ -1509,6 +1509,7 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
         let tree = hir::file_item_tree(db, file_id);
+        let bodies = hir::file_body_tree(db, file_id);
         let line_index = line_index::LineIndex::new(text);
         for (id, data) in all_items(&tree) {
             let header = match data {
@@ -1569,13 +1570,13 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                                 DiagLocation::Method => "method".to_owned(),
                             };
                             let at = diag
-                                .range(&tree.bodies)
+                                .range(&bodies)
                                 .map(|r| {
                                     let lc = line_index.line_col(r.start());
                                     format!("@{line}:{col}", line = lc.line, col = lc.col)
                                 })
                                 .unwrap_or_default();
-                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(&tree.bodies))
+                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(&bodies))
                         })
                         .collect::<Vec<_>>()
                         .join(" | ")

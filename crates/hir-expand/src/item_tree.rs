@@ -2,10 +2,12 @@
 //!
 //! Lowering turns a language's CST into this flat, arena-based IR: every
 //! top-level type, member, field, enum constant, initializer and module
-//! directive gets a stable [`ItemId`]. Method bodies and initializer
-//! expressions are lowered into the per-file [`crate::body::BodyTree`]
-//! embedded in the tree, keeping the source range of each declaration so IDE
-//! features can map items back to source.
+//! directive gets a stable [`ItemId`]. The *bodies* of methods, initializers,
+//! field initializers, enum constant arguments and annotation element defaults
+//! are lowered into the per-file [`crate::body::BodyTree`], which lives
+//! *beside* the item tree ([`LoweredFile`]) rather than inside it: keeping the
+//! body content out of the memoized item tree lets salsa backdate the
+//! signature-level queries across edits that only touch a method body.
 
 use std::sync::Arc;
 
@@ -48,11 +50,6 @@ pub struct ItemTree {
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
     pub items: Arena<ItemData>,
-    /// The lowered bodies of the file's methods, initializers, field
-    /// initializers, enum constant arguments and annotation defaults
-    /// ([JLS §14](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html),
-    /// [§15](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html)).
-    pub bodies: Arc<BodyTree>,
 }
 
 impl Default for ItemTree {
@@ -64,7 +61,6 @@ impl Default for ItemTree {
             imports: Vec::new(),
             top: Vec::new(),
             items: Arena::default(),
-            bodies: Arc::default(),
         }
     }
 }
@@ -73,6 +69,21 @@ impl ItemTree {
     pub fn data(&self, id: ItemId) -> &ItemData {
         self.items.get(id.0)
     }
+}
+
+/// The full per-file lowering: the declaration [`ItemTree`] plus the body IR
+/// ([`crate::body::BodyTree`]), lowered together in one pass so the body ids
+/// stored in the item data line up with the body arenas. Computed by a single
+/// salsa query (`hir_def::db::lower_source_query`) and read through its
+/// [`file_item_tree`](hir_def::file_item_tree) /
+/// [`file_body_tree`](hir_def::file_body_tree) accessors. Because the item
+/// tree carries no body content, edits that only change a method body leave
+/// its value unchanged, letting salsa backdate signature consumers
+/// (`file_symbols_query`, `supertypes_query`, ...) instead of re-running them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoweredFile {
+    pub items: Arc<ItemTree>,
+    pub bodies: Arc<BodyTree>,
 }
 
 /// A lowered declaration or member.

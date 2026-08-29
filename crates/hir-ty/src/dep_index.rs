@@ -160,6 +160,7 @@ fn record_source(
 /// appearing in this set or being reachable through [`file_resolved_deps`].
 pub(crate) fn file_dependency_refs_impl(db: &dyn TyDatabase, file: FileId) -> FxHashSet<Name> {
     let tree = hir::file_item_tree(db, file);
+    let bodies = hir::file_body_tree(db, file);
     let mut out: FxHashSet<Name> = FxHashSet::default();
 
     // Imports: the full name and its leaf simple name, so a symbol added or
@@ -178,29 +179,29 @@ pub(crate) fn file_dependency_refs_impl(db: &dyn TyDatabase, file: FileId) -> Fx
         match data {
             ItemData::Method(method) => {
                 if let Some(body) = method.body {
-                    collect_body_names(&tree, body, &mut out);
+                    collect_body_names(&bodies, body, &mut out);
                 }
                 if let Some(default) = method.default_expr {
-                    collect_expr_forest_names(&tree, &[default], &mut out);
+                    collect_expr_forest_names(&bodies, &[default], &mut out);
                 }
             }
             ItemData::StaticInit(init) => {
                 if let Some(body) = init.body {
-                    collect_body_names(&tree, body, &mut out);
+                    collect_body_names(&bodies, body, &mut out);
                 }
             }
             ItemData::InstanceInit(init) => {
                 if let Some(body) = init.body {
-                    collect_body_names(&tree, body, &mut out);
+                    collect_body_names(&bodies, body, &mut out);
                 }
             }
             ItemData::Field(field) => {
                 if let Some(init) = field.initializer_expr {
-                    collect_expr_forest_names(&tree, &[init], &mut out);
+                    collect_expr_forest_names(&bodies, &[init], &mut out);
                 }
             }
             ItemData::EnumConstant(constant) => {
-                collect_expr_forest_names(&tree, &constant.argument_exprs, &mut out);
+                collect_expr_forest_names(&bodies, &constant.argument_exprs, &mut out);
             }
             _ => {}
         }
@@ -218,22 +219,22 @@ fn collect_type_ref_names(spanned: &SpannedTypeRef, out: &mut FxHashSet<Name>) {
 
 /// The names of a body: the reference names of its type references plus the
 /// simple names of the methods and fields it accesses.
-fn collect_body_names(tree: &ItemTree, body: BodyId, out: &mut FxHashSet<Name>) {
-    for (_, spanned) in body_type_refs(&tree.bodies, body) {
+fn collect_body_names(bodies: &BodyTree, body: BodyId, out: &mut FxHashSet<Name>) {
+    for (_, spanned) in body_type_refs(bodies, body) {
         collect_type_ref_names(&spanned, out);
     }
-    collect_member_names(&tree.bodies, &tree.bodies.body(body).stmts, out);
+    collect_member_names(bodies, &bodies.body(body).stmts, out);
 }
 
 /// The names of an expression forest (a field initializer, enum constant
 /// arguments or an annotation element default): same rule as
 /// [`collect_body_names`].
-fn collect_expr_forest_names(tree: &ItemTree, exprs: &[ExprId], out: &mut FxHashSet<Name>) {
-    for (_, spanned) in expr_forest_type_refs(&tree.bodies, exprs) {
+fn collect_expr_forest_names(bodies: &BodyTree, exprs: &[ExprId], out: &mut FxHashSet<Name>) {
+    for (_, spanned) in expr_forest_type_refs(bodies, exprs) {
         collect_type_ref_names(&spanned, out);
     }
     for &expr in exprs {
-        walk_expr_members(&tree.bodies, expr, out);
+        walk_expr_members(bodies, expr, out);
     }
 }
 

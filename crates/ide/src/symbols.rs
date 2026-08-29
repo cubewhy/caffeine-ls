@@ -45,6 +45,7 @@ pub struct WorkspaceSymbol {
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+    let tree = hir::file_item_tree(db, file_id);
     let mut out = Vec::with_capacity(symbols.len() + 1);
     if !symbols.is_empty() {
         // The package is an independent item above the file's top-level
@@ -57,11 +58,12 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
             .as_str()
             .rsplit_once('.')
             .is_none_or(|(parent, _)| !names.contains(parent));
+        let data = tree.data(symbol.item);
         DocumentSymbol {
             name: symbol.name.as_str().to_owned(),
             kind: symbol.kind,
-            range: symbol.range,
-            name_range: symbol.name_range,
+            range: data.range(),
+            name_range: data.name_range(),
             detail: symbol_detail(db, file_id, symbol, top_level),
             item: Some(symbol.item),
         }
@@ -151,16 +153,20 @@ pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol>
     // Prefix and substring lookups overlap on prefix matches.
     out.dedup();
     out.into_iter()
-        .map(|reference| WorkspaceSymbol {
-            file: reference.file,
-            symbol: DocumentSymbol {
-                name: reference.symbol.name.as_str().to_owned(),
-                kind: reference.symbol.kind,
-                range: reference.symbol.range,
-                name_range: reference.symbol.name_range,
-                detail: None,
-                item: Some(reference.symbol.item),
-            },
+        .map(|reference| {
+            let tree = hir::file_item_tree(db, reference.file);
+            let data = tree.data(reference.symbol.item);
+            WorkspaceSymbol {
+                file: reference.file,
+                symbol: DocumentSymbol {
+                    name: reference.symbol.name.as_str().to_owned(),
+                    kind: reference.symbol.kind,
+                    range: data.range(),
+                    name_range: data.name_range(),
+                    detail: None,
+                    item: Some(reference.symbol.item),
+                },
+            }
         })
         .collect()
 }

@@ -3,10 +3,12 @@
 //! [`LowerCtx`] owns the [`ItemTree`] being built; the language-specific
 //! walkers allocate items into it in CST order.
 
+use std::sync::Arc;
+
 use base_db::LanguageKind;
 use hir_expand::{
     body::{BodyTree, LabelId},
-    item_tree::{ItemData, ItemId, ItemTree},
+    item_tree::{ItemData, ItemId, ItemTree, LoweredFile},
     name::Name,
 };
 use syntax::SourceFile;
@@ -40,11 +42,14 @@ impl LowerCtx {
     }
 }
 
-pub fn lower_source(language: LanguageKind, text: &str) -> ItemTree {
+pub fn lower_source(language: LanguageKind, text: &str) -> LoweredFile {
     if language == LanguageKind::Unknown {
-        return ItemTree {
-            language,
-            ..Default::default()
+        return LoweredFile {
+            items: Arc::new(ItemTree {
+                language,
+                ..Default::default()
+            }),
+            bodies: Arc::default(),
         };
     }
 
@@ -57,10 +62,12 @@ pub fn lower_source(language: LanguageKind, text: &str) -> ItemTree {
         SourceFile::Kotlin(_) => kotlin::lower_file(&mut ctx),
     }
     // The range arenas are allocated lock-step with the expr/local arenas;
-    // assert the alignment so a future direct allocation cannot silently
+    // assert the alignment so a direct allocation cannot silently
     // desynchronize them.
     debug_assert_eq!(ctx.bodies.expr_ranges.len(), ctx.bodies.exprs.len());
     debug_assert_eq!(ctx.bodies.local_ranges.len(), ctx.bodies.locals.len());
-    ctx.tree.bodies = std::sync::Arc::new(ctx.bodies);
-    ctx.tree
+    LoweredFile {
+        items: Arc::new(ctx.tree),
+        bodies: Arc::new(ctx.bodies),
+    }
 }

@@ -2,16 +2,16 @@
 source: crates/hir/tests/symbol_index_snapshots.rs
 expression: "render_symbols(&file_symbols(&db, FileId::from_raw(1)))"
 ---
-class      com.example.Outer public=true @22..217
-field      com.example.Outer.count public=false @59..64
-field      com.example.Outer.NAME public=true @97..111
-method     com.example.Outer.greet public=true @118..151
-class      com.example.Outer.Nested public=true @157..215
-method     com.example.Outer.Nested.inner public=false @194..209
-interface  com.example.Listener public=false @219..261
-method     com.example.Listener.onEvent public=false @244..259
-enum       com.example.Color public=false @263..296
-constant   com.example.Color.RED public=true @280..283
-constant   com.example.Color.GREEN public=true @289..294
-record     com.example.Point public=false @298..327
-@interface com.example.Marker public=false @329..349
+class      com.example.Outer public=true item5
+field      com.example.Outer.count public=false item0
+field      com.example.Outer.NAME public=true item1
+method     com.example.Outer.greet public=true item2
+class      com.example.Outer.Nested public=true item4
+method     com.example.Outer.Nested.inner public=false item3
+interface  com.example.Listener public=false item7
+method     com.example.Listener.onEvent public=false item6
+enum       com.example.Color public=false item10
+constant   com.example.Color.RED public=true item8
+constant   com.example.Color.GREEN public=true item9
+record     com.example.Point public=false item11
+@interface com.example.Marker public=false item12

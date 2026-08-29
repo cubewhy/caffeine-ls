@@ -404,9 +404,8 @@ pub fn render_primitive(prim: PrimitiveType) -> &'static str {
 /// `ItemTree`, the snapshot surface for the body IR. Expression, statement and
 /// local ids print via [`Display`] (`e5`, `s3`, `l0`); the arena is filled in
 /// CST order, so the output is deterministic for a given source file.
-pub fn pretty_body(tree: &ItemTree) -> String {
+pub fn pretty_body(tree: &ItemTree, bodies: &BodyTree) -> String {
     let mut out = String::new();
-    let bodies: &BodyTree = tree.bodies.as_ref();
     for (_id, body) in bodies.bodies.iter() {
         out.push_str("body:\n");
         for &param in &body.params {
@@ -447,7 +446,7 @@ pub fn pretty_body(tree: &ItemTree) -> String {
         }
     }
     for &top in &tree.top {
-        render_orphan_initializers(&mut out, tree, top, 0);
+        render_orphan_initializers(&mut out, tree, bodies, top, 0);
     }
     out
 }
@@ -455,13 +454,19 @@ pub fn pretty_body(tree: &ItemTree) -> String {
 /// Renders expressions that live in the shared expr arena but belong to no
 /// [`Body`]: field initializers, enum constant arguments and annotation
 /// element defaults.
-fn render_orphan_initializers(out: &mut String, tree: &ItemTree, id: ItemId, depth: usize) {
+fn render_orphan_initializers(
+    out: &mut String,
+    tree: &ItemTree,
+    bodies: &BodyTree,
+    id: ItemId,
+    depth: usize,
+) {
     let indent = "  ".repeat(depth);
     match tree.data(id) {
         ItemData::Field(f) => {
             if let Some(e) = f.initializer_expr {
                 out.push_str(&format!("{indent}field {}: initializer ", f.name));
-                render_expr(out, tree.bodies.as_ref(), e);
+                render_expr(out, bodies, e);
                 out.push('\n');
             }
         }
@@ -478,7 +483,7 @@ fn render_orphan_initializers(out: &mut String, tree: &ItemTree, id: ItemId, dep
                 out.push_str("]\n");
                 for e in &c.argument_exprs {
                     out.push_str(&format!("{indent}  "));
-                    render_expr(out, tree.bodies.as_ref(), *e);
+                    render_expr(out, bodies, *e);
                     out.push('\n');
                 }
             }
@@ -486,14 +491,14 @@ fn render_orphan_initializers(out: &mut String, tree: &ItemTree, id: ItemId, dep
         ItemData::Method(m) => {
             if let Some(e) = m.default_expr {
                 out.push_str(&format!("{indent}method {}: default ", m.name));
-                render_expr(out, tree.bodies.as_ref(), e);
+                render_expr(out, bodies, e);
                 out.push('\n');
             }
         }
         _ => {}
     }
     for &child in tree.data(id).body() {
-        render_orphan_initializers(out, tree, child, depth + 1);
+        render_orphan_initializers(out, tree, bodies, child, depth + 1);
     }
 }
 

@@ -54,7 +54,14 @@ impl FileChange {
             }
             match LocalRoots::try_get(db) {
                 Some(singleton) => {
-                    singleton.set_roots(db).to(local_roots);
+                    // Re-setting an unchanged root set is a no-op: salsa 0.28
+                    // records a write (and bumps the revision counter) on every
+                    // `set`, so skipping equal writes keeps a `didChange` that
+                    // only touched file text from invalidating root-keyed
+                    // queries like `source_root_symbols_query`.
+                    if *singleton.roots(db) != local_roots {
+                        singleton.set_roots(db).to(local_roots);
+                    }
                 }
                 None => {
                     LocalRoots::new(db, local_roots);

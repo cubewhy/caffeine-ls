@@ -57,6 +57,9 @@ impl Files {
         match self.files.get(&file_id) {
             Some(current) => {
                 let current = *current;
+                if *current.text(db) == Arc::from(text) {
+                    return;
+                }
                 current.set_text(db).to(Arc::from(text));
             }
             None => {
@@ -77,6 +80,12 @@ impl Files {
         match self.files.get(&file_id) {
             Some(current) => {
                 let current = *current;
+                // Setting the same text again is a no-op: salsa 0.28 does not
+                // deduplicate equal writes, and every set is a new revision
+                // (which invalidates every memo reading the input).
+                if *current.text(db) == Arc::from(text) {
+                    return;
+                }
                 current
                     .set_text(db)
                     .with_durability(durability)
@@ -113,6 +122,11 @@ impl Files {
         match self.source_roots.get(&source_root_id) {
             Some(current) => {
                 let current = *current;
+                // Re-setting an unchanged root is a no-op (see
+                // [`Self::set_file_text_with_durability`]).
+                if *current.source_root(db) == source_root {
+                    return;
+                }
                 current
                     .set_source_root(db)
                     .with_durability(durability)
@@ -199,6 +213,11 @@ impl Files {
         match self.file_source_roots.get(&id) {
             Some(current) => {
                 let current = *current;
+                // Re-setting an unchanged mapping is a no-op (see
+                // [`Self::set_file_text_with_durability`]).
+                if *current.source_root_id(db) == source_root_id {
+                    return;
+                }
                 current
                     .set_source_root_id(db)
                     .with_durability(durability)

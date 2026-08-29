@@ -18,8 +18,8 @@ pub fn check_lower_language(language: LanguageKind, src: &str) -> String {
         errors.join("\n")
     };
 
-    let tree = hir_def::lower::lower_source(language, src);
-    let rendered = hir_expand::pretty::pretty_print(&tree);
+    let lowered = hir_def::lower::lower_source(language, src);
+    let rendered = hir_expand::pretty::pretty_print(&lowered.items);
 
     format!(
         "\
@@ -47,9 +47,9 @@ pub fn check_lower_bodies(src: &str) -> String {
         errors.join("\n")
     };
 
-    let tree = hir_def::lower::lower_source(LanguageKind::Java, src);
-    let rendered = hir_expand::pretty::pretty_print(&tree);
-    let bodies = hir_expand::pretty::pretty_body(&tree);
+    let lowered = hir_def::lower::lower_source(LanguageKind::Java, src);
+    let rendered = hir_expand::pretty::pretty_print(&lowered.items);
+    let bodies = hir_expand::pretty::pretty_body(&lowered.items, &lowered.bodies);
 
     format!(
         "\

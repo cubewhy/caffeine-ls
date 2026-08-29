@@ -22,17 +22,17 @@ fn file(id: u32, path: &'static str, text: &'static str) -> RootFile {
 }
 
 /// Renders per-file symbols in walk order: kind, qualified name, `public`
-/// flag and source range.
+/// flag and item id.
 fn render_symbols(symbols: &[SourceSymbol]) -> String {
     symbols
         .iter()
         .map(|symbol| {
             format!(
-                "{:<10} {} public={} @{:?}",
+                "{:<10} {} public={} item{}",
                 symbol.kind.label(),
                 symbol.name,
                 symbol.public,
-                symbol.range
+                symbol.item.0.0
             )
         })
         .collect::<Vec<_>>()
@@ -356,6 +356,44 @@ fn edit_invalidates_only_changed_file() {
     assert_snapshot!(
         "edit_invalidates_only_changed_file_index",
         render_index(&source_set_symbols(&db, main))
+    );
+}
+
+/// A body-only edit (whitespace inside a method body) must leave the file's
+/// symbols and the whole source-set index unchanged: the item tree and the
+/// symbols carry no body content, so salsa backdates them and resolution
+/// (supertypes, member sets, abstract methods) is not re-run workspace-wide.
+#[test]
+fn body_edit_keeps_symbols_and_index_stable() {
+    let main = main_source_set();
+    let a = FileId::from_raw(1);
+    let mut db = build(
+        &[Root {
+            source_set: main.clone(),
+            files: vec![file(
+                1,
+                "/src/main/java/com/example/A.java",
+                "package com.example;\nclass A {\n    void m() {\n        int x = 1;\n    }\n}\n",
+            )],
+            classpath: vec![],
+        }],
+        &[],
+    );
+
+    let before_symbols = render_symbols(&file_symbols(&db, a));
+    let before_index = render_index(&source_set_symbols(&db, main.clone()));
+
+    // A body-only edit: a space inside the method body.
+    db.edit_file(
+        a,
+        "package com.example;\nclass A {\n    void m() {\n        int x = 1; \n    }\n}\n",
+    );
+
+    assert_eq!(render_symbols(&file_symbols(&db, a)), before_symbols);
+    assert_eq!(
+        render_index(&source_set_symbols(&db, main)),
+        before_index,
+        "a body-only edit must not change the source-set symbol index"
     );
 }
 

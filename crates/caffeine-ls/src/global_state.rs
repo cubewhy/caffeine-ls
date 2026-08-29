@@ -62,9 +62,11 @@ pub enum BackgroundTaskEvent {
     },
     /// A debounced diagnostics refresh pass completed: the files whose
     /// diagnostics actually moved, ready to be refreshed by the client (see
-    /// [`crate::diagnostics`]).
+    /// [`crate::diagnostics`]). `cross_file` is true when at least one *other*
+    /// file's diagnostics moved (not just the edited files themselves).
     DiagnosticsReady {
         changed: FxHashSet<FileId>,
+        cross_file: bool,
     },
     /// A diagnostics refresh pass was cancelled by a pending write mid-run.
     /// The changed-file set must be re-queued (and the debounce re-armed) once

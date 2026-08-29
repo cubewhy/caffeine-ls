@@ -33,7 +33,6 @@
 //! internal `ClasspathEntry::SourceSet` entry, so a source set only sees the
 //! internal source sets on its classpath.
 
-use rowan::TextRange;
 use rustc_hash::FxHashMap;
 use vfs::FileId;
 
@@ -115,11 +114,6 @@ pub struct SourceSymbol {
     pub name: Name,
     /// The lowered item this symbol refers to.
     pub item: ItemId,
-    /// The source range of the declaration.
-    pub range: TextRange,
-    /// The source range of just the declared name (the identifier), for the
-    /// LSP `selectionRange`.
-    pub name_range: TextRange,
     pub kind: SourceSymbolKind,
     /// Whether the declaration is `public` ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
     pub public: bool,
@@ -254,8 +248,6 @@ mod tests {
         SourceSymbol {
             name: Name::new(name),
             item: ItemId(ArenaId(0)),
-            range: rowan::TextRange::default(),
-            name_range: rowan::TextRange::default(),
             kind: SourceSymbolKind::Class,
             public: true,
         }

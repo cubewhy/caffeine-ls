@@ -17,7 +17,7 @@ use vfs::FileId;
 use hir_expand::{
     arena::ArenaId,
     body::{BodyTree, ExprData, ExprId, LocalId},
-    item_tree::{ItemData, ItemId},
+    item_tree::{ItemData, ItemId, ItemTree},
 };
 
 use crate::RootDatabase;
@@ -43,15 +43,14 @@ pub struct HoverInfo {
 /// an argument or operand, so the innermost *navigable* enclosing expression
 /// governs (innermost first).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
-    let tree = hir::file_item_tree(db, file);
-    let bodies = &tree.bodies;
-    for expr_id in exprs_at(bodies, offset) {
+    let bodies = hir::file_body_tree(db, file);
+    for expr_id in exprs_at(&bodies, offset) {
         let targets = match bodies.expr(expr_id).clone() {
             ExprData::Var(name) => {
                 let name_str = name.as_str();
                 // §6.3: a local of this body — the innermost declaration in
                 // scope, so a shadowing inner declarator beats an outer one.
-                if let Some(local) = resolve_local(bodies, name_str, offset) {
+                if let Some(local) = resolve_local(&bodies, name_str, offset) {
                     return vec![NavigationTarget {
                         file,
                         range: bodies.local_range(local).unwrap_or_default(),
@@ -145,13 +144,13 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
 /// falls on, or the signature of the declaration it falls inside.
 pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::file_item_tree(db, file);
-    let bodies = &tree.bodies;
+    let bodies = hir::file_body_tree(db, file);
     let symbols = hir::file_symbols(db, file);
 
     // An expression's inferred type, from the enclosing body — walk the
     // innermost enclosing expressions first.
-    for expr_id in exprs_at(bodies, offset) {
-        for item in body_items_at(&symbols, offset) {
+    for expr_id in exprs_at(&bodies, offset) {
+        for item in body_items_at(&tree, &symbols, offset) {
             if let Some(body) = hir_ty::body_types(db, file, item)
                 && let Some(ty) = body.exprs.get(&expr_id)
             {
@@ -168,7 +167,7 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
             .local_range(LocalId(id))
             .is_some_and(|range| range.contains_inclusive(offset))
         {
-            for item in body_items_at(&symbols, offset) {
+            for item in body_items_at(&tree, &symbols, offset) {
                 if let Some(body) = hir_ty::body_types(db, file, item)
                     && let Some(ty) = body.locals.get(&LocalId(id))
                 {
@@ -181,21 +180,21 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
     }
 
     // A declaration's signature.
-    render_symbol_decl(db, file, &symbols, offset)
+    render_symbol_decl(db, file, &tree, &symbols, offset)
 }
 
 /// The body-carrying item ids whose range contains `offset`, most-derived
 /// first — the owners whose `BodyTypes` may type the construct at the offset.
-fn body_items_at(symbols: &[hir::SourceSymbol], offset: TextSize) -> Vec<ItemId> {
+fn body_items_at(tree: &ItemTree, symbols: &[hir::SourceSymbol], offset: TextSize) -> Vec<ItemId> {
     let mut candidates: Vec<(TextRange, ItemId)> = symbols
         .iter()
         .filter(|s| {
             matches!(
                 s.kind,
                 hir::SourceSymbolKind::Method | hir::SourceSymbolKind::Field
-            ) && s.range.contains(offset)
+            ) && tree.data(s.item).range().contains(offset)
         })
-        .map(|s| (s.range, s.item))
+        .map(|s| (tree.data(s.item).range(), s.item))
         .collect();
     candidates.sort_by_key(|(range, _)| range.end() - range.start());
     candidates.into_iter().map(|(_, item)| item).collect()
@@ -207,13 +206,14 @@ fn body_items_at(symbols: &[hir::SourceSymbol], offset: TextSize) -> Vec<ItemId>
 fn render_symbol_decl(
     db: &RootDatabase,
     file: FileId,
+    tree: &ItemTree,
     symbols: &[hir::SourceSymbol],
     offset: TextSize,
 ) -> Option<HoverInfo> {
     let symbol = symbols
         .iter()
-        .filter(|s| s.range.contains(offset))
-        .min_by_key(|s| s.range.end() - s.range.start())?;
+        .filter(|s| tree.data(s.item).range().contains(offset))
+        .min_by_key(|s| tree.data(s.item).range().end() - tree.data(s.item).range().start())?;
     let simple = symbol.name.simple_name();
     let value = match symbol.kind {
         hir::SourceSymbolKind::Method => {
@@ -275,7 +275,7 @@ fn member_targets(
         })
         .map(|s| NavigationTarget {
             file,
-            range: s.range,
+            range: tree.data(s.item).range(),
             name: simple.to_owned(),
         })
         .collect()
@@ -283,6 +283,7 @@ fn member_targets(
 
 /// The same-named class-like declarations of `file`.
 fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<NavigationTarget> {
+    let tree = hir::file_item_tree(db, file);
     hir::file_symbols(db, file)
         .iter()
         .filter(|s| {
@@ -297,7 +298,7 @@ fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<Navigati
         })
         .map(|s| NavigationTarget {
             file,
-            range: s.range,
+            range: tree.data(s.item).range(),
             name: simple.clone(),
         })
         .collect()

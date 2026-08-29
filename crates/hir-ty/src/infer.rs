@@ -93,6 +93,7 @@ pub(crate) fn body_types_impl(
     item: ItemId,
 ) -> Option<BodyTypes> {
     let tree = hir::file_item_tree(db, file);
+    let bodies = hir::file_body_tree(db, file);
     let scope = scope_for_file(db, file);
     let type_params = type_params_map_query(db, db.file_text(file));
     let resolver = Resolver::new(&tree, type_params, item);
@@ -101,7 +102,7 @@ pub(crate) fn body_types_impl(
     let mut ctx = InferCtx {
         db,
         scope,
-        tree: tree.bodies.clone(),
+        tree: bodies.clone(),
         resolver,
         access,
         enclosing_class: enclosing_class.clone(),
@@ -159,10 +160,10 @@ pub(crate) fn body_types_impl(
             match method.body {
                 Some(body_id) => {
                     body = Some(body_id);
-                    for &param in &tree.bodies.body(body_id).params {
+                    for &param in &bodies.body(body_id).params {
                         ctx.declare_param(param);
                     }
-                    ctx.infer_block_statements(&tree.bodies.body(body_id).stmts);
+                    ctx.infer_block_statements(&bodies.body(body_id).stmts);
                     // §11.2: the body must discharge its checked exceptions.
                     ctx.check_thrown_liability();
                     // §8.4.7: a method whose return type is neither `void`
@@ -196,18 +197,18 @@ pub(crate) fn body_types_impl(
         hir_expand::item_tree::ItemData::StaticInit(init) => {
             let body_id = init.body?;
             body = Some(body_id);
-            for &param in &tree.bodies.body(body_id).params {
+            for &param in &bodies.body(body_id).params {
                 ctx.declare_param(param);
             }
-            ctx.infer_block_statements(&tree.bodies.body(body_id).stmts);
+            ctx.infer_block_statements(&bodies.body(body_id).stmts);
         }
         hir_expand::item_tree::ItemData::InstanceInit(init) => {
             let body_id = init.body?;
             body = Some(body_id);
-            for &param in &tree.bodies.body(body_id).params {
+            for &param in &bodies.body(body_id).params {
                 ctx.declare_param(param);
             }
-            ctx.infer_block_statements(&tree.bodies.body(body_id).stmts);
+            ctx.infer_block_statements(&bodies.body(body_id).stmts);
             // §11.2.2: an initializer cannot declare throws, so every
             // remaining checked exception is unreported.
             ctx.check_thrown_liability();
