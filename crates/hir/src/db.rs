@@ -604,36 +604,61 @@ fn source_set_symbol_index_query(
     Arc::new(index)
 }
 
-/// The package names declared by the files of a source root, scoped to the
-/// root's own files ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)).
-/// Used by [`source_set_packages_query`] to answer whether an on-demand
-/// import's package ([JLS §7.5.2]) is observable in the workspace's own
-/// sources.
-#[salsa::tracked(returns(ref))]
-fn source_root_packages_query(db: &dyn HirDatabase, root: SourceRootInput) -> Arc<FxHashSet<Name>> {
-    let source_root = root.source_root(db);
-    let mut packages = FxHashSet::default();
-    for file in source_root.iter() {
-        if let Some(package) = &file_item_tree(db, file).package {
-            packages.insert(package.clone());
-        }
-    }
-    Arc::new(packages)
+/// The declared package of `file`
+/// ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)),
+/// or the empty name for the unnamed package
+/// ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2)).
+/// Tracked on the interned [`FileText`], so a text edit invalidates exactly
+/// the edited file's package; files whose declaration name does not move stay
+/// memoized.
+#[salsa::tracked(returns(clone))]
+fn file_package_query(db: &dyn HirDatabase, file: FileText) -> Name {
+    let file_id = *file.file_id(db);
+    file_item_tree(db, file_id)
+        .package
+        .clone()
+        .unwrap_or_else(|| Name::new(""))
 }
 
-/// The package names observable in `source_set`'s *own* source roots
-/// ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)).
-/// Internal source-set dependencies on the classpath are consulted separately
-/// by the caller ([`package_exists`], mirroring [`fqn_resolve`]).
+/// The files of `root` grouped by declared package
+/// ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4)),
+/// each group in the root's file-set order. Tracked on the interned
+/// [`SourceRootInput`]; the per-file packages ([`file_package_query`]) are
+/// themselves tracked on [`FileText`], so a text edit that keeps a file's
+/// package leaves this map equal and salsa backdates every consumer instead of
+/// re-aggregating the workspace.
 #[salsa::tracked(returns(ref))]
-fn source_set_packages_query(
+fn source_root_package_files_query(
     db: &dyn HirDatabase,
-    _project_graph: ProjectGraph,
+    root: SourceRootInput,
+) -> Arc<FxHashMap<Name, Arc<Vec<FileId>>>> {
+    let source_root = root.source_root(db);
+    let mut out: FxHashMap<Name, Vec<FileId>> = FxHashMap::default();
+    for file in source_root.iter() {
+        let package = file_package_query(db, db.file_text(file));
+        out.entry(package).or_default().push(file);
+    }
+    Arc::new(
+        out.into_iter()
+            .map(|(package, files)| (package, Arc::new(files)))
+            .collect(),
+    )
+}
+
+/// The files of `source_set` declaring `package`, most-specific roots first:
+/// the source set's own roots sorted by id, each root's files in its file-set
+/// order. Tracked on the interned [`ProjectGraph`], so a graph replacement
+/// (workspace reload) invalidates it; a *text* edit only re-derives the edited
+/// file's package, so — unless the file moved packages — every package's file
+/// list is left equal and resolution reads of unrelated packages short-circuit.
+#[salsa::tracked(returns(ref))]
+fn source_set_package_files_query(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
     source_set: SourceSetId,
-) -> Arc<FxHashSet<Name>> {
-    let graph =
-        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
-    let mut packages = FxHashSet::default();
+    package: Name,
+) -> Arc<Vec<FileId>> {
+    let mut out = Vec::new();
     let mut roots: Vec<SourceRootId> = graph
         .source_root_to_source_set(db)
         .iter()
@@ -642,11 +667,27 @@ fn source_set_packages_query(
         .collect();
     roots.sort();
     for root in roots {
-        for package in source_root_packages_query(db, db.source_root(root)).iter() {
-            packages.insert(package.clone());
+        if let Some(files) = source_root_package_files_query(db, db.source_root(root)).get(&package)
+        {
+            out.extend(files.iter().copied());
         }
     }
-    Arc::new(packages)
+    Arc::new(out)
+}
+
+/// The files of `source_set` whose declared package is `package`
+/// ([JLS §7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4));
+/// the unnamed package ([§7.4.2]) is the empty name. Unlike the whole-source-set
+/// symbol aggregate, this is tracked per (source set, package): a text edit to
+/// a file in a different package never invalidates it.
+pub fn source_set_package_files(
+    db: &dyn HirDatabase,
+    source_set: SourceSetId,
+    package: &Name,
+) -> Arc<Vec<FileId>> {
+    let graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    source_set_package_files_query(db, graph, source_set, package.clone()).clone()
 }
 
 /// Whether any class of `library` belongs to `package`
@@ -662,13 +703,18 @@ fn library_has_package(db: &dyn HirDatabase, library: LibraryId, package: &str) 
 /// shadowing order as [`fqn_resolve`]. A package is observable when *any* of
 /// its classes resolves; packages never contain `module-info`-only descriptors
 /// in the stub index, so the class-index probe is exact.
+///
+/// The source-side probes read the per-(source set, package) file lists
+/// ([`source_set_package_files_query`]), so an edit to a file in another
+/// package never invalidates the result.
 pub fn package_exists(db: &dyn HirDatabase, scope: &ResolutionScope, package: &str) -> bool {
+    let package = Name::new(package);
     match scope {
         ResolutionScope::SourceSet(source_set) => {
             let graph = ProjectGraph::try_get(db)
                 .unwrap_or_else(|| panic!("no project graph; this is a bug"));
-            if source_set_packages_query(db, graph, source_set.clone())
-                .contains(&Name::new(package))
+            if !source_set_package_files_query(db, graph, source_set.clone(), package.clone())
+                .is_empty()
             {
                 return true;
             }
@@ -676,14 +722,19 @@ pub fn package_exists(db: &dyn HirDatabase, scope: &ResolutionScope, package: &s
             for entry in &entries.entries {
                 match entry {
                     ClasspathEntry::SourceSet(internal) => {
-                        if source_set_packages_query(db, graph, internal.clone())
-                            .contains(&Name::new(package))
+                        if !source_set_package_files_query(
+                            db,
+                            graph,
+                            internal.clone(),
+                            package.clone(),
+                        )
+                        .is_empty()
                         {
                             return true;
                         }
                     }
                     ClasspathEntry::Library(library) => {
-                        if library_has_package(db, *library, package) {
+                        if library_has_package(db, *library, package.as_str()) {
                             return true;
                         }
                     }
@@ -693,10 +744,10 @@ pub fn package_exists(db: &dyn HirDatabase, scope: &ResolutionScope, package: &s
         }
         ResolutionScope::Classpath(libraries) => libraries
             .iter()
-            .any(|library| library_has_package(db, *library, package)),
+            .any(|library| library_has_package(db, *library, package.as_str())),
         ResolutionScope::JdkBuiltins => jdk_builtin_libraries(db)
             .iter()
-            .any(|library| library_has_package(db, *library, package)),
+            .any(|library| library_has_package(db, *library, package.as_str())),
     }
 }
 
@@ -833,17 +884,56 @@ pub fn source_set_symbols(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<
 /// Resolves `fqn` against the source symbol index of `source_set`'s own
 /// source roots. Types are indexed under their fully qualified name
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
-/// so a single indexed lookup replaces the former linear scan.
+/// and a declaration's FQN is its declared package joined with its (possibly
+/// nested) type path — so the declaring file's package is always a `.`-prefix
+/// of the FQN. Rather than consulting one per-source-set aggregate (which
+/// salsa must re-derive on *any* file edit, cascading the recompute into every
+/// file's type inference), this probes only the files of the FQN's prefix
+/// packages ([`source_set_package_files_query`]) and scans each candidate's
+/// per-file symbols ([`file_symbols_query`]) — both tracked per file/package,
+/// so an edit to a file in an unrelated package leaves every resolver here
+/// memoized.
 fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> Option<Resolved> {
     let graph = ProjectGraph::try_get(db)?;
-    let name = Name::new(fqn);
-    let index = source_set_symbol_index_query(db, graph, source_set.clone());
-    index.resolve_class_fqn(&name).map(|reference| {
-        Resolved::Source(SourceClass {
-            file: reference.file,
-            item: reference.symbol.item,
-        })
-    })
+    for package in package_prefixes(fqn) {
+        let files = source_set_package_files_query(db, graph, source_set.clone(), package);
+        for &file in files.iter() {
+            for symbol in file_symbols_query(db, db.file_text(file)).iter() {
+                if symbol.name.as_str() == fqn
+                    && matches!(
+                        symbol.kind,
+                        SourceSymbolKind::Class
+                            | SourceSymbolKind::Interface
+                            | SourceSymbolKind::Enum
+                            | SourceSymbolKind::Record
+                            | SourceSymbolKind::Annotation
+                            | SourceSymbolKind::Module
+                    )
+                {
+                    return Some(Resolved::Source(SourceClass {
+                        file,
+                        item: symbol.item,
+                    }));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The `.`-prefix packages of a fully qualified name, most specific first: a
+/// declaration whose FQN is `fqn` lives in a file whose declared package is
+/// one of these (the package segments come first, the type path — possibly
+/// nested — last). A bare simple name has only the unnamed package (`""`).
+fn package_prefixes(fqn: &str) -> Vec<Name> {
+    let mut out = Vec::new();
+    let mut end = fqn.len();
+    while let Some(dot) = fqn[..end].rfind('.') {
+        out.push(Name::new(&fqn[..dot]));
+        end = dot;
+    }
+    out.push(Name::new(""));
+    out
 }
 
 /// The fully qualified name

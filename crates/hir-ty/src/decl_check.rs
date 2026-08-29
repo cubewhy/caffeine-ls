@@ -22,7 +22,7 @@ use crate::method::{self, MethodData};
 use crate::resolve::scope_for_file;
 use crate::subtyping;
 use crate::ty::Ty;
-use base_db::{LanguageKind, SourceDatabase};
+use base_db::LanguageKind;
 
 /// A declaration-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -638,15 +638,18 @@ fn public_type_diagnostics(
 /// qualified name ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7),
 /// [§7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)) —
 /// javac's `duplicate class` error, which spans files as well as a single
-/// file. For every top-level class-like declaration of `file`, the source-set
-/// symbol index answers the full set of declarations sharing its FQN; the
-/// *non-first* occurrences are reported, each in its own file, at the
-/// declaration's name range (matching javac, which reports on the later
-/// declaration).
+/// file. For every top-level class-like declaration of `file`, the set of
+/// declarations sharing its FQN is computed from the *peers* — the files of
+/// `file`'s package — and the *non-first* occurrences are reported, each in
+/// its own file, at the declaration's name range (matching javac, which
+/// reports on the later declaration).
 ///
-/// The index is the salsa-tracked `source_set_symbols` aggregate, so the check
-/// recomputes soundly when a peer file is edited; the LSP layer re-pulls the
-/// affected file's diagnostics lazily ([`ide_diagnostics::file_report`]).
+/// The peers are the per-(source set, package) file list
+/// ([`hir::source_set_package_files`]) and each peer's per-file symbols
+/// ([`hir::file_symbols`]) — both salsa-tracked per file/package, so the check
+/// recomputes soundly when a peer file is edited and short-circuits when an
+/// edit lands in a different package; the LSP layer re-pulls the affected
+/// file's diagnostics lazily ([`ide_diagnostics::file_report`]).
 fn duplicate_class_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
@@ -658,7 +661,6 @@ fn duplicate_class_diagnostics(
     let Some(source_set) = hir::source_set_for_file(db, file) else {
         return Vec::new();
     };
-    let index = hir::source_set_symbols(db, source_set);
     let mut out = Vec::new();
     for &top in &tree.top {
         let data = tree.data(top);
@@ -668,28 +670,38 @@ fn duplicate_class_diagnostics(
         let Some(fqn) = hir::source_class_fqn(db, file, top) else {
             continue;
         };
-        let refs = index.resolve_fqn(&fqn);
-        let class_refs: Vec<_> = refs
-            .iter()
-            .filter(|reference| {
-                matches!(
-                    reference.symbol.kind,
-                    hir::SourceSymbolKind::Class
-                        | hir::SourceSymbolKind::Interface
-                        | hir::SourceSymbolKind::Enum
-                        | hir::SourceSymbolKind::Record
-                        | hir::SourceSymbolKind::Annotation
-                )
-            })
-            .collect();
+        // The declaring file's package is the FQN minus its last segment (a
+        // top-level class is `package.Simple`); the unnamed package
+        // ([JLS §7.4.2]) leaves a bare simple name.
+        let package = fqn.as_str().rsplit_once('.').map(|(p, _)| p).unwrap_or("");
+        let peers = hir::source_set_package_files(db, source_set.clone(), &Name::new(package));
+        let mut class_refs: Vec<hir::SourceSymbolRef> = Vec::new();
+        for &peer in peers.iter() {
+            for symbol in hir::file_symbols(db, peer).iter() {
+                if symbol.name == fqn
+                    && matches!(
+                        symbol.kind,
+                        hir::SourceSymbolKind::Class
+                            | hir::SourceSymbolKind::Interface
+                            | hir::SourceSymbolKind::Enum
+                            | hir::SourceSymbolKind::Record
+                            | hir::SourceSymbolKind::Annotation
+                    )
+                {
+                    class_refs.push(hir::SourceSymbolRef {
+                        file: peer,
+                        symbol: symbol.clone(),
+                    });
+                }
+            }
+        }
         if class_refs.len() < 2 {
             continue;
         }
-        // Deterministic first-occurrence: the smallest (file, item). The
-        // refs are walked in file/arena order, but sort defensively.
+        // Deterministic first-occurrence: the smallest (file, item).
         let mut sorted = class_refs.clone();
         sorted.sort_by_key(|reference| (reference.file, reference.symbol.item));
-        let first = sorted[0];
+        let first = &sorted[0];
         if first.file == file && first.symbol.item == top {
             continue;
         }

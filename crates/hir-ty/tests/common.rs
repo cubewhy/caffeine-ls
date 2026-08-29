@@ -150,6 +150,14 @@ pub fn add_source(db: &mut TestDatabase, file_id: FileId, path: &str, text: &str
     change.apply(db);
 }
 
+/// Replaces the text of a single file, keeping the source roots intact (the
+/// analogue of the LSP `didChange` path).
+pub fn edit_file(db: &mut TestDatabase, file_id: FileId, text: &str) {
+    let mut change = FileChange::default();
+    change.change_file(file_id, Some(text.to_owned()));
+    change.apply(db);
+}
+
 /// A temporary JDK-like jar with the class hierarchy used by the tests.
 pub struct JdkFixture {
     _dir: TempDir,
