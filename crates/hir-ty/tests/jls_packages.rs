@@ -19,7 +19,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_class_diagnostics;
+use crate::common::{check_class_diagnostics, check_class_diagnostics_with_base};
 
 // -- green: the file sits in the directory chain of its declared package -------
 
@@ -176,3 +176,26 @@ public class Unmatched {}
 // root-relative and dotted: `org.example`. The declared package `org.example
 // .unmatched.pkg` cannot be a suffix of that directory, so the check fires
 // with the IntelliJ-style message ([JLS §7.2.1]).
+
+// -- red: a single-file root anchors on its build-system base -------------------
+//
+// A root holding a single file has no common directory prefix to recover a
+// base from (the file-set heuristic returns `None`), so the package directory
+// used to degrade to the full slash path. With the base the build system
+// resolved recorded in `source_root_dirs`, the directory renders root-relative
+// and dotted even here.
+
+snapshot!(
+    single_file_root_dotted,
+    check_class_diagnostics_with_base(
+        "/proj/src/main/java",
+        &[(
+            "/proj/src/main/java/org/example/Unmatched.java",
+            "\
+package org.example.unmatched.pkg;
+
+public class Unmatched {}
+",
+        )]
+    )
+);

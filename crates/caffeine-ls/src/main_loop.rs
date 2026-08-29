@@ -581,16 +581,19 @@ impl GlobalState {
     fn apply_loaded_graph(&mut self, graph: project_model::WorkspaceGraph, root: AbsPathBuf) {
         tracing::info!(?root, "Applying workspace source roots and loader config");
 
-        // Group source roots by source set, in a deterministic order (project
-        // id, then source set kind). This order is shared by the vfs partition
-        // (one `SourceRoot` per source set) and the `ProjectGraph` map, so the
-        // `SourceRootId(i)` assigned by `FileChange::apply` (vector order)
-        // lines up with `source_sets[i]`.
-        let mut source_sets: Vec<(SourceSetId, Vec<AbsPathBuf>)> = Vec::new();
-        // Generated source roots (`target/generated-sources`, ...) hold real
-        // compile inputs even though they live under gitignored paths.
-        let mut generated_roots: FxHashSet<AbsPathBuf> = FxHashSet::default();
+        // Collect every build-system source root with its owning source set,
+        // in a deterministic order. Each root becomes its own `SourceRoot` and
+        // one `FileSet` (ra-style: the source root *is* the base directory a
+        // classpath looks packages up under), so `file → SourceRootId →
+        // (SourceSetId, base dir)` is a pure salsa lookup and the package-path
+        // diagnostic can anchor on the exact base the build tool resolved
+        // ([JLS §7.2.1]). This order is shared by the vfs partition and the
+        // `ProjectGraph` maps, so the `SourceRootId(i)` assigned by
+        // `FileChange::apply` (vector order) lines up with `entries[i]`.
+        let mut source_sets: Vec<SourceSetId> = Vec::new();
+        let mut entries: Vec<(AbsPathBuf, SourceSetId, bool)> = Vec::new();
         let mut seen: FxHashSet<SourceSetId> = FxHashSet::default();
+        let mut seen_roots: FxHashSet<AbsPathBuf> = FxHashSet::default();
         for project in graph.projects.values() {
             for (kind, source_set) in &project.source_sets {
                 let id = SourceSetId {
@@ -600,32 +603,34 @@ impl GlobalState {
                 if !seen.insert(id.clone()) {
                     continue;
                 }
-                let mut roots = Vec::new();
-                roots.extend(source_set.source_roots.iter().cloned());
-                for generated in &source_set.generated_source_roots {
-                    generated_roots.insert(generated.clone());
-                    roots.push(generated.clone());
+                source_sets.push(id.clone());
+                // Generated source roots (`target/generated-sources`, ...)
+                // hold real compile inputs even though they live under
+                // gitignored paths; they are ordinary roots here, just loaded
+                // without gitignore filtering (see below).
+                for root in &source_set.source_roots {
+                    if seen_roots.insert(root.clone()) {
+                        entries.push((root.clone(), id.clone(), false));
+                    }
                 }
-                source_sets.push((id, roots));
+                for generated in &source_set.generated_source_roots {
+                    if seen_roots.insert(generated.clone()) {
+                        entries.push((generated.clone(), id.clone(), true));
+                    }
+                }
             }
         }
-        source_sets.sort_by_key(|(id, _)| id.clone());
-        let source_set_ids: Vec<SourceSetId> =
-            source_sets.iter().map(|(id, _)| id.clone()).collect();
+        source_sets.sort();
+        source_sets.dedup();
+        // Deterministic across reloads: order by source root path.
+        entries.sort_by_key(|(root, _, _)| root.clone());
 
-        let mut source_roots: Vec<AbsPathBuf> = Vec::new();
-        for (_, roots) in &source_sets {
-            source_roots.extend(roots.iter().cloned());
-        }
-        source_roots.sort();
-        source_roots.dedup();
-
-        // One FileSet per source set, so each source set becomes its own
-        // `SourceRoot` and `file → SourceRootId → SourceSetId` is a pure salsa
-        // lookup.
+        // One FileSet per source root, so each root becomes its own
+        // `SourceRoot` and `file → SourceRootId → (SourceSetId, base dir)` is
+        // a pure salsa lookup.
         let mut builder = vfs::file_set::FileSetConfig::builder();
-        for (_, roots) in &source_sets {
-            builder.add_file_set(roots.iter().cloned().map(vfs::VfsPath::from).collect());
+        for (root, _, _) in &entries {
+            builder.add_file_set(vec![vfs::VfsPath::from(root.clone())]);
         }
         let file_set_config = builder.build();
 
@@ -633,14 +638,13 @@ impl GlobalState {
         // skipping paths that gitignore rules exclude.
         self.vfs_config_version += 1;
         let mut matchers = Vec::new();
-        let entries: Vec<vfs::loader::Entry> = source_roots
+        let loader_entries: Vec<vfs::loader::Entry> = entries
             .iter()
-            .map(|source_root| {
+            .map(|(source_root, _, is_generated)| {
                 // A generated root lives under a gitignored directory
                 // (`target/`) yet holds real compile inputs ([JLS-adjacent]:
                 // annotation-processor and grammar-generator output is part
                 // of the compilation), so ignore rules do not apply to it.
-                let is_generated = generated_roots.contains(source_root);
                 let mut builder = ignore::WalkBuilder::new(source_root);
                 builder.standard_filters(!is_generated).require_git(false);
                 if !is_generated && let Some(matcher) = builder.build_matchers().into_iter().next()
@@ -651,7 +655,7 @@ impl GlobalState {
                 vfs::loader::Entry::Directories(vfs::loader::Directories {
                     extensions: vec!["java".into(), "kt".into(), "kts".into()],
                     include: vec![source_root.clone()],
-                    exclude: if is_generated {
+                    exclude: if *is_generated {
                         Vec::new()
                     } else {
                         collect_ignored_paths(source_root)
@@ -659,10 +663,10 @@ impl GlobalState {
                 })
             })
             .collect();
-        let watch = (0..entries.len()).collect();
+        let watch = (0..loader_entries.len()).collect();
         self.loader.handle.set_config(vfs::loader::Config {
             version: self.vfs_config_version,
-            load: entries,
+            load: loader_entries,
             watch,
         });
         self.source_root_matchers = matchers;
@@ -674,17 +678,21 @@ impl GlobalState {
         // database source roots.
         let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
         self.diagnostics.set_source_files(source_files);
-        let mut project_graph = self.build_project_graph(&graph, &source_set_ids);
-        for (idx, source_set) in source_sets.iter().enumerate() {
+        let mut project_graph = self.build_project_graph(&graph, &source_sets);
+        for (idx, (root, source_set, _)) in entries.iter().enumerate() {
             project_graph
                 .source_root_to_source_set
-                .insert(SourceRootId(idx as u32), source_set.0.clone());
+                .insert(SourceRootId(idx as u32), source_set.clone());
+            project_graph
+                .source_root_dirs
+                .insert(SourceRootId(idx as u32), root.clone());
         }
         let db = self.analysis_host.raw_database_mut();
         hir::set_project_graph(db, project_graph);
 
         // Applying roots must happen after the ProjectGraph registration so
-        // the per-source-set SourceRootIds match `source_root_to_source_set`.
+        // the per-source-root SourceRootIds match `source_root_to_source_set`
+        // and `source_root_dirs`.
         let mut change = FileChange::default();
         change.set_roots(roots);
         self.analysis_host.apply_change(change);

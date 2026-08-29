@@ -23,7 +23,7 @@ use hir_expand::name::Name;
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
-use vfs::{AbsPath, FileId};
+use vfs::{AbsPath, AbsPathBuf, FileId};
 
 use crate::{
     index::{ClassEntry, LibraryIndex, NameIndex},
@@ -59,6 +59,11 @@ pub struct ProjectGraph {
     /// keep this map aligned with that order.
     #[returns(ref)]
     pub source_root_to_source_set: FxHashMap<SourceRootId, SourceSetId>,
+    /// source root → its resolved build-system base directory (the directory
+    /// a classpath looks the root's packages up under), for the package-path
+    /// diagnostic ([JLS §7.2.1]). Aligned with [`Self::source_root_to_source_set`].
+    #[returns(ref)]
+    pub source_root_dirs: FxHashMap<SourceRootId, AbsPathBuf>,
     /// JDK built-in libraries (jimage / rt.jar), in registration order.
     #[returns(ref)]
     pub jdk_libraries: Vec<LibraryId>,
@@ -127,6 +132,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         libraries,
         source_sets,
         source_root_to_source_set,
+        source_root_dirs,
         jdk_libraries,
     } = data;
     match ProjectGraph::try_get(db) {
@@ -136,6 +142,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
             graph
                 .set_source_root_to_source_set(db)
                 .to(source_root_to_source_set);
+            graph.set_source_root_dirs(db).to(source_root_dirs);
             graph.set_jdk_libraries(db).to(jdk_libraries);
         }
         None => {
@@ -144,6 +151,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 libraries,
                 source_sets,
                 source_root_to_source_set,
+                source_root_dirs,
                 jdk_libraries,
             );
         }
@@ -723,7 +731,24 @@ pub fn file_package_dir(db: &dyn HirDatabase, file: FileId) -> Option<String> {
     let path = root.source_root(db).path_for_file(&file)?;
     let abs = path.as_path()?;
     let dir = dir_segments(abs.parent()?);
-    match source_root_dir_anchor_query(db, root).as_deref() {
+    // Prefer the base directory the build system resolved for this source
+    // root ([JLS §7.2.1]): the root is the exact directory a classpath looks
+    // the root's packages up under, so the package is the file's parent
+    // relative to it. The file-set heuristic is kept only as a fallback (and
+    // the full slash path when no base is recoverable).
+    let base = project_graph(db).and_then(|graph| {
+        graph
+            .source_root_dirs(db)
+            .get(&root_id)
+            .map(|base| dir_segments(base))
+    });
+    let base = match base {
+        Some(base) => Some(base),
+        None => source_root_dir_anchor_query(db, root)
+            .clone()
+            .map(|v| v.to_vec()),
+    };
+    match base {
         Some(base) if base.len() < dir.len() && dir[..base.len()] == base[..] => {
             Some(dir[base.len()..].join("."))
         }

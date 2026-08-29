@@ -81,6 +81,11 @@ pub struct ProjectGraphData {
     pub libraries: FxHashMap<LibraryId, LibraryInfo>,
     pub source_sets: FxHashMap<SourceSetId, Arc<Classpath>>,
     pub source_root_to_source_set: FxHashMap<base_db::SourceRootId, SourceSetId>,
+    /// build-system source root → its resolved base directory (the directory
+    /// a classpath looks the root's packages up under), for the package-path
+    /// diagnostic ([JLS §7.2.1]). One entry per `SourceRoot`, aligned with
+    /// [`Self::source_root_to_source_set`].
+    pub source_root_dirs: FxHashMap<base_db::SourceRootId, AbsPathBuf>,
     /// JDK built-in libraries (jimage / rt.jar), in registration order.
     pub jdk_libraries: Vec<LibraryId>,
 }

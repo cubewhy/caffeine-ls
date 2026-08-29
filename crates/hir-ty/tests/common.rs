@@ -234,6 +234,59 @@ pub fn register_source_set(
     source_set
 }
 
+/// Like [`register_source_set`], but additionally records the source root's
+/// resolved base directory (as a build system would) in `source_root_dirs`.
+/// This lets the package-path diagnostic anchor the file's package directory
+/// on the exact base — including for single-file roots, where the file-set
+/// heuristic ([`hir::file_package_dir`]) can recover no base.
+pub fn register_source_set_with_base(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    base: &str,
+    files: &[(&str, &str)],
+) -> hir::SourceSetId {
+    let mut file_set = FileSet::default();
+    for (i, (path, _)) in files.iter().enumerate() {
+        file_set.insert(
+            FileId::from_raw((i + 1) as u32),
+            VfsPath::from(AbsPathBuf::assert_utf8((*path).into())),
+        );
+    }
+    let root = SourceRoot::new(file_set);
+    let mut change = FileChange::default();
+    change.set_roots(vec![root]);
+    for (i, (_, text)) in files.iter().enumerate() {
+        change.change_file(FileId::from_raw((i + 1) as u32), Some((*text).to_owned()));
+    }
+    change.apply(db);
+
+    let source_set = hir::SourceSetId {
+        project: hir::ProjectId(0),
+        kind: hir::SourceSetKind::Main,
+    };
+    let mut data = hir::ProjectGraphData::default();
+    data.libraries.insert(
+        fixture.lib,
+        hir::LibraryInfo::new(
+            LibraryKind::Jar,
+            AbsPathBuf::assert_utf8(fixture.jar.as_std_path().to_owned()),
+        ),
+    );
+    data.jdk_libraries.push(fixture.lib);
+    data.source_sets.insert(
+        source_set.clone(),
+        Arc::new(hir::Classpath {
+            entries: vec![hir::ClasspathEntry::Library(fixture.lib)],
+        }),
+    );
+    data.source_root_to_source_set
+        .insert(SourceRootId(0), source_set.clone());
+    data.source_root_dirs
+        .insert(SourceRootId(0), AbsPathBuf::assert_utf8(base.into()));
+    hir::set_project_graph(db, data);
+    source_set
+}
+
 /// Every `(ItemId, &ItemData)` in the tree, parents before children.
 pub fn all_items(tree: &ItemTree) -> Vec<(ItemId, &ItemData)> {
     fn walk<'a>(tree: &'a ItemTree, id: ItemId, out: &mut Vec<(ItemId, &'a ItemData)>) {
@@ -1646,7 +1699,20 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
     register_source_set(&mut db, &fixture, files);
+    render_class_diagnostics(&db, files)
+}
 
+/// Like [`check_class_diagnostics`], but anchors the source root's base
+/// directory explicitly (as a build system would) so single-file roots also
+/// resolve a package directory.
+pub fn check_class_diagnostics_with_base(base: &str, files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_with_base(&mut db, &fixture, base, files);
+    render_class_diagnostics(&db, files)
+}
+
+fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
         .map(|(path, text)| format!("FILE {path}:\n{text}"))
@@ -1654,7 +1720,7 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
-        for diag in hir_ty::class_diagnostics(&db, file_id) {
+        for diag in hir_ty::class_diagnostics(db, file_id) {
             let at = diag
                 .range()
                 .map(|r| {
@@ -1667,7 +1733,7 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
                 diag.method_name(),
                 diag.code(),
                 at,
-                diag.message(&db)
+                diag.message(db)
             ));
         }
     }
