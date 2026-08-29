@@ -7,6 +7,7 @@
 //! substrate ([`crate::jvm`]) and `hir-expand`'s primitives, and never on
 //! [`crate::kotlin`].
 
+pub mod db;
 pub mod item_loc;
 pub mod item_tree;
 pub mod lower;

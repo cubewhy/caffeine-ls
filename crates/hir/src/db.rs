@@ -94,10 +94,31 @@ pub struct HirState {
     pub next_infer_var: std::sync::Mutex<u64>,
 }
 
+/// The JVM substrate database: the classpath, bytecode and resolved class
+/// hierarchy. This is the floor of the `hir` layer — a [`SourceDatabase`]
+/// plus the `hir-def` Java file HIR — that owns the session-wide [`HirState`]
+/// (the symbol interner, the per-library index cache and the persistent stub
+/// cache).
 #[salsa::db]
-pub trait HirDatabase: SourceDatabase + hir_def::db::DefDatabase {
+pub trait JvmDatabase: SourceDatabase + hir_def::java::db::JavaDatabase {
     fn hir_state(&self) -> &HirState;
 }
+
+/// The Java file HIR database: the Java-specific source queries
+/// (`file_symbols`, `source_class_fqn`, package file lists, ...) on top of the
+/// JVM substrate.
+#[salsa::db]
+pub trait JavaDatabase: JvmDatabase {}
+
+/// The Kotlin file HIR database: scaffold for the Kotlin side of the `hir`
+/// layer.
+#[salsa::db]
+pub trait KotlinDatabase: JvmDatabase {}
+
+/// The root database of the `hir` layer, composed from the JVM substrate and
+/// the language layers.
+#[salsa::db]
+pub trait HirDatabase: JavaDatabase + KotlinDatabase {}
 
 /// The lowered item tree of a source file (see `hir_def::file_item_tree`).
 pub fn file_item_tree(

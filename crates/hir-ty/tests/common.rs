@@ -11,7 +11,10 @@ use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase,
     SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
 };
-use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind, lmdb_store::StubStore};
+use hir::{
+    HirDatabase, HirState, JavaDatabase, JvmDatabase, KotlinDatabase, LibraryId, LibraryInfo,
+    LibraryKind, lmdb_store::StubStore,
+};
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
@@ -123,14 +126,32 @@ impl SourceDatabase for TestDatabase {
 }
 
 #[salsa::db]
-impl HirDatabase for TestDatabase {
+impl JvmDatabase for TestDatabase {
     fn hir_state(&self) -> &HirState {
         &self.hir_state
     }
 }
 
 #[salsa::db]
+impl JavaDatabase for TestDatabase {}
+
+#[salsa::db]
+impl KotlinDatabase for TestDatabase {}
+
+#[salsa::db]
+impl HirDatabase for TestDatabase {}
+
+#[salsa::db]
 impl hir_expand::db::DefDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::jvm::db::JvmDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::java::db::JavaDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::kotlin::db::KotlinDatabase for TestDatabase {}
 
 #[salsa::db]
 impl hir_def::db::DefDatabase for TestDatabase {}

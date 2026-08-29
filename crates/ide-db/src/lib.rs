@@ -8,7 +8,7 @@ use base_db::{
     DepsMap, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase, SourceRoot, SourceRootId,
     SourceRootInput,
 };
-use hir::{HirDatabase, HirState};
+use hir::{HirDatabase, HirState, JavaDatabase, JvmDatabase, KotlinDatabase};
 use line_index::LineIndex;
 use salsa::Durability;
 use triomphe::Arc;
@@ -138,14 +138,32 @@ impl SourceDatabase for RootDatabase {
 }
 
 #[salsa::db]
-impl HirDatabase for RootDatabase {
+impl JvmDatabase for RootDatabase {
     fn hir_state(&self) -> &HirState {
         &self.hir_state
     }
 }
 
 #[salsa::db]
+impl JavaDatabase for RootDatabase {}
+
+#[salsa::db]
+impl KotlinDatabase for RootDatabase {}
+
+#[salsa::db]
+impl HirDatabase for RootDatabase {}
+
+#[salsa::db]
 impl hir_expand::db::DefDatabase for RootDatabase {}
+
+#[salsa::db]
+impl hir_def::jvm::db::JvmDatabase for RootDatabase {}
+
+#[salsa::db]
+impl hir_def::java::db::JavaDatabase for RootDatabase {}
+
+#[salsa::db]
+impl hir_def::kotlin::db::KotlinDatabase for RootDatabase {}
 
 #[salsa::db]
 impl hir_def::db::DefDatabase for RootDatabase {}

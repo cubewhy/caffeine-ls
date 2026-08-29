@@ -22,3 +22,6 @@ pub mod modifiers {
 /// Kotlin item tree on top of the JVM substrate. Kotlin files currently
 /// produce an empty item tree (see [`crate::java::lower::lower_source`]).
 pub mod lower;
+
+/// The Kotlin database trait scaffold.
+pub mod db;

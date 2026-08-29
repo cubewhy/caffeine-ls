@@ -10,8 +10,8 @@ use base_db::{
     SourceRootId, SourceRootInput, salsa::Durability,
 };
 use hir::{
-    ClasspathEntry, HirState, LibraryInfo, ProjectGraphData, SourceSetId, lmdb_store::StubStore,
-    set_project_graph,
+    ClasspathEntry, HirState, JavaDatabase, JvmDatabase, KotlinDatabase, LibraryInfo,
+    ProjectGraphData, SourceSetId, lmdb_store::StubStore, set_project_graph,
 };
 use project_model::LibraryId;
 use tempfile::TempDir;
@@ -146,14 +146,32 @@ impl SourceDatabase for TestDatabase {
 }
 
 #[salsa::db]
-impl hir::HirDatabase for TestDatabase {
+impl JvmDatabase for TestDatabase {
     fn hir_state(&self) -> &HirState {
         &self.hir_state
     }
 }
 
 #[salsa::db]
+impl JavaDatabase for TestDatabase {}
+
+#[salsa::db]
+impl KotlinDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir::HirDatabase for TestDatabase {}
+
+#[salsa::db]
 impl hir_expand::db::DefDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::jvm::db::JvmDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::java::db::JavaDatabase for TestDatabase {}
+
+#[salsa::db]
+impl hir_def::kotlin::db::KotlinDatabase for TestDatabase {}
 
 #[salsa::db]
 impl hir_def::db::DefDatabase for TestDatabase {}
