@@ -1002,6 +1002,7 @@ name = "hir-def"
 version = "0.0.0"
 dependencies = [
  "base-db",
+ "bitflags",
  "hir-expand",
  "indoc",
  "insta",
@@ -1009,6 +1010,7 @@ dependencies = [
  "kotlin-syntax",
  "ra_ap_vfs",
  "rowan",
+ "rust-asm",
  "rustc-hash 2.1.2",
  "salsa",
  "smol_str",

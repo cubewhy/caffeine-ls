@@ -125,6 +125,109 @@ bitflags::bitflags! {
     }
 }
 
+impl JvmAccessFlags {
+    /// Whether the member is `public`.
+    pub fn is_public(self) -> bool {
+        self.contains(JvmAccessFlags::PUBLIC)
+    }
+
+    /// Whether the member is `protected`.
+    pub fn is_protected(self) -> bool {
+        self.contains(JvmAccessFlags::PROTECTED)
+    }
+
+    /// Whether the member is `private`.
+    pub fn is_private(self) -> bool {
+        self.contains(JvmAccessFlags::PRIVATE)
+    }
+
+    /// Whether the member is `static`.
+    pub fn is_static(self) -> bool {
+        self.contains(JvmAccessFlags::STATIC)
+    }
+
+    /// Whether the member is `final`.
+    pub fn is_final(self) -> bool {
+        self.contains(JvmAccessFlags::FINAL)
+    }
+
+    /// Whether the member is `abstract`.
+    pub fn is_abstract(self) -> bool {
+        self.contains(JvmAccessFlags::ABSTRACT)
+    }
+
+    /// Whether the type is an interface ([JVMS §4.1]).
+    pub fn is_interface(self) -> bool {
+        self.contains(JvmAccessFlags::INTERFACE)
+    }
+
+    /// Whether the type is an annotation type ([JVMS §4.1]).
+    pub fn is_annotation(self) -> bool {
+        self.contains(JvmAccessFlags::ANNOTATION)
+    }
+
+    /// Whether the type is an enum ([JVMS §4.1]).
+    pub fn is_enum(self) -> bool {
+        self.contains(JvmAccessFlags::ENUM)
+    }
+
+    /// Whether the type is a module (`module-info`, [JVMS §4.1]).
+    pub fn is_module(self) -> bool {
+        self.contains(JvmAccessFlags::MODULE)
+    }
+
+    /// Whether the member was synthesized by the compiler rather than written
+    /// in source ([JVMS §4.7.8](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.8)).
+    pub fn is_synthetic(self) -> bool {
+        self.contains(JvmAccessFlags::SYNTHETIC)
+    }
+
+    /// Whether the method is a varargs method ([JVMS §4.6]).
+    pub fn is_varargs(self) -> bool {
+        self.contains(JvmAccessFlags::VARARGS)
+    }
+
+    /// Whether the method is `native`.
+    pub fn is_native(self) -> bool {
+        self.contains(JvmAccessFlags::NATIVE)
+    }
+
+    /// Whether the method is `strictfp`.
+    pub fn is_strictfp(self) -> bool {
+        self.contains(JvmAccessFlags::STRICT)
+    }
+
+    /// Whether the method is `synchronized`.
+    pub fn is_synchronized(self) -> bool {
+        self.contains(JvmAccessFlags::SYNCHRONIZED)
+    }
+
+    /// Whether the field is `transient`.
+    pub fn is_transient(self) -> bool {
+        self.contains(JvmAccessFlags::TRANSIENT)
+    }
+
+    /// Whether the field is `volatile`.
+    pub fn is_volatile(self) -> bool {
+        self.contains(JvmAccessFlags::VOLATILE)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JvmAccessFlags;
+
+    #[test]
+    fn predicates() {
+        let flags = JvmAccessFlags::PUBLIC | JvmAccessFlags::STATIC | JvmAccessFlags::FINAL;
+        assert!(flags.is_public());
+        assert!(flags.is_static());
+        assert!(flags.is_final());
+        assert!(!flags.is_abstract());
+        assert!(!flags.is_private());
+    }
+}
+
 //method handle info
 pub const REF_GET_FIELD: u8 = 1;
 pub const REF_GET_STATIC: u8 = 2;
