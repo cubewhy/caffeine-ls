@@ -1,0 +1,37 @@
+---
+source: crates/kotlin-syntax/src/parser/grammar/modifiers.rs
+expression: out
+---
+StartNode(MODIFIER_LIST)
+AddToken
+AddToken
+StartNode(ANNOTATION)
+AddToken
+StartNode(USER_TYPE)
+AddToken
+FinishNode
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+FinishNode
+StartNode(ANNOTATION)
+AddToken
+StartNode(ANNOTATION_USE_SITE_TARGET)
+AddToken
+AddToken
+FinishNode
+AddToken
+StartNode(USER_TYPE)
+AddToken
+FinishNode
+StartNode(USER_TYPE)
+AddToken
+FinishNode
+AddToken
+FinishNode
+AddToken
+AddToken
+AddToken
+FinishNode

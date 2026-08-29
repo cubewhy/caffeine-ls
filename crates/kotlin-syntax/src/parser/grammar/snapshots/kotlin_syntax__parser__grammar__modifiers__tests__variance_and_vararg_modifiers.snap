@@ -1,0 +1,12 @@
+---
+source: crates/kotlin-syntax/src/parser/grammar/modifiers.rs
+expression: out
+---
+StartNode(MODIFIER_LIST)
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+AddToken
+FinishNode

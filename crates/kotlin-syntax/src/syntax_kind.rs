@@ -310,6 +310,7 @@ define_contextual_keywords! {
     Get => "get",
     Import => "import",
     Init => "init",
+    Inner => "inner",
     Param => "param",
     Property => "property",
     Receiver => "receiver",

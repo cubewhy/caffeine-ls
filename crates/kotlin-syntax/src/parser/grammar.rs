@@ -1,6 +1,7 @@
 mod annotations;
 mod compilation_unit;
 mod decl;
+mod modifiers;
 mod names;
 mod types;
 
