@@ -1,0 +1,99 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 440
+expression: out
+---
+SOURCE:
+fun f() {
+    println("is $this")
+    println("is $super")
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "is "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "this"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "is "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "super"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..61
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..60
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..7
+      L_PAREN@5..6 "("
+      R_PAREN@6..7 ")"
+    WHITESPACE@7..8 " "
+    BLOCK@8..60
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      EXPRESSION_STATEMENT@14..33
+        POSTFIX_UNARY_EXPRESSION@14..33
+          PRIMARY_EXPRESSION@14..21
+            IDENTIFIER@14..21 "println"
+          CALL_EXPRESSION@21..33
+            VALUE_ARGUMENTS@21..33
+              L_PAREN@21..22 "("
+              VALUE_ARGUMENT@22..32
+                STRING_LITERAL@22..32
+                  OPEN_QUOTE@22..23 "\""
+                  STRING_CONTENT@23..26 "is "
+                  STRING_TEMPLATE@26..31
+                    TEMPLATE_SHORT_START@26..27 "$"
+                    IDENTIFIER@27..31 "this"
+                  CLOSE_QUOTE@31..32 "\""
+              R_PAREN@32..33 ")"
+      NEWLINE@33..34 "\n"
+      WHITESPACE@34..38 "    "
+      EXPRESSION_STATEMENT@38..58
+        POSTFIX_UNARY_EXPRESSION@38..58
+          PRIMARY_EXPRESSION@38..45
+            IDENTIFIER@38..45 "println"
+          CALL_EXPRESSION@45..58
+            VALUE_ARGUMENTS@45..58
+              L_PAREN@45..46 "("
+              VALUE_ARGUMENT@46..57
+                STRING_LITERAL@46..57
+                  OPEN_QUOTE@46..47 "\""
+                  STRING_CONTENT@47..50 "is "
+                  STRING_TEMPLATE@50..56
+                    TEMPLATE_SHORT_START@50..51 "$"
+                    IDENTIFIER@51..56 "super"
+                  CLOSE_QUOTE@56..57 "\""
+              R_PAREN@57..58 ")"
+      NEWLINE@58..59 "\n"
+      R_BRACE@59..60 "}"
+  NEWLINE@60..61 "\n"

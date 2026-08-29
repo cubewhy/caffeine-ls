@@ -1,0 +1,76 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 337
+expression: out
+---
+SOURCE:
+fun Map.Entry<String, Int>.keyOf(): String = key
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "Map"
+DOT "."
+IDENTIFIER "Entry"
+LESS "<"
+IDENTIFIER "String"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "Int"
+GREATER ">"
+DOT "."
+IDENTIFIER "keyOf"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "key"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..49
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..48
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    RECEIVER_TYPE@4..26
+      IDENTIFIER@4..7 "Map"
+      DOT@7..8 "."
+      IDENTIFIER@8..13 "Entry"
+      TYPE_ARGUMENTS@13..26
+        LESS@13..14 "<"
+        TYPE_PROJECTION@14..20
+          TYPE@14..20
+            USER_TYPE@14..20
+              IDENTIFIER@14..20 "String"
+        COMMA@20..21 ","
+        WHITESPACE@21..22 " "
+        TYPE_PROJECTION@22..25
+          TYPE@22..25
+            USER_TYPE@22..25
+              IDENTIFIER@22..25 "Int"
+        GREATER@25..26 ">"
+    DOT@26..27 "."
+    IDENTIFIER@27..32 "keyOf"
+    VALUE_PARAMETERS@32..34
+      L_PAREN@32..33 "("
+      R_PAREN@33..34 ")"
+    COLON@34..35 ":"
+    WHITESPACE@35..36 " "
+    TYPE@36..42
+      USER_TYPE@36..42
+        IDENTIFIER@36..42 "String"
+    WHITESPACE@42..43 " "
+    EQUAL@43..44 "="
+    WHITESPACE@44..45 " "
+    PRIMARY_EXPRESSION@45..48
+      IDENTIFIER@45..48 "key"
+  NEWLINE@48..49 "\n"

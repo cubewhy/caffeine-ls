@@ -1,0 +1,140 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 424
+expression: out
+---
+SOURCE:
+fun f() {
+    if (b == -1) throw E()
+    b = stream.read()
+    other as Assets
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL_EQUAL "=="
+WHITESPACE " "
+MINUS "-"
+INTEGER_LITERAL "1"
+R_PAREN ")"
+WHITESPACE " "
+THROW_KW "throw"
+WHITESPACE " "
+IDENTIFIER "E"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "stream"
+DOT "."
+IDENTIFIER "read"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "other"
+WHITESPACE " "
+AS_KW "as"
+WHITESPACE " "
+IDENTIFIER "Assets"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..81
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..80
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..7
+      L_PAREN@5..6 "("
+      R_PAREN@6..7 ")"
+    WHITESPACE@7..8 " "
+    BLOCK@8..80
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      EXPRESSION_STATEMENT@14..37
+        IF_EXPRESSION@14..37
+          IF_KW@14..16 "if"
+          WHITESPACE@16..17 " "
+          L_PAREN@17..18 "("
+          BINARY_EXPRESSION@18..25
+            PRIMARY_EXPRESSION@18..19
+              IDENTIFIER@18..19 "b"
+            WHITESPACE@19..20 " "
+            EQUAL_EQUAL@20..22 "=="
+            WHITESPACE@22..23 " "
+            PREFIX_UNARY_EXPRESSION@23..25
+              MINUS@23..24 "-"
+              PRIMARY_EXPRESSION@24..25
+                INTEGER_LITERAL@24..25 "1"
+          R_PAREN@25..26 ")"
+          WHITESPACE@26..27 " "
+          EXPRESSION_STATEMENT@27..36
+            JUMP_EXPRESSION@27..36
+              THROW_KW@27..32 "throw"
+              WHITESPACE@32..33 " "
+              POSTFIX_UNARY_EXPRESSION@33..36
+                PRIMARY_EXPRESSION@33..34
+                  IDENTIFIER@33..34 "E"
+                CALL_EXPRESSION@34..36
+                  VALUE_ARGUMENTS@34..36
+                    L_PAREN@34..35 "("
+                    R_PAREN@35..36 ")"
+          NEWLINE@36..37 "\n"
+      WHITESPACE@37..41 "    "
+      ASSIGNMENT_STATEMENT@41..58
+        PRIMARY_EXPRESSION@41..42
+          IDENTIFIER@41..42 "b"
+        WHITESPACE@42..43 " "
+        EQUAL@43..44 "="
+        WHITESPACE@44..45 " "
+        POSTFIX_UNARY_EXPRESSION@45..58
+          PRIMARY_EXPRESSION@45..51
+            IDENTIFIER@45..51 "stream"
+          NAVIGATION_SUFFIX@51..56
+            DOT@51..52 "."
+            IDENTIFIER@52..56 "read"
+          CALL_EXPRESSION@56..58
+            VALUE_ARGUMENTS@56..58
+              L_PAREN@56..57 "("
+              R_PAREN@57..58 ")"
+      NEWLINE@58..59 "\n"
+      WHITESPACE@59..63 "    "
+      EXPRESSION_STATEMENT@63..79
+        AS_EXPRESSION@63..79
+          PRIMARY_EXPRESSION@63..68
+            IDENTIFIER@63..68 "other"
+          WHITESPACE@68..69 " "
+          AS_KW@69..71 "as"
+          WHITESPACE@71..72 " "
+          TYPE@72..79
+            USER_TYPE@72..79
+              IDENTIFIER@72..78 "Assets"
+              NEWLINE@78..79 "\n"
+      R_BRACE@79..80 "}"
+  NEWLINE@80..81 "\n"

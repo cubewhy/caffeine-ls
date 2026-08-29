@@ -1,0 +1,61 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 344
+expression: out
+---
+SOURCE:
+val Response.string: String
+    get() = body
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "Response"
+DOT "."
+IDENTIFIER "string"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "get"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "body"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..45
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..45
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    RECEIVER_TYPE@4..12
+      IDENTIFIER@4..12 "Response"
+    DOT@12..13 "."
+    VARIABLE_DECLARATION@13..28
+      IDENTIFIER@13..19 "string"
+      COLON@19..20 ":"
+      WHITESPACE@20..21 " "
+      TYPE@21..28
+        USER_TYPE@21..28
+          IDENTIFIER@21..27 "String"
+          NEWLINE@27..28 "\n"
+    WHITESPACE@28..32 "    "
+    GETTER@32..44
+      IDENTIFIER@32..35 "get"
+      L_PAREN@35..36 "("
+      R_PAREN@36..37 ")"
+      WHITESPACE@37..38 " "
+      EQUAL@38..39 "="
+      WHITESPACE@39..40 " "
+      PRIMARY_EXPRESSION@40..44
+        IDENTIFIER@40..44 "body"
+    NEWLINE@44..45 "\n"

@@ -1,5 +1,6 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
+assertion_line: 299
 expression: diagnostics
 ---
 {
@@ -19,6 +20,36 @@ expression: diagnostics
       "severity": 1,
       "source": "caffeine-ls",
       "message": "unclosed string literal"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 4
+        },
+        "end": {
+          "line": 3,
+          "character": 4
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "CLOSE_QUOTE expected"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 3,
+          "character": 4
+        },
+        "end": {
+          "line": 3,
+          "character": 4
+        }
+      },
+      "severity": 1,
+      "source": "caffeine-ls",
+      "message": "R_BRACE expected"
     }
   ],
   "kind": "full"

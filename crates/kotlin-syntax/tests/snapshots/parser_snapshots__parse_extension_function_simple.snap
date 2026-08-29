@@ -1,0 +1,77 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 321
+expression: out
+---
+SOURCE:
+fun String.toURI(): java.net.URI = URI.create(this)
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "String"
+DOT "."
+IDENTIFIER "toURI"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "net"
+DOT "."
+IDENTIFIER "URI"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "URI"
+DOT "."
+IDENTIFIER "create"
+L_PAREN "("
+THIS_KW "this"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..52
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..51
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    RECEIVER_TYPE@4..10
+      IDENTIFIER@4..10 "String"
+    DOT@10..11 "."
+    IDENTIFIER@11..16 "toURI"
+    VALUE_PARAMETERS@16..18
+      L_PAREN@16..17 "("
+      R_PAREN@17..18 ")"
+    COLON@18..19 ":"
+    WHITESPACE@19..20 " "
+    TYPE@20..32
+      USER_TYPE@20..32
+        IDENTIFIER@20..24 "java"
+        DOT@24..25 "."
+        IDENTIFIER@25..28 "net"
+        DOT@28..29 "."
+        IDENTIFIER@29..32 "URI"
+    WHITESPACE@32..33 " "
+    EQUAL@33..34 "="
+    WHITESPACE@34..35 " "
+    POSTFIX_UNARY_EXPRESSION@35..51
+      PRIMARY_EXPRESSION@35..38
+        IDENTIFIER@35..38 "URI"
+      NAVIGATION_SUFFIX@38..45
+        DOT@38..39 "."
+        IDENTIFIER@39..45 "create"
+      CALL_EXPRESSION@45..51
+        VALUE_ARGUMENTS@45..51
+          L_PAREN@45..46 "("
+          VALUE_ARGUMENT@46..50
+            THIS_EXPRESSION@46..50
+              THIS_KW@46..50 "this"
+          R_PAREN@50..51 ")"
+  NEWLINE@51..52 "\n"

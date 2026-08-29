@@ -8,7 +8,7 @@ use crate::{
         modifiers::{at_modifier, modifiers},
         names::simple_identifier,
         semis,
-        types::type_,
+        types::{type_, type_arguments},
     },
     parser::ExpectedConstruct,
     tokenset,
@@ -130,6 +130,114 @@ pub(crate) fn at_declaration(p: &Parser) -> bool {
     )
 }
 
+/// Whether a `primaryConstructor` follows the class name: either the
+/// `classParameters` directly, or `[[modifiers] 'constructor']` before them.
+/// [spec: grammar-rule-primaryConstructor] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-primaryConstructor
+fn at_primary_constructor(p: &Parser) -> bool {
+    let mut i = 0;
+    loop {
+        if p.nth(i) == Some(AT) {
+            i = skip_annotation(p, i);
+        } else if nth_is_modifier(p, i) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    matches!(p.nth(i), Some(L_PAREN))
+        || (p.nth(i) == Some(IDENTIFIER) && p.nth_lexeme(i) == Some("constructor"))
+}
+
+/// Tries to parse a `receiverType {NL} '.'` for an extension function or
+/// property, leaving the cursor on the separating `.` on success; on failure
+/// everything is rewound and `false` is returned.
+///
+/// [spec: grammar-rule-receiverType] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-receiverType
+///
+/// The declaration name is the `simpleIdentifier` right after that trailing
+/// `.` ([spec: grammar-rule-functionDeclaration] / [spec: grammar-rule-propertyDeclaration]),
+/// so the receiver parse must never "eat" the final `.`/name pair: e.g.
+/// `String.toURI` splits into receiver `String` + name `toURI`, not into a
+/// qualified type `String.toURI`.
+fn parse_receiver_type(p: &mut Parser) -> bool {
+    if !p.at(IDENTIFIER) {
+        return false;
+    }
+    let cp = p.checkpoint();
+    let r = p.start();
+
+    // First segment: simpleUserType (simpleIdentifier [typeArguments] ['?']).
+    simple_identifier(p);
+    eat_nl(p);
+    receiver_segment_tail(p);
+
+    loop {
+        if p.at(DOT) && p.nth(1) == Some(IDENTIFIER) {
+            if segment_continues_after_type_args(p) {
+                // More segments follow, so this `.simpleIdentifier` is part of
+                // the (possibly qualified) receiver type, not the name.
+                p.bump();
+                eat_nl(p);
+                simple_identifier(p);
+                eat_nl(p);
+                receiver_segment_tail(p);
+            } else {
+                break; // the split dot; the declaration name follows it
+            }
+        } else {
+            break;
+        }
+    }
+
+    if p.at(DOT) {
+        r.complete(p, RECEIVER_TYPE);
+        true
+    } else {
+        r.abandon(p);
+        p.rewind(cp);
+        false
+    }
+}
+
+/// At a `.` marker: is the following segment itself followed by another `.`?
+/// The declaration name is always the *last* identifier of the sequence, so a
+/// segment continues the receiver (e.g. `Map.Entry<K, V>.`) iff another `.`
+/// follows it — independently of whether the name is a function (`name(`),
+/// a property (`name: T`), a delegated property (`name by …`) or an
+/// expression-bodied one (`name = …`).
+fn segment_continues_after_type_args(p: &Parser) -> bool {
+    // tokens: . IDENTIFIER [ <…> [<…>…] ] ['?'] … and then a DOT
+    if p.nth(1) != Some(IDENTIFIER) {
+        return false;
+    }
+    let mut i = 2;
+    // each segment may be a `simpleUserType` with balanced `typeArguments`
+    if p.nth(i) == Some(LESS) {
+        let after = skip_balanced(p, i, LESS, GREATER);
+        if after == i {
+            return false; // unbalanced `<`
+        }
+        i = after;
+    }
+    while p.nth(i) == Some(QUESTION) {
+        i += 1;
+    }
+    p.nth(i) == Some(DOT)
+}
+
+/// Consume the optional `typeArguments {NL}` and trailing `?` of a receiver
+/// segment, as spelled by `simpleUserType` / `nullableType`.
+fn receiver_segment_tail(p: &mut Parser) {
+    if p.at(LESS) {
+        type_arguments(p);
+        eat_nl(p);
+    }
+    while p.at(QUESTION) {
+        p.bump();
+        eat_nl(p);
+    }
+}
+
 fn nth_is_modifier(p: &Parser, i: usize) -> bool {
     p.nth(i) == Some(IDENTIFIER)
         && matches!(
@@ -241,7 +349,7 @@ fn class_declaration(p: &mut Parser) {
         eat_nl(p);
     }
 
-    if p.at(L_PAREN) {
+    if at_primary_constructor(p) {
         primary_constructor(p);
         eat_nl(p);
     }
@@ -472,19 +580,9 @@ fn function_declaration(p: &mut Parser) {
     }
 
     // receiverType '.'
-    if p.at(IDENTIFIER) {
-        let cp = p.checkpoint();
-        let r = p.start();
-        type_(p);
+    if parse_receiver_type(p) {
+        p.expect(DOT);
         eat_nl(p);
-        if p.at(DOT) {
-            p.bump();
-            eat_nl(p);
-            r.complete(p, RECEIVER_TYPE);
-        } else {
-            r.abandon(p);
-            p.rewind(cp);
-        }
     }
 
     simple_identifier(p);
@@ -662,19 +760,9 @@ fn property_declaration(p: &mut Parser) {
     }
 
     // receiverType '.'
-    if p.at(IDENTIFIER) {
-        let cp = p.checkpoint();
-        let r = p.start();
-        type_(p);
+    if parse_receiver_type(p) {
+        p.expect(DOT);
         eat_nl(p);
-        if p.at(DOT) {
-            p.bump();
-            eat_nl(p);
-            r.complete(p, RECEIVER_TYPE);
-        } else {
-            r.abandon(p);
-            p.rewind(cp);
-        }
     }
 
     if p.at(L_PAREN) {
@@ -706,19 +794,65 @@ fn property_declaration(p: &mut Parser) {
         p.bump();
     }
 
+    // accessors: entered only when `get`/`set` (possibly preceded by
+    // modifiers) actually follows, so a later property member is never
+    // mis-consumed ([spec: grammar-rule-propertyDeclaration]).
     loop {
-        if p.at_contextual_kw(ContextualKeyword::Get) {
-            getter(p);
-            eat_nl(p);
-        } else if p.at_contextual_kw(ContextualKeyword::Set) {
-            setter(p);
-            eat_nl(p);
-        } else {
-            break;
+        match accessor_kind(p) {
+            Some(ContextualKeyword::Get) => {
+                getter(p);
+                eat_nl(p);
+            }
+            Some(ContextualKeyword::Set) => {
+                setter(p);
+                eat_nl(p);
+            }
+            _ => break,
         }
     }
 
     m.complete(p, PROPERTY_DECL);
+}
+
+/// The accessor keyword starting the remaining accessors of a property,
+/// looking past `[modifiers]` ([spec: grammar-rule-getter] /
+/// [spec: grammar-rule-setter]), so `private set` on its own line after the
+/// initializer is a property accessor rather than a stray declaration.
+///
+/// The decision is shape-aware so that a fresh statement that merely *begins*
+/// with the soft keywords `get`/`set` is not mis-consumed: a getter's
+/// parameter list is empty (`get(url).run()` stays a call expression) while a
+/// setter's is a single optional parameter.
+fn accessor_kind(p: &Parser) -> Option<ContextualKeyword> {
+    let mut i = 0;
+    while nth_is_modifier(p, i) {
+        i += 1;
+    }
+    let kind = match p.nth_lexeme(i) {
+        Some("get") => ContextualKeyword::Get,
+        Some("set") => ContextualKeyword::Set,
+        _ => return None,
+    };
+
+    let j = i + 1;
+    if p.nth(j) == Some(L_PAREN) {
+        // `get`/`set` `('(' {NL} ')')` — an empty parameter list.
+        let mut k = j + 1;
+        while p.nth(k) == Some(NEWLINE) {
+            k += 1;
+        }
+        if p.nth(k) == Some(R_PAREN) {
+            return Some(kind);
+        }
+        // `set(value: Int)` holds exactly one parameter and is therefore a
+        // setter; a getter with a non-empty parameter list is not an accessor.
+        return (kind == ContextualKeyword::Set).then_some(kind);
+    }
+
+    match p.nth(j) {
+        None | Some(COLON | EQUAL | L_BRACE | NEWLINE | SEMICOLON) => Some(kind),
+        _ => None,
+    }
 }
 
 /// `getter`: [modifiers] 'get' ['(' {NL} ')' [':' type]] functionBody

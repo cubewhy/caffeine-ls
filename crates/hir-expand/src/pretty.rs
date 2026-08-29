@@ -25,7 +25,7 @@ pub fn pretty_print(tree: &ItemTree) -> String {
         "file ({})",
         match tree.language {
             LanguageKind::Java => "java",
-            LanguageKind::Kotlin => "kotlin",
+            LanguageKind::Kotlin | LanguageKind::KotlinScript => "kotlin",
             LanguageKind::Unknown => "unknown",
         }
     ));

@@ -52,6 +52,26 @@ impl<'a> TokenSource<'a> {
         self.tokens
     }
 
+    /// Whether a line break (`NL` token) separates the last consumed
+    /// significant token from the current one.
+    ///
+    /// `NL` is a real token in `indices` (it is not trivia), so a preceding
+    /// newline is visible even when the caller already consumed it with
+    /// `eat_nl`: in that case the *previous* significant token is the `NL`
+    /// itself and falls inside the scanned window.
+    pub fn line_break_before(&self) -> bool {
+        if self.cursor == 0 {
+            return false;
+        }
+        let prev = self.indices[self.cursor - 1];
+        let end = self
+            .indices
+            .get(self.cursor)
+            .copied()
+            .unwrap_or(self.tokens.len());
+        (prev..end).any(|i| self.tokens[i].kind == SyntaxKind::NEWLINE)
+    }
+
     pub fn pos(&self) -> usize {
         self.cursor
     }

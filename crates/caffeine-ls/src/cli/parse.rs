@@ -277,7 +277,7 @@ fn parse_one(file: &str, language: LanguageKind, text: &str) -> ParseEntry {
 fn language_name(language: LanguageKind) -> &'static str {
     match language {
         LanguageKind::Java => "java",
-        LanguageKind::Kotlin => "kotlin",
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => "kotlin",
         LanguageKind::Unknown => "unknown",
     }
 }
@@ -490,6 +490,32 @@ mod tests {
         assert_eq!(code, EXIT_CLEAN, "{out}");
         let report: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(report["files"][0]["language"], "kotlin");
+    }
+
+    #[test]
+    fn parses_kts_files_with_the_script_grammar() {
+        let dir = tempfile::tempdir().unwrap();
+        // `buildscript { … }` is a top-level *statement* — only valid in the
+        // `script` production ([spec: grammar-rule-script]), not in a
+        // `kotlinFile`.
+        let file = dir.path().join("build.gradle.kts");
+        std::fs::write(
+            &file,
+            "buildscript { }\nkotlin(\"jvm\") version \"2.1.20\"\ngroup = \"app\"\n",
+        )
+        .unwrap();
+
+        let (code, out) = run(&flags(Some(file), None, ParseOutputFormat::Json), "");
+        assert_eq!(code, EXIT_CLEAN, "{out}");
+        let report: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(report["files"][0]["language"], "kotlin");
+        assert_eq!(
+            report["files"][0]["syntax_errors"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[test]

@@ -1,0 +1,144 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 376
+expression: out
+---
+SOURCE:
+fun read(): String {
+    return try {
+        Files.readString(path)
+    } catch (_: IOException) {
+        ""
+    }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "read"
+L_PAREN "("
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+TRY_KW "try"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "Files"
+DOT "."
+IDENTIFIER "readString"
+L_PAREN "("
+IDENTIFIER "path"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+WHITESPACE " "
+IDENTIFIER "catch"
+WHITESPACE " "
+L_PAREN "("
+UNDERSCORE "_"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "IOException"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+OPEN_QUOTE "\""
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..119
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..118
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "read"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    COLON@10..11 ":"
+    WHITESPACE@11..12 " "
+    TYPE@12..18
+      USER_TYPE@12..18
+        IDENTIFIER@12..18 "String"
+    WHITESPACE@18..19 " "
+    BLOCK@19..118
+      L_BRACE@19..20 "{"
+      NEWLINE@20..21 "\n"
+      WHITESPACE@21..25 "    "
+      EXPRESSION_STATEMENT@25..117
+        JUMP_EXPRESSION@25..117
+          RETURN_KW@25..31 "return"
+          WHITESPACE@31..32 " "
+          TRY_EXPRESSION@32..117
+            TRY_KW@32..35 "try"
+            WHITESPACE@35..36 " "
+            BLOCK@36..74
+              L_BRACE@36..37 "{"
+              NEWLINE@37..38 "\n"
+              WHITESPACE@38..46 "        "
+              EXPRESSION_STATEMENT@46..68
+                POSTFIX_UNARY_EXPRESSION@46..68
+                  PRIMARY_EXPRESSION@46..51
+                    IDENTIFIER@46..51 "Files"
+                  NAVIGATION_SUFFIX@51..62
+                    DOT@51..52 "."
+                    IDENTIFIER@52..62 "readString"
+                  CALL_EXPRESSION@62..68
+                    VALUE_ARGUMENTS@62..68
+                      L_PAREN@62..63 "("
+                      VALUE_ARGUMENT@63..67
+                        PRIMARY_EXPRESSION@63..67
+                          IDENTIFIER@63..67 "path"
+                      R_PAREN@67..68 ")"
+              NEWLINE@68..69 "\n"
+              WHITESPACE@69..73 "    "
+              R_BRACE@73..74 "}"
+            WHITESPACE@74..75 " "
+            CATCH_BLOCK@75..116
+              IDENTIFIER@75..80 "catch"
+              WHITESPACE@80..81 " "
+              L_PAREN@81..82 "("
+              UNDERSCORE@82..83 "_"
+              COLON@83..84 ":"
+              WHITESPACE@84..85 " "
+              TYPE@85..96
+                USER_TYPE@85..96
+                  IDENTIFIER@85..96 "IOException"
+              R_PAREN@96..97 ")"
+              WHITESPACE@97..98 " "
+              BLOCK@98..116
+                L_BRACE@98..99 "{"
+                NEWLINE@99..100 "\n"
+                WHITESPACE@100..108 "        "
+                EXPRESSION_STATEMENT@108..110
+                  STRING_LITERAL@108..110
+                    OPEN_QUOTE@108..109 "\""
+                    CLOSE_QUOTE@109..110 "\""
+                NEWLINE@110..111 "\n"
+                WHITESPACE@111..115 "    "
+                R_BRACE@115..116 "}"
+            NEWLINE@116..117 "\n"
+      R_BRACE@117..118 "}"
+  NEWLINE@118..119 "\n"

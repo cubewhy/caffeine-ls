@@ -164,15 +164,17 @@ fn infix_operation(p: &mut Parser) {
     }
 }
 
-/// `a ?: b`
+/// `a ?: b` — the elvis operator is the one binary operator kotlinc allows to
+/// start a new line (`val x = a\n ?: b`), so a leading `NL` is consumed too.
 /// [spec: grammar-rule-elvisExpression] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-elvisExpression
 fn elvis_expression(p: &mut Parser) {
     let m = p.start();
     infix_function_call(p);
     let mut wrapped = false;
-    while p.at(ELVIS) {
+    while p.at(ELVIS) || (p.at(NEWLINE) && p.nth(1) == Some(ELVIS)) {
         wrapped = true;
-        p.bump();
+        eat_nl(p);
+        p.bump(); // elvis
         eat_nl(p);
         infix_function_call(p);
     }
@@ -185,11 +187,16 @@ fn elvis_expression(p: &mut Parser) {
 
 /// `a foo b` — an infix (user-defined) function call.
 /// [spec: grammar-rule-infixFunctionCall] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-infixFunctionCall
+///
+/// The grammar is `rangeExpression {simpleIdentifier {NL} rangeExpression}`:
+/// there is *no* `{NL}` between the left operand and the operator, so an
+/// identifier that follows on a new line does not start an infix call but a
+/// fresh statement (`if (a) foo(x)\n y.c()` stays two statements).
 fn infix_function_call(p: &mut Parser) {
     let m = p.start();
     range_expression(p);
     let mut wrapped = false;
-    while p.at(IDENTIFIER) {
+    while p.at(IDENTIFIER) && !p.line_break_before() {
         wrapped = true;
         p.bump();
         eat_nl(p);
@@ -683,6 +690,12 @@ fn string_literal(p: &mut Parser) {
 }
 
 /// One unit of string content: literal text, an escape, `$name` or `${...}`.
+/// [spec: grammar-rule-stringLiteral] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-stringLiteral
+///
+/// `FieldIdentifier` is `'$' IdentifierOrSoftKey`; soft keywords lex as
+/// `IDENTIFIER`, but the hard keywords `this`/`super` are also accepted in
+/// this position by kotlinc (`"$this"` interpolates the receiver), so
+/// `THIS_KW`/`SUPER_KW` are wrapped as a short template too.
 fn string_template_entry(p: &mut Parser) {
     if p.at(TEMPLATE_SHORT_START) {
         // FieldIdentifier: '$' IdentifierOrSoftKey
@@ -690,6 +703,8 @@ fn string_template_entry(p: &mut Parser) {
         p.bump();
         if p.at(IDENTIFIER) {
             simple_identifier(p);
+        } else if p.at(THIS_KW) || p.at(SUPER_KW) {
+            p.bump();
         }
         m.complete(p, STRING_TEMPLATE);
     } else if p.at(TEMPLATE_EXPR_START) {
@@ -900,6 +915,10 @@ fn try_expression(p: &mut Parser) {
 /// `catchBlock`: 'catch' {NL} '(' {annotation} simpleIdentifier ':' type
 ///               [{NL} ','] ')' {NL} block
 /// [spec: grammar-rule-catchBlock] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-catchBlock
+///
+/// The `Identifier` lexical rule permits a bare `_`, and kotlinc accepts
+/// `catch (_: …)` as an anonymous catch parameter, so an `UNDERSCORE` token
+/// is accepted in place of the parameter name.
 fn catch_block(p: &mut Parser) {
     let m = p.start();
     p.expect_contextual_kw(ContextualKeyword::Catch);
@@ -910,7 +929,11 @@ fn catch_block(p: &mut Parser) {
         annotation(p);
         eat_nl(p);
     }
-    simple_identifier(p);
+    if p.at(UNDERSCORE) {
+        p.bump();
+    } else {
+        simple_identifier(p);
+    }
     p.expect(COLON);
     eat_nl(p);
     type_(p);
@@ -955,7 +978,11 @@ fn jump_expression(p: &mut Parser) {
                 label_suffix(p);
                 eat_nl(p);
             }
-            if at_expression(p) {
+            // The value of a `return` is a `LineExpression`: a line break after
+            // the keyword ends the jump statement, so the following line is a
+            // fresh statement — `val x = f() ?: return\n  next()` must not drag
+            // `next()` into the return. ([spec: grammar-rule-jumpExpression])
+            if at_expression(p) && !p.line_break_before() {
                 expression(p);
             }
         }

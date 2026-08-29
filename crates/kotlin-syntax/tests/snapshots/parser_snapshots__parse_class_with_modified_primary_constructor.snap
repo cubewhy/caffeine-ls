@@ -1,0 +1,91 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 357
+expression: out
+---
+SOURCE:
+class ServerException internal constructor(cause: Throwable) :
+    RuntimeException(cause.message, cause)
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "ServerException"
+WHITESPACE " "
+IDENTIFIER "internal"
+WHITESPACE " "
+IDENTIFIER "constructor"
+L_PAREN "("
+IDENTIFIER "cause"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Throwable"
+R_PAREN ")"
+WHITESPACE " "
+COLON ":"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "RuntimeException"
+L_PAREN "("
+IDENTIFIER "cause"
+DOT "."
+IDENTIFIER "message"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "cause"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..106
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..106
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..21 "ServerException"
+    WHITESPACE@21..22 " "
+    PRIMARY_CONSTRUCTOR@22..60
+      MODIFIER_LIST@22..30
+        IDENTIFIER@22..30 "internal"
+      WHITESPACE@30..31 " "
+      IDENTIFIER@31..42 "constructor"
+      CLASS_PARAMETERS@42..60
+        L_PAREN@42..43 "("
+        CLASS_PARAMETER@43..59
+          IDENTIFIER@43..48 "cause"
+          COLON@48..49 ":"
+          WHITESPACE@49..50 " "
+          TYPE@50..59
+            USER_TYPE@50..59
+              IDENTIFIER@50..59 "Throwable"
+        R_PAREN@59..60 ")"
+    WHITESPACE@60..61 " "
+    COLON@61..62 ":"
+    NEWLINE@62..63 "\n"
+    WHITESPACE@63..67 "    "
+    DELEGATION_SPECIFIERS@67..105
+      DELEGATION_SPECIFIER@67..105
+        CONSTRUCTOR_INVOCATION@67..83
+          TYPE@67..83
+            USER_TYPE@67..83
+              IDENTIFIER@67..83 "RuntimeException"
+        VALUE_ARGUMENTS@83..105
+          L_PAREN@83..84 "("
+          VALUE_ARGUMENT@84..97
+            POSTFIX_UNARY_EXPRESSION@84..97
+              PRIMARY_EXPRESSION@84..89
+                IDENTIFIER@84..89 "cause"
+              NAVIGATION_SUFFIX@89..97
+                DOT@89..90 "."
+                IDENTIFIER@90..97 "message"
+          COMMA@97..98 ","
+          WHITESPACE@98..99 " "
+          VALUE_ARGUMENT@99..104
+            PRIMARY_EXPRESSION@99..104
+              IDENTIFIER@99..104 "cause"
+          R_PAREN@104..105 ")"
+    NEWLINE@105..106 "\n"

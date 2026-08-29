@@ -1,0 +1,131 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 395
+expression: out
+---
+SOURCE:
+class Counter {
+    var count: Int = 0
+        private set
+    val total: Int
+        get() = count + 1
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Counter"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "count"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "private"
+WHITESPACE " "
+IDENTIFIER "set"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "total"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "get"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "count"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..106
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..105
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..13 "Counter"
+    WHITESPACE@13..14 " "
+    CLASS_BODY@14..105
+      L_BRACE@14..15 "{"
+      NEWLINE@15..16 "\n"
+      WHITESPACE@16..20 "    "
+      PROPERTY_DECL@20..59
+        VAR_KW@20..23 "var"
+        WHITESPACE@23..24 " "
+        VARIABLE_DECLARATION@24..34
+          IDENTIFIER@24..29 "count"
+          COLON@29..30 ":"
+          WHITESPACE@30..31 " "
+          TYPE@31..34
+            USER_TYPE@31..34
+              IDENTIFIER@31..34 "Int"
+        WHITESPACE@34..35 " "
+        EQUAL@35..36 "="
+        WHITESPACE@36..37 " "
+        PRIMARY_EXPRESSION@37..38
+          INTEGER_LITERAL@37..38 "0"
+        NEWLINE@38..39 "\n"
+        WHITESPACE@39..47 "        "
+        SETTER@47..58
+          MODIFIER_LIST@47..54
+            IDENTIFIER@47..54 "private"
+          WHITESPACE@54..55 " "
+          IDENTIFIER@55..58 "set"
+        NEWLINE@58..59 "\n"
+      WHITESPACE@59..63 "    "
+      PROPERTY_DECL@63..104
+        VAL_KW@63..66 "val"
+        WHITESPACE@66..67 " "
+        VARIABLE_DECLARATION@67..78
+          IDENTIFIER@67..72 "total"
+          COLON@72..73 ":"
+          WHITESPACE@73..74 " "
+          TYPE@74..78
+            USER_TYPE@74..78
+              IDENTIFIER@74..77 "Int"
+              NEWLINE@77..78 "\n"
+        WHITESPACE@78..86 "        "
+        GETTER@86..103
+          IDENTIFIER@86..89 "get"
+          L_PAREN@89..90 "("
+          R_PAREN@90..91 ")"
+          WHITESPACE@91..92 " "
+          EQUAL@92..93 "="
+          WHITESPACE@93..94 " "
+          BINARY_EXPRESSION@94..103
+            PRIMARY_EXPRESSION@94..99
+              IDENTIFIER@94..99 "count"
+            WHITESPACE@99..100 " "
+            PLUS@100..101 "+"
+            WHITESPACE@101..102 " "
+            PRIMARY_EXPRESSION@102..103
+              INTEGER_LITERAL@102..103 "1"
+        NEWLINE@103..104 "\n"
+      R_BRACE@104..105 "}"
+  NEWLINE@105..106 "\n"

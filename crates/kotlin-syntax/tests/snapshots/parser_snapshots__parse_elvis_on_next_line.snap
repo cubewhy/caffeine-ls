@@ -1,0 +1,107 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 413
+expression: out
+---
+SOURCE:
+fun f() {
+    val uuid = convert(input)
+        ?: return
+    use(uuid)
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "f"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "uuid"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "convert"
+L_PAREN "("
+IDENTIFIER "input"
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "        "
+ELVIS "?:"
+WHITESPACE " "
+RETURN_KW "return"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "use"
+L_PAREN "("
+IDENTIFIER "uuid"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..74
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..73
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..5 "f"
+    VALUE_PARAMETERS@5..7
+      L_PAREN@5..6 "("
+      R_PAREN@6..7 ")"
+    WHITESPACE@7..8 " "
+    BLOCK@8..73
+      L_BRACE@8..9 "{"
+      NEWLINE@9..10 "\n"
+      WHITESPACE@10..14 "    "
+      PROPERTY_DECL@14..58
+        VAL_KW@14..17 "val"
+        WHITESPACE@17..18 " "
+        VARIABLE_DECLARATION@18..22
+          IDENTIFIER@18..22 "uuid"
+        WHITESPACE@22..23 " "
+        EQUAL@23..24 "="
+        WHITESPACE@24..25 " "
+        ELVIS_EXPRESSION@25..58
+          POSTFIX_UNARY_EXPRESSION@25..39
+            PRIMARY_EXPRESSION@25..32
+              IDENTIFIER@25..32 "convert"
+            CALL_EXPRESSION@32..39
+              VALUE_ARGUMENTS@32..39
+                L_PAREN@32..33 "("
+                VALUE_ARGUMENT@33..38
+                  PRIMARY_EXPRESSION@33..38
+                    IDENTIFIER@33..38 "input"
+                R_PAREN@38..39 ")"
+          NEWLINE@39..40 "\n"
+          WHITESPACE@40..48 "        "
+          ELVIS@48..50 "?:"
+          WHITESPACE@50..51 " "
+          JUMP_EXPRESSION@51..58
+            RETURN_KW@51..57 "return"
+            NEWLINE@57..58 "\n"
+      WHITESPACE@58..62 "    "
+      EXPRESSION_STATEMENT@62..71
+        POSTFIX_UNARY_EXPRESSION@62..71
+          PRIMARY_EXPRESSION@62..65
+            IDENTIFIER@62..65 "use"
+          CALL_EXPRESSION@65..71
+            VALUE_ARGUMENTS@65..71
+              L_PAREN@65..66 "("
+              VALUE_ARGUMENT@66..70
+                PRIMARY_EXPRESSION@66..70
+                  IDENTIFIER@66..70 "uuid"
+              R_PAREN@70..71 ")"
+      NEWLINE@71..72 "\n"
+      R_BRACE@72..73 "}"
+  NEWLINE@73..74 "\n"

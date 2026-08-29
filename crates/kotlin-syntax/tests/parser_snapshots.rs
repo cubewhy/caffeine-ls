@@ -312,3 +312,137 @@ parser_snapshot!(
         }
     "#}
 );
+
+// ————————————————————————————————————————————————————————————————
+// Extension functions / properties with a `receiverType '.'` prefix
+// ([spec: grammar-rule-receiverType]).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_extension_function_simple,
+    indoc! {r#"
+        fun String.toURI(): java.net.URI = URI.create(this)
+    "#}
+);
+
+parser_snapshot!(
+    parse_extension_function_with_type_args,
+    indoc! {r#"
+        fun <T> Array<T>.forEachIsEnd(action: (T, Boolean) -> Unit) {
+            this.forEachIndexed { index, t -> action(t, index == this.size - 1) }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_extension_function_qualified_receiver,
+    indoc! {r#"
+        fun Map.Entry<String, Int>.keyOf(): String = key
+    "#}
+);
+
+parser_snapshot!(
+    parse_extension_property,
+    indoc! {r#"
+        val Response.string: String
+            get() = body
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
+// Class headers: `class C internal constructor(...)` and its plain
+// `class C constructor(...)` form ([spec: grammar-rule-primaryConstructor]).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_class_with_modified_primary_constructor,
+    indoc! {r#"
+        class ServerException internal constructor(cause: Throwable) :
+            RuntimeException(cause.message, cause)
+    "#}
+);
+
+parser_snapshot!(
+    parse_class_with_explicit_primary_constructor,
+    indoc! {r#"
+        class Point constructor(x: Int, y: Int)
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
+// `catch (_: Throwable)` — an underscore catch parameter.
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_catch_with_underscore_parameter,
+    indoc! {r#"
+        fun read(): String {
+            return try {
+                Files.readString(path)
+            } catch (_: IOException) {
+                ""
+            }
+        }
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
+// Accessors on their own line after the initializer:
+// `var x = 0` / `private set` / `get() = …` ([spec: grammar-rule-getter],
+// [spec: grammar-rule-setter]).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_property_accessors_with_modifiers,
+    indoc! {r#"
+        class Counter {
+            var count: Int = 0
+                private set
+            val total: Int
+                get() = count + 1
+        }
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
+// The elvis operator may begin a new line; and a braceless `if` branch is
+// terminated by a line break (no infix call across lines,
+// [spec: grammar-rule-infixFunctionCall]).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_elvis_on_next_line,
+    indoc! {r#"
+        fun f() {
+            val uuid = convert(input)
+                ?: return
+            use(uuid)
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_braceless_if_then_next_statement,
+    indoc! {r#"
+        fun f() {
+            if (b == -1) throw E()
+            b = stream.read()
+            other as Assets
+        }
+    "#}
+);
+
+// ————————————————————————————————————————————————————————————————
+// `$this` / `$super` short string templates
+// ([spec: grammar-rule-stringLiteral]).
+// ————————————————————————————————————————————————————————————————
+
+parser_snapshot!(
+    parse_string_template_this_and_super,
+    indoc! {r#"
+        fun f() {
+            println("is $this")
+            println("is $super")
+        }
+    "#}
+);

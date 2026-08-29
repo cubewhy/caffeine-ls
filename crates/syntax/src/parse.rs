@@ -29,6 +29,11 @@ impl SourceFile {
         match language {
             LanguageKind::Java => Parse::from_java(java::SourceFile::parse(text)),
             LanguageKind::Kotlin => Parse::from_kotlin(kotlin::SourceFile::parse(text)),
+            // `.kts` files are parsed with the KLS `script` grammar
+            // ([spec: grammar-rule-script]).
+            LanguageKind::KotlinScript => {
+                Parse::from_kotlin(kotlin::SourceFile::parse_script(text))
+            }
             LanguageKind::Unknown => Parse::empty(),
         }
     }
@@ -63,9 +68,11 @@ impl Parse {
             LanguageKind::Java => SourceFile::Java(java::SourceFile {
                 syntax_node: rowan::SyntaxNode::new_root(green),
             }),
-            LanguageKind::Kotlin => SourceFile::Kotlin(kotlin::SourceFile {
-                syntax_node: rowan::SyntaxNode::new_root(green),
-            }),
+            LanguageKind::Kotlin | LanguageKind::KotlinScript => {
+                SourceFile::Kotlin(kotlin::SourceFile {
+                    syntax_node: rowan::SyntaxNode::new_root(green),
+                })
+            }
             LanguageKind::Unknown => {
                 panic!("cannot create a syntax node for an unknown language")
             }

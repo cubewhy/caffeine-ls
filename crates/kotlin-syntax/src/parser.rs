@@ -154,6 +154,12 @@ impl<'a> Parser<'a> {
         Marker::new(pos)
     }
 
+    /// Whether an `NL` token separates the last consumed significant token
+    /// from the current one (see [`TokenSource::line_break_before`]).
+    pub(crate) fn line_break_before(&self) -> bool {
+        self.source.line_break_before()
+    }
+
     pub(crate) fn current(&self) -> Option<SyntaxKind> {
         self.override_token
             .as_ref()

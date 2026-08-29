@@ -1,5 +1,6 @@
 ---
 source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 268
 expression: out
 ---
 SOURCE:
@@ -69,8 +70,8 @@ ROOT@0..61
       L_BRACE@11..12 "{"
       NEWLINE@12..13 "\n"
       WHITESPACE@13..17 "    "
-      EXPRESSION_STATEMENT@17..59
-        IF_EXPRESSION@17..59
+      EXPRESSION_STATEMENT@17..35
+        IF_EXPRESSION@17..35
           IF_KW@17..19 "if"
           WHITESPACE@19..20 " "
           L_PAREN@20..21 "("
@@ -84,32 +85,33 @@ ROOT@0..61
               INTEGER_LITERAL@25..26 "0"
           R_PAREN@26..27 ")"
           WHITESPACE@27..28 " "
-          EXPRESSION_STATEMENT@28..58
-            JUMP_EXPRESSION@28..58
+          EXPRESSION_STATEMENT@28..35
+            JUMP_EXPRESSION@28..35
               RETURN_KW@28..34 "return"
               NEWLINE@34..35 "\n"
-              WHITESPACE@35..39 "    "
-              IF_EXPRESSION@39..58
-                IF_KW@39..41 "if"
-                WHITESPACE@41..42 " "
-                L_PAREN@42..43 "("
-                BINARY_EXPRESSION@43..48
-                  PRIMARY_EXPRESSION@43..44
-                    IDENTIFIER@43..44 "a"
-                  WHITESPACE@44..45 " "
-                  LESS@45..46 "<"
-                  WHITESPACE@46..47 " "
-                  PRIMARY_EXPRESSION@47..48
-                    INTEGER_LITERAL@47..48 "0"
-                R_PAREN@48..49 ")"
-                WHITESPACE@49..50 " "
-                SEMICOLON@50..51 ";"
-                WHITESPACE@51..52 " "
-                ELSE_KW@52..56 "else"
-                WHITESPACE@56..57 " "
-                EXPRESSION_STATEMENT@57..58
-                  PRIMARY_EXPRESSION@57..58
-                    IDENTIFIER@57..58 "a"
-          NEWLINE@58..59 "\n"
+      WHITESPACE@35..39 "    "
+      EXPRESSION_STATEMENT@39..58
+        IF_EXPRESSION@39..58
+          IF_KW@39..41 "if"
+          WHITESPACE@41..42 " "
+          L_PAREN@42..43 "("
+          BINARY_EXPRESSION@43..48
+            PRIMARY_EXPRESSION@43..44
+              IDENTIFIER@43..44 "a"
+            WHITESPACE@44..45 " "
+            LESS@45..46 "<"
+            WHITESPACE@46..47 " "
+            PRIMARY_EXPRESSION@47..48
+              INTEGER_LITERAL@47..48 "0"
+          R_PAREN@48..49 ")"
+          WHITESPACE@49..50 " "
+          SEMICOLON@50..51 ";"
+          WHITESPACE@51..52 " "
+          ELSE_KW@52..56 "else"
+          WHITESPACE@56..57 " "
+          EXPRESSION_STATEMENT@57..58
+            PRIMARY_EXPRESSION@57..58
+              IDENTIFIER@57..58 "a"
+      NEWLINE@58..59 "\n"
       R_BRACE@59..60 "}"
   NEWLINE@60..61 "\n"

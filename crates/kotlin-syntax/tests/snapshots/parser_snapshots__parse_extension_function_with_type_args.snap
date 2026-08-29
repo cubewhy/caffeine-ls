@@ -1,0 +1,197 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 328
+expression: out
+---
+SOURCE:
+fun <T> Array<T>.forEachIsEnd(action: (T, Boolean) -> Unit) {
+    this.forEachIndexed { index, t -> action(t, index == this.size - 1) }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "Array"
+LESS "<"
+IDENTIFIER "T"
+GREATER ">"
+DOT "."
+IDENTIFIER "forEachIsEnd"
+L_PAREN "("
+IDENTIFIER "action"
+COLON ":"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "T"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "Boolean"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "Unit"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+THIS_KW "this"
+DOT "."
+IDENTIFIER "forEachIndexed"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+IDENTIFIER "index"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "t"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "action"
+L_PAREN "("
+IDENTIFIER "t"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "index"
+WHITESPACE " "
+EQUAL_EQUAL "=="
+WHITESPACE " "
+THIS_KW "this"
+DOT "."
+IDENTIFIER "size"
+WHITESPACE " "
+MINUS "-"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+R_PAREN ")"
+WHITESPACE " "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..138
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..137
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    TYPE_PARAMETERS@4..7
+      LESS@4..5 "<"
+      TYPE_PARAMETER@5..6
+        IDENTIFIER@5..6 "T"
+      GREATER@6..7 ">"
+    WHITESPACE@7..8 " "
+    RECEIVER_TYPE@8..16
+      IDENTIFIER@8..13 "Array"
+      TYPE_ARGUMENTS@13..16
+        LESS@13..14 "<"
+        TYPE_PROJECTION@14..15
+          TYPE@14..15
+            USER_TYPE@14..15
+              IDENTIFIER@14..15 "T"
+        GREATER@15..16 ">"
+    DOT@16..17 "."
+    IDENTIFIER@17..29 "forEachIsEnd"
+    VALUE_PARAMETERS@29..59
+      L_PAREN@29..30 "("
+      VALUE_PARAMETER@30..58
+        IDENTIFIER@30..36 "action"
+        COLON@36..37 ":"
+        WHITESPACE@37..38 " "
+        TYPE@38..58
+          FUNCTION_TYPE@38..58
+            VALUE_PARAMETERS@38..50
+              L_PAREN@38..39 "("
+              TYPE@39..40
+                USER_TYPE@39..40
+                  IDENTIFIER@39..40 "T"
+              COMMA@40..41 ","
+              WHITESPACE@41..42 " "
+              TYPE@42..49
+                USER_TYPE@42..49
+                  IDENTIFIER@42..49 "Boolean"
+              R_PAREN@49..50 ")"
+            WHITESPACE@50..51 " "
+            ARROW@51..53 "->"
+            WHITESPACE@53..54 " "
+            TYPE@54..58
+              USER_TYPE@54..58
+                IDENTIFIER@54..58 "Unit"
+      R_PAREN@58..59 ")"
+    WHITESPACE@59..60 " "
+    BLOCK@60..137
+      L_BRACE@60..61 "{"
+      NEWLINE@61..62 "\n"
+      WHITESPACE@62..66 "    "
+      EXPRESSION_STATEMENT@66..135
+        POSTFIX_UNARY_EXPRESSION@66..135
+          THIS_EXPRESSION@66..70
+            THIS_KW@66..70 "this"
+          NAVIGATION_SUFFIX@70..85
+            DOT@70..71 "."
+            IDENTIFIER@71..85 "forEachIndexed"
+          WHITESPACE@85..86 " "
+          CALL_EXPRESSION@86..135
+            LAMBDA_LITERAL@86..135
+              L_BRACE@86..87 "{"
+              WHITESPACE@87..88 " "
+              LAMBDA_PARAMETERS@88..96
+                LAMBDA_PARAMETER@88..93
+                  VARIABLE_DECLARATION@88..93
+                    IDENTIFIER@88..93 "index"
+                COMMA@93..94 ","
+                WHITESPACE@94..95 " "
+                LAMBDA_PARAMETER@95..96
+                  VARIABLE_DECLARATION@95..96
+                    IDENTIFIER@95..96 "t"
+              WHITESPACE@96..97 " "
+              ARROW@97..99 "->"
+              WHITESPACE@99..100 " "
+              EXPRESSION_STATEMENT@100..133
+                POSTFIX_UNARY_EXPRESSION@100..133
+                  PRIMARY_EXPRESSION@100..106
+                    IDENTIFIER@100..106 "action"
+                  CALL_EXPRESSION@106..133
+                    VALUE_ARGUMENTS@106..133
+                      L_PAREN@106..107 "("
+                      VALUE_ARGUMENT@107..108
+                        PRIMARY_EXPRESSION@107..108
+                          IDENTIFIER@107..108 "t"
+                      COMMA@108..109 ","
+                      WHITESPACE@109..110 " "
+                      VALUE_ARGUMENT@110..132
+                        BINARY_EXPRESSION@110..132
+                          PRIMARY_EXPRESSION@110..115
+                            IDENTIFIER@110..115 "index"
+                          WHITESPACE@115..116 " "
+                          EQUAL_EQUAL@116..118 "=="
+                          WHITESPACE@118..119 " "
+                          BINARY_EXPRESSION@119..132
+                            POSTFIX_UNARY_EXPRESSION@119..128
+                              THIS_EXPRESSION@119..123
+                                THIS_KW@119..123 "this"
+                              NAVIGATION_SUFFIX@123..128
+                                DOT@123..124 "."
+                                IDENTIFIER@124..128 "size"
+                            WHITESPACE@128..129 " "
+                            MINUS@129..130 "-"
+                            WHITESPACE@130..131 " "
+                            PRIMARY_EXPRESSION@131..132
+                              INTEGER_LITERAL@131..132 "1"
+                      R_PAREN@132..133 ")"
+              WHITESPACE@133..134 " "
+              R_BRACE@134..135 "}"
+      NEWLINE@135..136 "\n"
+      R_BRACE@136..137 "}"
+  NEWLINE@137..138 "\n"

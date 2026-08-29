@@ -1,5 +1,6 @@
 ---
 source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 143
 expression: out
 ---
 SOURCE:
@@ -267,7 +268,7 @@ ROOT@0..336
             R_PAREN@159..160 ")"
         NEWLINE@160..162 "\n\n"
       WHITESPACE@162..166 "    "
-      PROPERTY_DECL@166..185
+      PROPERTY_DECL@166..206
         VAR_KW@166..169 "var"
         WHITESPACE@169..170 " "
         VARIABLE_DECLARATION@170..180
@@ -283,11 +284,13 @@ ROOT@0..336
         PRIMARY_EXPRESSION@183..184
           INTEGER_LITERAL@183..184 "0"
         NEWLINE@184..185 "\n"
-      WHITESPACE@185..193 "        "
-      IDENTIFIER@193..200 "private"
-      WHITESPACE@200..201 " "
-      IDENTIFIER@201..204 "set"
-      NEWLINE@204..206 "\n\n"
+        WHITESPACE@185..193 "        "
+        SETTER@193..204
+          MODIFIER_LIST@193..200
+            IDENTIFIER@193..200 "private"
+          WHITESPACE@200..201 " "
+          IDENTIFIER@201..204 "set"
+        NEWLINE@204..206 "\n\n"
       WHITESPACE@206..210 "    "
       PROPERTY_DECL@210..252
         VAL_KW@210..213 "val"

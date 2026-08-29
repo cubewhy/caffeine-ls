@@ -87,6 +87,31 @@ script_snapshot!(
 "#}
 );
 
+// A Gradle `build.gradle.kts` work-alike: top-level function calls, trailing
+// lambdas and infix calls such as `kotlin("jvm") version "…"`.
+script_snapshot!(
+    script_gradle_build_script,
+    indoc! {r#"
+    buildscript {
+        repositories {
+            mavenCentral()
+        }
+        dependencies {
+            classpath("com.guardsquare:proguard-gradle:7.6.1")
+        }
+    }
+
+    plugins {
+        application
+        kotlin("jvm") version "2.1.20"
+        id("com.github.johnrengelman.shadow") version "8.+"
+    }
+
+    group = "org.cubewhy.celestial"
+    version = "3.5.4-pre1-SNAPSHOT"
+"#}
+);
+
 #[test]
 fn source_file_parse_script() {
     let parse = kotlin_syntax::SourceFile::parse_script("println(1)\nval x = 2\n");

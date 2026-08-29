@@ -1,0 +1,62 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+assertion_line: 365
+expression: out
+---
+SOURCE:
+class Point constructor(x: Int, y: Int)
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Point"
+WHITESPACE " "
+IDENTIFIER "constructor"
+L_PAREN "("
+IDENTIFIER "x"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "y"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..40
+  IMPORT_LIST@0..0
+  CLASS_DECL@0..40
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..11 "Point"
+    WHITESPACE@11..12 " "
+    PRIMARY_CONSTRUCTOR@12..39
+      IDENTIFIER@12..23 "constructor"
+      CLASS_PARAMETERS@23..39
+        L_PAREN@23..24 "("
+        CLASS_PARAMETER@24..30
+          IDENTIFIER@24..25 "x"
+          COLON@25..26 ":"
+          WHITESPACE@26..27 " "
+          TYPE@27..30
+            USER_TYPE@27..30
+              IDENTIFIER@27..30 "Int"
+        COMMA@30..31 ","
+        WHITESPACE@31..32 " "
+        CLASS_PARAMETER@32..38
+          IDENTIFIER@32..33 "y"
+          COLON@33..34 ":"
+          WHITESPACE@34..35 " "
+          TYPE@35..38
+            USER_TYPE@35..38
+              IDENTIFIER@35..38 "Int"
+        R_PAREN@38..39 ")"
+    NEWLINE@39..40 "\n"

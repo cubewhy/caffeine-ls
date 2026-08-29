@@ -1,0 +1,267 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+assertion_line: 92
+expression: out
+---
+SOURCE:
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.guardsquare:proguard-gradle:7.6.1")
+    }
+}
+
+plugins {
+    application
+    kotlin("jvm") version "2.1.20"
+    id("com.github.johnrengelman.shadow") version "8.+"
+}
+
+group = "org.cubewhy.celestial"
+version = "3.5.4-pre1-SNAPSHOT"
+
+TOKENS:
+IDENTIFIER "buildscript"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "repositories"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "mavenCentral"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "dependencies"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "classpath"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "com.guardsquare:proguard-gradle:7.6.1"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n\n"
+IDENTIFIER "plugins"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "application"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "kotlin"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "jvm"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+WHITESPACE " "
+IDENTIFIER "version"
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "2.1.20"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "id"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "com.github.johnrengelman.shadow"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+WHITESPACE " "
+IDENTIFIER "version"
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "8.+"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n\n"
+IDENTIFIER "group"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "org.cubewhy.celestial"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+IDENTIFIER "version"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "3.5.4-pre1-SNAPSHOT"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..333
+  IMPORT_LIST@0..0
+  EXPRESSION_STATEMENT@0..147
+    POSTFIX_UNARY_EXPRESSION@0..147
+      PRIMARY_EXPRESSION@0..11
+        IDENTIFIER@0..11 "buildscript"
+      WHITESPACE@11..12 " "
+      CALL_EXPRESSION@12..147
+        LAMBDA_LITERAL@12..147
+          L_BRACE@12..13 "{"
+          NEWLINE@13..14 "\n"
+          WHITESPACE@14..18 "    "
+          EXPRESSION_STATEMENT@18..61
+            POSTFIX_UNARY_EXPRESSION@18..61
+              PRIMARY_EXPRESSION@18..30
+                IDENTIFIER@18..30 "repositories"
+              WHITESPACE@30..31 " "
+              CALL_EXPRESSION@31..61
+                LAMBDA_LITERAL@31..61
+                  L_BRACE@31..32 "{"
+                  NEWLINE@32..33 "\n"
+                  WHITESPACE@33..41 "        "
+                  EXPRESSION_STATEMENT@41..55
+                    POSTFIX_UNARY_EXPRESSION@41..55
+                      PRIMARY_EXPRESSION@41..53
+                        IDENTIFIER@41..53 "mavenCentral"
+                      CALL_EXPRESSION@53..55
+                        VALUE_ARGUMENTS@53..55
+                          L_PAREN@53..54 "("
+                          R_PAREN@54..55 ")"
+                  NEWLINE@55..56 "\n"
+                  WHITESPACE@56..60 "    "
+                  R_BRACE@60..61 "}"
+          NEWLINE@61..62 "\n"
+          WHITESPACE@62..66 "    "
+          EXPRESSION_STATEMENT@66..145
+            POSTFIX_UNARY_EXPRESSION@66..145
+              PRIMARY_EXPRESSION@66..78
+                IDENTIFIER@66..78 "dependencies"
+              WHITESPACE@78..79 " "
+              CALL_EXPRESSION@79..145
+                LAMBDA_LITERAL@79..145
+                  L_BRACE@79..80 "{"
+                  NEWLINE@80..81 "\n"
+                  WHITESPACE@81..89 "        "
+                  EXPRESSION_STATEMENT@89..139
+                    POSTFIX_UNARY_EXPRESSION@89..139
+                      PRIMARY_EXPRESSION@89..98
+                        IDENTIFIER@89..98 "classpath"
+                      CALL_EXPRESSION@98..139
+                        VALUE_ARGUMENTS@98..139
+                          L_PAREN@98..99 "("
+                          VALUE_ARGUMENT@99..138
+                            STRING_LITERAL@99..138
+                              OPEN_QUOTE@99..100 "\""
+                              STRING_CONTENT@100..137 "com.guardsquare:progu ..."
+                              CLOSE_QUOTE@137..138 "\""
+                          R_PAREN@138..139 ")"
+                  NEWLINE@139..140 "\n"
+                  WHITESPACE@140..144 "    "
+                  R_BRACE@144..145 "}"
+          NEWLINE@145..146 "\n"
+          R_BRACE@146..147 "}"
+  NEWLINE@147..149 "\n\n"
+  EXPRESSION_STATEMENT@149..267
+    POSTFIX_UNARY_EXPRESSION@149..267
+      PRIMARY_EXPRESSION@149..156
+        IDENTIFIER@149..156 "plugins"
+      WHITESPACE@156..157 " "
+      CALL_EXPRESSION@157..267
+        LAMBDA_LITERAL@157..267
+          L_BRACE@157..158 "{"
+          NEWLINE@158..159 "\n"
+          WHITESPACE@159..163 "    "
+          EXPRESSION_STATEMENT@163..174
+            PRIMARY_EXPRESSION@163..174
+              IDENTIFIER@163..174 "application"
+          NEWLINE@174..175 "\n"
+          WHITESPACE@175..179 "    "
+          EXPRESSION_STATEMENT@179..209
+            INFIX_FUNCTION_CALL@179..209
+              POSTFIX_UNARY_EXPRESSION@179..192
+                PRIMARY_EXPRESSION@179..185
+                  IDENTIFIER@179..185 "kotlin"
+                CALL_EXPRESSION@185..192
+                  VALUE_ARGUMENTS@185..192
+                    L_PAREN@185..186 "("
+                    VALUE_ARGUMENT@186..191
+                      STRING_LITERAL@186..191
+                        OPEN_QUOTE@186..187 "\""
+                        STRING_CONTENT@187..190 "jvm"
+                        CLOSE_QUOTE@190..191 "\""
+                    R_PAREN@191..192 ")"
+              WHITESPACE@192..193 " "
+              IDENTIFIER@193..200 "version"
+              WHITESPACE@200..201 " "
+              STRING_LITERAL@201..209
+                OPEN_QUOTE@201..202 "\""
+                STRING_CONTENT@202..208 "2.1.20"
+                CLOSE_QUOTE@208..209 "\""
+          NEWLINE@209..210 "\n"
+          WHITESPACE@210..214 "    "
+          EXPRESSION_STATEMENT@214..265
+            INFIX_FUNCTION_CALL@214..265
+              POSTFIX_UNARY_EXPRESSION@214..251
+                PRIMARY_EXPRESSION@214..216
+                  IDENTIFIER@214..216 "id"
+                CALL_EXPRESSION@216..251
+                  VALUE_ARGUMENTS@216..251
+                    L_PAREN@216..217 "("
+                    VALUE_ARGUMENT@217..250
+                      STRING_LITERAL@217..250
+                        OPEN_QUOTE@217..218 "\""
+                        STRING_CONTENT@218..249 "com.github.johnrengel ..."
+                        CLOSE_QUOTE@249..250 "\""
+                    R_PAREN@250..251 ")"
+              WHITESPACE@251..252 " "
+              IDENTIFIER@252..259 "version"
+              WHITESPACE@259..260 " "
+              STRING_LITERAL@260..265
+                OPEN_QUOTE@260..261 "\""
+                STRING_CONTENT@261..264 "8.+"
+                CLOSE_QUOTE@264..265 "\""
+          NEWLINE@265..266 "\n"
+          R_BRACE@266..267 "}"
+  NEWLINE@267..269 "\n\n"
+  ASSIGNMENT_STATEMENT@269..300
+    PRIMARY_EXPRESSION@269..274
+      IDENTIFIER@269..274 "group"
+    WHITESPACE@274..275 " "
+    EQUAL@275..276 "="
+    WHITESPACE@276..277 " "
+    STRING_LITERAL@277..300
+      OPEN_QUOTE@277..278 "\""
+      STRING_CONTENT@278..299 "org.cubewhy.celestial"
+      CLOSE_QUOTE@299..300 "\""
+  NEWLINE@300..301 "\n"
+  ASSIGNMENT_STATEMENT@301..332
+    PRIMARY_EXPRESSION@301..308
+      IDENTIFIER@301..308 "version"
+    WHITESPACE@308..309 " "
+    EQUAL@309..310 "="
+    WHITESPACE@310..311 " "
+    STRING_LITERAL@311..332
+      OPEN_QUOTE@311..312 "\""
+      STRING_CONTENT@312..331 "3.5.4-pre1-SNAPSHOT"
+      CLOSE_QUOTE@331..332 "\""
+  NEWLINE@332..333 "\n"
