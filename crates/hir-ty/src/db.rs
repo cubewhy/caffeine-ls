@@ -149,14 +149,7 @@ pub(crate) fn enclosing_class_query(
         map: &mut FxHashMap<ItemId, Name>,
     ) {
         let data = tree.data(id);
-        let is_type = matches!(
-            data,
-            ItemData::Class(_)
-                | ItemData::Interface(_)
-                | ItemData::Enum(_)
-                | ItemData::Record(_)
-                | ItemData::Annotation(_)
-        );
+        let is_type = data.is_type();
         let current = if is_type { Some(id) } else { enclosing };
         if let Some(enclosing) = current
             && let Some(fqn) = hir::source_class_fqn(db, file_id, enclosing)

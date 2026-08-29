@@ -349,10 +349,8 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let data = tree.data(id);
-        if matches!(
-            data,
-            ItemData::Class(_) | ItemData::Interface(_) | ItemData::Enum(_) | ItemData::Record(_)
-        ) && let Some(fqn) = hir::source_class_fqn(db, file, id)
+        if data.is_type()
+            && let Some(fqn) = hir::source_class_fqn(db, file, id)
         {
             out.extend(check_class(db, file, scope, tree, fqn.as_str(), id));
         }
@@ -551,14 +549,7 @@ fn related(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &str, b: &str) 
 /// may hold more than one of — class, interface, enum, record and annotation
 /// ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)).
 fn is_class_like(data: &ItemData) -> bool {
-    matches!(
-        data,
-        ItemData::Class(_)
-            | ItemData::Interface(_)
-            | ItemData::Enum(_)
-            | ItemData::Record(_)
-            | ItemData::Annotation(_)
-    )
+    data.is_type()
 }
 
 /// The `public` modifier and simple name of a class-like top-level declaration

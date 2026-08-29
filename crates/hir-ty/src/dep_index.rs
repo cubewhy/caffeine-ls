@@ -82,7 +82,7 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
         for item in all_items(&tree) {
             let key = ItemKey::new(db, file, item);
             item_ty_query(db, key).for_each_reference(db, &mut record);
-            if matches!(tree.data(item), ItemData::Method(_)) {
+            if tree.data(item).is_method() {
                 for param in method_params_query(db, key) {
                     param.for_each_reference(db, &mut record);
                 }

@@ -4888,10 +4888,7 @@ fn forward_field_names(
         target: hir_def::java::item_tree::ItemId,
     ) -> Option<hir_def::java::item_tree::ItemId> {
         let data = tree.data(id);
-        let class_like = matches!(
-            data,
-            ItemData::Class(_) | ItemData::Interface(_) | ItemData::Enum(_) | ItemData::Record(_)
-        );
+        let class_like = data.is_type();
         for &child in data.body() {
             if child == target {
                 return class_like.then_some(id);

@@ -78,6 +78,47 @@ impl ItemTree {
     pub fn data(&self, id: ItemId) -> &ItemData {
         self.items.get(id.0)
     }
+
+    /// The id viewed as a class-like type id, if the item is a class,
+    /// interface, enum, record or annotation type.
+    pub fn as_class(&self, id: ItemId) -> Option<ClassId> {
+        self.data(id).is_type().then_some(ClassId(id))
+    }
+
+    /// The id viewed as a method id, if the item is a method, constructor or
+    /// annotation element.
+    pub fn as_method(&self, id: ItemId) -> Option<MethodId> {
+        self.data(id).is_method().then_some(MethodId(id))
+    }
+
+    /// The id viewed as a field id, if the item is a field.
+    pub fn as_field(&self, id: ItemId) -> Option<FieldId> {
+        self.data(id).is_field().then_some(FieldId(id))
+    }
+
+    /// The declaration data of a method item.
+    ///
+    /// # Panics
+    /// If `id` was not produced by [`Self::as_method`] (or does not name a
+    /// method item at all).
+    pub fn method(&self, id: MethodId) -> &MethodData {
+        match self.data(id.0) {
+            ItemData::Method(data) => data,
+            _ => panic!("MethodId for non-method item: {id:?}"),
+        }
+    }
+
+    /// The declaration data of a field item.
+    ///
+    /// # Panics
+    /// If `id` was not produced by [`Self::as_field`] (or does not name a
+    /// field item at all).
+    pub fn field(&self, id: FieldId) -> &FieldData {
+        match self.data(id.0) {
+            ItemData::Field(data) => data,
+            _ => panic!("FieldId for non-field item: {id:?}"),
+        }
+    }
 }
 
 /// The full per-file lowering: the declaration [`ItemTree`] plus the body IR
@@ -111,7 +152,94 @@ pub enum ItemData {
     InstanceInit(InstanceInitData),
 }
 
+/// The kind of a lowered item ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemKind {
+    Class,
+    Interface,
+    Enum,
+    Record,
+    Annotation,
+    Module,
+    Method,
+    Field,
+    EnumConstant,
+    StaticInit,
+    InstanceInit,
+}
+
+/// The id of a class-like item (a class, interface, enum, record or
+/// annotation type) within its owning [`ItemTree`]. A typed view of an
+/// [`ItemId`]; the bare id is recoverable through the tuple field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ClassId(pub ItemId);
+
+/// The id of a method item (a method, constructor or annotation element).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MethodId(pub ItemId);
+
+/// The id of a field item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FieldId(pub ItemId);
+
 impl ItemData {
+    /// The kind of the item.
+    pub fn kind(&self) -> ItemKind {
+        match self {
+            ItemData::Class(_) => ItemKind::Class,
+            ItemData::Interface(_) => ItemKind::Interface,
+            ItemData::Enum(_) => ItemKind::Enum,
+            ItemData::Record(_) => ItemKind::Record,
+            ItemData::Annotation(_) => ItemKind::Annotation,
+            ItemData::Module(_) => ItemKind::Module,
+            ItemData::Method(_) => ItemKind::Method,
+            ItemData::Field(_) => ItemKind::Field,
+            ItemData::EnumConstant(_) => ItemKind::EnumConstant,
+            ItemData::StaticInit(_) => ItemKind::StaticInit,
+            ItemData::InstanceInit(_) => ItemKind::InstanceInit,
+        }
+    }
+
+    /// Whether the item is a class-like type declaration (a class, interface,
+    /// enum, record or annotation type).
+    pub fn is_type(&self) -> bool {
+        matches!(
+            self,
+            ItemData::Class(_)
+                | ItemData::Interface(_)
+                | ItemData::Enum(_)
+                | ItemData::Record(_)
+                | ItemData::Annotation(_)
+        )
+    }
+
+    /// Whether the item is a method, constructor or annotation element.
+    pub fn is_method(&self) -> bool {
+        matches!(self, ItemData::Method(_))
+    }
+
+    /// Whether the item is a field.
+    pub fn is_field(&self) -> bool {
+        matches!(self, ItemData::Field(_))
+    }
+
+    /// The declaration data, if the item is a method, constructor or
+    /// annotation element.
+    pub fn as_method(&self) -> Option<&MethodData> {
+        match self {
+            ItemData::Method(data) => Some(data),
+            _ => None,
+        }
+    }
+
+    /// The declaration data, if the item is a field.
+    pub fn as_field(&self) -> Option<&FieldData> {
+        match self {
+            ItemData::Field(data) => Some(data),
+            _ => None,
+        }
+    }
+
     /// The source range of the item.
     pub fn range(&self) -> TextRange {
         match self {
