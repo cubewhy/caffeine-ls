@@ -701,6 +701,49 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("get", "()Ljava/lang/Object;")],
             &["()TT;"],
         ),
+        functional_interface(
+            "java/util/function/Consumer",
+            "<T:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("accept", "(Ljava/lang/Object;)V")],
+            &["(TT;)V"],
+        ),
+        // Real `java.util.Comparator` shape: the `compare` SAM is abstract
+        // ([JLS §9.4]), the `comparing` factory is static ([§9.4.4]) and the
+        // `thenComparing` methods are default ([§9.4.3]). The mixed access
+        // flags make `thenComparing(Comparator)` a distinct overload from
+        // `thenComparing(Function)` — the pair a method-reference argument must
+        // disambiguate by SAM congruence ([§15.13.2]) rather than leave
+        // ambiguous ([§15.12.2.5]).
+        ClassSpec {
+            fqn: "java/util/Comparator",
+            super_class: None,
+            interfaces: &[],
+            access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+            fields: &[],
+            methods: &[
+                ("compare", "(Ljava/lang/Object;Ljava/lang/Object;)I"),
+                (
+                    "comparing",
+                    "(Ljava/util/function/Function;)Ljava/util/Comparator;",
+                ),
+                (
+                    "thenComparing",
+                    "(Ljava/util/function/Function;)Ljava/util/Comparator;",
+                ),
+                (
+                    "thenComparing",
+                    "(Ljava/util/Comparator;)Ljava/util/Comparator;",
+                ),
+            ],
+            method_sigs: &[
+                "(TT;TT;)I",
+                "<T:Ljava/lang/Object;U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Comparator<TT;>;",
+                "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Comparator<TT;>;",
+                "(Ljava/util/Comparator<-TT;>;)Ljava/util/Comparator<TT;>;",
+            ],
+            method_access: &[0x0401, 0x0409, 0x0001, 0x0001],
+            sig: Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+        },
         // Both `collect` overloads in real classfile order (the 3-arg form is
         // emitted first by javac), so overload resolution exercises the same
         // member set a real jimage produces ([JLS §15.12.2]).
@@ -722,12 +765,17 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                     "(Ljava/util/function/Function;)Ljava/util/stream/Stream;",
                 ),
                 ("toList", "()Ljava/util/List;"),
+                (
+                    "sorted",
+                    "(Ljava/util/Comparator;)Ljava/util/stream/Stream;",
+                ),
             ],
             &[
                 "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/function/Supplier<TR;>;Ljava/util/function/BiConsumer<TR;-TT;>;Ljava/util/function/BiConsumer<TR;TR;>;)TR;",
                 "<R:Ljava/lang/Object;A:Ljava/lang/Object;>(Ljava/util/stream/Collector<-TT;TA;TR;>;)TR;",
                 "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Ljava/util/stream/Stream<TR;>;",
                 "()Ljava/util/List<TT;>;",
+                "(Ljava/util/Comparator<-TT;>;)Ljava/util/stream/Stream<TT;>;",
             ],
         ),
         // commons-beanutils-shaped raw-implementable interface used by the
@@ -886,8 +934,14 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             "java/lang/Iterable",
             &[],
             Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
-            &[("iterator", "()Ljava/util/Iterator;")],
-            &["()Ljava/util/Iterator<TT;>;"],
+            &[
+                ("iterator", "()Ljava/util/Iterator;"),
+                ("forEach", "(Ljava/util/function/Consumer;)V"),
+            ],
+            &[
+                "()Ljava/util/Iterator<TT;>;",
+                "(Ljava/util/function/Consumer<-TT;>;)V",
+            ],
         ),
         interface_with_methods(
             "java/util/Iterator",
@@ -924,6 +978,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 ("isEmpty", "()Z"),
                 ("subList", "(II)Ljava/util/List;"),
                 ("iterator", "()Ljava/util/Iterator;"),
+                ("sort", "(Ljava/util/Comparator;)V"),
                 // `List.of(E...)` ([JLS §15.12.2.4] varargs phase).
                 ("of", "([Ljava/lang/Object;)Ljava/util/List;"),
             ],
@@ -934,6 +989,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 "",
                 "(II)Ljava/util/List<TE;>;",
                 "()Ljava/util/Iterator<TE;>;",
+                "(Ljava/util/Comparator<-TE;>;)V",
                 // `List.of(E...)` ([JLS §15.12.2.4] varargs phase): the
                 // signature marks the varargs parameter as an array `[TE;`,
                 // matching what javac emits for `ACC_VARARGS` methods.
@@ -941,6 +997,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             ],
             method_access: &[
                 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001,
+                0x0001, // ACC_PUBLIC default `sort(Comparator)`
                 0x0409, // ACC_PUBLIC | ACC_STATIC
             ],
             sig: Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),

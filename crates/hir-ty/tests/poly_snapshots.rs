@@ -691,6 +691,59 @@ class Body {
 // ...)` binds `T := Foo`, so the following `thenComparing` keeps a
 // `Cmp<Foo>` receiver and `foo -> foo.size` types against `Foo`.
 
+// -- regression: a comparator method-reference chain must not go ambiguous ----
+// `comparing(Foo::name).thenComparing(Foo::size)` fed to `List.sort`/`Stream
+// .sorted` reproduces the wMatcher diff-engine shape that reported
+// cant.apply.symbol false positives: with the comparator's type variable
+// unbound (the `sort`/`sorted` target type is not propagated back through the
+// receiver chain) the `thenComparing(Comparator)` overload's `compare` SAM
+// takes one more parameter than the reference's function descriptor. It must
+// turn *inapplicable* by SAM congruence ([JLS §15.13.2]) — arity after the
+// unbound-instance receiver ([§15.13.3]) — so §15.12.2.5 resolves
+// `thenComparing(Function)` instead of leaving both overloads applicable and
+// ambiguous. Neither `sort` nor `sorted` may emit a diagnostic.
+
+snapshot!(
+    comparator_chain_method_ref,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+class Body {
+    static class Foo {
+        String name() { return \"x\"; }
+        int size() { return 0; }
+    }
+
+    void sort(List<Foo> foos) {
+        foos.sort(Comparator.comparing(Foo::name).thenComparing(Foo::size));
+    }
+
+    List<Foo> sorted(List<Foo> foos) {
+        return foos.stream()
+                .sorted(Comparator.comparing(Foo::name).thenComparing(Foo::size))
+                .toList();
+    }
+
+    void boundRefs(List<Foo> foos) {
+        List<Foo> out = new ArrayList<>();
+        foos.forEach(out::add);
+    }
+}
+",
+    )])
+);
+// §15.13.2/§15.13.3: a *bound* instance reference (`out::add`) maps the SAM's
+// parameters directly onto the referenced method's — the full
+// `Consumer.accept(T)` arity — so `forEach` stays applicable; only the
+// genuinely incongruent `thenComparing(Comparator)` overload of the comparator
+// chain is rejected.
+
 snapshot!(
     static_import_overloads,
     check_body_types(&[

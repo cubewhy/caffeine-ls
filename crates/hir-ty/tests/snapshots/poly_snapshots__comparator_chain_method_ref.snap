@@ -1,0 +1,48 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+
+class Body {
+    static class Foo {
+        String name() { return "x"; }
+        int size() { return 0; }
+    }
+
+    void sort(List<Foo> foos) {
+        foos.sort(Comparator.comparing(Foo::name).thenComparing(Foo::size));
+    }
+
+    List<Foo> sorted(List<Foo> foos) {
+        return foos.stream()
+                .sorted(Comparator.comparing(Foo::name).thenComparing(Foo::size))
+                .toList();
+    }
+
+    void boundRefs(List<Foo> foos) {
+        List<Foo> out = new ArrayList<>();
+        foos.forEach(out::add);
+    }
+}
+
+method name(): java.lang.String
+  locals: 
+  exprs: e0: java.lang.String
+method size(): int
+  locals: 
+  exprs: e1: int
+method sort(java.util.List<com.example.Body.Foo>): void
+  locals: l0: java.util.List<com.example.Body.Foo>
+  exprs: e3: java.util.function.Function<? super java.lang.Object, ? extends java.lang.Integer> | e5: java.util.function.Function<? super java.lang.Object, ? extends java.lang.String> | e7: java.util.Comparator<java.lang.Object> | e8: java.util.Comparator<java.lang.Object> | e9: java.util.List<com.example.Body.Foo> | e10: void
+method sorted(java.util.List<com.example.Body.Foo>): java.util.List<com.example.Body.Foo>
+  locals: l1: java.util.List<com.example.Body.Foo>
+  exprs: e12: java.util.function.Function<? super java.lang.Object, ? extends java.lang.Integer> | e14: java.util.function.Function<? super java.lang.Object, ? extends java.lang.String> | e16: java.util.Comparator<java.lang.Object> | e17: java.util.Comparator<java.lang.Object> | e18: java.util.List<com.example.Body.Foo> | e19: java.util.stream.Stream<com.example.Body.Foo> | e20: java.util.stream.Stream<com.example.Body.Foo> | e21: java.util.List<com.example.Body.Foo>
+method boundRefs(java.util.List<com.example.Body.Foo>): void
+  locals: l2: java.util.List<com.example.Body.Foo> | l3: java.util.List<com.example.Body.Foo>
+  exprs: e22: java.util.ArrayList<com.example.Body.Foo> | e23: java.util.List<com.example.Body.Foo> | e24: java.util.function.Consumer<? super com.example.Body.Foo> | e25: java.util.List<com.example.Body.Foo> | e26: void
