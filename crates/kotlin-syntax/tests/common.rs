@@ -121,6 +121,28 @@ SYNTAX_TREE:
     )
 }
 
+pub fn check_parser_script(src: &str) -> String {
+    let (tokens, lex_errors) = lex(src);
+    let mut p = Parser::new(tokens.clone());
+    let green = p.parse_script().into_green_node();
+
+    format!(
+        "\
+SOURCE:
+{src}
+TOKENS:
+{}
+LEX_ERRORS:
+{}
+SYNTAX_TREE:
+{:#?}
+",
+        dump_tokens(&tokens),
+        dump_lex_errors(&lex_errors),
+        SyntaxNode::<Lang>::new_root(green),
+    )
+}
+
 pub fn check_lexer_ok(src: &str) -> String {
     let (tokens, lex_errors) = lex(src);
     assert!(
@@ -227,7 +249,18 @@ macro_rules! parser_snapshot {
     };
 }
 
+macro_rules! script_snapshot {
+    ($name:ident, $src:expr $(,)?) => {
+        #[test]
+        fn $name() {
+            let out = crate::common::check_parser_script($src);
+            insta::assert_snapshot!(stringify!($name), out);
+        }
+    };
+}
+
 pub(crate) use event_snapshot;
 pub(crate) use lexer_error_snapshot;
 pub(crate) use lexer_snapshot;
 pub(crate) use parser_snapshot;
+pub(crate) use script_snapshot;

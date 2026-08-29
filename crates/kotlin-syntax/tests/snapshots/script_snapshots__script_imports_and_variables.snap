@@ -1,0 +1,140 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+import kotlin.math.sqrt
+
+val x = 1
+val y = 2
+var total = x + y
+total += 1
+println(total)
+
+TOKENS:
+IDENTIFIER "import"
+WHITESPACE " "
+IDENTIFIER "kotlin"
+DOT "."
+IDENTIFIER "math"
+DOT "."
+IDENTIFIER "sqrt"
+NEWLINE "\n\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "y"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "2"
+NEWLINE "\n"
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "total"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "y"
+NEWLINE "\n"
+IDENTIFIER "total"
+WHITESPACE " "
+PLUS_EQUAL "+="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "total"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..89
+  IMPORT_LIST@0..25
+    IMPORT_HEADER@0..25
+      IDENTIFIER@0..6 "import"
+      WHITESPACE@6..7 " "
+      IMPORT_PATH@7..23
+        QUALIFIED_NAME@7..23
+          IDENTIFIER@7..13 "kotlin"
+          DOT@13..14 "."
+          IDENTIFIER@14..18 "math"
+          DOT@18..19 "."
+          IDENTIFIER@19..23 "sqrt"
+      NEWLINE@23..25 "\n\n"
+  PROPERTY_DECL@25..35
+    VAL_KW@25..28 "val"
+    WHITESPACE@28..29 " "
+    VARIABLE_DECLARATION@29..30
+      IDENTIFIER@29..30 "x"
+    WHITESPACE@30..31 " "
+    EQUAL@31..32 "="
+    WHITESPACE@32..33 " "
+    PRIMARY_EXPRESSION@33..34
+      INTEGER_LITERAL@33..34 "1"
+    NEWLINE@34..35 "\n"
+  PROPERTY_DECL@35..45
+    VAL_KW@35..38 "val"
+    WHITESPACE@38..39 " "
+    VARIABLE_DECLARATION@39..40
+      IDENTIFIER@39..40 "y"
+    WHITESPACE@40..41 " "
+    EQUAL@41..42 "="
+    WHITESPACE@42..43 " "
+    PRIMARY_EXPRESSION@43..44
+      INTEGER_LITERAL@43..44 "2"
+    NEWLINE@44..45 "\n"
+  PROPERTY_DECL@45..63
+    VAR_KW@45..48 "var"
+    WHITESPACE@48..49 " "
+    VARIABLE_DECLARATION@49..54
+      IDENTIFIER@49..54 "total"
+    WHITESPACE@54..55 " "
+    EQUAL@55..56 "="
+    WHITESPACE@56..57 " "
+    BINARY_EXPRESSION@57..62
+      PRIMARY_EXPRESSION@57..58
+        IDENTIFIER@57..58 "x"
+      WHITESPACE@58..59 " "
+      PLUS@59..60 "+"
+      WHITESPACE@60..61 " "
+      PRIMARY_EXPRESSION@61..62
+        IDENTIFIER@61..62 "y"
+    NEWLINE@62..63 "\n"
+  ASSIGNMENT_STATEMENT@63..73
+    PRIMARY_EXPRESSION@63..68
+      IDENTIFIER@63..68 "total"
+    WHITESPACE@68..69 " "
+    PLUS_EQUAL@69..71 "+="
+    WHITESPACE@71..72 " "
+    PRIMARY_EXPRESSION@72..73
+      INTEGER_LITERAL@72..73 "1"
+  NEWLINE@73..74 "\n"
+  EXPRESSION_STATEMENT@74..88
+    POSTFIX_UNARY_EXPRESSION@74..88
+      PRIMARY_EXPRESSION@74..81
+        IDENTIFIER@74..81 "println"
+      CALL_EXPRESSION@81..88
+        VALUE_ARGUMENTS@81..88
+          L_PAREN@81..82 "("
+          VALUE_ARGUMENT@82..87
+            PRIMARY_EXPRESSION@82..87
+              IDENTIFIER@82..87 "total"
+          R_PAREN@87..88 ")"
+  NEWLINE@88..89 "\n"

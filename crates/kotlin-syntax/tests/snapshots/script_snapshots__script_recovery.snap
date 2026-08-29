@@ -1,0 +1,57 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+val broken = ;
+println("still alive")
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "broken"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+SEMICOLON ";"
+NEWLINE "\n"
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "still alive"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..38
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..14
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..10
+      IDENTIFIER@4..10 "broken"
+    WHITESPACE@10..11 " "
+    EQUAL@11..12 "="
+    WHITESPACE@12..13 " "
+    PRIMARY_EXPRESSION@13..13
+    SEMICOLON@13..14 ";"
+  NEWLINE@14..15 "\n"
+  EXPRESSION_STATEMENT@15..37
+    POSTFIX_UNARY_EXPRESSION@15..37
+      PRIMARY_EXPRESSION@15..22
+        IDENTIFIER@15..22 "println"
+      CALL_EXPRESSION@22..37
+        VALUE_ARGUMENTS@22..37
+          L_PAREN@22..23 "("
+          VALUE_ARGUMENT@23..36
+            STRING_LITERAL@23..36
+              OPEN_QUOTE@23..24 "\""
+              STRING_CONTENT@24..35 "still alive"
+              CLOSE_QUOTE@35..36 "\""
+          R_PAREN@36..37 ")"
+  NEWLINE@37..38 "\n"

@@ -1,7 +1,7 @@
 use crate::{
     ContextualKeyword, Parser,
     SyntaxKind::*,
-    grammar::{decl::declaration, eat_nl, names::identifier, semis},
+    grammar::{decl::declaration, eat_nl, names::identifier, semi, semis, statements::statement},
 };
 
 /// `kotlinFile`: [shebangLine] {NL} {fileAnnotation} packageHeader importList
@@ -10,6 +10,42 @@ use crate::{
 pub fn root(p: &mut Parser) {
     let m = p.start();
 
+    compilation_header(p);
+
+    while !p.is_at_end() {
+        if p.at(SEMICOLON) || p.at(NEWLINE) {
+            semis(p);
+            continue;
+        }
+        top_level_object(p);
+    }
+
+    m.complete(p, ROOT);
+}
+
+/// `script`: [shebangLine] {NL} {fileAnnotation} packageHeader importList
+///           {statement semi} EOF  — used for `.kts` script files.
+/// [spec: grammar-rule-script] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-script
+pub fn root_script(p: &mut Parser) {
+    let m = p.start();
+
+    compilation_header(p);
+
+    while !p.is_at_end() {
+        if p.at(SEMICOLON) || p.at(NEWLINE) {
+            semis(p);
+            continue;
+        }
+        statement(p);
+        semi(p);
+    }
+
+    m.complete(p, ROOT);
+}
+
+/// The file header shared by `kotlinFile` and `script`: an optional shebang
+/// line, `{NL}`, `{fileAnnotation}`s, `packageHeader` and `importList`.
+fn compilation_header(p: &mut Parser) {
     if p.at(SHEBANG_LINE) {
         p.bump();
         eat_nl(p);
@@ -23,16 +59,6 @@ pub fn root(p: &mut Parser) {
 
     package_header(p);
     import_list(p);
-
-    while !p.is_at_end() {
-        if p.at(SEMICOLON) || p.at(NEWLINE) {
-            semis(p);
-            continue;
-        }
-        top_level_object(p);
-    }
-
-    m.complete(p, ROOT);
 }
 
 /// `fileAnnotation` starts with `@file:`.

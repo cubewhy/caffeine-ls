@@ -1,0 +1,183 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+fun factorial(n: Int): Int = if (n <= 1) 1 else n * factorial(n - 1)
+
+val result = factorial(5)
+println("5! = $result")
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "factorial"
+L_PAREN "("
+IDENTIFIER "n"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "n"
+WHITESPACE " "
+LESS_EQUAL "<="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+R_PAREN ")"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+WHITESPACE " "
+ELSE_KW "else"
+WHITESPACE " "
+IDENTIFIER "n"
+WHITESPACE " "
+STAR "*"
+WHITESPACE " "
+IDENTIFIER "factorial"
+L_PAREN "("
+IDENTIFIER "n"
+WHITESPACE " "
+MINUS "-"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+R_PAREN ")"
+NEWLINE "\n\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "result"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "factorial"
+L_PAREN "("
+INTEGER_LITERAL "5"
+R_PAREN ")"
+NEWLINE "\n"
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "5! = "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "result"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..120
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..68
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..13 "factorial"
+    VALUE_PARAMETERS@13..21
+      L_PAREN@13..14 "("
+      VALUE_PARAMETER@14..20
+        IDENTIFIER@14..15 "n"
+        COLON@15..16 ":"
+        WHITESPACE@16..17 " "
+        TYPE@17..20
+          USER_TYPE@17..20
+            IDENTIFIER@17..20 "Int"
+      R_PAREN@20..21 ")"
+    COLON@21..22 ":"
+    WHITESPACE@22..23 " "
+    TYPE@23..26
+      USER_TYPE@23..26
+        IDENTIFIER@23..26 "Int"
+    WHITESPACE@26..27 " "
+    EQUAL@27..28 "="
+    WHITESPACE@28..29 " "
+    IF_EXPRESSION@29..68
+      IF_KW@29..31 "if"
+      WHITESPACE@31..32 " "
+      L_PAREN@32..33 "("
+      BINARY_EXPRESSION@33..39
+        PRIMARY_EXPRESSION@33..34
+          IDENTIFIER@33..34 "n"
+        WHITESPACE@34..35 " "
+        LESS_EQUAL@35..37 "<="
+        WHITESPACE@37..38 " "
+        PRIMARY_EXPRESSION@38..39
+          INTEGER_LITERAL@38..39 "1"
+      R_PAREN@39..40 ")"
+      WHITESPACE@40..41 " "
+      EXPRESSION_STATEMENT@41..42
+        PRIMARY_EXPRESSION@41..42
+          INTEGER_LITERAL@41..42 "1"
+      WHITESPACE@42..43 " "
+      ELSE_KW@43..47 "else"
+      WHITESPACE@47..48 " "
+      EXPRESSION_STATEMENT@48..68
+        BINARY_EXPRESSION@48..68
+          PRIMARY_EXPRESSION@48..49
+            IDENTIFIER@48..49 "n"
+          WHITESPACE@49..50 " "
+          STAR@50..51 "*"
+          WHITESPACE@51..52 " "
+          POSTFIX_UNARY_EXPRESSION@52..68
+            PRIMARY_EXPRESSION@52..61
+              IDENTIFIER@52..61 "factorial"
+            CALL_EXPRESSION@61..68
+              VALUE_ARGUMENTS@61..68
+                L_PAREN@61..62 "("
+                VALUE_ARGUMENT@62..67
+                  BINARY_EXPRESSION@62..67
+                    PRIMARY_EXPRESSION@62..63
+                      IDENTIFIER@62..63 "n"
+                    WHITESPACE@63..64 " "
+                    MINUS@64..65 "-"
+                    WHITESPACE@65..66 " "
+                    PRIMARY_EXPRESSION@66..67
+                      INTEGER_LITERAL@66..67 "1"
+                R_PAREN@67..68 ")"
+  NEWLINE@68..70 "\n\n"
+  PROPERTY_DECL@70..96
+    VAL_KW@70..73 "val"
+    WHITESPACE@73..74 " "
+    VARIABLE_DECLARATION@74..80
+      IDENTIFIER@74..80 "result"
+    WHITESPACE@80..81 " "
+    EQUAL@81..82 "="
+    WHITESPACE@82..83 " "
+    POSTFIX_UNARY_EXPRESSION@83..95
+      PRIMARY_EXPRESSION@83..92
+        IDENTIFIER@83..92 "factorial"
+      CALL_EXPRESSION@92..95
+        VALUE_ARGUMENTS@92..95
+          L_PAREN@92..93 "("
+          VALUE_ARGUMENT@93..94
+            PRIMARY_EXPRESSION@93..94
+              INTEGER_LITERAL@93..94 "5"
+          R_PAREN@94..95 ")"
+    NEWLINE@95..96 "\n"
+  EXPRESSION_STATEMENT@96..119
+    POSTFIX_UNARY_EXPRESSION@96..119
+      PRIMARY_EXPRESSION@96..103
+        IDENTIFIER@96..103 "println"
+      CALL_EXPRESSION@103..119
+        VALUE_ARGUMENTS@103..119
+          L_PAREN@103..104 "("
+          VALUE_ARGUMENT@104..118
+            STRING_LITERAL@104..118
+              OPEN_QUOTE@104..105 "\""
+              STRING_CONTENT@105..110 "5! = "
+              STRING_TEMPLATE@110..117
+                TEMPLATE_SHORT_START@110..111 "$"
+                IDENTIFIER@111..117 "result"
+              CLOSE_QUOTE@117..118 "\""
+          R_PAREN@118..119 ")"
+  NEWLINE@119..120 "\n"

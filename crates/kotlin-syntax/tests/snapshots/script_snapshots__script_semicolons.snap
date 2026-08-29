@@ -1,0 +1,85 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = 1; val b = 2; println(a + b)
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+SEMICOLON ";"
+WHITESPACE " "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "2"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "b"
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..37
+  IMPORT_LIST@0..0
+  PROPERTY_DECL@0..10
+    VAL_KW@0..3 "val"
+    WHITESPACE@3..4 " "
+    VARIABLE_DECLARATION@4..5
+      IDENTIFIER@4..5 "a"
+    WHITESPACE@5..6 " "
+    EQUAL@6..7 "="
+    WHITESPACE@7..8 " "
+    PRIMARY_EXPRESSION@8..9
+      INTEGER_LITERAL@8..9 "1"
+    SEMICOLON@9..10 ";"
+  WHITESPACE@10..11 " "
+  PROPERTY_DECL@11..21
+    VAL_KW@11..14 "val"
+    WHITESPACE@14..15 " "
+    VARIABLE_DECLARATION@15..16
+      IDENTIFIER@15..16 "b"
+    WHITESPACE@16..17 " "
+    EQUAL@17..18 "="
+    WHITESPACE@18..19 " "
+    PRIMARY_EXPRESSION@19..20
+      INTEGER_LITERAL@19..20 "2"
+    SEMICOLON@20..21 ";"
+  WHITESPACE@21..22 " "
+  EXPRESSION_STATEMENT@22..36
+    POSTFIX_UNARY_EXPRESSION@22..36
+      PRIMARY_EXPRESSION@22..29
+        IDENTIFIER@22..29 "println"
+      CALL_EXPRESSION@29..36
+        VALUE_ARGUMENTS@29..36
+          L_PAREN@29..30 "("
+          VALUE_ARGUMENT@30..35
+            BINARY_EXPRESSION@30..35
+              PRIMARY_EXPRESSION@30..31
+                IDENTIFIER@30..31 "a"
+              WHITESPACE@31..32 " "
+              PLUS@32..33 "+"
+              WHITESPACE@33..34 " "
+              PRIMARY_EXPRESSION@34..35
+                IDENTIFIER@34..35 "b"
+          R_PAREN@35..36 ")"
+  NEWLINE@36..37 "\n"

@@ -101,19 +101,37 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse_with_cache(mut self, cache: Option<&'a mut NodeCache>) -> Parse {
-        grammar::root(&mut self);
+    pub fn parse_with_cache(self, cache: Option<&'a mut NodeCache>) -> Parse {
+        Self::drive(grammar::root, self, cache)
+    }
 
-        let green_node = Sink::new(self.source.into_inner(), self.events, cache).finish();
+    /// Parses a `.kts` script (the `script` production) instead of a
+    /// `kotlinFile`.
+    pub fn parse_script_with_cache(self, cache: Option<&'a mut NodeCache>) -> Parse {
+        Self::drive(grammar::root_script, self, cache)
+    }
+
+    fn drive(
+        root: for<'x> fn(&mut Parser<'x>),
+        mut parser: Parser<'_>,
+        cache: Option<&mut NodeCache>,
+    ) -> Parse {
+        root(&mut parser);
+
+        let green_node = Sink::new(parser.source.into_inner(), parser.events, cache).finish();
 
         Parse::new(
             green_node,
-            self.errors.into_iter().map(Into::into).collect(),
+            parser.errors.into_iter().map(Into::into).collect(),
         )
     }
 
     pub fn parse(self) -> Parse {
         self.parse_with_cache(None)
+    }
+
+    pub fn parse_script(self) -> Parse {
+        self.parse_script_with_cache(None)
     }
 
     pub(crate) fn checkpoint(&self) -> Checkpoint {

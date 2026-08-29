@@ -7,7 +7,7 @@ mod names;
 mod statements;
 mod types;
 
-pub use compilation_unit::root;
+pub use compilation_unit::{root, root_script};
 
 use crate::{Parser, SyntaxKind::*};
 

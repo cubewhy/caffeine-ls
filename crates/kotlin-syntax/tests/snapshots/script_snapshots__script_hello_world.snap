@@ -1,0 +1,42 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+#!/usr/bin/env kotlin
+println("Hello, World!")
+
+TOKENS:
+SHEBANG_LINE "#!/usr/bin/env kotlin"
+NEWLINE "\n"
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "Hello, World!"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..47
+  SHEBANG_LINE@0..21 "#!/usr/bin/env kotlin"
+  NEWLINE@21..22 "\n"
+  IMPORT_LIST@22..22
+  EXPRESSION_STATEMENT@22..46
+    POSTFIX_UNARY_EXPRESSION@22..46
+      PRIMARY_EXPRESSION@22..29
+        IDENTIFIER@22..29 "println"
+      CALL_EXPRESSION@29..46
+        VALUE_ARGUMENTS@29..46
+          L_PAREN@29..30 "("
+          VALUE_ARGUMENT@30..45
+            STRING_LITERAL@30..45
+              OPEN_QUOTE@30..31 "\""
+              STRING_CONTENT@31..44 "Hello, World!"
+              CLOSE_QUOTE@44..45 "\""
+          R_PAREN@45..46 ")"
+  NEWLINE@46..47 "\n"

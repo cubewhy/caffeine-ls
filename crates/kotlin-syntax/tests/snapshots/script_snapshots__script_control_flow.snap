@@ -1,0 +1,246 @@
+---
+source: crates/kotlin-syntax/tests/script_snapshots.rs
+expression: out
+---
+SOURCE:
+for (i in 1..10) {
+    if (i % 2 == 0) {
+        println("$i is even")
+    }
+}
+
+var n = 0
+while (n < 3) {
+    n++
+}
+
+run {
+    println("done")
+}
+
+TOKENS:
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+IN_KW "in"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+RANGE ".."
+INTEGER_LITERAL "10"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "i"
+WHITESPACE " "
+MODULO "%"
+WHITESPACE " "
+INTEGER_LITERAL "2"
+WHITESPACE " "
+EQUAL_EQUAL "=="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "i"
+STRING_CONTENT " is even"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n\n"
+VAR_KW "var"
+WHITESPACE " "
+IDENTIFIER "n"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0"
+NEWLINE "\n"
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "n"
+WHITESPACE " "
+LESS "<"
+WHITESPACE " "
+INTEGER_LITERAL "3"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "n"
+PLUS_PLUS "++"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n\n"
+IDENTIFIER "run"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "done"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..145
+  IMPORT_LIST@0..0
+  FOR_STATEMENT@0..78
+    FOR_KW@0..3 "for"
+    WHITESPACE@3..4 " "
+    L_PAREN@4..5 "("
+    VARIABLE_DECLARATION@5..6
+      IDENTIFIER@5..6 "i"
+    WHITESPACE@6..7 " "
+    IN_KW@7..9 "in"
+    WHITESPACE@9..10 " "
+    RANGE_EXPRESSION@10..15
+      PRIMARY_EXPRESSION@10..11
+        INTEGER_LITERAL@10..11 "1"
+      RANGE@11..13 ".."
+      PRIMARY_EXPRESSION@13..15
+        INTEGER_LITERAL@13..15 "10"
+    R_PAREN@15..16 ")"
+    WHITESPACE@16..17 " "
+    BLOCK@17..78
+      L_BRACE@17..18 "{"
+      NEWLINE@18..19 "\n"
+      WHITESPACE@19..23 "    "
+      EXPRESSION_STATEMENT@23..77
+        IF_EXPRESSION@23..77
+          IF_KW@23..25 "if"
+          WHITESPACE@25..26 " "
+          L_PAREN@26..27 "("
+          BINARY_EXPRESSION@27..37
+            BINARY_EXPRESSION@27..32
+              PRIMARY_EXPRESSION@27..28
+                IDENTIFIER@27..28 "i"
+              WHITESPACE@28..29 " "
+              MODULO@29..30 "%"
+              WHITESPACE@30..31 " "
+              PRIMARY_EXPRESSION@31..32
+                INTEGER_LITERAL@31..32 "2"
+            WHITESPACE@32..33 " "
+            EQUAL_EQUAL@33..35 "=="
+            WHITESPACE@35..36 " "
+            PRIMARY_EXPRESSION@36..37
+              INTEGER_LITERAL@36..37 "0"
+          R_PAREN@37..38 ")"
+          WHITESPACE@38..39 " "
+          BLOCK@39..76
+            L_BRACE@39..40 "{"
+            NEWLINE@40..41 "\n"
+            WHITESPACE@41..49 "        "
+            EXPRESSION_STATEMENT@49..70
+              POSTFIX_UNARY_EXPRESSION@49..70
+                PRIMARY_EXPRESSION@49..56
+                  IDENTIFIER@49..56 "println"
+                CALL_EXPRESSION@56..70
+                  VALUE_ARGUMENTS@56..70
+                    L_PAREN@56..57 "("
+                    VALUE_ARGUMENT@57..69
+                      STRING_LITERAL@57..69
+                        OPEN_QUOTE@57..58 "\""
+                        STRING_TEMPLATE@58..60
+                          TEMPLATE_SHORT_START@58..59 "$"
+                          IDENTIFIER@59..60 "i"
+                        STRING_CONTENT@60..68 " is even"
+                        CLOSE_QUOTE@68..69 "\""
+                    R_PAREN@69..70 ")"
+            NEWLINE@70..71 "\n"
+            WHITESPACE@71..75 "    "
+            R_BRACE@75..76 "}"
+          NEWLINE@76..77 "\n"
+      R_BRACE@77..78 "}"
+  NEWLINE@78..80 "\n\n"
+  PROPERTY_DECL@80..90
+    VAR_KW@80..83 "var"
+    WHITESPACE@83..84 " "
+    VARIABLE_DECLARATION@84..85
+      IDENTIFIER@84..85 "n"
+    WHITESPACE@85..86 " "
+    EQUAL@86..87 "="
+    WHITESPACE@87..88 " "
+    PRIMARY_EXPRESSION@88..89
+      INTEGER_LITERAL@88..89 "0"
+    NEWLINE@89..90 "\n"
+  WHILE_STATEMENT@90..115
+    WHILE_KW@90..95 "while"
+    WHITESPACE@95..96 " "
+    L_PAREN@96..97 "("
+    BINARY_EXPRESSION@97..102
+      PRIMARY_EXPRESSION@97..98
+        IDENTIFIER@97..98 "n"
+      WHITESPACE@98..99 " "
+      LESS@99..100 "<"
+      WHITESPACE@100..101 " "
+      PRIMARY_EXPRESSION@101..102
+        INTEGER_LITERAL@101..102 "3"
+    R_PAREN@102..103 ")"
+    WHITESPACE@103..104 " "
+    BLOCK@104..115
+      L_BRACE@104..105 "{"
+      NEWLINE@105..106 "\n"
+      WHITESPACE@106..110 "    "
+      EXPRESSION_STATEMENT@110..113
+        POSTFIX_UNARY_EXPRESSION@110..113
+          PRIMARY_EXPRESSION@110..111
+            IDENTIFIER@110..111 "n"
+          PLUS_PLUS@111..113 "++"
+      NEWLINE@113..114 "\n"
+      R_BRACE@114..115 "}"
+  NEWLINE@115..117 "\n\n"
+  EXPRESSION_STATEMENT@117..144
+    POSTFIX_UNARY_EXPRESSION@117..144
+      PRIMARY_EXPRESSION@117..120
+        IDENTIFIER@117..120 "run"
+      WHITESPACE@120..121 " "
+      CALL_EXPRESSION@121..144
+        LAMBDA_LITERAL@121..144
+          L_BRACE@121..122 "{"
+          NEWLINE@122..123 "\n"
+          WHITESPACE@123..127 "    "
+          EXPRESSION_STATEMENT@127..142
+            POSTFIX_UNARY_EXPRESSION@127..142
+              PRIMARY_EXPRESSION@127..134
+                IDENTIFIER@127..134 "println"
+              CALL_EXPRESSION@134..142
+                VALUE_ARGUMENTS@134..142
+                  L_PAREN@134..135 "("
+                  VALUE_ARGUMENT@135..141
+                    STRING_LITERAL@135..141
+                      OPEN_QUOTE@135..136 "\""
+                      STRING_CONTENT@136..140 "done"
+                      CLOSE_QUOTE@140..141 "\""
+                  R_PAREN@141..142 ")"
+          NEWLINE@142..143 "\n"
+          R_BRACE@143..144 "}"
+  NEWLINE@144..145 "\n"

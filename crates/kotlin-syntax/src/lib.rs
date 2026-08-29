@@ -16,20 +16,23 @@ pub struct SourceFile {
 }
 
 impl SourceFile {
+    /// Parses a `kotlinFile` ([spec: grammar-rule-kotlinFile]).
     pub fn parse(text: &str) -> Parse<SourceFile> {
-        // lex stage
         let (tokens, lex_errors) = lex(text);
+        Self::assemble(Parser::new(tokens).parse(), lex_errors)
+    }
 
-        // parse stage
-        let parser = Parser::new(tokens);
-        let (green_node, parse_errors) = parser.parse().into();
+    /// Parses a `.kts` script file as the KLS `script` grammar
+    /// ([spec: grammar-rule-script]).
+    pub fn parse_script(text: &str) -> Parse<SourceFile> {
+        let (tokens, lex_errors) = lex(text);
+        Self::assemble(Parser::new(tokens).parse_script(), lex_errors)
+    }
 
-        // collect errors
-        let errors: Vec<SyntaxError> = lex_errors
-            .into_iter()
-            .map(|e| e.into())
-            .chain(parse_errors.into_iter().map(|e| e))
-            .collect();
+    fn assemble(parse: Parse, lex_errors: Vec<LexicalError>) -> Parse<SourceFile> {
+        let (green_node, mut errors) = parse.into();
+
+        errors.splice(0..0, lex_errors.into_iter().map(Into::into));
 
         Parse::new(green_node, errors)
     }
