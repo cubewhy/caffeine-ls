@@ -60,15 +60,14 @@ pub fn syntax_diagnostics(
 /// Pushes the parse-level (syntax) diagnostics of `file_id` into `sink`.
 pub(crate) fn collect_syntax(
     sink: &mut DiagnosticSink,
-    db: &RootDatabase,
+    db: &dyn SourceDatabase,
     file_id: FileId,
     fallback_language_kind: LanguageKind,
 ) {
     // Before the workspace is loaded the file is not part of any source root,
     // so `file_language_kind` can't resolve the language. Fall back to the
     // kind inferred from the file path to keep basic syntax diagnostics.
-    let language_kind = db
-        .file_language_kind(file_id)
+    let language_kind = base_db::file_language_kind(db, file_id)
         .filter(|&kind| kind != LanguageKind::Unknown)
         .unwrap_or(fallback_language_kind);
     if language_kind == LanguageKind::Unknown {
@@ -206,19 +205,42 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec
     file_diagnostics_query(db, db.file_text(file_id))
 }
 
+/// The complete report of a file — syntax plus merged type and declaration
+/// diagnostics — memoized per [`FileText`]. Because the underlying sub-queries
+/// ([`base_db::parse`], [`file_diagnostics_query`]) are individually memoized
+/// and keyed on the file's own inputs, re-deriving an *unaffected* file's
+/// report here is an O(1) cache hit returning the same `Arc`, not a re-walk of
+/// the item tree: a text edit to another file invalidates only the queries
+/// whose inputs actually changed. See [`file_report`].
+///
+/// `lru = 4096` bounds the retained reports to the most-recently-used files
+/// (rust-analyzer-style: evicted at the next revision, recomputed on demand
+/// from the still-memoized sub-queries).
+#[salsa::tracked(returns(clone), lru = 4096)]
+pub(crate) fn file_report_query(
+    db: &dyn hir_ty::TyDatabase,
+    file: FileText,
+    fallback: LanguageKind,
+) -> Arc<Vec<Diagnostic>> {
+    let file_id = *file.file_id(db);
+    let mut sink = DiagnosticSink::new();
+    collect_syntax(&mut sink, db, file_id, fallback);
+    for diagnostic in file_diagnostics_query(db, file).iter() {
+        sink.push(file_id, diagnostic.clone());
+    }
+    Arc::new(sink.into_file(file_id))
+}
+
 /// The complete report of a file: its syntax diagnostics plus its merged type
-/// and declaration diagnostics, collected into the same sink. This is the unit
-/// the LSP diagnostics store tracks and diffs per file.
+/// and declaration diagnostics. This is the unit the LSP diagnostics store
+/// tracks and diffs per file. Memoized per [`FileText`] by
+/// [`file_report_query`].
 pub fn file_report(
-    db: &RootDatabase,
+    db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
     fallback_language_kind: LanguageKind,
 ) -> Arc<Vec<Diagnostic>> {
-    let mut sink = DiagnosticSink::new();
-    collect_syntax(&mut sink, db, file_id, fallback_language_kind);
-    collect_type_diagnostics(&mut sink, db, file_id);
-    collect_declaration_diagnostics(&mut sink, db, file_id);
-    Arc::new(sink.into_file(file_id))
+    file_report_query(db, db.file_text(file_id), fallback_language_kind)
 }
 
 fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
