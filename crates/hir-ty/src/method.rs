@@ -36,6 +36,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use vfs::FileId;
 
 use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
+use hir_def::jvm::access::{JvmAccessFlags, JvmVisibility};
 use hir_expand::name::Name;
 
 use crate::{
@@ -171,18 +172,15 @@ pub enum Access {
 }
 
 impl Access {
+    /// The access derived from the classfile access flags
+    /// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1))
+    /// via the canonical [`JvmAccessFlags`] model.
     fn from_flags(flags: u16) -> Access {
-        if flags & 0x0002 != 0 {
-            // ACC_PRIVATE
-            Access::Private
-        } else if flags & 0x0004 != 0 {
-            // ACC_PROTECTED
-            Access::Protected
-        } else if flags & 0x0001 != 0 {
-            // ACC_PUBLIC
-            Access::Public
-        } else {
-            Access::Package
+        match JvmVisibility::from_access_flags(JvmAccessFlags::from_bits_retain(flags)) {
+            JvmVisibility::Private => Access::Private,
+            JvmVisibility::Protected => Access::Protected,
+            JvmVisibility::Public => Access::Public,
+            JvmVisibility::Package => Access::Package,
         }
     }
 }
@@ -571,7 +569,7 @@ fn abstract_methods_impl(
                 };
                 let interner = &db.hir_state().interner;
                 for method in &stub.methods {
-                    if method.flags & 0x0400 == 0 {
+                    if !JvmAccessFlags::from_bits_retain(method.flags).is_abstract() {
                         continue;
                     }
                     let name = interner.resolve(&method.name);
@@ -772,7 +770,7 @@ fn library_class_methods(
         // JLS 4.8: the *instance* members of a raw type have erased
         // signatures. A static member does not depend on the receiver's
         // type arguments at all, so its own generics stay intact.
-        let is_static_member = method.flags & 0x0008 != 0;
+        let is_static_member = JvmAccessFlags::from_bits_retain(method.flags).is_static();
         let erase = |ty: Ty| {
             if is_raw && !is_static_member {
                 ty.erasure(db)
@@ -798,9 +796,9 @@ fn library_class_methods(
                 .map(instantiate)
                 .map(erase)
                 .collect(),
-            varargs: method.flags & 0x0080 != 0,   // ACC_VARARGS
-            is_static: method.flags & 0x0008 != 0, // ACC_STATIC
-            abstract_: method.flags & 0x0400 != 0, // ACC_ABSTRACT
+            varargs: JvmAccessFlags::from_bits_retain(method.flags).is_varargs(),
+            is_static: JvmAccessFlags::from_bits_retain(method.flags).is_static(),
+            abstract_: JvmAccessFlags::from_bits_retain(method.flags).is_abstract(),
             access: Access::from_flags(method.flags),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -1973,7 +1971,7 @@ fn library_class_fields(
             owner: fqn.clone(),
             owner_file: None,
             ty,
-            is_static: field.flags & 0x0008 != 0, // ACC_STATIC
+            is_static: JvmAccessFlags::from_bits_retain(field.flags).is_static(),
             access: Access::from_flags(field.flags),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),

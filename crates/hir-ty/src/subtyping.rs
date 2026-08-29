@@ -33,6 +33,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 
 use hir_def::java::item_tree::{ItemData, TypeParam};
+use hir_def::jvm::access::JvmAccessFlags;
 use hir_expand::{name::Name, span::SpannedTypeRef};
 
 use crate::{
@@ -86,7 +87,9 @@ pub(crate) fn supertypes_impl(
                 hir::Resolved::Library(resolved) => {
                     let is_interface = hir::class_record(db, &resolved)
                         .map(|record| match &*record {
-                            hir::ClassOrModuleRecord::Class(class) => class.flags & 0x0200 != 0,
+                            hir::ClassOrModuleRecord::Class(class) => {
+                                JvmAccessFlags::from_bits_retain(class.flags).is_interface()
+                            }
                             hir::ClassOrModuleRecord::Module(_) => false,
                         })
                         .unwrap_or(false);
@@ -270,8 +273,8 @@ pub(crate) fn enum_constants(
             let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
                 return None;
             };
-            // JVMS §4.6: enum constants carry ACC_ENUM = 0x4000.
-            if class.flags & 0x4000 == 0 {
+            // JVMS §4.6: enum constants carry the ACC_ENUM flag.
+            if !JvmAccessFlags::from_bits_retain(class.flags).is_enum() {
                 return None;
             }
             let interner = &db.hir_state().interner;
@@ -279,7 +282,7 @@ pub(crate) fn enum_constants(
                 class
                     .fields
                     .iter()
-                    .filter(|field| field.flags & 0x4000 != 0)
+                    .filter(|field| JvmAccessFlags::from_bits_retain(field.flags).is_enum())
                     .map(|field| Name::new(interner.resolve(&field.name)))
                     .collect(),
             )
@@ -320,10 +323,11 @@ pub(crate) fn class_like_and_final(
             let syntax::stub::ClassOrModuleStub::Class(class) = record.as_ref() else {
                 return None;
             };
-            // JVM access flags: ACC_INTERFACE = 0x0200, ACC_FINAL = 0x0010.
-            // A record is implicitly final ([§8.10]).
-            let interface = class.flags & 0x0200 != 0;
-            let final_ = class.flags & 0x0010 != 0 || class.is_record;
+            // JVM access flags ([JVMS §4.1]): an interface carries ACC_INTERFACE, a
+            // final class ACC_FINAL. A record is implicitly final ([§8.10]).
+            let flags = JvmAccessFlags::from_bits_retain(class.flags);
+            let interface = flags.is_interface();
+            let final_ = flags.is_final() || class.is_record;
             Some((!interface, !interface && final_))
         }
         hir::Resolved::Source(source) => {
