@@ -180,7 +180,7 @@ impl<'a> Lexer<'a> {
 
             c if c.is_numeric() => self.handle_number(),
             c if is_kotlin_newline(c) => self.handle_newline(),
-            ' ' | '\t' => self.handle_horizontal_whitespace(),
+            ' ' | '\t' | '\u{000C}' => self.handle_horizontal_whitespace(),
             c if is_kotlin_identifier_start(c) => self.handle_identifier(),
             _ => match self.reader.advance() {
                 '(' => self.complete_token(L_PAREN),
@@ -210,13 +210,33 @@ impl<'a> Lexer<'a> {
 
         // Handle Closing Quotes
         if is_raw {
-            if c == '"' && self.reader.peek_next() == '"' && self.reader.peek_n(2) == '"' {
-                self.reader.advance();
-                self.reader.advance();
-                self.reader.advance();
-                self.mode_stack.pop();
-                self.complete_token(CLOSE_RAW_QUOTE);
-                return;
+            if c == '"' {
+                // A run of `n >= 3` quotes closes the raw string; the extra
+                // `n - 3` quotes stay content. Verified against kotlinc:
+                // `"""x""""` is `x"`, `"""x"""""` is `x""`, `"""x""""""` is
+                // `x"""` ([spec: grammar-rule-TRIPLE_QUOTE_CLOSE]).
+                let mut run = 0;
+                while self.reader.peek_n(run) == '"' {
+                    run += 1;
+                }
+                if run >= 3 {
+                    let extra = run - 3;
+                    for _ in 0..extra {
+                        self.reader.advance();
+                    }
+                    if extra > 0 {
+                        self.complete_token(STRING_CONTENT);
+                    }
+                    // The close token must cover exactly the final three
+                    // quotes, not the whole run, so reset the lexeme start.
+                    self.reader.new_token();
+                    for _ in 0..3 {
+                        self.reader.advance();
+                    }
+                    self.mode_stack.pop();
+                    self.complete_token(CLOSE_RAW_QUOTE);
+                    return;
+                }
             }
         } else {
             if c == '"' {
@@ -332,7 +352,8 @@ impl<'a> Lexer<'a> {
     fn handle_horizontal_whitespace(&mut self) {
         while !self.reader.is_at_end() {
             let c = self.reader.peek();
-            if c == ' ' || c == '\t' {
+            // `WS`: SPACE, TAB or Form Feed ([spec: grammar-rule-WS]).
+            if c == ' ' || c == '\t' || c == '\u{000C}' {
                 self.reader.advance();
             } else {
                 break;
@@ -526,10 +547,57 @@ impl<'a> Lexer<'a> {
                     self.complete_token(RANGE);
                 }
             }
+            // `DoubleLiteral: [DecDigits] '.' DecDigits [DoubleExponent]` —
+            // the integral part may be empty, so a leading dot directly
+            // followed by a digit is a float literal (`.5`, `.5e2`, `.5f`),
+            // not a member access ([spec: grammar-rule-DoubleLiteral]).
+            c if c.is_ascii_digit() => self.handle_leading_dot_float(),
             _ => {
                 self.complete_token(DOT);
             }
         }
+    }
+
+    /// Scans the fractional part of a leading-dot float literal, including an
+    /// optional exponent and `f`/`F` suffix.
+    /// [spec: grammar-rule-DoubleLiteral] / [spec: grammar-rule-FloatLiteral]
+    fn handle_leading_dot_float(&mut self) {
+        let (_, mut last_was_underscore) = self.consume_digits(|c| c.is_ascii_digit());
+
+        // Exponent part
+        if self.reader.peek() == 'e' || self.reader.peek() == 'E' {
+            if last_was_underscore {
+                self.report_error(LexicalErrorKind::IllegalUnderscore);
+            }
+
+            self.reader.advance(); // Consume 'e' or 'E'
+
+            let sign = self.reader.peek();
+            if sign == '+' || sign == '-' {
+                self.reader.advance(); // Consume sign
+            }
+
+            if self.reader.peek() == '_' {
+                self.report_error(LexicalErrorKind::IllegalUnderscore);
+            }
+
+            let (exp_digits, ended_with_underscore) = self.consume_digits(|c| c.is_ascii_digit());
+            last_was_underscore = ended_with_underscore;
+
+            if exp_digits == 0 {
+                self.report_error(LexicalErrorKind::MissingExponentDigits);
+            }
+        }
+
+        if last_was_underscore {
+            self.report_error(LexicalErrorKind::IllegalUnderscore);
+        }
+
+        let c = self.reader.peek();
+        if c == 'f' || c == 'F' {
+            self.reader.advance();
+        }
+        self.complete_token(FLOAT_LITERAL);
     }
 
     fn handle_number(&mut self) {
@@ -552,8 +620,11 @@ impl<'a> Lexer<'a> {
                 return;
             }
 
-            // Kotlin forbids octal. Check for leading zeros.
-            if next.is_ascii_digit() {
+            // Kotlin forbids octal. Check for leading zeros; a separator is
+            // also invalid right after the leading zero: `IntegerLiteral` is
+            // `DecDigit` or `DecDigitNoZero {DecDigitOrSeparator} DecDigit`,
+            // so `0_1` / `01` are not literals ([spec: grammar-rule-IntegerLiteral]).
+            if next.is_ascii_digit() || next == '_' {
                 self.report_error(LexicalErrorKind::LeadingZerosNotAllowed);
             }
         }

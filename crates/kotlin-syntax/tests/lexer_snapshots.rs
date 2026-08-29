@@ -203,6 +203,41 @@ lexer_snapshot!(
 );
 
 lexer_snapshot!(
+    leading_zero_with_separator,
+    indoc! {r#"
+        val a = 0_1
+        val b = 0_2
+        val c = 0_
+    "#}
+);
+
+lexer_snapshot!(
+    dot_leading_float,
+    indoc! {r#"
+        val a = .5
+        val b = .5e2
+        val c = .5E+2
+        val d = .5f
+        val e = .0
+    "#}
+);
+
+lexer_snapshot!(
+    raw_string_quote_runs,
+    indoc! {r#"
+        val a = """x"""" 
+        val b = """x"""""
+        val c = """x""""""
+        val d = """"""""
+    "#}
+);
+
+lexer_snapshot!(
+    form_feed_whitespace,
+    "val a = 1\u{000C}+\u{000C}2\nval b = 3\u{000C}\u{000C}4\n",
+);
+
+lexer_snapshot!(
     semicolon,
     indoc! {r#"
         ;;;

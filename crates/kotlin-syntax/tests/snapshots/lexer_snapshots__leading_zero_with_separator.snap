@@ -1,0 +1,41 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = 0_1
+val b = 0_2
+val c = 0_
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0_1"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0_2"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0_"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: LeadingZerosNotAllowed, range: 8..8 }
+LexicalError { kind: LeadingZerosNotAllowed, range: 20..20 }
+LexicalError { kind: LeadingZerosNotAllowed, range: 32..32 }
+LexicalError { kind: IllegalUnderscore, range: 32..34 }

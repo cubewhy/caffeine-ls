@@ -1,0 +1,56 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = .5
+val b = .5e2
+val c = .5E+2
+val d = .5f
+val e = .0
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL ".5"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL ".5e2"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL ".5E+2"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "d"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL ".5f"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "e"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL ".0"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

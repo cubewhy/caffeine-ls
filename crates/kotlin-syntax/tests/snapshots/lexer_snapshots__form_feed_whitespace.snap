@@ -1,0 +1,35 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = 1+2
+val b = 34
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+WHITESPACE "\u{c}"
+PLUS "+"
+WHITESPACE "\u{c}"
+INTEGER_LITERAL "2"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "3"
+WHITESPACE "\u{c}\u{c}"
+INTEGER_LITERAL "4"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
