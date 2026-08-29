@@ -16,8 +16,8 @@
 //! ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)).
 //!
 //! The per-scope subtype and supertype results are memoized as tracked
-//! queries keyed on the interned scope ([`crate::db::ScopeId`]) and the
-//! interned type id ([`crate::ty::TyData`]), so repeated checks of the same
+//! queries keyed on the interned scope ([`crate::java::db::ScopeId`]) and the
+//! interned type id ([`crate::java::ty::TyData`]), so repeated checks of the same
 //! pair — the IDE pattern — hit the query cache. The public functions
 //! intern the scope and the types, then delegate.
 //!
@@ -37,9 +37,9 @@ use hir_def::jvm::access::JvmAccessFlags;
 use hir_expand::{name::Name, span::SpannedTypeRef};
 
 use crate::{
-    db::{ScopeId, ScopeKind, TyDatabase},
-    resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
-    ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type, unboxed_primitive},
+    java::db::{ScopeId, ScopeKind, TyDatabase},
+    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
+    java::ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type, unboxed_primitive},
 };
 
 /// The direct supertypes of `ty`
@@ -111,7 +111,8 @@ pub(crate) fn supertypes_impl(
                                 .zip(args.iter().copied())
                                 .collect();
                             let instantiate = |tyref: &hir::TypeRef<hir::Symbol>| {
-                                crate::resolve::ty_from_library(db, tyref).substitute(db, &binding)
+                                crate::java::resolve::ty_from_library(db, tyref)
+                                    .substitute(db, &binding)
                             };
                             let mut out = Vec::new();
                             if let Some(super_class) = &info.super_class {
@@ -192,7 +193,7 @@ pub(crate) fn source_supertypes(
         return Vec::new();
     };
     let scope = scope_for_file(db, source.file);
-    let type_params = crate::db::type_params_map_query(db, db.file_text(source.file));
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
     let implicit = |fqn: &str| {
         SpannedTypeRef::synthetic(TypeRef::Reference {

@@ -1,7 +1,7 @@
 //! Unknown-reference diagnostics ([JLS §6.5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5),
 //! [§7.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5)).
 //!
-//! Type resolution (`[`crate::resolve`]`) degrades an unresolvable name to
+//! Type resolution (`[`crate::java::resolve`]`) degrades an unresolvable name to
 //! its most-qualified candidate so the [`Ty` stays displayable and broken
 //! classpaths stay conservative. This module turns *failure to resolve* into
 //! structured diagnostics, walking the type references of a file's
@@ -24,15 +24,15 @@ use rustc_hash::FxHashMap;
 use vfs::FileId;
 
 use crate::{
-    db::TyDatabase,
-    decl_check::DeclDiagnostic,
-    diagnostics::DiagLocation,
-    resolve::{NameResolution, Resolver, resolve_name_checked},
+    java::db::TyDatabase,
+    java::decl_check::DeclDiagnostic,
+    java::diagnostics::DiagLocation,
+    java::resolve::{NameResolution, Resolver, resolve_name_checked},
 };
 
 /// Whether name resolution has a real classpath to answer against. Before the
 /// workspace loads (`project_graph` is `None`) or when a file outside any
-/// source set has no JDK registered, names degrade silently ([`crate::resolve`])
+/// source set has no JDK registered, names degrade silently ([`crate::java::resolve`])
 /// and no unknown-symbol report is emitted — it would be pure noise.
 fn can_resolve(db: &dyn TyDatabase, scope: &hir::ResolutionScope) -> bool {
     hir::project_graph(db).is_some()
@@ -274,11 +274,11 @@ pub(crate) fn declaration_type_diagnostics(
     file: FileId,
     tree: &ItemTree,
 ) -> Vec<DeclDiagnostic> {
-    let scope = crate::resolve::scope_for_file(db, file);
+    let scope = crate::java::resolve::scope_for_file(db, file);
     if !can_resolve(db, &scope) {
         return Vec::new();
     }
-    let type_params = crate::db::type_params_map_query(db, db.file_text(file));
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let mut out = Vec::new();
 
     fn walk(

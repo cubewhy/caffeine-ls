@@ -1,6 +1,6 @@
 //! Method invocation type inference ([JLS §18]).
 //!
-//! [`crate::method::pick_method`] determines the invocation type
+//! [`crate::java::method::pick_method`] determines the invocation type
 //! ([§15.12.2.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.6))
 //! of a generic method from the actual argument types ([§18.5.2]): the
 //! method's own type parameters ([§8.4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.4))
@@ -18,7 +18,7 @@
 //! invocation has no target type); throws inference ([§18.5.2.3]) instantiates
 //! `throws` clause type parameters from their bounds. Inference-variable-bearing
 //! types never reach the memoized subtype/supertype queries in
-//! [`crate::subtyping`]: all [`Ty`]s handed to `is_subtype`/`is_assignable`
+//! [`crate::java::subtyping`]: all [`Ty`]s handed to `is_subtype`/`is_assignable`
 //! here are proper.
 
 use std::collections::VecDeque;
@@ -27,10 +27,10 @@ use hir_expand::name::Name;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    db::TyDatabase,
-    method::MethodData,
-    subtyping::{is_assignable, is_subtype, strict_conversion, supertypes_impl},
-    ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type},
+    java::db::TyDatabase,
+    java::method::MethodData,
+    java::subtyping::{is_assignable, is_subtype, strict_conversion, supertypes_impl},
+    java::ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type},
 };
 
 /// The invocation conversion of a phase: strict invocation
@@ -1215,7 +1215,7 @@ fn pick_instantiation(
         is_subtype(db, scope, inst, upper)
             // A raw lower bound converts to a parameterized upper by
             // unchecked conversion ([§5.1.9], §18.4 bound validation).
-            || crate::subtyping::is_assignable(db, scope, inst, upper)
+            || crate::java::subtyping::is_assignable(db, scope, inst, upper)
     };
     if let Some(eq) = equality {
         for u in upper {

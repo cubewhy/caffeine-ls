@@ -21,7 +21,7 @@
 //! ([§15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)).
 //!
 //! A generic method's invocation type ([§15.12.2.6]) is computed by the
-//! method invocation type inference of [JLS §18.5.2] ([`crate::inference`]):
+//! method invocation type inference of [JLS §18.5.2] ([`crate::java::inference`]):
 //! the method's own type parameters become fresh inference variables whose
 //! constraints are solved against the actual argument types, so
 //! `Collections.identity("s")` is applicable as `identity(String)`, not as the
@@ -40,14 +40,14 @@ use hir_def::jvm::access::{JvmAccessFlags, JvmVisibility};
 use hir_expand::name::Name;
 
 use crate::{
-    db::{
+    java::db::{
         ContextKey, ItemKey, ScopeId, ScopeKind, TyDatabase, access_context_key_query,
         item_ty_query, method_params_query, type_params_map_query,
     },
-    inference::{Constraint, Inference, InvocationPhase},
-    resolve::{Resolver, item_data, resolve_type_ref, scope_for_file, ty_from_library},
-    subtyping::{is_subtype, supertypes_query},
-    ty::{Ty, TyData, TyKind, boxed_type, capture_conversion},
+    java::inference::{Constraint, Inference, InvocationPhase},
+    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file, ty_from_library},
+    java::subtyping::{is_subtype, supertypes_query},
+    java::ty::{Ty, TyData, TyKind, boxed_type, capture_conversion},
 };
 
 /// How the method name is qualified: the invocation mode of
@@ -319,7 +319,7 @@ pub fn member_set(
 /// deduped by overriding signature
 /// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)):
 /// the raw material of the declaration-level checks ([§8.4.8.3],
-/// [§9.4.1.3], [`crate::decl_check`]). The access-control context is that of
+/// [§9.4.1.3], [`crate::java::decl_check`]). The access-control context is that of
 /// the declaring class itself ([§6.6.1]).
 pub fn all_methods(
     db: &dyn TyDatabase,
@@ -749,7 +749,7 @@ fn library_class_methods(
     let mut out = Vec::new();
     for method in &class.methods {
         // An empty name is the wildcard of the declaration-level walk
-        // ([§9.8], [`crate::decl_check`]); no method can be named "".
+        // ([§9.8], [`crate::java::decl_check`]); no method can be named "".
         if !name.is_empty() && interner.resolve(&method.name) != name {
             continue;
         }
@@ -858,7 +858,7 @@ fn source_class_methods(
             continue;
         };
         // An empty name is the wildcard of the declaration-level walk
-        // ([§9.8], [`crate::decl_check`]); no method can be named "".
+        // ([§9.8], [`crate::java::decl_check`]); no method can be named "".
         if !name.is_empty() && method.name.as_str() != name {
             continue;
         }
@@ -1627,7 +1627,7 @@ pub(crate) fn more_specific(
 /// {char, short, byte}).
 fn formal_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, p1: &Ty, p2: &Ty) -> bool {
     if let (TyKind::Primitive(a), TyKind::Primitive(b)) = (p1.kind(db), p2.kind(db)) {
-        return a == b || crate::subtyping::widening_primitive(*a, *b);
+        return a == b || crate::java::subtyping::widening_primitive(*a, *b);
     }
     // §15.12.2.5 (loose invocation): a primitive formal boxes before the
     // subtyping test, so `valueOf(int)` is more specific than

@@ -17,11 +17,11 @@ use hir_expand::name::Name;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 use vfs::FileId;
 
-use crate::db::TyDatabase;
-use crate::method::{self, MethodData};
-use crate::resolve::scope_for_file;
-use crate::subtyping;
-use crate::ty::Ty;
+use crate::java::db::TyDatabase;
+use crate::java::method::{self, MethodData};
+use crate::java::resolve::scope_for_file;
+use crate::java::subtyping;
+use crate::java::ty::Ty;
 use base_db::LanguageKind;
 
 /// A declaration-level diagnostic.
@@ -309,7 +309,7 @@ impl DeclDiagnostic {
 /// The declaration-level diagnostics of every class-like declaration in
 /// `file`, in source order.
 pub fn class_diagnostics(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
-    crate::db::class_diagnostics_query(db, db.file_text(file))
+    crate::java::db::class_diagnostics_query(db, db.file_text(file))
 }
 
 /// Enumerates the class-like declarations of the file in source order and
@@ -320,18 +320,22 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     let mut out = Vec::new();
 
     // §6.5.5.1/[§7.5.1]: the unknown-reference and import diagnostics of the
-    // file's declarations (see [`crate::name_check`]).
-    out.extend(crate::name_check::declaration_type_diagnostics(
+    // file's declarations (see [`crate::java::name_check`]).
+    out.extend(crate::java::name_check::declaration_type_diagnostics(
         db, file, &tree,
     ));
 
     // §7.2.1: the file's package directory must match its declared package
-    // (see [`crate::name_check::package_path_diagnostics`]).
-    out.extend(crate::name_check::package_path_diagnostics(db, file, &tree));
+    // (see [`crate::java::name_check::package_path_diagnostics`]).
+    out.extend(crate::java::name_check::package_path_diagnostics(
+        db, file, &tree,
+    ));
 
     // §7.4.1: a compilation unit declares at most one package (see
-    // [`crate::name_check::duplicate_package_diagnostics`]).
-    out.extend(crate::name_check::duplicate_package_diagnostics(&tree));
+    // [`crate::java::name_check::duplicate_package_diagnostics`]).
+    out.extend(crate::java::name_check::duplicate_package_diagnostics(
+        &tree,
+    ));
 
     // §7.6: at most one public top-level type per file, named after the file.
     out.extend(public_type_diagnostics(db, file, &tree));
@@ -375,7 +379,7 @@ fn check_class(
 ) -> Vec<DeclDiagnostic> {
     // The access-control context of the class itself ([§6.6.1]): the walk is
     // a member enumeration, not an invocation from outside.
-    let ctx = crate::method::access_context(db, file, item);
+    let ctx = crate::java::method::access_context(db, file, item);
     let mut out = Vec::new();
     // Every member visible from the class, most-derived first ([§8.4.8.1]),
     // *without* the most-derived dedup: an override must still see the super
@@ -448,9 +452,9 @@ fn check_class(
         ItemData::Record(record) => &record.components,
         _ => &[],
     };
-    let resolver = crate::resolve::Resolver::new(
+    let resolver = crate::java::resolve::Resolver::new(
         tree,
-        crate::db::type_params_map_query(db, db.file_text(file)),
+        crate::java::db::type_params_map_query(db, db.file_text(file)),
         item,
     );
     for &child in tree.data(item).body() {
@@ -518,10 +522,10 @@ fn same_signature(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> bool {
 fn is_override_annotation(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
-    resolver: &crate::resolve::Resolver,
+    resolver: &crate::java::resolve::Resolver,
     name: &Name,
 ) -> bool {
-    let resolved = crate::resolve::candidate_fqns(resolver, name)
+    let resolved = crate::java::resolve::candidate_fqns(resolver, name)
         .into_iter()
         .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some());
     match resolved {

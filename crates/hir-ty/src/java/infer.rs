@@ -3,10 +3,10 @@
 //!
 //! [`body_types`] infers the type of every expression ([JLS §15]) and local
 //! variable ([JLS §14.4]) of a method, constructor or initializer body, given
-//! the declaration types computed by [`crate::db::item_ty_query`] and the
+//! the declaration types computed by [`crate::java::db::item_ty_query`] and the
 //! body IR of `hir-def`. Names are resolved lexically ([JLS §6.3]); field and
-//! method access is resolved by [`crate::method::pick_field`] /
-//! [`crate::method::pick_method`] under the access context of the call site
+//! method access is resolved by [`crate::java::method::pick_field`] /
+//! [`crate::java::method::pick_method`] under the access context of the call site
 //! ([JLS §6.6]).
 //!
 //! The types are computed bottom-up ([§15.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.1)):
@@ -52,17 +52,17 @@ use syntax::stub::{PrimitiveType, TypeRef};
 use vfs::FileId;
 
 use crate::{
-    const_eval::{Const, ConstEnv},
-    db::{TyDatabase, type_params_map_query},
-    diagnostics::TypeError,
-    inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
-    method::{
+    java::const_eval::{Const, ConstEnv},
+    java::db::{TyDatabase, type_params_map_query},
+    java::diagnostics::TypeError,
+    java::inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
+    java::method::{
         FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
         pick_field, pick_method, single_abstract_method,
     },
-    resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
-    subtyping::supertypes_impl,
-    ty::{Ty, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive},
+    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
+    java::subtyping::supertypes_impl,
+    java::ty::{Ty, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -81,10 +81,10 @@ pub struct BodyTypes {
 }
 
 /// Infers the types of the body of `item` in `file`, memoized per (file,
-/// item) by the tracked query in [`crate::db`]. `None` when the item has no
+/// item) by the tracked query in [`crate::java::db`]. `None` when the item has no
 /// body (a declaration without statements) or is not a body-carrying item.
 pub fn body_types(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<Arc<BodyTypes>> {
-    crate::db::body_types_query(db, crate::db::ItemKey::new(db, file, item))
+    crate::java::db::body_types_query(db, crate::java::db::ItemKey::new(db, file, item))
 }
 
 pub(crate) fn body_types_impl(
@@ -109,7 +109,7 @@ pub(crate) fn body_types_impl(
         enclosing_chain: {
             // The chain of enclosing class-like declarations of `item`,
             // innermost first, as raw types ([§6.3], [§8.1.3]).
-            crate::resolve::enclosing_type_chain(&tree, item)
+            crate::java::resolve::enclosing_type_chain(&tree, item)
                 .into_iter()
                 .map(|name| Ty::reference(db, name.as_str(), Vec::new()))
                 .collect()
@@ -138,7 +138,7 @@ pub(crate) fn body_types_impl(
     let mut body = None;
     // §6.5.5.1: the expression forests of body-less items (field
     // initializers, enum constant arguments, annotation element defaults),
-    // walked for their type references by [`crate::name_check`].
+    // walked for their type references by [`crate::java::name_check`].
     let mut ctx_orphan_exprs = Vec::new();
     match item_data(&tree, item)? {
         // A method or constructor body ([§8.4]); the return type is the
@@ -245,35 +245,41 @@ pub(crate) fn body_types_impl(
     // resolver the inference used.
     let mut resolved_diags = Vec::new();
     let body_refs: Vec<(
-        crate::diagnostics::DiagLocation,
+        crate::java::diagnostics::DiagLocation,
         hir_expand::span::SpannedTypeRef,
     )> = match body {
-        Some(body) => crate::name_check::body_type_refs(&ctx.tree, body),
+        Some(body) => crate::java::name_check::body_type_refs(&ctx.tree, body),
         // A field initializer, enum constant arguments or an annotation
         // element default carry their type references as expression
         // forests rather than a [`Body`].
-        None => crate::name_check::expr_forest_type_refs(&ctx.tree, &ctx_orphan_exprs),
+        None => crate::java::name_check::expr_forest_type_refs(&ctx.tree, &ctx_orphan_exprs),
     };
     for (location, spanned) in body_refs {
         let mut issues = Vec::new();
-        crate::name_check::check_spanned(db, &ctx.scope, &ctx.resolver, &spanned, &mut issues);
+        crate::java::name_check::check_spanned(
+            db,
+            &ctx.scope,
+            &ctx.resolver,
+            &spanned,
+            &mut issues,
+        );
         for issue in issues {
             match issue {
-                crate::name_check::TypeRefDiag::CannotResolve { name, range } => {
+                crate::java::name_check::TypeRefDiag::CannotResolve { name, range } => {
                     resolved_diags.push(TypeError::CannotResolveType {
                         location: location.clone(),
                         name,
                         range,
                     });
                 }
-                crate::name_check::TypeRefDiag::Ambiguous { name, range } => {
+                crate::java::name_check::TypeRefDiag::Ambiguous { name, range } => {
                     resolved_diags.push(TypeError::AmbiguousName {
                         location: location.clone(),
                         name,
                         range,
                     });
                 }
-                crate::name_check::TypeRefDiag::ModuleNotAccessible { name, range } => {
+                crate::java::name_check::TypeRefDiag::ModuleNotAccessible { name, range } => {
                     resolved_diags.push(TypeError::ModuleNotAccessible {
                         location: location.clone(),
                         name,
@@ -550,8 +556,8 @@ impl<'a> InferCtx<'a> {
         let a_unboxes = matches!(a.kind(self.db), TyKind::Reference { name, .. } if unboxed_primitive(name.as_str()).is_some());
         let b_unboxes = matches!(b.kind(self.db), TyKind::Reference { name, .. } if unboxed_primitive(name.as_str()).is_some());
         if a_unboxes != b_unboxes {
-            return crate::subtyping::is_subtype(self.db, &self.scope, &a, &b)
-                || crate::subtyping::is_subtype(self.db, &self.scope, &b, &a);
+            return crate::java::subtyping::is_subtype(self.db, &self.scope, &a, &b)
+                || crate::java::subtyping::is_subtype(self.db, &self.scope, &b, &a);
         }
         true
     }
@@ -582,7 +588,7 @@ impl<'a> InferCtx<'a> {
             // §5.1.7: boxing, optionally followed by a reference widening.
             (TyKind::Primitive(f), TyKind::Reference { .. }) => {
                 let boxed = Ty::reference(self.db, boxed_type(*f), Vec::new());
-                boxed == to || crate::subtyping::is_subtype(self.db, &self.scope, &boxed, &to)
+                boxed == to || crate::java::subtyping::is_subtype(self.db, &self.scope, &boxed, &to)
             }
             // §5.1.8/§5.5: unboxing, optionally followed by a *widening*
             // primitive conversion — an unbox-then-narrow cast (`(int) aLong`)
@@ -594,7 +600,7 @@ impl<'a> InferCtx<'a> {
             // distinct finals, [§5.5.1]).
             (TyKind::Reference { name, .. }, TyKind::Primitive(t)) => {
                 match unboxed_primitive(name.as_str()) {
-                    Some(p) => p == *t || crate::subtyping::widening_primitive(p, *t),
+                    Some(p) => p == *t || crate::java::subtyping::widening_primitive(p, *t),
                     None => {
                         let boxed = Ty::reference(self.db, boxed_type(*t), Vec::new());
                         self.reference_castable(from, boxed)
@@ -628,14 +634,14 @@ impl<'a> InferCtx<'a> {
     /// arrays or unresolvable types always succeed here (the runtime check may
     /// still fail; that is not a compile-time error per §5.5.1).
     fn reference_castable(&self, from: Ty, to: Ty) -> bool {
-        let sub = crate::subtyping::is_subtype(self.db, &self.scope, &from, &to);
-        let sup = crate::subtyping::is_subtype(self.db, &self.scope, &to, &from);
+        let sub = crate::java::subtyping::is_subtype(self.db, &self.scope, &from, &to);
+        let sup = crate::java::subtyping::is_subtype(self.db, &self.scope, &to, &from);
         if sub || sup {
             return true;
         }
         match (
-            crate::subtyping::class_like_and_final(self.db, &self.scope, &from),
-            crate::subtyping::class_like_and_final(self.db, &self.scope, &to),
+            crate::java::subtyping::class_like_and_final(self.db, &self.scope, &from),
+            crate::java::subtyping::class_like_and_final(self.db, &self.scope, &to),
         ) {
             (Some((true, _)), Some((true, _))) => false,
             _ => true,
@@ -680,7 +686,7 @@ impl<'a> InferCtx<'a> {
         if has_default {
             return true;
         }
-        match crate::subtyping::enum_constants(self.db, &self.scope, selector) {
+        match crate::java::subtyping::enum_constants(self.db, &self.scope, selector) {
             Some(constants) => constants
                 .iter()
                 .all(|constant| covered.iter().any(|covered| covered == constant)),
@@ -716,7 +722,7 @@ impl<'a> InferCtx<'a> {
     fn infer_switch_label(&mut self, label: ExprId, selector: &Ty) {
         if let ExprData::Var(name) = self.tree.expr(label).clone()
             && let Some(constants) =
-                crate::subtyping::enum_constants(self.db, &self.scope, selector)
+                crate::java::subtyping::enum_constants(self.db, &self.scope, selector)
             && constants.iter().any(|constant| constant == &name)
         {
             self.types.insert(label, selector.clone());
@@ -728,7 +734,7 @@ impl<'a> InferCtx<'a> {
         if !ty.is_error(self.db)
             && !selector.is_error(self.db)
             && !matches!(self.tree.expr(label).clone(), ExprData::Missing)
-            && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, selector)
+            && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ty, selector)
             // A label sits in assignment context ([§5.2]), so an int
             // *constant* also narrows to a `byte`, `short` or `char`
             // selector when its value is representable there ([§5.1.3]) —
@@ -773,7 +779,7 @@ impl<'a> InferCtx<'a> {
             return self.switch_results_narrowable(arms, *d);
         }
         self.const_int_value(expr)
-            .is_some_and(|value| crate::subtyping::fits_primitive(value, *d))
+            .is_some_and(|value| crate::java::subtyping::fits_primitive(value, *d))
     }
 
     /// Whether every result expression of `arms` is an int constant that
@@ -787,7 +793,7 @@ impl<'a> InferCtx<'a> {
         !results.is_empty()
             && results.into_iter().all(|expr| {
                 self.const_int_value(expr)
-                    .is_some_and(|value| crate::subtyping::fits_primitive(value, d))
+                    .is_some_and(|value| crate::java::subtyping::fits_primitive(value, d))
             })
     }
 
@@ -808,7 +814,7 @@ impl<'a> InferCtx<'a> {
     /// ([JLS §4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4),
     /// [§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)):
     /// literals, parenthesized forms, the constant operators, and simple
-    /// names of constant variables — evaluated by [`crate::const_eval`].
+    /// names of constant variables — evaluated by [`crate::java::const_eval`].
     fn const_int_value(&self, id: ExprId) -> Option<i64> {
         self.const_value(id).and_then(|value| value.as_int())
     }
@@ -825,7 +831,7 @@ impl<'a> InferCtx<'a> {
         match ty.kind(self.db) {
             TyKind::Reference { name, args } if args.is_empty() => {
                 !ty.is_error(self.db)
-                    && crate::resolve::class_is_generic(self.db, &self.scope, name)
+                    && crate::java::resolve::class_is_generic(self.db, &self.scope, name)
             }
             _ => false,
         }
@@ -851,7 +857,7 @@ impl<'a> InferCtx<'a> {
         }
         let parameterized =
             matches!(dst.kind(self.db), TyKind::Reference { args, .. } if !args.is_empty());
-        let plain_subtype = crate::subtyping::is_subtype(self.db, &self.scope, src, dst);
+        let plain_subtype = crate::java::subtyping::is_subtype(self.db, &self.scope, src, dst);
         if parameterized && !plain_subtype {
             self.report(TypeError::UncheckedConversion {
                 expr,
@@ -868,7 +874,7 @@ impl<'a> InferCtx<'a> {
     fn check_case_label(&mut self, label: ExprId, selector: &Ty) {
         if matches!(self.tree.expr(label).clone(), ExprData::Missing)
             || selector.is_error(self.db)
-            || crate::subtyping::enum_constants(self.db, &self.scope, selector).is_some()
+            || crate::java::subtyping::enum_constants(self.db, &self.scope, selector).is_some()
         {
             return;
         }
@@ -927,13 +933,13 @@ impl<'a> InferCtx<'a> {
     /// ([§11.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-11.html#jls-11.1.1)).
     fn is_checked(&self, ty: &Ty) -> bool {
         let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
-        if !crate::subtyping::is_assignable(self.db, &self.scope, ty, &throwable) {
+        if !crate::java::subtyping::is_assignable(self.db, &self.scope, ty, &throwable) {
             return false;
         }
         let unchecked = ["java.lang.RuntimeException", "java.lang.Error"];
         !unchecked.iter().any(|name| {
             let supertype = Ty::reference(self.db, *name, Vec::new());
-            crate::subtyping::is_assignable(self.db, &self.scope, ty, &supertype)
+            crate::java::subtyping::is_assignable(self.db, &self.scope, ty, &supertype)
         })
     }
 
@@ -950,9 +956,9 @@ impl<'a> InferCtx<'a> {
             if !self.is_checked(&ty) {
                 continue;
             }
-            let discharged = declared
-                .iter()
-                .any(|target| crate::subtyping::is_assignable(self.db, &self.scope, &ty, target));
+            let discharged = declared.iter().any(|target| {
+                crate::java::subtyping::is_assignable(self.db, &self.scope, &ty, target)
+            });
             if !discharged && reported.insert(expr) {
                 self.report(TypeError::UnreportedException { expr, thrown: ty });
             }
@@ -1120,7 +1126,7 @@ impl<'a> InferCtx<'a> {
                 if matches!(op, AssignOp::Assign)
                     && !lhs_ty.is_error(self.db)
                     && !rhs_ty.is_error(self.db)
-                    && !crate::subtyping::is_assignable(self.db, &self.scope, &rhs_ty, &lhs_ty)
+                    && !crate::java::subtyping::is_assignable(self.db, &self.scope, &rhs_ty, &lhs_ty)
                     // §5.2: an in-range int constant narrows to the target
                     // primitive ([§5.1.3]).
                     && !self.constant_narrowable(rhs, rhs_ty, lhs_ty)
@@ -1202,7 +1208,8 @@ impl<'a> InferCtx<'a> {
                 let cond_is_poly =
                     expr_is_poly_ext(&self.tree, then) && expr_is_poly_ext(&self.tree, els);
                 let target_is_fi = self.target.is_some_and(|target| {
-                    crate::method::single_abstract_method(self.db, &self.scope, &target).is_some()
+                    crate::java::method::single_abstract_method(self.db, &self.scope, &target)
+                        .is_some()
                 });
                 let both_arms_calls =
                     expr_is_call(&self.tree, then) && expr_is_call(&self.tree, els);
@@ -1792,12 +1799,12 @@ impl<'a> InferCtx<'a> {
 
     /// The type a (possibly qualified) *type* name denotes, probed candidate
     /// by candidate ([§6.5.5.1], [§6.5.5.2]) — unlike
-    /// [`crate::resolve::resolve_type_ref`], which degrades an unresolvable
+    /// [`crate::java::resolve::resolve_type_ref`], which degrades an unresolvable
     /// name to its most-qualified candidate for display, this reports
     /// failure so expression-position receivers can fall back to value
     /// treatment.
     fn resolve_type_name_checked(&self, name: &Name) -> Option<Ty> {
-        let candidates = crate::resolve::candidate_fqns(&self.resolver, name);
+        let candidates = crate::java::resolve::candidate_fqns(&self.resolver, name);
         for candidate in candidates {
             if hir::fqn_resolve(self.db, &self.scope, candidate.as_str()).is_some() {
                 return Some(Ty::reference(self.db, candidate.as_str(), Vec::new()));
@@ -1902,7 +1909,7 @@ impl<'a> InferCtx<'a> {
         expr: ExprId,
         name: Name,
         owner: Option<Name>,
-        members: &[crate::method::MethodData],
+        members: &[crate::java::method::MethodData],
         arg_kinds: &[ArgInfo],
         found: usize,
     ) {
@@ -1943,7 +1950,7 @@ impl<'a> InferCtx<'a> {
                     continue;
                 }
                 if let [ArgKind::Concrete(ty)] = info.leaves.as_slice()
-                    && !crate::subtyping::is_assignable(self.db, &self.scope, ty, formal)
+                    && !crate::java::subtyping::is_assignable(self.db, &self.scope, ty, formal)
                 {
                     incompatible = Some((*ty, *formal));
                     break;
@@ -2262,12 +2269,12 @@ impl<'a> InferCtx<'a> {
         }
         // The most specific applicable candidate ([§15.12.2.5]); identical
         // signatures seen through overriding paths collapse to their
-        // most-derived declaration (see [`crate::method::choose_most_specific`]).
+        // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
         let pairs: Vec<(MethodData, MethodData)> = applicable
             .iter()
             .map(|(candidate, invocation, _)| (candidate.clone(), invocation.clone()))
             .collect();
-        let chosen = crate::method::choose_most_specific(self.db, &self.scope, &pairs)?;
+        let chosen = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)?;
         let index = applicable
             .iter()
             .position(|(_, invocation, _)| *invocation == chosen)?;
@@ -2502,13 +2509,13 @@ impl<'a> InferCtx<'a> {
             if let (Some(target), true) = (target, constrains_target && target_proper) {
                 let ok = invocation.ret == target
                     || match phase {
-                        InvocationPhase::Strict => crate::subtyping::strict_conversion(
+                        InvocationPhase::Strict => crate::java::subtyping::strict_conversion(
                             self.db,
                             &self.scope,
                             &invocation.ret,
                             &target,
                         ),
-                        InvocationPhase::Loose => crate::subtyping::is_assignable(
+                        InvocationPhase::Loose => crate::java::subtyping::is_assignable(
                             self.db,
                             &self.scope,
                             &invocation.ret,
@@ -2689,7 +2696,7 @@ impl<'a> InferCtx<'a> {
                     .map(|arg| match arg.kind(self.db) {
                         TyKind::Wildcard(Some(bound)) => {
                             let decaptured = self.decapture(&bound.ty);
-                            let kind = Box::new(crate::ty::WildcardBound {
+                            let kind = Box::new(crate::java::ty::WildcardBound {
                                 kind: bound.kind,
                                 ty: decaptured,
                             });
@@ -2796,7 +2803,7 @@ impl<'a> InferCtx<'a> {
                 match returns.as_slice() {
                     [] => None,
                     [single] => Some(*single),
-                    many => Some(crate::inference::least_upper_bound(
+                    many => Some(crate::java::inference::least_upper_bound(
                         self.db,
                         &self.scope,
                         many,
@@ -2900,10 +2907,11 @@ impl<'a> InferCtx<'a> {
         }
         // The most specific applicable member ([§15.12.2.5]); identical
         // signatures seen through overriding paths collapse to their
-        // most-derived declaration (see [`crate::method::choose_most_specific`]).
+        // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
         let pairs: Vec<(MethodData, MethodData)> =
             applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        let Some(winner) = crate::method::choose_most_specific(self.db, &self.scope, &pairs) else {
+        let Some(winner) = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
+        else {
             inference.restore(base);
             return false;
         };
@@ -3055,7 +3063,7 @@ impl<'a> InferCtx<'a> {
                     return false;
                 };
                 let tree = hir::file_item_tree(self.db, source.file);
-                let Some(data) = crate::resolve::item_data(&tree, source.item) else {
+                let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
                     return false;
                 };
                 let non_instantiable = match data {
@@ -3125,7 +3133,7 @@ impl<'a> InferCtx<'a> {
         } else {
             Ty::reference(self.db, class_name.clone(), declared_params.clone())
         };
-        for parent in crate::subtyping::supertypes_impl(self.db, &self.scope, &probe) {
+        for parent in crate::java::subtyping::supertypes_impl(self.db, &self.scope, &probe) {
             let TyKind::Reference {
                 name: parent_name,
                 args: parent_args,
@@ -3174,7 +3182,7 @@ impl<'a> InferCtx<'a> {
             }
             hir::Resolved::Source(source) => {
                 let tree = hir::file_item_tree(self.db, source.file);
-                let declared = match crate::resolve::item_data(&tree, source.item) {
+                let declared = match crate::java::resolve::item_data(&tree, source.item) {
                     Some(hir_def::java::item_tree::ItemData::Class(d)) => Some(&d.type_params),
                     Some(hir_def::java::item_tree::ItemData::Interface(d)) => Some(&d.type_params),
                     Some(hir_def::java::item_tree::ItemData::Record(d)) => Some(&d.type_params),
@@ -3289,10 +3297,9 @@ impl<'a> InferCtx<'a> {
             .cloned()
             .collect();
         for (ty, expr) in &new_entries {
-            if !throws
-                .iter()
-                .any(|declared| crate::subtyping::is_assignable(self.db, &self.scope, ty, declared))
-            {
+            if !throws.iter().any(|declared| {
+                crate::java::subtyping::is_assignable(self.db, &self.scope, ty, declared)
+            }) {
                 self.report(TypeError::UnreportedException {
                     expr: *expr,
                     thrown: *ty,
@@ -3628,7 +3635,7 @@ impl<'a> InferCtx<'a> {
         }
         let pairs: Vec<(MethodData, MethodData)> =
             applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        crate::method::choose_most_specific(self.db, &self.scope, &pairs)
+        crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
             .or_else(|| applicable.into_iter().next())
     }
 
@@ -3645,7 +3652,7 @@ impl<'a> InferCtx<'a> {
         if decaptured.contains_infer_var(self.db) || method_param.contains_infer_var(self.db) {
             return true;
         }
-        crate::subtyping::is_assignable(self.db, &self.scope, &decaptured, method_param)
+        crate::java::subtyping::is_assignable(self.db, &self.scope, &decaptured, method_param)
     }
 
     fn resolve_method_ref(
@@ -4289,8 +4296,12 @@ impl<'a> InferCtx<'a> {
                     }
                     // §5.2: an int-typed constant expression whose value fits
                     // the target narrows in assignment context ([§5.1.3]).
-                    if !crate::subtyping::is_assignable(self.db, &self.scope, &init_ty, &target)
-                        && !self.constant_narrowable(*initializer, init_ty, target)
+                    if !crate::java::subtyping::is_assignable(
+                        self.db,
+                        &self.scope,
+                        &init_ty,
+                        &target,
+                    ) && !self.constant_narrowable(*initializer, init_ty, target)
                     {
                         self.report(TypeError::IncompatibleTypes {
                             expr: *initializer,
@@ -4540,7 +4551,7 @@ impl<'a> InferCtx<'a> {
                         Some(ret) => {
                             if !ty.is_error(self.db)
                                 && !ret.is_error(self.db)
-                                && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &ret)
+                                && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ty, &ret)
                                 // §5.2: an in-range int constant narrows to a
                                 // primitive return type ([§5.1.3]).
                                 && !self.constant_narrowable(*expr, ty, ret)
@@ -4570,7 +4581,7 @@ impl<'a> InferCtx<'a> {
                 let ty = self.infer_expr(*expr);
                 let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
                 if !ty.is_error(self.db)
-                    && !crate::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable)
+                    && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable)
                 {
                     self.types.insert(*expr, self.error());
                     // §14.18: a non-throwable operand is a compile-time error.
@@ -4714,7 +4725,7 @@ impl<'a> InferCtx<'a> {
                     }
                     if clause_tys.iter().all(|clause_ty| {
                         catch_tys.iter().any(|earlier| {
-                            crate::subtyping::is_subtype(
+                            crate::java::subtyping::is_subtype(
                                 self.db,
                                 &self.scope,
                                 &clause_ty.clone(),
@@ -4743,7 +4754,7 @@ impl<'a> InferCtx<'a> {
                         // the dead alternatives individually.
                         let exception = Ty::reference(self.db, "java.lang.Exception", Vec::new());
                         for clause_ty in &clause_tys {
-                            let covers_unchecked = crate::subtyping::is_assignable(
+                            let covers_unchecked = crate::java::subtyping::is_assignable(
                                 self.db,
                                 &self.scope,
                                 &exception,
@@ -4752,7 +4763,7 @@ impl<'a> InferCtx<'a> {
                             if self.is_checked(clause_ty)
                                 && !covers_unchecked
                                 && !try_thrown.iter().any(|thrown| {
-                                    crate::subtyping::is_assignable(
+                                    crate::java::subtyping::is_assignable(
                                         self.db,
                                         &self.scope,
                                         thrown,
@@ -4760,7 +4771,7 @@ impl<'a> InferCtx<'a> {
                                     )
                                 })
                                 && !try_thrown.iter().any(|thrown| {
-                                    crate::subtyping::is_assignable(
+                                    crate::java::subtyping::is_assignable(
                                         self.db,
                                         &self.scope,
                                         clause_ty,
@@ -4776,7 +4787,7 @@ impl<'a> InferCtx<'a> {
                         }
                         self.thrown.retain(|(thrown, _)| {
                             !clause_tys.iter().any(|clause_ty| {
-                                crate::subtyping::is_assignable(
+                                crate::java::subtyping::is_assignable(
                                     self.db,
                                     &self.scope,
                                     thrown,
@@ -4797,7 +4808,7 @@ impl<'a> InferCtx<'a> {
                         .filter(|(thrown, expr)| {
                             !thrown_before.contains(expr)
                                 && clause_tys.iter().any(|clause_ty| {
-                                    crate::subtyping::is_assignable(
+                                    crate::java::subtyping::is_assignable(
                                         self.db,
                                         &self.scope,
                                         thrown,
@@ -4955,7 +4966,7 @@ fn enclosing_self_ty(
     resolver: &Resolver,
 ) -> Option<Ty> {
     // Parent links, one walk (the same shape as
-    // [`crate::resolve::enclosing_type_chain`]).
+    // [`crate::java::resolve::enclosing_type_chain`]).
     fn parents(tree: &hir_def::java::item_tree::ItemTree, map: &mut FxHashMap<ItemId, ItemId>) {
         fn walk(
             tree: &hir_def::java::item_tree::ItemTree,

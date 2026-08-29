@@ -9,13 +9,13 @@
 //! and array types ([§10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.1)).
 //!
 //! Reference types carry a canonical fully qualified name ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)).
-//! For source types the FQN is produced by [`crate::resolve`]; for library
+//! For source types the FQN is produced by [`crate::java::resolve`]; for library
 //! types it comes straight out of the classfile stubs.
 //!
 //! [`Ty`] values are interned in the salsa database: each distinct
 //! [`TyKind`] maps to one id, so a [`Ty`] is a cheap `Copy` handle with
 //! `O(1)` equality that can key the memoized subtype/supertype queries in
-//! [`crate::subtyping`]. Every accessor therefore takes the database.
+//! [`crate::java::subtyping`]. Every accessor therefore takes the database.
 
 use std::fmt;
 
@@ -23,7 +23,13 @@ use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
-use crate::db::TyDatabase;
+use crate::java::db::TyDatabase;
+
+// The JVM primitive naming, boxing and numeric-promotion tables live on the
+// JVM substrate; re-export them here so the Java type layer keeps addressing
+// them through `crate::java::ty` (and code using `crate::ty::boxed_type`
+// keeps compiling unchanged).
+pub use crate::jvm::ty::{boxed_type, numeric_promotion, primitive_name, unboxed_primitive};
 
 /// A Java type. See the [module docs](self) for the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,7 +68,7 @@ pub enum TyKind {
     /// A type variable ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
     /// with its declared bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
     /// `bounds` is empty for unbounded type variables and for re-entrant
-    /// (recursive) references — the cycle guard in [`crate::resolve`] erases
+    /// (recursive) references — the cycle guard in [`crate::java::resolve`] erases
     /// bounds on re-entry so interning terminates. `lower` is set only for the
     /// fresh type variables of capture conversion
     /// ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
@@ -341,7 +347,7 @@ impl Ty {
     /// reference type reachable in `self`: the type itself, its type
     /// arguments, array elements, type-variable bounds, wildcard bounds and
     /// intersection members. Used by the cross-file dependency index
-    /// ([`crate::dep_index`]) to recover the source files a [`Ty`] refers to.
+    /// ([`crate::java::dep_index`]) to recover the source files a [`Ty`] refers to.
     pub fn for_each_reference(&self, db: &dyn TyDatabase, f: &mut impl FnMut(&Name)) {
         match self.kind(db) {
             TyKind::Reference { name, args } => {
@@ -642,71 +648,9 @@ impl fmt::Display for TySimpleDisplay<'_> {
     }
 }
 
-/// The display name of a primitive type.
-pub(crate) fn primitive_name(p: PrimitiveType) -> &'static str {
-    match p {
-        PrimitiveType::Int => "int",
-        PrimitiveType::Long => "long",
-        PrimitiveType::Float => "float",
-        PrimitiveType::Double => "double",
-        PrimitiveType::Boolean => "boolean",
-        PrimitiveType::Byte => "byte",
-        PrimitiveType::Char => "char",
-        PrimitiveType::Short => "short",
-        PrimitiveType::Void => "void",
-    }
-}
-
-/// The reference type a primitive boxes to ([JLS §5.1.7], table 5.1-D).
-pub(crate) fn boxed_type(p: PrimitiveType) -> &'static str {
-    match p {
-        PrimitiveType::Boolean => "java.lang.Boolean",
-        PrimitiveType::Byte => "java.lang.Byte",
-        PrimitiveType::Short => "java.lang.Short",
-        PrimitiveType::Char => "java.lang.Character",
-        PrimitiveType::Int => "java.lang.Integer",
-        PrimitiveType::Long => "java.lang.Long",
-        PrimitiveType::Float => "java.lang.Float",
-        PrimitiveType::Double => "java.lang.Double",
-        PrimitiveType::Void => "java.lang.Void",
-    }
-}
-
-/// The primitive a reference type unboxes to ([JLS §5.1.8], reverse of
-/// [`boxed_type`]), or `None` for non-boxed reference types.
-pub(crate) fn unboxed_primitive(fqn: &str) -> Option<PrimitiveType> {
-    use PrimitiveType::*;
-    match fqn {
-        "java.lang.Boolean" => Some(Boolean),
-        "java.lang.Byte" => Some(Byte),
-        "java.lang.Short" => Some(Short),
-        "java.lang.Character" => Some(Char),
-        "java.lang.Integer" => Some(Int),
-        "java.lang.Long" => Some(Long),
-        "java.lang.Float" => Some(Float),
-        "java.lang.Double" => Some(Double),
-        "java.lang.Void" => Some(Void),
-        _ => None,
-    }
-}
-
-/// Unary numeric promotion ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)):
-/// `byte`, `short` and `char` promote to `int`; the other numeric types keep
-/// their type. Applied to the unboxed operand of a binary expression
-/// ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2),
-/// [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
-/// so `Character + Character` promotes to `int`.
-pub(crate) fn numeric_promotion(p: PrimitiveType) -> PrimitiveType {
-    use PrimitiveType::*;
-    match p {
-        Byte | Short | Char => Int,
-        other => other,
-    }
-}
-
 /// Lowers a [`TypeRef`] into a [`Ty`], mapping names with `name`. Reference
 /// names are used verbatim (no resolution): use
-/// [`crate::resolve::resolve_type_ref`] for source-side resolution, and this
+/// [`crate::java::resolve::resolve_type_ref`] for source-side resolution, and this
 /// for library `TypeRef<Symbol>`s whose names are already fully qualified.
 pub fn ty_from_type_ref<N>(
     db: &dyn TyDatabase,
@@ -762,7 +706,7 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// by `T`; an unbounded `?` becomes `CAP#<n>` bounded by `Object`; `? super T`
 /// becomes `CAP#<n>` bounded above by `Object` and below by `T`. Applied to
 /// the receiver before the member set walk of
-/// [`crate::method::member_set`], and only there: the capture variables never
+/// [`crate::java::method::member_set`], and only there: the capture variables never
 /// reach the memoized subtype queries.
 pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
     let fresh = |bound: Ty| {
@@ -884,7 +828,7 @@ fn type_param_upper_bounds(
         .map(|(_, bounds)| {
             let bound = bounds
                 .first()
-                .map(|tr| crate::resolve::ty_from_library(db, tr).substitute(db, &binding))
+                .map(|tr| crate::java::resolve::ty_from_library(db, tr).substitute(db, &binding))
                 .filter(|b| !b.is_object(db))
                 .unwrap_or(object);
             bound

@@ -9,18 +9,30 @@
 //!
 //! # Architecture
 //!
-//! * [`ty`] — the [`Ty`] model
-//!   ([JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)–[§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)).
-//! * [`resolve`] — source name resolution
+//! The crate is organized along the language boundary:
+//!
+//! * [`jvm`] — the language-agnostic JVM type substrate (primitive naming,
+//!   boxing and numeric promotion), free of any Java or Kotlin concepts;
+//! * [`java`] — the Java type layer: the [`Ty`] model
+//!   ([`java::ty`]), source name resolution ([`java::resolve`]),
+//!   subtyping ([`java::subtyping`]), method resolution ([`java::method`]),
+//!   expression inference ([`java::infer`], [`java::inference`]) and the
+//!   declaration diagnostics ([`java::decl_check`], [`java::name_check`],
+//!   [`java::diagnostics`], [`java::dep_index`], [`java::const_eval`]);
+//! * [`kotlin`] — the Kotlin type layer scaffold.
+//!
+//! The [`Ty`] model ([`java::ty`], [JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)–[§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)):
+//!
+//! * [`java::resolve`] — source name resolution
 //!   ([JLS §6.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5),
 //!   [§7.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5)) over a
 //!   [`Resolver`], turning `syntax::stub::TypeRef<Name>`s into [`Ty`]s.
-//! * [`subtyping`] — [`is_subtype`], [`is_assignable`] and the supertype walk.
-//! * [`method`] — the member set, access control, field resolution and the
+//! * [`java::subtyping`] — [`is_subtype`], [`is_assignable`] and the supertype walk.
+//! * [`java::method`] — the member set, access control, field resolution and the
 //!   applicability phases of method resolution ([§15.12](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12)).
-//! * [`infer`] — expression-level type inference over the lowered body IR.
-//! * [`inference`] — method invocation type inference ([§18.5.2]).
-//! * [`db`] — [`TyDatabase`], the salsa database trait.
+//! * [`java::infer`] — expression-level type inference over the lowered body IR.
+//! * [`java::inference`] — method invocation type inference ([§18.5.2]).
+//! * [`java::db`] — [`TyDatabase`], the salsa database trait.
 //!
 //! # Method invocation inference and access control
 //!
@@ -76,39 +88,30 @@
 //! All JLS references use the Java SE 26 edition
 //! (<https://docs.oracle.com/javase/specs/jls/se26/html/index.html>).
 
-pub mod const_eval;
-pub mod db;
-pub mod decl_check;
-pub mod dep_index;
-pub mod diagnostics;
-pub mod infer;
-pub mod inference;
-pub mod method;
-pub mod name_check;
-pub mod resolve;
-pub mod subtyping;
-pub mod ty;
+pub mod java;
+pub mod jvm;
+pub mod kotlin;
 
-pub use db::TyDatabase;
+pub use java::db::TyDatabase;
 // `DiagnosticCode` lives in the shared `syntax` crate; re-export it here so
 // the hir-ty API can keep naming it directly.
-pub use decl_check::{DeclDiagnostic, class_diagnostics};
-pub use diagnostics::{DiagLocation, TypeError};
-pub use infer::{BodyTypes, body_types};
-pub use inference::least_upper_bound;
-pub use method::all_methods as all_methods_for_test;
-pub use method::{
+pub use java::decl_check::{DeclDiagnostic, class_diagnostics};
+pub use java::diagnostics::{DiagLocation, TypeError};
+pub use java::infer::{BodyTypes, body_types};
+pub use java::inference::least_upper_bound;
+pub use java::method::all_methods as all_methods_for_test;
+pub use java::method::{
     Access, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,
     MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
     pick_method, single_abstract_method,
 };
-pub use resolve::scope_for_file as scope_for_test;
-pub use resolve::{
+pub use java::resolve::scope_for_file as scope_for_test;
+pub use java::resolve::{
     Resolver, item_ty, method_params, record_component_types, resolve_type_ref, scope_for_file,
     ty_from_library,
 };
-pub use subtyping::{is_assignable, is_subtype, supertypes};
-pub use syntax::{DiagnosticCode, JavaDiagnosticCode};
-pub use ty::{
+pub use java::subtyping::{is_assignable, is_subtype, supertypes};
+pub use java::ty::{
     BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
 };
+pub use syntax::{DiagnosticCode, JavaDiagnosticCode};

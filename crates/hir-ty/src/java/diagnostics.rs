@@ -14,8 +14,8 @@ use hir_expand::name::Name;
 use rowan::TextRange;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 
-use crate::db::TyDatabase;
-use crate::ty::Ty;
+use crate::java::db::TyDatabase;
+use crate::java::ty::Ty;
 
 /// Where a reported type error occurred, in the currency of the body IR: the
 /// stable-per-file arena ids the inference layer works with.

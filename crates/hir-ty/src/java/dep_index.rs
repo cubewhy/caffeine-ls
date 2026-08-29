@@ -38,9 +38,9 @@ use hir_expand::{
 };
 
 use crate::{
-    db::{ItemKey, TyDatabase, body_types_query, item_ty_query, method_params_query},
-    name_check::{body_type_refs, expr_forest_type_refs, item_type_refs},
-    subtyping::source_supertypes,
+    java::db::{ItemKey, TyDatabase, body_types_query, item_ty_query, method_params_query},
+    java::name_check::{body_type_refs, expr_forest_type_refs, item_type_refs},
+    java::subtyping::source_supertypes,
 };
 
 /// The workspace source files whose declarations `file`'s type outputs resolve
@@ -50,7 +50,7 @@ use crate::{
 /// members inherited from a different file are attributed to their declaring
 /// file.
 pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHashSet<FileId> {
-    let scope = crate::resolve::scope_for_file(db, file);
+    let scope = crate::java::resolve::scope_for_file(db, file);
     let tree = hir::file_item_tree(db, file);
 
     let mut out: FxHashSet<FileId> = FxHashSet::default();

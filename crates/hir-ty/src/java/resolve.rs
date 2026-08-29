@@ -27,8 +27,8 @@ use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
-    db::TyDatabase,
-    ty::{BoundKind, Ty, TyKind, WildcardBound, ty_from_type_ref},
+    java::db::TyDatabase,
+    java::ty::{BoundKind, Ty, TyKind, WildcardBound, ty_from_type_ref},
 };
 
 /// The per-file name context of a single item: its package, the compilation
@@ -356,7 +356,7 @@ fn inherited_member_candidates(
     for enclosing in resolver.enclosing() {
         let mut queue = vec![Ty::reference(db, enclosing.clone(), Vec::new())];
         while let Some(ty) = queue.pop() {
-            for parent in crate::subtyping::supertypes_impl(db, scope, &ty) {
+            for parent in crate::java::subtyping::supertypes_impl(db, scope, &ty) {
                 if parent.is_error(db) {
                     continue;
                 }
@@ -724,15 +724,15 @@ pub(crate) fn class_is_generic(
 
 /// The declared type of an item: the type of a field, the return type of a
 /// method, or the type of a class/interface/enum/record/annotation
-/// declaration. Memoized per (file, item) by the tracked query in [`crate::db`].
+/// declaration. Memoized per (file, item) by the tracked query in [`crate::java::db`].
 pub fn item_ty(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Ty {
-    crate::db::item_ty_query(db, crate::db::ItemKey::new(db, file_id, item_id))
+    crate::java::db::item_ty_query(db, crate::java::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// The parameter types of a method or constructor, in declaration order.
-/// Memoized per (file, item) by the tracked query in [`crate::db`].
+/// Memoized per (file, item) by the tracked query in [`crate::java::db`].
 pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
-    crate::db::method_params_query(db, crate::db::ItemKey::new(db, file_id, item_id))
+    crate::java::db::method_params_query(db, crate::java::db::ItemKey::new(db, file_id, item_id))
 }
 
 /// The element types of the record components of `item` (a record
@@ -740,9 +740,12 @@ pub fn method_params(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> V
 /// type (a varargs component `String... names` resolves to `String`). The IDE
 /// renders the accessor's array form (`String[]`, [§8.10.3]) and the canonical
 /// constructor's ellipsis form (`String...`, [§8.10.4]) from these. Memoized
-/// per (file, item) by the tracked query in [`crate::db`].
+/// per (file, item) by the tracked query in [`crate::java::db`].
 pub fn record_component_types(db: &dyn TyDatabase, file_id: FileId, item_id: ItemId) -> Vec<Ty> {
-    crate::db::record_component_types_query(db, crate::db::ItemKey::new(db, file_id, item_id))
+    crate::java::db::record_component_types_query(
+        db,
+        crate::java::db::ItemKey::new(db, file_id, item_id),
+    )
 }
 
 /// Lowers a library [`TypeRef<Symbol>`] to a [`Ty`]. Library names are

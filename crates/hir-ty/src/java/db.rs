@@ -6,9 +6,9 @@
 //! as tracked queries keyed on the interned [`ItemKey`], so repeated lookups of
 //! the same item (the IDE pattern) hit the query cache instead of re-walking
 //! the item tree. The member set of a name
-//! ([`crate::method::member_set_query`]) is likewise memoized per interned
+//! ([`crate::java::method::member_set_query`]) is likewise memoized per interned
 //! (scope, receiver, name, context), and the subtype/supertype walks
-//! ([`crate::subtyping`]) per interned pair. The type parameters in scope of
+//! ([`crate::java::subtyping`]) per interned pair. The type parameters in scope of
 //! every item of a file ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3))
 //! are computed once per file in [`type_params_map_query`].
 
@@ -22,9 +22,9 @@ use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use crate::{
-    method::{InvocationContext, InvocationMode},
-    resolve::{self, Resolver, item_data, resolve_type_ref, scope_for_file},
-    ty::Ty,
+    java::method::{InvocationContext, InvocationMode},
+    java::resolve::{self, Resolver, item_data, resolve_type_ref, scope_for_file},
+    java::ty::Ty,
 };
 
 /// The type database: [`hir::HirDatabase`] plus the type-system API of this
@@ -46,7 +46,7 @@ pub struct ItemKey {
 
 /// The set of libraries a type query may see: the interned analogue of
 /// [`hir::ResolutionScope`]. Interned (rather than passed as a plain value) so
-/// it can key the memoized subtype/supertype queries in [`crate::subtyping`].
+/// it can key the memoized subtype/supertype queries in [`crate::java::subtyping`].
 #[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
 pub struct ScopeId {
     pub kind: ScopeKind,
@@ -85,7 +85,7 @@ impl ScopeKind {
 
 /// The invocation context of a method or field access, interned so it can key
 /// the memoized member-set query
-/// ([`crate::method::member_set_query`]): the invocation mode
+/// ([`crate::java::method::member_set_query`]): the invocation mode
 /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
 /// plus the access-control context
 /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
@@ -256,43 +256,43 @@ pub(crate) fn record_component_types_query<'db>(
 }
 /// The inferred types of the expressions and locals of the body of `item` in
 /// `file` ([JLS §15], [§14.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4)),
-/// memoized per (file, item). See [`crate::infer::body_types_impl`].
+/// memoized per (file, item). See [`crate::java::infer::body_types_impl`].
 #[salsa::tracked(returns(clone))]
 pub(crate) fn body_types_query<'db>(
     db: &'db dyn TyDatabase,
     key: ItemKey<'db>,
-) -> Option<Arc<crate::infer::BodyTypes>> {
+) -> Option<Arc<crate::java::infer::BodyTypes>> {
     let file_id = key.file(db);
     let item_id = key.item(db);
-    crate::infer::body_types_impl(db, file_id, item_id).map(Arc::new)
+    crate::java::infer::body_types_impl(db, file_id, item_id).map(Arc::new)
 }
 
 /// The declaration-level diagnostics
 /// ([JLS §8.4.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.3),
 /// [§9.4.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.3))
 /// of every class in `file`, memoized per file. See
-/// [`crate::decl_check::class_diagnostics_impl`].
+/// [`crate::java::decl_check::class_diagnostics_impl`].
 #[salsa::tracked(returns(clone))]
 pub(crate) fn class_diagnostics_query(
     db: &dyn TyDatabase,
     file: FileText,
-) -> Vec<crate::decl_check::DeclDiagnostic> {
+) -> Vec<crate::java::decl_check::DeclDiagnostic> {
     let file_id = *file.file_id(db);
-    crate::decl_check::class_diagnostics_impl(db, file_id)
+    crate::java::decl_check::class_diagnostics_impl(db, file_id)
 }
 
 /// The workspace source files whose declarations `file`'s type outputs resolve
 /// against — the exact cross-file dependency set of `file`. Tracked on the
 /// interned [`FileText`], so a text edit to `file` invalidates exactly its
 /// dependency set and leaves every other file's memo untouched. See
-/// [`crate::dep_index::file_resolved_deps_impl`].
+/// [`crate::java::dep_index::file_resolved_deps_impl`].
 #[salsa::tracked(returns(ref))]
 pub(crate) fn file_resolved_deps_query(
     db: &dyn TyDatabase,
     file: FileText,
 ) -> Arc<FxHashSet<FileId>> {
     let file_id = *file.file_id(db);
-    Arc::new(crate::dep_index::file_resolved_deps_impl(db, file_id))
+    Arc::new(crate::java::dep_index::file_resolved_deps_impl(db, file_id))
 }
 
 /// The workspace source files whose declarations `file`'s type outputs
@@ -304,14 +304,16 @@ pub fn file_resolved_deps(db: &dyn TyDatabase, file_id: FileId) -> Arc<FxHashSet
 
 /// The resolution-relevant *names* of `file` — the sound name-level fallback
 /// of the cross-file dependency index. See
-/// [`crate::dep_index::file_dependency_refs_impl`].
+/// [`crate::java::dep_index::file_dependency_refs_impl`].
 #[salsa::tracked(returns(ref))]
 pub(crate) fn file_dependency_refs_query(
     db: &dyn TyDatabase,
     file: FileText,
 ) -> Arc<FxHashSet<Name>> {
     let file_id = *file.file_id(db);
-    Arc::new(crate::dep_index::file_dependency_refs_impl(db, file_id))
+    Arc::new(crate::java::dep_index::file_dependency_refs_impl(
+        db, file_id,
+    ))
 }
 
 /// The resolution-relevant names of `file`.
@@ -330,8 +332,8 @@ pub fn file_dependency_refs(db: &dyn TyDatabase, file_id: FileId) -> Arc<FxHashS
 /// as `""`. A virtual invocation
 /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
 /// is assumed; the per-call-site mode
-/// ([`crate::method::InvocationContext::with_mode`]) refines it. See
-/// [`crate::method::access_context`].
+/// ([`crate::java::method::InvocationContext::with_mode`]) refines it. See
+/// [`crate::java::method::access_context`].
 #[salsa::tracked(returns(copy))]
 pub(crate) fn access_context_key_query<'db>(
     db: &'db dyn TyDatabase,

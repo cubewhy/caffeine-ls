@@ -14,7 +14,7 @@
 mod common;
 
 use base_db::FileChange;
-use hir_ty::db::{file_dependency_refs, file_resolved_deps};
+use hir_ty::java::db::{file_dependency_refs, file_resolved_deps};
 use hir_ty::{pick_field, pick_method};
 use vfs::FileId;
 
