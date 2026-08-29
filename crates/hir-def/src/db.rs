@@ -42,7 +42,7 @@ fn lower_source_query(db: &dyn DefDatabase, file: FileText) -> Arc<LoweredFile> 
     // later recomputes the tree with the correct language instead of serving
     // an `Unknown`-lowered (empty) result.
     let language = base_db::file_language_kind(db, file_id).unwrap_or(LanguageKind::Unknown);
-    Arc::new(crate::lower::lower_source(language, file.text(db)))
+    Arc::new(crate::java::lower::lower_source(language, file.text(db)))
 }
 
 /// The lowered item tree of `file_id`: the declaration-only view of the file.

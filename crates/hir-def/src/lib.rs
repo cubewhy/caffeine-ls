@@ -20,7 +20,6 @@ pub mod db;
 pub mod java;
 pub mod jvm;
 pub mod kotlin;
-pub mod lower;
 
 pub use db::{DefDatabase, file_body_tree, file_item_tree};
 
@@ -30,5 +29,5 @@ pub fn lower_source(
     language: base_db::LanguageKind,
     text: &str,
 ) -> crate::java::item_tree::LoweredFile {
-    lower::lower_source(language, text)
+    crate::java::lower::lower_source(language, text)
 }

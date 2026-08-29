@@ -15,18 +15,13 @@ use hir_expand::{
     span::{NameRef, SpannedTypeRef},
 };
 
-use crate::java::{
-    item_tree::{
-        AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData,
-        ItemData, ItemId, MethodData, MethodExtra, MethodExtraJava, ModuleData, ModuleExports,
-        ModuleProvides, ModuleRequires, Param, RecordComponent, RecordData, Signature,
-        StaticInitData, TypeParam,
-    },
-    modifiers::JavaModifiers,
+use super::super::item_tree::{
+    AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData, ItemData,
+    ItemId, MethodData, MethodExtra, MethodExtraJava, ModuleData, ModuleExports, ModuleProvides,
+    ModuleRequires, Param, RecordComponent, RecordData, Signature, StaticInitData, TypeParam,
 };
-use crate::lower::LowerCtx;
-
-pub(super) mod body;
+use super::super::modifiers::JavaModifiers;
+use super::{LowerCtx, body};
 
 pub(super) fn lower_file(ctx: &mut LowerCtx, file: &java_syntax::SourceFile) {
     for child in file.syntax_node.children() {

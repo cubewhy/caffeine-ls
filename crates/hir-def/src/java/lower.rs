@@ -1,7 +1,9 @@
-//! Entry point of lowering and the per-file lowering context.
+//! Entry point of Java lowering and the per-file lowering context.
 //!
-//! [`LowerCtx`] owns the [`ItemTree`] being built; the language-specific
-//! walkers allocate items into it in CST order.
+//! [`LowerCtx`] owns the [`ItemTree`] being built; the walker ([`walk`])
+//! allocates items into it in CST order, and the body lowering ([`body`])
+//! fills the per-file body IR. Lowering is a pure function of the parsed
+//! file, computed once per file by a salsa query ([`crate::db`]).
 
 use std::sync::Arc;
 
@@ -12,12 +14,15 @@ use hir_expand::{
 };
 use syntax::SourceFile;
 
-use crate::java::item_tree::{ItemData, ItemId, ItemTree, LoweredFile};
+use super::item_tree::{ItemData, ItemId, ItemTree, LoweredFile};
 
-pub mod java;
-pub mod kotlin;
+pub(super) mod body;
+pub(super) mod walk;
 
-pub struct LowerCtx {
+/// The per-file lowering context of the Java walker: owns the [`ItemTree`]
+/// and [`BodyTree`] being built. Java-internal; the Kotlin lowering will have
+/// its own context.
+pub(in crate::java) struct LowerCtx {
     pub tree: ItemTree,
     pub bodies: BodyTree,
     /// The labels currently in scope, innermost last, so that `break`/`continue`
@@ -43,6 +48,10 @@ impl LowerCtx {
     }
 }
 
+/// Lowers `text` for `language` into the file's item tree plus body IR.
+///
+/// Kotlin files produce an empty item tree for now; the Kotlin CST is parsed
+/// but not yet lowered ([`crate::kotlin::lower`]).
 pub fn lower_source(language: LanguageKind, text: &str) -> LoweredFile {
     if language == LanguageKind::Unknown {
         return LoweredFile {
@@ -59,8 +68,11 @@ pub fn lower_source(language: LanguageKind, text: &str) -> LoweredFile {
 
     let mut ctx = LowerCtx::new(language);
     match file {
-        SourceFile::Java(file) => java::lower_file(&mut ctx, &file),
-        SourceFile::Kotlin(_) => kotlin::lower_file(&mut ctx),
+        SourceFile::Java(file) => walk::lower_file(&mut ctx, &file),
+        SourceFile::Kotlin(_) => {
+            // TODO(kotlin): lower the Kotlin CST into an item tree on top of
+            // the JVM substrate; see crate::kotlin::lower.
+        }
     }
     // The range arenas are allocated lock-step with the expr/local arenas;
     // assert the alignment so a direct allocation cannot silently

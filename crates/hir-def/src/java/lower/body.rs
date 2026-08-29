@@ -28,9 +28,9 @@ use hir_expand::{
 };
 
 use crate::java::item_tree::ItemId;
-use crate::lower::LowerCtx;
+use crate::java::lower::LowerCtx;
 
-use super::{token_is, token_text, trimmed_text};
+use super::walk::{token_is, token_text, trimmed_text, type_from};
 
 /// Lowers the `BLOCK` of a method or constructor as a [`Body`], binding the
 /// formal parameters (`None` for compact constructors).
@@ -98,7 +98,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
             let mut ty = child
                 .children()
                 .find(|c| c.kind() == J::TYPE)
-                .map(|t| super::type_from(&t))
+                .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §8.4.1: `T... last` is exactly equivalent to `T[] last` — in
             // the body the parameter is read as an array.
@@ -334,7 +334,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 .children()
                 .find(|c| c.kind() == J::TYPE)
                 .map(|ty| {
-                    let ty = super::type_from(&ty);
+                    let ty = type_from(&ty);
                     // §14.4.1/§14.14.2: `var` — a contextual keyword lexed as
                     // an identifier — writes no type; the loop variable's type
                     // is the element type of the iterable ([§14.14.2]). The
@@ -442,7 +442,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     let type_ref = decl
         .children()
         .find(|c| c.kind() == TYPE)
-        .map(|t| super::type_from(&t));
+        .map(|t| type_from(&t));
     // §14.4.1: `var` — a contextual keyword lexed as an identifier — writes
     // no type; the local's type is inferred from its initializer. A `None`
     // type on a local marks such a declaration for the type layer.
@@ -531,7 +531,7 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         .map(|ct| {
                             ct.children()
                                 .filter(|t| t.kind() == TYPE)
-                                .map(|t| super::type_from(&t))
+                                .map(|t| type_from(&t))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -600,7 +600,7 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
         let type_ref = decl
             .children()
             .find(|c| c.kind() == TYPE)
-            .map(|t| super::type_from(&t));
+            .map(|t| type_from(&t));
         // §14.4.1: `var` — a contextual keyword lexed as an identifier — writes
         // no type; the resource's type is inferred from its initializer.
         let is_var = type_ref.is_none()
@@ -942,7 +942,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t));
+                .map(|t| type_from(&t));
             ExprData::InstanceOf {
                 expr: expr_,
                 ty,
@@ -984,7 +984,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t))
+                .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             let expr_ = first_expr(ctx, owner, node);
             ExprData::Cast { ty, expr: expr_ }
@@ -1037,7 +1037,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let type_name = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t));
+                .map(|t| type_from(&t));
             let qualifier = node.children().find(|c| is_expr_kind(c.kind()));
             ExprData::MethodRef {
                 qualifier: qualifier.map(|c| expr(ctx, owner, &c)),
@@ -1293,7 +1293,7 @@ fn text_block_value(text: &str) -> String {
 
 fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
     if let Some(ty) = node.children().find(|c| c.kind() == J::TYPE) {
-        return ExprData::ClassLit(super::type_from(&ty));
+        return ExprData::ClassLit(type_from(&ty));
     }
     if let Some(prim) = node.children().find(|c| c.kind() == J::PRIMITIVE_TYPE_EXPR) {
         let p = prim
@@ -1412,7 +1412,7 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
     let base = node
         .children()
         .find(|c| c.kind() == TYPE)
-        .map(|t| super::type_from(&t))
+        .map(|t| type_from(&t))
         .or_else(|| {
             // `new Type<A>(...)` / `new int[3]` have no `TYPE` child: the base
             // type is the primitive keyword or the `QUALIFIED_NAME`, with the
@@ -1560,7 +1560,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
         let ty = c
             .children()
             .find(|t| t.kind() == TYPE)
-            .map(|t| super::type_from(&t));
+            .map(|t| type_from(&t));
         (name, ty)
     }
     fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<(Name, Option<SpannedTypeRef>)>) {
@@ -1616,7 +1616,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t))
+                .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §14.30.1: `Foo f` binds the identifier, whose declared type is
             // the pattern type; `Foo _` binds nothing.
@@ -1641,7 +1641,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
-                .map(|t| super::type_from(&t))
+                .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §14.30.2: `Point(int x, int y)` — each component is a nested
             // pattern node.
@@ -1875,7 +1875,7 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
         .filter(|c| c.kind() == TYPE_ARGUMENT)
         .map(|c| {
             if let Some(ty) = c.children().find(|t| t.kind() == TYPE) {
-                super::type_from(&ty)
+                type_from(&ty)
             } else if let Some(wild) = c.children().find(|w| w.kind() == WILDCARD_TYPE) {
                 let (bound, refs) = match wild.children().find(|b| b.kind() == WILDCARD_BOUNDS) {
                     Some(bounds) => {
@@ -1885,7 +1885,7 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
                         let inner = bounds
                             .children()
                             .find(|t| t.kind() == TYPE)
-                            .map(|t| super::type_from(&t))
+                            .map(|t| type_from(&t))
                             .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
                         let refs = inner.refs.clone();
                         let bound = if is_super {
