@@ -3,6 +3,8 @@
 //! classfile stubs).
 
 use crate::name::Name;
+use crate::span::NameRef;
+use rowan::TextRange;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
@@ -20,9 +22,10 @@ pub struct Modifiers {
     pub synchronized: bool,
     pub transient: bool,
     pub volatile: bool,
-    /// The names of the annotations on the declaration ([JLS §9.7]), as
-    /// written — a qualified name keeps its prefix.
-    pub annotations: Vec<Name>,
+    /// The names of the annotations on the declaration ([JLS §9.7]), each
+    /// with the source range of its (possibly qualified) name — a qualified
+    /// name keeps its prefix.
+    pub annotations: Vec<NameRef>,
 }
 
 impl Modifiers {
@@ -49,9 +52,9 @@ impl Modifiers {
         true
     }
 
-    /// Records an annotation name ([JLS §9.7]).
-    pub fn push_annotation(&mut self, name: Name) {
-        self.annotations.push(name);
+    /// Records an annotation name ([JLS §9.7]) with its source range.
+    pub fn push_annotation(&mut self, name: Name, range: TextRange) {
+        self.annotations.push(NameRef::new(name, range));
     }
 
     /// The recognized modifier names, in display order.

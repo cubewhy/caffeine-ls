@@ -17,7 +17,7 @@ use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, LocalId, PatternId, StmtData, StmtId},
     item_tree::{ItemData, ItemId, ItemTree},
     name::Name,
-    span::SpannedTypeRef,
+    span::{NameRef, SpannedTypeRef},
 };
 use rowan::TextRange;
 use rustc_hash::FxHashMap;
@@ -78,21 +78,32 @@ pub(crate) fn check_spanned(
         return;
     }
     for reference in &spanned.refs {
-        match resolve_name_checked(db, scope, resolver, &reference.name) {
-            NameResolution::TypeVar | NameResolution::Resolved(_) => {}
-            NameResolution::Ambiguous(_) => into.push(TypeRefDiag::Ambiguous {
-                name: reference.name.clone(),
-                range: reference.range,
-            }),
-            NameResolution::NotAccessible(_) => into.push(TypeRefDiag::ModuleNotAccessible {
-                name: reference.name.clone(),
-                range: reference.range,
-            }),
-            NameResolution::Unresolved => into.push(TypeRefDiag::CannotResolve {
-                name: reference.name.clone(),
-                range: reference.range,
-            }),
-        }
+        check_reference(db, scope, resolver, reference, into);
+    }
+}
+
+/// The checked resolution outcome of one reference name, pushed into `into`.
+fn check_reference(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    reference: &NameRef,
+    into: &mut Vec<TypeRefDiag>,
+) {
+    match resolve_name_checked(db, scope, resolver, &reference.name) {
+        NameResolution::TypeVar | NameResolution::Resolved(_) => {}
+        NameResolution::Ambiguous(_) => into.push(TypeRefDiag::Ambiguous {
+            name: reference.name.clone(),
+            range: reference.range,
+        }),
+        NameResolution::NotAccessible(_) => into.push(TypeRefDiag::ModuleNotAccessible {
+            name: reference.name.clone(),
+            range: reference.range,
+        }),
+        NameResolution::Unresolved => into.push(TypeRefDiag::CannotResolve {
+            name: reference.name.clone(),
+            range: reference.range,
+        }),
     }
 }
 
@@ -194,8 +205,50 @@ pub(crate) fn package_path_diagnostics(
     Vec::new()
 }
 
-/// The unknown-reference diagnostics of the *declaration* type references and the
-/// imports of a file ([JLS §6.5.5.1], [§7.5.1]).
+/// The named annotation references of a *declaration* item
+/// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)):
+/// the annotations of every modifier list, of record components and of the
+/// type parameters of classes/interfaces/records and methods. Each resolves
+/// like a type name ([JLS §6.5.5.1]) — an annotation type *is* a reference
+/// type — so an unknown one is reported the same way.
+fn item_annotation_refs(data: &ItemData) -> Vec<&NameRef> {
+    fn mods<'a>(m: &'a hir_expand::modifiers::Modifiers, out: &mut Vec<&'a NameRef>) {
+        out.extend(m.annotations.iter());
+    }
+    fn type_params<'a>(params: &'a [hir_expand::item_tree::TypeParam], out: &mut Vec<&'a NameRef>) {
+        for param in params {
+            out.extend(param.annotations.iter());
+        }
+    }
+    let mut out = Vec::new();
+    match data {
+        ItemData::Class(d) | ItemData::Interface(d) => {
+            mods(&d.modifiers, &mut out);
+            type_params(&d.type_params, &mut out);
+        }
+        ItemData::Enum(d) => mods(&d.modifiers, &mut out),
+        ItemData::Record(d) => {
+            mods(&d.modifiers, &mut out);
+            type_params(&d.type_params, &mut out);
+            for component in &d.components {
+                out.extend(component.annotations.iter());
+            }
+        }
+        ItemData::Annotation(d) => mods(&d.modifiers, &mut out),
+        ItemData::Module(d) => mods(&d.modifiers, &mut out),
+        ItemData::Method(d) => {
+            mods(&d.modifiers, &mut out);
+            type_params(&d.sig.type_params, &mut out);
+        }
+        ItemData::Field(d) => mods(&d.modifiers, &mut out),
+        ItemData::EnumConstant(_) | ItemData::StaticInit(_) | ItemData::InstanceInit(_) => {}
+    }
+    out
+}
+
+/// The unknown-reference diagnostics of the *declaration* type references
+/// ([JLS §6.5.5.1], [§7.5.1]) — including the *annotation* references of the
+/// declarations ([JLS §9.7]) — and of the imports of a file.
 pub(crate) fn declaration_type_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
@@ -220,6 +273,13 @@ pub(crate) fn declaration_type_diagnostics(
         let mut issues = Vec::new();
         for spanned in item_type_refs(tree.data(id)) {
             check_spanned(db, scope, &resolver, spanned, &mut issues);
+        }
+        // §9.7/§6.5.5.1: the declaration's annotation names resolve like any
+        // type reference — an unknown `@Name` is reported the same way (*not*
+        // skipped by the caller's `check_spanned`, which the annotations
+        // bypass because they are not `SpannedTypeRef`s).
+        for reference in item_annotation_refs(tree.data(id)) {
+            check_reference(db, scope, &resolver, reference, &mut issues);
         }
         for issue in issues {
             match issue {

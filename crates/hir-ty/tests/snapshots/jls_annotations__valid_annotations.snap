@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/jls_annotations.rs
+assertion_line: 21
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.util.List;
+
+@Deprecated
+@SuppressWarnings("unchecked")
+interface AnnTarget {}
+
+@FunctionalInterface
+interface Workable {
+    void work();
+}
+
+@interface Local {
+    String value();
+}
+
+class Base {
+    void run() {}
+}
+
+class Anns extends Base {
+    @Override
+    void run() {}
+
+    @Deprecated
+    int legacy;
+
+    @Local
+    void local() {}
+
+    @java.lang.Deprecated
+    void qualified() {}
+}

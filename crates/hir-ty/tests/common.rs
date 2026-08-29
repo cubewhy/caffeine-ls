@@ -494,6 +494,24 @@ pub fn interface_ext(fqn: &'static str, interfaces: &'static [&'static str]) -> 
     interface_sig(fqn, interfaces, None)
 }
 
+/// An annotation type ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)):
+/// `ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT | ACC_ANNOTATION`, which
+/// `ClassKind::from_flags` classifies as `Annotation`
+/// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)).
+pub fn annotation(fqn: &'static str) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class: None,
+        interfaces: &[],
+        access: 0x2601,
+        fields: &[],
+        methods: &[],
+        method_sigs: &[],
+        method_access: &[],
+        sig: None,
+    }
+}
+
 /// Like [`interface_ext`], but carrying a class-level `Signature` attribute.
 pub fn interface_sig(
     fqn: &'static str,
@@ -791,6 +809,19 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         ),
         interface("java/lang/Cloneable"),
         interface("java/io/Serializable"),
+        // Annotations resolved by the declaration checks
+        // ([JLS §9.7], [§9.6.4.4]) and by the annotation fixtures.
+        annotation("java/lang/Deprecated"),
+        annotation("java/lang/Override"),
+        annotation("java/lang/SuppressWarnings"),
+        annotation("java/lang/FunctionalInterface"),
+        annotation("java/lang/SafeVarargs"),
+        annotation("java/lang/annotation/Annotation"),
+        annotation("java/lang/annotation/Documented"),
+        annotation("java/lang/annotation/Retention"),
+        annotation("java/lang/annotation/Target"),
+        class("java/lang/annotation/RetentionPolicy", None, &[]),
+        class("java/lang/annotation/ElementType", None, &[]),
         interface_with_methods(
             "java/lang/Iterable",
             &[],

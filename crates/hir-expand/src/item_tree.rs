@@ -12,14 +12,13 @@
 use std::sync::Arc;
 
 use rowan::TextRange;
-use syntax::stub::AnnotationSig;
 
 use crate::{
     arena::{Arena, ArenaId},
     body::{BodyId, BodyTree, ExprId},
     modifiers::Modifiers,
     name::Name,
-    span::SpannedTypeRef,
+    span::{NameRef, SpannedTypeRef},
 };
 
 pub use base_db::LanguageKind;
@@ -316,22 +315,24 @@ pub struct ModuleProvides {
 
 /// A declared type parameter of a class or method
 /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
-/// with source-spanned bounds.
+/// with source-spanned bounds and the annotations on the type-parameter
+/// declaration ([JLS §9.7.4]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     pub name: Name,
     pub bounds: Vec<SpannedTypeRef>,
-    pub annotations: Vec<AnnotationSig<Name>>,
+    pub annotations: Vec<NameRef>,
 }
 
 /// A record component declaration `T name`
 /// ([JLS §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1)),
-/// with the source-spanned component type.
+/// with the source-spanned component type and the annotations on the
+/// component declaration ([JLS §9.7.4]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordComponent {
     pub name: Name,
     pub ty: SpannedTypeRef,
     /// Whether the component was declared varargs (`String... names`).
     pub varargs: bool,
-    pub annotations: Vec<AnnotationSig<Name>>,
+    pub annotations: Vec<NameRef>,
 }

@@ -399,7 +399,7 @@ fn check_class(
             && m.modifiers
                 .annotations
                 .iter()
-                .any(|name| is_override_annotation(db, scope, &resolver, name))
+                .any(|annotation| is_override_annotation(db, scope, &resolver, &annotation.name))
         {
             let Some(method) = declared
                 .iter()

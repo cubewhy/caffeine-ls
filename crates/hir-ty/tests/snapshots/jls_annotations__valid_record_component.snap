@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_annotations.rs
+assertion_line: 69
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+import java.util.List;
+
+@Deprecated
+record Rec(@Deprecated @SuppressWarnings("x") List<String> items) {}

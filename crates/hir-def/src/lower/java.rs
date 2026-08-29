@@ -657,17 +657,15 @@ fn child_modifiers(node: &SyntaxNode<Lang>) -> Modifiers {
             let mut modifiers = Modifiers::default();
             for element in mods.children_with_tokens() {
                 match element {
-                    // §9.7: an annotation in the modifier list — record its
-                    // (possibly qualified) name.
                     NodeOrToken::Node(annotation)
                         if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION) =>
                     {
-                        if let Some(name) = annotation
-                            .descendants()
-                            .find(|d| d.kind() == J::QUALIFIED_NAME)
-                        {
-                            modifiers.push_annotation(Name::new(&name.text().to_string()));
-                        }
+                        // §9.7: an annotation in the modifier list — record its
+                        // (possibly qualified) name and range.
+                        modifiers.push_annotation(
+                            annotation_name(&annotation),
+                            annotation_name_range(&annotation),
+                        );
                     }
                     NodeOrToken::Node(_) => {}
                     NodeOrToken::Token(token) => {
@@ -678,6 +676,54 @@ fn child_modifiers(node: &SyntaxNode<Lang>) -> Modifiers {
             modifiers
         })
         .unwrap_or_default()
+}
+
+/// The reference name (`NameRef`) of an `ANNOTATION`/`MARKER_ANNOTATION`
+/// syntax node: the (possibly qualified) name after the `@`
+/// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7))
+/// with its source range.
+fn annotation_name_ref(annotation: &SyntaxNode<Lang>) -> Option<NameRef> {
+    annotation
+        .descendants()
+        .find(|d| d.kind() == J::QUALIFIED_NAME)
+        .map(|name| NameRef::new(Name::new(&name.text().to_string()), name.text_range()))
+}
+
+fn annotation_name(annotation: &SyntaxNode<Lang>) -> Name {
+    annotation_name_ref(annotation).map_or_else(missing_name, |r| r.name)
+}
+
+fn annotation_name_range(annotation: &SyntaxNode<Lang>) -> rowan::TextRange {
+    annotation_name_ref(annotation)
+        .and_then(|r| r.range)
+        .unwrap_or_else(|| annotation.text_range())
+}
+
+/// The type-use annotation references of a `TYPE` node
+/// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)):
+/// the leading annotations (`@Nullable Object`), the per-qualifier-segment
+/// annotations (`Connection.@Nullable Response`) and the per-dimension
+/// annotations (`int @Nullable []`). Nested types in type arguments are not
+/// descended into — they are lowered as their own [`SpannedTypeRef`]s, so
+/// their annotations are reported from there (no duplicates).
+fn type_annotation_refs(node: &SyntaxNode<Lang>) -> Vec<NameRef> {
+    let mut out = Vec::new();
+    for child in node.children() {
+        if !matches!(
+            child.kind(),
+            J::MODIFIER_LIST | J::DIMENSIONS | J::DIMENSION
+        ) {
+            continue;
+        }
+        for annotation in child.descendants() {
+            if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION)
+                && let Some(name) = annotation_name_ref(&annotation)
+            {
+                out.push(name);
+            }
+        }
+    }
+    out
 }
 
 fn child_type_params(node: &SyntaxNode<Lang>) -> Vec<TypeParam> {
@@ -758,12 +804,27 @@ fn component_from(node: &SyntaxNode<Lang>) -> RecordComponent {
         NodeOrToken::Token(token) => token.kind() == J::ELLIPSIS,
         NodeOrToken::Node(_) => false,
     });
+    // §9.7.4: the annotations on the component declaration (`record R(
+    // @Ann String s)`) live in its leading `MODIFIER_LIST`, like a field's.
+    let annotations = node
+        .children()
+        .find(|child| is(child, J::MODIFIER_LIST))
+        .map(|mods| annotations_from(&mods))
+        .unwrap_or_default();
     RecordComponent {
         name,
         ty,
         varargs,
-        annotations: Vec::new(),
+        annotations,
     }
+}
+
+/// The annotation reference names of a `MODIFIER_LIST` node, in order.
+fn annotations_from(mods: &SyntaxNode<Lang>) -> Vec<NameRef> {
+    mods.children()
+        .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
+        .filter_map(|annotation| annotation_name_ref(&annotation))
+        .collect()
 }
 
 /// The types listed in the named clause (`THROWS_CLAUSE`, `IMPLEMENTS_CLAUSE`,
@@ -822,7 +883,12 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
         for _ in 0..dimension_count(node) {
             ty = TypeRef::Array(Box::new(ty));
         }
-        return SpannedTypeRef::synthetic(ty);
+        // §9.7.4: the annotations on the array dimensions (`int @Nullable []`)
+        // are reference names like any type name ([JLS §6.5.5.1]).
+        return SpannedTypeRef {
+            ty,
+            refs: type_annotation_refs(node),
+        };
     }
 
     // reference type: QUALIFIED_NAME [TYPE_ARGUMENTS] (DOT IDENTIFIER TYPE_ARGUMENTS)* [DIMENSIONS]
@@ -892,8 +958,9 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
         return SpannedTypeRef::synthetic(TypeRef::Error);
     }
 
-    // Reference names of the type: its own name first, then those of its
-    // (recursively) generic arguments, depth-first.
+    // Reference names of the type: its own name first, then its type-use
+    // annotations ([§9.7.4]), then those of its (recursively) generic
+    // arguments, depth-first.
     let mut refs = Vec::with_capacity(1 + generic_args.len());
     if let Some(start) = name_start {
         refs.push(NameRef::new(
@@ -901,6 +968,7 @@ pub(super) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
             TextRange::new(start, name_end),
         ));
     }
+    refs.extend(type_annotation_refs(node));
     for arg in &generic_args {
         refs.extend(arg.refs.iter().cloned());
     }
