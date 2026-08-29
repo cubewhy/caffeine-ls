@@ -232,6 +232,20 @@ parser_snapshot!(
 );
 
 parser_snapshot!(
+    parse_annotated_statement,
+    indoc! {r#"
+        fun main() {
+            val x = make()
+
+            // `statement: {label | annotation} (…)` — an annotation may prefix
+            // a plain statement, not only declarations.
+            @Suppress("UsePropertyAccessSyntax")
+            x.setFoo(1)
+        }
+    "#}
+);
+
+parser_snapshot!(
     parse_loops,
     indoc! {r#"
         fun main() {

@@ -28,8 +28,15 @@ pub(crate) fn statements(p: &mut Parser) {
 }
 
 /// Whether the current token can start a statement.
+///
+/// `statement`: {label | annotation} (declaration | assignment |
+///              loopStatement | expression)
+/// [spec: grammar-rule-statement] https://kotlinlang.org/spec/syntax-and-grammar.html#grammar-rule-statement
+///
+/// An annotation (`@Foo`) may prefix a statement, so `AT` starts a statement
+/// just like `declaration`/`loop`/`expression`.
 pub(crate) fn at_statement(p: &Parser) -> bool {
-    at_declaration(p) || at_loop(p) || at_expression(p)
+    p.at(AT) || at_declaration(p) || at_loop(p) || at_expression(p)
 }
 
 fn at_loop(p: &Parser) -> bool {

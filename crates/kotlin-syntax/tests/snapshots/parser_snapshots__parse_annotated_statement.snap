@@ -1,0 +1,133 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+fun main() {
+    val x = make()
+
+    // `statement: {label | annotation} (…)` — an annotation may prefix
+    // a plain statement, not only declarations.
+    @Suppress("UsePropertyAccessSyntax")
+    x.setFoo(1)
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "make"
+L_PAREN "("
+R_PAREN ")"
+NEWLINE "\n\n"
+WHITESPACE "    "
+LINE_COMMENT "// `statement: {label | annotation} (…)` — an annotation may prefix"
+NEWLINE "\n"
+WHITESPACE "    "
+LINE_COMMENT "// a plain statement, not only declarations."
+NEWLINE "\n"
+WHITESPACE "    "
+AT "@"
+IDENTIFIER "Suppress"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "UsePropertyAccessSyntax"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "x"
+DOT "."
+IDENTIFIER "setFoo"
+L_PAREN "("
+INTEGER_LITERAL "1"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..217
+  IMPORT_LIST@0..0
+  FUNCTION_DECL@0..216
+    FUN_KW@0..3 "fun"
+    WHITESPACE@3..4 " "
+    IDENTIFIER@4..8 "main"
+    VALUE_PARAMETERS@8..10
+      L_PAREN@8..9 "("
+      R_PAREN@9..10 ")"
+    WHITESPACE@10..11 " "
+    BLOCK@11..216
+      L_BRACE@11..12 "{"
+      NEWLINE@12..13 "\n"
+      WHITESPACE@13..17 "    "
+      PROPERTY_DECL@17..158
+        VAL_KW@17..20 "val"
+        WHITESPACE@20..21 " "
+        VARIABLE_DECLARATION@21..22
+          IDENTIFIER@21..22 "x"
+        WHITESPACE@22..23 " "
+        EQUAL@23..24 "="
+        WHITESPACE@24..25 " "
+        POSTFIX_UNARY_EXPRESSION@25..31
+          PRIMARY_EXPRESSION@25..29
+            IDENTIFIER@25..29 "make"
+          CALL_EXPRESSION@29..31
+            VALUE_ARGUMENTS@29..31
+              L_PAREN@29..30 "("
+              R_PAREN@30..31 ")"
+        NEWLINE@31..33 "\n\n"
+        WHITESPACE@33..37 "    "
+        LINE_COMMENT@37..108 "// `statement: {label ..."
+        NEWLINE@108..109 "\n"
+        WHITESPACE@109..113 "    "
+        LINE_COMMENT@113..157 "// a plain statement, ..."
+        NEWLINE@157..158 "\n"
+      WHITESPACE@158..162 "    "
+      ANNOTATION@162..199
+        AT@162..163 "@"
+        USER_TYPE@163..171
+          IDENTIFIER@163..171 "Suppress"
+        VALUE_ARGUMENTS@171..198
+          L_PAREN@171..172 "("
+          VALUE_ARGUMENT@172..197
+            STRING_LITERAL@172..197
+              OPEN_QUOTE@172..173 "\""
+              STRING_CONTENT@173..196 "UsePropertyAccessSyntax"
+              CLOSE_QUOTE@196..197 "\""
+          R_PAREN@197..198 ")"
+        NEWLINE@198..199 "\n"
+      WHITESPACE@199..203 "    "
+      EXPRESSION_STATEMENT@203..214
+        POSTFIX_UNARY_EXPRESSION@203..214
+          PRIMARY_EXPRESSION@203..204
+            IDENTIFIER@203..204 "x"
+          NAVIGATION_SUFFIX@204..211
+            DOT@204..205 "."
+            IDENTIFIER@205..211 "setFoo"
+          CALL_EXPRESSION@211..214
+            VALUE_ARGUMENTS@211..214
+              L_PAREN@211..212 "("
+              VALUE_ARGUMENT@212..213
+                PRIMARY_EXPRESSION@212..213
+                  INTEGER_LITERAL@212..213 "1"
+              R_PAREN@213..214 ")"
+      NEWLINE@214..215 "\n"
+      R_BRACE@215..216 "}"
+  NEWLINE@216..217 "\n"
