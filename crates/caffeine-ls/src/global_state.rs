@@ -56,6 +56,12 @@ pub enum BackgroundTaskEvent {
         id: lsp_server::RequestId,
         run: PendingRequest,
     },
+    /// An async request observed its `$/cancelRequest` token and stopped early.
+    /// The main loop has already replied `RequestCancelled`; no further
+    /// response is sent and the worker's snapshot is dropped.
+    AsyncRequestAborted {
+        id: lsp_server::RequestId,
+    },
     NotifyUser {
         typ: lsp_types::MessageType,
         message: String,
@@ -126,6 +132,44 @@ type ReqQueue = lsp_server::ReqQueue<(String, Instant), OutgoingRequest>;
 /// captured inside the closure.
 pub(crate) type PendingRequest = Box<dyn FnOnce(GlobalStateSnapshot) + Send>;
 
+/// The client-cancellation token of an in-flight async request. Flipped by
+/// `$/cancelRequest` so the running worker stops instead of burning CPU to
+/// completion; salsa's cancellation only fires for pending writes.
+#[derive(Clone)]
+pub(crate) struct CancellationToken(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )))
+    }
+}
+
+impl CancellationToken {
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Error a handler returns once it observes its [`CancellationToken`] flipped.
+/// The main loop has already replied `RequestCancelled`; the worker just drops
+/// its snapshot — no re-queue, no duplicate response.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClientCancelled;
+
+impl std::fmt::Display for ClientCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("request cancelled by client")
+    }
+}
+
+impl std::error::Error for ClientCancelled {}
+
 pub struct GlobalState {
     sender: Sender<lsp_server::Message>,
     req_queue: ReqQueue,
@@ -162,6 +206,10 @@ pub struct GlobalState {
     /// Async requests cancelled by a pending salsa write, re-run once the
     /// write is applied. See [`BackgroundTaskEvent::AsyncRequestRetry`].
     pub(crate) pending_requests: Vec<PendingRequest>,
+    /// Cancellation tokens of in-flight async requests, keyed by request id, so
+    /// `$/cancelRequest` aborts the running worker instead of letting it finish
+    /// a full pull.
+    pub(crate) inflight_cancellations: FxHashMap<lsp_server::RequestId, CancellationToken>,
     /// Tracks the loader config version whose VFS scan progress is currently
     /// being reported to the client, so stale `Message::Progress` updates from
     /// a previous (reload) config are ignored.
@@ -221,6 +269,7 @@ impl GlobalState {
             vfs: Arc::new(RwLock::new((vfs::Vfs::default(), Default::default()))),
             vfs_config_version: 0,
             pending_requests: Vec::new(),
+            inflight_cancellations: FxHashMap::default(),
             scan_config_version: None,
             progress_tokens: FxHashMap::default(),
             file_set_config: None,
@@ -262,9 +311,12 @@ impl GlobalState {
     where
         R: serde::Serialize,
     {
-        if let Some((method, start)) = self.req_queue.incoming.complete(&id) {
-            tracing::info!("handled {} in {:?}", method, start.elapsed());
-        }
+        // The entry may already be gone if `$/cancelRequest` replied first;
+        // drop the late result instead of sending a duplicate response.
+        let Some((method, start)) = self.req_queue.incoming.complete(&id) else {
+            return;
+        };
+        tracing::info!("handled {} in {:?}", method, start.elapsed());
         let resp = lsp_server::Response::new_ok(id, result);
         self.send(resp.into());
     }
@@ -275,9 +327,12 @@ impl GlobalState {
         code: ErrorCode,
         message: String,
     ) {
-        if let Some((method, _)) = self.req_queue.incoming.complete(&id) {
-            tracing::error!("failed {}: {}", method, message);
-        }
+        // See [`Self::respond_ok`]: a cancelled request already has its
+        // `RequestCancelled` response, so a late error is dropped silently.
+        let Some((method, _)) = self.req_queue.incoming.complete(&id) else {
+            return;
+        };
+        tracing::error!("failed {}: {}", method, message);
         let resp = lsp_server::Response::new_err(id, code as i32, message);
         self.send(resp.into());
     }
@@ -309,6 +364,22 @@ impl GlobalState {
         self.req_queue
             .incoming
             .register(req.id.clone(), (req.method.clone(), request_received));
+    }
+
+    /// Registers a fresh cancellation token for an in-flight async request and
+    /// returns it, so the worker carries the token the client flips.
+    pub(crate) fn register_async_cancellation(
+        &mut self,
+        id: lsp_server::RequestId,
+    ) -> CancellationToken {
+        let token = CancellationToken::default();
+        self.inflight_cancellations.insert(id, token.clone());
+        token
+    }
+
+    /// Drops the cancellation token of a finished async request.
+    pub(crate) fn remove_async_cancellation(&mut self, id: &lsp_server::RequestId) {
+        self.inflight_cancellations.remove(id);
     }
 
     pub(crate) fn complete_request(&mut self, resp: lsp_server::Response) {
@@ -369,6 +440,7 @@ impl GlobalState {
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
             diagnostics: self.diagnostics.clone(),
+            cancelled: CancellationToken::default(),
         }
     }
 
@@ -386,6 +458,11 @@ impl GlobalState {
     }
 
     pub(crate) fn cancel(&mut self, request_id: lsp_server::RequestId) {
+        // Flip the in-flight worker's token so it stops at the next checkpoint
+        // instead of running the whole pull to completion.
+        if let Some(token) = self.inflight_cancellations.get(&request_id) {
+            token.cancel();
+        }
         if let Some(response) = self.req_queue.incoming.cancel(request_id) {
             self.send(response.into());
         }
@@ -398,6 +475,9 @@ pub struct GlobalStateSnapshot {
     mem_docs: MemDocs,
     vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
     pub(crate) diagnostics: DiagnosticsMap,
+    /// Set by `$/cancelRequest` for the request this snapshot serves; workers
+    /// checkpoint it and abort early instead of finishing a full pull.
+    pub(crate) cancelled: CancellationToken,
 }
 
 impl GlobalStateSnapshot {

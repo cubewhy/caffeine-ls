@@ -36,8 +36,7 @@ impl<'a> RequestDispatcher<'a> {
         self
     }
 
-    /// Dispatches a request to a handler on the thread pool. Currently unused,
-    /// but kept as the building block for future expensive (async) requests.
+    /// Dispatches a request to a handler on the thread pool.
     pub(crate) fn on_async<R>(
         &mut self,
         worker: fn(GlobalStateSnapshot, R::Params) -> anyhow::Result<R::Result>,
@@ -52,7 +51,11 @@ impl<'a> RequestDispatcher<'a> {
             None => return self,
         };
 
-        let snapshot = self.global_state.snapshot();
+        // Register the request's cancellation token before spawning so a
+        // `$/cancelRequest` racing the spawn still finds it.
+        let token = self.global_state.register_async_cancellation(id.clone());
+        let mut snapshot = self.global_state.snapshot();
+        snapshot.cancelled = token;
         let task_sender = self.global_state.task_sender.clone();
 
         self.global_state.thread_pool.execute(move || {
@@ -119,7 +122,10 @@ fn run_and_report<R>(
 /// Builds a closure that runs `worker` once, owning `params`. On success it
 /// reports the serialized result; on a pending-write cancellation it reports
 /// an [`BackgroundTaskEvent::AsyncRequestRetry`] carrying a fresh closure that
-/// owns `params` again, so the request can be re-run after the write lands.
+/// owns `params` again, so the request can be re-run after the write lands. A
+/// client-cancelled run ([`ClientCancelled`]) reports
+/// [`BackgroundTaskEvent::AsyncRequestAborted`]; the main loop already replied
+/// `RequestCancelled`, so no re-queue happens.
 fn retry_closure<R>(
     task_sender: Sender<BackgroundTaskEvent>,
     id: lsp_server::RequestId,
@@ -150,6 +156,13 @@ where
             {
                 let run = retry_closure::<R>(task_sender.clone(), retry_id, worker, retry_params);
                 let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestRetry { id, run });
+            }
+            Err(err)
+                if err
+                    .downcast_ref::<crate::global_state::ClientCancelled>()
+                    .is_some() =>
+            {
+                let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestAborted { id });
             }
             Err(err) => {
                 let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
@@ -276,6 +289,32 @@ mod tests {
         assert_eq!(id, id);
         assert!(result.is_ok());
 
+        assert!(rx.is_empty());
+    }
+
+    #[test]
+    fn client_cancelled_request_aborts_without_requeue() {
+        let (tx, rx) = unbounded();
+        let id = RequestId::from(2);
+
+        fn cancelling_worker(snapshot: GlobalStateSnapshot, _params: ()) -> anyhow::Result<()> {
+            crate::diagnostics::check_cancelled(&snapshot)
+        }
+
+        // A snapshot carrying a cancelled token makes the worker abort.
+        let mut snapshot = snapshot();
+        snapshot.cancelled.cancel();
+
+        let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), cancelling_worker, ());
+        run(snapshot);
+
+        // The abort must be reported as such — never re-queued, never
+        // completed with a result: the main loop already replied cancelled.
+        let event = rx.recv().unwrap();
+        let BackgroundTaskEvent::AsyncRequestAborted { id: aborted_id } = event else {
+            panic!("expected AsyncRequestAborted");
+        };
+        assert_eq!(aborted_id, id);
         assert!(rx.is_empty());
     }
 }

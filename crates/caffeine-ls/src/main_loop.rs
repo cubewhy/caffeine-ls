@@ -499,17 +499,25 @@ impl GlobalState {
                 tracing::info!("VFS file system synchronization completed.");
             }
 
-            BackgroundTaskEvent::AsyncRequestCompleted { id, result } => match result {
-                Ok(resp_json) => {
-                    self.respond_ok(id, resp_json);
+            BackgroundTaskEvent::AsyncRequestCompleted { id, result } => {
+                self.remove_async_cancellation(&id);
+                match result {
+                    Ok(resp_json) => {
+                        self.respond_ok(id, resp_json);
+                    }
+                    Err(err) => {
+                        self.respond_err(id, ErrorCode::InternalError, err.to_string());
+                    }
                 }
-                Err(err) => {
-                    self.respond_err(id, ErrorCode::InternalError, err.to_string());
-                }
-            },
+            }
             BackgroundTaskEvent::AsyncRequestRetry { id, run } => {
                 tracing::debug!(?id, "request cancelled by pending write; queuing for retry");
+                self.remove_async_cancellation(&id);
                 self.pending_requests.push(run);
+            }
+            BackgroundTaskEvent::AsyncRequestAborted { id } => {
+                tracing::debug!(?id, "request aborted by client cancellation");
+                self.remove_async_cancellation(&id);
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
 
@@ -1141,7 +1149,12 @@ impl GlobalState {
                         cross_file,
                     });
                 }
-                Err(Cancelled::PendingWrite) => {
+                Err(err)
+                    if matches!(
+                        err.downcast_ref::<Cancelled>(),
+                        Some(Cancelled::PendingWrite)
+                    ) =>
+                {
                     let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsRetry { changed });
                 }
                 Err(cancelled) => {

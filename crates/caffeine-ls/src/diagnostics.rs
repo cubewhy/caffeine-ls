@@ -36,7 +36,10 @@ use vfs::FileId;
 
 use ide::{Analysis, Cancellable, LanguageKind};
 
-use crate::{global_state::GlobalStateSnapshot, lsp::diagnostics as lsp_diagnostics};
+use crate::{
+    global_state::{ClientCancelled, GlobalStateSnapshot},
+    lsp::diagnostics as lsp_diagnostics,
+};
 
 /// Cap on the number of related documents embedded in one pull response, so a
 /// single request can never balloon into a multi-megabyte payload even after a
@@ -59,6 +62,16 @@ pub(crate) fn lint_allows(lints: &[String], diagnostic: &ide::Diagnostic) -> boo
         _ => return true,
     };
     lints.iter().any(|lint| lint == gated)
+}
+
+/// A checkpoint an expensive diagnostics loop consults every few files: if the
+/// client cancelled the in-flight request, abort instead of finishing the work
+/// (which would otherwise run to completion, burning CPU past the cancel).
+pub(crate) fn check_cancelled(snapshot: &GlobalStateSnapshot) -> anyhow::Result<()> {
+    if snapshot.cancelled.is_cancelled() {
+        return Err(ClientCancelled.into());
+    }
+    Ok(())
 }
 
 /// The wire-level diagnostics of a file, lint-filtered and range-converted
@@ -446,7 +459,7 @@ fn trim_to_capacity(inner: &mut DiagnosticsInner) {
 pub(crate) fn related_for(
     snapshot: &GlobalStateSnapshot,
     self_file: FileId,
-) -> Cancellable<Option<FxHashMap<Uri, RelatedDocument>>> {
+) -> anyhow::Result<Option<FxHashMap<Uri, RelatedDocument>>> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
 
@@ -471,6 +484,7 @@ pub(crate) fn related_for(
 
     let mut out: FxHashMap<Uri, RelatedDocument> = FxHashMap::default();
     for file in candidates {
+        check_cancelled(snapshot)?;
         let Ok(uri) = snapshot.file_id_to_url(file) else {
             continue;
         };
@@ -522,7 +536,7 @@ pub(crate) fn related_for(
 pub(crate) fn workspace_diagnostic_reports(
     snapshot: &GlobalStateSnapshot,
     previous_ids: &FxHashMap<lsp_types::Uri, String>,
-) -> Cancellable<Vec<lsp_types::WorkspaceDocumentDiagnosticReport>> {
+) -> anyhow::Result<Vec<lsp_types::WorkspaceDocumentDiagnosticReport>> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
 
@@ -535,6 +549,7 @@ pub(crate) fn workspace_diagnostic_reports(
 
     let mut items = Vec::new();
     for file in diag.source_files() {
+        check_cancelled(snapshot)?;
         let Ok(uri) = snapshot.file_id_to_url(file) else {
             continue;
         };
@@ -629,7 +644,7 @@ fn uri_of(item: &lsp_types::WorkspaceDocumentDiagnosticReport) -> &str {
 pub(crate) fn run_diagnostics_pass(
     snapshot: &GlobalStateSnapshot,
     changed: &FxHashSet<FileId>,
-) -> Cancellable<(Vec<FileId>, bool)> {
+) -> anyhow::Result<(Vec<FileId>, bool)> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
 
@@ -662,6 +677,7 @@ pub(crate) fn run_diagnostics_pass(
     }
 
     // 3. Candidate set: the edited files plus their watched dependents.
+    check_cancelled(snapshot)?;
     let candidates: FxHashSet<FileId> = {
         let inner = diag.inner.lock();
         let mut out: FxHashSet<FileId> = changed.clone();
@@ -682,6 +698,7 @@ pub(crate) fn run_diagnostics_pass(
     // 4. Recompute each candidate and commit, bumping generations on change.
     let mut reports: Vec<(FileId, Arc<Vec<ide::Diagnostic>>)> = Vec::new();
     for file in &candidates {
+        check_cancelled(snapshot)?;
         let Ok(uri) = snapshot.file_id_to_url(*file) else {
             continue;
         };
