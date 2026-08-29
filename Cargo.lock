@@ -1008,6 +1008,7 @@ dependencies = [
  "insta",
  "java-syntax",
  "kotlin-syntax",
+ "project-model",
  "ra_ap_vfs",
  "rowan",
  "rust-asm",

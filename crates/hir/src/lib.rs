@@ -3,6 +3,7 @@ pub use hir_expand;
 
 pub mod db;
 pub mod index;
+pub mod jvm;
 pub mod lmdb_store;
 pub mod loader;
 pub mod modules;

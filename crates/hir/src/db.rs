@@ -361,13 +361,16 @@ pub enum Resolved {
 }
 
 impl Resolved {
-    /// The fully qualified name of the resolved class.
-    pub fn fqn(&self, db: &dyn HirDatabase) -> String {
+    /// The fully qualified name of the resolved class. Source classes resolve
+    /// to their fully qualified name through the source symbol index; the
+    /// empty name is returned when the class has no FQN yet (the unnamed
+    /// package / unresolved source).
+    pub fn fqn(&self, db: &dyn JvmDatabase) -> hir_def::jvm::fqn::FqName {
         match self {
-            Resolved::Library(class) => {
-                db.hir_state().interner.resolve(&class.entry.fqn).to_owned()
-            }
-            Resolved::Source(_) => String::new(),
+            Resolved::Library(class) => hir_def::jvm::fqn::FqName::from_str(
+                db.hir_state().interner.resolve(&class.entry.fqn),
+            ),
+            Resolved::Source(_) => hir_def::jvm::fqn::FqName::from_str(""),
         }
     }
 }

@@ -10,6 +10,7 @@
 //! each other.
 
 pub mod access;
+pub mod class;
 pub mod db;
 pub mod fqn;
 pub mod ids;

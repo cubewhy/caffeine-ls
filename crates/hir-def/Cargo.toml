@@ -10,6 +10,7 @@ bitflags.workspace = true
 hir-expand.workspace = true
 java-syntax.workspace = true
 kotlin-syntax.workspace = true
+project-model.workspace = true
 rowan.workspace = true
 rust-asm.workspace = true
 rustc-hash.workspace = true
