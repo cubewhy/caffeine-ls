@@ -2340,6 +2340,29 @@ impl<'a> InferCtx<'a> {
                         return None;
                     }
                 }
+                // §15.13.2: a method reference has no syntactic parameter
+                // list to arity-check, so its congruence with the SAM — the
+                // referenced method set's arity (after the unbound-instance
+                // receiver, §15.13.3) and per-parameter compatibility — is
+                // checked against the referenced name itself. Without it the
+                // `thenComparing(Comparator)` overload of the JDK `Comparator`
+                // stays applicable to a zero-argument `Foo::length` argument
+                // — its `compare` SAM takes one more parameter than the
+                // reference's function descriptor — and [§15.12.2.5]
+                // picks nothing: the chained
+                // `comparing(Foo::length).thenComparing(Foo::width)` sorts of
+                // the wMatcher diff engine would go *ambiguous* rather than
+                // resolve the `thenComparing(Function)` overload javac picks.
+                if arity.is_none()
+                    && let ExprData::MethodRef {
+                        qualifier,
+                        type_name,
+                        name,
+                    } = self.tree.expr(*id).clone()
+                    && !self.method_ref_congruent(qualifier, type_name.as_ref(), &name, &sam.params)
+                {
+                    return None;
+                }
                 // §15.27.3: a block lambda that is not value-compatible — no
                 // `return` statement carries a value — is congruent only with
                 // a void function result. Without this check a void body stays
@@ -3309,28 +3332,22 @@ impl<'a> InferCtx<'a> {
         target
     }
 
-    /// Resolves the method or constructor referenced by
-    /// `Type::name`, `Type::new` or `expr::name` against the single abstract
-    /// method's parameters ([JLS §15.13.3]): a static reference takes the
-    /// SAM's parameters as its own, an instance reference takes the SAM's
-    /// first parameter as the receiver.
-    /// The return type a method reference contributes to inference
-    /// ([JLS §15.13.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.3)):
-    /// the referenced method's declared return type instantiated with the
-    /// qualifier's type arguments, or — for a constructor reference — the
-    /// qualifier type itself. `<error>` when the reference does not resolve;
-    /// the caller then simply skips the constraint.
-    fn method_ref_return(
+    /// The reference type, member-lookup context and *form* of a method
+    /// reference ([JLS §15.13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.1)):
+    /// a *type qualifier* — a bare name, `pkg.Type` or a nested `Outer.Inner`
+    /// — resolves a type and yields a type-qualified (`Type::m`) reference; an
+    /// instance qualifier is inferred as an expression and yields a bound
+    /// (`expr::m`) reference. A type-qualified reference (`Path::of`,
+    /// `List::stream`) may resolve a static method of an interface as well as
+    /// of a class, so the member lookup uses `TypeQualified` mode: the
+    /// virtual-invocation member filter of §15.12.3 must not swallow those
+    /// static members, or `map`'s `<R>` stays unbound and the chain types
+    /// `List<Object>`. `None` when neither qualifier form applies.
+    fn method_ref_target(
         &mut self,
         qualifier: Option<ExprId>,
         type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) -> Ty {
-        // `Type::name` — a qualifier that is a (possibly qualified) type name —
-        // a bare name, `pkg.Type` or a nested `Outer.Inner` — is a type
-        // qualifier ([§15.13.1]); otherwise it is an instance qualifier,
-        // inferred as an expression.
+    ) -> Option<(Ty, InvocationContext, bool)> {
         let (ref_ty, type_qualified) = match (type_name, qualifier) {
             (Some(tyref), _) => (
                 resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
@@ -3347,7 +3364,163 @@ impl<'a> InferCtx<'a> {
                     (self.infer_expr(expr), false)
                 }
             }
-            _ => return self.error(),
+            _ => return None,
+        };
+        // §15.13.1: a *type-qualified* reference (`Path::of`, `List::stream`)
+        // may resolve a static method of an interface as well as of a class,
+        // so the virtual-invocation member filter of §15.12.3 must not swallow
+        // it — the static members of `Path` (`of(String, String…)`,
+        // `of(URI)`) are invisible to `Virtual` mode, which left `map`'s `<R>`
+        // unbound and typed the chain `List<Object>`.
+        let ctx = if type_qualified {
+            self.access.with_mode(InvocationMode::TypeQualified)
+        } else {
+            self.access.clone()
+        };
+        Some((ref_ty, ctx, type_qualified))
+    }
+
+    /// The member set the referenced method `name` resolves to against the
+    /// single abstract method's parameters ([JLS §15.13.3]) and the kind of
+    /// reference — how the SAM's parameters map onto the method's. `List::stream`
+    /// as a `Function<List<MatchDecision>, ? extends Stream<…>>` calls
+    /// `stream()` on `List<MatchDecision>`, so its result is
+    /// `Stream<MatchDecision>` rather than a raw `Stream` that would erase the
+    /// element type and leave `R` unconstrained. `None` when the reference does
+    /// not name a reference type.
+    fn method_ref_members(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&SpannedTypeRef>,
+        name: &Name,
+        sam_params: &[Ty],
+    ) -> Option<(Vec<MethodData>, MethodRefKind)> {
+        let (ref_ty, ctx, type_qualified) = self.method_ref_target(qualifier, type_name)?;
+        if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
+            return None;
+        }
+        let methods_on_type = member_set(self.db, &self.scope, &ref_ty, name.as_str(), &ctx);
+        // §15.13.1/§15.13.3: a *static* reference (`Type::m` naming a static
+        // member) and a *bound* reference (`expr::m` — the qualifier value is
+        // the receiver) take the SAM's parameters as the method's own; only an
+        // *unbound* instance reference (`Type::m` naming an instance member)
+        // takes the SAM's first parameter as the receiver, which carries the
+        // type arguments the bare type name lacks.
+        let kind = if type_qualified && methods_on_type.iter().any(|m| m.is_static) {
+            MethodRefKind::Static
+        } else if type_qualified {
+            MethodRefKind::Unbound
+        } else {
+            MethodRefKind::Bound
+        };
+        let receiver = match kind {
+            MethodRefKind::Static | MethodRefKind::Bound => ref_ty,
+            MethodRefKind::Unbound => {
+                // Use the SAM receiver only when it is a *parameterized*
+                // reference once inference has made it concrete — an
+                // uninstantiated inference variable (`EntityId::externalName`
+                // probed against `Function<? super α, …>`) carries no members
+                // yet, and a plain or raw receiver (`? super EntityId`,
+                // `Object`) adds no type arguments, so the bare type-name
+                // lookup keeps the existing resolution (`EntityId::kind`,
+                // `String::length`) untouched.
+                match sam_params.first() {
+                    Some(first) => {
+                        let first = self.decapture(first);
+                        if matches!(
+                            first.kind(self.db),
+                            TyKind::Reference { args, .. } if !args.is_empty()
+                        ) {
+                            first
+                        } else {
+                            ref_ty
+                        }
+                    }
+                    None => ref_ty,
+                }
+            }
+        };
+        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &ctx);
+        Some((methods, kind))
+    }
+
+    /// The method a method reference names that is *potentially applicable*
+    /// against the single abstract method's parameters ([JLS §15.13.1] inexact
+    /// references): the applicable overload of the member set
+    /// [`Self::method_ref_members`] resolves against, chosen by the SAM's
+    /// arity and per-parameter compatibility. `None` when the reference names
+    /// no reference type or no overload is congruent.
+    fn method_ref_candidate(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&SpannedTypeRef>,
+        name: &Name,
+        sam_params: &[Ty],
+    ) -> Option<MethodData> {
+        let (methods, kind) = self.method_ref_members(qualifier, type_name, name, sam_params)?;
+        self.pick_method_ref(&methods, sam_params, kind)
+    }
+
+    /// Whether the method reference is *congruent* with the functional
+    /// interface it targets ([JLS §15.13.2]): the referenced member set
+    /// contains an overload applicable to the SAM — the check
+    /// [`Self::method_ref_candidate`] performs. A reference that names no
+    /// member at all reports `cannot find symbol` itself ([§15.12.1]) and a
+    /// constructor or array-creation reference is congruent by arity alone, so
+    /// neither turns an overload inapplicable before its own diagnostic fires.
+    /// `false` means the reference cannot be compatible with this SAM at all —
+    /// the hint that lets overload resolution reject the wrong candidate (a
+    /// `thenComparing(Comparator)` overload probed with a `Foo::length`
+    /// argument, whose `compare` SAM takes one more parameter than the
+    /// reference's function descriptor) instead of leaving it applicable and
+    /// ambiguous.
+    fn method_ref_congruent(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&SpannedTypeRef>,
+        name: &Name,
+        sam_params: &[Ty],
+    ) -> bool {
+        let Some((ref_ty, _, _)) = self.method_ref_target(qualifier, type_name) else {
+            return true;
+        };
+        // §15.13.1/§15.13.4: `Type::new` is a constructor reference — also an
+        // *array-creation* reference `T[]::new`; its congruence with a SAM is
+        // a matter of constructor arity, resolved against the qualifier type.
+        if matches!(
+            ref_ty.kind(self.db),
+            TyKind::Reference { .. } | TyKind::Array(_)
+        ) && (name.as_str() == "new" || name.as_str() == "<missing>")
+        {
+            return true;
+        }
+        let Some((methods, kind)) = self.method_ref_members(qualifier, type_name, name, sam_params)
+        else {
+            return true;
+        };
+        if methods.is_empty() {
+            // §15.12.1: an unknown name is a `cannot find symbol` on the
+            // reference itself, not a reason to prefer another overload.
+            return true;
+        }
+        self.pick_method_ref(&methods, sam_params, kind).is_some()
+    }
+
+    /// The return type a method reference contributes to inference
+    /// ([JLS §15.13.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.3)):
+    /// the referenced method's declared return type instantiated with the
+    /// qualifier's type arguments, or — for a constructor reference — the
+    /// qualifier type itself. `<error>` when the reference does not resolve;
+    /// the caller then simply skips the constraint.
+    fn method_ref_return(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&SpannedTypeRef>,
+        name: &Name,
+        sam_params: &[Ty],
+    ) -> Ty {
+        let Some((ref_ty, _, _)) = self.method_ref_target(qualifier, type_name) else {
+            return self.error();
         };
         // §15.13.1/§15.13.4: `Type::new` is a constructor reference whose
         // "return" is the class itself — also an *array-creation* reference
@@ -3365,61 +3538,23 @@ impl<'a> InferCtx<'a> {
         if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
             return self.error();
         }
-        // §15.13.1: a *type-qualified* reference (`Path::of`, `List::stream`)
-        // may resolve a static method of an interface as well as of a class,
-        // so the virtual-invocation member filter of §15.12.3 must not swallow
-        // it — the static members of `Path` (`of(String, String…)`,
-        // `of(URI)`) are invisible to `Virtual` mode, which left `map`'s `<R>`
-        // unbound and typed the chain `List<Object>`.
-        let member_ctx = if type_qualified {
-            self.access.with_mode(InvocationMode::TypeQualified)
-        } else {
-            self.access.clone()
-        };
-        // §15.13.3: for an unbound *instance* method reference, the receiver
-        // of the referenced method is the single abstract method's first
-        // parameter — which carries the type arguments the bare type name
-        // lacks. `List::stream` as a `Function<List<MatchDecision>, ? extends
-        // Stream<…>>` calls `stream()` on `List<MatchDecision>`, so its result
-        // is `Stream<MatchDecision>` rather than a raw `Stream` that would
-        // erase the element type and leave `R` unconstrained.
-        let methods_on_type = member_set(self.db, &self.scope, &ref_ty, name.as_str(), &member_ctx);
-        let is_static_ref = methods_on_type.iter().any(|m| m.is_static);
-        let receiver = if is_static_ref || sam_params.is_empty() {
-            ref_ty
-        } else {
-            let first = self.decapture(&sam_params[0]);
-            // Use the SAM receiver only when it is a *parameterized* reference
-            // once inference has made it concrete — an uninstantiated inference
-            // variable (`EntityId::externalName` probed against
-            // `Function<? super α, …>`) carries no members yet, and a plain or
-            // raw receiver (`? super EntityId`, `Object`) adds no type
-            // arguments, so the bare type-name lookup keeps the existing
-            // resolution (`EntityId::kind`, `String::length`) untouched.
-            if matches!(first.kind(self.db), TyKind::Reference { args, .. } if !args.is_empty()) {
-                first
-            } else {
-                ref_ty
-            }
-        };
-        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &member_ctx);
         // §15.13.1: an *inexact* reference to an overloaded method selects the
         // applicable candidate by the target functional interface — the SAM's
         // arity and per-parameter compatibility — not the first declared
         // overload, whose result would otherwise steer the enclosing
         // inference (`list.stream().map(P::of)` binding `map`'s `<R>`) to
         // `Object` and reject a `List<P>` constructor argument.
-        self.pick_method_ref(&methods, sam_params, is_static_ref)
+        self.method_ref_candidate(qualifier, type_name, name, sam_params)
             .map(|method| method.ret)
             .unwrap_or_else(|| self.error())
     }
 
     /// The method of a method reference's member set that is a *potentially
     /// applicable* candidate against the single abstract method's parameter
-    /// types ([JLS §15.13.1] inexact references): arity
-    /// — `sam_params.len()` value parameters for a static reference, one fewer
-    /// for an unbound instance reference whose receiver is the SAM's first
-    /// parameter ([§15.13.3]) — and each corresponding SAM parameter assignable
+    /// types ([JLS §15.13.1] inexact references): arity — `sam_params.len()`
+    /// value parameters for a static or bound reference, one fewer for an
+    /// unbound instance reference whose receiver is the SAM's first parameter
+    /// ([§15.13.3]) — and each corresponding SAM parameter assignable
     /// to the method's parameter in a loose invocation context
     /// ([§15.12.2.3]). The most specific applicable candidate
     /// ([§15.12.2.5]) wins; `None` when no overload is congruent, so the
@@ -3428,16 +3563,22 @@ impl<'a> InferCtx<'a> {
         &self,
         methods: &[MethodData],
         sam_params: &[Ty],
-        static_ref: bool,
+        kind: MethodRefKind,
     ) -> Option<MethodData> {
         let sam_count = sam_params.len();
-        // The value parameters the referenced method must accept: all the SAM's
-        // for a static reference, all but the leading receiver for an unbound
-        // instance reference.
-        let base = if static_ref {
-            sam_count
-        } else {
-            sam_count.saturating_sub(1)
+        // The value parameters the referenced method must accept: all the
+        // SAM's for a static or bound reference, all but the leading receiver
+        // for an unbound instance reference.
+        let base = match kind {
+            MethodRefKind::Static | MethodRefKind::Bound => sam_count,
+            MethodRefKind::Unbound => sam_count.saturating_sub(1),
+        };
+        // The SAM index of the referenced method's first value parameter: the
+        // receiver is the SAM's first parameter for an unbound instance
+        // reference, so the method's parameters start one slot in.
+        let offset = match kind {
+            MethodRefKind::Unbound => 1,
+            MethodRefKind::Static | MethodRefKind::Bound => 0,
         };
         let mut applicable: Vec<MethodData> = Vec::new();
         for method in methods {
@@ -3462,20 +3603,17 @@ impl<'a> InferCtx<'a> {
             };
             let mut ok = true;
             for (i, method_param) in fixed.iter().enumerate() {
-                let sam_index = if static_ref { i } else { i + 1 };
-                if !self.method_ref_param_compatible(sam_params.get(sam_index), method_param) {
+                if !self.method_ref_param_compatible(sam_params.get(i + offset), method_param) {
                     ok = false;
                     break;
                 }
             }
             if ok && let Some((element, tail_count)) = &tail {
                 for k in 0..*tail_count {
-                    let sam_index = if static_ref {
-                        fixed.len() + k
-                    } else {
-                        fixed.len() + k + 1
-                    };
-                    if !self.method_ref_param_compatible(sam_params.get(sam_index), element) {
+                    if !self.method_ref_param_compatible(
+                        sam_params.get(fixed.len() + k + offset),
+                        element,
+                    ) {
                         ok = false;
                         break;
                     }
@@ -3517,59 +3655,11 @@ impl<'a> InferCtx<'a> {
         name: &Name,
         sam_params: &[Ty],
     ) {
-        let ref_ty = match (type_name, qualifier) {
-            (Some(tyref), _) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-            // `Type::name` — a qualifier that is a (possibly qualified) type
-            // name — a bare name, `pkg.Type` or a nested `Outer.Inner` — is a
-            // type qualifier ([§15.13.1]); otherwise it is an instance
-            // qualifier, inferred as an expression.
-            (None, Some(expr)) => {
-                if let Some(ty) = self.dotted_type_name(expr) {
-                    ty
-                } else if let ExprData::Var(name) = self.tree.expr(expr).clone()
-                    && let Some(ty) = self.type_name_ty(&name)
-                {
-                    ty
-                } else {
-                    self.infer_expr(expr)
-                }
-            }
-            _ => return,
-        };
-        let TyKind::Reference { name: fqn, .. } = ref_ty.kind(self.db) else {
-            return;
-        };
-        // §15.13.1: `Type::new` is a constructor reference; the constructor
-        // is named `<init>` for library classes ([JVMS §4.2]).
-        let is_ctor_ref = name.as_str() == "new" || name.as_str() == "<missing>";
-        let candidate_name = if is_ctor_ref {
-            match hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) {
-                Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
-                _ => fqn.simple_name().to_owned(),
-            }
-        } else {
-            name.as_str().to_owned()
-        };
-        // §15.13.1: a *type-qualified* reference may name a static method of an
-        // interface (`Path::of`), which the virtual-invocation member filter of
-        // §15.12.3 excludes — see [`Self::method_ref_return`].
-        let type_qualified = type_name.is_some()
-            || qualifier.is_some_and(|expr| {
-                self.dotted_type_name(expr).is_some()
-                    || matches!(self.tree.expr(expr).clone(), ExprData::Var(name) if self.type_name_ty(&name).is_some())
-            });
-        let member_ctx = if type_qualified {
-            self.access.with_mode(InvocationMode::TypeQualified)
-        } else {
-            self.access.clone()
-        };
-        let methods = member_set(self.db, &self.scope, &ref_ty, &candidate_name, &member_ctx);
         // §15.13.1: resolve the applicable overload against the SAM — the same
         // selection [`Self::method_ref_return`] feeds the inference constraints
         // with — so a reference to a name that resolves only to inapplicable
         // overloads does not silently type against the first declaration.
-        let is_static_ref = methods.iter().any(|m| m.is_static);
-        let _ = self.pick_method_ref(&methods, sam_params, is_static_ref);
+        let _ = self.method_ref_candidate(qualifier, type_name, name, sam_params);
     }
 
     fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {
@@ -4998,6 +5088,20 @@ fn expr_is_call(tree: &BodyTree, id: ExprId) -> bool {
         ExprData::Paren(inner) => expr_is_call(tree, inner),
         _ => false,
     }
+}
+
+/// The form of a method reference ([JLS §15.13.1]): how its target's single
+/// abstract method's parameters map onto the referenced method's. A *static*
+/// reference (`Type::m` naming a static member) and a *bound* reference
+/// (`expr::m` — the qualifier value is the receiver) take the SAM's parameters
+/// as the method's own; an *unbound* instance reference (`Type::m` naming an
+/// instance member) takes the SAM's first parameter as the receiver
+/// ([§15.13.3]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MethodRefKind {
+    Static,
+    Unbound,
+    Bound,
 }
 
 /// The kinds of the actual arguments of a method invocation for the joint
