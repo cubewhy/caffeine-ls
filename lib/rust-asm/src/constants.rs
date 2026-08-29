@@ -75,6 +75,56 @@ pub const ACC_TRANSITIVE: u16 = 0x0020;
 pub const ACC_STATIC_PHASE: u16 = 0x0040;
 pub const ACC_MANDATED: u16 = 0x8000;
 
+bitflags::bitflags! {
+    /// The JVM access flags of a class, field or method, as specified by the
+    /// JVM ClassFile format ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)
+    /// classes, [§4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5)
+    /// fields, [§4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)
+    /// methods). A single 16-bit word matching the ClassFile representation.
+    ///
+    /// Several bits are reused across contexts: `ACC_SUPER`/`ACC_SYNCHRONIZED`
+    /// share `0x0020`, `ACC_VOLATILE`/`ACC_BRIDGE` share `0x0040`, and
+    /// `ACC_TRANSIENT`/`ACC_VARARGS` share `0x0080` ([JVMS §4.6]). The same
+    /// bit values appear again on JPMS `module-info` attributes (`ACC_OPEN`,
+    /// `ACC_TRANSITIVE`, `ACC_STATIC_PHASE`, `ACC_MANDATED`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct JvmAccessFlags: u16 {
+        const PUBLIC = ACC_PUBLIC;
+        const PRIVATE = ACC_PRIVATE;
+        const PROTECTED = ACC_PROTECTED;
+        const STATIC = ACC_STATIC;
+        const FINAL = ACC_FINAL;
+        /// Class flag ([JVMS §4.1]); equals `SYNCHRONIZED` on methods.
+        const SUPER = ACC_SUPER;
+        /// Method flag ([JVMS §4.6]); equals `SUPER` on classes.
+        const SYNCHRONIZED = ACC_SYNCHRONIZED;
+        /// Field flag ([JVMS §4.5]); equals `BRIDGE` on methods.
+        const VOLATILE = ACC_VOLATILE;
+        /// Method flag; equals `VOLATILE` on fields.
+        const BRIDGE = ACC_BRIDGE;
+        /// Field flag; equals `VARARGS` on methods.
+        const TRANSIENT = ACC_TRANSIENT;
+        /// Method flag; equals `TRANSIENT` on fields.
+        const VARARGS = ACC_VARARGS;
+        const NATIVE = ACC_NATIVE;
+        const INTERFACE = ACC_INTERFACE;
+        const ABSTRACT = ACC_ABSTRACT;
+        const STRICT = ACC_STRICT;
+        const SYNTHETIC = ACC_SYNTHETIC;
+        const ANNOTATION = ACC_ANNOTATION;
+        const ENUM = ACC_ENUM;
+        const MODULE = ACC_MODULE;
+        /// Module flag ([JVMS §4.7.25]); equals `SUPER`/`SYNCHRONIZED`.
+        const OPEN = ACC_OPEN;
+        /// Module-requires flag; equals `SUPER`/`SYNCHRONIZED`.
+        const TRANSITIVE = ACC_TRANSITIVE;
+        /// Module-requires flag; equals `VOLATILE`/`BRIDGE`.
+        const STATIC_PHASE = ACC_STATIC_PHASE;
+        /// Module-requires/opens/exports flag; equals `MODULE`.
+        const MANDATED = ACC_MANDATED;
+    }
+}
+
 //method handle info
 pub const REF_GET_FIELD: u8 = 1;
 pub const REF_GET_STATIC: u8 = 2;

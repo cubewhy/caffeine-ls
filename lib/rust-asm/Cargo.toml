@@ -11,4 +11,5 @@ license = "MIT"
 macros = []
 
 [dependencies]
+bitflags.workspace = true
 thiserror = { workspace = true }

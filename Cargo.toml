@@ -21,6 +21,7 @@ vfs = { package = "ra_ap_vfs", version = "0.0.345" }
 vfs-notify = { package = "ra_ap_vfs-notify", version = "0.0.345" }
 
 anyhow = "1"
+bitflags = "2"
 bytes = "1.11.1"
 camino = "1.2.2"
 clap = "4"

@@ -2142,6 +2142,7 @@ dependencies = [
 name = "rust-asm"
 version = "0.2.1"
 dependencies = [
+ "bitflags",
  "thiserror",
 ]
 
