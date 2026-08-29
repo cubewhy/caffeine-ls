@@ -485,7 +485,7 @@ mod tests {
         change.apply(&mut db);
 
         let tree = file_item_tree(&db, file_id);
-        let rendered = hir_expand::pretty::pretty_print(&tree);
+        let rendered = hir_def::java::pretty::pretty_print(&tree);
         assert!(rendered.contains("class A [public]"), "{rendered}");
         assert!(rendered.contains("field x: int"), "{rendered}");
         assert!(rendered.contains("package com.example"), "{rendered}");
@@ -499,7 +499,7 @@ mod tests {
         edit.apply(&mut db);
 
         let tree = file_item_tree(&db, file_id);
-        let rendered = hir_expand::pretty::pretty_print(&tree);
+        let rendered = hir_def::java::pretty::pretty_print(&tree);
         assert!(rendered.contains("class B"), "{rendered}");
         assert!(!rendered.contains("field x: int"), "{rendered}");
 

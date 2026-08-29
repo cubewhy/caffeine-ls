@@ -23,11 +23,11 @@ use hir_expand::{
         PostfixOp, RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern,
         UnaryOp,
     },
-    item_tree::ItemId,
     name::Name,
     span::{NameRef, SpannedTypeRef},
 };
 
+use crate::java::item_tree::ItemId;
 use crate::lower::LowerCtx;
 
 use super::{token_is, token_text, trimmed_text};

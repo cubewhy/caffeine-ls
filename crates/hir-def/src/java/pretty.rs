@@ -5,17 +5,20 @@
 
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
-use crate::{
+use hir_expand::{
     body::{
         AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
         PatternId, PostfixOp, StmtData, StmtId, SwitchLabel, UnaryOp,
     },
+    name::Name,
+    span::SpannedTypeRef,
+};
+
+use crate::java::{
     item_tree::{
         ItemData, ItemId, ItemTree, LanguageKind, ModuleData, RecordComponent, Signature, TypeParam,
     },
-    modifiers::Modifiers,
-    name::Name,
-    span::SpannedTypeRef,
+    modifiers::JavaModifiers,
 };
 
 pub fn pretty_print(tree: &ItemTree) -> String {
@@ -53,7 +56,7 @@ pub fn pretty_print(tree: &ItemTree) -> String {
     out
 }
 
-fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out: &mut String) {
+fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
     let item = tree.data(id);
     let indent = "  ".repeat(depth);
 
@@ -133,7 +136,7 @@ fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out:
             render_module(out, &indent, data);
         }
         ItemData::Method(data) => {
-            let label = if data.is_constructor {
+            let label = if data.is_constructor() {
                 "constructor"
             } else {
                 "method"
@@ -141,7 +144,7 @@ fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out:
             out.push_str(&format!(
                 "{indent}{label} {}{}{} @{:?}\n",
                 render_signature(&data.sig, &data.name),
-                data.default_value
+                data.default_value()
                     .map(|default| format!(" default @{default:?}"))
                     .unwrap_or_default(),
                 render_mods(&data.modifiers),
@@ -179,12 +182,7 @@ fn render_item(tree: &ItemTree, id: crate::item_tree::ItemId, depth: usize, out:
     }
 }
 
-fn render_children(
-    tree: &ItemTree,
-    body: &[crate::item_tree::ItemId],
-    depth: usize,
-    out: &mut String,
-) {
+fn render_children(tree: &ItemTree, body: &[ItemId], depth: usize, out: &mut String) {
     for id in body {
         render_item(tree, *id, depth, out);
     }
@@ -196,13 +194,13 @@ fn render_type_like(
     indent: &str,
     label: &str,
     name: &Name,
-    modifiers: &Modifiers,
+    modifiers: &JavaModifiers,
     super_class: Option<&SpannedTypeRef>,
     interfaces: &[SpannedTypeRef],
     type_params: &[TypeParam],
     range: rowan::TextRange,
     tree: &ItemTree,
-    body: &[crate::item_tree::ItemId],
+    body: &[ItemId],
 ) {
     out.push_str(indent);
     out.push_str(label);
@@ -351,7 +349,7 @@ fn render_join(iter: impl Iterator<Item = String>, sep: &str) -> String {
     iter.collect::<Vec<_>>().join(sep)
 }
 
-fn render_mods(modifiers: &Modifiers) -> String {
+fn render_mods(modifiers: &JavaModifiers) -> String {
     let names = modifiers.names().collect::<Vec<_>>();
     if names.is_empty() {
         String::new()
@@ -489,7 +487,7 @@ fn render_orphan_initializers(
             }
         }
         ItemData::Method(m) => {
-            if let Some(e) = m.default_expr {
+            if let Some(e) = m.default_expr() {
                 out.push_str(&format!("{indent}method {}: default ", m.name));
                 render_expr(out, bodies, e);
                 out.push('\n');
@@ -743,8 +741,8 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
         ExprData::CtorCall { args, target } => out.push_str(&format!(
             "{id}: ctor-call({})({})",
             match target {
-                crate::body::CtorCallTarget::This => "this",
-                crate::body::CtorCallTarget::Super => "super",
+                hir_expand::body::CtorCallTarget::This => "this",
+                hir_expand::body::CtorCallTarget::Super => "super",
             },
             args.iter()
                 .map(|a| a.to_string())

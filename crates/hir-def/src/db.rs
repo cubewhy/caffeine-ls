@@ -16,11 +16,10 @@
 use std::sync::Arc;
 
 use base_db::{FileText, LanguageKind, salsa};
-use hir_expand::{
-    body::BodyTree,
-    item_tree::{ItemTree, LoweredFile},
-};
+use hir_expand::body::BodyTree;
 use vfs::FileId;
+
+use crate::java::item_tree::{ItemTree, LoweredFile};
 
 /// Definition database: `hir-expand`'s base trait plus the language-specific
 /// queries. Concrete databases (e.g. `ide-db`'s `RootDatabase`) implement this

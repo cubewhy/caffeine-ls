@@ -181,7 +181,7 @@ impl Analysis {
     pub fn item_ty(
         &self,
         file_id: FileId,
-        item: hir::hir_expand::item_tree::ItemId,
+        item: hir::hir_def::java::item_tree::ItemId,
     ) -> Cancellable<String> {
         self.with_db(|db| symbols::item_ty(db, file_id, item))
     }
@@ -190,7 +190,7 @@ impl Analysis {
     pub fn method_params(
         &self,
         file_id: FileId,
-        item: hir::hir_expand::item_tree::ItemId,
+        item: hir::hir_def::java::item_tree::ItemId,
     ) -> Cancellable<Arc<Vec<String>>> {
         self.with_db(|db| symbols::method_params(db, file_id, item))
     }

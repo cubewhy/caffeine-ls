@@ -11,16 +11,19 @@ use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange, TextSize};
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
-    item_tree::{
-        AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData,
-        ItemData, ItemId, MethodData, ModuleData, ModuleExports, ModuleProvides, ModuleRequires,
-        Param, RecordComponent, RecordData, Signature, StaticInitData, TypeParam,
-    },
-    modifiers::Modifiers,
     name::Name,
     span::{NameRef, SpannedTypeRef},
 };
 
+use crate::java::{
+    item_tree::{
+        AnnotationData, ClassData, EnumConstantData, EnumData, FieldData, InstanceInitData,
+        ItemData, ItemId, MethodData, MethodExtra, MethodExtraJava, ModuleData, ModuleExports,
+        ModuleProvides, ModuleRequires, Param, RecordComponent, RecordData, Signature,
+        StaticInitData, TypeParam,
+    },
+    modifiers::JavaModifiers,
+};
 use crate::lower::LowerCtx;
 
 pub(super) mod body;
@@ -70,7 +73,7 @@ fn lower_import(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) {
             .is_some_and(|token| token_is(token, J::STATIC_KW))
     });
 
-    ctx.tree.imports.push(hir_expand::item_tree::ImportItem {
+    ctx.tree.imports.push(crate::java::item_tree::ImportItem {
         name: Name::new(name_text),
         is_static,
         is_asterisk,
@@ -135,7 +138,7 @@ fn lower_member(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
 fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
         decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let super_class = clause_types(node, J::EXTENDS_CLAUSE).into_iter().next();
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
@@ -144,6 +147,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         name,
         name_range,
         modifiers,
+        annotations,
         super_class,
         interfaces,
         type_params,
@@ -155,7 +159,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
         decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let interfaces = clause_types(node, J::INTERFACE_EXTENDS_CLAUSE);
     let body = body_members(ctx, node, J::INTERFACE_BODY);
@@ -163,6 +167,7 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         name,
         name_range,
         modifiers,
+        annotations,
         super_class: None,
         interfaces,
         type_params,
@@ -174,7 +179,7 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
         decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
     let body = node
         .children()
@@ -185,6 +190,7 @@ fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         name,
         name_range,
         modifiers,
+        annotations,
         interfaces,
         body,
         range: node.text_range(),
@@ -194,7 +200,7 @@ fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
         decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let components = node
         .children()
@@ -235,6 +241,7 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         components_range,
         header_range,
         modifiers,
+        annotations,
         components,
         interfaces,
         type_params,
@@ -246,12 +253,13 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 fn lower_annotation_type(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
         decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let body = body_members(ctx, node, J::ANNOTATION_TYPE_BODY);
     ctx.alloc(ItemData::Annotation(AnnotationData {
         name,
         name_range,
         modifiers,
+        annotations,
         body,
         range: node.text_range(),
     }))
@@ -259,7 +267,7 @@ fn lower_annotation_type(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId 
 
 fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let (name, name_range) = decl_identifier(node)?;
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let ret = if token_is_direct(node, J::VOID_KW) {
         Some(SpannedTypeRef::synthetic(TypeRef::Primitive(
             PrimitiveType::Void,
@@ -280,11 +288,14 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
         name,
         name_range,
         modifiers,
+        annotations,
         sig,
-        is_constructor: false,
-        body: None,
-        default_value: None,
-        default_expr: None,
+        extra: MethodExtra::Java(MethodExtraJava {
+            is_constructor: false,
+            body: None,
+            default_value: None,
+            default_expr: None,
+        }),
         range: node.text_range(),
     }));
     if let Some(block) = block {
@@ -295,14 +306,15 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
         let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
             unreachable!("method");
         };
-        data.body = Some(body);
+        let MethodExtra::Java(java) = &mut data.extra;
+        java.body = Some(body);
     }
     Some(id)
 }
 
 fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool) -> Option<ItemId> {
     let (name, name_range) = decl_identifier(node)?;
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let sig = Signature {
         type_params: child_type_params(node),
         params: if compact {
@@ -322,11 +334,14 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
         name,
         name_range,
         modifiers,
+        annotations,
         sig,
-        is_constructor: true,
-        body: None,
-        default_value: None,
-        default_expr: None,
+        extra: MethodExtra::Java(MethodExtraJava {
+            is_constructor: true,
+            body: None,
+            default_value: None,
+            default_expr: None,
+        }),
         range: node.text_range(),
     }));
     if let Some(block) = block {
@@ -340,14 +355,15 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
         let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
             unreachable!("constructor");
         };
-        data.body = Some(body);
+        let MethodExtra::Java(java) = &mut data.extra;
+        java.body = Some(body);
     }
     Some(id)
 }
 
 fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let (name, name_range) = decl_identifier(node)?;
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let ret = node
         .children()
         .find(|child| is(child, J::TYPE))
@@ -357,16 +373,19 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
         name,
         name_range,
         modifiers,
+        annotations,
         sig: Signature {
             type_params: Vec::new(),
             params: Vec::new(),
             ret,
             throws: Vec::new(),
         },
-        is_constructor: false,
-        body: None,
-        default_value,
-        default_expr: None,
+        extra: MethodExtra::Java(MethodExtraJava {
+            is_constructor: false,
+            body: None,
+            default_value,
+            default_expr: None,
+        }),
         range: node.text_range(),
     }));
     if let Some(value_node) = body::find_expression_child(node)
@@ -375,13 +394,14 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
         let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
             unreachable!("annotation element");
         };
-        data.default_expr = Some(expr_id);
+        let MethodExtra::Java(java) = &mut data.extra;
+        java.default_expr = Some(expr_id);
     }
     Some(id)
 }
 
 fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> {
-    let modifiers = child_modifiers(node);
+    let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let ty = node
         .children()
         .find(|child| is(child, J::TYPE))
@@ -415,7 +435,8 @@ fn lower_field_decl(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Vec<ItemId> 
         let field_id = ctx.alloc(ItemData::Field(FieldData {
             name,
             name_range,
-            modifiers: modifiers.clone(),
+            modifiers,
+            annotations: annotations.clone(),
             ty,
             initializer,
             initializer_expr: None,
@@ -533,7 +554,8 @@ fn lower_module(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     ctx.alloc(ItemData::Module(ModuleData {
         name,
         name_range,
-        modifiers: Modifiers::default(),
+        modifiers: JavaModifiers::none(),
+        annotations: Vec::new(),
         is_open,
         requires,
         exports,
@@ -676,31 +698,21 @@ fn token_is_direct(node: &SyntaxNode<Lang>, kind: J) -> bool {
     first_token(node, kind).is_some()
 }
 
-/// The first `MODIFIER_LIST` child, if any.
-fn child_modifiers(node: &SyntaxNode<Lang>) -> Modifiers {
+/// The first `MODIFIER_LIST` child, split into its syntax modifiers
+/// ([`JavaModifiers`]) and its declared annotation references ([JLS §9.7]),
+/// which are decoupled from the modifier flags.
+fn child_modifiers_and_annotations(node: &SyntaxNode<Lang>) -> (JavaModifiers, Vec<NameRef>) {
     node.children()
         .find(|child| is(child, J::MODIFIER_LIST))
         .map(|mods| {
-            let mut modifiers = Modifiers::default();
+            let mut modifiers = JavaModifiers::none();
             for element in mods.children_with_tokens() {
-                match element {
-                    NodeOrToken::Node(annotation)
-                        if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION) =>
-                    {
-                        // §9.7: an annotation in the modifier list — record its
-                        // (possibly qualified) name and range.
-                        modifiers.push_annotation(
-                            annotation_name(&annotation),
-                            annotation_name_range(&annotation),
-                        );
-                    }
-                    NodeOrToken::Node(_) => {}
-                    NodeOrToken::Token(token) => {
-                        modifiers.push(token.text());
-                    }
+                if let NodeOrToken::Token(token) = element {
+                    modifiers.push(token.text());
                 }
             }
-            modifiers
+            let annotations = annotations_from(&mods);
+            (modifiers, annotations)
         })
         .unwrap_or_default()
 }
@@ -714,16 +726,6 @@ fn annotation_name_ref(annotation: &SyntaxNode<Lang>) -> Option<NameRef> {
         .descendants()
         .find(|d| d.kind() == J::QUALIFIED_NAME)
         .map(|name| NameRef::new(Name::new(&name.text().to_string()), name.text_range()))
-}
-
-fn annotation_name(annotation: &SyntaxNode<Lang>) -> Name {
-    annotation_name_ref(annotation).map_or_else(missing_name, |r| r.name)
-}
-
-fn annotation_name_range(annotation: &SyntaxNode<Lang>) -> rowan::TextRange {
-    annotation_name_ref(annotation)
-        .and_then(|r| r.range)
-        .unwrap_or_else(|| annotation.text_range())
 }
 
 /// The type-use annotation references of a `TYPE` node

@@ -30,9 +30,9 @@
 use rustc_hash::FxHashSet;
 use vfs::FileId;
 
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, StmtData, StmtId},
-    item_tree::{ItemData, ItemId, ItemTree},
     name::Name,
     span::SpannedTypeRef,
 };
@@ -178,10 +178,10 @@ pub(crate) fn file_dependency_refs_impl(db: &dyn TyDatabase, file: FileId) -> Fx
         }
         match data {
             ItemData::Method(method) => {
-                if let Some(body) = method.body {
+                if let Some(body) = method.body() {
                     collect_body_names(&bodies, body, &mut out);
                 }
-                if let Some(default) = method.default_expr {
+                if let Some(default) = method.default_expr() {
                     collect_expr_forest_names(&bodies, &[default], &mut out);
                 }
             }

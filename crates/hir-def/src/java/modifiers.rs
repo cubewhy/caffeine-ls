@@ -316,6 +316,76 @@ impl JavaModifiers {
     /// The size of the compact representation in bytes (visibility tag + two
     /// flag bytes).
     pub const SIZE: usize = 3;
+
+    /// Whether the declaration is explicitly `public`.
+    pub fn is_public(&self) -> bool {
+        self.visibility.is_public()
+    }
+
+    /// Whether the declaration is explicitly `protected`.
+    pub fn is_protected(&self) -> bool {
+        self.visibility == JavaVisibility::Protected
+    }
+
+    /// Whether the declaration is explicitly `private`.
+    pub fn is_private(&self) -> bool {
+        self.visibility == JavaVisibility::Private
+    }
+
+    /// Whether the declaration is `static`.
+    pub fn is_static(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::STATIC)
+    }
+
+    /// Whether the declaration is `final`.
+    pub fn is_final(&self) -> bool {
+        self.modality.contains(JavaModality::FINAL)
+    }
+
+    /// Whether the declaration is `abstract`.
+    pub fn is_abstract(&self) -> bool {
+        self.modality.contains(JavaModality::ABSTRACT)
+    }
+
+    /// Whether the declaration is `sealed`.
+    pub fn is_sealed(&self) -> bool {
+        self.modality.contains(JavaModality::SEALED)
+    }
+
+    /// Whether the declaration is `non-sealed`.
+    pub fn is_non_sealed(&self) -> bool {
+        self.modality.contains(JavaModality::NON_SEALED)
+    }
+
+    /// Whether the declaration is `strictfp`.
+    pub fn is_strictfp(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::STRICTFP)
+    }
+
+    /// Whether the declaration is a `default` interface method.
+    pub fn is_default(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::DEFAULT)
+    }
+
+    /// Whether the declaration is `native`.
+    pub fn is_native(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::NATIVE)
+    }
+
+    /// Whether the declaration is `synchronized`.
+    pub fn is_synchronized(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::SYNCHRONIZED)
+    }
+
+    /// Whether the declaration is `transient`.
+    pub fn is_transient(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::TRANSIENT)
+    }
+
+    /// Whether the declaration is `volatile`.
+    pub fn is_volatile(&self) -> bool {
+        self.flags.contains(JavaModifierFlags::VOLATILE)
+    }
 }
 
 #[cfg(test)]

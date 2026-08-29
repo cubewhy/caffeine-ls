@@ -1,6 +1,6 @@
-//! A tiny `Vec`-backed arena with stable ids, used for the items of an
-//! [`crate::item_tree::ItemTree`]. Insertion order is significant: items are
-//! allocated in CST order so iteration is deterministic.
+//! A tiny `Vec`-backed arena with stable ids, used for the items of a
+//! per-file `ItemTree` and its `BodyTree`. Insertion order is significant:
+//! items are allocated in CST order so iteration is deterministic.
 
 use std::ops::Index;
 

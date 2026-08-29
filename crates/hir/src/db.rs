@@ -18,7 +18,7 @@ use base_db::{
 };
 use camino::Utf8PathBuf;
 use dashmap::DashMap;
-use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::name::Name;
 use lasso::ThreadedRodeo;
 use parking_lot::Mutex;
@@ -103,7 +103,7 @@ pub trait HirDatabase: SourceDatabase + hir_def::db::DefDatabase {
 pub fn file_item_tree(
     db: &dyn HirDatabase,
     file_id: FileId,
-) -> Arc<hir_expand::item_tree::ItemTree> {
+) -> Arc<hir_def::java::item_tree::ItemTree> {
     hir_def::file_item_tree(db, file_id)
 }
 
@@ -329,7 +329,7 @@ pub struct ResolvedClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceClass {
     pub file: FileId,
-    pub item: hir_expand::item_tree::ItemId,
+    pub item: hir_def::java::item_tree::ItemId,
 }
 
 /// A class resolved either to a library entry or to a source declaration.
@@ -473,18 +473,18 @@ fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
             return;
         };
         let (simple, public) = match data {
-            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.public),
-            ItemData::Enum(d) => (&d.name, d.modifiers.public),
-            ItemData::Record(d) => (&d.name, d.modifiers.public),
-            ItemData::Annotation(d) => (&d.name, d.modifiers.public),
+            ItemData::Class(d) | ItemData::Interface(d) => (&d.name, d.modifiers.is_public()),
+            ItemData::Enum(d) => (&d.name, d.modifiers.is_public()),
+            ItemData::Record(d) => (&d.name, d.modifiers.is_public()),
+            ItemData::Annotation(d) => (&d.name, d.modifiers.is_public()),
             // Enum constants are implicitly `public static final`
             // ([JLS §8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)).
             ItemData::EnumConstant(d) => (&d.name, true),
             // A module declaration carries no access modifiers
             // ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)).
             ItemData::Module(d) => (&d.name, false),
-            ItemData::Method(d) => (&d.name, d.modifiers.public),
-            ItemData::Field(d) => (&d.name, d.modifiers.public),
+            ItemData::Method(d) => (&d.name, d.modifiers.is_public()),
+            ItemData::Field(d) => (&d.name, d.modifiers.is_public()),
             ItemData::StaticInit(_) | ItemData::InstanceInit(_) => unreachable!(),
         };
         let name = match prefix {

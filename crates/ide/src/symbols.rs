@@ -6,7 +6,7 @@
 //! memoized; the `ide::Analysis` methods below funnel them through the
 //! cancellation boundary.
 
-use hir_expand::item_tree::ItemData;
+use hir::hir_def::java::item_tree::ItemData;
 use rowan::TextRange;
 use rustc_hash::FxHashSet;
 use triomphe::Arc;
@@ -39,7 +39,7 @@ pub struct DocumentSymbol {
     pub detail: Option<String>,
     /// The lowered item, for later HIR queries (e.g. [`crate::Analysis::item_ty`]).
     /// `None` for synthesized symbols (the file's package).
-    pub item: Option<hir_expand::item_tree::ItemId>,
+    pub item: Option<hir::hir_def::java::item_tree::ItemId>,
 }
 
 /// A document symbol plus the file it lives in.
@@ -80,7 +80,7 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
         // A record's outline range points at its declaration *header* (the
         // definition, including the component list) rather than the whole
         // body; its selection points at the component list itself — see
-        // [`hir_expand::item_tree::RecordData`].
+        // [`hir::hir_def::java::item_tree::RecordData`].
         let (range, name_range) = match data {
             ItemData::Record(record) => (record.header_range, record.components_range),
             _ => (data.range(), data.name_range()),
@@ -166,7 +166,7 @@ fn record_members(
         .unwrap_or(&symbol.name)
         .to_owned();
     let declares_canonical = record.body.iter().any(|item| {
-        matches!(tree.data(*item), ItemData::Method(method) if method.is_constructor
+        matches!(tree.data(*item), ItemData::Method(method) if method.is_constructor()
             && method.sig.params.len() == record.components.len())
     });
     if !declares_canonical {
@@ -266,13 +266,13 @@ fn symbol_detail(symbol: &hir::SourceSymbol, top_level: bool) -> Option<String> 
 pub fn method_signature(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir_expand::item_tree::ItemId,
+    item: hir::hir_def::java::item_tree::ItemId,
     simple: &str,
     include_return: bool,
 ) -> String {
     let is_constructor = matches!(
         hir::file_item_tree(db, file_id).data(item),
-        ItemData::Method(method) if method.is_constructor
+        ItemData::Method(method) if method.is_constructor()
     );
     let ret = if include_return && !is_constructor {
         format!(": {}", item_ty(db, file_id, item))
@@ -288,7 +288,7 @@ pub fn method_signature(
 fn render_params(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir_expand::item_tree::ItemId,
+    item: hir::hir_def::java::item_tree::ItemId,
 ) -> String {
     let tree = hir::file_item_tree(db, file_id);
     let varargs = matches!(
@@ -370,7 +370,11 @@ fn registered_source_sets(db: &RootDatabase) -> Vec<hir::SourceSetId> {
 /// The declared type of an item — a field's type, a method's return type, or
 /// the type of a class-like declaration — rendered from the HIR type layer
 /// with the *simple* class name (the last `.`-segment).
-pub fn item_ty(db: &RootDatabase, file_id: FileId, item: hir_expand::item_tree::ItemId) -> String {
+pub fn item_ty(
+    db: &RootDatabase,
+    file_id: FileId,
+    item: hir::hir_def::java::item_tree::ItemId,
+) -> String {
     hir_ty::item_ty(db, file_id, item)
         .display_simple(db)
         .to_string()
@@ -381,7 +385,7 @@ pub fn item_ty(db: &RootDatabase, file_id: FileId, item: hir_expand::item_tree::
 pub fn method_params(
     db: &RootDatabase,
     file_id: FileId,
-    item: hir_expand::item_tree::ItemId,
+    item: hir::hir_def::java::item_tree::ItemId,
 ) -> Arc<Vec<String>> {
     Arc::new(
         hir_ty::method_params(db, file_id, item)

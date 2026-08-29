@@ -32,7 +32,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 
-use hir_expand::{item_tree::ItemData, item_tree::TypeParam, name::Name, span::SpannedTypeRef};
+use hir_def::java::item_tree::{ItemData, TypeParam};
+use hir_expand::{name::Name, span::SpannedTypeRef};
 
 use crate::{
     db::{ScopeId, ScopeKind, TyDatabase},
@@ -328,7 +329,7 @@ pub(crate) fn class_like_and_final(
         hir::Resolved::Source(source) => {
             let tree = hir::file_item_tree(db, source.file);
             match item_data(&tree, source.item)? {
-                ItemData::Class(d) => Some((true, d.modifiers.final_)),
+                ItemData::Class(d) => Some((true, d.modifiers.is_final())),
                 ItemData::Record(_) => Some((true, true)),
                 // §8.9: an enum without constant bodies is implicitly final,
                 // but treating every enum as final only ever tightens a cast

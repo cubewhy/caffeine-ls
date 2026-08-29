@@ -13,9 +13,9 @@
 //! exists (or when a file is not mapped to a source set and no JDK is
 //! registered) every name would fail and the reports would be noise.
 
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, LocalId, PatternId, StmtData, StmtId},
-    item_tree::{ItemData, ItemId, ItemTree},
     name::Name,
     span::{NameRef, SpannedTypeRef},
 };
@@ -113,7 +113,7 @@ fn check_reference(
 /// directives.
 pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
     fn collect_params<'a>(
-        params: &'a [hir_expand::item_tree::TypeParam],
+        params: &'a [hir_def::java::item_tree::TypeParam],
         out: &mut Vec<&'a SpannedTypeRef>,
     ) {
         for param in params {
@@ -229,10 +229,13 @@ pub(crate) fn package_path_diagnostics(
 /// like a type name ([JLS §6.5.5.1]) — an annotation type *is* a reference
 /// type — so an unknown one is reported the same way.
 fn item_annotation_refs(data: &ItemData) -> Vec<&NameRef> {
-    fn mods<'a>(m: &'a hir_expand::modifiers::Modifiers, out: &mut Vec<&'a NameRef>) {
-        out.extend(m.annotations.iter());
+    fn annotations<'a>(items: &'a [NameRef], out: &mut Vec<&'a NameRef>) {
+        out.extend(items.iter());
     }
-    fn type_params<'a>(params: &'a [hir_expand::item_tree::TypeParam], out: &mut Vec<&'a NameRef>) {
+    fn type_params<'a>(
+        params: &'a [hir_def::java::item_tree::TypeParam],
+        out: &mut Vec<&'a NameRef>,
+    ) {
         for param in params {
             out.extend(param.annotations.iter());
         }
@@ -240,24 +243,24 @@ fn item_annotation_refs(data: &ItemData) -> Vec<&NameRef> {
     let mut out = Vec::new();
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => {
-            mods(&d.modifiers, &mut out);
+            annotations(&d.annotations, &mut out);
             type_params(&d.type_params, &mut out);
         }
-        ItemData::Enum(d) => mods(&d.modifiers, &mut out),
+        ItemData::Enum(d) => annotations(&d.annotations, &mut out),
         ItemData::Record(d) => {
-            mods(&d.modifiers, &mut out);
+            annotations(&d.annotations, &mut out);
             type_params(&d.type_params, &mut out);
             for component in &d.components {
                 out.extend(component.annotations.iter());
             }
         }
-        ItemData::Annotation(d) => mods(&d.modifiers, &mut out),
-        ItemData::Module(d) => mods(&d.modifiers, &mut out),
+        ItemData::Annotation(d) => annotations(&d.annotations, &mut out),
+        ItemData::Module(d) => annotations(&d.annotations, &mut out),
         ItemData::Method(d) => {
-            mods(&d.modifiers, &mut out);
+            annotations(&d.annotations, &mut out);
             type_params(&d.sig.type_params, &mut out);
         }
-        ItemData::Field(d) => mods(&d.modifiers, &mut out),
+        ItemData::Field(d) => annotations(&d.annotations, &mut out),
         ItemData::EnumConstant(_) | ItemData::StaticInit(_) | ItemData::InstanceInit(_) => {}
     }
     out
@@ -282,7 +285,7 @@ pub(crate) fn declaration_type_diagnostics(
         db: &dyn TyDatabase,
         scope: &hir::ResolutionScope,
         tree: &ItemTree,
-        type_params: &FxHashMap<ItemId, Vec<hir_expand::item_tree::TypeParam>>,
+        type_params: &FxHashMap<ItemId, Vec<hir_def::java::item_tree::TypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
@@ -339,7 +342,7 @@ pub(crate) fn import_diagnostics(
     scope: &hir::ResolutionScope,
     tree: &ItemTree,
 ) -> Vec<DeclDiagnostic> {
-    let single_imports: Vec<&hir_expand::item_tree::ImportItem> = tree
+    let single_imports: Vec<&hir_def::java::item_tree::ImportItem> = tree
         .imports
         .iter()
         .filter(|import| !import.is_static && !import.is_asterisk)

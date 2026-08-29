@@ -22,10 +22,8 @@
 use rustc_hash::FxHashMap;
 use vfs::FileId;
 
-use hir_expand::{
-    item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam},
-    name::Name,
-};
+use hir_def::java::item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam};
+use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{

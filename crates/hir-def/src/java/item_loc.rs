@@ -3,11 +3,11 @@
 use rowan::TextRange;
 use vfs::FileId;
 
-use crate::item_tree::ItemId;
+use crate::java::item_tree::ItemId;
 
 /// Uniquely identifies an item across the whole workspace (analogous to
 /// rust-analyzer's `ItemLoc`). `file_id` + [`ItemId`] recover the item from
-/// the owning file's [`crate::item_tree::ItemTree`].
+/// the owning file's [`crate::java::item_tree::ItemTree`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemLoc {
     pub file_id: FileId,

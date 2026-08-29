@@ -503,7 +503,7 @@ fn source_set_module_ctx_query(
     };
 
     let mut packages: FxHashSet<Symbol> = FxHashSet::default();
-    let mut source_module: Option<(Name, bool, hir_expand::item_tree::ModuleData)> = None;
+    let mut source_module: Option<(Name, bool, hir_def::java::item_tree::ModuleData)> = None;
     let roots: Vec<base_db::SourceRootId> = pg
         .source_root_to_source_set(db)
         .iter()
@@ -518,7 +518,7 @@ fn source_set_module_ctx_query(
                 packages.insert(interner.get_or_intern(package.as_str()));
             }
             for &top in &tree.top {
-                if let hir_expand::item_tree::ItemData::Module(data) = tree.data(top)
+                if let hir_def::java::item_tree::ItemData::Module(data) = tree.data(top)
                     && source_module.is_none()
                 {
                     source_module = Some((data.name.clone(), data.is_open, data.clone()));

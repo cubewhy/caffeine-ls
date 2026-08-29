@@ -36,10 +36,8 @@
 use rustc_hash::FxHashMap;
 use vfs::FileId;
 
-use hir_expand::{
-    item_tree::{ItemData, ItemId},
-    name::Name,
-};
+use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_expand::name::Name;
 
 /// The kind of a source symbol, mapped from the lowered [`ItemData`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

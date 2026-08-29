@@ -14,10 +14,10 @@
 use rowan::{TextRange, TextSize};
 use vfs::FileId;
 
+use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     arena::ArenaId,
     body::{BodyTree, ExprData, ExprId, LocalId},
-    item_tree::{ItemData, ItemId, ItemTree},
 };
 
 use crate::RootDatabase;
@@ -297,7 +297,7 @@ fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<Navigati
 }
 
 /// The parameter count of the method declaration `item`, from the item tree.
-fn parameter_count(tree: &hir_expand::item_tree::ItemTree, item: ItemId) -> Option<usize> {
+fn parameter_count(tree: &hir::hir_def::java::item_tree::ItemTree, item: ItemId) -> Option<usize> {
     match tree.data(item) {
         ItemData::Method(method) => Some(method.sig.params.len()),
         _ => None,

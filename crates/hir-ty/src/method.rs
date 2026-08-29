@@ -35,10 +35,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use vfs::FileId;
 
-use hir_expand::{
-    item_tree::{ItemData, ItemId, TypeParam},
-    name::Name,
-};
+use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
+use hir_expand::name::Name;
 
 use crate::{
     db::{
@@ -596,7 +594,7 @@ fn abstract_methods_impl(
                     // §9.4: an interface method is implicitly `abstract`
                     // unless it is `static` or declares a body (`default` or
                     // `private`) — the modifier keyword itself is optional.
-                    if method.modifiers.static_ || method.body.is_some() {
+                    if method.modifiers.is_static() || method.body().is_some() {
                         continue;
                     }
                     let name = method.name.as_str().to_owned();
@@ -891,7 +889,7 @@ fn source_class_methods(
         // signatures. A static member does not depend on the receiver's
         // type arguments at all, so its own generics stay intact.
         let erase = |ty: Ty| {
-            if is_raw && !method.modifiers.static_ {
+            if is_raw && !method.modifiers.is_static() {
                 ty.erasure(db)
             } else {
                 ty
@@ -924,9 +922,9 @@ fn source_class_methods(
         // §9.4: an interface method without a body and without `static` is
         // implicitly `abstract`, whether or not the keyword is written.
         let abstract_ = if declaring_interface {
-            method.body.is_none() && !method.modifiers.static_
+            method.body().is_none() && !method.modifiers.is_static()
         } else {
-            method.modifiers.abstract_
+            method.modifiers.is_abstract()
         };
         out.push(MethodData {
             // The method's own name — not the lookup filter, which is the
@@ -938,7 +936,7 @@ fn source_class_methods(
             ret,
             throws,
             varargs,
-            is_static: method.modifiers.static_,
+            is_static: method.modifiers.is_static(),
             abstract_,
             access: interface_access_of(declaring_interface, &method.modifiers),
             declaring_package: declaring_package.clone(),
@@ -954,7 +952,7 @@ fn source_class_methods(
     // base reports `cannot find symbol: method Base()`.
     let declares_ctor = class_data.body().iter().any(|item| {
         item_data(&tree, *item)
-            .is_some_and(|data| matches!(data, ItemData::Method(method) if method.is_constructor))
+            .is_some_and(|data| matches!(data, ItemData::Method(method) if method.is_constructor()))
     });
     if !declares_ctor
         && !declaring_interface
@@ -986,7 +984,7 @@ fn source_class_methods(
             // §8.8.9: the default constructor has the same access modifier
             // as the class (package-private when the class has none).
             access: modifiers
-                .map(|m| access(m.public))
+                .map(|m| access(m.is_public()))
                 .unwrap_or(Access::Package),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -1146,15 +1144,12 @@ fn source_class_methods(
     out
 }
 
-fn access_of(modifiers: &hir_expand::modifiers::Modifiers) -> Access {
-    if modifiers.private {
-        Access::Private
-    } else if modifiers.protected {
-        Access::Protected
-    } else if modifiers.public {
-        Access::Public
-    } else {
-        Access::Package
+fn access_of(modifiers: &hir_def::java::modifiers::JavaModifiers) -> Access {
+    match modifiers.visibility {
+        hir_def::java::modifiers::JavaVisibility::Private => Access::Private,
+        hir_def::java::modifiers::JavaVisibility::Protected => Access::Protected,
+        hir_def::java::modifiers::JavaVisibility::Public => Access::Public,
+        hir_def::java::modifiers::JavaVisibility::Package => Access::Package,
     }
 }
 
@@ -1163,7 +1158,7 @@ fn access_of(modifiers: &hir_expand::modifiers::Modifiers) -> Access {
 /// spells the modifier out.
 fn interface_access_of(
     declaring_interface: bool,
-    modifiers: &hir_expand::modifiers::Modifiers,
+    modifiers: &hir_def::java::modifiers::JavaModifiers,
 ) -> Access {
     match access_of(modifiers) {
         Access::Package if declaring_interface => Access::Public,
@@ -2048,7 +2043,7 @@ fn source_class_fields(
                     owner: fqn.clone(),
                     owner_file: Some(source.file),
                     ty,
-                    is_static: field.modifiers.static_,
+                    is_static: field.modifiers.is_static(),
                     access: interface_access_of(declaring_interface, &field.modifiers),
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),

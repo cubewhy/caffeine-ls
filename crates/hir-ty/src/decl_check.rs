@@ -12,7 +12,7 @@
 //! declaring method rather than an expression: they are collected per file by
 //! [`class_diagnostics`] and carry the offending method's name.
 
-use hir_expand::item_tree::ItemData;
+use hir_def::java::item_tree::ItemData;
 use hir_expand::name::Name;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 use vfs::FileId;
@@ -344,8 +344,8 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
         db: &dyn TyDatabase,
         file: FileId,
         scope: &hir::ResolutionScope,
-        tree: &hir_expand::item_tree::ItemTree,
-        id: hir_expand::item_tree::ItemId,
+        tree: &hir_def::java::item_tree::ItemTree,
+        id: hir_def::java::item_tree::ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let data = tree.data(id);
@@ -371,9 +371,9 @@ fn check_class(
     db: &dyn TyDatabase,
     file: FileId,
     scope: &hir::ResolutionScope,
-    tree: &hir_expand::item_tree::ItemTree,
+    tree: &hir_def::java::item_tree::ItemTree,
     fqn: &str,
-    item: hir_expand::item_tree::ItemId,
+    item: hir_def::java::item_tree::ItemId,
 ) -> Vec<DeclDiagnostic> {
     // The access-control context of the class itself ([§6.6.1]): the walk is
     // a member enumeration, not an invocation from outside.
@@ -446,7 +446,7 @@ fn check_class(
     // *hides*), so its annotation always fails. An explicitly declared
     // record accessor is the accessor mandated by its component ([§8.10.3]),
     // so `@Override` is accepted on it ([§9.6.4.4]).
-    let record_components: &[hir_expand::item_tree::RecordComponent] = match tree.data(item) {
+    let record_components: &[hir_def::java::item_tree::RecordComponent] = match tree.data(item) {
         ItemData::Record(record) => &record.components,
         _ => &[],
     };
@@ -457,9 +457,8 @@ fn check_class(
     );
     for &child in tree.data(item).body() {
         if let ItemData::Method(m) = tree.data(child)
-            && !m.is_constructor
-            && m.modifiers
-                .annotations
+            && !m.is_constructor()
+            && m.annotations
                 .iter()
                 .any(|annotation| is_override_annotation(db, scope, &resolver, &annotation.name))
         {
@@ -565,7 +564,7 @@ fn is_class_like(data: &ItemData) -> bool {
 /// The `public` modifier and simple name of a class-like top-level declaration
 /// ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6),
 /// [§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
-fn class_like_modifiers(data: &ItemData) -> Option<&hir_expand::modifiers::Modifiers> {
+fn class_like_modifiers(data: &ItemData) -> Option<&hir_def::java::modifiers::JavaModifiers> {
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => Some(&d.modifiers),
         ItemData::Enum(d) => Some(&d.modifiers),
@@ -597,7 +596,7 @@ fn file_stem(db: &dyn TyDatabase, file: FileId) -> Option<String> {
 fn public_type_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
-    tree: &hir_expand::item_tree::ItemTree,
+    tree: &hir_def::java::item_tree::ItemTree,
 ) -> Vec<DeclDiagnostic> {
     if tree.language != LanguageKind::Java {
         return Vec::new();
@@ -614,7 +613,7 @@ fn public_type_diagnostics(
         let Some(modifiers) = class_like_modifiers(data) else {
             continue;
         };
-        if !modifiers.public {
+        if !modifiers.is_public() {
             continue;
         }
         let simple = match data {
@@ -653,7 +652,7 @@ fn public_type_diagnostics(
 fn duplicate_class_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
-    tree: &hir_expand::item_tree::ItemTree,
+    tree: &hir_def::java::item_tree::ItemTree,
 ) -> Vec<DeclDiagnostic> {
     if tree.language != LanguageKind::Java {
         return Vec::new();

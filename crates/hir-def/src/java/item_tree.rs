@@ -4,29 +4,33 @@
 //! top-level type, member, field, enum constant, initializer and module
 //! directive gets a stable [`ItemId`]. The *bodies* of methods, initializers,
 //! field initializers, enum constant arguments and annotation element defaults
-//! are lowered into the per-file [`crate::body::BodyTree`], which lives
+//! are lowered into the per-file [`hir_expand::body::BodyTree`], which lives
 //! *beside* the item tree ([`LoweredFile`]) rather than inside it: keeping the
 //! body content out of the memoized item tree lets salsa backdate the
 //! signature-level queries across edits that only touch a method body.
+//!
+//! This is the *Java* declaration layer: the item kinds mirror the Java
+//! grammar (classes, interfaces, enums, records, annotation types, modules,
+//! methods, fields), and every declaration's source modifiers are carried as
+//! [`crate::java::modifiers::JavaModifiers`]. Language-specific method
+//! attributes are wrapped in [`MethodExtra::Java`], leaving the JVM-level
+//! signature independent of the source language. Kotlin will lower its own
+//! item tree against the same JVM substrate.
 
 use std::sync::Arc;
 
-use rowan::TextRange;
-
-use crate::{
-    arena::{Arena, ArenaId},
+use hir_expand::{
+    arena::Arena,
     body::{BodyId, BodyTree, ExprId},
-    modifiers::Modifiers,
     name::Name,
     span::{NameRef, SpannedTypeRef},
 };
+use rowan::TextRange;
+
+use crate::java::modifiers::JavaModifiers;
 
 pub use base_db::LanguageKind;
-
-/// The id of an item within its owning [`ItemTree`]. Stable across salsa
-/// queries; combine with a `FileId` for a workspace-unique id ([`crate::item_loc::ItemLoc`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ItemId(pub ArenaId);
+pub use hir_expand::ids::ItemId;
 
 /// An import of a compilation unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,11 +81,11 @@ impl ItemTree {
 }
 
 /// The full per-file lowering: the declaration [`ItemTree`] plus the body IR
-/// ([`crate::body::BodyTree`]), lowered together in one pass so the body ids
-/// stored in the item data line up with the body arenas. Computed by a single
-/// salsa query (`hir_def::db::lower_source_query`) and read through its
-/// [`file_item_tree`](hir_def::file_item_tree) /
-/// [`file_body_tree`](hir_def::file_body_tree) accessors. Because the item
+/// ([`hir_expand::body::BodyTree`]), lowered together in one pass so the body
+/// ids stored in the item data line up with the body arenas. Computed by a
+/// single salsa query (`hir_def::db::lower_source_query`) and read through its
+/// [`file_item_tree`](crate::db::file_item_tree) /
+/// [`file_body_tree`](crate::db::file_body_tree) accessors. Because the item
 /// tree carries no body content, edits that only change a method body leave
 /// its value unchanged, letting salsa backdate signature consumers
 /// (`file_symbols_query`, `supertypes_query`, ...) instead of re-running them.
@@ -153,7 +157,7 @@ impl ItemData {
         }
     }
 
-    /// A display label used by [`crate::pretty::pretty_print`].
+    /// A display label used by [`crate::java::pretty::pretty_print`].
     pub fn label(&self) -> &'static str {
         match self {
             ItemData::Class(_) => "class",
@@ -176,7 +180,11 @@ impl ItemData {
 pub struct ClassData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    /// The annotation references of the declaration, in source order
+    /// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)),
+    /// decoupled from the modifier flags.
+    pub annotations: Vec<NameRef>,
     pub super_class: Option<SpannedTypeRef>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
@@ -188,7 +196,8 @@ pub struct ClassData {
 pub struct EnumData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
@@ -207,7 +216,8 @@ pub struct RecordData {
     /// `implements` clause), excluding the body `{ ... }`. This is the
     /// declaration's "definition" — what the outline should point at.
     pub header_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     pub components: Vec<RecordComponent>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
@@ -219,7 +229,8 @@ pub struct RecordData {
 pub struct AnnotationData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
 }
@@ -242,27 +253,84 @@ pub struct Param {
     pub varargs: bool,
 }
 
-/// A method, constructor or annotation element. `is_constructor` is `true` for
-/// constructors and compact constructors; annotation elements carry a
-/// `default_value` range and expression.
+/// The language-specific attributes of a method declaration, abstracted out of
+/// the JVM-level [`MethodData`] core so the substrate stays language-neutral:
+/// a Kotlin method will carry `MethodExtra::Kotlin(...)` with its own
+/// attributes instead of these Java ones.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MethodExtra {
+    /// A Java method, constructor or annotation element
+    /// ([JLS §8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4),
+    /// [§8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8),
+    /// [§9.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.1)).
+    Java(MethodExtraJava),
+}
+
+/// The Java-specific attributes of a [`MethodData`]: constructor-ness, the
+/// lowered body and the annotation element default.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MethodExtraJava {
+    /// Whether the method is a constructor or compact constructor
+    /// ([JLS §8.8]).
+    pub is_constructor: bool,
+    /// The lowered body of the method, if it declares one.
+    pub body: Option<BodyId>,
+    /// The source range of an annotation element's default value
+    /// ([JLS §9.6.1]).
+    pub default_value: Option<TextRange>,
+    /// The lowered default-value expression of an annotation element.
+    pub default_expr: Option<ExprId>,
+}
+
+/// A method, constructor or annotation element.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     pub sig: Signature,
-    pub is_constructor: bool,
-    pub body: Option<BodyId>,
-    pub default_value: Option<TextRange>,
-    pub default_expr: Option<ExprId>,
+    /// The language-specific attributes of the declaration (Java constructor
+    /// / body / annotation default, Kotlin attributes later).
+    pub extra: MethodExtra,
     pub range: TextRange,
+}
+
+impl MethodData {
+    /// Whether the method is a Java constructor or compact constructor
+    /// ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)).
+    pub fn is_constructor(&self) -> bool {
+        matches!(&self.extra, MethodExtra::Java(java) if java.is_constructor)
+    }
+
+    /// The lowered body of the method, if it declares one.
+    pub fn body(&self) -> Option<BodyId> {
+        match &self.extra {
+            MethodExtra::Java(java) => java.body,
+        }
+    }
+
+    /// The source range of an annotation element's default value.
+    pub fn default_value(&self) -> Option<TextRange> {
+        match &self.extra {
+            MethodExtra::Java(java) => java.default_value,
+        }
+    }
+
+    /// The lowered default-value expression of an annotation element.
+    pub fn default_expr(&self) -> Option<ExprId> {
+        match &self.extra {
+            MethodExtra::Java(java) => java.default_expr,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     pub ty: SpannedTypeRef,
     pub initializer: Option<TextRange>,
     pub initializer_expr: Option<ExprId>,
@@ -298,7 +366,8 @@ pub struct InstanceInitData {
 pub struct ModuleData {
     pub name: Name,
     pub name_range: TextRange,
-    pub modifiers: Modifiers,
+    pub modifiers: JavaModifiers,
+    pub annotations: Vec<NameRef>,
     /// Whether the module was declared `open`.
     pub is_open: bool,
     pub requires: Vec<ModuleRequires>,
@@ -331,7 +400,7 @@ pub struct ModuleProvides {
 /// A declared type parameter of a class or method
 /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
 /// with source-spanned bounds and the annotations on the type-parameter
-/// declaration ([JLS §9.7.4]).
+/// declaration ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     pub name: Name,

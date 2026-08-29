@@ -1028,11 +1028,13 @@ impl Lub<'_> {
             hir::Resolved::Source(source) => {
                 let tree = hir::file_item_tree(self.db, source.file);
                 match tree.data(source.item) {
-                    hir_expand::item_tree::ItemData::Class(data)
-                    | hir_expand::item_tree::ItemData::Interface(data) => {
+                    hir_def::java::item_tree::ItemData::Class(data)
+                    | hir_def::java::item_tree::ItemData::Interface(data) => {
                         !data.type_params.is_empty()
                     }
-                    hir_expand::item_tree::ItemData::Record(data) => !data.type_params.is_empty(),
+                    hir_def::java::item_tree::ItemData::Record(data) => {
+                        !data.type_params.is_empty()
+                    }
                     _ => false,
                 }
             }

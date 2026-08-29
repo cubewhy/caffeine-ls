@@ -8,10 +8,11 @@ use std::sync::Arc;
 use base_db::LanguageKind;
 use hir_expand::{
     body::{BodyTree, LabelId},
-    item_tree::{ItemData, ItemId, ItemTree, LoweredFile},
     name::Name,
 };
 use syntax::SourceFile;
+
+use crate::java::item_tree::{ItemData, ItemId, ItemTree, LoweredFile};
 
 pub mod java;
 pub mod kotlin;

@@ -1,4 +1,4 @@
-use hir::hir_expand::item_tree::{ItemData, ItemId, ItemTree};
+use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use ide_db::{
     FileRange, RootDatabase, Severity,
     base_db::{self, FileText, LanguageKind, SourceDatabase, salsa},

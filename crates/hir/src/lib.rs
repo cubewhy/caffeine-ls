@@ -1,3 +1,4 @@
+pub use hir_def;
 pub use hir_expand;
 
 pub mod db;

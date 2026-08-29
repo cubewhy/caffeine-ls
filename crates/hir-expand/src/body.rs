@@ -1,12 +1,13 @@
 //! The lowered per-file body IR ("body tree", after rust-analyzer).
 //!
-//! Where [`crate::item_tree::ItemTree`] carries declarations, the body
-//! tree carries the executed *statements* and *expressions* of method bodies,
-//! initializers, field initializers, enum constant arguments and annotation
-//! element defaults, mirroring [JLS §14](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html)
+//! Where the item tree (`hir_def::java::item_tree::ItemTree`) carries
+//! declarations, the body tree carries the executed *statements* and
+//! *expressions* of method bodies, initializers, field initializers, enum
+//! constant arguments and annotation element defaults, mirroring
+//! [JLS §14](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html)
 //! (statements) and [JLS §15](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html)
 //! (expressions). It is lowered alongside the item tree (one salsa query, one
-//! parse per file) and embedded in [`ItemTree`], so edits invalidate bodies
+//! parse per file) and embedded in `LoweredFile`, so edits invalidate bodies
 //! together with declarations.
 //!
 //! The IR is an arena of [`ExprData`] and [`StmtData`] plus the [`Body`]
@@ -19,7 +20,7 @@ use rowan::TextRange;
 
 use crate::{
     arena::{Arena, ArenaId},
-    item_tree::ItemId,
+    ids::ItemId,
     name::Name,
     span::SpannedTypeRef,
 };

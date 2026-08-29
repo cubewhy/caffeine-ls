@@ -15,10 +15,8 @@
 use std::sync::Arc;
 
 use base_db::{FileText, salsa};
-use hir_expand::{
-    item_tree::{ItemData, ItemId, TypeParam},
-    name::Name,
-};
+use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
+use hir_expand::name::Name;
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::TypeRef;
 use vfs::FileId;
@@ -145,7 +143,7 @@ pub(crate) fn enclosing_class_query(
     fn walk(
         db: &dyn TyDatabase,
         file_id: FileId,
-        tree: &hir_expand::item_tree::ItemTree,
+        tree: &hir_def::java::item_tree::ItemTree,
         id: ItemId,
         enclosing: Option<ItemId>,
         map: &mut FxHashMap<ItemId, Name>,

@@ -12,7 +12,7 @@ use base_db::{
     SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
 };
 use hir::{HirDatabase, HirState, LibraryId, LibraryInfo, LibraryKind, lmdb_store::StubStore};
-use hir_expand::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
 use triomphe::Arc as Arc3;
