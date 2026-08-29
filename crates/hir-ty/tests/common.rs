@@ -1595,7 +1595,7 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                                     format!("@{line}:{col}", line = lc.line, col = lc.col)
                                 })
                                 .unwrap_or_default();
-                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(&bodies))
+                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(db, &bodies))
                         })
                         .collect::<Vec<_>>()
                         .join(" | ")
@@ -1636,7 +1636,7 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
                 diag.method_name(),
                 diag.code(),
                 at,
-                diag.message()
+                diag.message(&db)
             ));
         }
     }

@@ -503,7 +503,7 @@ impl<'a> InferCtx<'a> {
             self.types.insert(cond, self.error());
             self.report(TypeError::NonBooleanCondition {
                 expr: cond,
-                found: ty.display(self.db).to_string(),
+                found: ty,
             });
         }
     }
@@ -652,7 +652,7 @@ impl<'a> InferCtx<'a> {
         if !ty.is_error(self.db) && !self.switchable(&ty) {
             self.report(TypeError::SwitchSelectorType {
                 expr: scrutinee,
-                found: ty.display(self.db).to_string(),
+                found: ty,
             });
         }
         ty
@@ -737,8 +737,8 @@ impl<'a> InferCtx<'a> {
         {
             self.report(TypeError::IncompatibleTypes {
                 expr: label,
-                found: ty.display(self.db).to_string(),
-                expected: selector.display(self.db).to_string(),
+                found: ty,
+                expected: *selector,
             });
         }
         // §14.11.1/§15.28: a primitive- or String-selector label must be a
@@ -836,14 +836,10 @@ impl<'a> InferCtx<'a> {
         let Some(ty) = self.locals.get(&local).copied() else {
             return;
         };
-        if let TyKind::Reference { name, .. } = ty.kind(self.db)
+        if let TyKind::Reference { .. } = ty.kind(self.db)
             && self.is_raw_type(&ty)
         {
-            let simple = name.as_str().rsplit('.').next().unwrap_or_default();
-            self.report(TypeError::RawTypeUse {
-                local,
-                name: simple.to_owned(),
-            });
+            self.report(TypeError::RawTypeUse { local, ty });
         }
     }
 
@@ -859,8 +855,8 @@ impl<'a> InferCtx<'a> {
         if parameterized && !plain_subtype {
             self.report(TypeError::UncheckedConversion {
                 expr,
-                from: src.display(self.db).to_string(),
-                to: dst.display(self.db).to_string(),
+                from: *src,
+                to: *dst,
             });
         }
     }
@@ -958,10 +954,7 @@ impl<'a> InferCtx<'a> {
                 .iter()
                 .any(|target| crate::subtyping::is_assignable(self.db, &self.scope, &ty, target));
             if !discharged && reported.insert(expr) {
-                self.report(TypeError::UnreportedException {
-                    expr,
-                    thrown: ty.display(self.db).to_string(),
-                });
+                self.report(TypeError::UnreportedException { expr, thrown: ty });
             }
         }
     }
@@ -1064,7 +1057,7 @@ impl<'a> InferCtx<'a> {
                     self.types.insert(id, self.error());
                     self.report(TypeError::GenericArrayCreation {
                         expr: id,
-                        ty: inner.display(self.db).to_string(),
+                        ty: inner,
                     });
                 }
                 let mut result = inner;
@@ -1134,8 +1127,8 @@ impl<'a> InferCtx<'a> {
                 {
                     self.report(TypeError::IncompatibleTypes {
                         expr: rhs,
-                        found: rhs_ty.display(self.db).to_string(),
-                        expected: lhs_ty.display(self.db).to_string(),
+                        found: rhs_ty,
+                        expected: lhs_ty,
                     });
                 }
                 // §5.1.9: a raw source assigned to a parameterized target is
@@ -1172,8 +1165,8 @@ impl<'a> InferCtx<'a> {
                         self.types.insert(expr, self.error());
                         self.report(TypeError::BadCast {
                             expr,
-                            found: operand.display(self.db).to_string(),
-                            target: cast_ty.display(self.db).to_string(),
+                            found: operand,
+                            target: cast_ty,
                         });
                     }
                     cast_ty
@@ -1254,8 +1247,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr: id,
                             op: "?:",
-                            found: then_ty.display(self.db).to_string(),
-                            other: Some(els_ty.display(self.db).to_string()),
+                            found: then_ty,
+                            other: Some(els_ty),
                         });
                     }
                     ty
@@ -1833,29 +1826,20 @@ impl<'a> InferCtx<'a> {
             .cloned();
         let required = best
             .as_ref()
-            .map(|m| {
-                m.params
-                    .iter()
-                    .map(|p| p.display(self.db).to_string())
-                    .collect()
-            })
+            .map(|m| m.params.iter().copied().collect::<Vec<_>>())
             .unwrap_or_default();
-        let found_tys: Vec<String> = arg_kinds
+        // The actual argument types: a concrete argument carries its own
+        // type; a poly argument (or an error/void one) has no standalone type
+        // and renders as `<poly>`.
+        let found_tys: Vec<Option<Ty>> = arg_kinds
             .iter()
             .map(|info| match info.leaves.as_slice() {
-                // A concrete argument carries its own type.
-                [ArgKind::Concrete(ty)] => ty.display(self.db).to_string(),
+                [ArgKind::Concrete(ty)] => Some(*ty),
                 _ => self
                     .types
                     .get(&info.id)
-                    .map(|ty| {
-                        if ty.is_error(self.db) || ty.is_void_like(self.db) {
-                            "<poly>".to_owned()
-                        } else {
-                            ty.display(self.db).to_string()
-                        }
-                    })
-                    .unwrap_or_else(|| "<poly>".to_owned()),
+                    .copied()
+                    .filter(|ty| !ty.is_error(self.db) && !ty.is_void_like(self.db)),
             })
             .collect();
         // The reason line: against a same-arity candidate, the first
@@ -1871,10 +1855,7 @@ impl<'a> InferCtx<'a> {
                 if let [ArgKind::Concrete(ty)] = info.leaves.as_slice()
                     && !crate::subtyping::is_assignable(self.db, &self.scope, ty, formal)
                 {
-                    incompatible = Some((
-                        ty.display(self.db).to_string(),
-                        formal.display(self.db).to_string(),
-                    ));
+                    incompatible = Some((*ty, *formal));
                     break;
                 }
             }
@@ -2943,13 +2924,8 @@ impl<'a> InferCtx<'a> {
             _ => return,
         };
         if non_instantiable {
-            let name = match class_ty.kind(self.db) {
-                TyKind::TypeVar { name, .. } => name.as_str().to_owned(),
-                TyKind::Reference { name, .. } => name.simple_name().to_owned(),
-                _ => unreachable!(),
-            };
             self.types.insert(expr, self.error());
-            self.report(TypeError::CannotInstantiateTypeVar { expr, name });
+            self.report(TypeError::CannotInstantiateTypeVar { expr, ty: class_ty });
         }
     }
 
@@ -3086,7 +3062,7 @@ impl<'a> InferCtx<'a> {
             if !target.is_error(self.db) {
                 self.report(TypeError::NotAFunctionalInterface {
                     expr,
-                    target: target.display(self.db).to_string(),
+                    target: target,
                 });
             }
             return self.error();
@@ -3169,7 +3145,7 @@ impl<'a> InferCtx<'a> {
             {
                 self.report(TypeError::UnreportedException {
                     expr: *expr,
-                    thrown: ty.display(self.db).to_string(),
+                    thrown: *ty,
                 });
             }
         }
@@ -3197,7 +3173,7 @@ impl<'a> InferCtx<'a> {
             if !target.is_error(self.db) {
                 self.report(TypeError::NotAFunctionalInterface {
                     expr,
-                    target: target.display(self.db).to_string(),
+                    target: target,
                 });
             }
             return self.error();
@@ -3362,10 +3338,7 @@ impl<'a> InferCtx<'a> {
                 if !self.is_boolean(inner) {
                     if !inner.is_error(self.db) {
                         self.types.insert(expr, self.error());
-                        self.report(TypeError::NonBooleanCondition {
-                            expr,
-                            found: inner.display(self.db).to_string(),
-                        });
+                        self.report(TypeError::NonBooleanCondition { expr, found: inner });
                     }
                     self.error()
                 } else {
@@ -3381,7 +3354,7 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr,
                             op: unary_op_symbol(op),
-                            found: inner.display(self.db).to_string(),
+                            found: inner,
                             other: None,
                         });
                     }
@@ -3549,8 +3522,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
-                            found: bad_ty.display(self.db).to_string(),
-                            other: Some(other_ty.display(self.db).to_string()),
+                            found: bad_ty,
+                            other: Some(other_ty),
                         });
                     }
                     self.error()
@@ -3579,8 +3552,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
-                            found: bad_ty.display(self.db).to_string(),
-                            other: Some(other_ty.display(self.db).to_string()),
+                            found: bad_ty,
+                            other: Some(other_ty),
                         });
                     }
                     return self.error();
@@ -3602,8 +3575,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
-                            found: bad_ty.display(self.db).to_string(),
-                            other: Some(other_ty.display(self.db).to_string()),
+                            found: bad_ty,
+                            other: Some(other_ty),
                         });
                     }
                     self.error()
@@ -3630,8 +3603,8 @@ impl<'a> InferCtx<'a> {
                         self.report(TypeError::IncompatibleOperand {
                             expr: bad,
                             op: binary_op_symbol(op),
-                            found: bad_ty.display(self.db).to_string(),
-                            other: Some(other_ty.display(self.db).to_string()),
+                            found: bad_ty,
+                            other: Some(other_ty),
                         });
                     }
                     self.error()
@@ -3656,8 +3629,8 @@ impl<'a> InferCtx<'a> {
                     self.report(TypeError::IncomparableTypes {
                         expr: lhs,
                         op: binary_op_symbol(op),
-                        found: lhs_ty.display(self.db).to_string(),
-                        other: rhs_ty.display(self.db).to_string(),
+                        found: lhs_ty,
+                        other: rhs_ty,
                     });
                 }
                 self.primitive(PrimitiveType::Boolean)
@@ -3988,8 +3961,8 @@ impl<'a> InferCtx<'a> {
                     {
                         self.report(TypeError::IncompatibleTypes {
                             expr: *initializer,
-                            found: init_ty.display(self.db).to_string(),
-                            expected: target.display(self.db).to_string(),
+                            found: init_ty,
+                            expected: target,
                         });
                     }
                     // §5.1.9: a raw source assigned to a parameterized target
@@ -4120,7 +4093,7 @@ impl<'a> InferCtx<'a> {
                                 // reference type is a compile-time error.
                                 self.report(TypeError::NonIterableForEach {
                                     expr: *iterable,
-                                    found: iterable_ty.display(self.db).to_string(),
+                                    found: iterable_ty,
                                 });
                             }
                             self.error()
@@ -4226,8 +4199,8 @@ impl<'a> InferCtx<'a> {
                             if !ty.is_error(self.db) {
                                 self.report(TypeError::IncompatibleTypes {
                                     expr: *expr,
-                                    found: ty.display(self.db).to_string(),
-                                    expected: "void".to_owned(),
+                                    found: ty,
+                                    expected: Ty::void(self.db),
                                 });
                             }
                         }
@@ -4243,8 +4216,8 @@ impl<'a> InferCtx<'a> {
                                 // to the return type ([§5.2]).
                                 self.report(TypeError::IncompatibleTypes {
                                     expr: *expr,
-                                    found: ty.display(self.db).to_string(),
-                                    expected: ret.display(self.db).to_string(),
+                                    found: ty,
+                                    expected: ret,
                                 });
                             }
                         }
@@ -4270,8 +4243,8 @@ impl<'a> InferCtx<'a> {
                     // §14.18: a non-throwable operand is a compile-time error.
                     self.report(TypeError::IncompatibleTypes {
                         expr: *expr,
-                        found: ty.display(self.db).to_string(),
-                        expected: "java.lang.Throwable".to_owned(),
+                        found: ty,
+                        expected: throwable,
                     });
                 } else if let ExprData::Var(name) = self.tree.expr(*expr).clone()
                     && let Some(local) = self.lookup_local(&name)
@@ -4420,11 +4393,7 @@ impl<'a> InferCtx<'a> {
                         // earlier clause.
                         self.report(TypeError::AlreadyCaught {
                             local: clause.param,
-                            caught: clause_tys
-                                .iter()
-                                .map(|ty| ty.display(self.db).to_string())
-                                .collect::<Vec<_>>()
-                                .join(" | "),
+                            caught: clause_tys.clone(),
                         });
                     } else {
                         // §11.2.3: an alternative may name a *checked*
@@ -4468,7 +4437,7 @@ impl<'a> InferCtx<'a> {
                             {
                                 self.report(TypeError::CatchNeverThrown {
                                     local: clause.param,
-                                    caught: clause_ty.display(self.db).to_string(),
+                                    caught: *clause_ty,
                                 });
                             }
                         }

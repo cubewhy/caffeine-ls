@@ -118,7 +118,7 @@ pub(crate) fn collect_type_diagnostics(
                 file_id,
                 make_diagnostic(
                     file_id,
-                    &diagnostic.message(&bodies),
+                    &diagnostic.message(db, &bodies),
                     range,
                     Some(diagnostic.code()),
                     // Raw-type and unchecked-conversion reports are warnings
@@ -172,7 +172,7 @@ pub(crate) fn collect_declaration_diagnostics(
             file_id,
             make_diagnostic(
                 file_id,
-                &diagnostic.message(),
+                &diagnostic.message(db),
                 range,
                 Some(diagnostic.code()),
                 Severity::Error,

@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
+assertion_line: 517
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -32,9 +33,9 @@ method call(): void
   locals: 
   exprs: e1: java.util.List<java.lang.Object> | e2: <error> | e3: <error>
   diags: e2@12:13: wrong-argument-count: method pick cannot be applied to given types;
-  required: java.lang.Integer
-  found: java.util.List<java.lang.Object>
+  required: Integer
+  found: List<Object>
   reason: actual and formal argument lists differ in length | e3@12:8: wrong-argument-count: method take cannot be applied to given types;
-  required: java.util.List<java.lang.String>
+  required: List<String>
   found: <poly>
   reason: actual and formal argument lists differ in length

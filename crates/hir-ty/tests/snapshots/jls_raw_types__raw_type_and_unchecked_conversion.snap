@@ -1,5 +1,6 @@
 ---
 source: crates/hir-ty/tests/jls_raw_types.rs
+assertion_line: 42
 expression: out
 ---
 FILE /src/com/example/Raw.java:
@@ -18,4 +19,4 @@ class Raw {
 method m(java.util.List<java.lang.String>): void
   locals: l0: java.util.List<java.lang.String> | l1: java.util.List | l2: java.util.List<java.lang.String> | l3: java.lang.String
   exprs: e0: java.util.List<java.lang.String> | e1: java.util.List | e2: int | e3: java.util.List<java.lang.String> | e4: java.lang.String
-  diags: l1@6:13: raw-type-use: raw type 'List' is used without type arguments | e1@7:33: unchecked-conversion: unchecked conversion: java.util.List converted to java.util.List<java.lang.String>
+  diags: l1@6:13: raw-type-use: raw type 'List' is used without type arguments | e1@7:33: unchecked-conversion: unchecked conversion: List converted to List<String>

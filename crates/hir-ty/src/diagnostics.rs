@@ -14,6 +14,9 @@ use hir_expand::name::Name;
 use rowan::TextRange;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 
+use crate::db::TyDatabase;
+use crate::ty::Ty;
+
 /// Where a reported type error occurred, in the currency of the body IR: the
 /// stable-per-file arena ids the inference layer works with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,75 +97,75 @@ pub enum TypeError {
     NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
     /// §15.12.2: members of the name exist but none is applicable to the
     /// actual arguments. `required` carries the parameter types of the
-    /// closest candidate and `found_tys` the actual argument types, so the
-    /// message can render javac's `required:/found:` block; both empty means
-    /// only the arity numbers are known. `incompatible` carries the first
-    /// argument-to-formal mismatch against the closest candidate when the
-    /// arities *match* — javac then renders
+    /// closest candidate and `found_tys` the actual argument types (each a
+    /// [`Ty`], or `None` for a poly argument that has no standalone type), so
+    /// the message can render javac's `required:/found:` block; both empty
+    /// means only the arity numbers are known. `incompatible` carries the
+    /// first argument-to-formal mismatch against the closest candidate when
+    /// the arities *match* — javac then renders
     /// `reason: incompatible types: … cannot be converted to …` instead of
-    /// the argument-list-length text.
+    /// the argument-list-length text. Types are stored unresolved (the
+    /// canonical FQN), rendered simple only in [`TypeError::message`], so
+    /// future quickfixes keep the full type.
     WrongArity {
         expr: ExprId,
         name: Name,
         found: usize,
         expected: usize,
-        required: Vec<String>,
-        found_tys: Vec<String>,
-        incompatible: Option<(String, String)>,
+        required: Vec<Ty>,
+        found_tys: Vec<Option<Ty>>,
+        incompatible: Option<(Ty, Ty)>,
     },
     /// §14.18: the operand of a `throw` statement is not assignable to
     /// `Throwable` ([§5.2]).
     IncompatibleTypes {
         expr: ExprId,
-        found: String,
-        expected: String,
+        found: Ty,
+        expected: Ty,
     },
     /// §14.9, §14.11, §14.12.1, §14.16, §15.25.1: the condition of an
     /// `if`/`while`/`do`/`for`/`assert`/`? :`/`&&`/`||`/`!` is not `boolean`.
-    NonBooleanCondition { expr: ExprId, found: String },
+    NonBooleanCondition { expr: ExprId, found: Ty },
     /// §15.15, §15.17, §15.18, §15.19, §15.22: a unary, binary or shift
     /// operator applied to a non-numeric operand.
     IncompatibleOperand {
         expr: ExprId,
         op: &'static str,
-        found: String,
-        other: Option<String>,
+        found: Ty,
+        other: Option<Ty>,
     },
     /// §15.20/§15.21: an equality or relational operator between operands that
     /// are not comparable.
     IncomparableTypes {
         expr: ExprId,
         op: &'static str,
-        found: String,
-        other: String,
+        found: Ty,
+        other: Ty,
     },
     /// §14.14.2: the iterable of a for-each loop is not an array or an
     /// `Iterable`.
-    NonIterableForEach { expr: ExprId, found: String },
+    NonIterableForEach { expr: ExprId, found: Ty },
     /// §5.5/§15.16: a cast to a type the operand cannot be cast to.
-    BadCast {
-        expr: ExprId,
-        found: String,
-        target: String,
-    },
+    BadCast { expr: ExprId, found: Ty, target: Ty },
     /// §15.10.2: array creation with a non-reifiable component type
     /// (`new List<String>[3]`).
-    GenericArrayCreation { expr: ExprId, ty: String },
+    GenericArrayCreation { expr: ExprId, ty: Ty },
     /// §15.9: a `new` of a type variable, interface, abstract class or enum.
-    CannotInstantiateTypeVar { expr: ExprId, name: String },
+    CannotInstantiateTypeVar { expr: ExprId, ty: Ty },
     /// §14.11.1: the selector of a `switch` is not one of the types a switch
     /// supports (`char`, `byte`, `short`, `int` or their boxes, `String`, an
     /// enum).
-    SwitchSelectorType { expr: ExprId, found: String },
+    SwitchSelectorType { expr: ExprId, found: Ty },
     /// §11.2: a checked exception is thrown at `expr` but neither caught by
     /// an enclosing `catch` nor declared by the enclosing method's `throws`.
-    UnreportedException { expr: ExprId, thrown: String },
+    UnreportedException { expr: ExprId, thrown: Ty },
     /// §11.2.3/§14.20: a catch clause's parameter is shadowed by an earlier
-    /// clause whose type is a superclass — the clause is unreachable.
-    AlreadyCaught { local: LocalId, caught: String },
+    /// clause whose type is a superclass — the clause is unreachable. The
+    /// clause's alternatives (a multi-catch) are kept individually.
+    AlreadyCaught { local: LocalId, caught: Vec<Ty> },
     /// §9.8/§15.27.3: a lambda or method reference target is not a functional
     /// interface.
-    NotAFunctionalInterface { expr: ExprId, target: String },
+    NotAFunctionalInterface { expr: ExprId, target: Ty },
     /// §8.3.3: a field initializer reads a same-class field declared
     /// textually later, by simple name and of the same static/instance kind.
     IllegalForwardReference { expr: ExprId, name: Name },
@@ -180,15 +183,11 @@ pub enum TypeError {
     DuplicateCaseLabel { expr: ExprId, value: String },
     /// §4.12.2: a declared type names a generic class without type arguments
     /// — a *raw type* use. A warning, not an error.
-    RawTypeUse { local: LocalId, name: String },
+    RawTypeUse { local: LocalId, ty: Ty },
     /// §5.1.9/§5.2: a raw-typed expression is assigned to a parameterized
     /// target; the conversion succeeds but carries no static element-type
     /// guarantee. A warning, not an error.
-    UncheckedConversion {
-        expr: ExprId,
-        from: String,
-        to: String,
-    },
+    UncheckedConversion { expr: ExprId, from: Ty, to: Ty },
     /// §14.22: a statement is unreachable — the statement before it cannot
     /// complete normally (`return`, `throw`, `break`, `continue`).
     UnreachableStatement { stmt: StmtId },
@@ -198,7 +197,7 @@ pub enum TypeError {
     MissingReturnValue { range: Option<TextRange> },
     /// §11.2.3: a `catch` clause names a checked exception that the `try`
     /// block cannot throw.
-    CatchNeverThrown { local: LocalId, caught: String },
+    CatchNeverThrown { local: LocalId, caught: Ty },
 }
 
 impl TypeError {
@@ -318,8 +317,10 @@ impl TypeError {
     /// occurred in (for the local's name). Wherever javac has a 1:1 message
     /// for the construct (see `compiler.properties` / the `-XDrawDiagnostics`
     /// probe harness in `crates/hir-ty/tests/javac_parity.rs`), this text
-    /// mirrors it verbatim, using javac's *simple* class-name rendering.
-    pub fn message(&self, tree: &BodyTree) -> String {
+    /// mirrors it verbatim, using javac's *simple* class-name rendering
+    /// ([`Ty::display_simple`]). The structured fields keep the canonical
+    /// FQN; the simple rendering happens only here, at display time.
+    pub fn message(&self, db: &dyn TyDatabase, tree: &BodyTree) -> String {
         use TypeError::*;
         match self {
             VarWithoutInitializer { local } => {
@@ -382,16 +383,27 @@ impl TypeError {
                 let reason = match incompatible {
                     Some((found, expected)) => format!(
                         "reason: incompatible types: {} cannot be converted to {}",
-                        simple_display(&found),
-                        simple_display(&expected)
+                        render_simple(db, *found),
+                        render_simple(db, *expected)
                     ),
                     None => "reason: actual and formal argument lists differ in length".to_owned(),
                 };
                 format!(
                     "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
                     name.as_str(),
-                    required.join(","),
-                    found_tys.join(","),
+                    required
+                        .iter()
+                        .map(|ty| render_simple(db, *ty))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    found_tys
+                        .iter()
+                        .map(|ty| match ty {
+                            Some(ty) => render_simple(db, *ty),
+                            None => "<poly>".to_owned(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(","),
                     reason
                 )
             }
@@ -400,14 +412,14 @@ impl TypeError {
             } => {
                 format!(
                     "incompatible types: {} cannot be converted to {}",
-                    simple_display(found),
-                    simple_display(expected)
+                    render_simple(db, *found),
+                    render_simple(db, *expected)
                 )
             }
             NonBooleanCondition { found, .. } => {
                 format!(
                     "incompatible types: {} cannot be converted to boolean",
-                    simple_display(found)
+                    render_simple(db, *found)
                 )
             }
             IncompatibleOperand {
@@ -415,57 +427,61 @@ impl TypeError {
             } => match other {
                 Some(other) => format!(
                     "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
-                    simple_display(found),
-                    simple_display(other)
+                    render_simple(db, *found),
+                    render_simple(db, *other)
                 ),
                 None => format!(
                     "bad operand type {} for unary operator '{op}'",
-                    simple_display(found)
+                    render_simple(db, *found)
                 ),
             },
             IncomparableTypes {
                 op, found, other, ..
             } => format!(
                 "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
-                simple_display(found),
-                simple_display(other)
+                render_simple(db, *found),
+                render_simple(db, *other)
             ),
             NonIterableForEach { found, .. } => format!(
                 "for-each not applicable to expression type\n  required: array or java.lang.Iterable\n  found:    {}",
-                simple_display(found)
+                render_simple(db, *found)
             ),
             BadCast { found, target, .. } => {
                 format!(
                     "inconvertible types: {} cannot be cast to {}",
-                    simple_display(found),
-                    simple_display(target)
+                    render_simple(db, *found),
+                    render_simple(db, *target)
                 )
             }
             GenericArrayCreation { .. } => "generic array creation".to_owned(),
-            CannotInstantiateTypeVar { name, .. } => {
+            CannotInstantiateTypeVar { ty, .. } => {
                 format!(
                     "{} is abstract; cannot be instantiated",
-                    simple_display(name)
+                    render_simple(db, *ty)
                 )
             }
             SwitchSelectorType { found, .. } => {
-                format!("switch selector type {}", simple_display(found))
+                format!("switch selector type {}", render_simple(db, *found))
             }
             UnreportedException { thrown, .. } => {
                 format!(
                     "unreported exception {}; must be caught or declared to be thrown",
-                    simple_display(thrown)
+                    render_simple(db, *thrown)
                 )
             }
             AlreadyCaught { caught, .. } => {
                 format!(
                     "exception {} has already been caught",
-                    simple_display(caught)
+                    caught
+                        .iter()
+                        .map(|ty| render_simple(db, *ty))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
                 )
             }
             NotAFunctionalInterface { target, .. } => format!(
                 "incompatible types: {} is not a functional interface",
-                simple_display(target)
+                render_simple(db, *target)
             ),
             IllegalForwardReference { .. } => "illegal forward reference".to_owned(),
             NotDefinitelyAssigned { name, .. } => {
@@ -477,33 +493,30 @@ impl TypeError {
             }
             NonConstantCaseLabel { .. } => "constant expression required".to_owned(),
             DuplicateCaseLabel { .. } => "duplicate case label".to_owned(),
-            RawTypeUse { name, .. } => {
-                format!("raw type '{name}' is used without type arguments")
+            RawTypeUse { ty, .. } => {
+                format!(
+                    "raw type '{}' is used without type arguments",
+                    render_simple(db, *ty)
+                )
             }
             UncheckedConversion { from, to, .. } => {
-                format!("unchecked conversion: {from} converted to {to}")
+                format!(
+                    "unchecked conversion: {} converted to {}",
+                    render_simple(db, *from),
+                    render_simple(db, *to)
+                )
             }
             UnreachableStatement { .. } => "unreachable statement".to_owned(),
             MissingReturnValue { .. } => "missing return statement".to_owned(),
             CatchNeverThrown { caught, .. } => format!(
                 "exception {} is never thrown in the corresponding try block",
-                simple_display(caught)
+                render_simple(db, *caught)
             ),
         }
     }
 }
 
-/// Strips the package prefix from a rendered type so javac's default-mode
-/// *simple* class-name display is reproduced (`java.lang.Object` →
-/// `Object`), while keeping arrays (`java.lang.String[]` → `String[]`).
-fn simple_display(rendered: &str) -> String {
-    let (base, arrays) = match rendered.strip_suffix("[]") {
-        Some(base) => (base, "[]"),
-        None => (rendered, ""),
-    };
-    let base = match base.rfind('.') {
-        Some(idx) => &base[idx + 1..],
-        None => base,
-    };
-    format!("{base}{arrays}")
+/// The simple-name rendering of a [`Ty`] for a diagnostic message.
+fn render_simple(db: &dyn TyDatabase, ty: Ty) -> String {
+    ty.display_simple(db).to_string()
 }

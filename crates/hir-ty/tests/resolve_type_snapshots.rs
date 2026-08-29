@@ -126,7 +126,7 @@ fn check_with_libs(specs: &[common::ClassSpec<'static>], files: &[(&str, &str)])
                 diag.method_name(),
                 diag.code(),
                 at,
-                diag.message()
+                diag.message(&db)
             ));
         }
     }

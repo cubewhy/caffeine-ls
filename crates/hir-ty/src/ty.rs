@@ -631,7 +631,7 @@ impl fmt::Display for TySimpleDisplay<'_> {
                 }
                 Ok(())
             }
-            other => fmt::Display::fmt(
+            _ => fmt::Display::fmt(
                 &TyDisplay {
                     ty: self.ty,
                     db: self.db,

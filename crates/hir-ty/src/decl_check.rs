@@ -27,11 +27,15 @@ use crate::ty::Ty;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclDiagnostic {
     /// §8.4.8.3: an override's return type is not return-type-substitutable —
-    /// it is not a subtype of the overridden method's return type.
+    /// it is not a subtype of the overridden method's return type. The return
+    /// types are stored unresolved (the canonical FQN) and the owner's FQN
+    /// kept, rendered simple only in [`DeclDiagnostic::message`], so future
+    /// quickfixes keep the full types.
     IncompatibleOverride {
         method: Name,
-        found: String,
-        expected: String,
+        found: Ty,
+        expected_owner: Name,
+        expected_ret: Ty,
     },
     /// §9.4.1.3: two unrelated superinterfaces declare matching default
     /// methods and the class inherits both without overriding.
@@ -106,13 +110,23 @@ impl DeclDiagnostic {
         }
     }
 
-    /// The human-readable message.
-    pub fn message(&self) -> String {
+    /// The human-readable message, using javac's *simple* class-name
+    /// rendering ([`Ty::display_simple`]). The structured fields keep the
+    /// canonical FQN; the simple rendering happens only here, at display time.
+    pub fn message(&self, db: &dyn TyDatabase) -> String {
         match self {
             DeclDiagnostic::IncompatibleOverride {
-                found, expected, ..
+                found,
+                expected_owner,
+                expected_ret,
+                ..
             } => {
-                format!("incompatible override: {found} cannot override {expected}")
+                format!(
+                    "incompatible override: {} cannot override {}.{}",
+                    found.display_simple(db),
+                    expected_owner.simple_name(),
+                    expected_ret.display_simple(db)
+                )
             }
             DeclDiagnostic::ConflictingDefaults { method } => {
                 let name = method.as_str();
@@ -268,12 +282,9 @@ fn check_class(
                 {
                     out.push(DeclDiagnostic::IncompatibleOverride {
                         method: Name::new(&method.name),
-                        found: method.ret.display(db).to_string(),
-                        expected: format!(
-                            "{}.{}",
-                            super_method.owner,
-                            super_method.ret.display(db)
-                        ),
+                        found: method.ret,
+                        expected_owner: Name::new(&super_method.owner),
+                        expected_ret: super_method.ret,
                     });
                 }
                 break;
