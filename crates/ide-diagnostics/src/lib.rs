@@ -217,6 +217,7 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec
 /// (rust-analyzer-style: evicted at the next revision, recomputed on demand
 /// from the still-memoized sub-queries).
 #[salsa::tracked(returns(clone), lru = 4096)]
+#[tracing::instrument(skip_all, level = "debug")]
 pub(crate) fn file_report_query(
     db: &dyn hir_ty::TyDatabase,
     file: FileText,

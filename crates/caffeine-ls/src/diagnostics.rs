@@ -540,6 +540,8 @@ pub(crate) fn workspace_diagnostic_reports(
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
 
+    let _span = tracing::info_span!("workspace_diagnostic").entered();
+
     // No input changed since the last fully-verified pull: every cached
     // generation is authoritative, so the whole pull is a digest comparison
     // against `previous_result_ids` with zero salsa work. Once any `didChange`
@@ -547,8 +549,14 @@ pub(crate) fn workspace_diagnostic_reports(
     let (nonce, revision) = analysis.raw_database().nonce_and_revision();
     let verified = diag.is_verified(nonce, revision);
 
+    let source_files = diag.source_files();
     let mut items = Vec::new();
-    for file in diag.source_files() {
+    // Cache-vs-recompute split, reported at the end for cache hit/miss tracing.
+    let mut served = 0usize;
+    let mut recomputed = 0usize;
+    let mut full = 0usize;
+    let mut unchanged = 0usize;
+    for file in source_files {
         check_cancelled(snapshot)?;
         let Ok(uri) = snapshot.file_id_to_url(file) else {
             continue;
@@ -580,11 +588,18 @@ pub(crate) fn workspace_diagnostic_reports(
             }
         };
         let (generation, report) = match cached {
-            Some(cached) => cached,
-            None => diag.file_report(analysis, file, fallback)?,
+            Some(cached) => {
+                served += 1;
+                cached
+            }
+            None => {
+                recomputed += 1;
+                diag.file_report(analysis, file, fallback)?
+            }
         };
         let id = render_id(generation);
         if previous_ids.get(&uri).map(String::as_str) == Some(id.as_str()) {
+            unchanged += 1;
             items.push(
                 lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
                     lsp_types::WorkspaceUnchangedDocumentDiagnosticReport {
@@ -596,6 +611,7 @@ pub(crate) fn workspace_diagnostic_reports(
                 ),
             );
         } else {
+            full += 1;
             let diagnostics = convert_items(snapshot, file, &report)?;
             diag.mark_delivered(file, generation);
             items.push(
@@ -616,6 +632,15 @@ pub(crate) fn workspace_diagnostic_reports(
     // current with this revision — later pulls short-circuit until a change.
     diag.mark_verified(nonce, revision);
     items.sort_by(|a, b| uri_of(a).cmp(uri_of(b)));
+    tracing::info!(
+        verified,
+        files = items.len(),
+        served,
+        recomputed,
+        full,
+        unchanged,
+        "workspace/diagnostic pull"
+    );
     Ok(items)
 }
 
@@ -647,6 +672,13 @@ pub(crate) fn run_diagnostics_pass(
 ) -> anyhow::Result<(Vec<FileId>, bool)> {
     let analysis = &snapshot.analysis;
     let diag = &snapshot.diagnostics;
+
+    let _span = tracing::info_span!(
+        "diagnostics_pass",
+        changed = changed.len(),
+        cancelled = false
+    )
+    .entered();
 
     // 1. Lazily subscribe watched-but-untracked files; re-subscribe edited
     //    files that are already tracked (their own dependency edges moved).
