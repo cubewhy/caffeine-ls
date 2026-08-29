@@ -2,6 +2,7 @@ use rowan::TextSize;
 
 use crate::syntax_kind::SyntaxKind;
 
+#[derive(Clone, Copy)]
 pub struct Token<'a> {
     pub kind: SyntaxKind,
     pub lexeme: &'a str,

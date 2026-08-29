@@ -1,0 +1,26 @@
+---
+source: crates/kotlin-syntax/tests/event_snapshots.rs
+expression: out
+---
+SOURCE:
+;;;
+TOKENS:
+SEMICOLON ";"
+SEMICOLON ";"
+SEMICOLON ";"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(IMPORT_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+AddToken
+FinishNode
+
+PARSE_ERRORS:
+<none>

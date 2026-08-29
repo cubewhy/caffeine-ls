@@ -5,7 +5,7 @@ pub(crate) mod syntax_kind;
 
 pub use crate::syntax_error::{SyntaxError, SyntaxErrorKind};
 pub use lexer::{Lexer, LexicalError, LexicalErrorKind, lex, token::Token};
-pub use parser::{Event, Lang, Parse, ParseError, ParseErrorKind, Parser};
+pub use parser::{Event, Lang, Parse, ParseError, ParseErrorKind, Parser, grammar};
 pub use syntax_kind::{ContextualKeyword, SyntaxKind};
 
 use rowan::SyntaxNode;

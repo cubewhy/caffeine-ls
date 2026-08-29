@@ -1,0 +1,39 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+#!/usr/bin/env kotlin
+fun main() {}
+
+TOKENS:
+SHEBANG_LINE "#!/usr/bin/env kotlin"
+NEWLINE "\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..36
+  SHEBANG_LINE@0..21 "#!/usr/bin/env kotlin"
+  NEWLINE@21..22 "\n"
+  IMPORT_LIST@22..22
+  FUN_KW@22..25 "fun"
+  WHITESPACE@25..26 " "
+  IDENTIFIER@26..30 "main"
+  L_PAREN@30..31 "("
+  R_PAREN@31..32 ")"
+  WHITESPACE@32..33 " "
+  L_BRACE@33..34 "{"
+  R_BRACE@34..35 "}"
+  NEWLINE@35..36 "\n"

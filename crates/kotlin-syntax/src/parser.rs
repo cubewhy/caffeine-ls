@@ -12,7 +12,7 @@ use crate::{
 };
 
 mod checkpoint;
-mod grammar;
+pub mod grammar;
 mod marker;
 mod reader;
 mod sink;

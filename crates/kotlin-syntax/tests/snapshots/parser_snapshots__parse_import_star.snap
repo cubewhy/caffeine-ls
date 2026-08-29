@@ -1,0 +1,35 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+import com.example.*
+
+TOKENS:
+IDENTIFIER "import"
+WHITESPACE " "
+IDENTIFIER "com"
+DOT "."
+IDENTIFIER "example"
+DOT "."
+STAR "*"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..21
+  IMPORT_LIST@0..21
+    IMPORT_HEADER@0..21
+      IDENTIFIER@0..6 "import"
+      WHITESPACE@6..7 " "
+      IMPORT_PATH@7..20
+        QUALIFIED_NAME@7..18
+          IDENTIFIER@7..10 "com"
+          DOT@10..11 "."
+          IDENTIFIER@11..18 "example"
+        DOT@18..19 "."
+        STAR@19..20 "*"
+      NEWLINE@20..21 "\n"

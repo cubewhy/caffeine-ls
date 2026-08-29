@@ -1,0 +1,34 @@
+---
+source: crates/kotlin-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+package com.example.app
+
+TOKENS:
+PACKAGE_KW "package"
+WHITESPACE " "
+IDENTIFIER "com"
+DOT "."
+IDENTIFIER "example"
+DOT "."
+IDENTIFIER "app"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..24
+  PACKAGE_HEADER@0..24
+    PACKAGE_KW@0..7 "package"
+    WHITESPACE@7..8 " "
+    QUALIFIED_NAME@8..23
+      IDENTIFIER@8..11 "com"
+      DOT@11..12 "."
+      IDENTIFIER@12..19 "example"
+      DOT@19..20 "."
+      IDENTIFIER@20..23 "app"
+    NEWLINE@23..24 "\n"
+  IMPORT_LIST@24..24

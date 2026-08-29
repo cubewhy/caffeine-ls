@@ -1,0 +1,20 @@
+---
+source: crates/kotlin-syntax/tests/event_snapshots.rs
+expression: out
+---
+SOURCE:
+
+TOKENS:
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(IMPORT_LIST, forward_parent=None)
+FinishNode
+FinishNode
+
+PARSE_ERRORS:
+<none>
