@@ -26,5 +26,4 @@ method s(): void
 method use(): void
   locals: 
   exprs: e1: void | e3: <error>
-  diags: e3@10:8: no-such-method: cannot find symbol
-  symbol:   method s()
+  diags: e3@10:14: no-such-method: Cannot resolve method 's()'

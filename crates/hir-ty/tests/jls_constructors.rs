@@ -5,9 +5,9 @@
 //!
 //! A `new Foo(...)` selects an applicable constructor exactly like a method
 //! invocation ([§15.12.2]): when the class declares no constructor of the
-//! name the creation is a `cannot find symbol` error; when the declared
-//! constructors exist but none is applicable, the message opens with javac's
-//! `constructor {Foo}() cannot be applied to given types;`.
+//! name the creation is a `cannot resolve symbol` error; when the declared
+//! constructors exist but none is applicable, the message reports
+//! `Constructor {Foo}() cannot be applied to given types`.
 
 #[macro_use]
 mod common;
@@ -37,8 +37,8 @@ class Body {
     )])
 );
 // §15.9/[§15.12.2]: `new Foo()` has members of the name (`Foo(int)`) but none
-// applicable — javac's `constructor Foo() cannot be applied to given types;
-// required: int found: no arguments`. `new Foo(1)` resolves.
+// applicable — `Constructor 'Foo()' cannot be applied to given types` (with a
+// `required: int` detail). `new Foo(1)` resolves.
 
 snapshot!(
     new_argument_mismatch,

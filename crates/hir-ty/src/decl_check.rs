@@ -180,9 +180,10 @@ impl DeclDiagnostic {
         }
     }
 
-    /// The human-readable message, using javac's *simple* class-name
-    /// rendering ([`Ty::display_simple`]). The structured fields keep the
-    /// canonical FQN; the simple rendering happens only here, at display time.
+    /// The human-readable message, written in the IntelliJ IDEA style (a
+    /// single, capitalized sentence) with types rendered simple
+    /// ([`Ty::display_simple`]). The structured fields keep the canonical FQN;
+    /// the simple rendering happens only here, at display time.
     pub fn message(&self, db: &dyn TyDatabase) -> String {
         match self {
             DeclDiagnostic::IncompatibleOverride {
@@ -192,57 +193,56 @@ impl DeclDiagnostic {
                 ..
             } => {
                 format!(
-                    "incompatible override: {} cannot override {}.{}",
+                    "Incompatible override: '{}' cannot override '{}' in '{}'",
                     found.display_simple(db),
-                    expected_owner.simple_name(),
-                    expected_ret.display_simple(db)
+                    expected_ret.display_simple(db),
+                    expected_owner.simple_name()
                 )
             }
             DeclDiagnostic::ConflictingDefaults { method } => {
                 let name = method.as_str();
-                format!("class inherits unrelated default methods for {name}(); must be overridden")
+                format!(
+                    "Class inherits unrelated default methods for '{}()'; it must be overridden",
+                    name
+                )
             }
             DeclDiagnostic::MethodDoesNotOverride { method } => {
                 let name = method.as_str();
                 format!(
-                    "method {name}() annotated @Override does not override or implement a method from a supertype"
+                    "Method '{}()' annotated @Override does not override or implement a method from a supertype",
+                    name
                 )
             }
             DeclDiagnostic::CannotResolveType { name, .. } => {
-                format!("cannot resolve symbol '{}'", name.as_str())
+                format!("Cannot resolve symbol '{}'", name.as_str())
             }
             DeclDiagnostic::AmbiguousName { name, .. } => {
                 format!(
-                    "reference to '{}' is ambiguous; both are imported on demand",
+                    "Reference to '{}' is ambiguous; it is imported on demand from more than one type",
                     name.as_str()
                 )
             }
             DeclDiagnostic::UnresolvedImport { name, .. } => {
                 format!(
-                    "cannot find symbol '{}' in the single-type import",
+                    "Cannot resolve symbol '{}' in the single-type import",
                     name.as_str()
                 )
             }
             DeclDiagnostic::UnresolvedImportPackage { name, .. } => {
-                format!("package {} does not exist", name.as_str())
+                format!("Package '{}' does not exist", name.as_str())
             }
             DeclDiagnostic::UnresolvedStaticImport { name, .. } => {
-                // javac's message for a static on-demand import of a missing
-                // type: `cannot find symbol: class Type`.
-                format!(
-                    "cannot find symbol\n  symbol:   class {}",
-                    name.simple_name()
-                )
+                format!("Cannot resolve symbol '{}'", name.simple_name())
             }
             DeclDiagnostic::ConflictingImport { name, .. } => {
                 format!(
-                    "import conflicts with another declaration of '{}'",
+                    "Import conflicts with another declaration of '{}'",
                     name.as_str()
                 )
             }
             DeclDiagnostic::ModuleNotAccessible { name, .. } => {
                 format!(
-                    "package in which '{}' is declared is not visible from the current module",
+                    "Package in which '{}' is declared is not visible from the current module",
                     name.as_str()
                 )
             }
@@ -252,15 +252,15 @@ impl DeclDiagnostic {
                 dir
             ),
             DeclDiagnostic::DuplicatePackage { package, .. } => {
-                format!("duplicate package declaration '{}'", package.as_str())
+                format!("Duplicate package declaration '{}'", package.as_str())
             }
             DeclDiagnostic::DuplicateClass { fqn, .. } => {
-                format!("duplicate class: {fqn}")
+                format!("Duplicate class: {fqn}")
             }
             DeclDiagnostic::ClassPublicShouldBeInFile { name, .. } => {
                 let simple = name.simple_name();
                 format!(
-                    "class {simple} is public, should be declared in a file named {simple}.java"
+                    "Class '{simple}' is public; it should be declared in a file named '{simple}.java'"
                 )
             }
         }

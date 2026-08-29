@@ -10,14 +10,14 @@ expression: "normalize_and_sort(before, &lsp)"
       "items": [
         {
           "code": "compiler.err.cant.resolve.location",
-          "message": "cannot find symbol\n  symbol:   method go()",
+          "message": "Cannot resolve method 'go()'",
           "range": {
             "end": {
-              "character": 24,
+              "character": 22,
               "line": 2
             },
             "start": {
-              "character": 18,
+              "character": 20,
               "line": 2
             }
           },

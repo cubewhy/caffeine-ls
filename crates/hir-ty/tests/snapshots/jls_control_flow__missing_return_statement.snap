@@ -14,4 +14,4 @@ class NoRet {
 method missing(): int
   locals: l0: int
   exprs: e0: int
-  diags: method@5:5: missing-return-value: missing return statement
+  diags: method@5:5: missing-return-value: Missing return statement

@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_decl_checks.rs
-assertion_line: 71
 expression: out
 ---
 FILE /src/com/example/A.java:
@@ -22,4 +21,4 @@ package com.example;
 
 class Diamond implements A, B {}
 
-method name: conflicting-defaults: class inherits unrelated default methods for name(); must be overridden
+method name: conflicting-defaults: Class inherits unrelated default methods for 'name()'; it must be overridden

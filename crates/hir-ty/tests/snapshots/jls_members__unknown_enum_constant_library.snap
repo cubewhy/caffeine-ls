@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_members.rs
-assertion_line: 653
 expression: out
 ---
 FILE /src/com/example/Use.java:
@@ -31,5 +30,4 @@ method ok(com.lib.Syntax): com.lib.Syntax
 method bad(com.lib.Syntax): com.lib.Syntax
   locals: l2: com.lib.Syntax
   exprs: e7: <error>
-  diags: e7@14:15: no-such-field: cannot find symbol
-  symbol:   variable json
+  diags: e7@14:22: no-such-field: Cannot resolve symbol 'json'

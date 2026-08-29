@@ -12,4 +12,4 @@ class App {
     Widget w;
 }
 
-method : ambiguous-name: @6:4reference to 'Widget' is ambiguous; both are imported on demand
+method : ambiguous-name: @6:4Reference to 'Widget' is ambiguous; it is imported on demand from more than one type

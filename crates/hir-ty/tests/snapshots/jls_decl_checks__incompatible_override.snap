@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_decl_checks.rs
-assertion_line: 51
 expression: out
 ---
 FILE /src/com/example/Base.java:
@@ -14,4 +13,4 @@ class Derived extends Base {
     String f() { return ""; }
 }
 
-method f: incompatible-override: incompatible override: String cannot override Base.int
+method f: incompatible-override: Incompatible override: 'String' cannot override 'int' in 'Base'

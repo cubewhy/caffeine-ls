@@ -21,4 +21,4 @@ method Abs$Tract(): <init>
 method make(): void
   locals: 
   exprs: e0: com.example.Abs$Tract
-  diags: e0@8:8: cannot-instantiate-type-var: Abs$Tract is abstract; cannot be instantiated
+  diags: e0@8:8: cannot-instantiate-type-var: 'Abs$Tract' is abstract; cannot be instantiated

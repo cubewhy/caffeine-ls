@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_packages.rs
-assertion_line: 205
 expression: out
 ---
 FILE /src/com/example/A.java:
@@ -10,4 +9,4 @@ package com.example.other;
 public class A {}
 
 method : package-path-mismatch: @1:8Package name 'com.example.other' does not correspond to the file path 'src/com/example'
-method : duplicate-package: @1:8duplicate package declaration 'com.example.other'
+method : duplicate-package: @1:8Duplicate package declaration 'com.example.other'

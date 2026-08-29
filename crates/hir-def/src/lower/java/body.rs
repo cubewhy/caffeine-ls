@@ -788,12 +788,35 @@ fn expr_children(node: &SyntaxNode<Lang>) -> Vec<SyntaxNode<Lang>> {
 
 fn alloc_expr(ctx: &mut LowerCtx, data: ExprData, range: TextRange) -> ExprId {
     ctx.bodies.expr_ranges.push(range);
+    // The name range defaults to the full expression range; `expr` narrows it
+    // to the member/method identifier afterwards.
+    ctx.bodies.expr_name_ranges.push(range);
     ExprId(ctx.bodies.exprs.alloc(data))
 }
 
 fn expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
     let data = expr_data(ctx, owner, node);
-    alloc_expr(ctx, data, node.text_range())
+    let id = alloc_expr(ctx, data, node.text_range());
+    // Narrow the name range to the member/method identifier for a field
+    // access, invocation or method reference, so diagnostics underline the
+    // symbol rather than the whole receiver chain.
+    let name_range = expr_name_range(&ctx.bodies.exprs.get(id.0), node);
+    ctx.bodies.expr_name_ranges[id.0.0 as usize] = name_range;
+    id
+}
+
+/// The source range of the *name* of the just-lowered expression `node`: for a
+/// member access, invocation or method reference, the member/method identifier
+/// (the last identifier, skipping any argument list); for every other
+/// expression, the whole node. Used to underline just the symbol in
+/// name-bearing diagnostics.
+fn expr_name_range(data: &ExprData, node: &SyntaxNode<Lang>) -> TextRange {
+    match data {
+        ExprData::FieldAccess { .. } | ExprData::MethodCall { .. } | ExprData::MethodRef { .. } => {
+            name_identifier_range(node).unwrap_or_else(|| node.text_range())
+        }
+        _ => node.text_range(),
+    }
 }
 
 fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
@@ -1690,6 +1713,30 @@ fn first_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
 
 fn identifier_of(node: &SyntaxNode<Lang>) -> Option<Name> {
     first_identifier(node)
+}
+
+/// The source range of the name identifier of an access/invocation node:
+/// recursively the last identifier that is not inside an argument list — so
+/// `foo(bar)` names `foo` and `b.missing()` names `missing`, not `bar`/`b`.
+fn name_identifier_range(node: &SyntaxNode<Lang>) -> Option<TextRange> {
+    let mut last = None;
+    for element in node.children_with_tokens() {
+        match element {
+            NodeOrToken::Node(child) => {
+                if child.kind() != J::ARGUMENT_LIST {
+                    if let Some(r) = name_identifier_range(&child) {
+                        last = Some(r);
+                    }
+                }
+            }
+            NodeOrToken::Token(token) => {
+                if token_is(&token, J::IDENTIFIER) && token.text() != "new" {
+                    last = Some(token.text_range());
+                }
+            }
+        }
+    }
+    last
 }
 
 /// The last direct IDENTIFIER token of the node.

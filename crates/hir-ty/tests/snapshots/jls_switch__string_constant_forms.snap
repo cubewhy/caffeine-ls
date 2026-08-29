@@ -27,7 +27,7 @@ class Sw {
 method m(java.lang.String): void
   locals: l0: java.lang.String
   exprs: e0: java.lang.String | e1: java.lang.String | e2: void | e3: java.lang.String | e4: void | e5: java.lang.String | e6: void | e7: java.lang.String | e8: void | e9: java.lang.String | e10: void | e11: java.lang.String | e12: void | e13: java.lang.String | e14: int | e15: java.lang.String | e16: void | e17: <error>
-  diags: e3@6:17: duplicate-case-label: duplicate case label | e7@8:17: duplicate-case-label: duplicate case label | e11@12:17: duplicate-case-label: duplicate case label
+  diags: e3@6:17: duplicate-case-label: Duplicate case label | e7@8:17: duplicate-case-label: Duplicate case label | e11@12:17: duplicate-case-label: Duplicate case label
 method f(): void
   locals: 
   exprs:

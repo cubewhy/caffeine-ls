@@ -15,7 +15,4 @@ class Body {
 method m(): void
   locals: l0: org.objectweb.asm.ClassWriter | l1: org.objectweb.asm.ClassWriter
   exprs: e0: org.objectweb.asm.ClassWriter | e1: int | e2: org.objectweb.asm.ClassWriter
-  diags: e0@4:43: wrong-argument-count: constructor ClassWriter() cannot be applied to given types;
-  required: int
-  found: 
-  reason: actual and formal argument lists differ in length
+  diags: e0@4:43: wrong-argument-count: Constructor 'ClassWriter()' cannot be applied to given types

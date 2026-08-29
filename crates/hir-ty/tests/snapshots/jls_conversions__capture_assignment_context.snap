@@ -17,4 +17,4 @@ class Body {
 method m(java.util.List<? extends java.lang.Number>, java.util.List<?>): void
   locals: l0: java.util.List<? extends java.lang.Number> | l1: java.util.List<?> | l2: java.lang.Number | l3: java.lang.Object | l4: java.lang.String
   exprs: e0: int | e1: java.util.List<? extends java.lang.Number> | e2: CAP#1 | e3: int | e4: java.util.List<?> | e5: CAP#3 | e6: int | e7: java.util.List<? extends java.lang.Number> | e8: CAP#1
-  diags: e8@7:21: incompatible-types: incompatible types: CAP#1 cannot be converted to String
+  diags: e8@7:21: incompatible-types: Incompatible types. Found: 'CAP#1', required: 'String'

@@ -24,4 +24,4 @@ method io(): void
 method m(): void
   locals: l0: java.io.IOException
   exprs: e0: void
-  diags: l0@10:17: catch-never-thrown: exception ClassNotFoundException is never thrown in the corresponding try block
+  diags: l0@10:17: catch-never-thrown: Exception 'ClassNotFoundException' is never thrown in the corresponding try block

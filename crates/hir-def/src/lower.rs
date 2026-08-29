@@ -65,6 +65,7 @@ pub fn lower_source(language: LanguageKind, text: &str) -> LoweredFile {
     // assert the alignment so a direct allocation cannot silently
     // desynchronize them.
     debug_assert_eq!(ctx.bodies.expr_ranges.len(), ctx.bodies.exprs.len());
+    debug_assert_eq!(ctx.bodies.expr_name_ranges.len(), ctx.bodies.exprs.len());
     debug_assert_eq!(ctx.bodies.local_ranges.len(), ctx.bodies.locals.len());
     LoweredFile {
         items: Arc::new(ctx.tree),

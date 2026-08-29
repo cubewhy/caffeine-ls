@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_imports.rs
-assertion_line: 46
 expression: out
 ---
 FILE /src/com/example/Imports.java:
@@ -11,5 +10,5 @@ import java.*;
 
 class Imports {}
 
-method : unresolved-import-package: @2:0package com.nonexistent.pkg does not exist
-method : unresolved-import-package: @3:0package java does not exist
+method : unresolved-import-package: @2:0Package 'com.nonexistent.pkg' does not exist
+method : unresolved-import-package: @3:0Package 'java' does not exist

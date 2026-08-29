@@ -16,4 +16,4 @@ class Body {
 method m(): void
   locals: l0: byte | l1: char | l2: long
   exprs: e0: int | e1: int | e2: int | e3: float
-  diags: e0@4:17: incompatible-types: incompatible types: int cannot be converted to byte | e2@5:17: incompatible-types: incompatible types: int cannot be converted to char | e3@6:17: incompatible-types: incompatible types: float cannot be converted to long
+  diags: e0@4:17: incompatible-types: Incompatible types. Found: 'int', required: 'byte' | e2@5:17: incompatible-types: Incompatible types. Found: 'int', required: 'char' | e3@6:17: incompatible-types: Incompatible types. Found: 'float', required: 'long'

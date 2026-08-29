@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_annotations.rs
-assertion_line: 116
 expression: out
 ---
 FILE /src/com/example/Anns.java:
@@ -14,6 +13,6 @@ class Anns {
     List<String @UnknownArgument []> argDim;
 }
 
-method : cannot-resolve-type: @5:12cannot resolve symbol 'UnknownTypeUse'
-method : cannot-resolve-type: @6:10cannot resolve symbol 'UncheckedElement'
-method : cannot-resolve-type: @7:17cannot resolve symbol 'UnknownArgument'
+method : cannot-resolve-type: @5:12Cannot resolve symbol 'UnknownTypeUse'
+method : cannot-resolve-type: @6:10Cannot resolve symbol 'UncheckedElement'
+method : cannot-resolve-type: @7:17Cannot resolve symbol 'UnknownArgument'

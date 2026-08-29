@@ -17,9 +17,4 @@ class Body {
 method m(java.lang.Object): void
   locals: l0: java.lang.Object | l1: org.example.List<java.lang.String> | l2: org.example.List<java.lang.String> | l3: java.lang.Object | l4: java.lang.Class<?>
   exprs: e0: org.example.List<java.lang.String> | e1: java.lang.Object | e2: org.example.NoSuch | e3: java.lang.Class<org.example.MissingClass>
-  diags: e2@6:19: incompatible-types: incompatible types: NoSuch cannot be converted to Object | l1@4:8: cannot-resolve-type: cannot find symbol
-  symbol:   class org.example.List | e0@4:51: cannot-resolve-type: cannot find symbol
-  symbol:   class org.example.List | l2@5:8: cannot-resolve-type: cannot find symbol
-  symbol:   class org.example.List | e2@6:20: cannot-resolve-type: cannot find symbol
-  symbol:   class org.example.NoSuch | e3@7:21: cannot-resolve-type: cannot find symbol
-  symbol:   class org.example.MissingClass
+  diags: e2@6:19: incompatible-types: Incompatible types. Found: 'NoSuch', required: 'Object' | l1@4:8: cannot-resolve-type: Cannot resolve symbol 'org.example.List' | e0@4:51: cannot-resolve-type: Cannot resolve symbol 'org.example.List' | l2@5:8: cannot-resolve-type: Cannot resolve symbol 'org.example.List' | e2@6:20: cannot-resolve-type: Cannot resolve symbol 'org.example.NoSuch' | e3@7:21: cannot-resolve-type: Cannot resolve symbol 'org.example.MissingClass'

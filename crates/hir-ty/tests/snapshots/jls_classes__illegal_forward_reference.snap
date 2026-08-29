@@ -13,7 +13,7 @@ class InitOrder {
 field a
   locals: 
   exprs: e0: <error>
-  diags: e0@3:12: illegal-forward-reference: illegal forward reference
+  diags: e0@3:12: illegal-forward-reference: Illegal forward reference
 field b
   locals: 
   exprs: e1: int

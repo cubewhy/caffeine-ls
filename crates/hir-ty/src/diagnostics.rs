@@ -102,17 +102,16 @@ pub enum TypeError {
     /// actual arguments. `required` carries the parameter types of the
     /// closest candidate and `found_tys` the actual argument types (each a
     /// [`Ty`], or `None` for a poly argument that has no standalone type), so
-    /// the message can render javac's `required:/found:` block; both empty
-    /// means only the arity numbers are known. `incompatible` carries the
-    /// first argument-to-formal mismatch against the closest candidate when
-    /// the arities *match* — javac then renders
-    /// `reason: incompatible types: … cannot be converted to …` instead of
-    /// the argument-list-length text. When `owner` is `Some` the invocation
-    /// is a *constructor* (`new`, `this(...)`, `super(...)`) of that class and
-    /// the message opens with javac's `constructor {owner}() cannot be applied
-    /// to given types;`. Types are stored unresolved (the canonical FQN),
-    /// rendered simple only in [`TypeError::message`], so future quickfixes
-    /// keep the full type.
+    /// the detail (see [`TypeError::detail`]) can render a `required:`/`found:`
+    /// block; both empty means only the arity numbers are known.
+    /// `incompatible` carries the first argument-to-formal mismatch against
+    /// the closest candidate when the arities *match* — the detail then
+    /// renders a `reason: … cannot be converted to …` line instead of the
+    /// argument-list-length text. When `owner` is `Some` the invocation is a
+    /// *constructor* (`new`, `this(...)`, `super(...)`) of that class and the
+    /// message reads `Constructor {owner}() cannot be applied to given types`.
+    /// Types are stored unresolved (the canonical FQN), rendered simple only
+    /// in [`TypeError::message`], so future quickfixes keep the full type.
     WrongArity {
         expr: ExprId,
         name: Name,
@@ -318,253 +317,255 @@ impl TypeError {
             | TypeError::AmbiguousName { range, .. }
             | TypeError::ModuleNotAccessible { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
+            // Name-bearing diagnostics underline just the member/method/name
+            // identifier (`b.missing` → `missing`), not the whole expression.
+            TypeError::CannotResolveName { expr, .. }
+            | TypeError::NoSuchField { expr, .. }
+            | TypeError::NoSuchMethod { expr, .. }
+            | TypeError::NoSuchConstructor { expr, .. }
+            | TypeError::NonStaticMethodFromStaticContext { expr, .. }
+            | TypeError::WrongArity { expr, .. }
+            | TypeError::NonIterableForEach { expr, .. }
+            | TypeError::GenericArrayCreation { expr, .. }
+            | TypeError::CannotInstantiateTypeVar { expr, .. }
+            | TypeError::SwitchSelectorType { expr, .. }
+            | TypeError::NotAFunctionalInterface { expr, .. }
+            | TypeError::IllegalForwardReference { expr, .. }
+            | TypeError::NotDefinitelyAssigned { expr, .. }
+            | TypeError::DuplicateCaseLabel { expr, .. }
+            | TypeError::UncheckedConversion { expr, .. } => tree
+                .expr_name_range(*expr)
+                .or_else(|| tree.expr_range(*expr)),
             _ => self.location().range(tree),
         }
     }
 
     /// The human-readable message, rendered against the body IR the error
-    /// occurred in (for the local's name). Wherever javac has a 1:1 message
-    /// for the construct (see `compiler.properties` / the `-XDrawDiagnostics`
-    /// probe harness in `crates/hir-ty/tests/javac_parity.rs`), this text
-    /// mirrors it verbatim, using javac's *simple* class-name rendering
-    /// ([`Ty::display_simple`]). The structured fields keep the canonical
-    /// FQN; the simple rendering happens only here, at display time.
+    /// occurred in (for the local's name). Messages are written in the
+    /// IntelliJ IDEA style: a single, capitalized sentence naming the
+    /// offending symbol, with types rendered simple ([`Ty::display_simple`]).
+    /// The structured fields keep the canonical FQN; the simple rendering
+    /// happens only here, at display time. Where a javac-style detail block
+    /// (`required:`/`found:`/`reason:`) applies it is carried separately by
+    /// [`TypeError::detail`] and surfaced as LSP `related_information`, not in
+    /// this message.
     pub fn message(&self, db: &dyn TyDatabase, tree: &BodyTree) -> String {
         use TypeError::*;
         match self {
             VarWithoutInitializer { local } => {
                 let name = tree.local(*local).name.as_str();
-                format!(
-                    "cannot infer type for local variable {name}\n  (cannot use 'var' on variable without initializer)"
-                )
+                format!("Cannot infer type for 'var' variable '{name}'")
             }
             VarArrayInitializer { local } => {
                 let name = tree.local(*local).name.as_str();
                 format!(
-                    "cannot infer type for local variable {name}\n  (array initializer needs an explicit target-type)"
+                    "Cannot infer type for 'var' variable '{name}': array initializer needs an explicit target type"
                 )
             }
             CannotResolveName { name, .. } => {
-                format!("cannot find symbol\n  symbol:   variable {}", name.as_str())
+                format!("Cannot resolve symbol '{}'", name.as_str())
             }
             CannotResolveType { name, .. } => {
-                format!("cannot find symbol\n  symbol:   class {}", name.as_str())
+                format!("Cannot resolve symbol '{}'", name.as_str())
             }
             AmbiguousName { name, .. } => {
-                format!("reference to '{}' is ambiguous", name.as_str())
+                format!("Reference to '{}' is ambiguous", name.as_str())
             }
             ModuleNotAccessible { name, .. } => {
                 format!(
-                    "package in which '{}' is declared is not visible from the current module",
+                    "Package in which '{}' is declared is not visible from the current module",
                     name.as_str()
                 )
             }
             NoSuchField { name, .. } => {
-                format!("cannot find symbol\n  symbol:   variable {}", name.as_str())
+                format!("Cannot resolve symbol '{}'", name.as_str())
             }
             NoSuchMethod { name, .. } => {
-                format!("cannot find symbol\n  symbol:   method {}()", name.as_str())
+                format!("Cannot resolve method '{}()'", name.as_str())
             }
             NoSuchConstructor { name, .. } => {
                 format!("Cannot resolve constructor '{}()'", name.as_str())
             }
             NonStaticMethodFromStaticContext { name, .. } => {
                 format!(
-                    "non-static method {}() cannot be referenced from a static context",
+                    "Non-static method '{}()' cannot be referenced from a static context",
                     name.as_str()
                 )
             }
-            WrongArity {
-                name,
-                owner,
-                required,
-                found_tys,
-                incompatible,
-                ..
-            } => {
-                // javac's default-mode message block for
-                // `compiler.err.cant.apply.symbol`. The reason line mirrors
-                // javac's two shapes: the argument-list-length text when the
-                // arities differ, otherwise the first argument-to-formal
-                // conversion failure against the closest candidate. A
-                // constructor invocation ([§15.9], [§8.8.7.1]) opens with
-                // javac's `constructor {Owner}() …`, a method invocation with
-                // `method {name} …` ([§15.12.2]).
+            WrongArity { name, owner, .. } => {
+                // The head sentence only; the `required:`/`found:`/`reason:`
+                // detail is carried separately and surfaced as LSP
+                // `related_information`.
                 match owner {
                     Some(owner) => {
-                        let head = format!("constructor {owner}()");
-                        if required.is_empty() {
-                            return format!("{head} cannot be applied to given types");
-                        }
-                        let reason = match incompatible {
-                            Some((found, expected)) => format!(
-                                "reason: incompatible types: {} cannot be converted to {}",
-                                render_simple(db, *found),
-                                render_simple(db, *expected)
-                            ),
-                            None => "reason: actual and formal argument lists differ in length"
-                                .to_owned(),
-                        };
                         format!(
-                            "{head} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
-                            required
-                                .iter()
-                                .map(|ty| render_simple(db, *ty))
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            found_tys
-                                .iter()
-                                .map(|ty| match ty {
-                                    Some(ty) => render_simple(db, *ty),
-                                    None => "<poly>".to_owned(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            reason
-                        )
-                    }
-                    None if required.is_empty() => {
-                        format!(
-                            "method '{}' cannot be applied to given types",
-                            name.as_str()
+                            "Constructor '{}()' cannot be applied to given types",
+                            owner.as_str()
                         )
                     }
                     None => {
-                        let reason = match incompatible {
-                            Some((found, expected)) => format!(
-                                "reason: incompatible types: {} cannot be converted to {}",
-                                render_simple(db, *found),
-                                render_simple(db, *expected)
-                            ),
-                            None => "reason: actual and formal argument lists differ in length"
-                                .to_owned(),
-                        };
                         format!(
-                            "method {} cannot be applied to given types;\n  required: {}\n  found: {}\n  {}",
-                            name.as_str(),
-                            required
-                                .iter()
-                                .map(|ty| render_simple(db, *ty))
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            found_tys
-                                .iter()
-                                .map(|ty| match ty {
-                                    Some(ty) => render_simple(db, *ty),
-                                    None => "<poly>".to_owned(),
-                                })
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            reason
+                            "Method '{}()' cannot be applied to given types",
+                            name.as_str()
                         )
                     }
                 }
             }
             IncompatibleTypes {
                 found, expected, ..
-            } => {
-                format!(
-                    "incompatible types: {} cannot be converted to {}",
-                    render_simple(db, *found),
-                    render_simple(db, *expected)
-                )
-            }
-            NonBooleanCondition { found, .. } => {
-                format!(
-                    "incompatible types: {} cannot be converted to boolean",
-                    render_simple(db, *found)
-                )
-            }
+            } => format!(
+                "Incompatible types. Found: '{}', required: '{}'",
+                render_simple(db, *found),
+                render_simple(db, *expected)
+            ),
+            NonBooleanCondition { found, .. } => format!(
+                "Incompatible types. Found: '{}', required: 'boolean'",
+                render_simple(db, *found)
+            ),
             IncompatibleOperand {
                 op, found, other, ..
             } => match other {
                 Some(other) => format!(
-                    "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
+                    "Operator '{op}' cannot be applied to '{}' and '{}'",
                     render_simple(db, *found),
                     render_simple(db, *other)
                 ),
                 None => format!(
-                    "bad operand type {} for unary operator '{op}'",
+                    "Operator '{op}' cannot be applied to '{}'",
                     render_simple(db, *found)
                 ),
             },
             IncomparableTypes {
                 op, found, other, ..
             } => format!(
-                "bad operand types for binary operator '{op}'\n  first type:  {}\n  second type: {}",
+                "Operator '{op}' cannot be applied to '{}' and '{}'",
                 render_simple(db, *found),
                 render_simple(db, *other)
             ),
             NonIterableForEach { found, .. } => format!(
-                "for-each not applicable to expression type\n  required: array or java.lang.Iterable\n  found:    {}",
+                "For-each is not applicable to expression of type '{}'",
                 render_simple(db, *found)
             ),
-            BadCast { found, target, .. } => {
-                format!(
-                    "inconvertible types: {} cannot be cast to {}",
-                    render_simple(db, *found),
-                    render_simple(db, *target)
-                )
-            }
-            GenericArrayCreation { .. } => "generic array creation".to_owned(),
+            BadCast { found, target, .. } => format!(
+                "Inconvertible types; cannot cast '{}' to '{}'",
+                render_simple(db, *found),
+                render_simple(db, *target)
+            ),
+            GenericArrayCreation { .. } => "Generic array creation".to_owned(),
             CannotInstantiateTypeVar { ty, .. } => {
                 format!(
-                    "{} is abstract; cannot be instantiated",
+                    "'{}' is abstract; cannot be instantiated",
                     render_simple(db, *ty)
                 )
             }
             SwitchSelectorType { found, .. } => {
-                format!("switch selector type {}", render_simple(db, *found))
+                format!("Switch selector type '{}'", render_simple(db, *found))
             }
             UnreportedException { thrown, .. } => {
-                format!(
-                    "unreported exception {}; must be caught or declared to be thrown",
-                    render_simple(db, *thrown)
-                )
+                format!("Unhandled exception: {}", render_simple(db, *thrown))
             }
-            AlreadyCaught { caught, .. } => {
-                format!(
-                    "exception {} has already been caught",
-                    caught
-                        .iter()
-                        .map(|ty| render_simple(db, *ty))
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                )
-            }
+            AlreadyCaught { caught, .. } => format!(
+                "Exception {} has already been caught",
+                caught
+                    .iter()
+                    .map(|ty| render_simple(db, *ty))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
             NotAFunctionalInterface { target, .. } => format!(
-                "incompatible types: {} is not a functional interface",
+                "'{}' is not a functional interface",
                 render_simple(db, *target)
             ),
-            IllegalForwardReference { .. } => "illegal forward reference".to_owned(),
+            IllegalForwardReference { .. } => "Illegal forward reference".to_owned(),
             NotDefinitelyAssigned { name, .. } => {
-                let name = name.as_str();
-                format!("variable '{name}' might not have been initialized")
+                format!(
+                    "Variable '{}' might not have been initialized",
+                    name.as_str()
+                )
             }
             NotExhaustive { .. } => {
-                "the switch expression does not cover all possible input values".to_owned()
+                "Switch expression does not cover all possible input values".to_owned()
             }
-            NonConstantCaseLabel { .. } => "constant expression required".to_owned(),
-            DuplicateCaseLabel { .. } => "duplicate case label".to_owned(),
+            NonConstantCaseLabel { .. } => "Constant expression required".to_owned(),
+            DuplicateCaseLabel { .. } => "Duplicate case label".to_owned(),
             RawTypeUse { ty, .. } => {
                 format!(
-                    "raw type '{}' is used without type arguments",
+                    "Raw use of parameterized class '{}'",
                     render_simple(db, *ty)
                 )
             }
             UncheckedConversion { from, to, .. } => {
                 format!(
-                    "unchecked conversion: {} converted to {}",
+                    "Unchecked assignment: '{}' to '{}'",
                     render_simple(db, *from),
                     render_simple(db, *to)
                 )
             }
-            UnreachableStatement { .. } => "unreachable statement".to_owned(),
-            MissingReturnValue { .. } => "missing return statement".to_owned(),
+            UnreachableStatement { .. } => "Unreachable statement".to_owned(),
+            MissingReturnValue { .. } => "Missing return statement".to_owned(),
             CatchNeverThrown { caught, .. } => format!(
-                "exception {} is never thrown in the corresponding try block",
+                "Exception '{}' is never thrown in the corresponding try block",
                 render_simple(db, *caught)
             ),
+        }
+    }
+
+    /// Secondary detail lines for the diagnostic, IntelliJ-style
+    /// `related_information`: the `required:`/`found:`/`reason:` block of an
+    /// invocation or assignment mismatch. Empty for most diagnostics, whose
+    /// message already carries everything. Each line is rendered against `db`
+    /// with simple type names; the LSP layer attaches the diagnostic's own
+    /// range to each.
+    pub fn detail(&self, db: &dyn TyDatabase) -> Vec<String> {
+        use TypeError::*;
+        match self {
+            WrongArity {
+                required,
+                found_tys,
+                incompatible,
+                ..
+            } => {
+                if required.is_empty() {
+                    return Vec::new();
+                }
+                let mut lines = vec![format!(
+                    "required: {}",
+                    required
+                        .iter()
+                        .map(|ty| render_simple(db, *ty))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )];
+                lines.push(format!(
+                    "found: {}",
+                    found_tys
+                        .iter()
+                        .map(|ty| match ty {
+                            Some(ty) => render_simple(db, *ty),
+                            None => "<poly>".to_owned(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                match incompatible {
+                    Some((found, expected)) => lines.push(format!(
+                        "reason: '{}' cannot be converted to '{}'",
+                        render_simple(db, *found),
+                        render_simple(db, *expected)
+                    )),
+                    None => lines.push(
+                        "reason: actual and formal argument lists differ in length".to_owned(),
+                    ),
+                }
+                lines
+            }
+            IncompatibleTypes {
+                found, expected, ..
+            } => vec![
+                format!("required: {}", render_simple(db, *expected)),
+                format!("found: {}", render_simple(db, *found)),
+            ],
+            _ => Vec::new(),
         }
     }
 }

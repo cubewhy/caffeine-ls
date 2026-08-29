@@ -53,8 +53,8 @@ public class Main {
 );
 // JLS §15.12.3: the invocation has the simple `MethodName` form and the chosen
 // method is an instance method, so it is a compile-time error from the static
-// context ([§8.1.3]) of `main`'s body — javac 25 reports "non-static method
-// printStrings(List<String>) cannot be referenced from a static context".
+// context ([§8.1.3]) of `main`'s body — reported as "Non-static method
+// 'printStrings()' cannot be referenced from a static context".
 
 snapshot!(
     static_context_initializers,

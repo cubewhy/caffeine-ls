@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_constructors.rs
-assertion_line: 43
 expression: out
 ---
 FILE /src/com/example/Constr.java:
@@ -23,10 +22,4 @@ method Foo(int): <init>
 method m(): void
   locals: 
   exprs: e0: java.lang.String | e1: com.example.Foo | e2: int | e3: int | e4: com.example.Foo
-  diags: e1@8:8: wrong-argument-count: constructor Foo() cannot be applied to given types;
-  required: int
-  found: String
-  reason: incompatible types: String cannot be converted to int | e4@9:8: wrong-argument-count: constructor Foo() cannot be applied to given types;
-  required: int
-  found: int,int
-  reason: actual and formal argument lists differ in length
+  diags: e1@8:8: wrong-argument-count: Constructor 'Foo()' cannot be applied to given types | e4@9:8: wrong-argument-count: Constructor 'Foo()' cannot be applied to given types

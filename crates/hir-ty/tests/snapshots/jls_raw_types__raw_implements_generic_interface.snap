@@ -29,4 +29,4 @@ method convert(java.lang.Class, java.lang.Object): java.lang.Object
 method use(): void
   locals: l2: com.example.Conv.Converter | l3: java.lang.Object
   exprs: e1: com.example.Conv.RawImpl | e2: java.lang.Class<java.lang.String> | e3: java.lang.String | e4: com.example.Conv.Converter | e5: java.lang.Object
-  diags: l2@15:18: raw-type-use: raw type 'Converter' is used without type arguments
+  diags: l2@15:18: raw-type-use: Raw use of parameterized class 'Converter'

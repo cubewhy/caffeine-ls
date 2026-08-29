@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/body_types_snapshots.rs
-assertion_line: 270
 expression: out
 ---
 FILE /src/com/example/Body.java:
@@ -31,7 +30,4 @@ method id(T): T
 method call(): void
   locals: 
   exprs: e2: java.util.List<java.lang.String> | e3: void | e4: int | e5: java.lang.Integer | e6: <error>
-  diags: e6@14:8: wrong-argument-count: method take cannot be applied to given types;
-  required: List<String>
-  found: Integer
-  reason: actual and formal argument lists differ in length
+  diags: e6@14:8: wrong-argument-count: Method 'take()' cannot be applied to given types

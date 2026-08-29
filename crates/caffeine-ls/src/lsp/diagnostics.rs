@@ -2,6 +2,7 @@ use crate::lsp;
 
 pub(crate) fn convert_diagnostic(
     line_index: &crate::line_index::LineIndex,
+    uri: &lsp_types::Uri,
     d: ide::Diagnostic,
 ) -> lsp_types::Diagnostic {
     lsp_types::Diagnostic {
@@ -13,7 +14,18 @@ pub(crate) fn convert_diagnostic(
         code_description: None,
         source: Some(crate::NAME.to_owned()),
         message: lsp_types::Message::String(d.message),
-        related_information: None,
+        related_information: (!d.related_information.is_empty()).then(|| {
+            d.related_information
+                .into_iter()
+                .map(|related| lsp_types::DiagnosticRelatedInformation {
+                    location: lsp_types::Location {
+                        uri: uri.clone(),
+                        range: lsp::to_proto::range(line_index, related.range.range),
+                    },
+                    message: related.message,
+                })
+                .collect()
+        }),
         tags: d
             .unused
             .then(|| vec![lsp_types::DiagnosticTag::Unnecessary]),

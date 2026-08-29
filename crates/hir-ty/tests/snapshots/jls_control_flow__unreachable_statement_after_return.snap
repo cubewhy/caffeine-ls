@@ -15,6 +15,4 @@ class Dead {
 method dead(): int
   locals: 
   exprs: e0: int | e1: int | e2: <error> | e3: <error> | e4: <error>
-  diags: ss1@5:8: unreachable-statement: unreachable statement | e2@5:8: cannot-resolve-symbol: cannot find symbol
-  symbol:   variable System | e3@5:8: no-such-field: cannot find symbol
-  symbol:   variable out
+  diags: ss1@5:8: unreachable-statement: Unreachable statement | e2@5:8: cannot-resolve-symbol: Cannot resolve symbol 'System' | e3@5:15: no-such-field: Cannot resolve symbol 'out'

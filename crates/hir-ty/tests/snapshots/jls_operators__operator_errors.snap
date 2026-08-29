@@ -31,54 +31,44 @@ field o
 method unaryMinus(): java.lang.String
   locals: 
   exprs: e2: <error> | e3: <error>
-  diags: e2@6:34: incompatible-operand: bad operand type String for unary operator '-'
+  diags: e2@6:34: incompatible-operand: Operator '-' cannot be applied to 'String'
 method stringMinus(): int
   locals: 
   exprs: e4: <error> | e5: java.lang.String | e6: <error>
-  diags: e4@7:31: incompatible-operand: bad operand types for binary operator '-'
-  first type:  String
-  second type: String
+  diags: e4@7:31: incompatible-operand: Operator '-' cannot be applied to 'String' and 'String'
 method bitNot(): java.lang.String
   locals: 
   exprs: e7: <error> | e8: <error>
-  diags: e7@8:30: incompatible-operand: bad operand type String for unary operator '~'
+  diags: e7@8:30: incompatible-operand: Operator '~' cannot be applied to 'String'
 method shiftBad(): int
   locals: 
   exprs: e9: int | e10: <error> | e11: <error>
-  diags: e10@9:33: incompatible-operand: bad operand types for binary operator '<<'
-  first type:  String
-  second type: int
+  diags: e10@9:33: incompatible-operand: Operator '<<' cannot be applied to 'String' and 'int'
 method notBad(): boolean
   locals: 
   exprs: e12: <error> | e13: <error>
-  diags: e12@10:31: non-boolean-condition: incompatible types: int cannot be converted to boolean
+  diags: e12@10:31: non-boolean-condition: Incompatible types. Found: 'int', required: 'boolean'
 method eqBad(): boolean
   locals: 
   exprs: e14: <error> | e15: java.lang.String | e16: boolean
-  diags: e14@11:29: incomparable-types: bad operand types for binary operator '=='
-  first type:  int
-  second type: String
+  diags: e14@11:29: incomparable-types: Operator '==' cannot be applied to 'int' and 'String'
 method ltBad(): boolean
   locals: 
   exprs: e17: <error> | e18: java.lang.String | e19: boolean
-  diags: e17@12:29: incomparable-types: bad operand types for binary operator '<'
-  first type:  int
-  second type: String
+  diags: e17@12:29: incomparable-types: Operator '<' cannot be applied to 'int' and 'String'
 method boolAndBad(): boolean
   locals: 
   exprs: e20: boolean | e21: <error> | e22: boolean
-  diags: e21@13:42: non-boolean-condition: incompatible types: int cannot be converted to boolean
+  diags: e21@13:42: non-boolean-condition: Incompatible types. Found: 'int', required: 'boolean'
 method boolOrBad(): boolean
   locals: 
   exprs: e23: boolean | e24: <error> | e25: boolean
-  diags: e24@14:42: non-boolean-condition: incompatible types: int cannot be converted to boolean
+  diags: e24@14:42: non-boolean-condition: Incompatible types. Found: 'int', required: 'boolean'
 method castBad(): int
   locals: 
   exprs: e26: <error> | e27: int
-  diags: e26@15:33: bad-cast: inconvertible types: String cannot be cast to int
+  diags: e26@15:33: bad-cast: Inconvertible types; cannot cast 'String' to 'int'
 method mulBad(): int
   locals: 
   exprs: e28: int | e29: <error> | e30: <error>
-  diags: e29@16:30: incompatible-operand: bad operand types for binary operator '*'
-  first type:  String
-  second type: int
+  diags: e29@16:30: incompatible-operand: Operator '*' cannot be applied to 'String' and 'int'

@@ -27,8 +27,8 @@ class Body {
 method m(): void
   locals: l0: java.util.List<java.lang.String>[] | l1: com.example.Greeter | l2: com.example.Base
   exprs: e0: int | e1: java.util.List<java.lang.String>[] | e2: com.example.Greeter | e3: com.example.Base
-  diags: e1@11:39: generic-array-creation: generic array creation | e2@12:20: cannot-instantiate-type-var: Greeter is abstract; cannot be instantiated | e3@13:17: cannot-instantiate-type-var: Base is abstract; cannot be instantiated
+  diags: e1@11:39: generic-array-creation: Generic array creation | e2@12:20: cannot-instantiate-type-var: 'Greeter' is abstract; cannot be instantiated | e3@13:17: cannot-instantiate-type-var: 'Base' is abstract; cannot be instantiated
 method make(): T
   locals: 
   exprs: e4: T
-  diags: e4@17:15: cannot-instantiate-type-var: T is abstract; cannot be instantiated
+  diags: e4@17:15: cannot-instantiate-type-var: 'T' is abstract; cannot be instantiated

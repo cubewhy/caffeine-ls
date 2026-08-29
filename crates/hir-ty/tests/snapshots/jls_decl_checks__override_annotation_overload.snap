@@ -17,5 +17,5 @@ class Derived extends Base {
     void g(java.lang.String s) {}
 }
 
-method f: method-does-not-override: method f() annotated @Override does not override or implement a method from a supertype
-method g: method-does-not-override: method g() annotated @Override does not override or implement a method from a supertype
+method f: method-does-not-override: Method 'f()' annotated @Override does not override or implement a method from a supertype
+method g: method-does-not-override: Method 'g()' annotated @Override does not override or implement a method from a supertype

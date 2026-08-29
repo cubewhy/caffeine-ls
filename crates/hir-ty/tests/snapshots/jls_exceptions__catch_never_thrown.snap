@@ -19,4 +19,4 @@ class Never {
 method t(): void
   locals: l0: int | l1: java.io.IOException
   exprs: e0: int
-  diags: l1@8:17: catch-never-thrown: exception IOException is never thrown in the corresponding try block
+  diags: l1@8:17: catch-never-thrown: Exception 'IOException' is never thrown in the corresponding try block

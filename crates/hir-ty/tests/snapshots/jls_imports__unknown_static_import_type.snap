@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_imports.rs
-assertion_line: 97
 expression: out
 ---
 FILE /src/com/example/Imports.java:
@@ -11,6 +10,5 @@ import static java.lang.MissingUtility.*;
 
 class Imports {}
 
-method : unresolved-import-package: @2:0package bogus does not exist
-method : unresolved-static-import: @3:0cannot find symbol
-  symbol:   class MissingUtility
+method : unresolved-import-package: @2:0Package 'bogus' does not exist
+method : unresolved-static-import: @3:0Cannot resolve symbol 'MissingUtility'

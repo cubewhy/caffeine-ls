@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_constructors.rs
-assertion_line: 91
 expression: out
 ---
 FILE /src/com/example/Constr.java:
@@ -18,7 +17,4 @@ class Body {
 method m(): void
   locals: 
   exprs: e0: int | e1: com.example.Rec | e2: java.lang.String | e3: com.example.Rec
-  diags: e3@7:8: wrong-argument-count: constructor Rec() cannot be applied to given types;
-  required: int
-  found: String
-  reason: incompatible types: String cannot be converted to int
+  diags: e3@7:8: wrong-argument-count: Constructor 'Rec()' cannot be applied to given types

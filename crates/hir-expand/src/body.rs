@@ -97,6 +97,12 @@ pub struct BodyTree {
     /// The source range of every expression, parallel to [`BodyTree::exprs`]:
     /// index `n` is the range of the expression with arena id `n`.
     pub expr_ranges: Vec<TextRange>,
+    /// The source range of the *name* of every expression, parallel to
+    /// [`BodyTree::exprs`]: for a member access, invocation or method
+    /// reference this is the range of the member/method identifier (so a
+    /// diagnostic underlines `missing` in `b.missing`, not the whole
+    /// receiver chain); for other expressions it equals [`BodyTree::expr_ranges`].
+    pub expr_name_ranges: Vec<TextRange>,
     /// The source range of every local (parameter or declared local), parallel
     /// to [`BodyTree::locals`].
     pub local_ranges: Vec<TextRange>,
@@ -116,6 +122,14 @@ impl BodyTree {
     /// from a syntax node (synthetic `Missing` expressions have none).
     pub fn expr_range(&self, id: ExprId) -> Option<TextRange> {
         self.expr_ranges.get(id.0.0 as usize).copied()
+    }
+
+    /// The source range of the *name* of the expression, when the expression
+    /// was lowered from a syntax node: the member/method identifier of a
+    /// field access, invocation or method reference, else the whole
+    /// expression range. See [`BodyTree::expr_name_ranges`].
+    pub fn expr_name_range(&self, id: ExprId) -> Option<TextRange> {
+        self.expr_name_ranges.get(id.0.0 as usize).copied()
     }
 
     pub fn stmt(&self, id: StmtId) -> &StmtData {

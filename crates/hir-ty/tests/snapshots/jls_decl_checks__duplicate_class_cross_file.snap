@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_decl_checks.rs
-assertion_line: 300
 expression: out
 ---
 FILE /src/com/example/A.java:
@@ -13,4 +12,4 @@ package com.example;
 
 class Foo {}
 
-method : duplicate-class: @2:6duplicate class: com.example.Foo
+method : duplicate-class: @2:6Duplicate class: com.example.Foo

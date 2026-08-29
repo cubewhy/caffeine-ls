@@ -19,4 +19,4 @@ method risky(): void
 method caller(): void
   locals: 
   exprs: e0: void
-  diags: e0@7:20: unreported-exception: unreported exception IOException; must be caught or declared to be thrown
+  diags: e0@7:20: unreported-exception: Unhandled exception: IOException

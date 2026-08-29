@@ -20,19 +20,19 @@ class Body {
 method m(java.lang.String): void
   locals: l0: java.lang.String | l1: com.example.Body
   exprs: e0: java.lang.String | e1: int
-  diags: e1@4:17: incompatible-types: incompatible types: int cannot be converted to Body
+  diags: e1@4:17: incompatible-types: Incompatible types. Found: 'int', required: 'Body'
 method m2(java.lang.String): int
   locals: l2: java.lang.String
   exprs: e2: int
 method bad(): void
   locals: 
   exprs: e3: int
-  diags: e3@9:24: incompatible-types: incompatible types: int cannot be converted to void
+  diags: e3@9:24: incompatible-types: Incompatible types. Found: 'int', required: 'void'
 method bad2(): java.lang.String
   locals: 
   exprs: e4: int
-  diags: e4@10:27: incompatible-types: incompatible types: int cannot be converted to String
+  diags: e4@10:27: incompatible-types: Incompatible types. Found: 'int', required: 'String'
 method bad3(java.lang.Object): int
   locals: l3: java.lang.Object
   exprs: e5: java.lang.Object
-  diags: e5@11:32: incompatible-types: incompatible types: Object cannot be converted to int
+  diags: e5@11:32: incompatible-types: Incompatible types. Found: 'Object', required: 'int'

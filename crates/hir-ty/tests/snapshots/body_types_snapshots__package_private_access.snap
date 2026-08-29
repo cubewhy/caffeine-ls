@@ -33,5 +33,4 @@ method use(com.example.A): void
 method use(com.example.A): void
   locals: l0: com.example.A
   exprs: e0: com.example.A | e1: <error>
-  diags: e1@4:8: no-such-method: cannot find symbol
-  symbol:   method pkg()
+  diags: e1@4:10: no-such-method: Cannot resolve method 'pkg()'

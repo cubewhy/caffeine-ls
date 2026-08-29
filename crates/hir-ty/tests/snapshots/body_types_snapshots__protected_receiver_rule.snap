@@ -36,5 +36,4 @@ field c
 method use(): void
   locals: 
   exprs: e2: com.example.A | e3: <error> | e4: org.other.C | e5: void | e7: void | e8: void
-  diags: e3@7:8: no-such-method: cannot find symbol
-  symbol:   method pro()
+  diags: e3@7:10: no-such-method: Cannot resolve method 'pro()'

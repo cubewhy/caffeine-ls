@@ -19,6 +19,18 @@ pub struct Diagnostic {
     /// The stable diagnostic code, when the underlying error kind carries one
     /// (see [`syntax::DiagnosticCode`]); surfaces as the LSP `code` field.
     pub code: Option<DiagnosticCode>,
+    /// Secondary ranges and messages, surfaced as LSP `related_information`
+    /// (e.g. the `required:`/`found:`/`reason:` detail of an invocation or
+    /// assignment mismatch, IntelliJ-style).
+    pub related_information: Vec<RelatedInformation>,
+}
+
+/// A single item of a diagnostic's [`Diagnostic::related_information`]: a
+/// secondary message attached to a range in the same file.
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub struct RelatedInformation {
+    pub message: String,
+    pub range: FileRange,
 }
 
 /// The push-based collection point of a diagnostics run, mirroring the
@@ -113,6 +125,13 @@ pub(crate) fn collect_type_diagnostics(
                 // from broken source) has no range to point at.
                 continue;
             };
+            let detail = diagnostic
+                .detail(db)
+                .into_iter()
+                .map(|message| RelatedInformation {
+                    message,
+                    range: FileRange::new(file_id, range),
+                });
             sink.push(
                 file_id,
                 make_diagnostic(
@@ -128,7 +147,8 @@ pub(crate) fn collect_type_diagnostics(
                     } else {
                         Severity::Error
                     },
-                ),
+                )
+                .with_related(detail),
             );
         }
     }
@@ -287,5 +307,14 @@ fn make_diagnostic(
         severity,
         unused: false,
         code,
+        related_information: Vec::new(),
+    }
+}
+
+impl Diagnostic {
+    /// Replaces the diagnostic's `related_information` with `related`.
+    fn with_related(mut self, related: impl IntoIterator<Item = RelatedInformation>) -> Self {
+        self.related_information = related.into_iter().collect();
+        self
     }
 }

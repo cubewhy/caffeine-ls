@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_annotations.rs
-assertion_line: 88
 expression: out
 ---
 FILE /src/com/example/Anns.java:
@@ -18,7 +17,7 @@ class Anns {
     void qualified() {}
 }
 
-method : cannot-resolve-type: @2:1cannot resolve symbol 'UnknownAnn'
-method : cannot-resolve-type: @4:5cannot resolve symbol 'DoesNotExist'
-method : cannot-resolve-type: @7:5cannot resolve symbol 'NotARealAnnotation'
-method : cannot-resolve-type: @10:5cannot resolve symbol 'bogus.Widget'
+method : cannot-resolve-type: @2:1Cannot resolve symbol 'UnknownAnn'
+method : cannot-resolve-type: @4:5Cannot resolve symbol 'DoesNotExist'
+method : cannot-resolve-type: @7:5Cannot resolve symbol 'NotARealAnnotation'
+method : cannot-resolve-type: @10:5Cannot resolve symbol 'bogus.Widget'

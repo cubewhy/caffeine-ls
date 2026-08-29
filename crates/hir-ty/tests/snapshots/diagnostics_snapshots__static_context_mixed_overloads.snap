@@ -21,4 +21,4 @@ method m(java.lang.String): void
 method test(): void
   locals: 
   exprs: e0: java.lang.String | e1: void
-  diags: e1@5:8: non-static-method-from-static-context: non-static method m() cannot be referenced from a static context
+  diags: e1@5:8: non-static-method-from-static-context: Non-static method 'm()' cannot be referenced from a static context

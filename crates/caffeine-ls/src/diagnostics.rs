@@ -83,10 +83,15 @@ pub(crate) fn convert_items(
 ) -> Cancellable<Vec<lsp_types::Diagnostic>> {
     let line_index = snapshot.file_line_index(file_id)?;
     let lints = snapshot.config.client_lints();
+    let Ok(uri) = snapshot.file_id_to_url(file_id) else {
+        return Ok(Vec::new());
+    };
     Ok(report
         .iter()
         .filter(|diagnostic| lint_allows(lints, diagnostic))
-        .map(|diagnostic| lsp_diagnostics::convert_diagnostic(&line_index, diagnostic.clone()))
+        .map(|diagnostic| {
+            lsp_diagnostics::convert_diagnostic(&line_index, &uri, diagnostic.clone())
+        })
         .collect())
 }
 

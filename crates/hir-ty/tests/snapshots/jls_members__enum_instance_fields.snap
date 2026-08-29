@@ -26,8 +26,7 @@ constant A
 constant B
   locals: 
   exprs: e1: <error> | e2: <error>
-  diags: e1@4:6: cannot-resolve-symbol: cannot find symbol
-  symbol:   variable System
+  diags: e1@4:6: cannot-resolve-symbol: Cannot resolve symbol 'System'
 method Sep(java.lang.String): <init>
   locals: l0: java.lang.String
   exprs: e3: java.lang.String | e4: java.lang.String | e5: java.lang.String

@@ -20,7 +20,7 @@ class Sw {
 method m(byte): void
   locals: l0: byte
   exprs: e0: byte | e1: int | e2: int | e3: int | e4: int | e5: void | e6: int | e7: int | e8: int | e9: int | e10: void | e11: <error>
-  diags: e8@6:17: duplicate-case-label: duplicate case label
+  diags: e8@6:17: duplicate-case-label: Duplicate case label
 method f(int): void
   locals: l1: int
   exprs:

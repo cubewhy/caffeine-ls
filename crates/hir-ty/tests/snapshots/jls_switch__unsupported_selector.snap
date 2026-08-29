@@ -17,4 +17,4 @@ class Sw {
 method m(double): double
   locals: l0: double
   exprs: e0: double | e1: <error> | e2: int
-  diags: e0@4:16: switch-selector-type: switch selector type double
+  diags: e0@4:16: switch-selector-type: Switch selector type 'double'

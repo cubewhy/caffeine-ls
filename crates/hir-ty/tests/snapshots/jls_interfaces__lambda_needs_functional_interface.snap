@@ -22,4 +22,4 @@ class UsesFI {
 method m(): void
   locals: l0: com.example.NotFI
   exprs: e1: <error>
-  diags: e1@4:20: not-a-functional-interface: incompatible types: NotFI is not a functional interface
+  diags: e1@4:20: not-a-functional-interface: 'NotFI' is not a functional interface

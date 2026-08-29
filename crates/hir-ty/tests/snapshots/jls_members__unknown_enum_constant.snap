@@ -25,8 +25,7 @@ class Use {
 method isJson(com.example.Syntax): boolean
   locals: l0: com.example.Syntax
   exprs: e0: com.example.Syntax | e2: <error> | e3: boolean
-  diags: e2@4:25: no-such-field: cannot find symbol
-  symbol:   variable json
+  diags: e2@4:32: no-such-field: Cannot resolve symbol 'json'
 method ok(com.example.Syntax): com.example.Syntax
   locals: l1: com.example.Syntax
   exprs: e5: com.example.Syntax

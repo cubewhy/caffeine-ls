@@ -15,4 +15,4 @@ class Body {
 method m(): void
   locals: l0: int | l1: boolean
   exprs: e0: boolean | e1: int
-  diags: e0@4:16: incompatible-types: incompatible types: boolean cannot be converted to int | e1@5:20: incompatible-types: incompatible types: int cannot be converted to boolean
+  diags: e0@4:16: incompatible-types: Incompatible types. Found: 'boolean', required: 'int' | e1@5:20: incompatible-types: Incompatible types. Found: 'int', required: 'boolean'

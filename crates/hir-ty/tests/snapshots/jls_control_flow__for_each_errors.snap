@@ -17,8 +17,4 @@ class Body {
 method m(int, java.lang.String, java.lang.Object): int
   locals: l0: int | l1: java.lang.String | l2: java.lang.Object | l3: int | l4: java.lang.Object | l5: char
   exprs: e0: int | e1: java.lang.Object | e2: int | e3: int | e4: java.lang.String | e5: int | e6: int | e7: int
-  diags: e1@5:24: non-iterable-for-each: for-each not applicable to expression type
-  required: array or java.lang.Iterable
-  found:    Object | e4@6:22: non-iterable-for-each: for-each not applicable to expression type
-  required: array or java.lang.Iterable
-  found:    String
+  diags: e1@5:24: non-iterable-for-each: For-each is not applicable to expression of type 'Object' | e4@6:22: non-iterable-for-each: For-each is not applicable to expression of type 'String'

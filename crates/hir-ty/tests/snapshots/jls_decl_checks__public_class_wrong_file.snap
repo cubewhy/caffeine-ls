@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_decl_checks.rs
-assertion_line: 385
 expression: out
 ---
 FILE /src/com/example/Zed.java:
@@ -9,4 +8,4 @@ package com.example;
 public class Zed {}
 public class Other {}
 
-method : class-public-should-be-in-file: @3:13class Other is public, should be declared in a file named Other.java
+method : class-public-should-be-in-file: @3:13Class 'Other' is public; it should be declared in a file named 'Other.java'

@@ -18,4 +18,4 @@ class Body {
 method m(java.lang.String, long, int, java.lang.Object): void
   locals: l0: java.lang.String | l1: long | l2: int | l3: java.lang.Object | l4: int | l5: int | l6: int[] | l7: com.example.Body
   exprs: e0: java.lang.String | e1: long | e2: int | e3: java.lang.String | e4: int | e5: java.lang.Object | e6: int
-  diags: e0@4:18: incompatible-types: incompatible types: String cannot be converted to int | e1@5:23: incompatible-types: incompatible types: long cannot be converted to int | e3@6:12: incompatible-types: incompatible types: String cannot be converted to int | e5@7:20: incompatible-types: incompatible types: Object cannot be converted to int[] | e6@8:17: incompatible-types: incompatible types: int cannot be converted to Body
+  diags: e0@4:18: incompatible-types: Incompatible types. Found: 'String', required: 'int' | e1@5:23: incompatible-types: Incompatible types. Found: 'long', required: 'int' | e3@6:12: incompatible-types: Incompatible types. Found: 'String', required: 'int' | e5@7:20: incompatible-types: Incompatible types. Found: 'Object', required: 'int[]' | e6@8:17: incompatible-types: Incompatible types. Found: 'int', required: 'Body'

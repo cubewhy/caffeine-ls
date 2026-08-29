@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_annotations.rs
-assertion_line: 140
 expression: out
 ---
 FILE /src/com/example/Anns.java:
@@ -13,4 +12,4 @@ class Anns {
     int @BogusDim [] bad;
 }
 
-method : cannot-resolve-type: @6:9cannot resolve symbol 'BogusDim'
+method : cannot-resolve-type: @6:9Cannot resolve symbol 'BogusDim'
