@@ -1,0 +1,91 @@
+name: Build & Package VS Code Extension
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package-extension:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            vsce_target: linux-x64
+            bin_name: caffeine-ls
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            vsce_target: win32-x64
+            bin_name: caffeine-ls.exe
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            vsce_target: darwin-arm64
+            bin_name: caffeine-ls
+
+          - os: macos-13
+            target: x86_64-apple-darwin
+            vsce_target: darwin-x64
+            bin_name: caffeine-ls
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Rust binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Copy binary to extension bin folder
+        shell: bash
+        run: |
+          mkdir -p editors/code/bin
+          cp target/${{ matrix.target }}/release/${{ matrix.bin_name }} editors/code/bin/
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            chmod +x editors/code/bin/${{ matrix.bin_name }}
+          fi
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node.js with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+          cache-dependency-path: "editors/code/pnpm-lock.yaml"
+
+      - name: Install extension dependencies
+        working-directory: ./editors/code
+        run: pnpm install --frozen-lockfile
+
+      - name: Package VSIX
+        working-directory: ./editors/code
+        run: |
+          pnpx @vscode/vsce package --target ${{ matrix.vsce_target }} --no-dependencies -o caffeine-ls-${{ matrix.vsce_target }}.vsix
+
+      - name: Upload VSIX Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.vsce_target }}
+          path: editors/code/*.vsix
