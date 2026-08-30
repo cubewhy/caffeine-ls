@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -67,7 +67,7 @@ jobs:
           version: 11
 
       - name: Set up Node.js with pnpm cache
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: "pnpm"
@@ -83,7 +83,7 @@ jobs:
           pnpx @vscode/vsce package --target ${{ matrix.vsce_target }} --no-dependencies -o caffeine-ls-${{ matrix.vsce_target }}.vsix
 
       - name: Upload VSIX Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vsix-${{ matrix.vsce_target }}
           path: editors/code/*.vsix
