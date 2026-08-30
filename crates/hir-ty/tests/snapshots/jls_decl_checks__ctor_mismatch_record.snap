@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Recs.java:
+package com.example;
+
+record Recs(int x) {
+    Recs { }
+    Recs(int x) { this.x = x; }
+    Wrong { }
+    Bad(int x) { this.x = x; }
+}
+
+@5:4: constructor-name-mismatch: Constructor name 'Wrong' is different from the class name 'Recs'
+@6:4: constructor-name-mismatch: Constructor name 'Bad' is different from the class name 'Recs'

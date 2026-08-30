@@ -172,6 +172,20 @@ pub enum DeclDiagnostic {
         member: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.8 ([§8.10.4] for records): the `SimpleTypeName` in a constructor
+    /// declaration must be the simple name of the class that contains it, or a
+    /// compile-time error occurs. javac reports such a declaration as
+    /// `invalid method declaration; return type required`
+    /// ([`JavaDiagnosticCode::ConstructorNameMismatch`]); the message is
+    /// IntelliJ IDEA's `Constructor name 'W' is different from the class name
+    /// 'R'`. `name` is the mismatched constructor name, `class` the enclosing
+    /// class's simple name, and `range` the constructor's name identifier
+    /// (matching javac's caret position).
+    ConstructorNameMismatch {
+        name: Name,
+        class: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -234,6 +248,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::UnknownAnnotationElementConstant { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationElementConstant)
+            }
+            DeclDiagnostic::ConstructorNameMismatch { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ConstructorNameMismatch)
             }
         }
     }
@@ -346,6 +363,13 @@ impl DeclDiagnostic {
             DeclDiagnostic::UnknownAnnotationElementConstant { member, .. } => {
                 format!("Cannot resolve symbol '{}'", member.simple_name())
             }
+            DeclDiagnostic::ConstructorNameMismatch { name, class, .. } => {
+                format!(
+                    "Constructor name '{}' is different from the class name '{}'",
+                    name.as_str(),
+                    class.as_str()
+                )
+            }
         }
     }
 
@@ -370,7 +394,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnknownAnnotationMember { .. }
             | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
             | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
-            | DeclDiagnostic::UnknownAnnotationElementConstant { .. } => "",
+            | DeclDiagnostic::UnknownAnnotationElementConstant { .. }
+            | DeclDiagnostic::ConstructorNameMismatch { .. } => "",
         }
     }
 
@@ -402,6 +427,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::UnknownAnnotationElementConstant {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::ConstructorNameMismatch {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -592,6 +620,36 @@ fn check_class(
                     method: Name::new(&method.name),
                 });
             }
+        }
+    }
+
+    // §8.8 ([§8.10.4] for records): the `SimpleTypeName` of every constructor
+    // declaration must be the simple name of the class that contains it, or a
+    // compile-time error occurs. The parser accepts any `Name(...)` member as
+    // a constructor regardless of name (it has no class name at parse time),
+    // so the match is checked here; a constructor whose name differs is how a
+    // would-be method with a missing return type ([§8.4.5]) surfaces — javac
+    // reports `invalid method declaration; return type required`. Only classes,
+    // enum classes ([§8.9.2]) and record classes ([§8.10.4]) can declare
+    // constructors; interfaces and annotation types ([§9]) cannot, so their
+    // (syntactically parseable but semantically void) constructor-shaped
+    // members are left to other checks.
+    let class_simple = match tree.data(item) {
+        ItemData::Class(class) => &class.name,
+        ItemData::Enum(enum_) => &enum_.name,
+        ItemData::Record(record) => &record.name,
+        _ => return out,
+    };
+    for &child in tree.data(item).body() {
+        let ItemData::Method(method) = tree.data(child) else {
+            continue;
+        };
+        if method.is_constructor() && &method.name != class_simple {
+            out.push(DeclDiagnostic::ConstructorNameMismatch {
+                name: method.name.clone(),
+                class: class_simple.clone(),
+                range: Some(method.name_range),
+            });
         }
     }
     out

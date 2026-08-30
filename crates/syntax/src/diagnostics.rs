@@ -168,6 +168,13 @@ pub enum JavaDiagnosticCode {
     /// §9.7.1/[§8.9]: an enum-constant element value names a constant that the
     /// element's (enum) type does not declare.
     UnknownAnnotationElementConstant,
+    /// §8.8: a constructor declaration's name is not the simple name of the
+    /// class that contains it. javac reports `invalid method declaration;
+    /// return type required` ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)):
+    /// a constructor-shaped declaration (`Name(...)`) whose name matches
+    /// neither the class nor any return type is a method with a missing
+    /// result.
+    ConstructorNameMismatch,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -265,6 +272,7 @@ impl JavaDiagnosticCode {
             }
             AnnotationElementTypeMismatch => Some("compiler.err.prob.found.req"),
             UnknownAnnotationElementConstant => Some("compiler.err.cant.resolve.location"),
+            ConstructorNameMismatch => Some("compiler.err.invalid.meth.decl.ret.type.req"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -347,6 +355,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::UnknownAnnotationElementConstant => {
                 "unknown-annotation-element-constant"
             }
+            JavaDiagnosticCode::ConstructorNameMismatch => "constructor-name-mismatch",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

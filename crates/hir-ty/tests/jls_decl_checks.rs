@@ -410,3 +410,85 @@ class Other {}
 );
 // Green: package-private top-level types need not name the file ([§7.6]);
 // multiple package-private types per file are legal.
+
+// -- §8.8: a constructor must be named after its class --------------------------
+// The `SimpleTypeName` in a constructor declaration must be the simple name of
+// the class that contains it, or a compile-time error occurs ([§8.8]). javac
+// reports such a declaration as `invalid method declaration; return type
+// required` (a would-be method with a missing return type, §8.4.5); the
+// message rendered here is IntelliJ IDEA's.
+
+snapshot!(
+    ctor_mismatch,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class Ctors {
+    Ctors() {}
+    Ctors(int x) {}
+    <T> Ctors(String s) {}
+    Wrong() {}
+    public Bad() {}
+    <T> Other(String s) {}
+}
+
+class Nested {
+    Nested() {}
+    class Inner {
+        Inner() {}
+        Nested() {}
+        Inner(int x) {}
+        void Wrong() {}
+    }
+}
+",
+    )])
+);
+// Red: `Wrong`, `Bad` and `Other` name something other than their own class —
+// each is a constructor-derived method with a missing return type. The nested
+// `Inner`'s `Nested()` (which names the *outer* class) is flagged too, matched
+// against `Inner`. `void Wrong()` is a real method (`void` is its result,
+// §8.4.5) and stays silent, as does every constructor that names its class.
+
+snapshot!(
+    ctor_mismatch_record,
+    check_class_diagnostics(&[(
+        "/src/com/example/Recs.java",
+        "\
+package com.example;
+
+record Recs(int x) {
+    Recs { }
+    Recs(int x) { this.x = x; }
+    Wrong { }
+    Bad(int x) { this.x = x; }
+}
+",
+    )])
+);
+// §8.10.4: a record's canonical constructor — normal or compact ([§8.10.4.2])
+// — must name the record. The compact `Wrong { }` and the normal `Bad(...)`
+// mismatch and are flagged; `Recs { }` and `Recs(int)` match.
+
+snapshot!(
+    ctor_mismatch_enum,
+    check_class_diagnostics(&[(
+        "/src/com/example/Seasons.java",
+        "\
+package com.example;
+
+enum Seasons {
+    SPRING, SUMMER;
+    Seasons() {}
+    Wrong() {}
+}
+",
+    )])
+);
+// §8.9.2/[§8.8]: enum constructors are constructors of the enum class, so the
+// same naming rule applies to the member section after the ';'. (javac
+// actually reports the enum spelling as `enum constant not expected here`;
+// both agree the declaration is invalid and the mismatch is the visible
+// cause.)
