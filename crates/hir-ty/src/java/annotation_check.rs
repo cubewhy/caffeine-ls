@@ -723,11 +723,23 @@ fn resolve_annotation_type(
             match source_tree.data(source.item) {
                 ItemData::Annotation(annotation) => {
                     // The `@Target` argument list was lowered with the
-                    // annotation type's own declaration ([§9.7.1]).
+                    // annotation type's own declaration ([§9.7.1]); the
+                    // annotation itself is resolved in its own file's scope
+                    // ([§6.5.5.1]), so the simple `@Target` — implicitly
+                    // imported from `java.lang` ([JLS §7.3]) — and the fully
+                    // qualified form both count, while a same-package
+                    // `@interface Target` that shadows the JDK annotation
+                    // ([§6.5.5.1]) does not.
+                    let file_scope = crate::java::resolve::scope_for_file(db, source.file);
+                    let type_params =
+                        crate::java::db::type_params_map_query(db, db.file_text(source.file));
+                    let resolver = Resolver::new(&source_tree, &type_params, source.item);
                     annotation
                         .annotations
                         .iter()
-                        .find(|annotation| is_target_annotation(annotation))
+                        .find(|annotation| {
+                            is_target_annotation(db, &file_scope, &resolver, annotation)
+                        })
                         .map(|annotation| target_value_names(&annotation.args))
                 }
                 _ => None,
@@ -737,12 +749,23 @@ fn resolve_annotation_type(
     }
 }
 
-/// Whether an annotation name is `@Target` — the fully qualified JDK name, or
-/// the simple name `Target` (a same-package or imported `Target` shadows it,
-/// but that is exotic enough to keep simple).
-fn is_target_annotation(annotation: &AnnotationRef) -> bool {
-    let name = annotation.name.name.as_str();
-    name == "java.lang.annotation.Target" || name == "Target"
+/// Whether an annotation name resolves to `java.lang.annotation.Target`
+/// (`@Target`, [JLS §9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1)):
+/// the name resolves like any type name in the declaration's scope
+/// ([§6.5.5.1]) — the simple name (implicitly imported from `java.lang`,
+/// [§7.3]) or a fully qualified name — and only a resolution to the JDK
+/// annotation counts, so a same-package `@interface Target` or a shadowing
+/// import ([§6.5.5.1]) is not mistaken for it.
+fn is_target_annotation(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    annotation: &AnnotationRef,
+) -> bool {
+    candidate_fqns(resolver, &annotation.name.name)
+        .into_iter()
+        .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())
+        .is_some_and(|candidate| candidate.as_str() == "java.lang.annotation.Target")
 }
 
 /// The `ElementType` constant names of a `@Target` argument list: the enum

@@ -221,3 +221,50 @@ class Anns {
 );
 // §9.6.4.1: an annotation type with no `@Target` is applicable to every
 // declaration (except type parameters and packages); nothing is reported.
+
+// -- red: the fully qualified @Target name resolves too ------------------------
+
+snapshot!(
+    fully_qualified_target,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+import java.lang.annotation.ElementType;
+
+@java.lang.annotation.Target(ElementType.METHOD)
+@interface M {}
+
+@M
+class Anns {}
+",
+    )])
+);
+// §9.6.4.1/[§9.7]: the annotation's own `@Target` is resolved like any type
+// name ([§6.5.5.2]), so the fully qualified form is recognized and `@M`
+// (targeted to `METHOD`) is rejected on the class. The FQN form is the case a
+// naive simple-name match would silently lose.
+
+// -- green: a same-package `@interface Target` shadows, not annotates ----------
+
+snapshot!(
+    shadowed_target_not_the_jdk_annotation,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Target {}
+
+@Target
+interface Anns {}
+",
+    )])
+);
+// §6.5.5.1/§7.5: a type of the same package shadows the implicitly imported
+// `java.lang.annotation.Target`, so `@Target` here names the local
+// `@interface Target` — which carries no `@Target` meta-annotation — and is
+// applicable to the interface like any unconstrained annotation. Shadowing is
+// exactly what a name-based `@Target` recognition gets wrong: the name is not
+// the identity, the resolution is.
