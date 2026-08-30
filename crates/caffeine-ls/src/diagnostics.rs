@@ -18,13 +18,11 @@
 //! diagnostics the server echoes `WorkspaceUnchangedDocumentDiagnosticReport`
 //! — the `full=1 unchanged=N-1` steady state.
 
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::hash::{Hash, Hasher};
 
 use ide::Cancellable;
 use rustc_hash::FxHashMap;
+use triomphe::Arc;
 use vfs::FileId;
 
 use crate::{
@@ -60,7 +58,7 @@ pub(crate) fn check_cancelled(snapshot: &GlobalStateSnapshot) -> anyhow::Result<
 pub(crate) fn convert_items(
     snapshot: &GlobalStateSnapshot,
     file_id: FileId,
-    report: &Arc<Vec<ide::Diagnostic>>,
+    report: &Arc<[ide::Diagnostic]>,
 ) -> Cancellable<Vec<lsp_types::Diagnostic>> {
     let line_index = snapshot.file_line_index(file_id)?;
     let lints = snapshot.config.client_lints();

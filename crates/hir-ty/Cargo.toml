@@ -13,6 +13,7 @@ rowan.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
 syntax.workspace = true
+triomphe.workspace = true
 vfs.workspace = true
 
 [dev-dependencies]
@@ -22,9 +23,10 @@ hir-def.workspace = true
 ide-diagnostics.workspace = true
 insta.workspace = true
 line-index.workspace = true
-rustc-hash.workspace = true
 rowan.workspace = true
+rustc-hash.workspace = true
 tempfile = "3"
 triomphe.workspace = true
 vfs.workspace = true
 zip.workspace = true
+

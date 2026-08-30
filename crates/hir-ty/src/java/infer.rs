@@ -36,7 +36,7 @@
 //! ([§15.12.2.5]) wins, and only its constraints are lifted into the
 //! enclosing table ([JLS §18.5.2.1/§18.5.2.2]).
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use hir_def::java::item_tree::{ItemData, ItemId};
 use hir_expand::{

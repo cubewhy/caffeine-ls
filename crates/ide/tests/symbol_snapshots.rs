@@ -1,12 +1,13 @@
 //! Insta snapshot tests for the HIR wiring in `ide`: document/workspace symbol
 //! queries and the HIR type layer forwarded through `Analysis`.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use hir::{Classpath, ClasspathEntry, ProjectGraphData, SourceSetId, set_project_graph};
 use ide::{Analysis, AnalysisHost, DocumentSymbol, WorkspaceSymbol};
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
 use insta::assert_snapshot;
+use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
 fn main_source_set(project: u32) -> SourceSetId {

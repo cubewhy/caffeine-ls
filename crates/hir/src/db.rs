@@ -10,7 +10,7 @@
 //! resolve queries ([`fqn_resolve`]) search exactly those libraries, in
 //! classpath order.
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use base_db::{
     FileText, SourceDatabase, SourceRootId, SourceRootInput,
@@ -475,7 +475,7 @@ fn debug_path(db: &dyn HirDatabase, file: FileId) -> String {
 /// body — leaves the symbol set equal and salsa backdates every consumer,
 /// keeping the workspace symbol index and resolution caches intact.
 #[salsa::tracked(returns(ref))]
-fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<SourceSymbol>> {
+fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<[SourceSymbol]> {
     let file_id = *file.file_id(db);
     let tree = file_item_tree(db, file_id);
     let symbols = collect_file_symbols(&tree);
@@ -486,7 +486,7 @@ fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<Vec<SourceSym
         symbol_count = symbols.len(),
         "hir: indexed file declarations",
     );
-    Arc::new(symbols)
+    Arc::from(symbols)
 }
 
 fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
@@ -571,7 +571,7 @@ fn join_name(prefix: &Name, suffix: &str) -> Name {
 fn source_root_symbols_query(
     db: &dyn HirDatabase,
     root: SourceRootInput,
-) -> Arc<Vec<(FileId, SourceSymbol)>> {
+) -> Arc<[(FileId, SourceSymbol)]> {
     let source_root = root.source_root(db);
     let mut out = Vec::new();
     let file_count = source_root.iter().count();
@@ -585,7 +585,7 @@ fn source_root_symbols_query(
         symbol_count = out.len(),
         "hir: aggregated symbols of a source root",
     );
-    Arc::new(out)
+    Arc::from(out)
 }
 
 /// The source symbol index of one source set, scoped to its *own* source
@@ -655,7 +655,7 @@ fn file_package_query(db: &dyn HirDatabase, file: FileText) -> Name {
 fn source_root_package_files_query(
     db: &dyn HirDatabase,
     root: SourceRootInput,
-) -> Arc<FxHashMap<Name, Arc<Vec<FileId>>>> {
+) -> Arc<FxHashMap<Name, Arc<[FileId]>>> {
     let source_root = root.source_root(db);
     let mut out: FxHashMap<Name, Vec<FileId>> = FxHashMap::default();
     for file in source_root.iter() {
@@ -664,7 +664,7 @@ fn source_root_package_files_query(
     }
     Arc::new(
         out.into_iter()
-            .map(|(package, files)| (package, Arc::new(files)))
+            .map(|(package, files)| (package, Arc::from(files)))
             .collect(),
     )
 }
@@ -850,7 +850,7 @@ fn dir_segments(path: &AbsPath) -> Vec<String> {
 fn source_root_dir_anchor_query(
     db: &dyn HirDatabase,
     root: SourceRootInput,
-) -> Option<Arc<Vec<String>>> {
+) -> Option<Arc<[String]>> {
     let source_root = root.source_root(db);
     let mut anchor: Option<Vec<String>> = None;
     let mut real_count = 0usize;
@@ -867,7 +867,7 @@ fn source_root_dir_anchor_query(
             Some(anchor) => common_dir_prefix(&anchor, &dir),
         });
     }
-    (real_count > 1).then_some(Arc::new(anchor?))
+    (real_count > 1).then_some(Arc::from(anchor?))
 }
 
 /// The longest common prefix of two path-segment lists.
@@ -880,7 +880,7 @@ fn common_dir_prefix(a: &[String], b: &[String]) -> Vec<String> {
 }
 
 /// The indexed symbols of a file.
-pub fn file_symbols(db: &dyn HirDatabase, file_id: FileId) -> Arc<Vec<SourceSymbol>> {
+pub fn file_symbols(db: &dyn HirDatabase, file_id: FileId) -> Arc<[SourceSymbol]> {
     let symbols = file_symbols_query(db, db.file_text(file_id));
     tracing::debug!(
         file_id = ?file_id,

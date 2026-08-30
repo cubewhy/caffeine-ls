@@ -5,7 +5,7 @@
 //! fills the per-file body IR. Lowering is a pure function of the parsed
 //! file, computed once per file by a salsa query ([`crate::db`]).
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use base_db::LanguageKind;
 use hir_expand::{

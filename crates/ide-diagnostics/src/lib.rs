@@ -4,11 +4,11 @@ use ide_db::{
     base_db::{self, FileText, LanguageKind, SourceDatabase, salsa},
 };
 use rowan::TextRange;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use syntax::DiagnosticCode;
 use vfs::FileId;
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Diagnostic {
@@ -40,7 +40,7 @@ pub struct RelatedInformation {
 /// gathers them uniformly.
 #[derive(Default)]
 pub struct DiagnosticSink {
-    pub(crate) per_file: HashMap<FileId, Vec<Diagnostic>>,
+    pub(crate) per_file: FxHashMap<FileId, Vec<Diagnostic>>,
 }
 
 impl DiagnosticSink {
@@ -208,16 +208,16 @@ pub(crate) fn collect_declaration_diagnostics(
 pub(crate) fn file_diagnostics_query(
     db: &dyn hir_ty::TyDatabase,
     file: FileText,
-) -> Arc<Vec<Diagnostic>> {
+) -> Arc<[Diagnostic]> {
     let file_id = *file.file_id(db);
     let mut sink = DiagnosticSink::new();
     collect_type_diagnostics(&mut sink, db, file_id);
     collect_declaration_diagnostics(&mut sink, db, file_id);
-    Arc::new(sink.into_file(file_id))
+    Arc::from(sink.into_file(file_id))
 }
 
 /// The merged type + declaration diagnostics of a file.
-pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec<Diagnostic>> {
+pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Diagnostic]> {
     file_diagnostics_query(db, db.file_text(file_id))
 }
 
@@ -234,24 +234,21 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec
 /// from the still-memoized sub-queries).
 #[salsa::tracked(returns(clone), lru = 4096)]
 #[tracing::instrument(skip_all, level = "debug")]
-pub(crate) fn file_report_query(
-    db: &dyn hir_ty::TyDatabase,
-    file: FileText,
-) -> Arc<Vec<Diagnostic>> {
+pub(crate) fn file_report_query(db: &dyn hir_ty::TyDatabase, file: FileText) -> Arc<[Diagnostic]> {
     let file_id = *file.file_id(db);
     let mut sink = DiagnosticSink::new();
     collect_syntax(&mut sink, db, file_id);
     for diagnostic in file_diagnostics_query(db, file).iter() {
         sink.push(file_id, diagnostic.clone());
     }
-    Arc::new(sink.into_file(file_id))
+    Arc::from(sink.into_file(file_id))
 }
 
 /// The complete report of a file: its syntax diagnostics plus its merged type
 /// and declaration diagnostics. This is the unit the LSP diagnostics store
 /// tracks and diffs per file. Memoized per [`FileText`] by
 /// [`file_report_query`].
-pub fn file_report(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec<Diagnostic>> {
+pub fn file_report(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Diagnostic]> {
     file_report_query(db, db.file_text(file_id))
 }
 

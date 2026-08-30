@@ -19,7 +19,7 @@
 //! ([§14.11.1]), detect duplicate labels and apply the narrowing conversion
 //! of constants in assignment context ([§5.2], [§5.1.3]).
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use rustc_hash::FxHashMap;
 

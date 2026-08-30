@@ -386,11 +386,11 @@ pub fn method_params(
     db: &RootDatabase,
     file_id: FileId,
     item: hir::hir_def::java::item_tree::ItemId,
-) -> Arc<Vec<String>> {
-    Arc::new(
+) -> Arc<[String]> {
+    Arc::from(
         hir_ty::method_params(db, file_id, item)
             .into_iter()
             .map(|ty| ty.display_simple(db).to_string())
-            .collect(),
+            .collect::<Vec<_>>(),
     )
 }

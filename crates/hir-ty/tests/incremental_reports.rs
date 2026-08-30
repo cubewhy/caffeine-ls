@@ -18,7 +18,7 @@
 #[macro_use]
 mod common;
 
-use std::sync::Arc;
+use triomphe::Arc;
 use vfs::FileId;
 
 use common::{TestDatabase, edit_file, find_method, jdk_fixture, register_source_set};

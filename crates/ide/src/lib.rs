@@ -130,7 +130,7 @@ impl Analysis {
     /// The complete report of the file — its syntax diagnostics plus its merged
     /// type and declaration diagnostics — the unit the LSP diagnostics store
     /// tracks and diffs per file (see [`ide_diagnostics::file_report`]).
-    pub fn file_report(&self, file_id: FileId) -> Cancellable<std::sync::Arc<Vec<Diagnostic>>> {
+    pub fn file_report(&self, file_id: FileId) -> Cancellable<triomphe::Arc<[Diagnostic]>> {
         self.with_db(|db| ide_diagnostics::file_report(db, file_id))
     }
 
@@ -139,7 +139,7 @@ impl Analysis {
     pub fn file_resolved_deps(
         &self,
         file_id: FileId,
-    ) -> Cancellable<std::sync::Arc<FxHashSet<FileId>>> {
+    ) -> Cancellable<triomphe::Arc<FxHashSet<FileId>>> {
         self.with_db(|db| hir_ty::java::db::file_resolved_deps(db, file_id))
     }
 
@@ -149,7 +149,7 @@ impl Analysis {
     pub fn file_dependency_refs(
         &self,
         file_id: FileId,
-    ) -> Cancellable<std::sync::Arc<FxHashSet<hir_expand::name::Name>>> {
+    ) -> Cancellable<triomphe::Arc<FxHashSet<hir_expand::name::Name>>> {
         self.with_db(|db| hir_ty::java::db::file_dependency_refs(db, file_id))
     }
 
@@ -196,7 +196,7 @@ impl Analysis {
         &self,
         file_id: FileId,
         item: hir::hir_def::java::item_tree::ItemId,
-    ) -> Cancellable<Arc<Vec<String>>> {
+    ) -> Cancellable<Arc<[String]>> {
         self.with_db(|db| symbols::method_params(db, file_id, item))
     }
 

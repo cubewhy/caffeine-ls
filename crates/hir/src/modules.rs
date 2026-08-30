@@ -11,7 +11,7 @@
 //! (classpath semantics): they read every module and every exported
 //! package. Named-module enforcement for source files is a follow-up.
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use lasso::ThreadedRodeo;
 use rust_asm::constants::{ACC_STATIC_PHASE, ACC_TRANSITIVE};

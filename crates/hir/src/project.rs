@@ -6,7 +6,7 @@
 //! a [`SourceSetId`] (compilation unit), an ordered [`Classpath`], and the
 //! per-library [`LibraryInfo`] the stub index is keyed by.
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use project_model::{LibraryId, ProjectId, SourceSetKind};
 use rustc_hash::FxHashMap;
@@ -92,7 +92,8 @@ pub struct ProjectGraphData {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write as _, sync::Arc};
+    use std::{fs::File, io::Write as _};
+    use triomphe::Arc;
 
     use base_db::{
         DepsMap, FileChange, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase,

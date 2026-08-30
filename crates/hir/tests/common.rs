@@ -3,7 +3,7 @@
 //! jar builder, so integration tests can exercise the source symbol index and
 //! the classpath-wired resolver end to end.
 
-use std::{fs::File, io::Write as _, sync::Arc};
+use std::{fs::File, io::Write as _};
 
 use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase, SourceRoot,
@@ -15,6 +15,7 @@ use hir::{
 };
 use project_model::LibraryId;
 use tempfile::TempDir;
+use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 use zip::write::{SimpleFileOptions, ZipWriter};
 

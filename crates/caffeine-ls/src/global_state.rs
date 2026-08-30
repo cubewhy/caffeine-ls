@@ -121,11 +121,11 @@ pub(crate) type PendingRequest = Box<dyn FnOnce(GlobalStateSnapshot) + Send>;
 /// `$/cancelRequest` so the running worker stops instead of burning CPU to
 /// completion; salsa's cancellation only fires for pending writes.
 #[derive(Clone)]
-pub(crate) struct CancellationToken(std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub(crate) struct CancellationToken(triomphe::Arc<std::sync::atomic::AtomicBool>);
 
 impl Default for CancellationToken {
     fn default() -> Self {
-        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+        Self(triomphe::Arc::new(std::sync::atomic::AtomicBool::new(
             false,
         )))
     }

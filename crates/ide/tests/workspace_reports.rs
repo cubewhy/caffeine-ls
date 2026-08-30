@@ -1,7 +1,9 @@
 //! Tests for the parallel workspace-wide diagnostics report
 //! (see [`ide::Analysis::workspace_reports`]).
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+
+use triomphe::Arc;
 
 use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
 use ide::{Analysis, AnalysisHost, WorkspaceReport};
@@ -110,8 +112,8 @@ fn workspace_reports_matches_per_file_reports() {
     for report in &reports {
         let expected = single(&analysis, report.file);
         assert_eq!(
-            report.report.as_slice(),
-            expected.as_slice(),
+            report.report.as_ref(),
+            &expected,
             "report mismatch for file {}",
             report.file.index()
         );
@@ -134,12 +136,9 @@ fn workspace_reports_matches_per_file_reports() {
     assert_eq!(
         reports
             .iter()
-            .map(|r| r.report.as_slice())
+            .map(|r| r.report.as_ref())
             .collect::<Vec<_>>(),
-        second
-            .iter()
-            .map(|r| r.report.as_slice())
-            .collect::<Vec<_>>()
+        second.iter().map(|r| r.report.as_ref()).collect::<Vec<_>>()
     );
 
     // A is clean; B carries the cross-file unresolved-method error; C carries

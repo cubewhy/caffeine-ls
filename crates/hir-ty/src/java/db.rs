@@ -12,7 +12,7 @@
 //! every item of a file ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3))
 //! are computed once per file in [`type_params_map_query`].
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use base_db::{FileText, salsa};
 use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};

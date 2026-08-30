@@ -5,7 +5,7 @@
 //! full member stubs are loaded on demand from the persistent LMDB stub
 //! cache (without ever touching the archive again).
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use camino::Utf8PathBuf;
 use lasso::ThreadedRodeo;

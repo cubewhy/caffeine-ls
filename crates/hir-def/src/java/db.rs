@@ -16,7 +16,7 @@
 //! so file-level and workspace-level queries (`file_symbols_query`,
 //! `supertypes_query`, ...) are not invalidated.
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use base_db::{FileText, LanguageKind, salsa};
 use hir_expand::body::BodyTree;

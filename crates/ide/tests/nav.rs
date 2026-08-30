@@ -1,7 +1,7 @@
 //! Insta snapshot tests for name-level navigation in `ide`: goto-definition
 //! and hover at an offset, resolved through the HIR layer (see [`ide::nav`]).
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
 use ide::{Analysis, AnalysisHost};

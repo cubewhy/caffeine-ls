@@ -784,7 +784,7 @@ impl GlobalState {
 
             data.source_sets.insert(
                 source_set_id.clone(),
-                std::sync::Arc::new(Classpath { entries }),
+                triomphe::Arc::new(Classpath { entries }),
             );
         }
 

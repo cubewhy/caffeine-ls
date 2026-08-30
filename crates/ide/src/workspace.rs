@@ -2,10 +2,8 @@
 //! file.
 
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::hash::{Hash, Hasher};
+use triomphe::Arc;
 use vfs::FileId;
 
 use crate::RootDatabase;
@@ -19,7 +17,7 @@ pub struct WorkspaceReport {
     pub file: FileId,
     /// The file's syntax plus merged type and declaration diagnostics
     /// ([`ide_diagnostics::file_report`]).
-    pub report: Arc<Vec<Diagnostic>>,
+    pub report: Arc<[Diagnostic]>,
     /// The precomputed, client-opaque LSP `resultId` of the report: a
     /// deterministic hash of the diagnostics plus the client lint keys,
     /// computed on the rayon worker that derived the report. Equal content

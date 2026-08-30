@@ -5,7 +5,7 @@
 
 #![allow(unused)]
 
-use std::{collections::HashMap, fs::File, io::Write as _, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Write as _};
 
 use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase,
@@ -18,6 +18,7 @@ use hir::{
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 use tempfile::TempDir;
+use triomphe::Arc;
 use triomphe::Arc as Arc3;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 use zip::write::{SimpleFileOptions, ZipWriter};

@@ -4,10 +4,7 @@
 use std::{
     fs::File,
     io::Read as _,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use anyhow::Context as _;
@@ -19,6 +16,7 @@ use syntax::{
     class_parser::ClassParser,
     stub::{ClassOrModuleStub, Symbol, TypeRef as SyntaxTypeRef},
 };
+use triomphe::Arc;
 use zip::ZipArchive;
 
 use crate::{
@@ -360,7 +358,7 @@ pub fn load_from_cache(
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
-    use std::sync::Arc;
+    use triomphe::Arc;
 
     use camino::Utf8PathBuf;
     use rust_asm::class_writer::ClassWriter;

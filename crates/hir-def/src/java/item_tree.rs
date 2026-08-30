@@ -17,7 +17,7 @@
 //! signature independent of the source language. Kotlin will lower its own
 //! item tree against the same JVM substrate.
 
-use std::sync::Arc;
+use triomphe::Arc;
 
 use hir_expand::{
     arena::Arena,
