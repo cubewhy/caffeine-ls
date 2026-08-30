@@ -67,3 +67,6 @@ windows-sys = {
 default = ["mimalloc"]
 jemalloc = ["dep:jemallocator"]
 mimalloc = ["dep:mimalloc"]
+
+[profile.release]
+debug = true
