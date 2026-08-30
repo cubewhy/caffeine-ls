@@ -48,8 +48,6 @@ jobs:
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
-        with:
-          targets: ${{ matrix.target }}
 
       - name: Build Rust binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -64,7 +62,7 @@ jobs:
           fi
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11
 
