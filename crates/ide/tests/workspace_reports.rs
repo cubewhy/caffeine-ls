@@ -210,6 +210,69 @@ fn workspace_reports_reflect_incremental_edits() {
     assert!(map[&fixture.file(2)].report.is_empty());
 }
 
+/// A declaration edit in one file of a package must not re-derive an
+/// *unaffected* file's report: its type queries and the duplicate-class check
+/// consume the per-FQN package-symbol buckets, so salsa backdates them instead
+/// of re-executing. We probe this two ways:
+///
+/// * the unaffected file's [`WorkspaceReport::result_id`] is stable — the LSP
+///   layer's `Unchanged` echo depends on it — and
+/// * its `report` `Arc` is the *same allocation* as before the edit: salsa
+///   `returns(clone)` on a verified memo clones the stored value, while a
+///   re-execution builds a fresh `Arc` even when the contents compare equal.
+#[test]
+fn workspace_reports_declaration_edit_preserves_unaffected_files() {
+    let mut fixture = build(&[(
+        main_source_set(0),
+        vec![
+            (1, "/src/p/A.java", "package p;\npublic class A {\n}\n"),
+            (
+                2,
+                "/src/p/B.java",
+                "package p;\npublic class B {\n    A a;\n}\n",
+            ),
+        ],
+    )]);
+    let file_b = fixture.file(2);
+
+    let before = fixture.analysis().workspace_reports(&[]).unwrap();
+    let b_before = by_file(&before)[&file_b];
+
+    // Edit A's *declaration*: add a method whose body errors. Nothing B
+    // resolves against changes (`A` still declares the same `p.A`), so B must
+    // stay clean and backdated; only A's report moves.
+    let mut change = FileChange::default();
+    change.change_file(
+        fixture.file(1),
+        Some(
+            "package p;\npublic class A {\n    public void m() { UndefinedType x; }\n}\n"
+                .to_string(),
+        ),
+    );
+    fixture.host.apply_change(change);
+
+    let after = fixture.analysis().workspace_reports(&[]).unwrap();
+    let map = by_file(&after);
+    let a_after = map[&fixture.file(1)];
+    let b_after = map[&file_b];
+
+    // A's edit took effect: its report changed.
+    assert!(
+        a_after
+            .report
+            .iter()
+            .any(|d| d.message.contains("UndefinedType"))
+    );
+    assert_ne!(a_after.result_id, b_before.result_id);
+
+    // B is untouched: same report contents, same result id, and the *same Arc*
+    // (proving salsa served the backdated memo instead of re-executing).
+    assert!(b_after.report.is_empty());
+    assert_eq!(b_before.report, b_after.report);
+    assert_eq!(b_before.result_id, b_after.result_id);
+    assert!(Arc::ptr_eq(&b_before.report, &b_after.report));
+}
+
 /// The precomputed `result_id` folds in the client lint keys: the same
 /// unchanged report must hash differently under a different lint config, so a
 /// `didChangeConfiguration` invalidates every cached id and forces full

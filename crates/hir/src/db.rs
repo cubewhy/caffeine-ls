@@ -31,7 +31,7 @@ use crate::{
     loader,
     project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId},
     stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
-    symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind},
+    symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind, SourceSymbolRef},
 };
 pub use project_model::LibraryId;
 
@@ -905,6 +905,71 @@ pub fn source_set_symbols(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<
     index.clone()
 }
 
+/// The declaration index of one (source set, package): FQN → every
+/// `(file, symbol)` declaring that name in the package's files. Built once per
+/// (source set, package) per revision; the per-file symbols are themselves
+/// tracked on [`FileText`], so a text edit recomputes only the edited file's
+/// symbols before this re-aggregates the (unchanged) package. Downstream
+/// resolution consumes the O(1) bucket lookups of [`package_fqn_symbols_query`]
+/// instead of scanning a package's files inside each tracked query's body, so
+/// an edit to one file backdates only the FQNs it declares.
+#[salsa::tracked(returns(ref))]
+fn package_symbols_index_query(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
+    source_set: SourceSetId,
+    package: Name,
+) -> Arc<FxHashMap<Name, Arc<[SourceSymbolRef]>>> {
+    let mut out: FxHashMap<Name, Vec<SourceSymbolRef>> = FxHashMap::default();
+    for &file in source_set_package_files_query(db, graph, source_set, package).iter() {
+        for symbol in file_symbols_query(db, db.file_text(file)).iter() {
+            out.entry(symbol.name.clone())
+                .or_default()
+                .push(SourceSymbolRef {
+                    file,
+                    symbol: symbol.clone(),
+                });
+        }
+    }
+    Arc::new(
+        out.into_iter()
+            .map(|(name, refs)| (name, Arc::from(refs)))
+            .collect(),
+    )
+}
+
+/// The declarations of `source_set`'s package `package` whose fully qualified
+/// name is `fqn`, in the package's deterministic file order. The tracked O(1)
+/// bucket lookup of [`package_symbols_index_query`]: the value of this query
+/// per `fqn` is a *slice of the index*, so an edit to a file that declares
+/// other names leaves every other bucket backdated and every consumer memoized.
+#[salsa::tracked(returns(ref))]
+fn package_fqn_symbols_query(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
+    source_set: SourceSetId,
+    package: Name,
+    fqn: Name,
+) -> Arc<[SourceSymbolRef]> {
+    package_symbols_index_query(db, graph, source_set, package)
+        .get(&fqn)
+        .cloned()
+        .unwrap_or_else(|| Arc::from(Vec::<SourceSymbolRef>::new()))
+}
+
+/// The declarations of `source_set`'s package `package` whose fully qualified
+/// name is `fqn`.
+pub fn source_set_fqn_symbols(
+    db: &dyn HirDatabase,
+    source_set: SourceSetId,
+    package: &Name,
+    fqn: &Name,
+) -> Arc<[SourceSymbolRef]> {
+    let graph =
+        ProjectGraph::try_get(db).unwrap_or_else(|| panic!("no project graph; this is a bug"));
+    package_fqn_symbols_query(db, graph, source_set, package.clone(), fqn.clone()).clone()
+}
+
 /// Resolves `fqn` against the source symbol index of `source_set`'s own
 /// source roots. Types are indexed under their fully qualified name
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
@@ -912,33 +977,30 @@ pub fn source_set_symbols(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<
 /// nested) type path — so the declaring file's package is always a `.`-prefix
 /// of the FQN. Rather than consulting one per-source-set aggregate (which
 /// salsa must re-derive on *any* file edit, cascading the recompute into every
-/// file's type inference), this probes only the files of the FQN's prefix
-/// packages ([`source_set_package_files_query`]) and scans each candidate's
-/// per-file symbols ([`file_symbols_query`]) — both tracked per file/package,
-/// so an edit to a file in an unrelated package leaves every resolver here
-/// memoized.
+/// file's type inference), this probes the per-FQN buckets of the FQN's prefix
+/// packages ([`package_fqn_symbols_query`]) — tracked per (package, FQN), so
+/// an edit to a file in an unrelated package — or one declaring other names —
+/// leaves every resolver here memoized.
 fn source_resolve(db: &dyn HirDatabase, source_set: &SourceSetId, fqn: &str) -> Option<Resolved> {
     let graph = ProjectGraph::try_get(db)?;
-    for package in package_prefixes(fqn) {
-        let files = source_set_package_files_query(db, graph, source_set.clone(), package);
-        for &file in files.iter() {
-            for symbol in file_symbols_query(db, db.file_text(file)).iter() {
-                if symbol.name.as_str() == fqn
-                    && matches!(
-                        symbol.kind,
-                        SourceSymbolKind::Class
-                            | SourceSymbolKind::Interface
-                            | SourceSymbolKind::Enum
-                            | SourceSymbolKind::Record
-                            | SourceSymbolKind::Annotation
-                            | SourceSymbolKind::Module
-                    )
-                {
-                    return Some(Resolved::Source(SourceClass {
-                        file,
-                        item: symbol.item,
-                    }));
-                }
+    let fqn = Name::new(fqn);
+    for package in package_prefixes(fqn.as_str()) {
+        for reference in
+            package_fqn_symbols_query(db, graph, source_set.clone(), package, fqn.clone()).iter()
+        {
+            if matches!(
+                reference.symbol.kind,
+                SourceSymbolKind::Class
+                    | SourceSymbolKind::Interface
+                    | SourceSymbolKind::Enum
+                    | SourceSymbolKind::Record
+                    | SourceSymbolKind::Annotation
+                    | SourceSymbolKind::Module
+            ) {
+                return Some(Resolved::Source(SourceClass {
+                    file: reference.file,
+                    item: reference.symbol.item,
+                }));
             }
         }
     }

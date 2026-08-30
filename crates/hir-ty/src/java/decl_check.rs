@@ -633,17 +633,17 @@ fn public_type_diagnostics(
 /// [§7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)) —
 /// javac's `duplicate class` error, which spans files as well as a single
 /// file. For every top-level class-like declaration of `file`, the set of
-/// declarations sharing its FQN is computed from the *peers* — the files of
-/// `file`'s package — and the *non-first* occurrences are reported, each in
-/// its own file, at the declaration's name range (matching javac, which
-/// reports on the later declaration).
+/// declarations sharing its FQN is the per-(source set, package, FQN) symbol
+/// bucket ([`hir::source_set_fqn_symbols`]) — an O(1) slice of the
+/// salsa-tracked per-package symbol index — and the *non-first* occurrences
+/// are reported, each in its own file, at the declaration's name range
+/// (matching javac, which reports on the later declaration).
 ///
-/// The peers are the per-(source set, package) file list
-/// ([`hir::source_set_package_files`]) and each peer's per-file symbols
-/// ([`hir::file_symbols`]) — both salsa-tracked per file/package, so the check
-/// recomputes soundly when a peer file is edited and short-circuits when an
-/// edit lands in a different package; the LSP layer re-pulls the affected
-/// file's diagnostics lazily ([`ide_diagnostics::file_report`]).
+/// The bucket is tracked per FQN, so the check recomputes soundly when a peer
+/// file is edited (its FQN's bucket re-derives) and short-circuits when an
+/// edit lands in a different package *or* changes a different declaration —
+/// the LSP layer re-pulls the affected file's diagnostics lazily
+/// ([`ide_diagnostics::file_report`]).
 fn duplicate_class_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
@@ -668,27 +668,25 @@ fn duplicate_class_diagnostics(
         // top-level class is `package.Simple`); the unnamed package
         // ([JLS §7.4.2]) leaves a bare simple name.
         let package = fqn.as_str().rsplit_once('.').map(|(p, _)| p).unwrap_or("");
-        let peers = hir::source_set_package_files(db, source_set.clone(), &Name::new(package));
-        let mut class_refs: Vec<hir::SourceSymbolRef> = Vec::new();
-        for &peer in peers.iter() {
-            for symbol in hir::file_symbols(db, peer).iter() {
-                if symbol.name == fqn
-                    && matches!(
-                        symbol.kind,
+        // The per-(source set, package, FQN) symbol bucket
+        // ([`hir::source_set_fqn_symbols`]) is salsa-tracked per FQN, so a text
+        // edit that changes a *different* declaration leaves this file's check
+        // memoized; only files declaring the edited FQN re-run it.
+        let class_refs: Vec<hir::SourceSymbolRef> =
+            hir::source_set_fqn_symbols(db, source_set.clone(), &Name::new(package), &fqn)
+                .iter()
+                .filter(|reference| {
+                    matches!(
+                        reference.symbol.kind,
                         hir::SourceSymbolKind::Class
                             | hir::SourceSymbolKind::Interface
                             | hir::SourceSymbolKind::Enum
                             | hir::SourceSymbolKind::Record
                             | hir::SourceSymbolKind::Annotation
                     )
-                {
-                    class_refs.push(hir::SourceSymbolRef {
-                        file: peer,
-                        symbol: symbol.clone(),
-                    });
-                }
-            }
-        }
+                })
+                .cloned()
+                .collect();
         if class_refs.len() < 2 {
             continue;
         }
