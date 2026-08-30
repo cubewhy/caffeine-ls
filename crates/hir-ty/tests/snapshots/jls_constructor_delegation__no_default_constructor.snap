@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class NeedsArg {
+    NeedsArg(int x) {}
+}
+
+class Broken extends NeedsArg {}
+
+class Fine extends NeedsArg {
+    Fine() {
+        super(1);
+    }
+}
+
+class NoCtor {}
+class Direct extends NoCtor {}
+
+@6:6: no-default-constructor: There is no default constructor available in 'NeedsArg'

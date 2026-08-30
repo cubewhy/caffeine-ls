@@ -9,3 +9,4 @@ record R(int x) {}
 class UsesR extends R {}
 
 @3:20: cannot-inherit-from-final-class: Cannot inherit from 'R'
+@3:6: no-default-constructor: There is no default constructor available in 'R'

@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Chain {
+    Chain() {
+        this(1);
+    }
+    Chain(int x) {
+        this("s");
+    }
+    Chain(String s) {
+        super();
+    }
+}

@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Base {}
+
+class Sub extends Base {
+    Sub() {
+        int x = 1;
+        int[] arr = new int[1];
+        String s = "s";
+        super();
+        int y = x + 1;
+        thisField = y;
+    }
+    int thisField;
+}
+
+method Sub(): <init>
+  @9:8..9:15 'super()': constructor-call-not-first: Constructor call must be the first statement in a constructor

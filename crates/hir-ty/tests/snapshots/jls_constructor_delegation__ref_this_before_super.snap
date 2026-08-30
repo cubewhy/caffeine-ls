@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Base {}
+
+class Sub extends Base {
+    int f;
+    int g() {
+        return 1;
+    }
+    Sub() {
+        this.f = 1;
+        g();
+        int k = f;
+        super();
+    }
+}
+
+method Sub(): <init>
+  @13:8..13:15 'super()': constructor-call-not-first: Constructor call must be the first statement in a constructor
+  @10:8..10:12 'this': cannot-reference-before-super: Cannot reference 'this' before supertype constructor has been called
+  @11:8..11:9 'g': cannot-reference-before-super: Cannot reference 'g' before supertype constructor has been called
+  @12:16..12:17 'f': cannot-reference-before-super: Cannot reference 'f' before supertype constructor has been called

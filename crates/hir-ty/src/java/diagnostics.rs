@@ -247,6 +247,21 @@ pub enum TypeError {
         owner: Name,
         access: &'static str,
     },
+    /// §8.8.7.1: the class's constructor delegation graph — `this(...)` calls
+    /// between its own constructors — contains a cycle, so no path reaches
+    /// `super(...)`/`Object()`. javac: `recursive constructor invocation`.
+    RecursiveConstructorInvocation { expr: ExprId },
+    /// §8.8.7.1: an explicit constructor invocation `this(...)`/`super(...)`
+    /// that is not the first statement of the constructor body. javac: `call
+    /// to {this|super} must be first statement in constructor`.
+    ConstructorCallNotFirst { expr: ExprId },
+    /// §8.8.7.1: a reference to `this`, `super` or an instance member of the
+    /// class being constructed — a bare `this`/`super`, `this.x`, `super.x`,
+    /// a simple-name instance field read or write, an unqualified instance
+    /// method invocation — before the supertype constructor has been called.
+    /// javac: `cannot reference {x} before supertype constructor has been
+    /// called`.
+    CannotReferenceBeforeSuper { expr: ExprId, name: Name },
 }
 
 impl TypeError {
@@ -304,6 +319,15 @@ impl TypeError {
             TypeError::MissingReturnValue { .. } => DiagnosticCode::Java(MissingReturnValue),
             TypeError::CatchNeverThrown { .. } => DiagnosticCode::Java(CatchNeverThrown),
             TypeError::IllegalAccess { .. } => DiagnosticCode::Java(IllegalAccess),
+            TypeError::RecursiveConstructorInvocation { .. } => {
+                DiagnosticCode::Java(RecursiveConstructorInvocation)
+            }
+            TypeError::ConstructorCallNotFirst { .. } => {
+                DiagnosticCode::Java(ConstructorCallNotFirst)
+            }
+            TypeError::CannotReferenceBeforeSuper { .. } => {
+                DiagnosticCode::Java(CannotReferenceBeforeSuper)
+            }
         }
     }
 
@@ -353,6 +377,9 @@ impl TypeError {
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
             IllegalAccess { expr, .. } => DiagLocation::Expr(*expr),
+            RecursiveConstructorInvocation { expr }
+            | ConstructorCallNotFirst { expr }
+            | CannotReferenceBeforeSuper { expr, .. } => DiagLocation::Expr(*expr),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. } => location.clone(),
@@ -406,6 +433,9 @@ impl TypeError {
             | TypeError::NoSuchMethod { expr, .. }
             | TypeError::NoSuchConstructor { expr, .. }
             | TypeError::IllegalAccess { expr, .. }
+            | TypeError::RecursiveConstructorInvocation { expr }
+            | TypeError::ConstructorCallNotFirst { expr }
+            | TypeError::CannotReferenceBeforeSuper { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
@@ -627,6 +657,14 @@ impl TypeError {
                     owner.simple_name()
                 ),
             },
+            RecursiveConstructorInvocation { .. } => "Recursive constructor invocation".to_owned(),
+            ConstructorCallNotFirst { .. } => {
+                "Constructor call must be the first statement in a constructor".to_owned()
+            }
+            CannotReferenceBeforeSuper { name, .. } => format!(
+                "Cannot reference '{}' before supertype constructor has been called",
+                name.as_str()
+            ),
         }
     }
 

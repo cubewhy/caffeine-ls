@@ -209,6 +209,24 @@ pub enum JavaDiagnosticCode {
     /// its access is more restrictive than [§6.6.1]/[§6.6.2] allows at the
     /// access site. javac: `{member} has {access} access in {owner}`.
     IllegalAccess,
+    /// §8.8.7: a class with no declared constructor has an implicit default
+    /// constructor that invokes `super()`; a direct superclass with no
+    /// accessible no-argument constructor makes that implicit call fail. javac:
+    /// `implicit super constructor {S}() is undefined`.
+    NoDefaultConstructor,
+    /// §8.8.7.1: the `this(...)` delegation chain between a class's own
+    /// constructors cycles, so no path ever reaches the supertype constructor.
+    /// javac: `recursive constructor invocation`.
+    RecursiveConstructorInvocation,
+    /// §8.8.7.1: an explicit constructor invocation `this(...)`/`super(...)`
+    /// that is not the first statement of the constructor body. javac: `call
+    /// to {this|super} must be first statement in constructor`.
+    ConstructorCallNotFirst,
+    /// §8.8.7.1: a reference to `this`, `super` or an instance member of the
+    /// class being constructed before the supertype constructor has been
+    /// called. javac: `cannot reference {x} before supertype constructor has
+    /// been called`.
+    CannotReferenceBeforeSuper,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -314,6 +332,10 @@ impl JavaDiagnosticCode {
             UnimplementedAbstractMethod => Some("compiler.err.does.not.override.abstract"),
             CyclicInheritance => Some("compiler.err.cyclic.inheritance"),
             IllegalAccess => Some("compiler.err.report.access"),
+            NoDefaultConstructor => Some("compiler.err.implicit.super.constructor.undefined"),
+            RecursiveConstructorInvocation => Some("compiler.err.recursive.ctor.invocation"),
+            ConstructorCallNotFirst => Some("compiler.err.call.to.super.must.be.first.stmt"),
+            CannotReferenceBeforeSuper => Some("compiler.err.cant.ref.before.ctor.called"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -404,6 +426,12 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::UnimplementedAbstractMethod => "unimplemented-abstract-method",
             JavaDiagnosticCode::CyclicInheritance => "cyclic-inheritance",
             JavaDiagnosticCode::IllegalAccess => "illegal-access",
+            JavaDiagnosticCode::NoDefaultConstructor => "no-default-constructor",
+            JavaDiagnosticCode::RecursiveConstructorInvocation => {
+                "recursive-constructor-invocation"
+            }
+            JavaDiagnosticCode::ConstructorCallNotFirst => "constructor-call-not-first",
+            JavaDiagnosticCode::CannotReferenceBeforeSuper => "cannot-reference-before-super",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

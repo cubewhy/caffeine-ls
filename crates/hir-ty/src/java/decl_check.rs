@@ -12,14 +12,14 @@
 //! declaring method rather than an expression: they are collected per file by
 //! [`class_diagnostics`] and carry the offending method's name.
 
-use hir_def::java::item_tree::ItemData;
+use hir_def::java::item_tree::{ItemData, ItemId};
 use hir_expand::name::Name;
 use rustc_hash::FxHashSet;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
-use crate::java::method::{self, Access, MethodData};
+use crate::java::method::{self, Access, InvocationContext, InvocationMode, MethodData};
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
 use crate::java::ty::Ty;
@@ -244,6 +244,23 @@ pub enum DeclDiagnostic {
         class: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.8.7: a class that declares no constructor has an implicit default
+    /// constructor whose body begins with `super()`; a direct superclass with
+    /// no *accessible* no-argument constructor makes that implicit call fail.
+    /// javac: `implicit super constructor {S}() is undefined`; the message is
+    /// IntelliJ's `There is no default constructor available in 'Base'`.
+    /// `class` is the subclass and `super_owner` the direct superclass lacking
+    /// a no-arg constructor, rendered simple. `range` is the class name range.
+    NoDefaultConstructor {
+        class: Name,
+        super_owner: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.8.7.1: a `this(...)` delegation cycle among the class's own
+    /// constructors — no path reaches the supertype constructor. javac:
+    /// `recursive constructor invocation` at the offending `this(...)` call.
+    /// `range` is the delegating call's source range.
+    RecursiveConstructorInvocation { range: Option<rowan::TextRange> },
 }
 
 impl DeclDiagnostic {
@@ -327,6 +344,12 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::CyclicInheritance { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::CyclicInheritance)
+            }
+            DeclDiagnostic::NoDefaultConstructor { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::NoDefaultConstructor)
+            }
+            DeclDiagnostic::RecursiveConstructorInvocation { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::RecursiveConstructorInvocation)
             }
         }
     }
@@ -490,6 +513,15 @@ impl DeclDiagnostic {
             DeclDiagnostic::CyclicInheritance { class, .. } => {
                 format!("Cyclic inheritance involving '{}'", class.simple_name())
             }
+            DeclDiagnostic::NoDefaultConstructor { super_owner, .. } => {
+                format!(
+                    "There is no default constructor available in '{}'",
+                    super_owner.simple_name()
+                )
+            }
+            DeclDiagnostic::RecursiveConstructorInvocation { .. } => {
+                "Recursive constructor invocation".to_owned()
+            }
         }
     }
 
@@ -521,7 +553,9 @@ impl DeclDiagnostic {
             | DeclDiagnostic::IllegalModifierCombination { .. }
             | DeclDiagnostic::CannotInheritFromFinalClass { .. }
             | DeclDiagnostic::UnimplementedAbstractMethod { .. }
-            | DeclDiagnostic::CyclicInheritance { .. } => "",
+            | DeclDiagnostic::CyclicInheritance { .. }
+            | DeclDiagnostic::NoDefaultConstructor { .. }
+            | DeclDiagnostic::RecursiveConstructorInvocation { .. } => "",
         }
     }
 
@@ -568,6 +602,12 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::CyclicInheritance {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::NoDefaultConstructor {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::RecursiveConstructorInvocation {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -770,6 +810,33 @@ fn check_class(
         });
     }
 
+    // §8.8.7: a class that declares no constructor has an implicit default
+    // constructor whose body begins with `super()`; a direct superclass with
+    // no *accessible* no-argument constructor makes that implicit call fail.
+    // Enums and records have their own implicit superclass (`Enum`, `Record`),
+    // so only plain class declarations are checked.
+    if let ItemData::Class(class) = tree.data(item)
+        && !class
+            .body
+            .iter()
+            .any(|child| matches!(tree.data(*child), ItemData::Method(m) if m.is_constructor()))
+        && let Some(super_ref) = &class.super_class
+    {
+        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+        let no_accessible_no_arg = has_no_accessible_no_arg_ctor(db, scope, &super_ty, &ctx);
+        if no_accessible_no_arg == Some(true) {
+            let super_owner = super_ty
+                .as_reference(db)
+                .map(|(name, _)| name.clone())
+                .unwrap_or_else(|| class.name.clone());
+            out.push(DeclDiagnostic::NoDefaultConstructor {
+                class: class.name.clone(),
+                super_owner,
+                range: Some(class.name_range),
+            });
+        }
+    }
+
     // §8.1.1.1: a non-abstract class — a class without the `abstract`
     // modifier, a record [§8.10] or an enum [§8.9] — must implement every
     // abstract method it inherits (or declares itself) with a concrete method
@@ -811,6 +878,10 @@ fn check_class(
             }
         }
     }
+
+    // §8.8.7.1: a `this(...)` delegation cycle among the class's own
+    // constructors ([`recursive_constructor_diagnostics`]).
+    out.extend(recursive_constructor_diagnostics(db, file, tree, item));
 
     // §9.4.1.3: two default methods with the same signature whose declaring
     // interfaces are unrelated (neither a subtype of the other) conflict; the
@@ -1036,6 +1107,151 @@ fn in_own_supertype_cycle(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn
         }
     }
     false
+}
+
+/// §8.8.7: whether the class `super_ty` demonstrably provides *no* accessible
+/// no-argument constructor to the implicit `super()` of the class in `ctx` (a
+/// `super` invocation mode, [§8.8.7.1]). Returns `Some(true)` when the
+/// violation holds, `Some(false)` when there is an accessible one, and `None`
+/// when the superclass's constructor set cannot be trusted — a *library* stub
+/// that records no `<init>` at all is partial (a real classfile always has
+/// one), so its absence proves nothing. Source superclasses name their
+/// constructors after the class; library ones use the JVMS `<init>` name
+/// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)),
+/// and a constructor-less source class's *implicit* default constructor
+/// ([§8.8.9]) is part of its member set.
+fn has_no_accessible_no_arg_ctor(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    super_ty: &Ty,
+    ctx: &InvocationContext,
+) -> Option<bool> {
+    use hir::ClassOrModuleStub;
+    let (fqn, _) = super_ty.as_reference(db)?;
+    let name = match hir::fqn_resolve(db, scope, fqn.as_str()) {
+        Some(hir::Resolved::Library(library)) => {
+            // A library stub with no `<init>` at all is a partial record; only
+            // a declared constructor set is conclusive.
+            let record = hir::class_record(db, &library)?;
+            let ClassOrModuleStub::Class(class) = record.as_ref() else {
+                return Some(false);
+            };
+            let interner = &db.hir_state().interner;
+            let init_count = class
+                .methods
+                .iter()
+                .filter(|m| interner.resolve(&m.name) == "<init>")
+                .count();
+            if init_count == 0 {
+                return None;
+            }
+            "<init>"
+        }
+        Some(hir::Resolved::Source(_)) => fqn.as_str().rsplit('.').next().unwrap_or(fqn.as_str()),
+        // An unresolvable superclass is already reported as a missing type by
+        // the name check; whether it has a no-arg constructor is unknowable.
+        None => return None,
+    };
+    let access = ctx.with_mode(InvocationMode::Super);
+    let has_no_arg = method::member_set(db, scope, super_ty, name, &access)
+        .iter()
+        .any(|method| method.params.is_empty());
+    Some(!has_no_arg)
+}
+
+/// §8.8.7.1: a constructor delegation (`this(...)`) cycle among the class's
+/// own constructors — every path through the delegation graph must reach the
+/// supertype constructor, so a cycle is a compile-time error. The delegation
+/// target of each constructor's first explicit `this(...)` is resolved by
+/// arity (the source is already broken, so full overload resolution is not
+/// needed); the first explicit `this(...)` of every constructor on a cycle is
+/// reported. javac: `recursive constructor invocation`.
+fn recursive_constructor_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: hir_def::java::item_tree::ItemId,
+) -> Vec<DeclDiagnostic> {
+    use hir_def::java::item_tree::ItemData as I;
+    use hir_expand::body::{CtorCallTarget, ExprData, StmtData};
+    let item_data = tree.data(item);
+    let ctors: Vec<ItemId> = item_data
+        .body()
+        .iter()
+        .copied()
+        .filter(|child| matches!(tree.data(*child), I::Method(m) if m.is_constructor()))
+        .collect();
+    if ctors.is_empty() {
+        return Vec::new();
+    }
+    let bodies = hir::file_body_tree(db, file);
+    // The arity of each constructor, for the delegation-target lookup.
+    let arity = |id: ItemId| match tree.data(id) {
+        I::Method(m) => m.sig.params.len(),
+        _ => 0,
+    };
+    // §8.8.7.1: resolve a `this(...)` call's target by arity. When several
+    // overloads share the arity the source is ambiguous; the edge is then
+    // skipped (returns `None`) so a wrong toString resolve does not fabricate
+    // a cycle in otherwise-legal chains through same-arity overloads.
+    let unique_target_with_arity = |wanted: usize| {
+        let mut it = ctors.iter().filter(|id| arity(**id) == wanted);
+        let first = it.next()?;
+        it.next()
+            .is_none()
+            .then_some(ctors.iter().position(|id| *id == *first).unwrap())
+    };
+    // The delegation edge of each constructor: its target's index and the
+    // source range of the delegating `this(...)` call.
+    let edges: Vec<Option<(usize, Option<rowan::TextRange>)>> = ctors
+        .iter()
+        .map(|id| {
+            let I::Method(m) = tree.data(*id) else {
+                return None;
+            };
+            let body_id = m.body()?;
+            let call = bodies.body(body_id).stmts.iter().find_map(|&stmt| {
+                if let StmtData::Expr(expr) = bodies.stmt(stmt)
+                    && let ExprData::CtorCall {
+                        target: CtorCallTarget::This,
+                        args,
+                    } = bodies.expr(*expr)
+                {
+                    return Some((args.len(), bodies.expr_range(*expr)));
+                }
+                None
+            })?;
+            let target = unique_target_with_arity(call.0)?;
+            Some((target, call.1))
+        })
+        .collect();
+    // Find every delegation cycle: a walk from `start` that revisits a node
+    // already on its own path closes a cycle, whose members are the path tail.
+    let mut reported: FxHashSet<usize> = FxHashSet::default();
+    let mut out = Vec::new();
+    for start in 0..edges.len() {
+        let mut order: Vec<usize> = Vec::new();
+        let mut cur = Some(start);
+        let mut cycle: Option<Vec<usize>> = None;
+        while let Some(i) = cur {
+            if let Some(pos) = order.iter().position(|&node| node == i) {
+                cycle = Some(order[pos..].to_vec());
+                break;
+            }
+            order.push(i);
+            cur = edges[i].as_ref().map(|(target, _)| *target);
+        }
+        if let Some(members) = cycle {
+            for node in members {
+                if reported.insert(node) {
+                    out.push(DeclDiagnostic::RecursiveConstructorInvocation {
+                        range: edges[node].and_then(|(_, range)| range),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// §7.6: the class-like declarations of a compilation unit that a package

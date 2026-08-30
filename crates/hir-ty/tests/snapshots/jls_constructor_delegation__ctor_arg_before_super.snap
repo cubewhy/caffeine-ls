@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Base {
+    Base(int x) {}
+}
+
+class Sub extends Base {
+    int f;
+    Sub() {
+        super(this.f);
+    }
+}
+
+method Sub(): <init>
+  @9:14..9:18 'this': cannot-reference-before-super: Cannot reference 'this' before supertype constructor has been called

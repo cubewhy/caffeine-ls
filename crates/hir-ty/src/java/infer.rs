@@ -121,6 +121,7 @@ pub(crate) fn body_types_impl(
         thrown: Vec::new(),
         forward_names: Vec::new(),
         static_context: static_context_of(&tree, item),
+        before_super: false,
         definite: FxHashSet::default(),
         exited: false,
         writing: false,
@@ -162,10 +163,40 @@ pub(crate) fn body_types_impl(
             match method.body() {
                 Some(body_id) => {
                     body = Some(body_id);
+                    let stmts = bodies.body(body_id).stmts.clone();
                     for &param in &bodies.body(body_id).params {
                         ctx.declare_param(param);
                     }
-                    ctx.infer_block_statements(&bodies.body(body_id).stmts);
+                    // §8.8.7.1: a constructor body's explicit
+                    // `this(...)`/`super(...)` invocation bounds the
+                    // before-super window — its *arguments* (and any earlier
+                    // statements) are evaluated while the supertype constructor
+                    // has not run, so `this`/instance references there are an
+                    // error ([§15] evaluation order); an invocation that is not
+                    // the first statement is itself an error. When there is no
+                    // explicit invocation (the implicit `super()` precedes the
+                    // whole body) the window is empty.
+                    if method.is_constructor() {
+                        let first_call = stmts.iter().position(|&stmt| {
+                            matches!(
+                                bodies.stmt(stmt),
+                                hir_expand::body::StmtData::Expr(expr)
+                                    if matches!(
+                                        bodies.expr(*expr),
+                                        hir_expand::body::ExprData::CtorCall { .. }
+                                    )
+                            )
+                        });
+                        ctx.before_super = first_call.is_some();
+                        if let Some(index) = first_call
+                            && index > 0
+                            && let hir_expand::body::StmtData::Expr(expr) =
+                                bodies.stmt(stmts[index])
+                        {
+                            ctx.report(TypeError::ConstructorCallNotFirst { expr: *expr });
+                        }
+                    }
+                    ctx.infer_block_statements(&stmts);
                     // §11.2: the body must discharge its checked exceptions.
                     ctx.check_thrown_liability();
                     // §8.4.7: a method whose return type is neither `void`
@@ -336,6 +367,15 @@ struct InferCtx<'a> {
     /// an instance method from such a body is a compile-time error
     /// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
     static_context: bool,
+    /// Whether the body of the *constructor* currently being inferred is
+    /// before its supertype constructor has been called
+    /// ([JLS §8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
+    /// the explicit `this(...)`/`super(...)` invocation has not been reached
+    /// yet (or the body has none, in which case the implicit `super()` runs
+    /// before the first statement and the window is empty). While set, a
+    /// reference to `this`, `super` or an instance member is a compile-time
+    /// error ([`TypeError::CannotReferenceBeforeSuper`]).
+    before_super: bool,
     /// The locals definitely assigned at the current position
     /// ([§16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html)):
     /// parameters start assigned; a declarator with an initializer or the
@@ -992,6 +1032,14 @@ impl<'a> InferCtx<'a> {
                         keyword: NonStaticThisKind::This,
                     });
                 }
+                // §8.8.7.1: `this` names the object whose supertype
+                // constructor has not run yet.
+                if self.before_super {
+                    self.report(TypeError::CannotReferenceBeforeSuper {
+                        expr: id,
+                        name: Name::new("this"),
+                    });
+                }
                 match qualifier {
                     Some(type_name) => {
                         resolve_type_ref(self.db, &self.scope, &self.resolver, &type_name)
@@ -1006,6 +1054,13 @@ impl<'a> InferCtx<'a> {
                     self.report(TypeError::NonStaticThisFromStaticContext {
                         expr: id,
                         keyword: NonStaticThisKind::Super,
+                    });
+                }
+                // §8.8.7.1: the supertype constructor has not run yet.
+                if self.before_super {
+                    self.report(TypeError::CannotReferenceBeforeSuper {
+                        expr: id,
+                        name: Name::new("super"),
                     });
                 }
                 self.error()
@@ -1486,6 +1541,14 @@ impl<'a> InferCtx<'a> {
                     name: name.clone(),
                 });
             }
+            // §8.8.7.1: an instance field of the object under construction is
+            // not usable before the supertype constructor has run.
+            if self.before_super && !field.is_static {
+                self.report(TypeError::CannotReferenceBeforeSuper {
+                    expr,
+                    name: name.clone(),
+                });
+            }
             return field.ty;
         }
         // §6.5: a simple name that resolves to nothing is a compile-time
@@ -1660,6 +1723,13 @@ impl<'a> InferCtx<'a> {
                 self.report(TypeError::NonStaticThisFromStaticContext {
                     expr: target,
                     keyword: NonStaticThisKind::Super,
+                });
+            }
+            // §8.8.7.1: `super`'s own supertype constructor has not run yet.
+            if self.before_super {
+                self.report(TypeError::CannotReferenceBeforeSuper {
+                    expr,
+                    name: name.clone(),
                 });
             }
             let receiver = self.super_ty();
@@ -2004,6 +2074,12 @@ impl<'a> InferCtx<'a> {
                 }
             }
         }
+        // §8.8.7.1: the explicit constructor invocation (and the implicit
+        // one) is the point past which the object is fully usable — its own
+        // arguments were inferred *inside* the before-super window above
+        // (`this(...)`/`super(...)` argument expressions may not reference
+        // the un-initialized instance either).
+        self.before_super = false;
         self.primitive(PrimitiveType::Void)
     }
 
@@ -2163,6 +2239,15 @@ impl<'a> InferCtx<'a> {
                 // specific than a static candidate still resolves first.
                 if self.static_context && method_name_form && !method.is_static {
                     self.report(TypeError::NonStaticMethodFromStaticContext {
+                        expr,
+                        name: name.clone(),
+                    });
+                }
+                // §8.8.7.1: an unqualified invocation of an instance method of
+                // the class under construction before the supertype constructor
+                // has run is a compile-time error.
+                if self.before_super && method_name_form && !method.is_static {
+                    self.report(TypeError::CannotReferenceBeforeSuper {
                         expr,
                         name: name.clone(),
                     });
