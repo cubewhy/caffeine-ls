@@ -2027,7 +2027,7 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        let (receiver_ty, mode, method_name_form) = self.receiver_info(expr, receiver, &name);
+        let (receiver_ty, mode, method_name_form) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         // §15.12.1: no member of the name on the receiver is a compile-time
@@ -2104,7 +2104,6 @@ impl<'a> InferCtx<'a> {
     /// ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     fn receiver_info(
         &mut self,
-        expr: ExprId,
         receiver: Option<ExprId>,
         name: &Name,
     ) -> (Ty, InvocationMode, bool) {
@@ -2912,7 +2911,7 @@ impl<'a> InferCtx<'a> {
         else {
             return true;
         };
-        let (receiver_ty, mode, _) = self.receiver_info(id, receiver, &name);
+        let (receiver_ty, mode, _) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);
