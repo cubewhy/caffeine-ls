@@ -2,6 +2,7 @@
   "name": "caffeine-ls",
   "displayName": "Caffeine LS",
   "description": "Language support for JVM family languages",
+  "repository": "https://github.com/cubewhy/caffeine-ls",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.118.0"
