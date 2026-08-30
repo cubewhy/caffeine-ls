@@ -4,7 +4,7 @@ expression: "(diag_broken, diag_fixed)"
 ---
 [
   {
-    "resultId": "1",
+    "resultId": "98744fd8b5e1d191",
     "items": [
       {
         "range": {
@@ -41,7 +41,7 @@ expression: "(diag_broken, diag_fixed)"
     "kind": "full"
   },
   {
-    "resultId": "2",
+    "resultId": "bd60acb658c79e45",
     "items": [],
     "kind": "full"
   }

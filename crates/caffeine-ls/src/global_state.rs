@@ -444,6 +444,27 @@ impl GlobalState {
         }
     }
 
+    /// The currently open documents as file ids (sorted for determinism).
+    /// Open documents are the files whose diagnostics the client can surface,
+    /// so they are the cross-file refresh pass's working set.
+    pub(crate) fn open_file_ids(&self) -> Vec<FileId> {
+        let vfs = self.vfs.read();
+        let mut ids: Vec<FileId> = self
+            .mem_docs
+            .iter()
+            .filter_map(|path| {
+                vfs.0
+                    .file_id(path)
+                    .and_then(|(id, excluded)| match excluded {
+                        vfs::FileExcluded::Yes => None,
+                        vfs::FileExcluded::No => Some(id),
+                    })
+            })
+            .collect();
+        ids.sort();
+        ids
+    }
+
     /// Re-runs async requests that were cancelled by a pending salsa write, on
     /// a fresh snapshot that observes the change just applied to the database.
     /// Called from the main loop after `process_changes`.
@@ -524,6 +545,24 @@ impl GlobalStateSnapshot {
     /// that are not open.
     pub(crate) fn open_document_version(&self, path: &vfs::VfsPath) -> Option<i32> {
         self.mem_docs.get(path).map(|doc| doc.version)
+    }
+
+    /// The currently open documents as file ids (sorted for determinism),
+    /// excluding files the vfs excludes.
+    pub(crate) fn open_files(&self) -> Vec<FileId> {
+        let vfs = self.vfs_read();
+        let mut ids: Vec<FileId> = self
+            .mem_docs
+            .iter()
+            .filter_map(|path| {
+                vfs.file_id(path).and_then(|(id, excluded)| match excluded {
+                    vfs::FileExcluded::Yes => None,
+                    vfs::FileExcluded::No => Some(id),
+                })
+            })
+            .collect();
+        ids.sort();
+        ids
     }
 }
 

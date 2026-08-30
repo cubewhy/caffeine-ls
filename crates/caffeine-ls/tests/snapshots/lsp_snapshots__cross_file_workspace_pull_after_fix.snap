@@ -6,14 +6,14 @@ expression: "normalize_and_sort(after_fix, &lsp)"
   "items": [
     {
       "kind": "unchanged",
-      "resultId": "1",
+      "resultId": "bd60acb658c79e45",
       "uri": "file://<WORKSPACE_ROOT>/src/p/A.java",
       "version": 1
     },
     {
       "items": [],
       "kind": "full",
-      "resultId": "2",
+      "resultId": "bd60acb658c79e45",
       "uri": "file://<WORKSPACE_ROOT>/src/p/B.java",
       "version": null
     }

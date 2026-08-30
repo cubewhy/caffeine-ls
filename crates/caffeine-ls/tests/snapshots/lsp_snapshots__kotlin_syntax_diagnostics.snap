@@ -1,10 +1,9 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-assertion_line: 299
 expression: diagnostics
 ---
 {
-  "resultId": "1",
+  "resultId": "9a32cbe9605177fc",
   "items": [
     {
       "range": {

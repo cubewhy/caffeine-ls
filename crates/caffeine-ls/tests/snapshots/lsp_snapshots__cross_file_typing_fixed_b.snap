@@ -1,6 +1,6 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-expression: "normalize_and_sort(clean, &lsp)"
+expression: "normalize_and_sort(after, &lsp)"
 ---
 {
   "items": [],

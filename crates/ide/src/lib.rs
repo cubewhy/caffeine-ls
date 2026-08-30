@@ -165,6 +165,12 @@ impl Analysis {
         self.with_db(|db| line_index(db, file_id).clone())
     }
 
+    /// Every workspace source file (the `workspace/diagnostic` set), derived
+    /// from the registered source roots.
+    pub fn all_files(&self) -> Cancellable<Vec<FileId>> {
+        self.with_db(|db| db.source_files())
+    }
+
     /// The declared symbols of a file, in declaration order.
     pub fn document_symbols(&self, file_id: FileId) -> Cancellable<Vec<DocumentSymbol>> {
         self.with_db(|db| symbols::document_symbols(db, file_id))

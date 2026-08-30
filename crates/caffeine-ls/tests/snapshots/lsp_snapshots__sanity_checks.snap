@@ -4,12 +4,12 @@ expression: "(diag_empty, diag_garbage)"
 ---
 [
   {
-    "resultId": "1",
+    "resultId": "bd60acb658c79e45",
     "items": [],
     "kind": "full"
   },
   {
-    "resultId": "1",
+    "resultId": "b1d978c19a349a63",
     "items": [
       {
         "range": {

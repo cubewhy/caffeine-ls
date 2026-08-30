@@ -72,9 +72,6 @@ pub fn on_did_open(
         // hasn't scanned yet, so the id is available immediately after.
         let file_id = state.vfs.read().0.file_id(&path).map(|(id, _)| id);
         if let Some(file_id) = file_id {
-            // Opening a document makes it watched: its diagnostics are now
-            // tracked across edits to the files it depends on.
-            state.diagnostics.mark_watched(file_id);
             // Opening a document can bring text in that differs from the
             // on-disk copy; treat that as an edit for the diagnostics pipeline.
             if changed {
@@ -153,11 +150,6 @@ pub fn on_did_close(
     if let Ok(path) = from_proto::vfs_path(&params.text_document.uri) {
         if state.mem_docs.remove(&path).is_err() {
             tracing::error!("orphan DidCloseTextDocument: {}", path);
-        }
-
-        // Closing a document stops tracking its diagnostics across edits.
-        if let Some((file_id, _)) = state.vfs.read().0.file_id(&path) {
-            state.diagnostics.unwatch(file_id);
         }
 
         if let Some(path) = path.as_path() {

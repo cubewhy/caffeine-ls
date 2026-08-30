@@ -3,7 +3,7 @@ source: crates/caffeine-ls/tests/lsp_snapshots.rs
 expression: diagnostics
 ---
 {
-  "resultId": "1",
+  "resultId": "c17318829733b228",
   "items": [
     {
       "range": {

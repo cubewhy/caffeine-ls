@@ -682,10 +682,6 @@ impl GlobalState {
         self.file_set_config = Some(file_set_config);
 
         let roots = self.partition_source_roots();
-        // The diagnostics store covers the exactly same file set as the
-        // database source roots.
-        let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-        self.diagnostics.set_source_files(source_files);
         let mut project_graph = self.build_project_graph(&graph, &source_sets);
         for (idx, (root, source_set, _)) in entries.iter().enumerate() {
             project_graph
@@ -1067,19 +1063,18 @@ impl GlobalState {
         // to be rebuilt to keep `file_language_kind` working.
         if roots_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
-            // The diagnostics store covers the same file set; refresh the files
-            // it covers, and get back the watched files whose diagnostics may
-            // have moved because of the repartition.
-            let source_files: Vec<FileId> = roots.iter().flat_map(SourceRoot::iter).collect();
-            let affected = self.diagnostics.set_source_files(source_files);
             change.set_roots(roots);
 
-            if self.config.cross_file_enabled() && !affected.is_empty() {
-                // A file add/delete can resolve (or conflict with) references
-                // in watched files; re-verify them all.
-                self.pending_changes.extend(affected);
-                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
-                self.arm_refresh_timer();
+            // A file add/delete can resolve (or conflict with) references in
+            // open documents; recompute their diagnostics on the next refresh.
+            if self.config.cross_file_enabled() {
+                let open = self.open_file_ids();
+                if !open.is_empty() {
+                    self.pending_changes.extend(open);
+                    self.refresh_deadline =
+                        Some(Instant::now() + self.config.cross_file_debounce());
+                    self.arm_refresh_timer();
+                }
             }
         }
 
@@ -1093,9 +1088,10 @@ impl GlobalState {
         if !self.config.cross_file_enabled() {
             return;
         }
-        // The edit makes the file's cached diagnostics stale immediately:
-        // neither pull channel may echo an `Unchanged` resultId from before it.
-        self.diagnostics.invalidate(file_id);
+        // No cached state to invalidate: pull handlers always re-derive from
+        // the current analysis snapshot. The debounced pass recomputes the
+        // edited file's diagnostics (and those of every open document) to gate
+        // the workspace-wide refresh notification.
         self.pending_changes.insert(file_id);
         self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
         self.arm_refresh_timer();

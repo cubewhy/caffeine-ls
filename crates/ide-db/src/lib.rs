@@ -5,8 +5,8 @@ pub use base_db;
 use hir::hir_expand::files::FileRangeWrapper;
 
 use base_db::{
-    DepsMap, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase, SourceRoot, SourceRootId,
-    SourceRootInput,
+    DepsMap, FALLBACK_SOURCE_ROOT, FileSourceRootInput, FileText, Files, Nonce, SourceDatabase,
+    SourceRoot, SourceRootId, SourceRootInput,
 };
 use hir::{HirDatabase, HirState, JavaDatabase, JvmDatabase, KotlinDatabase};
 use line_index::LineIndex;
@@ -40,6 +40,17 @@ impl RootDatabase {
             nonce: Nonce::new(),
             hir_state: Default::default(),
         }
+    }
+
+    /// Every file of every registered source root, excluding the fallback
+    /// catch-all root that pre-workspace documents attach to. This is the
+    /// `workspace/diagnostic` file set.
+    pub fn source_files(&self) -> Vec<FileId> {
+        self.files
+            .source_root_ids()
+            .filter(|&id| id != FALLBACK_SOURCE_ROOT)
+            .flat_map(|id| self.files.source_root(id).source_root(self).iter())
+            .collect()
     }
 }
 

@@ -171,6 +171,12 @@ impl Files {
             .map(|input| *input.source_root_id(db))
     }
 
+    /// The registered source-root ids, including the catch-all fallback root
+    /// that files outside the workspace attach to.
+    pub fn source_root_ids(&self) -> impl Iterator<Item = SourceRootId> + '_ {
+        self.source_roots.iter().map(|entry| *entry.key())
+    }
+
     /// Ensures `file_id` has a [`FileSourceRootInput`] salsa input, so
     /// [`SourceDatabase::file_source_root`] is total for every file that holds
     /// text. Documents not yet claimed by an applied source root are

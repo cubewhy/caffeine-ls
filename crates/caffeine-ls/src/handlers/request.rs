@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     diagnostics,
     global_state::GlobalStateSnapshot,
@@ -31,24 +29,17 @@ pub fn on_diagnostic(
     // Before the workspace is loaded, files are not part of any source
     // root, so fall back to the language kind inferred from the path.
     let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
-    // Track this file across edits and compute (or read back) its report.
-    state
-        .diagnostics
-        .ensure_subscribed(&state.analysis, file_id)?;
-    let (generation, report) =
-        state
-            .diagnostics
-            .file_report(&state.analysis, file_id, fallback_language_kind)?;
-
-    // Related documents: watched files whose diagnostics an edit to this file
-    // can move, sealed with their generation.
-    let related_documents: Option<HashMap<Uri, RelatedDocument>> =
-        diagnostics::related_for(&state, file_id)?.map(|map| map.into_iter().collect());
-
-    let id = generation.to_string();
+    // Compute the report through the memoized salsa query; the `result_id` is a
+    // deterministic fingerprint of the items, so an unchanged file echoes
+    // `Unchanged` across edits to unrelated files.
+    let report = state
+        .analysis
+        .file_report(file_id, fallback_language_kind)?;
+    let items = diagnostics::convert_items(&state, file_id, &report)?;
+    let id = diagnostics::render_id(diagnostics::result_id(&items));
     if params.previous_result_id.as_deref() == Some(id.as_str()) {
         return Ok(RelatedUnchangedDocumentDiagnosticReport {
-            related_documents,
+            related_documents: None,
             unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport {
                 result_id: id,
             },
@@ -56,9 +47,8 @@ pub fn on_diagnostic(
         .into());
     }
 
-    let items = diagnostics::convert_items(&state, file_id, &report)?;
     Ok(RelatedFullDocumentDiagnosticReport {
-        related_documents,
+        related_documents: None,
         full_document_diagnostic_report: FullDocumentDiagnosticReport {
             result_id: Some(id),
             items,
