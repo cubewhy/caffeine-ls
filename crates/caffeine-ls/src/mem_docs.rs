@@ -47,10 +47,6 @@ impl MemDocs {
             .map(Arc::make_mut)
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &VfsPath> {
-        self.mem_docs.keys()
-    }
-
     pub(crate) fn take_changes(&mut self) -> bool {
         mem::replace(&mut self.added_or_removed, false)
     }

@@ -20,9 +20,11 @@ use vfs::FileId;
 pub mod delta;
 pub mod nav;
 pub mod symbols;
+pub mod workspace;
 
 pub use nav::{HoverInfo, NavigationTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbol};
+pub use workspace::WorkspaceReport;
 
 pub type Cancellable<T> = Result<T, Cancelled>;
 
@@ -165,10 +167,11 @@ impl Analysis {
         self.with_db(|db| line_index(db, file_id).clone())
     }
 
-    /// Every workspace source file (the `workspace/diagnostic` set), derived
-    /// from the registered source roots.
-    pub fn all_files(&self) -> Cancellable<Vec<FileId>> {
-        self.with_db(|db| db.source_files())
+    /// The complete diagnostic report of every workspace source file, computed
+    /// in parallel across the memoized per-file salsa queries (see
+    /// [`workspace::workspace_reports`]). The `workspace/diagnostic` pull.
+    pub fn workspace_reports(&self) -> Cancellable<Vec<WorkspaceReport>> {
+        self.with_db(workspace::workspace_reports)
     }
 
     /// The declared symbols of a file, in declaration order.

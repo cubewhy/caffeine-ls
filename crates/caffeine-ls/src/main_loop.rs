@@ -14,12 +14,11 @@ use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError};
 use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
-use vfs::{AbsPathBuf, FileId};
+use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
     config::Config,
-    diagnostics as diagnostics_store,
     global_state::{BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState},
     handlers::{
         self,
@@ -49,7 +48,6 @@ impl GlobalState {
             .inspect_err(|err| tracing::error!(?err, "Failed to init lsp"))?;
 
         loop {
-            let refresh_rx = self.refresh_timer.as_ref().unwrap_or(&self.never_rx);
             crossbeam_channel::select! {
                 recv(receiver) -> msg => {
                     match msg? {
@@ -63,9 +61,6 @@ impl GlobalState {
                 }
                 recv(self.task_receiver) -> task => {
                     self.handle_background_task(task?);
-                }
-                recv(refresh_rx) -> _ => {
-                    self.collect_refresh_timer();
                 }
             }
 
@@ -520,19 +515,6 @@ impl GlobalState {
                 self.remove_async_cancellation(&id);
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
-
-            BackgroundTaskEvent::DiagnosticsReady {
-                changed,
-                cross_file,
-            } => {
-                self.handle_diagnostics_ready(changed, cross_file);
-            }
-            BackgroundTaskEvent::DiagnosticsRetry { changed } => {
-                tracing::debug!("diagnostics pass cancelled by pending write; re-queueing");
-                self.pending_changes.extend(changed);
-                self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
-                self.arm_refresh_timer();
-            }
         }
     }
 
@@ -924,7 +906,6 @@ impl GlobalState {
                 self.process_changes();
             }
             vfs::loader::Message::Changed { files } => {
-                let mut recorded: Vec<FileId> = Vec::new();
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
@@ -947,21 +928,8 @@ impl GlobalState {
                         if ignored {
                             continue;
                         }
-                        let file_id = vfs.0.file_id(&path.clone().into()).map(|(id, _)| id);
-                        // `set_file_contents` reports whether the content truly
-                        // changed; a re-read after `didClose` with an unchanged
-                        // file yields `false` and must not be treated as an edit.
-                        if vfs.0.set_file_contents(path.into(), contents)
-                            && let Some(file_id) = file_id
-                        {
-                            recorded.push(file_id);
-                        }
+                        vfs.0.set_file_contents(path.into(), contents);
                     }
-                }
-                for file_id in recorded {
-                    // An on-disk edit to a source file can move the diagnostics
-                    // of its dependents.
-                    self.record_source_edit(file_id);
                 }
                 self.process_changes();
             }
@@ -1064,121 +1032,9 @@ impl GlobalState {
         if roots_changed && self.file_set_config.is_some() {
             let roots = self.partition_source_roots();
             change.set_roots(roots);
-
-            // A file add/delete can resolve (or conflict with) references in
-            // open documents; recompute their diagnostics on the next refresh.
-            if self.config.cross_file_enabled() {
-                let open = self.open_file_ids();
-                if !open.is_empty() {
-                    self.pending_changes.extend(open);
-                    self.refresh_deadline =
-                        Some(Instant::now() + self.config.cross_file_debounce());
-                    self.arm_refresh_timer();
-                }
-            }
         }
 
         self.analysis_host.apply_change(change);
-    }
-
-    /// Queues a *client-visible* text edit for the debounced cross-file
-    /// refresh. The background pass redisplays only the files whose
-    /// diagnostics genuinely moved, so steady-state keystrokes are cheap.
-    pub(crate) fn record_source_edit(&mut self, file_id: FileId) {
-        if !self.config.cross_file_enabled() {
-            return;
-        }
-        // No cached state to invalidate: pull handlers always re-derive from
-        // the current analysis snapshot. The debounced pass recomputes the
-        // edited file's diagnostics (and those of every open document) to gate
-        // the workspace-wide refresh notification.
-        self.pending_changes.insert(file_id);
-        self.refresh_deadline = Some(Instant::now() + self.config.cross_file_debounce());
-        self.arm_refresh_timer();
-    }
-
-    /// Fired when the debounce timer wakes (or when a previous one-shot was
-    /// consumed): clears the armed timer and either starts the refresh pass or
-    /// re-arms for a later deadline.
-    fn collect_refresh_timer(&mut self) {
-        self.refresh_timer = None;
-        match self.refresh_deadline {
-            Some(deadline) if Instant::now() >= deadline => {
-                self.start_diagnostics_pass();
-            }
-            Some(_) => self.arm_refresh_timer(),
-            None => {}
-        }
-    }
-
-    /// Arms a one-shot receiver that wakes the main loop when the debounce
-    /// deadline is reached (if one is pending and no timer is already armed).
-    fn arm_refresh_timer(&mut self) {
-        if self.refresh_timer.is_some() {
-            return;
-        }
-        if let Some(deadline) = self.refresh_deadline {
-            self.refresh_timer = Some(crossbeam_channel::at(deadline));
-        }
-    }
-
-    /// Launches the debounced diagnostics refresh pass on the worker pool. The
-    /// pass recomputes the edited files and their watched dependents, returning
-    /// the files whose diagnostics actually moved. A concurrent write cancels
-    /// the pass ([`Cancelled::PendingWrite`]) and the worker hands the changed
-    /// set back for a re-run after the write.
-    fn start_diagnostics_pass(&mut self) {
-        self.refresh_deadline = None;
-        let changed = std::mem::take(&mut self.pending_changes);
-        if changed.is_empty() {
-            return;
-        }
-
-        let snapshot = self.snapshot();
-        let task_sender = self.task_sender.clone();
-        self.thread_pool.execute(move || {
-            let result = diagnostics_store::run_diagnostics_pass(&snapshot, &changed);
-            match result {
-                Ok((moved, cross_file)) => {
-                    let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsReady {
-                        changed: moved.into_iter().collect(),
-                        cross_file,
-                    });
-                }
-                Err(err)
-                    if matches!(
-                        err.downcast_ref::<Cancelled>(),
-                        Some(Cancelled::PendingWrite)
-                    ) =>
-                {
-                    let _ = task_sender.send(BackgroundTaskEvent::DiagnosticsRetry { changed });
-                }
-                Err(cancelled) => {
-                    tracing::debug!(?cancelled, "diagnostics pass aborted");
-                }
-            }
-        });
-    }
-
-    /// Applies a completed diagnostics pass: asks the client to re-pull the
-    /// documents whose diagnostics moved via `workspace/diagnosticRefresh` (the
-    /// pull channel). Unopened files are never pushed. When only the edited
-    /// (active) files' diagnostics moved, the client already re-pulls
-    /// `textDocument/diagnostic` for them, so the workspace-wide refresh is
-    /// skipped; it is sent only when a *dependent* file's diagnostics moved.
-    fn handle_diagnostics_ready(&mut self, changed: FxHashSet<FileId>, cross_file: bool) {
-        if !self.config.cross_file_enabled() {
-            return;
-        }
-        if changed.is_empty() {
-            return;
-        }
-        if !cross_file {
-            tracing::debug!(changed = ?changed, "active-file diagnostics moved; skipping workspace refresh");
-            return;
-        }
-        tracing::debug!(changed = ?changed, "cross-file diagnostics moved; refreshing the client");
-        self.refresh_diagnostics();
     }
 }
 

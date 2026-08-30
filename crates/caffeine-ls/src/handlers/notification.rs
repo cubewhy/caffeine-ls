@@ -63,21 +63,11 @@ pub fn on_did_open(
         }
 
         let contents = params.text_document.text.into_bytes();
-        let changed = state
+        state
             .vfs
             .write()
             .0
             .set_file_contents(path.clone(), Some(contents));
-        // `set_file_contents` allocates the file id even for a file the loader
-        // hasn't scanned yet, so the id is available immediately after.
-        let file_id = state.vfs.read().0.file_id(&path).map(|(id, _)| id);
-        if let Some(file_id) = file_id {
-            // Opening a document can bring text in that differs from the
-            // on-disk copy; treat that as an edit for the diagnostics pipeline.
-            if changed {
-                state.record_source_edit(file_id);
-            }
-        }
     }
 
     Ok(())
@@ -109,22 +99,11 @@ pub(crate) fn on_did_change(
         .into_bytes();
         if *data != new_contents {
             data.clone_from(&new_contents);
-            let file_id = state
-                .vfs
-                .read()
-                .0
-                .file_id(&path)
-                .map(|(file_id, _)| file_id);
             state
                 .vfs
                 .write()
                 .0
                 .set_file_contents(path, Some(new_contents));
-            if let Some(file_id) = file_id {
-                // The edit may have moved the diagnostics of files that depend
-                // on this one; schedule the debounced cross-file refresh.
-                state.record_source_edit(file_id);
-            }
         }
     }
 

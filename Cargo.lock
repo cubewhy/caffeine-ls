@@ -1174,6 +1174,7 @@ dependencies = [
  "parking_lot",
  "project-model",
  "ra_ap_vfs",
+ "rayon",
  "rowan",
  "rustc-hash 2.1.2",
  "syntax",

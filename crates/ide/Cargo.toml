@@ -13,6 +13,7 @@ ide-db.workspace = true
 ide-diagnostics.workspace = true
 parking_lot.workspace = true
 project-model.workspace = true
+rayon.workspace = true
 rowan.workspace = true
 rustc-hash.workspace = true
 syntax.workspace = true

@@ -1,6 +1,5 @@
 use crate::{
     config::ConfigErrors,
-    diagnostics::DiagnosticsMap,
     line_index::{LineEndings, LineIndex},
     lsp::from_proto,
     mem_docs::MemDocs,
@@ -8,7 +7,7 @@ use crate::{
 };
 use lsp_types::Uri;
 use project_model::WorkspaceGraph;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::time::Instant;
 use triomphe::Arc;
 
@@ -65,20 +64,6 @@ pub enum BackgroundTaskEvent {
     NotifyUser {
         typ: lsp_types::MessageType,
         message: String,
-    },
-    /// A debounced diagnostics refresh pass completed: the files whose
-    /// diagnostics actually moved, ready to be refreshed by the client (see
-    /// [`crate::diagnostics`]). `cross_file` is true when at least one *other*
-    /// file's diagnostics moved (not just the edited files themselves).
-    DiagnosticsReady {
-        changed: FxHashSet<FileId>,
-        cross_file: bool,
-    },
-    /// A diagnostics refresh pass was cancelled by a pending write mid-run.
-    /// The changed-file set must be re-queued (and the debounce re-armed) once
-    /// the write has been applied.
-    DiagnosticsRetry {
-        changed: FxHashSet<FileId>,
     },
 }
 
@@ -183,19 +168,6 @@ pub struct GlobalState {
     pub(crate) analysis_host: AnalysisHost,
     pub(crate) mem_docs: MemDocs,
 
-    /// Central diagnostics store + subscriptions shared with background
-    /// workers (see [`crate::diagnostics`]).
-    pub(crate) diagnostics: DiagnosticsMap,
-    /// Files with unsaved edits awaiting the debounced diagnostics refresh pass.
-    pub(crate) pending_changes: FxHashSet<FileId>,
-    /// When the current debounce window ends, if a refresh is pending.
-    pub(crate) refresh_deadline: Option<Instant>,
-    /// The one-shot timer armed for the current debounce window.
-    pub(crate) refresh_timer: Option<crossbeam_channel::Receiver<std::time::Instant>>,
-    /// A receiver that delivers nothing; used to park the `select!` when no
-    /// refresh is pending.
-    pub(crate) never_rx: crossbeam_channel::Receiver<std::time::Instant>,
-
     pub(crate) shutdown_requested: bool,
     pub(crate) exit_requested: bool,
 
@@ -255,12 +227,6 @@ impl GlobalState {
 
             analysis_host,
             mem_docs: MemDocs::default(),
-
-            diagnostics: DiagnosticsMap::default(),
-            pending_changes: FxHashSet::default(),
-            refresh_deadline: None,
-            refresh_timer: None,
-            never_rx: crossbeam_channel::never(),
 
             shutdown_requested: false,
             exit_requested: false,
@@ -439,30 +405,8 @@ impl GlobalState {
             analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
-            diagnostics: self.diagnostics.clone(),
             cancelled: CancellationToken::default(),
         }
-    }
-
-    /// The currently open documents as file ids (sorted for determinism).
-    /// Open documents are the files whose diagnostics the client can surface,
-    /// so they are the cross-file refresh pass's working set.
-    pub(crate) fn open_file_ids(&self) -> Vec<FileId> {
-        let vfs = self.vfs.read();
-        let mut ids: Vec<FileId> = self
-            .mem_docs
-            .iter()
-            .filter_map(|path| {
-                vfs.0
-                    .file_id(path)
-                    .and_then(|(id, excluded)| match excluded {
-                        vfs::FileExcluded::Yes => None,
-                        vfs::FileExcluded::No => Some(id),
-                    })
-            })
-            .collect();
-        ids.sort();
-        ids
     }
 
     /// Re-runs async requests that were cancelled by a pending salsa write, on
@@ -490,12 +434,12 @@ impl GlobalState {
     }
 }
 
+#[derive(Clone)]
 pub struct GlobalStateSnapshot {
     pub(crate) config: Arc<Config>,
     pub(crate) analysis: Analysis,
     mem_docs: MemDocs,
     vfs: Arc<RwLock<(vfs::Vfs, FxHashMap<FileId, LineEndings>)>>,
-    pub(crate) diagnostics: DiagnosticsMap,
     /// Set by `$/cancelRequest` for the request this snapshot serves; workers
     /// checkpoint it and abort early instead of finishing a full pull.
     pub(crate) cancelled: CancellationToken,
@@ -545,24 +489,6 @@ impl GlobalStateSnapshot {
     /// that are not open.
     pub(crate) fn open_document_version(&self, path: &vfs::VfsPath) -> Option<i32> {
         self.mem_docs.get(path).map(|doc| doc.version)
-    }
-
-    /// The currently open documents as file ids (sorted for determinism),
-    /// excluding files the vfs excludes.
-    pub(crate) fn open_files(&self) -> Vec<FileId> {
-        let vfs = self.vfs_read();
-        let mut ids: Vec<FileId> = self
-            .mem_docs
-            .iter()
-            .filter_map(|path| {
-                vfs.file_id(path).and_then(|(id, excluded)| match excluded {
-                    vfs::FileExcluded::Yes => None,
-                    vfs::FileExcluded::No => Some(id),
-                })
-            })
-            .collect();
-        ids.sort();
-        ids
     }
 }
 

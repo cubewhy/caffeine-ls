@@ -316,11 +316,14 @@ mod tests {
         let id = RequestId::from(2);
 
         fn cancelling_worker(snapshot: GlobalStateSnapshot, _params: ()) -> anyhow::Result<()> {
-            crate::diagnostics::check_cancelled(&snapshot)
+            if snapshot.cancelled.is_cancelled() {
+                return Err(crate::global_state::ClientCancelled.into());
+            }
+            Ok(())
         }
 
         // A snapshot carrying a cancelled token makes the worker abort.
-        let mut snapshot = snapshot();
+        let snapshot = snapshot();
         snapshot.cancelled.cancel();
 
         let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), cancelling_worker, ());
