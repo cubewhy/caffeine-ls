@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Dup.java:
+package com.example;
+
+class Dup {
+    void m(int p) {
+        int q = 1;
+        int q = 2;
+    }
+    void n() {
+        int r = 1;
+        {
+            int r = 2;
+        }
+    }
+}
+
+method m(int): void
+  @5:12..5:17 'q = 2': duplicate-declaration: Variable 'q' is already defined in the scope
+method n(): void
+  @10:16..10:21 'r = 2': duplicate-declaration: Variable 'r' is already defined in the scope

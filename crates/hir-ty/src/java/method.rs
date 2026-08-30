@@ -1887,6 +1887,13 @@ pub struct FieldData {
     /// The access of the field
     /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
     pub access: Access,
+    /// Whether the field is `final`
+    /// ([JLS §8.3.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.3.1.2)):
+    /// the ACC_FINAL flag of the classfile
+    /// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1))
+    /// or the `final` modifier of the source. A final field cannot be assigned
+    /// after initialization ([§16]).
+    pub is_final: bool,
     /// The package of the declaring class, or `None` for the unnamed package.
     pub declaring_package: Option<String>,
     /// The fully qualified name of the top-level class of the declaring class
@@ -2047,6 +2054,7 @@ fn library_class_fields(
             ty,
             is_static: JvmAccessFlags::from_bits_retain(field.flags).is_static(),
             access: Access::from_flags(field.flags),
+            is_final: JvmAccessFlags::from_bits_retain(field.flags).is_final(),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
         });
@@ -2117,6 +2125,7 @@ fn source_class_fields(
                     ty,
                     is_static: field.modifiers.is_static(),
                     access: interface_access_of(declaring_interface, &field.modifiers),
+                    is_final: field.modifiers.is_final(),
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),
                 });
@@ -2135,6 +2144,7 @@ fn source_class_fields(
                     ty: Ty::reference(db, Name::new(&fqn), binding.values().copied().collect()),
                     is_static: true,
                     access: Access::Public,
+                    is_final: true,
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),
                 });
@@ -2163,6 +2173,7 @@ fn source_class_fields(
                 ty: ty.substitute(db, &binding),
                 is_static: false,
                 access: Access::Private,
+                is_final: true,
                 declaring_package: declaring_package.clone(),
                 declaring_top_level: declaring_top_level.clone(),
             });

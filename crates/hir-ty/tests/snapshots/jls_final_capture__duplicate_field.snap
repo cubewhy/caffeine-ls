@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Dup.java:
+package com.example;
+
+class Dup {
+    int a;
+    int a;
+    int b;
+}
+
+@4:8: duplicate-declaration: Variable 'a' is already defined in the scope

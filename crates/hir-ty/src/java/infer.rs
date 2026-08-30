@@ -125,6 +125,9 @@ pub(crate) fn body_types_impl(
         definite: FxHashSet::default(),
         exited: false,
         writing: false,
+        mutating: false,
+        in_constructor: false,
+        blank_finals: FxHashSet::default(),
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
         diagnostics: Vec::new(),
@@ -164,6 +167,7 @@ pub(crate) fn body_types_impl(
                 Some(body_id) => {
                     body = Some(body_id);
                     let stmts = bodies.body(body_id).stmts.clone();
+                    ctx.in_constructor = method.is_constructor();
                     for &param in &bodies.body(body_id).params {
                         ctx.declare_param(param);
                     }
@@ -323,6 +327,22 @@ pub(crate) fn body_types_impl(
         }
     }
     ctx.diagnostics.extend(resolved_diags);
+    // §6.5.6.1/[§15.27.2]: a local variable captured by a lambda expression —
+    // one referenced inside a lambda body — that is *mutated* anywhere in its
+    // scope is not effectively final, and every capture of it is an error.
+    // The scan is syntactic (independent of the inference it runs beside), so
+    // this covers a local reassigned after the capturing lambda too, and only
+    // the *final* inference pass's body-tree participates (each `body_types`
+    // invocation re-runs it).
+    if let Some(body_id) = body {
+        let (mutated, captures) = effective_final_scan(&ctx.tree, body_id);
+        let mut reported: FxHashSet<(Name, ExprId)> = FxHashSet::default();
+        for (name, expr) in captures {
+            if mutated.contains(&name) && reported.insert((name.clone(), expr)) {
+                ctx.report(TypeError::VariableMustBeEffectivelyFinal { expr, name });
+            }
+        }
+    }
     Some(BodyTypes {
         body,
         exprs: ctx.types,
@@ -390,6 +410,25 @@ struct InferCtx<'a> {
     /// of a simple assignment — a write, not a value read ([§15.26.1],
     /// [§16]).
     writing: bool,
+    /// Whether the expression currently being inferred is the target of a
+    /// write — an assignment (simple or compound) or an increment/decrement
+    /// ([§15.26], [§15.14], [§15.15.1]). Unlike [`Self::writing`] (which only
+    /// marks the *simple*-assignment left-hand side, for the §16 definite-
+    /// assignment rule), this marks every mutating target, so the
+    /// `CannotAssignToFinalVariable` check can reject writes to `final`
+    /// variables and fields.
+    mutating: bool,
+    /// Whether the body being inferred is a constructor
+    /// ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)):
+    /// a **blank** `final` field may be assigned once, in a constructor of
+    /// its own class, as its initialization ([§8.3.1.2], [§16]).
+    in_constructor: bool,
+    /// The **blank** `final` locals of the body ([§4.12.4], [§16]): declared
+    /// `final` with no initializer. Unlike every other `final` variable
+    /// (parameters, catch/foreach/resource variables, finals with an
+    /// initializer), a blank one may still be assigned — once, by definite
+    /// assignment — so the `CannotAssignToFinalVariable` check exempts it.
+    blank_finals: FxHashSet<LocalId>,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
     /// The type errors reported so far, in report order ([§14.4.1], [§8.3.3]).
@@ -1169,7 +1208,12 @@ impl<'a> InferCtx<'a> {
             ExprData::Unary { op, expr } => self.unary(expr, op),
             // §15.14: a postfix increment/decrement has the type of its
             // operand.
-            ExprData::Postfix { expr, .. } => self.infer_expr(expr),
+            ExprData::Postfix { expr, .. } => {
+                self.mutating = true;
+                let ty = self.infer_expr(expr);
+                self.mutating = false;
+                ty
+            }
             ExprData::Binary { op, lhs, rhs } => self.binary(op, lhs, rhs),
             // §15.26: an assignment expression has the type of its left-hand
             // side; the right-hand side is a poly expression with the left
@@ -1181,6 +1225,7 @@ impl<'a> InferCtx<'a> {
                 // §15.26.1: the left-hand side of a *simple* assignment is
                 // written, not read — the definite-assignment check does not
                 // apply to it.
+                self.mutating = true;
                 let lhs_ty = if matches!(op, AssignOp::Assign) {
                     self.writing = true;
                     let ty = self.infer_expr(lhs);
@@ -1189,6 +1234,7 @@ impl<'a> InferCtx<'a> {
                 } else {
                     self.infer_expr(lhs)
                 };
+                self.mutating = false;
                 let rhs_ty = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
                 // §16: a simple assignment definitely assigns its left-hand
                 // local; a compound assignment or increment reads it first,
@@ -1489,6 +1535,19 @@ impl<'a> InferCtx<'a> {
     /// field of the implicit receiver ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)).
     fn var(&mut self, expr: ExprId, name: Name) -> Ty {
         if let Some(local) = self.lookup_local(&name) {
+            // §8.3.1.2/[§16]: writing a `final` local that is not *blank*
+            // (a parameter, a catch/foreach/resource variable, or one with an
+            // initializer) is an error; a blank final may still be assigned
+            // once, by definite assignment.
+            if self.mutating
+                && self.tree.local(local).is_final
+                && !self.blank_finals.contains(&local)
+            {
+                self.report(TypeError::CannotAssignToFinalVariable {
+                    expr,
+                    name: name.clone(),
+                });
+            }
             // §16: a local's value may be read only after it is definitely
             // assigned on every path to the read. Reads past an exit
             // (return/break/throw) are not checked — the path is unreachable —
@@ -1545,6 +1604,15 @@ impl<'a> InferCtx<'a> {
             // not usable before the supertype constructor has run.
             if self.before_super && !field.is_static {
                 self.report(TypeError::CannotReferenceBeforeSuper {
+                    expr,
+                    name: name.clone(),
+                });
+            }
+            // §8.3.1.2/[§16]: writing a `final` field through its simple name
+            // (implicit `this`) is only legal as the blank-final constructor
+            // initialization.
+            if self.mutating && field.is_final && !self.final_field_write_legal(&field) {
+                self.report(TypeError::CannotAssignToFinalVariable {
                     expr,
                     name: name.clone(),
                 });
@@ -1767,7 +1835,23 @@ impl<'a> InferCtx<'a> {
             return self.primitive(PrimitiveType::Int);
         }
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
-            Some(field) => field.ty,
+            Some(field) => {
+                // §8.3.1.2/[§16]: writing a `final` field is legal only as the
+                // blank-final initialization through `this` in a constructor
+                // of the field's own class; every other final-field write is
+                // an error.
+                if self.mutating && field.is_final {
+                    let receiver_is_this =
+                        matches!(self.tree.expr(target).clone(), ExprData::This { .. });
+                    if !(receiver_is_this && self.final_field_write_legal(&field)) {
+                        self.report(TypeError::CannotAssignToFinalVariable {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
+                }
+                field.ty
+            }
             // `Type.Name` read without a call — or used as the receiver of a
             // `Type.method(...)` call — is the type itself when `Name` is a
             // *nested type* member of `Type` ([§6.5.5.2], [§15.11.1]). For a
@@ -1927,6 +2011,59 @@ impl<'a> InferCtx<'a> {
             }
         }
         None
+    }
+
+    /// §8.3.1.2/[§16]: whether writing to the `final` field `field` is the
+    /// *legal* blank-`final` initialization — a blank (initializer-less)
+    /// instance field of the class under construction may be assigned once, in
+    /// a constructor of that class, through its own `this` receiver. Every
+    /// other `final`-field assignment (a field with an initializer, a static
+    /// field, an external receiver, a library field) is a compile-time error
+    /// ([`TypeError::CannotAssignToFinalVariable`]).
+    fn final_field_write_legal(&self, field: &FieldData) -> bool {
+        if !self.in_constructor {
+            return false;
+        }
+        // The field must belong to the class under construction.
+        let same_class = self
+            .enclosing_class
+            .as_ref()
+            .and_then(|ty| ty.as_reference(self.db))
+            .is_some_and(|(fqn, _)| fqn.as_str() == field.owner);
+        if !same_class {
+            return false;
+        }
+        // The field must be blank — a source field with no initializer (its
+        // initializer is what makes a later assignment a double-write).
+        let Some(owner_file) = field.owner_file else {
+            return false;
+        };
+        let tree = hir::file_item_tree(self.db, owner_file);
+        let mut found_blank = false;
+        fn walk(
+            tree: &hir_def::java::item_tree::ItemTree,
+            id: hir_def::java::item_tree::ItemId,
+            name: &str,
+            found: &mut bool,
+        ) {
+            if *found {
+                return;
+            }
+            match tree.data(id) {
+                hir_def::java::item_tree::ItemData::Field(f) if f.name.as_str() == name => {
+                    *found = f.initializer.is_none();
+                    return;
+                }
+                _ => {}
+            }
+            for &child in tree.data(id).body() {
+                walk(tree, child, name, found);
+            }
+        }
+        for &top in &tree.top {
+            walk(&tree, top, &field.name, &mut found_blank);
+        }
+        found_blank
     }
 
     /// §6.6: the access probe of a field access ([§15.11]) — after the
@@ -3945,7 +4082,10 @@ impl<'a> InferCtx<'a> {
     }
 
     fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {
+        // §15.15.1/§15.15.2: `++`/`--` mutate their operand.
+        self.mutating = matches!(op, UnaryOp::Inc | UnaryOp::Dec);
         let inner = self.infer_expr(expr);
+        self.mutating = false;
         match op {
             // §15.15.6: `!` has type `boolean` and its operand must be a
             // `boolean` ([§15.15.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.15.6)).
@@ -4350,6 +4490,11 @@ impl<'a> InferCtx<'a> {
     }
 
     fn bind_local(&mut self, id: LocalId, name: Name, ty: Ty) {
+        // §6.4: a local variable, parameter, exception parameter, loop or
+        // resource variable may not duplicate a name already declared as a
+        // local in the same or an *enclosing* scope — local variables do not
+        // shadow each other ([§6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4)).
+        let duplicate = self.lookup_local(&name).is_some();
         self.locals.insert(id, ty);
         // Every binding form except a bare declarator initializes its local
         // (parameters, initializers, catch/foreach/resource variables,
@@ -4358,7 +4503,11 @@ impl<'a> InferCtx<'a> {
         self.scopes
             .last_mut()
             .expect("scope stack non-empty")
-            .insert(name, id);
+            .insert(name.clone(), id);
+        // The later binding is reported, at the duplicate's own name range.
+        if duplicate {
+            self.report(TypeError::VariableAlreadyDefined { local: id, name });
+        }
     }
 
     fn lookup_local(&self, name: &Name) -> Option<LocalId> {
@@ -4540,6 +4689,14 @@ impl<'a> InferCtx<'a> {
                     // §16: a declarator without an initializer is not
                     // definitely assigned until a later assignment reaches it.
                     self.definite.remove(local);
+                    // §4.12.4: a `final` declarator with no initializer is a
+                    // *blank* final — it may still be assigned once by
+                    // definite assignment, so it is not an un-assignable
+                    // final yet.
+                    let local_data = self.tree.local(*local).clone();
+                    if local_data.is_final {
+                        self.blank_finals.insert(*local);
+                    }
                 }
                 if let Some(initializer) = initializer {
                     // The initializer is a poly expression whose target is the
@@ -5557,4 +5714,321 @@ fn access_keyword(access: Access) -> &'static str {
         Access::Package => "package-private",
         Access::Public => "public",
     }
+}
+
+/// §6.5.6.1/[§15.27.2]: a body-tree scan — independent of inference — that
+/// finds (a) every local variable that is *mutated* anywhere in the body
+/// (`mutated`, keyed by name), and (b) every reference to an enclosing local
+/// inside a lambda expression (`captures`), with the reference's expression.
+/// A local that is both captured by a lambda and mutated anywhere in its scope
+/// is not *effectively final*, and every capture of it is an error.
+fn effective_final_scan(
+    bodies: &BodyTree,
+    body_id: BodyId,
+) -> (FxHashSet<Name>, Vec<(Name, ExprId)>) {
+    fn resolve<'a>(scopes: &'a [FxHashSet<Name>], name: &Name) -> Option<usize> {
+        scopes.iter().rposition(|scope| scope.contains(name))
+    }
+    struct Scan<'a> {
+        bodies: &'a BodyTree,
+        scopes: Vec<FxHashSet<Name>>,
+        lambda_entries: Vec<usize>,
+        mutated: FxHashSet<Name>,
+        captures: Vec<(Name, ExprId)>,
+    }
+    impl Scan<'_> {
+        fn in_lambda(&self) -> bool {
+            !self.lambda_entries.is_empty()
+        }
+        fn walk_stmt(&mut self, stmt: StmtId) {
+            use hir_expand::body::StmtData;
+            let data = self.bodies.stmt(stmt);
+            match data.clone() {
+                StmtData::Empty | StmtData::Missing => {}
+                StmtData::Block(inner) => {
+                    self.scopes.push(FxHashSet::default());
+                    for s in inner {
+                        self.walk_stmt(s);
+                    }
+                    self.scopes.pop();
+                }
+                StmtData::Decl { local, initializer } => {
+                    let name = self.bodies.local(local).name.clone();
+                    self.scopes.last_mut().expect("scope").insert(name);
+                    if let Some(initializer) = initializer {
+                        self.walk_expr(initializer);
+                    }
+                }
+                StmtData::DeclGroup(inner) => {
+                    for s in inner {
+                        self.walk_stmt(s);
+                    }
+                }
+                StmtData::Expr(expr) => self.walk_expr(expr),
+                StmtData::Labeled { stmt, .. } => self.walk_stmt(stmt),
+                StmtData::If { cond, then, els } => {
+                    self.walk_expr(cond);
+                    self.walk_stmt(then);
+                    if let Some(els) = els {
+                        self.walk_stmt(els);
+                    }
+                }
+                StmtData::While { cond, body } | StmtData::DoWhile { body, cond } => {
+                    self.walk_expr(cond);
+                    self.walk_stmt(body);
+                }
+                StmtData::For {
+                    init,
+                    cond,
+                    step,
+                    body,
+                } => {
+                    self.scopes.push(FxHashSet::default());
+                    for s in init {
+                        self.walk_stmt(s);
+                    }
+                    if let Some(cond) = cond {
+                        self.walk_expr(cond);
+                    }
+                    for e in step {
+                        self.walk_expr(e);
+                    }
+                    self.walk_stmt(body);
+                    self.scopes.pop();
+                }
+                StmtData::ForEach {
+                    var,
+                    iterable,
+                    body,
+                } => {
+                    self.scopes.push(FxHashSet::default());
+                    let name = self.bodies.local(var).name.clone();
+                    self.scopes.last_mut().expect("scope").insert(name);
+                    self.walk_expr(iterable);
+                    self.walk_stmt(body);
+                    self.scopes.pop();
+                }
+                StmtData::Switch { scrutinee, arms } => {
+                    self.walk_expr(scrutinee);
+                    for arm in arms {
+                        for label in arm.labels {
+                            if let hir_expand::body::SwitchLabel::Expr(e) = label {
+                                self.walk_expr(e);
+                            }
+                        }
+                        for s in arm.body {
+                            self.walk_stmt(s);
+                        }
+                    }
+                }
+                StmtData::Return(ret) => {
+                    if let Some(ret) = ret {
+                        self.walk_expr(ret);
+                    }
+                }
+                StmtData::Throw(expr) => self.walk_expr(expr),
+                StmtData::Break(_) | StmtData::Continue(_) => {}
+                StmtData::Yield(expr) => self.walk_expr(expr),
+                StmtData::Synchronized { expr, body } => {
+                    self.walk_expr(expr);
+                    self.walk_stmt(body);
+                }
+                StmtData::Try {
+                    resources,
+                    body,
+                    catches,
+                    finally,
+                } => {
+                    for resource in resources {
+                        let name = self.bodies.local(resource.local).name.clone();
+                        self.scopes.last_mut().expect("scope").insert(name);
+                        if let Some(init) = resource.initializer {
+                            self.walk_expr(init);
+                        }
+                    }
+                    self.walk_stmt(body);
+                    for clause in catches {
+                        self.scopes.push(FxHashSet::default());
+                        let name = self.bodies.local(clause.param).name.clone();
+                        self.scopes.last_mut().expect("scope").insert(name);
+                        self.walk_stmt(clause.body);
+                        self.scopes.pop();
+                    }
+                    if let Some(finally) = finally {
+                        self.walk_stmt(finally);
+                    }
+                }
+                StmtData::Assert { cond, msg } => {
+                    self.walk_expr(cond);
+                    if let Some(msg) = msg {
+                        self.walk_expr(msg);
+                    }
+                }
+                StmtData::LocalClass { .. } => {}
+            }
+        }
+        fn walk_expr(&mut self, expr: ExprId) {
+            use hir_expand::body::ExprData;
+            let data = self.bodies.expr(expr);
+            match data.clone() {
+                ExprData::Var(name) | ExprData::NamePath(name) => {
+                    if self.in_lambda()
+                        && resolve(&self.scopes, &name).is_some_and(|frame| {
+                            self.lambda_entries
+                                .last()
+                                .is_some_and(|&entry| frame < entry)
+                        })
+                    {
+                        self.captures.push((name, expr));
+                    }
+                }
+                ExprData::Literal(_)
+                | ExprData::Null
+                | ExprData::This { .. }
+                | ExprData::Super { .. }
+                | ExprData::Missing => {}
+                ExprData::Template { args } => {
+                    for a in args {
+                        self.walk_expr(a);
+                    }
+                }
+                ExprData::ClassLit(_) => {}
+                ExprData::FieldAccess { target, .. } => {
+                    if let Some(target) = target {
+                        self.walk_expr(target);
+                    }
+                }
+                ExprData::ArrayAccess { array, index } => {
+                    self.walk_expr(array);
+                    self.walk_expr(index);
+                }
+                ExprData::MethodCall { receiver, args, .. } => {
+                    if let Some(receiver) = receiver {
+                        self.walk_expr(receiver);
+                    }
+                    for a in args {
+                        self.walk_expr(a);
+                    }
+                }
+                ExprData::New { args, receiver, .. } => {
+                    if let Some(receiver) = receiver {
+                        self.walk_expr(receiver);
+                    }
+                    for a in args {
+                        self.walk_expr(a);
+                    }
+                }
+                ExprData::CtorCall { args, .. } => {
+                    for a in args {
+                        self.walk_expr(a);
+                    }
+                }
+                ExprData::NewArray {
+                    dims, initializer, ..
+                } => {
+                    for d in dims {
+                        self.walk_expr(d);
+                    }
+                    if let Some(elems) = initializer {
+                        for e in elems {
+                            self.walk_expr(e);
+                        }
+                    }
+                }
+                ExprData::ArrayInit(elems) => {
+                    for e in elems {
+                        self.walk_expr(e);
+                    }
+                }
+                ExprData::Unary { expr: inner, op } => {
+                    if matches!(
+                        op,
+                        hir_expand::body::UnaryOp::Inc | hir_expand::body::UnaryOp::Dec
+                    ) {
+                        self.mark_mutation(inner);
+                    }
+                    self.walk_expr(inner);
+                }
+                ExprData::Postfix { expr: inner, .. } => {
+                    self.mark_mutation(inner);
+                    self.walk_expr(inner);
+                }
+                ExprData::Binary { lhs, rhs, .. } => {
+                    self.walk_expr(lhs);
+                    self.walk_expr(rhs);
+                }
+                ExprData::Assign { lhs, rhs, .. } => {
+                    self.mark_mutation(lhs);
+                    self.walk_expr(lhs);
+                    self.walk_expr(rhs);
+                }
+                ExprData::Cast { expr: inner, .. } => self.walk_expr(inner),
+                ExprData::InstanceOf {
+                    expr: inner,
+                    pattern,
+                    ..
+                } => {
+                    self.walk_expr(inner);
+                    let _ = pattern;
+                }
+                ExprData::Conditional { cond, then, els } => {
+                    self.walk_expr(cond);
+                    self.walk_expr(then);
+                    self.walk_expr(els);
+                }
+                ExprData::Lambda { params, body } => {
+                    self.scopes.push(FxHashSet::default());
+                    for (name, _) in &params {
+                        self.scopes.last_mut().expect("scope").insert(name.clone());
+                    }
+                    self.lambda_entries.push(self.scopes.len());
+                    match body {
+                        hir_expand::body::LambdaBody::Expr(inner) => self.walk_expr(inner),
+                        hir_expand::body::LambdaBody::Block(stmt) => self.walk_stmt(stmt),
+                    }
+                    self.lambda_entries.pop();
+                    self.scopes.pop();
+                }
+                ExprData::MethodRef { qualifier, .. } => {
+                    if let Some(qualifier) = qualifier {
+                        self.walk_expr(qualifier);
+                    }
+                }
+                ExprData::Switch { scrutinee, arms } => {
+                    self.walk_expr(scrutinee);
+                    for arm in arms {
+                        for label in arm.labels {
+                            if let hir_expand::body::SwitchLabel::Expr(e) = label {
+                                self.walk_expr(e);
+                            }
+                        }
+                        for s in arm.body {
+                            self.walk_stmt(s);
+                        }
+                    }
+                }
+                ExprData::Paren(inner) => self.walk_expr(inner),
+            }
+        }
+        fn mark_mutation(&mut self, expr: ExprId) {
+            if let ExprData::Var(name) = self.bodies.expr(expr).clone() {
+                self.mutated.insert(name);
+            }
+        }
+    }
+    let mut scan = Scan {
+        bodies,
+        scopes: vec![FxHashSet::default()],
+        lambda_entries: Vec::new(),
+        mutated: FxHashSet::default(),
+        captures: Vec::new(),
+    };
+    for &param in &bodies.body(body_id).params {
+        let name = bodies.local(param).name.clone();
+        scan.scopes.last_mut().expect("scope").insert(name);
+    }
+    for &stmt in &bodies.body(body_id).stmts {
+        scan.walk_stmt(stmt);
+    }
+    (scan.mutated, scan.captures)
 }

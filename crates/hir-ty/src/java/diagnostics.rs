@@ -262,6 +262,24 @@ pub enum TypeError {
     /// javac: `cannot reference {x} before supertype constructor has been
     /// called`.
     CannotReferenceBeforeSuper { expr: ExprId, name: Name },
+    /// §8.3.1.2/[§16]: an assignment (simple, compound or increment) whose
+    /// target is a `final` local variable or `final` field — a final variable
+    /// can be assigned only by its initializer. javac: `cannot assign a value
+    /// to final variable {x}`.
+    CannotAssignToFinalVariable { expr: ExprId, name: Name },
+    /// §6.5.6.1/[§15.27.2]: a local variable captured by a lambda expression
+    /// (or a method-reference receiver) that is not *effectively final* — it
+    /// is reassigned after its initializer, so the capture may observe a
+    /// changing value. Reported at the capturing reference.
+    /// javac: `local variables referenced from a lambda expression must be
+    /// final or effectively final`.
+    VariableMustBeEffectivelyFinal { expr: ExprId, name: Name },
+    /// §6.4: a local variable or parameter declaration re-declares a name
+    /// already in scope as a local variable, formal parameter, exception
+    /// parameter, for-loop variable or resource variable — a local may not
+    /// shadow an enclosing local. javac: `{x} is already defined in {y}`.
+    /// `local` is the later binding and `name` the duplicated name.
+    VariableAlreadyDefined { local: LocalId, name: Name },
 }
 
 impl TypeError {
@@ -328,6 +346,13 @@ impl TypeError {
             TypeError::CannotReferenceBeforeSuper { .. } => {
                 DiagnosticCode::Java(CannotReferenceBeforeSuper)
             }
+            TypeError::CannotAssignToFinalVariable { .. } => {
+                DiagnosticCode::Java(CannotAssignToFinalVariable)
+            }
+            TypeError::VariableMustBeEffectivelyFinal { .. } => {
+                DiagnosticCode::Java(VariableMustBeEffectivelyFinal)
+            }
+            TypeError::VariableAlreadyDefined { .. } => DiagnosticCode::Java(DuplicateDeclaration),
         }
     }
 
@@ -379,7 +404,10 @@ impl TypeError {
             IllegalAccess { expr, .. } => DiagLocation::Expr(*expr),
             RecursiveConstructorInvocation { expr }
             | ConstructorCallNotFirst { expr }
-            | CannotReferenceBeforeSuper { expr, .. } => DiagLocation::Expr(*expr),
+            | CannotReferenceBeforeSuper { expr, .. }
+            | CannotAssignToFinalVariable { expr, .. }
+            | VariableMustBeEffectivelyFinal { expr, .. } => DiagLocation::Expr(*expr),
+            VariableAlreadyDefined { local, .. } => DiagLocation::Local(*local),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. } => location.clone(),
@@ -436,6 +464,8 @@ impl TypeError {
             | TypeError::RecursiveConstructorInvocation { expr }
             | TypeError::ConstructorCallNotFirst { expr }
             | TypeError::CannotReferenceBeforeSuper { expr, .. }
+            | TypeError::CannotAssignToFinalVariable { expr, .. }
+            | TypeError::VariableMustBeEffectivelyFinal { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
@@ -665,6 +695,22 @@ impl TypeError {
                 "Cannot reference '{}' before supertype constructor has been called",
                 name.as_str()
             ),
+            CannotAssignToFinalVariable { name, .. } => {
+                format!(
+                    "Cannot assign a value to final variable '{}'",
+                    name.as_str()
+                )
+            }
+            VariableMustBeEffectivelyFinal { name, .. } => format!(
+                "Variable '{}' used in lambda expression should be final or effectively final",
+                name.as_str()
+            ),
+            VariableAlreadyDefined { name, .. } => {
+                format!(
+                    "Variable '{}' is already defined in the scope",
+                    name.as_str()
+                )
+            }
         }
     }
 

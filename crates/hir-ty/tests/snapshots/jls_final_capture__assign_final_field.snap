@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int x = 1;
+    static final int s = 2;
+    void m() {
+        x = 3;
+        this.s = 4;
+    }
+}
+
+method m(): void
+  @6:8..6:9 'x': cannot-assign-to-final-variable: Cannot assign a value to final variable 'x'
+  @7:13..7:14 's': cannot-assign-to-final-variable: Cannot assign a value to final variable 's'

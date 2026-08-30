@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Broken {
+    final int f;
+    static final int s;
+    Broken() {
+    }
+    Broken(int x) {
+    }
+}
+
+@3:14: final-field-not-initialized: Variable 'f' might not have been initialized
+@4:21: final-field-not-initialized: Variable 's' might not have been initialized

@@ -227,6 +227,25 @@ pub enum JavaDiagnosticCode {
     /// called. javac: `cannot reference {x} before supertype constructor has
     /// been called`.
     CannotReferenceBeforeSuper,
+    /// §8.3.1.2/[§16]: an assignment (or increment) whose target is a `final`
+    /// variable or field. javac: `cannot assign a value to final variable
+    /// {x}`.
+    CannotAssignToFinalVariable,
+    /// §8.3.1.2/[§16]: a blank `final` instance field that is not assigned in
+    /// every constructor, or a blank `final` static field not assigned in the
+    /// static initializers. javac: `variable {x} might not have been
+    /// initialized`.
+    FinalFieldNotInitialized,
+    /// §6.5.6.1/[§15.27.2]: a local variable captured by a lambda expression
+    /// (or local class, or a method reference receiver) that is not effectively
+    /// final — it is reassigned after its initializer. javac: `local variables
+    /// referenced from a lambda expression must be final or effectively final`.
+    VariableMustBeEffectivelyFinal,
+    /// §6.4: a variable, parameter or member is already defined in the scope —
+    /// two fields of one class, two locals/parameters of one method scope, or a
+    /// nested-block local shadowing an enclosing local. javac: `{x} is already
+    /// defined in {y}`.
+    DuplicateDeclaration,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -336,6 +355,12 @@ impl JavaDiagnosticCode {
             RecursiveConstructorInvocation => Some("compiler.err.recursive.ctor.invocation"),
             ConstructorCallNotFirst => Some("compiler.err.call.to.super.must.be.first.stmt"),
             CannotReferenceBeforeSuper => Some("compiler.err.cant.ref.before.ctor.called"),
+            CannotAssignToFinalVariable => Some("compiler.err.cant.assign.val.to.var"),
+            FinalFieldNotInitialized => Some("compiler.err.var.might.not.have.been.initialized"),
+            VariableMustBeEffectivelyFinal => {
+                Some("compiler.err.cant.ref.non.effectively.final.var")
+            }
+            DuplicateDeclaration => Some("compiler.err.already.defined"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -432,6 +457,12 @@ impl JavaDiagnosticCode {
             }
             JavaDiagnosticCode::ConstructorCallNotFirst => "constructor-call-not-first",
             JavaDiagnosticCode::CannotReferenceBeforeSuper => "cannot-reference-before-super",
+            JavaDiagnosticCode::CannotAssignToFinalVariable => "cannot-assign-to-final-variable",
+            JavaDiagnosticCode::FinalFieldNotInitialized => "final-field-not-initialized",
+            JavaDiagnosticCode::VariableMustBeEffectivelyFinal => {
+                "variable-must-be-effectively-final"
+            }
+            JavaDiagnosticCode::DuplicateDeclaration => "duplicate-declaration",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

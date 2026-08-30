@@ -88,6 +88,19 @@ fn alloc_body(
     }))
 }
 
+/// Whether a formal parameter declares the `final` modifier
+/// ([JLS §8.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.1)):
+/// the parameter node's `MODIFIER_LIST` child carries a `final` keyword token.
+/// The `Local` model's `is_final` drives the `final`-assignment diagnostics
+/// of the type layer ([§8.3.1.2], [§16]).
+fn param_is_final(param: &SyntaxNode<Lang>) -> bool {
+    param
+        .children()
+        .filter(|c| c.kind() == J::MODIFIER_LIST)
+        .flat_map(|c| c.children_with_tokens())
+        .any(|e| matches!(e, rowan::NodeOrToken::Token(t) if t.kind() == J::FINAL_KW))
+}
+
 /// The local bindings of a `FORMAL_PARAMETERS` node.
 fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
     params
@@ -114,7 +127,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                 Local {
                     name,
                     ty: Some(ty),
-                    is_final: false,
+                    is_final: param_is_final(&child),
                 },
                 child.text_range(),
             )

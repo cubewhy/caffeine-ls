@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    void m() {
+        int y = 1;
+        Runnable r = () -> { int c = y; };
+        int z = y + 1;
+    }
+}

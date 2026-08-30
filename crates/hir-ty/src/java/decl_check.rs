@@ -13,6 +13,7 @@
 //! [`class_diagnostics`] and carry the offending method's name.
 
 use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_expand::body::BodyTree;
 use hir_expand::name::Name;
 use rustc_hash::FxHashSet;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
@@ -261,6 +262,22 @@ pub enum DeclDiagnostic {
     /// `recursive constructor invocation` at the offending `this(...)` call.
     /// `range` is the delegating call's source range.
     RecursiveConstructorInvocation { range: Option<rowan::TextRange> },
+    /// §6.4: two members of one class-like declaration (fields, or a field
+    /// clashing with another field) share a name — the second is reported at
+    /// its name range. javac: `{x} is already defined in {y}`.
+    DuplicateDeclaration {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.3.1.2/[§16]: a blank `final` field that cannot be initialized on
+    /// every constructor path (instance) or in the static initializers
+    /// (static) is never assigned — `variable {f} might not have been
+    /// initialized`. `field` is the field's simple name, `range` its name
+    /// range.
+    FinalFieldNotInitialized {
+        field: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -350,6 +367,12 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::RecursiveConstructorInvocation { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::RecursiveConstructorInvocation)
+            }
+            DeclDiagnostic::DuplicateDeclaration { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DuplicateDeclaration)
+            }
+            DeclDiagnostic::FinalFieldNotInitialized { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::FinalFieldNotInitialized)
             }
         }
     }
@@ -522,6 +545,18 @@ impl DeclDiagnostic {
             DeclDiagnostic::RecursiveConstructorInvocation { .. } => {
                 "Recursive constructor invocation".to_owned()
             }
+            DeclDiagnostic::DuplicateDeclaration { name, .. } => {
+                format!(
+                    "Variable '{}' is already defined in the scope",
+                    name.as_str()
+                )
+            }
+            DeclDiagnostic::FinalFieldNotInitialized { field, .. } => {
+                format!(
+                    "Variable '{}' might not have been initialized",
+                    field.as_str()
+                )
+            }
         }
     }
 
@@ -555,7 +590,9 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnimplementedAbstractMethod { .. }
             | DeclDiagnostic::CyclicInheritance { .. }
             | DeclDiagnostic::NoDefaultConstructor { .. }
-            | DeclDiagnostic::RecursiveConstructorInvocation { .. } => "",
+            | DeclDiagnostic::RecursiveConstructorInvocation { .. }
+            | DeclDiagnostic::DuplicateDeclaration { .. }
+            | DeclDiagnostic::FinalFieldNotInitialized { .. } => "",
         }
     }
 
@@ -608,6 +645,12 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::RecursiveConstructorInvocation {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::DuplicateDeclaration {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::FinalFieldNotInitialized {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -882,6 +925,27 @@ fn check_class(
     // §8.8.7.1: a `this(...)` delegation cycle among the class's own
     // constructors ([`recursive_constructor_diagnostics`]).
     out.extend(recursive_constructor_diagnostics(db, file, tree, item));
+
+    // §6.4: two members of one class-like declaration share a name — the later
+    // declaration is reported ([§6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4)).
+    let mut member_names: Vec<Name> = Vec::new();
+    for &child in tree.data(item).body() {
+        let ItemData::Field(field) = tree.data(child) else {
+            continue;
+        };
+        if member_names.iter().any(|seen| seen == &field.name) {
+            out.push(DeclDiagnostic::DuplicateDeclaration {
+                name: field.name.clone(),
+                range: Some(field.name_range),
+            });
+        } else {
+            member_names.push(field.name.clone());
+        }
+    }
+
+    // §8.3.1.2/[§16]: a blank `final` field that no constructor path (or,
+    // for a static field, no static initializer) assigns is never initialized.
+    out.extend(final_field_diagnostics(db, file, tree, item));
 
     // §9.4.1.3: two default methods with the same signature whose declaring
     // interfaces are unrelated (neither a subtype of the other) conflict; the
@@ -1406,6 +1470,375 @@ fn duplicate_class_diagnostics(
             fqn: fqn.as_str().to_owned(),
             name_range: Some(data.name_range()),
         });
+    }
+    out
+}
+
+/// §8.3.1.2/[§16]: a blank (initializer-less) `final` instance field must be
+/// assigned on every supertype-constructor path of the class — i.e. by every
+/// constructor that does not delegate with `this(...)` (delegation hands the
+/// requirement to the target constructor), with an instance initializer
+/// counting for all paths; a blank `final` static field must be assigned in
+/// the static initializers. A field that no such construct assigns is never
+/// initialized — javac: `variable {f} might not have been initialized`,
+/// reported at the field's name.
+fn final_field_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: hir_def::java::item_tree::ItemId,
+) -> Vec<DeclDiagnostic> {
+    use hir_def::java::item_tree::ItemData as I;
+    use hir_expand::body::{CtorCallTarget, ExprData, StmtData};
+    let I::Class(class) = tree.data(item) else {
+        return Vec::new();
+    };
+    // The blank final fields of the class: (name, is_static, name range).
+    let fields: Vec<(Name, bool, rowan::TextRange)> = class
+        .body
+        .iter()
+        .filter_map(|child| match tree.data(*child) {
+            I::Field(f) if f.modifiers.is_final() && f.initializer.is_none() => {
+                Some((f.name.clone(), f.modifiers.is_static(), f.name_range))
+            }
+            _ => None,
+        })
+        .collect();
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    let bodies = hir::file_body_tree(db, file);
+
+    /// Whether `name` is assigned anywhere in the statement forest of a body:
+    /// a write `name = …` (or `this.name = …`) with a **plain** assignment
+    /// operator — the only form that initializes a blank final. Walks blocks,
+    /// branches, loops, switches, `try` and nested lambdas/initializers.
+    fn body_assigns_name(bodies: &BodyTree, body: hir_expand::body::BodyId, name: &str) -> bool {
+        fn walk_stmt(
+            bodies: &BodyTree,
+            stmt: hir_expand::body::StmtId,
+            name: &str,
+            found: &mut bool,
+        ) {
+            if *found {
+                return;
+            }
+            match bodies.stmt(stmt) {
+                StmtData::Expr(expr) => walk_expr(bodies, *expr, name, found),
+                StmtData::Block(inner) | StmtData::DeclGroup(inner) => {
+                    for s in inner {
+                        walk_stmt(bodies, *s, name, found);
+                    }
+                }
+                StmtData::Labeled { stmt: s, .. } => walk_stmt(bodies, *s, name, found),
+                StmtData::If {
+                    cond, then, els, ..
+                } => {
+                    walk_expr(bodies, *cond, name, found);
+                    walk_stmt(bodies, *then, name, found);
+                    if let Some(els) = els {
+                        walk_stmt(bodies, *els, name, found);
+                    }
+                }
+                StmtData::While { cond, body, .. } => {
+                    walk_expr(bodies, *cond, name, found);
+                    walk_stmt(bodies, *body, name, found);
+                }
+                StmtData::DoWhile { body, cond, .. } => {
+                    walk_stmt(bodies, *body, name, found);
+                    walk_expr(bodies, *cond, name, found);
+                }
+                StmtData::For {
+                    init,
+                    cond,
+                    step,
+                    body,
+                } => {
+                    for s in init {
+                        walk_stmt(bodies, *s, name, found);
+                    }
+                    if let Some(cond) = cond {
+                        walk_expr(bodies, *cond, name, found);
+                    }
+                    for e in step {
+                        walk_expr(bodies, *e, name, found);
+                    }
+                    walk_stmt(bodies, *body, name, found);
+                }
+                StmtData::ForEach { iterable, body, .. } => {
+                    walk_expr(bodies, *iterable, name, found);
+                    walk_stmt(bodies, *body, name, found);
+                }
+                StmtData::Switch {
+                    scrutinee, arms, ..
+                } => {
+                    walk_expr(bodies, *scrutinee, name, found);
+                    for arm in arms {
+                        for label in &arm.labels {
+                            if let hir_expand::body::SwitchLabel::Expr(e) = label {
+                                walk_expr(bodies, *e, name, found);
+                            }
+                        }
+                        for s in &arm.body {
+                            walk_stmt(bodies, *s, name, found);
+                        }
+                    }
+                }
+                StmtData::Return(ret) => {
+                    if let Some(ret) = ret {
+                        walk_expr(bodies, *ret, name, found);
+                    }
+                }
+                StmtData::Throw(ret) | StmtData::Yield(ret) => {
+                    walk_expr(bodies, *ret, name, found);
+                }
+                StmtData::Synchronized { expr, body } => {
+                    walk_expr(bodies, *expr, name, found);
+                    walk_stmt(bodies, *body, name, found);
+                }
+                StmtData::Try {
+                    resources,
+                    body,
+                    catches,
+                    finally,
+                } => {
+                    for r in resources {
+                        if let Some(init) = r.initializer {
+                            walk_expr(bodies, init, name, found);
+                        }
+                    }
+                    walk_stmt(bodies, *body, name, found);
+                    for c in catches {
+                        walk_stmt(bodies, c.body, name, found);
+                    }
+                    if let Some(finally) = finally {
+                        walk_stmt(bodies, *finally, name, found);
+                    }
+                }
+                StmtData::Assert { cond, msg, .. } => {
+                    walk_expr(bodies, *cond, name, found);
+                    if let Some(msg) = msg {
+                        walk_expr(bodies, *msg, name, found);
+                    }
+                }
+                StmtData::Empty
+                | StmtData::Break(_)
+                | StmtData::Continue(_)
+                | StmtData::LocalClass { .. }
+                | StmtData::Missing => {}
+                StmtData::Decl { .. } => {
+                    // A declarator's initializer may itself assign.
+                    if let StmtData::Decl {
+                        local: _,
+                        initializer,
+                    } = bodies.stmt(stmt)
+                        && let Some(init) = initializer
+                    {
+                        walk_expr(bodies, *init, name, found);
+                    }
+                }
+            }
+        }
+        fn walk_expr(
+            bodies: &BodyTree,
+            expr: hir_expand::body::ExprId,
+            name: &str,
+            found: &mut bool,
+        ) {
+            if *found {
+                return;
+            }
+            match bodies.expr(expr) {
+                ExprData::Assign { op, lhs, rhs, .. } => {
+                    // A plain assignment whose left-hand side is the name
+                    // (or `this.name`) initializes the field.
+                    if matches!(op, hir_expand::body::AssignOp::Assign) {
+                        match bodies.expr(*lhs) {
+                            ExprData::Var(n) => {
+                                if n.as_str() == name {
+                                    *found = true;
+                                }
+                            }
+                            ExprData::FieldAccess {
+                                target, name: n, ..
+                            } => {
+                                let receiver_is_this = match target {
+                                    None => true,
+                                    Some(t) => matches!(bodies.expr(*t), ExprData::This { .. }),
+                                };
+                                if receiver_is_this && n.as_str() == name {
+                                    *found = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    walk_expr(bodies, *lhs, name, found);
+                    walk_expr(bodies, *rhs, name, found);
+                }
+                ExprData::Template { args }
+                | ExprData::ArrayInit(args)
+                | ExprData::New {
+                    args,
+                    receiver: _,
+                    diamond: _,
+                    members: _,
+                    ty: _,
+                }
+                | ExprData::CtorCall {
+                    args, target: _, ..
+                } => {
+                    for a in args {
+                        walk_expr(bodies, *a, name, found);
+                    }
+                }
+                ExprData::FieldAccess { target, .. }
+                | ExprData::MethodCall {
+                    receiver: target, ..
+                } => {
+                    if let Some(t) = target {
+                        walk_expr(bodies, *t, name, found);
+                    }
+                }
+                ExprData::ArrayAccess { array, index } => {
+                    walk_expr(bodies, *array, name, found);
+                    walk_expr(bodies, *index, name, found);
+                }
+                ExprData::NewArray {
+                    dims, initializer, ..
+                } => {
+                    for d in dims {
+                        walk_expr(bodies, *d, name, found);
+                    }
+                    if let Some(elems) = initializer {
+                        for e in elems {
+                            walk_expr(bodies, *e, name, found);
+                        }
+                    }
+                }
+                ExprData::Unary { expr: inner, .. }
+                | ExprData::Postfix { expr: inner, .. }
+                | ExprData::Cast { ty: _, expr: inner }
+                | ExprData::Paren(inner) => walk_expr(bodies, *inner, name, found),
+                ExprData::Binary { lhs, rhs, .. } => {
+                    walk_expr(bodies, *lhs, name, found);
+                    walk_expr(bodies, *rhs, name, found);
+                }
+                ExprData::InstanceOf { expr: inner, .. } => {
+                    walk_expr(bodies, *inner, name, found);
+                }
+                ExprData::Conditional { cond, then, els } => {
+                    walk_expr(bodies, *cond, name, found);
+                    walk_expr(bodies, *then, name, found);
+                    walk_expr(bodies, *els, name, found);
+                }
+                ExprData::Lambda { body, .. } => match body {
+                    hir_expand::body::LambdaBody::Expr(inner) => {
+                        walk_expr(bodies, *inner, name, found)
+                    }
+                    hir_expand::body::LambdaBody::Block(stmt) => {
+                        walk_stmt(bodies, *stmt, name, found)
+                    }
+                },
+                ExprData::MethodRef { qualifier, .. } => {
+                    if let Some(q) = qualifier {
+                        walk_expr(bodies, *q, name, found);
+                    }
+                }
+                ExprData::Switch {
+                    scrutinee, arms, ..
+                } => {
+                    walk_expr(bodies, *scrutinee, name, found);
+                    for arm in arms {
+                        for s in &arm.body {
+                            walk_stmt(bodies, *s, name, found);
+                        }
+                    }
+                }
+                ExprData::Literal(_)
+                | ExprData::Null
+                | ExprData::This { .. }
+                | ExprData::Super { .. }
+                | ExprData::ClassLit(_)
+                | ExprData::Var(_)
+                | ExprData::NamePath(_)
+                | ExprData::Missing => {}
+            }
+        }
+        let mut found = false;
+        for s in bodies.body(body).stmts.iter().copied() {
+            walk_stmt(bodies, s, name, &mut found);
+        }
+        found
+    }
+
+    let mut out = Vec::new();
+    for (field, is_static, range) in &fields {
+        let name = field.as_str();
+        if *is_static {
+            // A static final field must be assigned in a static initializer.
+            let assigned = class.body.iter().any(|child| {
+                if let I::StaticInit(init) = tree.data(*child)
+                    && let Some(body_id) = init.body
+                {
+                    return body_assigns_name(&bodies, body_id, name);
+                }
+                false
+            });
+            if !assigned {
+                out.push(DeclDiagnostic::FinalFieldNotInitialized {
+                    field: field.clone(),
+                    range: Some(*range),
+                });
+            }
+        } else {
+            // An instance final field is assigned on every path iff every
+            // non-this-delegating constructor assigns it, or an instance
+            // initializer does (it runs on every path).
+            let inits_assign = class.body.iter().any(|child| {
+                if let I::InstanceInit(init) = tree.data(*child)
+                    && let Some(body_id) = init.body
+                {
+                    return body_assigns_name(&bodies, body_id, name);
+                }
+                false
+            });
+            if inits_assign {
+                continue;
+            }
+            let unassigned_ctor = class.body.iter().any(|child| {
+                let I::Method(ctor) = tree.data(*child) else {
+                    return false;
+                };
+                if !ctor.is_constructor() {
+                    return false;
+                }
+                let Some(body_id) = ctor.body() else {
+                    return true;
+                };
+                // A this(...) delegating constructor defers to its target.
+                let delegates = bodies.body(body_id).stmts.iter().any(|&stmt| {
+                    matches!(
+                        bodies.stmt(stmt),
+                        StmtData::Expr(expr)
+                            if matches!(
+                                bodies.expr(*expr),
+                                ExprData::CtorCall {
+                                    target: CtorCallTarget::This,
+                                    ..
+                                }
+                            )
+                    )
+                });
+                !delegates && !body_assigns_name(&bodies, body_id, name)
+            });
+            if unassigned_ctor {
+                out.push(DeclDiagnostic::FinalFieldNotInitialized {
+                    field: field.clone(),
+                    range: Some(*range),
+                });
+            }
+        }
     }
     out
 }

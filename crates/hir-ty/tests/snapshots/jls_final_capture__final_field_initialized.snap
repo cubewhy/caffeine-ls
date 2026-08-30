@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Ok {
+    final int f;
+    final int g = 1;
+    static final int s;
+    Ok() {
+        f = 2;
+    }
+    static {
+        s = 3;
+    }
+}
