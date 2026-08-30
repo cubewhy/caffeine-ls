@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Break.java:
+package com.example;
+
+class A {
+    void m() {
+        break;
+    }
+    void n(int x) {
+        switch (x) {
+            case 1:
+                break;
+            default:
+                break;
+        }
+    }
+    void p() {
+        while (true) {
+            break;
+        }
+    }
+}
+
+method m(): void
+  @4:8..4:14 'break;': break-outside-of-switch-or-loop: Break outside of switch or loop

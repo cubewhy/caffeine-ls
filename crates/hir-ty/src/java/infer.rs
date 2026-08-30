@@ -140,6 +140,9 @@ pub(crate) fn body_types_impl(
         switch_targets: Vec::new(),
         const_locals: FxHashMap::default(),
         case_values: Vec::new(),
+        loop_depth: 0,
+        switch_depth: 0,
+        labels: Vec::new(),
         probing: false,
         rethrow_sets: FxHashMap::default(),
     };
@@ -466,6 +469,18 @@ struct InferCtx<'a> {
     /// innermost last ([§14.11.1]): a label repeating an earlier value is
     /// reported as duplicate.
     case_values: Vec<FxHashMap<String, ()>>,
+    /// The nesting depth of enclosing loops — `while`, `do`, `for` and
+    /// enhanced `for` ([§14.12]-[§14.14]): an unlabeled `continue` is legal
+    /// only inside a loop ([§14.16]) and an unlabeled `break` only inside a
+    /// loop or a `switch` ([§14.15]).
+    loop_depth: usize,
+    /// The nesting depth of enclosing `switch` statements ([§14.11]): an
+    /// unlabeled `break` may target the nearest enclosing switch.
+    switch_depth: usize,
+    /// The labels in scope, innermost last: `(name, is_loop)` — `break label`
+    /// may target any labeled statement, a labeled `continue` only a labeled
+    /// loop ([§14.16]).
+    labels: Vec<(Name, bool)>,
     /// Whether the current inference is *speculative* — the applicability
     /// probe of an overload candidate ([§15.12.2]): like javac, diagnostics
     /// from speculatively attributed arguments are discarded, so a nested
@@ -1552,7 +1567,7 @@ impl<'a> InferCtx<'a> {
                             // block arm, produces its value through the block's
                             // final `yield` statement.
                             StmtData::Block(stmts) => {
-                                self.infer_stmt_data(&data);
+                                self.infer_stmt_data(stmt, &data);
                                 if let Some(&last) = stmts.last()
                                     && let StmtData::Yield(expr) = self.tree.stmt(last).clone()
                                     && let Some(ty) = self.types.get(&expr).copied()
@@ -1560,7 +1575,7 @@ impl<'a> InferCtx<'a> {
                                     result_tys.push(ty);
                                 }
                             }
-                            _ => self.infer_stmt_data(&data),
+                            _ => self.infer_stmt_data(stmt, &data),
                         }
                     }
                     // Record the arm's end state: abrupt completion (throw /
@@ -4644,12 +4659,54 @@ impl<'a> InferCtx<'a> {
             }
             PatternData::Record(rp) => {
                 let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &rp.ty);
+                // §14.30.2: the number of nested patterns must equal the
+                // record's component count — a mismatch means the pattern can
+                // never match. Conservative: records whose components cannot
+                // be recovered are skipped.
+                if let Some(expected) = self.record_component_count(&ty)
+                    && expected != rp.components.len()
+                {
+                    self.report(TypeError::IncorrectNumberOfPatternComponents {
+                        pattern: id,
+                        expected,
+                        found: rp.components.len(),
+                    });
+                }
                 for &component in &rp.components {
                     let _ = self.pattern_type(component);
                 }
                 ty
             }
             PatternData::MatchAll => self.error(),
+        }
+    }
+
+    /// The number of components ([§8.10.1]) of the record type `ty`, from its
+    /// source declaration or its classfile `Record` attribute. `None` when
+    /// `ty` is not a record or its components cannot be recovered — the
+    /// pattern-arity check ([§14.30.2]) then stays silent.
+    fn record_component_count(&self, ty: &Ty) -> Option<usize> {
+        let TyKind::Reference { name, .. } = ty.kind(self.db) else {
+            return None;
+        };
+        let resolved = hir::fqn_resolve(self.db, &self.scope, name.as_str())?;
+        match resolved {
+            hir::Resolved::Source(source) => {
+                let tree = hir::file_item_tree(self.db, source.file);
+                match tree.data(source.item) {
+                    ItemData::Record(record) => Some(record.components.len()),
+                    _ => None,
+                }
+            }
+            hir::Resolved::Library(resolved_class) => {
+                let record = hir::class_record(self.db, &resolved_class)?;
+                match record.as_ref() {
+                    hir::ClassOrModuleRecord::Class(class) if class.is_record => {
+                        Some(class.record_components.len())
+                    }
+                    _ => None,
+                }
+            }
         }
     }
 
@@ -4744,10 +4801,10 @@ impl<'a> InferCtx<'a> {
 
     fn infer_stmt(&mut self, id: StmtId) {
         let stmt = self.tree.stmt(id).clone();
-        self.infer_stmt_data(&stmt);
+        self.infer_stmt_data(id, &stmt);
     }
 
-    fn infer_stmt_data(&mut self, stmt: &StmtData) {
+    fn infer_stmt_data(&mut self, id: StmtId, stmt: &StmtData) {
         match stmt {
             StmtData::Empty => {}
             StmtData::Block(stmts) => {
@@ -4863,7 +4920,22 @@ impl<'a> InferCtx<'a> {
             StmtData::Expr(expr) => {
                 let _ = self.infer_expr(*expr);
             }
-            StmtData::Labeled { stmt, .. } => self.infer_stmt(*stmt),
+            // §14.7: a labeled statement puts its label in scope for the
+            // nested `break label`/`continue label`; whether it is a loop
+            // decides which of the two a labeled `continue` may target.
+            StmtData::Labeled { label, stmt } => {
+                let name = self.tree.label(*label).0.clone();
+                let is_loop = matches!(
+                    self.tree.stmt(*stmt),
+                    StmtData::While { .. }
+                        | StmtData::DoWhile { .. }
+                        | StmtData::For { .. }
+                        | StmtData::ForEach { .. }
+                );
+                self.labels.push((name, is_loop));
+                self.infer_stmt(*stmt);
+                self.labels.pop();
+            }
             StmtData::If { cond, then, els } => {
                 self.check_condition(*cond);
                 // §14.30.3: the condition's true-flow pattern bindings are in
@@ -4921,7 +4993,9 @@ impl<'a> InferCtx<'a> {
                 // §16.1.10: the body may run zero times, so nothing it
                 // assigns is definitely assigned after the loop.
                 let before = self.definite.clone();
+                self.loop_depth += 1;
                 self.infer_stmt(*body);
+                self.loop_depth -= 1;
                 self.definite = before;
                 self.exited = false;
             }
@@ -4930,7 +5004,9 @@ impl<'a> InferCtx<'a> {
                 // assignments carry past the loop when the body falls
                 // through; an exiting body constrains nothing.
                 let before = self.definite.clone();
+                self.loop_depth += 1;
                 self.infer_stmt(*body);
+                self.loop_depth -= 1;
                 if self.exited {
                     self.definite = before;
                 }
@@ -4955,7 +5031,9 @@ impl<'a> InferCtx<'a> {
                 }
                 // §16.1.14: like `while`, the body may run zero times.
                 let before = self.definite.clone();
+                self.loop_depth += 1;
                 self.infer_stmt(*body);
+                self.loop_depth -= 1;
                 self.definite = before;
                 self.exited = false;
                 self.scopes.pop();
@@ -4994,7 +5072,9 @@ impl<'a> InferCtx<'a> {
                 self.declare_local_ty(*var, element);
                 // §16.1.11: like `while`, the body may run zero times.
                 let before = self.definite.clone();
+                self.loop_depth += 1;
                 self.infer_stmt(*body);
+                self.loop_depth -= 1;
                 self.definite = before;
                 self.exited = false;
                 self.scopes.pop();
@@ -5003,6 +5083,7 @@ impl<'a> InferCtx<'a> {
                 let selector = self.infer_switch_selector(*scrutinee);
                 self.case_values.push(FxHashMap::default());
                 self.scopes.push(FxHashMap::default());
+                self.switch_depth += 1;
                 // §14.22: every arm is an alternative flow path starting from
                 // the pre-switch state; the switch completes normally iff at
                 // least one arm completes normally, and a local is definitely
@@ -5060,6 +5141,7 @@ impl<'a> InferCtx<'a> {
                 self.exited = paths.iter().all(|(_, exited)| *exited);
                 self.scopes.pop();
                 self.case_values.pop();
+                self.switch_depth -= 1;
             }
             StmtData::Return(Some(expr)) | StmtData::Yield(expr) => {
                 // A returned expression is a poly expression whose target is
@@ -5157,9 +5239,64 @@ impl<'a> InferCtx<'a> {
                 // §16: control does not continue past a `throw` on this path.
                 self.exited = true;
             }
-            StmtData::Return(None) | StmtData::Break(_) | StmtData::Continue(_) => {
+            StmtData::Return(None) => {
                 // §16: control does not continue past an exit on this path.
                 self.exited = true;
+            }
+            // §14.15: `break` exits the nearest enclosing `switch` or loop
+            // ([§14.11.1]), or the statement named by its label.
+            StmtData::Break(label) => {
+                self.exited = true;
+                match label {
+                    Some(label) => {
+                        let name = self.tree.label(*label).0.clone();
+                        // §14.15: a labeled `break` requires the label of an
+                        // enclosing statement in scope.
+                        if !self.labels.iter().any(|(n, _)| *n == name) {
+                            self.report(TypeError::UndefinedLabel {
+                                stmt: id,
+                                label: name.as_str().to_owned(),
+                            });
+                        }
+                    }
+                    None => {
+                        // §14.15: an unlabeled `break` needs an enclosing
+                        // `switch` or loop to exit.
+                        if self.loop_depth == 0 && self.switch_depth == 0 {
+                            self.report(TypeError::BreakOutsideSwitchOrLoop { stmt: id });
+                        }
+                    }
+                }
+            }
+            // §14.16: `continue` skips to the next iteration of the nearest
+            // enclosing loop (or the loop named by its label).
+            StmtData::Continue(label) => {
+                self.exited = true;
+                match label {
+                    Some(label) => {
+                        let name = self.tree.label(*label).0.clone();
+                        // §14.16: a labeled `continue` requires a labeled
+                        // *loop* in scope.
+                        match self.labels.iter().rev().find(|(n, _)| *n == name) {
+                            Some((_, is_loop)) if *is_loop => {}
+                            Some(_) => self.report(TypeError::NotALoopLabel {
+                                stmt: id,
+                                label: name.as_str().to_owned(),
+                            }),
+                            None => self.report(TypeError::UndefinedLabel {
+                                stmt: id,
+                                label: name.as_str().to_owned(),
+                            }),
+                        }
+                    }
+                    None => {
+                        // §14.16: an unlabeled `continue` needs an enclosing
+                        // loop.
+                        if self.loop_depth == 0 {
+                            self.report(TypeError::ContinueOutsideLoop { stmt: id });
+                        }
+                    }
+                }
             }
             StmtData::Synchronized { expr, body } => {
                 let _ = self.infer_expr(*expr);
@@ -5198,6 +5335,36 @@ impl<'a> InferCtx<'a> {
                             let target = self.locals.get(&resource.local).copied();
                             let _ = self.with_target(target, |this| this.infer_expr(initializer));
                         }
+                    }
+                    // §14.20.3: a resource's type must be a subtype of
+                    // `java.lang.AutoCloseable` — an exception is thrown if it
+                    // is not ([§14.20.3]). Reported at the resource
+                    // initializer (javac's caret), IntelliJ-style. A resource
+                    // type that does not resolve on the classpath is already
+                    // reported (`CannotResolveType`), so it is skipped.
+                    let auto_closeable =
+                        Ty::reference(self.db, "java.lang.AutoCloseable", Vec::new());
+                    if let Some(resource_ty) = self.locals.get(&resource.local).copied()
+                        && let Some(initializer) = resource.initializer
+                        && !resource_ty.is_error(self.db)
+                        && (match resource_ty.kind(self.db) {
+                            TyKind::Reference { name, .. } => {
+                                hir::fqn_resolve(self.db, &self.scope, name.as_str()).is_some()
+                            }
+                            _ => true,
+                        })
+                        && !crate::java::subtyping::is_assignable(
+                            self.db,
+                            &self.scope,
+                            &resource_ty,
+                            &auto_closeable,
+                        )
+                    {
+                        self.report(TypeError::IncompatibleTypes {
+                            expr: initializer,
+                            found: resource_ty,
+                            expected: auto_closeable,
+                        });
                     }
                 }
                 // §16.1.8: the try block may exit via any catch, so a local

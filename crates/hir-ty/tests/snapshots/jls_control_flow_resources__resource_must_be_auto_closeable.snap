@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Resource.java:
+package com.example;
+
+class NotCloseable {
+}
+
+class R implements AutoCloseable {
+    public void close() {
+    }
+}
+
+class A {
+    void m() {
+        try (NotCloseable n = new NotCloseable()) {
+        }
+    }
+    void n() {
+        try (R r = new R()) {
+        }
+    }
+}
+
+method m(): void
+  @12:30..12:48 'new NotCloseable()': incompatible-types: Incompatible types. Found: 'NotCloseable', required: 'AutoCloseable'
+    -> @12:30..12:48 'new NotCloseable()': required: AutoCloseable
+    -> @12:30..12:48 'new NotCloseable()': found: NotCloseable

@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Pattern.java:
+package com.example;
+
+record Point(int x, int y) {
+}
+
+class A {
+    void m(Object o) {
+        switch (o) {
+            case Point(int x) -> {
+            }
+            default -> {
+            }
+        }
+    }
+    void n(Object o) {
+        if (o instanceof Point(int x, int y, int z)) {
+        }
+    }
+    void p(Object o) {
+        if (o instanceof Point(int x, int y)) {
+        }
+    }
+}
+
+method m(java.lang.Object): void
+  @8:17..8:29 'Point(int x)': incorrect-number-of-pattern-components: Incorrect number of nested patterns: expected 2, found 1
+method n(java.lang.Object): void
+  @15:25..15:51 'Point(int x, int y, int z)': incorrect-number-of-pattern-components: Incorrect number of nested patterns: expected 2, found 3

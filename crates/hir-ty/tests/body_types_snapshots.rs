@@ -1121,9 +1121,10 @@ snapshot!(
         "\
 package com.example;
 
-class Res {
+class Res implements AutoCloseable {
     Res() {}
     int read() { return 1; }
+    public void close() {}
 }
 
 class Body {

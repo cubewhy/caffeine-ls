@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Label.java:
+package com.example;
+
+class A {
+    void m() {
+        break nowhere;
+    }
+    void n() {
+        outer: for (;;) {
+            continue nowhere;
+        }
+    }
+    void p() {
+        outer: for (;;) {
+            break outer;
+        }
+    }
+}
+
+method m(): void
+  @4:8..4:22 'break nowhere;': undefined-label: Undefined label: 'nowhere'
+method n(): void
+  @8:12..8:29 'continue nowhere;': undefined-label: Undefined label: 'nowhere'

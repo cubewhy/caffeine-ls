@@ -5,9 +5,10 @@ expression: out
 FILE /src/com/example/Body.java:
 package com.example;
 
-class Res {
+class Res implements AutoCloseable {
     Res() {}
     int read() { return 1; }
+    public void close() {}
 }
 
 class Body {
@@ -24,6 +25,9 @@ method Res(): <init>
 method read(): int
   locals: 
   exprs: e0: int
+method close(): void
+  locals: 
+  exprs: 
 method m(): void
   locals: l0: com.example.Res | l1: com.example.Res
   exprs: e1: com.example.Res | e2: int | e3: com.example.Res | e4: com.example.Res

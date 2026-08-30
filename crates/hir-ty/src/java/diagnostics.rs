@@ -315,6 +315,34 @@ pub enum TypeError {
     /// cast {o} to {T}`; the message is IntelliJ's `Cannot perform instanceof
     /// check against non-reifiable type 'List<String>'`.
     IllegalGenericInstanceOf { expr: ExprId, ty: Ty },
+    /// §14.16: a `continue` statement outside any `while`, `do`, `for` or
+    /// enhanced `for` statement. javac: `continue outside of loop`; the message
+    /// is javac's, IntelliJ-style, reported at the statement.
+    ContinueOutsideLoop { stmt: StmtId },
+    /// §14.15: an unlabeled `break` statement outside any `switch` or loop —
+    /// there is no enclosing statement for it to exit. javac: `break outside
+    /// switch or loop`; the message is javac's, IntelliJ-style, reported at the
+    /// statement.
+    BreakOutsideSwitchOrLoop { stmt: StmtId },
+    /// §14.15/[§14.16]: a labeled `break` or `continue` whose label is not in
+    /// scope — no enclosing labeled statement declares it. javac: `undefined
+    /// label: {label}`; the message is javac's, IntelliJ-style, reported at the
+    /// statement.
+    UndefinedLabel { stmt: StmtId, label: String },
+    /// §14.16: a labeled `continue` whose label names an enclosing statement
+    /// that is not a loop — only a labeled loop is a legal `continue` target.
+    /// javac: `not a loop label: {label}`; the message is javac's,
+    /// IntelliJ-style, reported at the statement.
+    NotALoopLabel { stmt: StmtId, label: String },
+    /// §14.30.2: a record pattern `Point(int x, int y)` declares a different
+    /// number of nested patterns than the record has components — the pattern
+    /// can never match. javac: `incorrect number of nested patterns`; the
+    /// message is javac's, IntelliJ-style, reported at the record pattern.
+    IncorrectNumberOfPatternComponents {
+        pattern: PatternId,
+        expected: usize,
+        found: usize,
+    },
 }
 
 impl TypeError {
@@ -400,6 +428,15 @@ impl TypeError {
             TypeError::IllegalGenericInstanceOf { .. } => {
                 DiagnosticCode::Java(IllegalGenericInstanceOf)
             }
+            TypeError::ContinueOutsideLoop { .. } => DiagnosticCode::Java(ContinueOutsideLoop),
+            TypeError::BreakOutsideSwitchOrLoop { .. } => {
+                DiagnosticCode::Java(BreakOutsideSwitchOrLoop)
+            }
+            TypeError::UndefinedLabel { .. } => DiagnosticCode::Java(UndefinedLabel),
+            TypeError::NotALoopLabel { .. } => DiagnosticCode::Java(NotALoopLabel),
+            TypeError::IncorrectNumberOfPatternComponents { .. } => {
+                DiagnosticCode::Java(IncorrectNumberOfPatternComponents)
+            }
         }
     }
 
@@ -446,6 +483,11 @@ impl TypeError {
             | DuplicateCaseLabel { expr, .. }
             | UncheckedConversion { expr, .. } => DiagLocation::Expr(*expr),
             UnreachableStatement { stmt } => DiagLocation::Stmt(*stmt),
+            ContinueOutsideLoop { stmt }
+            | BreakOutsideSwitchOrLoop { stmt }
+            | UndefinedLabel { stmt, .. }
+            | NotALoopLabel { stmt, .. } => DiagLocation::Stmt(*stmt),
+            IncorrectNumberOfPatternComponents { pattern, .. } => DiagLocation::Pattern(*pattern),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
             CannotCatchTypeVariable { local } => DiagLocation::Local(*local),
@@ -784,6 +826,13 @@ impl TypeError {
                 "Cannot perform instanceof check against non-reifiable type '{}'",
                 render_simple(db, *ty)
             ),
+            ContinueOutsideLoop { .. } => "Continue outside of loop".to_owned(),
+            BreakOutsideSwitchOrLoop { .. } => "Break outside of switch or loop".to_owned(),
+            UndefinedLabel { label, .. } => format!("Undefined label: '{label}'"),
+            NotALoopLabel { label, .. } => format!("Not a loop label: '{label}'"),
+            IncorrectNumberOfPatternComponents {
+                expected, found, ..
+            } => format!("Incorrect number of nested patterns: expected {expected}, found {found}"),
         }
     }
 

@@ -276,6 +276,26 @@ pub enum JavaDiagnosticCode {
     /// cannot cast {o} to {T}` / `cannot perform instanceof check against
     /// non-reifiable type`.
     IllegalGenericInstanceOf,
+    /// §14.16: a `continue` statement with no target loop — it appears
+    /// outside any `while`, `do`, `for` or enhanced `for` statement. javac:
+    /// `continue outside of loop`.
+    ContinueOutsideLoop,
+    /// §14.15: an unlabeled `break` statement outside any `switch`, `while`,
+    /// `do`, `for` or enhanced `for` statement. javac: `break outside switch
+    /// or loop`.
+    BreakOutsideSwitchOrLoop,
+    /// §14.15/[§14.16]: a `break label;` or `continue label;` whose label is
+    /// not the label of an enclosing statement — no labeled statement of that
+    /// name is in scope. javac: `undefined label: {label}`.
+    UndefinedLabel,
+    /// §14.16: a `continue label;` whose label names an enclosing statement
+    /// that is not a loop — a `continue` can only target a labeled loop.
+    /// javac: `not a loop label: {label}`.
+    NotALoopLabel,
+    /// §14.30.2: a record pattern declares a different number of nested
+    /// patterns than the record has components. javac: `incorrect number of
+    /// nested patterns`.
+    IncorrectNumberOfPatternComponents,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -397,6 +417,13 @@ impl JavaDiagnosticCode {
             GenericCannotExtendThrowable => Some("compiler.err.generic.throwable"),
             CannotCatchTypeVariable => Some("compiler.err.type.found.req"),
             IllegalGenericInstanceOf => Some("compiler.err.instanceof.reifiable.not.safe"),
+            ContinueOutsideLoop => Some("compiler.err.cont.outside.loop"),
+            BreakOutsideSwitchOrLoop => Some("compiler.err.break.outside.switch.loop"),
+            UndefinedLabel => Some("compiler.err.undef.label"),
+            NotALoopLabel => Some("compiler.err.not.loop.label"),
+            IncorrectNumberOfPatternComponents => {
+                Some("compiler.err.incorrect.number.of.nested.patterns")
+            }
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -505,6 +532,13 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::GenericCannotExtendThrowable => "generic-cannot-extend-throwable",
             JavaDiagnosticCode::CannotCatchTypeVariable => "cannot-catch-type-variable",
             JavaDiagnosticCode::IllegalGenericInstanceOf => "illegal-generic-instanceof",
+            JavaDiagnosticCode::ContinueOutsideLoop => "continue-outside-of-loop",
+            JavaDiagnosticCode::BreakOutsideSwitchOrLoop => "break-outside-of-switch-or-loop",
+            JavaDiagnosticCode::UndefinedLabel => "undefined-label",
+            JavaDiagnosticCode::NotALoopLabel => "not-a-loop-label",
+            JavaDiagnosticCode::IncorrectNumberOfPatternComponents => {
+                "incorrect-number-of-pattern-components"
+            }
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

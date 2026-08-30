@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Break.java:
+package com.example;
+
+class A {
+    void m() {
+        continue;
+    }
+    void n() {
+        for (int i = 0; i < 3; i++) {
+            if (i == 1) {
+                continue;
+            }
+        }
+    }
+}
+
+method m(): void
+  @4:8..4:17 'continue;': continue-outside-of-loop: Continue outside of loop

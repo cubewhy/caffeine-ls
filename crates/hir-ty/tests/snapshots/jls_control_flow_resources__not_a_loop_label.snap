@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_control_flow_resources.rs
+expression: out
+---
+FILE /src/com/example/Label.java:
+package com.example;
+
+class A {
+    void m() {
+        lab: {
+            continue lab;
+        }
+    }
+    void n() {
+        lab: for (;;) {
+            continue lab;
+        }
+    }
+}
+
+method m(): void
+  @5:12..5:25 'continue lab;': not-a-loop-label: Not a loop label: 'lab'
