@@ -31,4 +31,4 @@ method pick(java.lang.String): void
 method call(): void
   locals: 
   exprs: e1: java.util.List<java.lang.Object> | e2: <error> | e3: <error>
-  diags: e2@12:13: wrong-argument-count: Method 'pick()' cannot be applied to given types | e3@12:8: wrong-argument-count: Method 'take()' cannot be applied to given types
+  diags: e2@12:18: wrong-argument-count: Method 'pick()' cannot be applied to given types | e3@12:13: wrong-argument-count: Method 'take()' cannot be applied to given types

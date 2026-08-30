@@ -1790,6 +1790,121 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     lines.join("\n")
 }
 
+/// Renders the syntax-layer diagnostics of every file, each as
+/// `@line:col..line:col 'covered-text': code: message`, so the friendly
+/// ranges of a diagnostic (e.g. the "bad arguments" span of a wrong-arity
+/// invocation, [JLS §15.12.2]) are visible verbatim in the snapshot.
+pub fn check_syntax_diagnostic_spans(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+    render_syntax_spans(&db, files)
+}
+
+fn render_syntax_spans(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let line_index = line_index::LineIndex::new(text);
+        for diag in parse_syntax_errors(db, file_id, text) {
+            let span = span_text(&line_index, text, diag.range);
+            lines.push(format!(
+                "{span}: {}: {}",
+                diag.code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "<none>".into()),
+                diag.message
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Renders the body-type diagnostics of every file with their *full* source
+/// ranges (`@line:col..line:col 'covered-text'`) and their
+/// `related_information` entries ([JLS §15.12.2], [§5.3]) — the friendly
+/// bad-argument spans and the per-argument conversion reasons.
+pub fn check_body_diagnostic_spans(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+    render_body_diagnostic_spans(&db, files)
+}
+
+fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let tree = hir::file_item_tree(db, file_id);
+        let bodies = hir::file_body_tree(db, file_id);
+        let line_index = line_index::LineIndex::new(text);
+        for (id, data) in all_items(&tree) {
+            let header = match data {
+                ItemData::Method(method) => {
+                    let ret = if method.sig.ret.is_none() {
+                        "<init>".to_owned()
+                    } else {
+                        hir_ty::item_ty(db, file_id, id).display(db).to_string()
+                    };
+                    let params: Vec<String> = hir_ty::method_params(db, file_id, id)
+                        .iter()
+                        .map(|ty| ty.display(db).to_string())
+                        .collect();
+                    format!("method {}({}): {ret}", method.name, params.join(", "))
+                }
+                ItemData::Field(field) => format!("field {}", field.name),
+                ItemData::EnumConstant(constant) => format!("constant {}", constant.name),
+                ItemData::StaticInit(_) => "static {}".to_owned(),
+                ItemData::InstanceInit(_) => "instance {}".to_owned(),
+                _ => continue,
+            };
+            let Some(types) = hir_ty::body_types(db, file_id, id) else {
+                continue;
+            };
+            if types.diagnostics.is_empty() {
+                continue;
+            }
+            lines.push(header);
+            for diag in &types.diagnostics {
+                let Some(range) = diag.range(&bodies) else {
+                    continue;
+                };
+                let span = span_text(&line_index, text, range);
+                lines.push(format!(
+                    "  {span}: {}: {}",
+                    diag.code(),
+                    diag.message(db, &bodies)
+                ));
+                for (message, rel_range) in diag.related(db, &bodies) {
+                    let rel_span = span_text(&line_index, text, rel_range);
+                    lines.push(format!("    -> {rel_span}: {message}"));
+                }
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+/// Renders a range as `@line:col..line:col 'covered-text'` (0-based columns).
+fn span_text(line_index: &line_index::LineIndex, text: &str, range: rowan::TextRange) -> String {
+    let start = line_index.line_col(range.start());
+    let end = line_index.line_col(range.end());
+    let covered = &text[usize::from(range.start())..usize::from(range.end())];
+    format!(
+        "@{s_line}:{s_col}..{e_line}:{e_col} '{covered}'",
+        s_line = start.line,
+        s_col = start.col,
+        e_line = end.line,
+        e_col = end.col
+    )
+}
+
 /// Renders the declaration-level diagnostics
 /// ([JLS §8.4.8.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.3),
 /// [§9.4.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.3))

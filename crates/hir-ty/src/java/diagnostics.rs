@@ -102,16 +102,23 @@ pub enum TypeError {
     /// actual arguments. `required` carries the parameter types of the
     /// closest candidate and `found_tys` the actual argument types (each a
     /// [`Ty`], or `None` for a poly argument that has no standalone type), so
-    /// the detail (see [`TypeError::detail`]) can render a `required:`/`found:`
+    /// the detail (see [`TypeError::related`]) can render a `required:`/`found:`
     /// block; both empty means only the arity numbers are known.
-    /// `incompatible` carries the first argument-to-formal mismatch against
-    /// the closest candidate when the arities *match* — the detail then
-    /// renders a `reason: … cannot be converted to …` line instead of the
-    /// argument-list-length text. When `owner` is `Some` the invocation is a
-    /// *constructor* (`new`, `this(...)`, `super(...)`) of that class and the
-    /// message reads `Constructor {owner}() cannot be applied to given types`.
-    /// Types are stored unresolved (the canonical FQN), rendered simple only
-    /// in [`TypeError::message`], so future quickfixes keep the full type.
+    /// `arg_ranges` holds the source range of every actual argument, in
+    /// order, and `bad_args` the argument-to-formal mismatches against the
+    /// closest candidate when the arities *match*: each `(argument index,
+    /// found type, formal type)` of a concrete argument that does not
+    /// convert. Together they give the diagnostic its IntelliJ-style *bad
+    /// arguments* range (see [`TypeError::range`]): when the arities match
+    /// the diagnostic underlines exactly the incompatible arguments, and each
+    /// mismatch also surfaces as its own `related_information` entry; when the
+    /// arities differ the whole argument list is underlined and the
+    /// `reason:` text is the argument-list-length message. When `owner` is
+    /// `Some` the invocation is a *constructor* (`new`, `this(...)`,
+    /// `super(...)`) of that class and the message reads `Constructor {owner}()
+    /// cannot be applied to given types`. Types are stored unresolved (the
+    /// canonical FQN), rendered simple only in [`TypeError::message`], so
+    /// future quickfixes keep the full type.
     WrongArity {
         expr: ExprId,
         name: Name,
@@ -120,7 +127,8 @@ pub enum TypeError {
         expected: usize,
         required: Vec<Ty>,
         found_tys: Vec<Option<Ty>>,
-        incompatible: Option<(Ty, Ty)>,
+        arg_ranges: Vec<TextRange>,
+        bad_args: Vec<(usize, Ty, Ty)>,
     },
     /// §14.18: the operand of a `throw` statement is not assignable to
     /// `Throwable` ([§5.2]).
@@ -317,6 +325,39 @@ impl TypeError {
             | TypeError::AmbiguousName { range, .. }
             | TypeError::ModuleNotAccessible { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
+            // §15.12.2: a wrong-argument diagnostic points at the offending
+            // *arguments* (IntelliJ-style), not the method name — the
+            // incompatible arguments when the arities match ([§5.3] loose
+            // conversion), the whole argument list when they differ, and the
+            // member name when the invocation has no arguments at all (e.g.
+            // `new Foo()` against `Foo(int)` keeps pointing at `Foo`).
+            TypeError::WrongArity {
+                expr,
+                arg_ranges,
+                bad_args,
+                ..
+            } => {
+                let merged_args = merge_ranges(arg_ranges.iter().copied());
+                let merged_bad = merge_ranges(
+                    bad_args
+                        .iter()
+                        .filter_map(|(idx, _, _)| arg_ranges.get(*idx).copied()),
+                );
+                if !arg_ranges.is_empty() && !bad_args.is_empty() {
+                    merged_bad.or(merged_args).or_else(|| {
+                        tree.expr_name_range(*expr)
+                            .or_else(|| tree.expr_range(*expr))
+                    })
+                } else if !arg_ranges.is_empty() {
+                    merged_args.or_else(|| {
+                        tree.expr_name_range(*expr)
+                            .or_else(|| tree.expr_range(*expr))
+                    })
+                } else {
+                    tree.expr_name_range(*expr)
+                        .or_else(|| tree.expr_range(*expr))
+                }
+            }
             // Name-bearing diagnostics underline just the member/method/name
             // identifier (`b.missing` → `missing`), not the whole expression.
             TypeError::CannotResolveName { expr, .. }
@@ -324,7 +365,6 @@ impl TypeError {
             | TypeError::NoSuchMethod { expr, .. }
             | TypeError::NoSuchConstructor { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
-            | TypeError::WrongArity { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
             | TypeError::GenericArrayCreation { expr, .. }
             | TypeError::CannotInstantiateTypeVar { expr, .. }
@@ -394,8 +434,8 @@ impl TypeError {
             }
             WrongArity { name, owner, .. } => {
                 // The head sentence only; the `required:`/`found:`/`reason:`
-                // detail is carried separately and surfaced as LSP
-                // `related_information`.
+                // block is carried separately and surfaced as LSP
+                // `related_information` (see [`TypeError::related`]).
                 match owner {
                     Some(owner) => {
                         format!(
@@ -510,64 +550,123 @@ impl TypeError {
         }
     }
 
-    /// Secondary detail lines for the diagnostic, IntelliJ-style
-    /// `related_information`: the `required:`/`found:`/`reason:` block of an
-    /// invocation or assignment mismatch. Empty for most diagnostics, whose
-    /// message already carries everything. Each line is rendered against `db`
-    /// with simple type names; the LSP layer attaches the diagnostic's own
-    /// range to each.
-    pub fn detail(&self, db: &dyn TyDatabase) -> Vec<String> {
+    /// Secondary detail entries for the diagnostic, IntelliJ-style
+    /// `related_information`: each `(message, range)` renders against `db`
+    /// with simple type names. The `required:`/`found:`/`reason:` block of an
+    /// invocation or assignment mismatch is attached to the diagnostic's own
+    /// range; a wrong-argument invocation additionally carries one
+    /// `reason: …` entry per incompatible *argument* at that argument's own
+    /// range ([§15.12.2], [§5.3]). Empty for most diagnostics, whose message
+    /// already carries everything.
+    pub fn related(&self, db: &dyn TyDatabase, tree: &BodyTree) -> Vec<(String, TextRange)> {
         use TypeError::*;
         match self {
             WrongArity {
                 required,
                 found_tys,
-                incompatible,
+                arg_ranges,
+                bad_args,
                 ..
             } => {
+                // The merged span of the whole argument list; falls back to
+                // the diagnostic's own range (the member name) when the
+                // invocation has no arguments.
+                let primary = merge_ranges(arg_ranges.iter().copied())
+                    .or_else(|| self.range(tree))
+                    .unwrap_or_default();
+                let mut out = Vec::new();
                 if required.is_empty() {
-                    return Vec::new();
+                    return out;
                 }
-                let mut lines = vec![format!(
-                    "required: {}",
-                    required
-                        .iter()
-                        .map(|ty| render_simple(db, *ty))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )];
-                lines.push(format!(
-                    "found: {}",
-                    found_tys
-                        .iter()
-                        .map(|ty| match ty {
-                            Some(ty) => render_simple(db, *ty),
-                            None => "<poly>".to_owned(),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-                match incompatible {
-                    Some((found, expected)) => lines.push(format!(
-                        "reason: '{}' cannot be converted to '{}'",
-                        render_simple(db, *found),
-                        render_simple(db, *expected)
-                    )),
-                    None => lines.push(
-                        "reason: actual and formal argument lists differ in length".to_owned(),
+                out.push((
+                    format!(
+                        "required: {}",
+                        required
+                            .iter()
+                            .map(|ty| render_simple(db, *ty))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
+                    primary,
+                ));
+                out.push((
+                    format!(
+                        "found: {}",
+                        found_tys
+                            .iter()
+                            .map(|ty| match ty {
+                                Some(ty) => render_simple(db, *ty),
+                                None => "<poly>".to_owned(),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    primary,
+                ));
+                // §15.12.2: the reason line. When the arities differ it is the
+                // argument-list-length text on the whole list; when they match,
+                // one `cannot be converted` entry per incompatible argument,
+                // each at its own range — the IntelliJ "bad arguments"
+                // highlighting.
+                if let Some((idx, found, expected)) = bad_args.first() {
+                    out.push((
+                        format!(
+                            "reason: '{}' cannot be converted to '{}'",
+                            render_simple(db, *found),
+                            render_simple(db, *expected)
+                        ),
+                        arg_ranges.get(*idx).copied().unwrap_or(primary),
+                    ));
+                    for (idx, found, expected) in bad_args.iter().skip(1) {
+                        out.push((
+                            format!(
+                                "reason: '{}' cannot be converted to '{}'",
+                                render_simple(db, *found),
+                                render_simple(db, *expected)
+                            ),
+                            arg_ranges.get(*idx).copied().unwrap_or(primary),
+                        ));
+                    }
+                } else {
+                    out.push((
+                        "reason: actual and formal argument lists differ in length".to_owned(),
+                        primary,
+                    ));
                 }
-                lines
+                out
             }
             IncompatibleTypes {
                 found, expected, ..
-            } => vec![
-                format!("required: {}", render_simple(db, *expected)),
-                format!("found: {}", render_simple(db, *found)),
-            ],
+            } => {
+                let primary = self.range(tree);
+                vec![
+                    (
+                        format!("required: {}", render_simple(db, *expected)),
+                        primary.unwrap_or_default(),
+                    ),
+                    (
+                        format!("found: {}", render_simple(db, *found)),
+                        primary.unwrap_or_default(),
+                    ),
+                ]
+            }
             _ => Vec::new(),
         }
     }
+}
+
+/// The smallest range covering all of `ranges` — the merged span of the
+/// (possibly disjoint) arguments of a wrong-arity invocation, IntelliJ-style.
+/// `None` when `ranges` is empty.
+fn merge_ranges(ranges: impl IntoIterator<Item = TextRange>) -> Option<TextRange> {
+    let mut ranges = ranges.into_iter();
+    let first = ranges.next()?;
+    let (mut start, mut end) = (first.start(), first.end());
+    for range in ranges {
+        start = start.min(range.start());
+        end = end.max(range.end());
+    }
+    Some(TextRange::new(start, end))
 }
 
 /// The simple-name rendering of a [`Ty`] for a diagnostic message.

@@ -47,6 +47,7 @@ use hir_expand::{
     name::Name,
     span::SpannedTypeRef,
 };
+use rowan::TextRange;
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 use vfs::FileId;
@@ -1939,21 +1940,28 @@ impl<'a> InferCtx<'a> {
                     .filter(|ty| !ty.is_error(self.db) && !ty.is_void_like(self.db)),
             })
             .collect();
-        // The reason line: against a same-arity candidate, the first
-        // concrete argument that does not convert (loosely) to its formal.
-        let mut incompatible = None;
+        // The source range of every actual argument ([JLS §15.12.2]): the
+        // "bad arguments" the diagnostic underlines, IntelliJ-style.
+        let arg_ranges: Vec<TextRange> = arg_kinds
+            .iter()
+            .filter_map(|info| self.tree.expr_range(info.id))
+            .collect();
+        // The reason lines: against a same-arity candidate, every concrete
+        // argument that does not convert (loosely) to its formal ([§5.3]) is
+        // a mismatch; the first renders the `reason:` line, each also surfaces
+        // at its own range as `related_information`.
+        let mut bad_args = Vec::new();
         if let Some(best) = best.as_ref()
             && best.params.len() == found
         {
-            for (info, formal) in arg_kinds.iter().zip(&best.params) {
+            for (idx, (info, formal)) in arg_kinds.iter().zip(&best.params).enumerate() {
                 if info.poly {
                     continue;
                 }
                 if let [ArgKind::Concrete(ty)] = info.leaves.as_slice()
                     && !crate::java::subtyping::is_assignable(self.db, &self.scope, ty, formal)
                 {
-                    incompatible = Some((*ty, *formal));
-                    break;
+                    bad_args.push((idx, *ty, *formal));
                 }
             }
         }
@@ -1966,7 +1974,8 @@ impl<'a> InferCtx<'a> {
             expected,
             required,
             found_tys,
-            incompatible,
+            arg_ranges,
+            bad_args,
         });
     }
 

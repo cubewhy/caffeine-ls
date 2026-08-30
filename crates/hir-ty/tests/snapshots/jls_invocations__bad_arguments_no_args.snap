@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_invocations.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void func(String arg0, int arg1) {}
+
+    void use() {
+        func();
+    }
+}
+
+method use(): void
+  @6:8..6:12 'func': wrong-argument-count: Method 'func()' cannot be applied to given types
+    -> @6:8..6:12 'func': required: String, int
+    -> @6:8..6:12 'func': found: 
+    -> @6:8..6:12 'func': reason: actual and formal argument lists differ in length

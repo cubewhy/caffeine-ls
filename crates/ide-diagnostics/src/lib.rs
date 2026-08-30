@@ -121,10 +121,10 @@ pub(crate) fn collect_type_diagnostics(
                 // from broken source) has no range to point at.
                 continue;
             };
-            let detail = diagnostic
-                .detail(db)
+            let related = diagnostic
+                .related(db, &bodies)
                 .into_iter()
-                .map(|message| RelatedInformation {
+                .map(|(message, range)| RelatedInformation {
                     message,
                     range: FileRange::new(file_id, range),
                 });
@@ -144,7 +144,7 @@ pub(crate) fn collect_type_diagnostics(
                         Severity::Error
                     },
                 )
-                .with_related(detail),
+                .with_related(related),
             );
         }
     }

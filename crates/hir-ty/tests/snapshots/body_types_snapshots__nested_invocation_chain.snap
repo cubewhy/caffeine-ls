@@ -30,4 +30,4 @@ method id(T): T
 method call(): void
   locals: 
   exprs: e2: java.util.List<java.lang.String> | e3: void | e4: int | e5: java.lang.Integer | e6: <error>
-  diags: e6@14:8: wrong-argument-count: Method 'take()' cannot be applied to given types
+  diags: e6@14:13: wrong-argument-count: Method 'take()' cannot be applied to given types

@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_invocations.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void take(List<String> xs) {}
+
+    void pick(int i) {}
+
+    void use() {
+        take(pick("nope"));
+    }
+}
+
+method use(): void
+  @10:18..10:24 '"nope"': wrong-argument-count: Method 'pick()' cannot be applied to given types
+    -> @10:18..10:24 '"nope"': required: int
+    -> @10:18..10:24 '"nope"': found: String
+    -> @10:18..10:24 '"nope"': reason: 'String' cannot be converted to 'int'
+  @10:13..10:25 'pick("nope")': wrong-argument-count: Method 'take()' cannot be applied to given types
+    -> @10:13..10:25 'pick("nope")': required: List<String>
+    -> @10:13..10:25 'pick("nope")': found: <poly>
+    -> @10:13..10:25 'pick("nope")': reason: actual and formal argument lists differ in length

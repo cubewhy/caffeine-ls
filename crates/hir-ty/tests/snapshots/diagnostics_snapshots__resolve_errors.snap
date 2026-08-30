@@ -18,4 +18,4 @@ class Body {
 method m(java.lang.String, com.example.Body): void
   locals: l0: java.lang.String | l1: com.example.Body
   exprs: e0: <error> | e1: com.example.Body | e2: <error> | e3: com.example.Body | e4: <error> | e5: int | e6: int | e7: java.lang.String | e8: <error> | e9: <error>
-  diags: e0@4:8: cannot-resolve-symbol: Cannot resolve symbol 'undefinedName' | e2@5:10: no-such-field: Cannot resolve symbol 'missing' | e4@6:10: no-such-method: Cannot resolve method 'missing()' | e8@7:10: wrong-argument-count: Method 'length()' cannot be applied to given types | e9@8:14: incompatible-types: Incompatible types. Found: 'Object', required: 'Throwable'
+  diags: e0@4:8: cannot-resolve-symbol: Cannot resolve symbol 'undefinedName' | e2@5:10: no-such-field: Cannot resolve symbol 'missing' | e4@6:10: no-such-method: Cannot resolve method 'missing()' | e8@7:17: wrong-argument-count: Method 'length()' cannot be applied to given types | e9@8:14: incompatible-types: Incompatible types. Found: 'Object', required: 'Throwable'

@@ -19,4 +19,4 @@ method Foo(int): <init>
 method Foo(): <init>
   locals: 
   exprs: e0: java.lang.String | e1: void
-  diags: e1@6:8: wrong-argument-count: Constructor 'Foo()' cannot be applied to given types
+  diags: e1@6:13: wrong-argument-count: Constructor 'Foo()' cannot be applied to given types
