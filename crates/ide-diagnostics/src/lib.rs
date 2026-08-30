@@ -59,29 +59,25 @@ impl DiagnosticSink {
     }
 }
 
-pub fn syntax_diagnostics(
-    db: &RootDatabase,
-    file_id: FileId,
-    fallback_language_kind: LanguageKind,
-) -> Vec<Diagnostic> {
+pub fn syntax_diagnostics(db: &RootDatabase, file_id: FileId) -> Vec<Diagnostic> {
     let mut sink = DiagnosticSink::new();
-    collect_syntax(&mut sink, db, file_id, fallback_language_kind);
+    collect_syntax(&mut sink, db, file_id);
     sink.into_file(file_id)
 }
 
 /// Pushes the parse-level (syntax) diagnostics of `file_id` into `sink`.
-pub(crate) fn collect_syntax(
-    sink: &mut DiagnosticSink,
-    db: &dyn SourceDatabase,
-    file_id: FileId,
-    fallback_language_kind: LanguageKind,
-) {
-    // Before the workspace is loaded the file is not part of any source root,
-    // so `file_language_kind` can't resolve the language. Fall back to the
-    // kind inferred from the file path to keep basic syntax diagnostics.
-    let language_kind = base_db::file_language_kind(db, file_id)
-        .filter(|&kind| kind != LanguageKind::Unknown)
-        .unwrap_or(fallback_language_kind);
+///
+/// The language comes from the file's owning source root; a file that is not
+/// part of any root yet (e.g. opened before the workspace finished loading)
+/// reports no syntax diagnostics until it is attached to one.
+pub(crate) fn collect_syntax(sink: &mut DiagnosticSink, db: &dyn SourceDatabase, file_id: FileId) {
+    let Some(language_kind) = base_db::file_language_kind(db, file_id) else {
+        tracing::debug!(
+            ?file_id,
+            "file has no source root; skipping syntax diagnostics"
+        );
+        return;
+    };
     if language_kind == LanguageKind::Unknown {
         tracing::warn!("unsupported language");
         return;
@@ -241,11 +237,10 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec
 pub(crate) fn file_report_query(
     db: &dyn hir_ty::TyDatabase,
     file: FileText,
-    fallback: LanguageKind,
 ) -> Arc<Vec<Diagnostic>> {
     let file_id = *file.file_id(db);
     let mut sink = DiagnosticSink::new();
-    collect_syntax(&mut sink, db, file_id, fallback);
+    collect_syntax(&mut sink, db, file_id);
     for diagnostic in file_diagnostics_query(db, file).iter() {
         sink.push(file_id, diagnostic.clone());
     }
@@ -256,12 +251,8 @@ pub(crate) fn file_report_query(
 /// and declaration diagnostics. This is the unit the LSP diagnostics store
 /// tracks and diffs per file. Memoized per [`FileText`] by
 /// [`file_report_query`].
-pub fn file_report(
-    db: &dyn hir_ty::TyDatabase,
-    file_id: FileId,
-    fallback_language_kind: LanguageKind,
-) -> Arc<Vec<Diagnostic>> {
-    file_report_query(db, db.file_text(file_id), fallback_language_kind)
+pub fn file_report(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<Vec<Diagnostic>> {
+    file_report_query(db, db.file_text(file_id))
 }
 
 fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {

@@ -4,7 +4,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost, LanguageKind, WorkspaceReport};
+use ide::{Analysis, AnalysisHost, WorkspaceReport};
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
@@ -74,10 +74,7 @@ fn by_file(reports: &[WorkspaceReport]) -> HashMap<FileId, &WorkspaceReport> {
 
 /// The single-file [`ide::Analysis::file_report`] result, for comparison.
 fn single(analysis: &Analysis, file: FileId) -> Vec<ide::Diagnostic> {
-    analysis
-        .file_report(file, LanguageKind::Unknown)
-        .unwrap()
-        .to_vec()
+    analysis.file_report(file).unwrap().to_vec()
 }
 
 #[test]

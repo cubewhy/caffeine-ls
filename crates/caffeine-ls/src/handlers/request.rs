@@ -4,7 +4,6 @@ use crate::{
     lsp::{symbols, to_proto},
 };
 
-use ide::LanguageKind;
 use lsp_types::*;
 use rustc_hash::FxHashMap;
 use vfs::FileId;
@@ -27,15 +26,10 @@ pub fn on_diagnostic(
         }
         .into());
     };
-    // Before the workspace is loaded, files are not part of any source
-    // root, so fall back to the language kind inferred from the path.
-    let fallback_language_kind = LanguageKind::from_path(params.text_document.uri.path());
     // Compute the report through the memoized salsa query; the `result_id` is a
     // deterministic fingerprint of the items, so an unchanged file echoes
     // `Unchanged` across edits to unrelated files.
-    let report = state
-        .analysis
-        .file_report(file_id, fallback_language_kind)?;
+    let report = state.analysis.file_report(file_id)?;
     let items = diagnostics::convert_items(&state, file_id, &report)?;
     let id = diagnostics::render_id(diagnostics::result_id(&items));
     if params.previous_result_id.as_deref() == Some(id.as_str()) {

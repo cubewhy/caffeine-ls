@@ -97,12 +97,8 @@ impl Analysis {
         Cancelled::catch(AssertUnwindSafe(|| f(&self.db)))
     }
 
-    pub fn syntax_diagnostics(
-        &self,
-        file_id: FileId,
-        fallback_language_kind: LanguageKind,
-    ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id, fallback_language_kind))
+    pub fn syntax_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::syntax_diagnostics(db, file_id))
     }
 
     /// The type-layer diagnostics of the file, collected from the inference of
@@ -134,12 +130,8 @@ impl Analysis {
     /// The complete report of the file — its syntax diagnostics plus its merged
     /// type and declaration diagnostics — the unit the LSP diagnostics store
     /// tracks and diffs per file (see [`ide_diagnostics::file_report`]).
-    pub fn file_report(
-        &self,
-        file_id: FileId,
-        fallback_language_kind: LanguageKind,
-    ) -> Cancellable<std::sync::Arc<Vec<Diagnostic>>> {
-        self.with_db(|db| ide_diagnostics::file_report(db, file_id, fallback_language_kind))
+    pub fn file_report(&self, file_id: FileId) -> Cancellable<std::sync::Arc<Vec<Diagnostic>>> {
+        self.with_db(|db| ide_diagnostics::file_report(db, file_id))
     }
 
     /// The workspace source files whose declarations the file's type outputs

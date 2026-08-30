@@ -8,7 +8,7 @@ use std::{
 };
 use vfs::FileId;
 
-use crate::{LanguageKind, RootDatabase};
+use crate::RootDatabase;
 use ide_diagnostics::Diagnostic;
 
 /// A file's complete diagnostic report within an
@@ -49,10 +49,7 @@ fn report_result_id(report: &[Diagnostic], lints: &[String]) -> String {
 /// clones share the memo tables with the source database through salsa's
 /// `StorageHandle`, so the per-file [`ide_diagnostics::file_report_query`]
 /// results are shared: an edit that moved a single file's inputs recomputes
-/// only that file's report, everything else re-reads the cache. Fallback
-/// language kind is [`LanguageKind::Unknown`] — workspace source files always
-/// resolve their language from their owning source root, so the fallback is
-/// never consulted here.
+/// only that file's report, everything else re-reads the cache.
 ///
 /// Cancellation is salsa's: a pending write unwinds the in-flight queries on
 /// every worker, rayon propagates the unwind (preserving the `Cancelled`
@@ -82,7 +79,7 @@ pub fn workspace_reports(db: &RootDatabase, lints: &[String]) -> Vec<WorkspaceRe
         .zip(databases.into_par_iter())
         .flat_map_iter(|(chunk, db)| {
             chunk.into_iter().map(move |file| {
-                let report = ide_diagnostics::file_report(&db, file, LanguageKind::Unknown);
+                let report = ide_diagnostics::file_report(&db, file);
                 let result_id = report_result_id(&report, lints);
                 WorkspaceReport {
                     file,

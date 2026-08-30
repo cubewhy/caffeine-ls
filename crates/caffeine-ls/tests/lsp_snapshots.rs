@@ -396,6 +396,8 @@ fn test_syntax_diagnostics_before_workspace_load() {
         "public class Main {\n    public void m() {\n        int a = 1\n    }\n}",
     );
     lsp.open_document("/src/Main.java");
+    // The file is not part of any source root before the workspace loads, so
+    // it reports no diagnostics (syntax included) until it is attached to one.
     let diagnostics = lsp.pull_document_diagnostics("/src/Main.java");
 
     insta::assert_json_snapshot!("syntax_diagnostics_before_workspace_load", diagnostics);

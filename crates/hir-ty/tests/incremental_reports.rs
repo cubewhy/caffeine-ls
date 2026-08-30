@@ -52,7 +52,7 @@ fn unrelated_package_edit_short_circuits_other_inference() {
 
     // Warm B's inference; it is clean (everything resolves).
     let before = hir_ty::body_types(&db, b, method).expect("B.f body");
-    let before_report = ide_diagnostics::file_report(&db, b, base_db::LanguageKind::Java);
+    let before_report = ide_diagnostics::file_report(&db, b);
     assert!(
         before_report.is_empty(),
         "B must be clean: {before_report:?}"
@@ -80,7 +80,7 @@ fn unrelated_package_edit_short_circuits_other_inference() {
         !Arc::ptr_eq(&before, &after_a_rename),
         "renaming A must re-infer B's method"
     );
-    let renamed_report = ide_diagnostics::file_report(&db, b, base_db::LanguageKind::Java);
+    let renamed_report = ide_diagnostics::file_report(&db, b);
     assert!(
         !renamed_report.is_empty(),
         "renaming A must surface an unresolved `com.a.A` error in B: {renamed_report:?}"
