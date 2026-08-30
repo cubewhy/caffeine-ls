@@ -486,9 +486,11 @@ impl GlobalStateSnapshot {
     }
 
     /// The version of an open document (client-maintained), `None` for files
-    /// that are not open.
-    pub(crate) fn open_document_version(&self, path: &vfs::VfsPath) -> Option<i32> {
-        self.mem_docs.get(path).map(|doc| doc.version)
+    /// that are not open. Resolved directly from the `FileId`, avoiding a
+    /// `FileId -> Uri -> VfsPath` round-trip per file in workspace pulls.
+    pub(crate) fn open_document_version_by_file(&self, file_id: FileId) -> Option<i32> {
+        let path = self.vfs_read().file_path(file_id).clone();
+        self.mem_docs.get(&path).map(|doc| doc.version)
     }
 }
 

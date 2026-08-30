@@ -170,8 +170,12 @@ impl Analysis {
     /// The complete diagnostic report of every workspace source file, computed
     /// in parallel across the memoized per-file salsa queries (see
     /// [`workspace::workspace_reports`]). The `workspace/diagnostic` pull.
-    pub fn workspace_reports(&self) -> Cancellable<Vec<WorkspaceReport>> {
-        self.with_db(workspace::workspace_reports)
+    ///
+    /// `lints` are the client-enabled lint keys (`rawtypes`, `unchecked`,
+    /// ...); each worker folds them into the precomputed `result_id` of its
+    /// report, so a lint-config change invalidates every cached id.
+    pub fn workspace_reports(&self, lints: &[String]) -> Cancellable<Vec<WorkspaceReport>> {
+        self.with_db(|db| workspace::workspace_reports(db, lints))
     }
 
     /// The declared symbols of a file, in declaration order.

@@ -10,11 +10,13 @@
 //! `workspace/diagnostic` on demand and an edit never invalidates the whole
 //! workspace.
 //!
-//! The LSP `resultId` of a file is a deterministic 64-bit hash of its
-//! converted diagnostics. Equal content yields the same id, so after an edit
-//! that does not change a file's diagnostics the server echoes
-//! `WorkspaceUnchangedDocumentDiagnosticReport` — the `full=1 unchanged=N-1`
-//! steady state.
+//! The LSP `resultId` of a file is a deterministic hash of its diagnostics:
+//! the workspace pull carries a `result_id` *precomputed in the parallel
+//! [`ide::Analysis::workspace_reports`] pass* (raw report + client lint keys),
+//! while the per-file document pull hashes its converted items. Equal content
+//! yields the same id, so after an edit that does not change a file's
+//! diagnostics the server echoes `WorkspaceUnchangedDocumentDiagnosticReport`
+//! — the `full=1 unchanged=N-1` steady state.
 
 use std::{
     hash::{Hash, Hasher},
@@ -97,12 +99,17 @@ pub(crate) fn render_id(hash: u64) -> String {
 /// The pull is a pure function of the analysis snapshot: the reports come from
 /// [`ide::Analysis::workspace_reports`], which chunks the workspace across
 /// rayon workers over shared salsa memo tables — O(1) cache hits for
-/// unaffected files, recompute only files whose inputs actually moved. Because
-/// the `resultId` is a content hash, an edit that leaves a file's diagnostics
-/// alone keeps its id, so a single-file edit with no cascading changes
-/// produces `full=1 unchanged=N-1`. A pull issued right after `didChange`
-/// always reflects the new text instead of echoing a stale pre-edit
-/// `resultId` — there is no cache to go stale.
+/// unaffected files, recompute only files whose inputs actually moved. The
+/// `result_id` of every file is *precomputed inside that parallel pass* (a
+/// content hash of the raw report plus the client lint keys), so a cache hit
+/// never converts items or re-hashes on the main thread: an unchanged file is
+/// echoed straight from its `result_id`. Only cache misses
+/// ([`convert_items`]) run the LSP conversion. Because the `resultId` is a
+/// content hash, an edit that leaves a file's diagnostics alone keeps its id,
+/// so a single-file edit with no cascading changes produces
+/// `full=1 unchanged=N-1`. A pull issued right after `didChange` always
+/// reflects the new text instead of echoing a stale pre-edit `resultId` —
+/// there is no cache to go stale.
 ///
 /// Cancellation is salsa's: a pending write unwinds the in-flight queries and
 /// surfaces as [`Cancelled`], which the request loop retries on a fresh
@@ -116,7 +123,9 @@ pub(crate) fn workspace_diagnostic_reports(
 
     check_cancelled(snapshot)?;
 
-    let reports = snapshot.analysis.workspace_reports()?;
+    let reports = snapshot
+        .analysis
+        .workspace_reports(snapshot.config.client_lints())?;
     if reports.is_empty() {
         return Ok(Vec::new());
     }
@@ -127,35 +136,43 @@ pub(crate) fn workspace_diagnostic_reports(
         let Ok(uri) = snapshot.file_id_to_url(file) else {
             continue;
         };
-        let version = crate::lsp::from_proto::vfs_path(&uri)
-            .ok()
-            .and_then(|path| snapshot.open_document_version(&path));
+        let version = snapshot.open_document_version_by_file(file);
 
+        // Cache hit: the precomputed result id (hashed in the parallel pass)
+        // matches the client's. Echo `Unchanged` without converting a single
+        // item — the whole steady-state pull is allocation-free here.
+        if previous_ids.get(&file).map(String::as_str) == Some(workspace_report.result_id.as_str())
+        {
+            items.push(
+                lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
+                    lsp_types::WorkspaceUnchangedDocumentDiagnosticReport {
+                        uri,
+                        version,
+                        unchanged_document_diagnostic_report:
+                            lsp_types::UnchangedDocumentDiagnosticReport {
+                                result_id: workspace_report.result_id,
+                            },
+                    },
+                ),
+            );
+            continue;
+        }
+
+        // Cache miss: only the files that actually changed pay for the
+        // lint-filter + UTF-16 coordinate conversion.
         let diagnostics = convert_items(snapshot, file, &workspace_report.report)?;
-        let id = render_id(result_id(&diagnostics));
-
-        let report = if previous_ids.get(&file).map(String::as_str) == Some(id.as_str()) {
-            lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
-                lsp_types::WorkspaceUnchangedDocumentDiagnosticReport {
-                    uri,
-                    version,
-                    unchanged_document_diagnostic_report:
-                        lsp_types::UnchangedDocumentDiagnosticReport { result_id: id },
-                },
-            )
-        } else {
+        items.push(
             lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceFullDocumentDiagnosticReport(
                 lsp_types::WorkspaceFullDocumentDiagnosticReport {
                     uri,
                     version,
                     full_document_diagnostic_report: lsp_types::FullDocumentDiagnosticReport {
-                        result_id: Some(id),
+                        result_id: Some(workspace_report.result_id),
                         items: diagnostics,
                     },
                 },
-            )
-        };
-        items.push(report);
+            ),
+        );
     }
 
     items.sort_by(|a, b| uri_of(a).cmp(uri_of(b)));
