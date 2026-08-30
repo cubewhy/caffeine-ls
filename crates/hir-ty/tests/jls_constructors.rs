@@ -61,7 +61,8 @@ class Body {
     )])
 );
 // `new Foo("s")` matches the arity but `String` does not convert to `int` —
-// the `reason: incompatible types:` block. `new Foo(1, 2)` differs in arity.
+// the `reason: incompatible types:` block on the bad argument. `new Foo(1, 2)`
+// hands the constructor one *extra* argument — the surplus `2` is highlighted.
 
 snapshot!(
     new_no_such_constructor,

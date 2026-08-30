@@ -15,11 +15,11 @@ class Body {
 }
 
 method use(): void
-  @6:13..6:23 '"only one"': wrong-argument-count: Method 'func()' cannot be applied to given types
-    -> @6:13..6:23 '"only one"': required: String, int
-    -> @6:13..6:23 '"only one"': found: String
-    -> @6:13..6:23 '"only one"': reason: actual and formal argument lists differ in length
-  @7:13..7:22 '"a", 1, 2': wrong-argument-count: Method 'func()' cannot be applied to given types
-    -> @7:13..7:22 '"a", 1, 2': required: String, int
-    -> @7:13..7:22 '"a", 1, 2': found: String, int, int
-    -> @7:13..7:22 '"a", 1, 2': reason: actual and formal argument lists differ in length
+  @6:8..6:12 'func': wrong-argument-count: Method 'func()' cannot be applied to given types
+    -> @6:8..6:12 'func': required: String, int
+    -> @6:8..6:12 'func': found: String
+    -> @6:8..6:12 'func': reason: actual and formal argument lists differ in length
+  @7:21..7:22 '2': wrong-argument-count: Method 'func()' cannot be applied to given types
+    -> @7:21..7:22 '2': required: String, int
+    -> @7:21..7:22 '2': found: String, int, int
+    -> @7:21..7:22 '2': reason: actual and formal argument lists differ in length

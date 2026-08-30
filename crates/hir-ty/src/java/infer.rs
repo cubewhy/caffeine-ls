@@ -2005,6 +2005,41 @@ impl<'a> InferCtx<'a> {
                 }
             }
         }
+        // §15.12.2: when the invocation supplies *more* arguments than the
+        // closest candidate takes, the surplus arguments are the offending
+        // ones — the diagnostic points at them (IntelliJ-style) instead of
+        // the whole argument list. No argument is specifically at fault when
+        // the closest candidate is not unique (the arity is ambiguous) or the
+        // call is too short; the diagnostic then stays on the member name.
+        let min_distance = members
+            .iter()
+            .map(|m| m.params.len().abs_diff(found))
+            .min()
+            .unwrap_or(0);
+        let ambiguous = members
+            .iter()
+            .filter(|m| m.params.len().abs_diff(found) == min_distance)
+            .count()
+            > 1;
+        let surplus: Vec<usize> = match &best {
+            Some(best) if !ambiguous && best.params.len() < found => {
+                (best.params.len()..found).collect()
+            }
+            _ => Vec::new(),
+        };
+        // §15.12.2: every incompatible argument beyond the first is reported
+        // as its own diagnostic at its own range — a split so each bad
+        // argument draws its own error line (IntelliJ-style) instead of riding
+        // as `related_information` on the first one, which an editor renders
+        // only on that first range. Collected before `bad_args` moves into the
+        // primary diagnostic, reported after it so the summary comes first.
+        let extra_bad: Vec<(ExprId, Ty, Ty)> = bad_args
+            .iter()
+            .skip(1)
+            .filter_map(|(idx, found, expected)| {
+                arg_kinds.get(*idx).map(|info| (info.id, *found, *expected))
+            })
+            .collect();
         let _ = expected;
         self.report(TypeError::WrongArity {
             expr,
@@ -2016,7 +2051,15 @@ impl<'a> InferCtx<'a> {
             found_tys,
             arg_ranges,
             bad_args,
+            surplus,
         });
+        for (expr, found, expected) in extra_bad {
+            self.report(TypeError::IncompatibleTypes {
+                expr,
+                found,
+                expected,
+            });
+        }
     }
 
     fn method_call(

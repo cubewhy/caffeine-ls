@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_invocations.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void foo(boolean s, String i, long b) {}
+
+    void use() {
+        foo("", "", "");
+    }
+}
+
+method use(): void
+  @6:12..6:14 '""': wrong-argument-count: Method 'foo()' cannot be applied to given types
+    -> @6:12..6:14 '""': required: boolean, String, long
+    -> @6:12..6:14 '""': found: String, String, String
+    -> @6:12..6:14 '""': reason: 'String' cannot be converted to 'boolean'
+  @6:20..6:22 '""': incompatible-types: Incompatible types. Found: 'String', required: 'long'
+    -> @6:20..6:22 '""': required: long
+    -> @6:20..6:22 '""': found: String

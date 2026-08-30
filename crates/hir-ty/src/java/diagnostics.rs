@@ -118,17 +118,22 @@ pub enum TypeError {
     /// order, and `bad_args` the argument-to-formal mismatches against the
     /// closest candidate when the arities *match*: each `(argument index,
     /// found type, formal type)` of a concrete argument that does not
-    /// convert. Together they give the diagnostic its IntelliJ-style *bad
-    /// arguments* range (see [`TypeError::range`]): when the arities match
-    /// the diagnostic underlines exactly the incompatible arguments, and each
-    /// mismatch also surfaces as its own `related_information` entry; when the
-    /// arities differ the whole argument list is underlined and the
-    /// `reason:` text is the argument-list-length message. When `owner` is
-    /// `Some` the invocation is a *constructor* (`new`, `this(...)`,
-    /// `super(...)`) of that class and the message reads `Constructor {owner}()
-    /// cannot be applied to given types`. Types are stored unresolved (the
-    /// canonical FQN), rendered simple only in [`TypeError::message`], so
-    /// future quickfixes keep the full type.
+    /// convert. They give the diagnostic its IntelliJ-style *bad arguments*
+    /// range (see [`TypeError::range`]): when the arities match the
+    /// diagnostic underlines the first incompatible argument, and each
+    /// mismatch also surfaces as its own `related_information` entry.
+    /// `surplus` carries the indices of the *extra* arguments when the
+    /// invocation supplies more arguments than the closest candidate takes,
+    /// and the diagnostic then underlines the first of those instead. The
+    /// range always covers a single offending argument, never a merged span.
+    /// When the call is too short, the closest candidate is ambiguous, or no
+    /// argument is at fault, the diagnostic falls back to the member name.
+    /// The `reason:` text is the argument-list-length message whenever the
+    /// arities differ. When `owner` is `Some` the invocation is a
+    /// *constructor* (`new`, `this(...)`, `super(...)`) of that class and the
+    /// message reads `Constructor {owner}() cannot be applied to given types`.
+    /// Types are stored unresolved (the canonical FQN), rendered simple only
+    /// in [`TypeError::message`], so future quickfixes keep the full type.
     WrongArity {
         expr: ExprId,
         name: Name,
@@ -139,6 +144,7 @@ pub enum TypeError {
         found_tys: Vec<Option<Ty>>,
         arg_ranges: Vec<TextRange>,
         bad_args: Vec<(usize, Ty, Ty)>,
+        surplus: Vec<usize>,
     },
     /// §14.18: the operand of a `throw` statement is not assignable to
     /// `Throwable` ([§5.2]).
@@ -343,38 +349,34 @@ impl TypeError {
             | TypeError::AmbiguousName { range, .. }
             | TypeError::ModuleNotAccessible { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
-            // §15.12.2: a wrong-argument diagnostic points at the offending
-            // *arguments* (IntelliJ-style), not the method name — the
-            // incompatible arguments when the arities match ([§5.3] loose
-            // conversion), the whole argument list when they differ, and the
-            // member name when the invocation has no arguments at all (e.g.
-            // `new Foo()` against `Foo(int)` keeps pointing at `Foo`).
+            // §15.12.2: a wrong-argument diagnostic points at a *single*
+            // offending argument (IntelliJ-style), never a merged span — the
+            // first incompatible argument when the arities match ([§5.3]
+            // loose conversion), the first *surplus* argument when the
+            // invocation is too long for the closest candidate, and the
+            // member name when the call has no arguments, is too short, or
+            // the closest candidate is ambiguous (e.g. `new Foo()` against
+            // `Foo(int)` keeps pointing at `Foo`). Every other incompatible /
+            // surplus argument surfaces as its own `related_information`
+            // entry, so highlighting several bad arguments does not merge
+            // back into the whole argument list.
             TypeError::WrongArity {
                 expr,
                 arg_ranges,
                 bad_args,
+                surplus,
                 ..
             } => {
-                let merged_args = merge_ranges(arg_ranges.iter().copied());
-                let merged_bad = merge_ranges(
-                    bad_args
-                        .iter()
-                        .filter_map(|(idx, _, _)| arg_ranges.get(*idx).copied()),
-                );
-                if !arg_ranges.is_empty() && !bad_args.is_empty() {
-                    merged_bad.or(merged_args).or_else(|| {
-                        tree.expr_name_range(*expr)
-                            .or_else(|| tree.expr_range(*expr))
-                    })
-                } else if !arg_ranges.is_empty() {
-                    merged_args.or_else(|| {
-                        tree.expr_name_range(*expr)
-                            .or_else(|| tree.expr_range(*expr))
-                    })
-                } else {
+                let first_bad = bad_args
+                    .first()
+                    .and_then(|(idx, _, _)| arg_ranges.get(*idx).copied());
+                let first_surplus = surplus
+                    .first()
+                    .and_then(|idx| arg_ranges.get(*idx).copied());
+                first_bad.or(first_surplus).or_else(|| {
                     tree.expr_name_range(*expr)
                         .or_else(|| tree.expr_range(*expr))
-                }
+                })
             }
             // Name-bearing diagnostics underline just the member/method/name
             // identifier (`b.missing` → `missing`), not the whole expression.
@@ -597,12 +599,10 @@ impl TypeError {
                 bad_args,
                 ..
             } => {
-                // The merged span of the whole argument list; falls back to
-                // the diagnostic's own range (the member name) when the
-                // invocation has no arguments.
-                let primary = merge_ranges(arg_ranges.iter().copied())
-                    .or_else(|| self.range(tree))
-                    .unwrap_or_default();
+                // The `required:`/`found:`/`reason:` block anchors at the
+                // diagnostic's own range — a single bad / surplus argument, or
+                // the member name — never a merged whole argument list.
+                let primary = self.range(tree).unwrap_or_default();
                 let mut out = Vec::new();
                 if required.is_empty() {
                     return out;
@@ -633,10 +633,10 @@ impl TypeError {
                     primary,
                 ));
                 // §15.12.2: the reason line. When the arities differ it is the
-                // argument-list-length text on the whole list; when they match,
-                // one `cannot be converted` entry per incompatible argument,
-                // each at its own range — the IntelliJ "bad arguments"
-                // highlighting.
+                // argument-list-length text; when they match, a single
+                // `cannot be converted` entry for the *first* incompatible
+                // argument at its own range — every further incompatible
+                // argument is reported as its own diagnostic, not buried here.
                 if let Some((idx, found, expected)) = bad_args.first() {
                     out.push((
                         format!(
@@ -646,16 +646,6 @@ impl TypeError {
                         ),
                         arg_ranges.get(*idx).copied().unwrap_or(primary),
                     ));
-                    for (idx, found, expected) in bad_args.iter().skip(1) {
-                        out.push((
-                            format!(
-                                "reason: '{}' cannot be converted to '{}'",
-                                render_simple(db, *found),
-                                render_simple(db, *expected)
-                            ),
-                            arg_ranges.get(*idx).copied().unwrap_or(primary),
-                        ));
-                    }
                 } else {
                     out.push((
                         "reason: actual and formal argument lists differ in length".to_owned(),
@@ -682,20 +672,6 @@ impl TypeError {
             _ => Vec::new(),
         }
     }
-}
-
-/// The smallest range covering all of `ranges` — the merged span of the
-/// (possibly disjoint) arguments of a wrong-arity invocation, IntelliJ-style.
-/// `None` when `ranges` is empty.
-fn merge_ranges(ranges: impl IntoIterator<Item = TextRange>) -> Option<TextRange> {
-    let mut ranges = ranges.into_iter();
-    let first = ranges.next()?;
-    let (mut start, mut end) = (first.start(), first.end());
-    for range in ranges {
-        start = start.min(range.start());
-        end = end.max(range.end());
-    }
-    Some(TextRange::new(start, end))
 }
 
 /// The simple-name rendering of a [`Ty`] for a diagnostic message.

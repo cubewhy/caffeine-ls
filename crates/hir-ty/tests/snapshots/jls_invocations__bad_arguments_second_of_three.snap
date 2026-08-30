@@ -15,6 +15,6 @@ class Body {
 
 method use(): void
   @6:18..6:20 '42': wrong-argument-count: Method 'func()' cannot be applied to given types
-    -> @6:13..6:23 '"x", 42, 1': required: String, String, int
-    -> @6:13..6:23 '"x", 42, 1': found: String, int, int
+    -> @6:18..6:20 '42': required: String, String, int
+    -> @6:18..6:20 '42': found: String, int, int
     -> @6:18..6:20 '42': reason: 'int' cannot be converted to 'String'

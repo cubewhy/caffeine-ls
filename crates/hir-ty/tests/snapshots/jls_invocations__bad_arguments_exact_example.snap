@@ -15,8 +15,10 @@ class Body {
 }
 
 method use(): void
-  @7:13..7:24 'i, "string"': wrong-argument-count: Method 'func()' cannot be applied to given types
-    -> @7:13..7:24 'i, "string"': required: String, int
-    -> @7:13..7:24 'i, "string"': found: int, String
+  @7:13..7:14 'i': wrong-argument-count: Method 'func()' cannot be applied to given types
+    -> @7:13..7:14 'i': required: String, int
+    -> @7:13..7:14 'i': found: int, String
     -> @7:13..7:14 'i': reason: 'int' cannot be converted to 'String'
-    -> @7:16..7:24 '"string"': reason: 'String' cannot be converted to 'int'
+  @7:16..7:24 '"string"': incompatible-types: Incompatible types. Found: 'String', required: 'int'
+    -> @7:16..7:24 '"string"': required: int
+    -> @7:16..7:24 '"string"': found: String

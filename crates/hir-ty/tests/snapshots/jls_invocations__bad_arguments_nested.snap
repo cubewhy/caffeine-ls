@@ -22,7 +22,7 @@ method use(): void
     -> @10:18..10:24 '"nope"': required: int
     -> @10:18..10:24 '"nope"': found: String
     -> @10:18..10:24 '"nope"': reason: 'String' cannot be converted to 'int'
-  @10:13..10:25 'pick("nope")': wrong-argument-count: Method 'take()' cannot be applied to given types
-    -> @10:13..10:25 'pick("nope")': required: List<String>
-    -> @10:13..10:25 'pick("nope")': found: <poly>
-    -> @10:13..10:25 'pick("nope")': reason: actual and formal argument lists differ in length
+  @10:8..10:12 'take': wrong-argument-count: Method 'take()' cannot be applied to given types
+    -> @10:8..10:12 'take': required: List<String>
+    -> @10:8..10:12 'take': found: <poly>
+    -> @10:8..10:12 'take': reason: actual and formal argument lists differ in length
