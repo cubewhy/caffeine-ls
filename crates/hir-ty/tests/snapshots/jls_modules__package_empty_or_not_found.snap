@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_modules.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m1 {
+    exports com.nonexistent;
+    opens com.example;
+}
+
+FILE /src/com/example/Service.java:
+package com.example;
+
+public interface Service {
+}
+
+@1:12: package-empty-or-not-found: Package 'com.nonexistent' is empty or does not exist

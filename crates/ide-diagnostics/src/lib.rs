@@ -152,7 +152,8 @@ pub(crate) fn collect_type_diagnostics(
 
 /// The declaration-level diagnostics of a file ([JLS §6.5.5.1], [§7.5], [§8],
 /// [§9]): the unknown-type/ambiguity/import reports and the override and
-/// default-method checks of [`hir_ty::class_diagnostics`]. Each reference
+/// default-method checks of [`hir_ty::class_diagnostics`], plus the
+/// module-directive checks of [`hir_ty::module_diagnostics`]. Each reference
 /// carries its own source range; the hierarchy checks are keyed to the
 /// offending method's name.
 pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
@@ -181,6 +182,25 @@ pub(crate) fn collect_declaration_diagnostics(
                 .find_map(|top| find_method(&tree, top, method_name));
             item.map(|item| tree.data(item).range())
         }) else {
+            continue;
+        };
+        sink.push(
+            file_id,
+            make_diagnostic(
+                file_id,
+                &diagnostic.message(db),
+                range,
+                Some(diagnostic.code()),
+                Severity::Error,
+            ),
+        );
+    }
+    // §7.7: the module-directive checks (`requires` of an unknown module,
+    // `exports`/`opens` of an empty package, a `provides` implementation not
+    // a subtype of its service) of a `module-info.java`. Every module
+    // diagnostic carries its own range.
+    for diagnostic in hir_ty::module_diagnostics(db, file_id) {
+        let Some(range) = diagnostic.range() else {
             continue;
         };
         sink.push(

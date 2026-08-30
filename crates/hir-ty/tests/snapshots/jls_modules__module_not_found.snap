@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_modules.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m1 {
+    requires missing.module;
+}
+
+@1:13: module-not-found: Module not found: 'missing.module'

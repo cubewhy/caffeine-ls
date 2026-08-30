@@ -319,6 +319,18 @@ pub enum JavaDiagnosticCode {
     /// body, or a class method without `abstract`). javac: `missing method
     /// body, or declare abstract`.
     MissingMethodBodyOrDeclareAbstract,
+    /// §7.7.1: a `requires` directive names a module that is not on the module
+    /// path — no source module and no classpath library declares it. javac:
+    /// `module not found: {m}`.
+    ModuleNotFound,
+    /// §7.7.1: an `exports`/`opens` directive names a package that has no
+    /// source files in the module — the package is empty or does not exist.
+    /// javac: `package is empty or does not exist: {p}`.
+    PackageEmptyOrNotFound,
+    /// §7.7.2: a `provides` directive names an implementation type that is not
+    /// a subtype of the service interface. javac: `service implementation must
+    /// be a subtype of service interface`.
+    ServiceImplementationNotSubtype,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -454,6 +466,11 @@ impl JavaDiagnosticCode {
             MissingMethodBodyOrDeclareAbstract => {
                 Some("compiler.err.missing.meth.body.or.decl.abstract")
             }
+            ModuleNotFound => Some("compiler.err.module.not.found"),
+            PackageEmptyOrNotFound => Some("compiler.err.package.empty.or.not.found"),
+            ServiceImplementationNotSubtype => {
+                Some("compiler.err.service.implementation.must.be.subtype.of.service.interface")
+            }
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -579,6 +596,11 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::ModifierNotAllowedHere => "modifier-not-allowed-here",
             JavaDiagnosticCode::MissingMethodBodyOrDeclareAbstract => {
                 "missing-method-body-or-declare-abstract"
+            }
+            JavaDiagnosticCode::ModuleNotFound => "module-not-found",
+            JavaDiagnosticCode::PackageEmptyOrNotFound => "package-empty-or-not-found",
+            JavaDiagnosticCode::ServiceImplementationNotSubtype => {
+                "service-implementation-not-subtype-of-service-interface"
             }
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",

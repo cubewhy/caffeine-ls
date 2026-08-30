@@ -519,12 +519,18 @@ pub struct ModuleRequires {
     pub name: Name,
     pub transitive: bool,
     pub statik: bool,
+    /// The source range of the required module name.
+    pub range: TextRange,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleExports {
     pub package: Name,
     pub to: Vec<Name>,
+    /// The source range of the exported/opened package name.
+    pub package_range: TextRange,
+    /// The source ranges of the `to` module names, parallel to `to`.
+    pub to_ranges: Vec<TextRange>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

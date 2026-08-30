@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_modules.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m1 {
+    provides com.example.Service with com.example.BadImpl;
+}
+
+FILE /src/com/example/Service.java:
+package com.example;
+
+public interface Service {
+}
+
+FILE /src/com/example/BadImpl.java:
+package com.example;
+
+public class BadImpl {
+}
+
+@1:38: service-implementation-not-subtype-of-service-interface: Service implementation 'BadImpl' is not a subtype of service interface 'Service'

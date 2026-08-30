@@ -2184,6 +2184,33 @@ fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
     lines.join("\n")
 }
 
+/// The module-directive diagnostics ([JLS §7.7]) of every `module-info.java`
+/// in the source files, rendered like [`check_class_diagnostics`].
+pub fn check_module_diagnostics(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let line_index = line_index::LineIndex::new(text);
+        for diag in hir_ty::module_diagnostics(&db, file_id) {
+            let at = diag
+                .range()
+                .map(|r| {
+                    let lc = line_index.line_col(r.start());
+                    format!("@{line}:{col}", line = lc.line, col = lc.col)
+                })
+                .unwrap_or_default();
+            lines.push(format!("{at}: {}: {}", diag.code(), diag.message(&db)));
+        }
+    }
+    lines.join("\n")
+}
+
 /// Renders the resolved method call for each `(label, receiver, name, args)`
 /// sample, against the JDK fixture. The receiver and the arguments are
 /// [`TyBuilder`]s rendered after resolution.

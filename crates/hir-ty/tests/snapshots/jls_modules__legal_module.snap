@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_modules.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m1 {
+    exports com.example;
+    uses com.example.Service;
+    provides com.example.Service with com.example.GoodImpl;
+}
+
+FILE /src/com/example/Service.java:
+package com.example;
+
+public interface Service {
+}
+
+FILE /src/com/example/GoodImpl.java:
+package com.example;
+
+public class GoodImpl implements Service {
+}

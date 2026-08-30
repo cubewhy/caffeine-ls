@@ -343,6 +343,31 @@ pub enum DeclDiagnostic {
         method: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §7.7.1: a `requires` directive names a module that is not on the
+    /// module path — no source module and no classpath library declares it.
+    /// javac: `module not found: {m}`; the message is javac's,
+    /// IntelliJ-style. `range` is the required module name's source range.
+    ModuleNotFound {
+        module: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.7.1: an `exports`/`opens` directive names a package that has no
+    /// source files in the module — the package is empty or does not exist.
+    /// javac: `package is empty or does not exist: {p}`; the message is
+    /// javac's, IntelliJ-style. `range` is the package name's source range.
+    PackageEmptyOrNotFound {
+        package: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §7.7.2: a `provides` directive names an implementation type that is
+    /// not a subtype of the service interface. javac: `service implementation
+    /// must be a subtype of service interface`; the message is javac's,
+    /// IntelliJ-style. `range` is the implementation type's name range.
+    ServiceImplementationNotSubtype {
+        service: Ty,
+        implementation: Ty,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -459,6 +484,15 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::MissingMethodBodyOrDeclareAbstract)
+            }
+            DeclDiagnostic::ModuleNotFound { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ModuleNotFound)
+            }
+            DeclDiagnostic::PackageEmptyOrNotFound { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::PackageEmptyOrNotFound)
+            }
+            DeclDiagnostic::ServiceImplementationNotSubtype { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ServiceImplementationNotSubtype)
             }
         }
     }
@@ -686,6 +720,21 @@ impl DeclDiagnostic {
                     method.as_str()
                 )
             }
+            DeclDiagnostic::ModuleNotFound { module, .. } => {
+                format!("Module not found: '{}'", module.as_str())
+            }
+            DeclDiagnostic::PackageEmptyOrNotFound { package, .. } => {
+                format!("Package '{}' is empty or does not exist", package.as_str())
+            }
+            DeclDiagnostic::ServiceImplementationNotSubtype {
+                service,
+                implementation,
+                ..
+            } => format!(
+                "Service implementation '{}' is not a subtype of service interface '{}'",
+                implementation.display_simple(db),
+                service.display_simple(db)
+            ),
         }
     }
 
@@ -728,7 +777,10 @@ impl DeclDiagnostic {
             | DeclDiagnostic::SealedSealedOrFinalExpected { .. }
             | DeclDiagnostic::SealedClassMustHaveSubclasses { .. }
             | DeclDiagnostic::ModifierNotAllowedHere { .. }
-            | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. } => "",
+            | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. }
+            | DeclDiagnostic::ModuleNotFound { .. }
+            | DeclDiagnostic::PackageEmptyOrNotFound { .. }
+            | DeclDiagnostic::ServiceImplementationNotSubtype { .. } => "",
         }
     }
 
@@ -807,6 +859,15 @@ impl DeclDiagnostic {
             DeclDiagnostic::MissingMethodBodyOrDeclareAbstract {
                 range: name_range, ..
             } => *name_range,
+            DeclDiagnostic::ModuleNotFound {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::PackageEmptyOrNotFound {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::ServiceImplementationNotSubtype {
+                range: name_range, ..
+            } => *name_range,
             _ => None,
         }
     }
@@ -816,6 +877,86 @@ impl DeclDiagnostic {
 /// `file`, in source order.
 pub fn class_diagnostics(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
     crate::java::db::class_diagnostics_query(db, db.file_text(file))
+}
+
+/// The module-directive diagnostics of the `module-info.java` in `file`
+/// ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)):
+/// a `requires` of an unknown module, an `exports`/`opens` of a package with
+/// no source files in the module, and a `provides` implementation that is not
+/// a subtype of its service. Empty for files without a module declaration.
+pub fn module_diagnostics(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
+    crate::java::db::module_diagnostics_query(db, db.file_text(file))
+}
+
+/// §7.7.1/[§7.7.2: the module-directive checks of `file`'s `module-info.java`.
+pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
+    let tree = hir::file_item_tree(db, file);
+    let Some(top) = tree
+        .top
+        .iter()
+        .copied()
+        .find(|&t| matches!(tree.data(t), ItemData::Module(_)))
+    else {
+        return Vec::new();
+    };
+    let ItemData::Module(data) = tree.data(top) else {
+        return Vec::new();
+    };
+    let scope = scope_for_file(db, file);
+    let ctx = hir::module_ctx_for_scope(db, &scope);
+    let interner = &db.hir_state().interner;
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
+    let resolver = crate::java::resolve::Resolver::new(&tree, type_params, top);
+    let mut out = Vec::new();
+
+    // §7.7.1: a `requires` directive must name a module on the module path —
+    // a source module or a classpath library.
+    for req in &data.requires {
+        let symbol = interner.get_or_intern(req.name.as_str());
+        if ctx.graph.module(symbol).is_none() {
+            out.push(DeclDiagnostic::ModuleNotFound {
+                module: req.name.clone(),
+                range: Some(req.range),
+            });
+        }
+    }
+
+    // §7.7.1: an `exports`/`opens` directive must name a package that has
+    // source files in the module — a package with no files is empty or does
+    // not exist ([§7.7.1]).
+    if let Some(source_set) = hir::source_set_for_file(db, file) {
+        for export in data.exports.iter().chain(data.opens.iter()) {
+            if hir::source_set_package_files(db, source_set.clone(), &export.package).is_empty() {
+                out.push(DeclDiagnostic::PackageEmptyOrNotFound {
+                    package: export.package.clone(),
+                    range: Some(export.package_range),
+                });
+            }
+        }
+    }
+
+    // §7.7.2: a `provides` directive's implementation type must be a subtype
+    // of its service interface ([§7.7.2]).
+    for provide in &data.provides {
+        let service =
+            crate::java::resolve::resolve_type_ref(db, &scope, &resolver, &provide.service);
+        for implementation in &provide.implementations {
+            let implementation_ty =
+                crate::java::resolve::resolve_type_ref(db, &scope, &resolver, implementation);
+            if !service.is_error(db)
+                && !implementation_ty.is_error(db)
+                && !crate::java::subtyping::is_subtype(db, &scope, &implementation_ty, &service)
+            {
+                let range = implementation.first_ref().and_then(|r| r.range);
+                out.push(DeclDiagnostic::ServiceImplementationNotSubtype {
+                    service,
+                    implementation: implementation_ty,
+                    range,
+                });
+            }
+        }
+    }
+    out
 }
 
 /// Enumerates the class-like declarations of the file in source order and

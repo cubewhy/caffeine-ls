@@ -573,6 +573,11 @@ fn lower_module(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
 fn requires_from(directive: &SyntaxNode<Lang>) -> ModuleRequires {
     let name = qualified_name_text(directive).unwrap_or_else(missing_name);
+    let range = directive
+        .children()
+        .find(|child| is(child, J::QUALIFIED_NAME))
+        .map(|child| child.text_range())
+        .unwrap_or_else(|| directive.text_range());
     let (transitive, statik) = directive
         .children()
         .find(|child| is(child, J::MODIFIER_LIST))
@@ -593,18 +598,32 @@ fn requires_from(directive: &SyntaxNode<Lang>) -> ModuleRequires {
         name,
         transitive,
         statik,
+        range,
     }
 }
 
 fn package_exports_from(directive: &SyntaxNode<Lang>) -> ModuleExports {
-    let names: Vec<Name> = directive
+    let names: Vec<(Name, TextRange)> = directive
         .children()
         .filter(|child| is(child, J::QUALIFIED_NAME))
-        .map(|child| Name::new(&trimmed_text(&child)))
+        .map(|child| (Name::new(&trimmed_text(&child)), child.text_range()))
         .collect();
-    let package = names.first().cloned().unwrap_or_else(missing_name);
-    let to = names.into_iter().skip(1).collect();
-    ModuleExports { package, to }
+    let package = names
+        .first()
+        .map(|(name, _)| name.clone())
+        .unwrap_or_else(missing_name);
+    let package_range = names
+        .first()
+        .map(|(_, range)| *range)
+        .unwrap_or_else(|| directive.text_range());
+    let to = names.iter().skip(1).map(|(name, _)| name.clone()).collect();
+    let to_ranges = names.iter().skip(1).map(|(_, range)| *range).collect();
+    ModuleExports {
+        package,
+        to,
+        package_range,
+        to_ranges,
+    }
 }
 
 fn provides_from(directive: &SyntaxNode<Lang>) -> ModuleProvides {

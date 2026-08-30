@@ -281,6 +281,19 @@ pub(crate) fn class_diagnostics_query(
     crate::java::decl_check::class_diagnostics_impl(db, file_id)
 }
 
+/// The module-directive diagnostics of `file`'s `module-info.java`
+/// ([JLS §7.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.7)),
+/// memoized per file. See
+/// [`crate::java::decl_check::module_diagnostics_impl`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn module_diagnostics_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Vec<crate::java::decl_check::DeclDiagnostic> {
+    let file_id = *file.file_id(db);
+    crate::java::decl_check::module_diagnostics_impl(db, file_id)
+}
+
 /// The workspace source files whose declarations `file`'s type outputs resolve
 /// against — the exact cross-file dependency set of `file`. Tracked on the
 /// interned [`FileText`], so a text edit to `file` invalidates exactly its
