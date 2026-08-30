@@ -23,7 +23,7 @@ use hir_expand::{
     arena::Arena,
     body::{BodyId, BodyTree, ExprId},
     name::Name,
-    span::{NameRef, SpannedTypeRef},
+    span::{AnnotationRef, SpannedTypeRef},
 };
 use rowan::TextRange;
 
@@ -312,7 +312,7 @@ pub struct ClassData {
     /// The annotation references of the declaration, in source order
     /// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)),
     /// decoupled from the modifier flags.
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub super_class: Option<SpannedTypeRef>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
@@ -325,7 +325,7 @@ pub struct EnumData {
     pub name: Name,
     pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
@@ -345,7 +345,7 @@ pub struct RecordData {
     /// declaration's "definition" — what the outline should point at.
     pub header_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub components: Vec<RecordComponent>,
     pub interfaces: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
@@ -358,7 +358,7 @@ pub struct AnnotationData {
     pub name: Name,
     pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
 }
@@ -416,7 +416,7 @@ pub struct MethodData {
     pub name: Name,
     pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub sig: Signature,
     /// The language-specific attributes of the declaration (Java constructor
     /// / body / annotation default, Kotlin attributes later).
@@ -458,7 +458,7 @@ pub struct FieldData {
     pub name: Name,
     pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     pub ty: SpannedTypeRef,
     pub initializer: Option<TextRange>,
     pub initializer_expr: Option<ExprId>,
@@ -495,7 +495,7 @@ pub struct ModuleData {
     pub name: Name,
     pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
     /// Whether the module was declared `open`.
     pub is_open: bool,
     pub requires: Vec<ModuleRequires>,
@@ -533,7 +533,7 @@ pub struct ModuleProvides {
 pub struct TypeParam {
     pub name: Name,
     pub bounds: Vec<SpannedTypeRef>,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
 }
 
 /// A record component declaration `T name`
@@ -554,5 +554,5 @@ pub struct RecordComponent {
     pub ty_range: TextRange,
     /// Whether the component was declared varargs (`String... names`).
     pub varargs: bool,
-    pub annotations: Vec<NameRef>,
+    pub annotations: Vec<AnnotationRef>,
 }

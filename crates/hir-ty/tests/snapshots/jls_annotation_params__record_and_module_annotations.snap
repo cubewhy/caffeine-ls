@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+@Ann
+record Rec(@Comp(a = "x") String name) {}
+
+FILE /src/module-info.java:
+@Ann(module = true)
+module com.example {}
+
+record Rec
+  annotations: @Ann
+  component name: @Comp(a = "x")
+module com.example
+  annotations: @Ann(module = true)

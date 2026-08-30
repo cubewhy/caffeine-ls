@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@SuppressWarnings("unchecked")
+@Target(METHOD)
+class Anns {}
+
+class Anns
+  annotations: @SuppressWarnings(value = "unchecked") @Target(value = METHOD)

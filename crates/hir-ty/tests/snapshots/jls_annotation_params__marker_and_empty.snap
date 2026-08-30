@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@Marker
+@Empty()
+@Pair(a = 1)
+class Anns {
+    @Marker
+    void run() {}
+}
+
+class Anns
+  annotations: @Marker @Empty @Pair(a = 1)
+method run
+  annotations: @Marker

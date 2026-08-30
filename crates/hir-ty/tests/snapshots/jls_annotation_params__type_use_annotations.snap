@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.util.List;
+
+class Anns {
+    @TUA(level = 1) String field;
+    List<@TUA(level = 2) String> list;
+    int @TUA(level = 3) [] dim;
+    @TUA(level = 4) <T> void generic() {}
+}
+
+class Anns
+field field
+  annotations: @TUA(level = 1)
+field list
+  type: @TUA(level = 2)
+field dim
+  type: @TUA(level = 3)
+method generic
+  annotations: @TUA(level = 4)

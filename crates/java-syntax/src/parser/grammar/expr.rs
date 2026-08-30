@@ -775,12 +775,38 @@ pub fn element_value(p: &mut Parser) {
     if p.at(AT) {
         annotation(p);
     } else if p.at(L_BRACE) {
-        array_initializer(p);
+        element_value_array_initializer(p);
     } else {
         if expression(p).is_err() {
             recover_parameter(p);
         }
     }
+}
+
+/// An annotation element value in an array initializer
+/// ([JLS §9.7.1]: `element-value-array-initializer`). Unlike a regular
+/// [`array_initializer`] — whose elements are expressions — the elements here
+/// are *element values*, which may themselves be annotations (`{ @A, @B }`)
+/// or array initializers, not just constant expressions.
+fn element_value_array_initializer(p: &mut Parser) -> CompletedMarker {
+    let m = p.start();
+
+    p.expect(L_BRACE); // {
+
+    if !p.at(R_BRACE) {
+        element_value(p);
+
+        while p.eat(COMMA) {
+            if p.at(R_BRACE) {
+                break; // trailing comma
+            }
+            element_value(p);
+        }
+    }
+
+    p.expect(R_BRACE);
+
+    m.complete(p, ARRAY_INITIALIZER)
 }
 
 pub fn expression_list(p: &mut Parser) {

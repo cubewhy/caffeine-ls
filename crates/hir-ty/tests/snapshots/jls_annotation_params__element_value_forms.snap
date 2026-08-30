@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@Ann(
+    a = 1,
+    b = 2L,
+    c = 'x',
+    d = true,
+    e = "text",
+    f = Foo.BAR,
+    g = String.class,
+    h = { 1, 2, 3 },
+    i = @Nested(x = false),
+    j = -5
+)
+class Anns {}
+
+class Anns
+  annotations: @Ann(a = 1, b = 2L, c = 'x', d = true, e = "text", f = Foo.BAR, g = String.class, h = {1, 2, 3}, i = @Nested(x = false), j = -5)

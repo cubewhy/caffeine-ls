@@ -1790,6 +1790,201 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     lines.join("\n")
 }
 
+/// Renders the source files and the parsed annotations of every declaration
+/// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7),
+/// [§9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1)):
+/// for each item the declaration annotations plus the type-use annotations
+/// ([§9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4))
+/// of its signature types, with the parsed element-value arguments.
+pub fn check_annotations(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set(&mut db, &fixture, files);
+    render_annotations(&db, files)
+}
+
+fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+    use hir_def::java::item_tree::ItemData;
+    use hir_expand::span::{AnnotationRef, AnnotationValue};
+    fn render_arg(value: &AnnotationValue) -> String {
+        use hir_expand::body::Literal;
+        match value {
+            AnnotationValue::Literal(Literal::Int(i)) => format!("{i}"),
+            AnnotationValue::Literal(Literal::Long(i)) => format!("{i}L"),
+            AnnotationValue::Literal(Literal::Char(c)) => format!("'{c}'"),
+            AnnotationValue::Literal(Literal::Float) => "f".to_owned(),
+            AnnotationValue::Literal(Literal::Double) => "d".to_owned(),
+            AnnotationValue::Literal(Literal::Boolean(b)) => format!("{b}"),
+            AnnotationValue::Literal(Literal::Str(s)) => format!("\"{s}\""),
+            AnnotationValue::EnumConstant { qualifier, member } => match qualifier {
+                Some(q) => format!("{}.{}", q.as_str(), member.as_str()),
+                None => member.as_str().to_owned(),
+            },
+            AnnotationValue::ClassLit(ty) => {
+                let name = ty
+                    .first_ref()
+                    .map(|r| r.name.as_str().to_owned())
+                    .unwrap_or_else(|| "<error>".to_owned());
+                format!("{name}.class")
+            }
+            AnnotationValue::Annotation(inner) => render_annotation(inner),
+            AnnotationValue::Array(values) => format!(
+                "{{{}}}",
+                values.iter().map(render_arg).collect::<Vec<_>>().join(", ")
+            ),
+            AnnotationValue::Unresolved { text } => text.clone(),
+        }
+    }
+    fn render_annotation(annotation: &AnnotationRef) -> String {
+        let name = annotation.name.name.as_str();
+        if annotation.args.is_empty() {
+            format!("@{name}")
+        } else {
+            let args = annotation
+                .args
+                .iter()
+                .map(|arg| format!("{} = {}", arg.name.as_str(), render_arg(&arg.value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("@{name}({args})")
+        }
+    }
+    fn render_annotations_vec(annotations: &[AnnotationRef]) -> String {
+        annotations
+            .iter()
+            .map(render_annotation)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+    fn render_type_annotations(ty: &hir_expand::span::SpannedTypeRef) -> String {
+        render_annotations_vec(&ty.type_use_annotations)
+    }
+
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let tree = hir::file_item_tree(db, file_id);
+        for (_id, data) in all_items(&tree) {
+            let header = match data {
+                ItemData::Class(d) => format!("class {}", d.name.as_str()),
+                ItemData::Interface(d) => format!("interface {}", d.name.as_str()),
+                ItemData::Enum(d) => format!("enum {}", d.name.as_str()),
+                ItemData::Record(d) => format!("record {}", d.name.as_str()),
+                ItemData::Annotation(d) => format!("@interface {}", d.name.as_str()),
+                ItemData::Method(m) => format!("method {}", m.name.as_str()),
+                ItemData::Field(f) => format!("field {}", f.name.as_str()),
+                ItemData::EnumConstant(c) => format!("constant {}", c.name.as_str()),
+                ItemData::StaticInit(_) => "static {}".to_owned(),
+                ItemData::InstanceInit(_) => "instance {}".to_owned(),
+                ItemData::Module(d) => format!("module {}", d.name.as_str()),
+                _ => continue,
+            };
+            lines.push(header);
+            match data {
+                ItemData::Class(d) | ItemData::Interface(d) => {
+                    let decl = render_annotations_vec(&d.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                    for param in &d.type_params {
+                        let anns = render_annotations_vec(&param.annotations);
+                        if !anns.is_empty() {
+                            lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
+                        }
+                    }
+                }
+                ItemData::Enum(d) => {
+                    let decl = render_annotations_vec(&d.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                }
+                ItemData::Record(d) => {
+                    let decl = render_annotations_vec(&d.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                    for param in &d.type_params {
+                        let anns = render_annotations_vec(&param.annotations);
+                        if !anns.is_empty() {
+                            lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
+                        }
+                    }
+                    for component in &d.components {
+                        let anns = render_annotations_vec(&component.annotations);
+                        let type_anns = render_type_annotations(&component.ty);
+                        let extra = [anns, type_anns]
+                            .iter()
+                            .filter(|s| !s.is_empty())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if !extra.is_empty() {
+                            lines.push(format!("  component {}: {extra}", component.name.as_str()));
+                        }
+                    }
+                }
+                ItemData::Annotation(d) => {
+                    let decl = render_annotations_vec(&d.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                }
+                ItemData::Module(d) => {
+                    let decl = render_annotations_vec(&d.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                }
+                ItemData::Method(m) => {
+                    let decl = render_annotations_vec(&m.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                    for param in &m.sig.type_params {
+                        let anns = render_annotations_vec(&param.annotations);
+                        if !anns.is_empty() {
+                            lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
+                        }
+                    }
+                    let type_anns = m
+                        .sig
+                        .params
+                        .iter()
+                        .map(|p| render_type_annotations(&p.ty))
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if !type_anns.is_empty() {
+                        lines.push(format!("  param types: {type_anns}"));
+                    }
+                    if let Some(ret) = &m.sig.ret {
+                        let ret_anns = render_type_annotations(ret);
+                        if !ret_anns.is_empty() {
+                            lines.push(format!("  return type: {ret_anns}"));
+                        }
+                    }
+                }
+                ItemData::Field(f) => {
+                    let decl = render_annotations_vec(&f.annotations);
+                    if !decl.is_empty() {
+                        lines.push(format!("  annotations: {decl}"));
+                    }
+                    let type_anns = render_type_annotations(&f.ty);
+                    if !type_anns.is_empty() {
+                        lines.push(format!("  type: {type_anns}"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    lines.join("\n")
+}
+
 /// Renders the syntax-layer diagnostics of every file, each as
 /// `@line:col..line:col 'covered-text': code: message`, so the friendly
 /// ranges of a diagnostic (e.g. the "bad arguments" span of a wrong-arity

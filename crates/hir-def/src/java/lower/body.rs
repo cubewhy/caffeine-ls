@@ -106,6 +106,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                 ty = SpannedTypeRef {
                     ty: TypeRef::Array(Box::new(ty.ty)),
                     refs: ty.refs,
+                    type_use_annotations: ty.type_use_annotations,
                 };
             }
             alloc_local(
@@ -851,6 +852,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                             generic_args: Vec::new(),
                         },
                         refs,
+                        type_use_annotations: Vec::new(),
                     }
                 }),
             }
@@ -873,6 +875,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
                             generic_args: Vec::new(),
                         },
                         refs,
+                        type_use_annotations: Vec::new(),
                     }
                 }),
             }
@@ -1061,7 +1064,10 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
     }
 }
 
-fn literal(node: &SyntaxNode<Lang>) -> ExprData {
+/// Decodes a `LITERAL` node into its [`ExprData`] ([JLS §3.10]); `pub(super)`
+/// so the annotation walker ([`super::walk`]) can reuse the value decoding for
+/// annotation element values ([§9.7.1]).
+pub(super) fn literal(node: &SyntaxNode<Lang>) -> ExprData {
     let token = node
         .children_with_tokens()
         .filter_map(|e| e.as_token().cloned())
@@ -1315,6 +1321,7 @@ fn class_literal(node: &SyntaxNode<Lang>) -> ExprData {
             generic_args: Vec::new(),
         },
         refs,
+        type_use_annotations: Vec::new(),
     })
 }
 
@@ -1495,10 +1502,15 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
         if let Some(size) = dimension.children().find(|c| is_expr_kind(c.kind())) {
             dims.push(expr(ctx, owner, &size));
         } else {
-            let SpannedTypeRef { ty: inner, refs } = ty;
+            let SpannedTypeRef {
+                ty: inner,
+                refs,
+                type_use_annotations,
+            } = ty;
             ty = SpannedTypeRef {
                 ty: TypeRef::Array(Box::new(inner)),
                 refs,
+                type_use_annotations,
             };
         }
     }
@@ -1900,6 +1912,7 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
                 SpannedTypeRef {
                     ty: TypeRef::Wildcard { bound },
                     refs,
+                    type_use_annotations: Vec::new(),
                 }
             } else {
                 SpannedTypeRef::synthetic(TypeRef::Error)

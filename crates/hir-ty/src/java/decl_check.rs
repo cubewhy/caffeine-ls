@@ -460,9 +460,9 @@ fn check_class(
     for &child in tree.data(item).body() {
         if let ItemData::Method(m) = tree.data(child)
             && !m.is_constructor()
-            && m.annotations
-                .iter()
-                .any(|annotation| is_override_annotation(db, scope, &resolver, &annotation.name))
+            && m.annotations.iter().any(|annotation| {
+                is_override_annotation(db, scope, &resolver, &annotation.name.name)
+            })
         {
             let Some(method) = declared
                 .iter()

@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_annotation_params.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@Outer(inner = @Inner(value = 1), arr = { @A, @B(x = "y") })
+class Anns {}
+
+class Anns
+  annotations: @Outer(inner = @Inner(value = 1), arr = {@A, @B(x = "y")})

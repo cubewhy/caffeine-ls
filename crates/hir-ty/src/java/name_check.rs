@@ -17,7 +17,7 @@ use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, LocalId, PatternId, StmtData, StmtId},
     name::Name,
-    span::{NameRef, SpannedTypeRef},
+    span::{AnnotationRef, NameRef, SpannedTypeRef},
 };
 use rowan::TextRange;
 use rustc_hash::FxHashMap;
@@ -228,13 +228,13 @@ pub(crate) fn package_path_diagnostics(
 /// type parameters of classes/interfaces/records and methods. Each resolves
 /// like a type name ([JLS §6.5.5.1]) — an annotation type *is* a reference
 /// type — so an unknown one is reported the same way.
-fn item_annotation_refs(data: &ItemData) -> Vec<&NameRef> {
-    fn annotations<'a>(items: &'a [NameRef], out: &mut Vec<&'a NameRef>) {
+fn item_annotation_refs(data: &ItemData) -> Vec<&AnnotationRef> {
+    fn annotations<'a>(items: &'a [AnnotationRef], out: &mut Vec<&'a AnnotationRef>) {
         out.extend(items.iter());
     }
     fn type_params<'a>(
         params: &'a [hir_def::java::item_tree::TypeParam],
-        out: &mut Vec<&'a NameRef>,
+        out: &mut Vec<&'a AnnotationRef>,
     ) {
         for param in params {
             out.extend(param.annotations.iter());
@@ -299,7 +299,7 @@ pub(crate) fn declaration_type_diagnostics(
         // skipped by the caller's `check_spanned`, which the annotations
         // bypass because they are not `SpannedTypeRef`s).
         for reference in item_annotation_refs(tree.data(id)) {
-            check_reference(db, scope, &resolver, reference, &mut issues);
+            check_reference(db, scope, &resolver, &reference.name, &mut issues);
         }
         for issue in issues {
             match issue {
