@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_annotation_targets.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@interface Marker {}
+
+@Marker
+class Anns {}
+
+@8:1: annotation-not-applicable: Annotation '@Marker' is not applicable to 'TYPE'

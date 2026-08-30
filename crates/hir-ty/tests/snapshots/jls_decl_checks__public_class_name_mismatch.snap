@@ -7,4 +7,4 @@ package com.example;
 
 public class Zed {}
 
-method : class-public-should-be-in-file: @2:13Class 'Zed' is public; it should be declared in a file named 'Zed.java'
+@2:13: class-public-should-be-in-file: Class 'Zed' is public; it should be declared in a file named 'Zed.java'

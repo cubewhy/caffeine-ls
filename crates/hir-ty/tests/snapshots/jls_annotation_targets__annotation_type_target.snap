@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_annotation_targets.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.METHOD)
+@interface Inner {}
+
+@Target(ElementType.ANNOTATION_TYPE)
+@interface Ok {}
+
+@Inner
+@Ok
+@interface Anns {}
+
+@11:1: annotation-not-applicable: Annotation '@Inner' is not applicable to 'ANNOTATION_TYPE'

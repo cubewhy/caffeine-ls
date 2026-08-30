@@ -2138,13 +2138,21 @@ fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
                     format!("@{line}:{col}", line = lc.line, col = lc.col)
                 })
                 .unwrap_or_default();
-            lines.push(format!(
-                "method {}: {}: {}{}",
-                diag.method_name(),
-                diag.code(),
-                at,
-                diag.message(db)
-            ));
+            // A diagnostic keyed to a method (override, @Override, …) is
+            // prefixed with its method name; the reference-position and
+            // annotation-target diagnostics carry none and render bare.
+            let method = diag.method_name();
+            if method.is_empty() {
+                lines.push(format!("{at}: {}: {}", diag.code(), diag.message(db)));
+            } else {
+                lines.push(format!(
+                    "method {}: {}: {}{}",
+                    method,
+                    diag.code(),
+                    at,
+                    diag.message(db)
+                ));
+            }
         }
     }
     lines.join("\n")

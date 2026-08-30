@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_annotation_targets.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target({ ElementType.TYPE, ElementType.METHOD, ElementType.FIELD })
+@interface M {}
+
+@M
+class Anns {
+    @M
+    void run() {}
+
+    @M
+    int x;
+}

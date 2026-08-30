@@ -12,4 +12,4 @@ class Anns {
     int @BogusDim [] bad;
 }
 
-method : cannot-resolve-type: @6:9Cannot resolve symbol 'BogusDim'
+@6:9: cannot-resolve-type: Cannot resolve symbol 'BogusDim'

@@ -16,12 +16,12 @@ class App extends org.missing.Base implements org.missing.Marker {
     }
 }
 
-method : cannot-resolve-type: @4:18Cannot resolve symbol 'org.missing.Base'
-method : cannot-resolve-type: @4:46Cannot resolve symbol 'org.missing.Marker'
-method : cannot-resolve-type: @5:4Cannot resolve symbol 'org.missing.List'
-method : cannot-resolve-type: @6:4Cannot resolve symbol 'org.missing.Missing'
-method : cannot-resolve-type: @7:30Cannot resolve symbol 'org.missing.Param'
-method : cannot-resolve-type: @7:66Cannot resolve symbol 'org.missing.Elem'
-method : cannot-resolve-type: @7:4Cannot resolve symbol 'org.missing.Widget'
-method : cannot-resolve-type: @8:15Cannot resolve symbol 'org.missing.Failure'
-method : cannot-resolve-type: @8:36Cannot resolve symbol 'org.missing.Outcome'
+@4:18: cannot-resolve-type: Cannot resolve symbol 'org.missing.Base'
+@4:46: cannot-resolve-type: Cannot resolve symbol 'org.missing.Marker'
+@5:4: cannot-resolve-type: Cannot resolve symbol 'org.missing.List'
+@6:4: cannot-resolve-type: Cannot resolve symbol 'org.missing.Missing'
+@7:30: cannot-resolve-type: Cannot resolve symbol 'org.missing.Param'
+@7:66: cannot-resolve-type: Cannot resolve symbol 'org.missing.Elem'
+@7:4: cannot-resolve-type: Cannot resolve symbol 'org.missing.Widget'
+@8:15: cannot-resolve-type: Cannot resolve symbol 'org.missing.Failure'
+@8:36: cannot-resolve-type: Cannot resolve symbol 'org.missing.Outcome'

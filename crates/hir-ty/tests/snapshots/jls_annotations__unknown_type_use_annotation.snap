@@ -13,6 +13,6 @@ class Anns {
     List<String @UnknownArgument []> argDim;
 }
 
-method : cannot-resolve-type: @5:12Cannot resolve symbol 'UnknownTypeUse'
-method : cannot-resolve-type: @6:10Cannot resolve symbol 'UncheckedElement'
-method : cannot-resolve-type: @7:17Cannot resolve symbol 'UnknownArgument'
+@5:12: cannot-resolve-type: Cannot resolve symbol 'UnknownTypeUse'
+@6:10: cannot-resolve-type: Cannot resolve symbol 'UncheckedElement'
+@7:17: cannot-resolve-type: Cannot resolve symbol 'UnknownArgument'

@@ -10,5 +10,5 @@ import java.*;
 
 class Imports {}
 
-method : unresolved-import-package: @2:0Package 'com.nonexistent.pkg' does not exist
-method : unresolved-import-package: @3:0Package 'java' does not exist
+@2:0: unresolved-import-package: Package 'com.nonexistent.pkg' does not exist
+@3:0: unresolved-import-package: Package 'java' does not exist

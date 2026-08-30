@@ -129,6 +129,18 @@ pub enum DeclDiagnostic {
         name: Name,
         name_range: Option<rowan::TextRange>,
     },
+    /// §9.6.4.1: an annotation's `@Target` does not include the element type
+    /// of the declaration (or type) it is applied to — javac's
+    /// `annotation @X is not applicable in this type context`. `name` is the
+    /// annotation's (possibly qualified) name; `element_type` is the
+    /// `ElementType` constant of the annotated declaration, or `TYPE_USE`
+    /// for a type context that neither the annotation's target nor the
+    /// declaration's element type covers.
+    AnnotationNotApplicable {
+        name: Name,
+        element_type: &'static str,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -176,6 +188,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ClassPublicShouldBeInFile { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ClassPublicShouldBeInFile)
+            }
+            DeclDiagnostic::AnnotationNotApplicable { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AnnotationNotApplicable)
             }
         }
     }
@@ -263,6 +278,15 @@ impl DeclDiagnostic {
                     "Class '{simple}' is public; it should be declared in a file named '{simple}.java'"
                 )
             }
+            DeclDiagnostic::AnnotationNotApplicable {
+                name, element_type, ..
+            } => {
+                format!(
+                    "Annotation '@{}' is not applicable to '{}'",
+                    name.as_str(),
+                    element_type
+                )
+            }
         }
     }
 
@@ -282,7 +306,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnexpectedPackagePath { .. }
             | DeclDiagnostic::DuplicatePackage { .. }
             | DeclDiagnostic::DuplicateClass { .. }
-            | DeclDiagnostic::ClassPublicShouldBeInFile { .. } => "",
+            | DeclDiagnostic::ClassPublicShouldBeInFile { .. }
+            | DeclDiagnostic::AnnotationNotApplicable { .. } => "",
         }
     }
 
@@ -300,7 +325,10 @@ impl DeclDiagnostic {
             DeclDiagnostic::UnexpectedPackagePath { name_range, .. } => *name_range,
             DeclDiagnostic::DuplicatePackage { name_range, .. }
             | DeclDiagnostic::DuplicateClass { name_range, .. }
-            | DeclDiagnostic::ClassPublicShouldBeInFile { name_range, .. } => *name_range,
+            | DeclDiagnostic::ClassPublicShouldBeInFile { name_range, .. }
+            | DeclDiagnostic::AnnotationNotApplicable {
+                range: name_range, ..
+            } => *name_range,
             _ => None,
         }
     }
@@ -343,6 +371,10 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // §7.6: no two class-like declarations share a fully qualified name,
     // across the source set (cross-file as well as same-file).
     out.extend(duplicate_class_diagnostics(db, file, &tree));
+
+    // §9.6.4.1/[§9.7.4]: the `@Target` applicability of every annotation,
+    // declaration and type-use alike (see [`crate::java::annotation_check`]).
+    out.extend(crate::java::annotation_check::annotation_target_diagnostics(db, file, &tree));
 
     fn walk(
         db: &dyn TyDatabase,

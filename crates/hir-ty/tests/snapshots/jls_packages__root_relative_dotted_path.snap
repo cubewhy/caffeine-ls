@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_packages.rs
-assertion_line: 145
 expression: out
 ---
 FILE /proj/src/main/java/org/example/Widget.java:
@@ -18,4 +17,4 @@ package org.example.unmatched.pkg;
 
 public class Unmatched {}
 
-method : package-path-mismatch: @0:8Package name 'org.example.unmatched.pkg' does not correspond to the file path 'org.example'
+@0:8: package-path-mismatch: Package name 'org.example.unmatched.pkg' does not correspond to the file path 'org.example'

@@ -8,4 +8,4 @@ package com.example;
 public class Zed {}
 public class Other {}
 
-method : class-public-should-be-in-file: @3:13Class 'Other' is public; it should be declared in a file named 'Other.java'
+@3:13: class-public-should-be-in-file: Class 'Other' is public; it should be declared in a file named 'Other.java'

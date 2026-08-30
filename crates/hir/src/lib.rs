@@ -31,8 +31,8 @@ pub use modules::{
 pub use project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId};
 pub use project_model::{ProjectId, SourceSetKind};
 pub use stubs::{
-    ClassKind, ClassOrModuleRecord, ClassOrModuleStub, ClassRecord, ClassStub, FieldStub,
-    MethodStub, ModuleRecord, ModuleStub, ParamData, PrimitiveType, PrimitiveValue, Symbol,
-    TypeRef,
+    AnnotationSig, AnnotationValue, ClassKind, ClassOrModuleRecord, ClassOrModuleStub, ClassRecord,
+    ClassStub, FieldStub, MethodStub, ModuleRecord, ModuleStub, ParamData, PrimitiveType,
+    PrimitiveValue, Symbol, TypeRef,
 };
 pub use symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind, SourceSymbolRef};

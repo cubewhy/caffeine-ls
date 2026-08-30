@@ -4,11 +4,13 @@
 //! Resolution ([`resolve`]), subtyping ([`subtyping`]), method resolution
 //! ([`method`]), expression inference ([`infer`], [`inference`]), the
 //! declaration diagnostics ([`decl_check`], [`name_check`],
-//! [`diagnostics`]), the cross-file dependency index ([`dep_index`]) and
-//! constant evaluation ([`const_eval`]) are all Java-specific today. The
-//! JVM substrate they build on lives in [`crate::jvm`]; a Kotlin type layer
-//! will be added in [`crate::kotlin`] without touching this namespace.
+//! [`diagnostics`], [`annotation_check`]), the cross-file dependency index
+//! ([`dep_index`]) and constant evaluation ([`const_eval`]) are all
+//! Java-specific today. The JVM substrate they build on lives in
+//! [`crate::jvm`]; a Kotlin type layer will be added in [`crate::kotlin`]
+//! without touching this namespace.
 
+pub mod annotation_check;
 pub mod const_eval;
 pub mod db;
 pub mod decl_check;

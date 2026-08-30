@@ -17,7 +17,7 @@ class Anns {
     void qualified() {}
 }
 
-method : cannot-resolve-type: @2:1Cannot resolve symbol 'UnknownAnn'
-method : cannot-resolve-type: @4:5Cannot resolve symbol 'DoesNotExist'
-method : cannot-resolve-type: @7:5Cannot resolve symbol 'NotARealAnnotation'
-method : cannot-resolve-type: @10:5Cannot resolve symbol 'bogus.Widget'
+@2:1: cannot-resolve-type: Cannot resolve symbol 'UnknownAnn'
+@4:5: cannot-resolve-type: Cannot resolve symbol 'DoesNotExist'
+@7:5: cannot-resolve-type: Cannot resolve symbol 'NotARealAnnotation'
+@10:5: cannot-resolve-type: Cannot resolve symbol 'bogus.Widget'

@@ -8,4 +8,4 @@ package com.example;
 class Foo {}
 class Foo {}
 
-method : duplicate-class: @3:6Duplicate class: com.example.Foo
+@3:6: duplicate-class: Duplicate class: com.example.Foo

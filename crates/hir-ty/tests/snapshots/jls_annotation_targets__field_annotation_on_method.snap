@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_targets.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target({ ElementType.FIELD, ElementType.PARAMETER })
+@interface F {}
+
+class Anns {
+    @F
+    void run() {}
+}
+
+@9:5: annotation-not-applicable: Annotation '@F' is not applicable to 'METHOD'

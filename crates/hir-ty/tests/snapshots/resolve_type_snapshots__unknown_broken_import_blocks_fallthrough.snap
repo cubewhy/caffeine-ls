@@ -11,5 +11,5 @@ class App {
     Thing field;
 }
 
-method : cannot-resolve-type: @5:4Cannot resolve symbol 'Thing'
-method : unresolved-import: @2:0Cannot resolve symbol 'org.missing.Thing' in the single-type import
+@5:4: cannot-resolve-type: Cannot resolve symbol 'Thing'
+@2:0: unresolved-import: Cannot resolve symbol 'org.missing.Thing' in the single-type import

@@ -153,6 +153,10 @@ pub enum JavaDiagnosticCode {
     /// file named after its simple name — which also means at most one `public`
     /// top-level type per file.
     ClassPublicShouldBeInFile,
+    /// §9.6.4.1: an annotation is used on a declaration or type whose element
+    /// type is not in its `@Target` set (or, for a type-use annotation, the
+    /// target includes neither `TYPE_USE` nor the declaration's element type).
+    AnnotationNotApplicable,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -243,6 +247,7 @@ impl JavaDiagnosticCode {
             DuplicatePackage => None,
             DuplicateClass => Some("compiler.err.duplicate.class"),
             ClassPublicShouldBeInFile => Some("compiler.err.class.public.should.be.in.file"),
+            AnnotationNotApplicable => Some("compiler.err.annotation.not.applicable"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -316,6 +321,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::DuplicatePackage => "duplicate-package",
             JavaDiagnosticCode::DuplicateClass => "duplicate-class",
             JavaDiagnosticCode::ClassPublicShouldBeInFile => "class-public-should-be-in-file",
+            JavaDiagnosticCode::AnnotationNotApplicable => "annotation-not-applicable",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

@@ -18,4 +18,4 @@ class Imports {
     }
 }
 
-method : unresolved-import-package: @2:0Package 'com.missing.dep' does not exist
+@2:0: unresolved-import-package: Package 'com.missing.dep' does not exist
