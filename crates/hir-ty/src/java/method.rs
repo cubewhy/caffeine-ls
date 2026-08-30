@@ -237,6 +237,14 @@ pub struct MethodData {
     /// or the `abstract` modifier of the source. The single abstract method of
     /// a functional interface ([JLS §9.8]) is found from these.
     pub abstract_: bool,
+    /// Whether the method is `final`
+    /// ([JLS §8.4.3.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.3.3)):
+    /// the ACC_FINAL flag of the classfile
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
+    /// or the `final` modifier of the source. A final instance method cannot be
+    /// overridden and a final static method cannot be hidden by a subclass; the
+    /// declaration-level checks ([JLS §8.4.3.3]) report the violation.
+    pub is_final: bool,
     /// The access of the method
     /// ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
     pub access: Access,
@@ -470,6 +478,7 @@ fn member_set_impl(
             varargs: false,
             is_static: false,
             abstract_: false,
+            is_final: false,
             access: Access::Public,
             declaring_package: Some("java.lang".to_owned()),
             declaring_top_level: Some("Object".to_owned()),
@@ -799,6 +808,7 @@ fn library_class_methods(
             varargs: JvmAccessFlags::from_bits_retain(method.flags).is_varargs(),
             is_static: JvmAccessFlags::from_bits_retain(method.flags).is_static(),
             abstract_: JvmAccessFlags::from_bits_retain(method.flags).is_abstract(),
+            is_final: JvmAccessFlags::from_bits_retain(method.flags).is_final(),
             access: Access::from_flags(method.flags),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -936,6 +946,7 @@ fn source_class_methods(
             varargs,
             is_static: method.modifiers.is_static(),
             abstract_,
+            is_final: method.modifiers.is_final(),
             access: interface_access_of(declaring_interface, &method.modifiers),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
@@ -979,6 +990,7 @@ fn source_class_methods(
             varargs: false,
             is_static: false,
             abstract_: false,
+            is_final: false,
             // §8.8.9: the default constructor has the same access modifier
             // as the class (package-private when the class has none).
             access: modifiers
@@ -1009,6 +1021,7 @@ fn source_class_methods(
                 varargs: false,
                 is_static: true,
                 abstract_: false,
+                is_final: false,
                 access: Access::Public,
                 declaring_package: declaring_package.clone(),
                 declaring_top_level: declaring_top_level.clone(),
@@ -1027,6 +1040,7 @@ fn source_class_methods(
                 varargs: false,
                 is_static: true,
                 abstract_: false,
+                is_final: false,
                 access: Access::Public,
                 declaring_package: declaring_package.clone(),
                 declaring_top_level: declaring_top_level.clone(),
@@ -1071,6 +1085,7 @@ fn source_class_methods(
                 varargs: false,
                 is_static: false,
                 abstract_: false,
+                is_final: false,
                 access: Access::Public,
                 declaring_package: declaring_package.clone(),
                 declaring_top_level: declaring_top_level.clone(),
@@ -1129,6 +1144,7 @@ fn source_class_methods(
                         varargs,
                         is_static: false,
                         abstract_: false,
+                        is_final: false,
                         access: access_of(&record.modifiers),
                         declaring_package: declaring_package.clone(),
                         declaring_top_level: declaring_top_level.clone(),
@@ -1521,6 +1537,7 @@ fn instantiate(
         varargs: method.varargs,
         is_static: method.is_static,
         abstract_: method.abstract_,
+        is_final: method.is_final,
         access: method.access,
         declaring_package: method.declaring_package.clone(),
         declaring_top_level: method.declaring_top_level.clone(),

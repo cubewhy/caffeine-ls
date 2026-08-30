@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class A {}
+
+final class B extends A {}
+
+class C extends B {}
+
+@6:16: cannot-inherit-from-final-class: Cannot inherit from 'B'

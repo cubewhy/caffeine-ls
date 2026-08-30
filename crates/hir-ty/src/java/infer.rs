@@ -2604,6 +2604,7 @@ impl<'a> InferCtx<'a> {
             varargs: method.varargs,
             is_static: method.is_static,
             abstract_: method.abstract_,
+            is_final: method.is_final,
             access: method.access,
             declaring_package: method.declaring_package.clone(),
             declaring_top_level: method.declaring_top_level.clone(),

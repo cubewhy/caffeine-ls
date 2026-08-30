@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    public int f() { return 1; }
+}
+
+class Mid extends Base {
+    @Override
+    public int f() { return 2; }
+}
+
+class Top extends Mid {
+    @Override
+    public int f() { return 3; }
+}

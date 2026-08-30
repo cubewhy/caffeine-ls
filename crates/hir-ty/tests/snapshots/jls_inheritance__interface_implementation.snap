@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/I.java:
+package com.example;
+
+interface Greeter {
+    String greet();
+}
+
+class EnglishGreeter implements Greeter {
+    public String greet() { return "hello"; }
+}

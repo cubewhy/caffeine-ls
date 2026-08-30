@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/G.java:
+package com.example;
+
+abstract class A {
+    abstract void m();
+    final void done() {}
+}
+
+abstract class Mid extends A {
+    abstract void n();
+}
+
+class Concrete extends Mid {
+    void m() {}
+    void n() {}
+}

@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/FinalMethod.java:
+package com.example;
+
+class Base {
+    final void seal() {}
+    void open() {}
+}
+
+class Sub extends Base {
+    void seal() {}
+    @Override
+    void open() {}
+}
+
+method seal: cannot-override-final-method: Cannot override final method 'seal()' in 'Base'

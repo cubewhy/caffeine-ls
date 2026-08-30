@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Abstract.java:
+package com.example;
+
+class Bad {
+    abstract void self();
+}
+
+@2:6: unimplemented-abstract-method: Class 'Bad' must either be declared abstract or implement abstract method 'self()' in 'Bad'

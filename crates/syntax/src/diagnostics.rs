@@ -175,6 +175,35 @@ pub enum JavaDiagnosticCode {
     /// neither the class nor any return type is a method with a missing
     /// result.
     ConstructorNameMismatch,
+    /// §8.1.1/[§8.4.3]: a declaration carries two or more modifiers that the
+    /// JLS forbids from co-occurring — two access modifiers, `abstract` with
+    /// `final`/`static`/`private`/`default`/`native`/`synchronized`/`strictfp`,
+    /// `final` with `sealed` or `volatile`, `sealed` with `non-sealed`. javac
+    /// reports the pair as `illegal combination of modifiers`.
+    IllegalModifierCombination,
+    /// §8.1.1.2: a class or interface declaration whose direct superclass
+    /// (in `extends`) is a `final` class — a final class cannot have
+    /// subclasses. javac: `cannot inherit from final {F}`.
+    CannotInheritFromFinalClass,
+    /// §8.4.3.3: a declaration of a method with the same signature as a
+    /// `final` method inherited from a superclass or superinterface — a final
+    /// method can neither be overridden (instance) nor hidden (static). javac:
+    /// `{m} in {D} cannot override {m} in {S}; overridden method is final`.
+    CannotOverrideFinalMethod,
+    /// §8.4.8.3: an override or implementation whose access is weaker than
+    /// the access of the method it overrides — `public` > `protected` >
+    /// package-private > `private`. javac: `{m} in {D} cannot override {m} in
+    /// {S}; attempting to assign weaker access privileges`.
+    WeakerAccessPrivileges,
+    /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
+    /// abstract method and does not implement it with a concrete method of the
+    /// same signature. javac: `{C} is not abstract and does not override
+    /// abstract method {m} in {A}`.
+    UnimplementedAbstractMethod,
+    /// §8.1.4/[§9.1.3]: a class or interface appears in its own inheritance
+    /// chain — `class A extends B` with `class B extends A`. javac: `cyclic
+    /// inheritance involving {C}`.
+    CyclicInheritance,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -273,6 +302,12 @@ impl JavaDiagnosticCode {
             AnnotationElementTypeMismatch => Some("compiler.err.prob.found.req"),
             UnknownAnnotationElementConstant => Some("compiler.err.cant.resolve.location"),
             ConstructorNameMismatch => Some("compiler.err.invalid.meth.decl.ret.type.req"),
+            IllegalModifierCombination => Some("compiler.err.illegal.combination.of.modifiers"),
+            CannotInheritFromFinalClass => Some("compiler.err.cant.inherit.from.final"),
+            CannotOverrideFinalMethod => Some("compiler.err.override.meth"),
+            WeakerAccessPrivileges => Some("compiler.err.override.weaker.access"),
+            UnimplementedAbstractMethod => Some("compiler.err.does.not.override.abstract"),
+            CyclicInheritance => Some("compiler.err.cyclic.inheritance"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -356,6 +391,12 @@ impl JavaDiagnosticCode {
                 "unknown-annotation-element-constant"
             }
             JavaDiagnosticCode::ConstructorNameMismatch => "constructor-name-mismatch",
+            JavaDiagnosticCode::IllegalModifierCombination => "illegal-combination-of-modifiers",
+            JavaDiagnosticCode::CannotInheritFromFinalClass => "cannot-inherit-from-final-class",
+            JavaDiagnosticCode::CannotOverrideFinalMethod => "cannot-override-final-method",
+            JavaDiagnosticCode::WeakerAccessPrivileges => "weaker-access-privileges",
+            JavaDiagnosticCode::UnimplementedAbstractMethod => "unimplemented-abstract-method",
+            JavaDiagnosticCode::CyclicInheritance => "cyclic-inheritance",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Access.java:
+package com.example;
+
+interface I {
+    void m();
+}
+
+class Impl implements I {
+    void m() {}
+}
+
+method m: weaker-access-privileges: Overrides 'm()' in 'I' with weaker access privilege

@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Cycle.java:
+package com.example;
+
+class Self extends Self {}
+
+@2:6: cyclic-inheritance: Cyclic inheritance involving 'Self'

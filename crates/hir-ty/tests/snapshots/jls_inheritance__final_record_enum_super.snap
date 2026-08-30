@@ -1,0 +1,11 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+record R(int x) {}
+class UsesR extends R {}
+
+@3:20: cannot-inherit-from-final-class: Cannot inherit from 'R'

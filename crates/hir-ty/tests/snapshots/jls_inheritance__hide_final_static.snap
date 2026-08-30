@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/FinalMethod.java:
+package com.example;
+
+class Base {
+    static final void stat() {}
+}
+
+class Sub extends Base {
+    static void stat() {}
+}
+
+method stat: cannot-override-final-method: Cannot override final method 'stat()' in 'Base'

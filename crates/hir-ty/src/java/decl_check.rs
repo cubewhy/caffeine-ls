@@ -14,11 +14,12 @@
 
 use hir_def::java::item_tree::ItemData;
 use hir_expand::name::Name;
+use rustc_hash::FxHashSet;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
-use crate::java::method::{self, MethodData};
+use crate::java::method::{self, Access, MethodData};
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
 use crate::java::ty::Ty;
@@ -186,6 +187,63 @@ pub enum DeclDiagnostic {
         class: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.1.1/[§8.4.3]: a declaration carries two or more modifiers that the
+    /// JLS forbids from co-occurring — two access modifiers, `abstract` with
+    /// `final`/`static`/`private`/`default`/`native`/`synchronized`/`strictfp`,
+    /// `final` with `sealed` or `volatile`, `sealed` with `non-sealed`. javac
+    /// reports the pair (`abstract, final`) as `illegal combination of
+    /// modifiers`; the message here is IntelliJ-style. `first`/`second` are
+    /// the offending pair in canonical modifier order and `range` spans the
+    /// whole declaration, so the error is visible at a glance.
+    IllegalModifierCombination {
+        first: &'static str,
+        second: &'static str,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.1.1.2: a class or interface whose direct superclass (its `extends`
+    /// clause) is a `final` class — a final class cannot have subclasses.
+    /// javac: `cannot inherit from final {F}`; the message is IntelliJ's
+    /// `Cannot inherit from 'Base'`. `super_owner` is the canonical FQN of the
+    /// final superclass (rendered simple) and `range` the source range of the
+    /// superclass reference name.
+    CannotInheritFromFinalClass {
+        super_owner: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.4.3.3: a declaration of a method with the same signature as a
+    /// `final` method inherited from a superclass or superinterface — a final
+    /// method can neither be overridden (instance) nor hidden (static). javac
+    /// reports `{m} in {D} cannot override {m} in {S}; overridden method is
+    /// final`; the message is IntelliJ's `Cannot override final method`.
+    /// `super_owner` is the declaring class of the final method.
+    CannotOverrideFinalMethod { method: Name, super_owner: Name },
+    /// §8.4.8.3: an override or implementation whose access is weaker than
+    /// the access of the method it overrides — `public` > `protected` >
+    /// package-private > `private`. javac reports `{m} in {D} cannot override
+    /// {m} in {S}; attempting to assign weaker access privileges`; the message
+    /// is IntelliJ's `Overrides 'm' in 'S' with weaker access privilege`.
+    /// `required` is the weaker access keyword actually granted.
+    WeakerAccessPrivileges { method: Name, super_owner: Name },
+    /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
+    /// abstract method and does not implement it with a concrete method of
+    /// the same signature. javac reports `{C} is not abstract and does not
+    /// override abstract method {m} in {A}`. `class` is the non-abstract
+    /// class, `method` the unimplemented abstract method and `owner` the
+    /// class that declares it.
+    UnimplementedAbstractMethod {
+        class: Name,
+        method: Name,
+        owner: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.1.4/[§9.1.3]: a class or interface appears in its own inheritance
+    /// chain — `class A extends B` with `class B extends A`. javac: `cyclic
+    /// inheritance involving {C}`. `class` is the reported class and `range`
+    /// its declaration's name range.
+    CyclicInheritance {
+        class: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -251,6 +309,24 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ConstructorNameMismatch { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ConstructorNameMismatch)
+            }
+            DeclDiagnostic::IllegalModifierCombination { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::IllegalModifierCombination)
+            }
+            DeclDiagnostic::CannotInheritFromFinalClass { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CannotInheritFromFinalClass)
+            }
+            DeclDiagnostic::CannotOverrideFinalMethod { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CannotOverrideFinalMethod)
+            }
+            DeclDiagnostic::WeakerAccessPrivileges { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::WeakerAccessPrivileges)
+            }
+            DeclDiagnostic::UnimplementedAbstractMethod { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnimplementedAbstractMethod)
+            }
+            DeclDiagnostic::CyclicInheritance { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CyclicInheritance)
             }
         }
     }
@@ -370,6 +446,50 @@ impl DeclDiagnostic {
                     class.as_str()
                 )
             }
+            DeclDiagnostic::IllegalModifierCombination { first, second, .. } => {
+                format!("Illegal combination of modifiers: '{first}' and '{second}'")
+            }
+            DeclDiagnostic::CannotInheritFromFinalClass { super_owner, .. } => {
+                format!("Cannot inherit from '{}'", super_owner.simple_name())
+            }
+            DeclDiagnostic::CannotOverrideFinalMethod {
+                method,
+                super_owner,
+                ..
+            } => {
+                format!(
+                    "Cannot override final method '{}()' in '{}'",
+                    method.as_str(),
+                    super_owner.simple_name()
+                )
+            }
+            DeclDiagnostic::WeakerAccessPrivileges {
+                method,
+                super_owner,
+                ..
+            } => {
+                format!(
+                    "Overrides '{}()' in '{}' with weaker access privilege",
+                    method.as_str(),
+                    super_owner.simple_name()
+                )
+            }
+            DeclDiagnostic::UnimplementedAbstractMethod {
+                class,
+                method,
+                owner,
+                ..
+            } => {
+                format!(
+                    "Class '{}' must either be declared abstract or implement abstract method '{}()' in '{}'",
+                    class.simple_name(),
+                    method.as_str(),
+                    owner.simple_name()
+                )
+            }
+            DeclDiagnostic::CyclicInheritance { class, .. } => {
+                format!("Cyclic inheritance involving '{}'", class.simple_name())
+            }
         }
     }
 
@@ -378,7 +498,9 @@ impl DeclDiagnostic {
         match self {
             DeclDiagnostic::IncompatibleOverride { method, .. }
             | DeclDiagnostic::ConflictingDefaults { method }
-            | DeclDiagnostic::MethodDoesNotOverride { method } => method.as_str(),
+            | DeclDiagnostic::MethodDoesNotOverride { method }
+            | DeclDiagnostic::CannotOverrideFinalMethod { method, .. }
+            | DeclDiagnostic::WeakerAccessPrivileges { method, .. } => method.as_str(),
             DeclDiagnostic::CannotResolveType { .. }
             | DeclDiagnostic::AmbiguousName { .. }
             | DeclDiagnostic::UnresolvedImport { .. }
@@ -395,7 +517,11 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
             | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
             | DeclDiagnostic::UnknownAnnotationElementConstant { .. }
-            | DeclDiagnostic::ConstructorNameMismatch { .. } => "",
+            | DeclDiagnostic::ConstructorNameMismatch { .. }
+            | DeclDiagnostic::IllegalModifierCombination { .. }
+            | DeclDiagnostic::CannotInheritFromFinalClass { .. }
+            | DeclDiagnostic::UnimplementedAbstractMethod { .. }
+            | DeclDiagnostic::CyclicInheritance { .. } => "",
         }
     }
 
@@ -430,6 +556,18 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::ConstructorNameMismatch {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::IllegalModifierCombination {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::CannotInheritFromFinalClass {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::UnimplementedAbstractMethod {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::CyclicInheritance {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -475,6 +613,10 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // across the source set (cross-file as well as same-file).
     out.extend(duplicate_class_diagnostics(db, file, &tree));
 
+    // §8.1.1/[§8.4.3]: a declaration carries two or more modifiers the JLS
+    // forbids from co-occurring (see [`modifier_combination_diagnostics`]).
+    out.extend(modifier_combination_diagnostics(db, file, &tree));
+
     // §9.6.4.1/[§9.7.4]/[§9.7.1]: the `@Target` applicability and the
     // element-value arguments of every annotation, declaration and type-use
     // alike (see [`crate::java::annotation_check`]).
@@ -519,6 +661,13 @@ fn check_class(
     // a member enumeration, not an invocation from outside.
     let ctx = crate::java::method::access_context(db, file, item);
     let mut out = Vec::new();
+    // The name-resolution context of the declaration itself: its type
+    // parameters and every enclosing class's ([§6.5.5.1], [§8.1.3]).
+    let resolver = crate::java::resolve::Resolver::new(
+        tree,
+        crate::java::db::type_params_map_query(db, db.file_text(file)),
+        item,
+    );
     // Every member visible from the class, most-derived first ([§8.4.8.1]),
     // *without* the most-derived dedup: an override must still see the super
     // declaration it hides — both for the return-type-substitutability check
@@ -529,30 +678,136 @@ fn check_class(
     let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == fqn).collect();
     let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != fqn).collect();
     for method in &declared {
-        // §8.4.8.3: an instance method overriding an inherited method must be
-        // return-type-substitutable — its return type is a subtype of the
-        // overridden return type.
-        if method.is_static || method.ret.is_void(db) {
-            continue;
-        }
         for super_method in &inherited {
             if same_signature(db, method, super_method) {
-                // §8.4.8.3: the overriding return must be *substitutable*
-                // for the overridden one — `R1 <: R2`, or `R1 <: |R2|` against
-                // its ERASURE when the overridden return is a type variable
-                // ([§8.4.4] adaptation, [§4.6]).
-                let super_ret_erasure = super_method.ret.erasure(db);
-                if !super_method.ret.is_error(db)
-                    && !subtyping::is_subtype(db, scope, &method.ret.clone(), &super_ret_erasure)
-                {
-                    out.push(DeclDiagnostic::IncompatibleOverride {
+                // §8.4.3.3: a final method of a superclass or superinterface
+                // can neither be overridden (instance) nor hidden (static), so
+                // a redeclaration of its signature is an error.
+                if super_method.is_final {
+                    out.push(DeclDiagnostic::CannotOverrideFinalMethod {
                         method: Name::new(&method.name),
-                        found: method.ret,
-                        expected_owner: Name::new(&super_method.owner),
-                        expected_ret: super_method.ret,
+                        super_owner: Name::new(&super_method.owner),
                     });
                 }
+                // §8.4.8.3: the access of an overriding or hiding method must
+                // be at least as permissive as the access of the method it
+                // overrides or hides (`public` > `protected` > package-private
+                // > `private`). A static/instance signature clash is a
+                // different error (neither overrides nor hides), so only
+                // same-staticness pairs are compared.
+                if method.is_static == super_method.is_static
+                    && weaker_access(method.access, super_method.access)
+                {
+                    out.push(DeclDiagnostic::WeakerAccessPrivileges {
+                        method: Name::new(&method.name),
+                        super_owner: Name::new(&super_method.owner),
+                    });
+                }
+                // §8.4.8.3: an overriding *instance* method must be
+                // return-type-substitutable — its return type is a subtype of
+                // the overridden return type. A static method hides (§8.4.8.2)
+                // and its result type is unconstrained, so only instance pairs
+                // are checked.
+                if !method.is_static && !method.ret.is_void(db) {
+                    // §8.4.8.3: the overriding return must be *substitutable*
+                    // for the overridden one — `R1 <: R2`, or `R1 <: |R2|`
+                    // against its ERASURE when the overridden return is a type
+                    // variable ([§8.4.4] adaptation, [§4.6]).
+                    let super_ret_erasure = super_method.ret.erasure(db);
+                    if !super_method.ret.is_error(db)
+                        && !subtyping::is_subtype(
+                            db,
+                            scope,
+                            &method.ret.clone(),
+                            &super_ret_erasure,
+                        )
+                    {
+                        out.push(DeclDiagnostic::IncompatibleOverride {
+                            method: Name::new(&method.name),
+                            found: method.ret,
+                            expected_owner: Name::new(&super_method.owner),
+                            expected_ret: super_method.ret,
+                        });
+                    }
+                }
                 break;
+            }
+        }
+    }
+
+    // §8.1.1.2: a class declaration whose `extends` clause names a `final`
+    // class — a final class can have no subclasses ([§8.1.1.2]). Interfaces
+    // extend interfaces only (their `extends` clause is stored in
+    // `ClassData::interfaces`, not `super_class`), so the check reads the
+    // superclass reference of a *class* declaration.
+    if let ItemData::Class(class) = tree.data(item)
+        && let Some(super_ref) = &class.super_class
+    {
+        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+        if let Some((is_class_like, is_final)) =
+            subtyping::class_like_and_final(db, scope, &super_ty)
+            && is_class_like
+            && is_final
+        {
+            let fqn = super_ty
+                .as_reference(db)
+                .map(|(name, _)| name.clone())
+                .unwrap_or_else(|| class.name.clone());
+            out.push(DeclDiagnostic::CannotInheritFromFinalClass {
+                super_owner: fqn,
+                range: super_ref.first_ref().and_then(|r| r.range),
+            });
+        }
+    }
+
+    // §8.1.4/[§9.1.3]: a class or interface appears in its own inheritance
+    // chain — `class A extends B` with `class B extends A`. Reported for every
+    // class-like declaration, at its name.
+    if in_own_supertype_cycle(db, scope, fqn) {
+        out.push(DeclDiagnostic::CyclicInheritance {
+            class: class_like_simple_name(tree.data(item)),
+            range: Some(tree.data(item).name_range()),
+        });
+    }
+
+    // §8.1.1.1: a non-abstract class — a class without the `abstract`
+    // modifier, a record [§8.10] or an enum [§8.9] — must implement every
+    // abstract method it inherits (or declares itself) with a concrete method
+    // of the same overriding signature. Interfaces and annotation types may
+    // stay abstract, so they are exempt.
+    if !declaring_interface_item(tree, item)
+        && !class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_abstract())
+    {
+        // The most-derived declaration of each overriding signature: the raw
+        // member walk is derived-first, so the first occurrence of a
+        // signature is its effective member. An abstract member whose
+        // signature no concrete method (declared by the class itself or by a
+        // *subtype of its declaring type*, i.e. one that actually overrides
+        // it) implements is unimplemented.
+        let mut seen = FxHashSet::default();
+        for abstract_method in &all {
+            let key = (abstract_method.name.clone(), abstract_method.params.clone());
+            if abstract_method.abstract_ && !abstract_method.is_static && seen.insert(key) {
+                let implemented = all.iter().any(|candidate| {
+                    !candidate.abstract_
+                        && !candidate.is_static
+                        && same_signature(db, candidate, abstract_method)
+                        && (candidate.owner == abstract_method.owner
+                            || subtyping::is_subtype(
+                                db,
+                                scope,
+                                &Ty::reference(db, candidate.owner.as_str(), Vec::new()),
+                                &Ty::reference(db, abstract_method.owner.as_str(), Vec::new()),
+                            ))
+                });
+                if !implemented {
+                    out.push(DeclDiagnostic::UnimplementedAbstractMethod {
+                        class: class_like_simple_name(tree.data(item)),
+                        method: Name::new(&abstract_method.name),
+                        owner: Name::new(&abstract_method.owner),
+                        range: Some(tree.data(item).name_range()),
+                    });
+                }
             }
         }
     }
@@ -590,11 +845,6 @@ fn check_class(
         ItemData::Record(record) => &record.components,
         _ => &[],
     };
-    let resolver = crate::java::resolve::Resolver::new(
-        tree,
-        crate::java::db::type_params_map_query(db, db.file_text(file)),
-        item,
-    );
     for &child in tree.data(item).body() {
         if let ItemData::Method(m) = tree.data(child)
             && !m.is_constructor()
@@ -715,6 +965,77 @@ fn related(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &str, b: &str) 
     let a_ty = Ty::reference(db, a, Vec::new());
     let b_ty = Ty::reference(db, b, Vec::new());
     subtyping::is_subtype(db, scope, &a_ty, &b_ty) || subtyping::is_subtype(db, scope, &b_ty, &a_ty)
+}
+
+/// §8.4.8.3: whether access `a` is strictly weaker than access `b` — the
+/// ordering the JLS rules on overriding and hiding: `public` >
+/// `protected` > package-private > `private` ([§6.6.1]).
+fn weaker_access(a: Access, b: Access) -> bool {
+    access_rank(a) < access_rank(b)
+}
+
+/// The numeric rank of an access level, `public` strongest
+/// ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+fn access_rank(access: Access) -> u8 {
+    match access {
+        Access::Public => 3,
+        Access::Protected => 2,
+        Access::Package => 1,
+        Access::Private => 0,
+    }
+}
+
+/// The simple name of a class-like declaration (class, interface, enum,
+/// record or annotation), for a diagnostic header.
+fn class_like_simple_name(data: &ItemData) -> Name {
+    match data {
+        ItemData::Class(d) | ItemData::Interface(d) => d.name.clone(),
+        ItemData::Enum(d) => d.name.clone(),
+        ItemData::Record(d) => d.name.clone(),
+        ItemData::Annotation(d) => d.name.clone(),
+        _ => Name::new(""),
+    }
+}
+
+/// Whether the class-like declaration is an interface or annotation type —
+/// either may stay abstract, so the §8.1.1.1 unimplemented-abstract-method
+/// requirement does not apply.
+fn declaring_interface_item(
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: hir_def::java::item_tree::ItemId,
+) -> bool {
+    matches!(
+        tree.data(item),
+        ItemData::Interface(_) | ItemData::Annotation(_)
+    )
+}
+
+/// §8.1.4/[§9.1.3]: whether the reference type `fqn` appears in its own
+/// inheritance chain — a transitive-direct-supertype walk revisits the type
+/// itself. Works for source and library types alike; the visited set keeps the
+/// walk finite on cyclic graphs. `supertypes_impl` yields only the *direct*
+/// supertypes, so one BFS level at a time.
+fn in_own_supertype_cycle(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &str) -> bool {
+    let mut visited: FxHashSet<String> = FxHashSet::default();
+    let mut stack: Vec<Ty> = vec![Ty::reference(db, fqn, Vec::new())];
+    while let Some(ty) = stack.pop() {
+        let Some((name, _)) = ty.as_reference(db) else {
+            continue;
+        };
+        if !visited.insert(name.as_str().to_owned()) {
+            continue;
+        }
+        for parent in subtyping::supertypes_impl(db, scope, &ty) {
+            let Some((parent_name, _)) = parent.as_reference(db) else {
+                continue;
+            };
+            if parent_name.as_str() == fqn {
+                return true;
+            }
+            stack.push(parent);
+        }
+    }
+    false
 }
 
 /// §7.6: the class-like declarations of a compilation unit that a package
@@ -871,4 +1192,181 @@ fn duplicate_class_diagnostics(
         });
     }
     out
+}
+
+/// §8.1.1/[§8.4.3]: a declaration whose source modifier list carries two or
+/// more modifiers the JLS forbids from co-occurring — two access modifiers,
+/// `abstract` with `final`/`static`/`private`/`default`/`native`/
+/// `synchronized`/`strictfp`, `final` with `sealed` or `volatile`, `sealed`
+/// with `non-sealed`. javac reports the offending pair in a canonical order
+/// (`illegal combination of modifiers: abstract, final`); the message here is
+/// IntelliJ-style.
+///
+/// The lowered [`JavaModifiers`] cannot detect this: a duplicate visibility
+/// overwrites the first and the modality/general flag sets OR, so the
+/// co-occurrence is lost at lowering time. The raw modifier keywords are
+/// therefore re-read from the file's cached parse tree — of the same revision
+/// the item tree was lowered from.
+fn modifier_combination_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+) -> Vec<DeclDiagnostic> {
+    use syntax::java::SourceFile as JavaSourceFile;
+    if tree.language != LanguageKind::Java {
+        return Vec::new();
+    }
+    let parse = base_db::parse(db, file, LanguageKind::Java);
+    let syntax::SourceFile::Java(JavaSourceFile { syntax_node }) =
+        parse.syntax_node(LanguageKind::Java)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk_decl_modifiers(&syntax_node, &mut out);
+    out
+}
+
+/// Recursively walks `node` for modifier-bearing declarations, pushing an
+/// [`IllegalModifierCombination`] for every conflicting pair of their
+/// modifier lists, at the declaration's whole source range.
+fn walk_decl_modifiers(
+    node: &rowan::SyntaxNode<syntax::java::Lang>,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    use syntax::java::SyntaxKind as J;
+    for child in node.children() {
+        if is_modifier_bearing_decl(child.kind())
+            && let Some(modifier_list) = child.children().find(|c| c.kind() == J::MODIFIER_LIST)
+        {
+            let names = modifier_keywords(&modifier_list);
+            for (first, second) in conflicting_modifiers(&names) {
+                out.push(DeclDiagnostic::IllegalModifierCombination {
+                    first,
+                    second,
+                    range: Some(child.text_range()),
+                });
+            }
+        }
+        walk_decl_modifiers(&child, out);
+    }
+}
+
+/// Whether the syntax node is a declaration kind that carries a
+/// `MODIFIER_LIST` ([JLS §8.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1),
+/// [§8.3.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.3.1),
+/// [§8.4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.3)).
+fn is_modifier_bearing_decl(kind: syntax::java::SyntaxKind) -> bool {
+    use syntax::java::SyntaxKind as J;
+    matches!(
+        kind,
+        J::CLASS_DECL
+            | J::INTERFACE_DECL
+            | J::ENUM_DECL
+            | J::RECORD_DECL
+            | J::ANNOTATION_TYPE_DECL
+            | J::METHOD_DECL
+            | J::CONSTRUCTOR_DECL
+            | J::COMPACT_CONSTRUCTOR_DECL
+            | J::FIELD_DECL
+            | J::ANNOTATION_TYPE_ELEMENT_DECL
+    )
+}
+
+/// The recognized modifier keywords of a `MODIFIER_LIST` node, in source
+/// order (annotations are child *nodes* and skipped; the restricted keywords
+/// `sealed` and `non-sealed` are lexed as `IDENTIFIER` tokens, [JLS §3.9]).
+fn modifier_keywords(node: &rowan::SyntaxNode<syntax::java::Lang>) -> Vec<&'static str> {
+    use rowan::NodeOrToken;
+    use syntax::java::SyntaxKind as J;
+    node.children_with_tokens()
+        .filter_map(|element| match element {
+            NodeOrToken::Node(_) => None,
+            NodeOrToken::Token(token) => match token.kind() {
+                J::PUBLIC_KW => Some("public"),
+                J::PROTECTED_KW => Some("protected"),
+                J::PRIVATE_KW => Some("private"),
+                J::ABSTRACT_KW => Some("abstract"),
+                J::FINAL_KW => Some("final"),
+                J::STATIC_KW => Some("static"),
+                J::DEFAULT_KW => Some("default"),
+                J::NATIVE_KW => Some("native"),
+                J::SYNCHRONIZED_KW => Some("synchronized"),
+                J::TRANSIENT_KW => Some("transient"),
+                J::VOLATILE_KW => Some("volatile"),
+                J::STRICTFP_KW => Some("strictfp"),
+                J::IDENTIFIER => match token.text() {
+                    "sealed" => Some("sealed"),
+                    "non-sealed" => Some("non-sealed"),
+                    _ => None,
+                },
+                _ => None,
+            },
+        })
+        .collect()
+}
+
+/// The illegal modifier pairs declared by `names`, each once, in the canonical
+/// javac order (e.g. `abstract, final` for `final abstract`).
+fn conflicting_modifiers(names: &[&'static str]) -> Vec<(&'static str, &'static str)> {
+    fn push_unique(
+        pairs: &mut Vec<(&'static str, &'static str)>,
+        first: &'static str,
+        second: &'static str,
+    ) {
+        if !pairs.contains(&(first, second)) {
+            pairs.push((first, second));
+        }
+    }
+    let mut pairs: Vec<(&'static str, &'static str)> = Vec::new();
+    // More than one access modifier: every pair, canonicalized to
+    // `public` < `protected` < `private` ([§6.6.1]).
+    let access: Vec<&'static str> = names
+        .iter()
+        .copied()
+        .filter(|name| matches!(*name, "public" | "protected" | "private"))
+        .collect();
+    if access.len() > 1 {
+        let mut sorted = access.clone();
+        sorted.sort_by_key(|name| match *name {
+            "public" => 0,
+            "protected" => 1,
+            _ => 2,
+        });
+        for pair in sorted.windows(2) {
+            push_unique(&mut pairs, pair[0], pair[1]);
+        }
+    }
+    let has = |name: &'static str| names.contains(&name);
+    // §8.4.3: `abstract` excludes the modifiers that turn it into a
+    // contradiction — a concrete body, a static receiver, a private
+    // inheritance, or an implementation keyword.
+    if has("abstract") {
+        for other in [
+            "final",
+            "static",
+            "private",
+            "default",
+            "native",
+            "synchronized",
+            "strictfp",
+        ] {
+            if has(other) {
+                push_unique(&mut pairs, "abstract", other);
+            }
+        }
+    }
+    // §8.1.1: a sealed class must not be final ([§8.1.1.2]).
+    if has("final") && has("sealed") {
+        push_unique(&mut pairs, "final", "sealed");
+    }
+    // §8.3.1: a `final` field cannot also be `volatile`.
+    if has("final") && has("volatile") {
+        push_unique(&mut pairs, "final", "volatile");
+    }
+    // §8.1.1: `sealed` and `non-sealed` are mutually exclusive.
+    if has("sealed") && has("non-sealed") {
+        push_unique(&mut pairs, "sealed", "non-sealed");
+    }
+    pairs
 }

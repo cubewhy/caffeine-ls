@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Mods.java:
+package com.example;
+
+abstract final class AF {}
+
+class C {
+    public private void both() {}
+    static abstract void sa();
+    private abstract void paa();
+    final volatile int fv;
+    transient volatile int tv;
+    native synchronized void ns();
+    public int legal;
+}
+
+@2:0: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'final'
+@5:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'public' and 'private'
+@6:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'static'
+@7:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'private'
+@8:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'final' and 'volatile'
+@4:6: unimplemented-abstract-method: Class 'C' must either be declared abstract or implement abstract method 'paa()' in 'C'

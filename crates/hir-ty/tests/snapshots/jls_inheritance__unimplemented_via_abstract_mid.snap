@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Abstract.java:
+package com.example;
+
+abstract class A {
+    abstract void m();
+}
+abstract class Mid extends A {}
+class Leaf extends Mid {}
+class Done extends Mid {
+    void m() {}
+}
+
+@6:6: unimplemented-abstract-method: Class 'Leaf' must either be declared abstract or implement abstract method 'm()' in 'A'

@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Access.java:
+package com.example;
+
+class Base {
+    public void a() {}
+    protected void b() {}
+    void c() {}
+}
+
+class Sub extends Base {
+    void a() {}
+    private void b() {}
+    public void c() {}
+}
+
+method a: weaker-access-privileges: Overrides 'a()' in 'Base' with weaker access privilege
+method b: weaker-access-privileges: Overrides 'b()' in 'Base' with weaker access privilege
