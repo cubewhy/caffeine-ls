@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_sealed.rs
+expression: out
+---
+FILE /src/com/example/Sealed.java:
+package com.example;
+
+sealed class Shape permits Circle, Square {
+}
+final class Circle extends Shape {
+}
+class Square extends Shape {
+}
+
+@6:6: sealed-non-sealed-or-final-expected: Sealed, non-sealed or final expected

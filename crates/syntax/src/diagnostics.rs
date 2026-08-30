@@ -296,6 +296,29 @@ pub enum JavaDiagnosticCode {
     /// patterns than the record has components. javac: `incorrect number of
     /// nested patterns`.
     IncorrectNumberOfPatternComponents,
+    /// §8.1.1.2: a class directly extends (or a class or interface directly
+    /// implements/extends) a `sealed` supertype without being named in its
+    /// `permits` clause. javac: `class is not allowed to extend sealed class
+    /// {S}` / `sealed class {S} not permitted to extend`.
+    CantInheritFromSealed,
+    /// §8.1.1.2: a permitted direct subclass of a `sealed` supertype is
+    /// itself neither `sealed`, `non-sealed` nor `final` — it must be one of
+    /// the three, or the hierarchy is not closed. javac: `{sealed, non-sealed
+    /// or final} expected`.
+    SealedSealedOrFinalExpected,
+    /// §8.1.1.2: a `sealed` class or interface has no direct subclasses —
+    /// a sealed type must have at least one. javac: `sealed class must have
+    /// subclasses`.
+    SealedClassMustHaveSubclasses,
+    /// §8.4.3/[§9.4: a modifier on a member declaration that the JLS forbids
+    /// for that member's kind — a `protected` interface method, for example.
+    /// javac: `modifier {m} not allowed here`.
+    ModifierNotAllowedHere,
+    /// §8.4.5/[§9.4: a method with no body that is neither `abstract` nor
+    /// `native` (an interface `private`/`static`/`default` method without a
+    /// body, or a class method without `abstract`). javac: `missing method
+    /// body, or declare abstract`.
+    MissingMethodBodyOrDeclareAbstract,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -424,6 +447,13 @@ impl JavaDiagnosticCode {
             IncorrectNumberOfPatternComponents => {
                 Some("compiler.err.incorrect.number.of.nested.patterns")
             }
+            CantInheritFromSealed => Some("compiler.err.cant.inherit.from.sealed"),
+            SealedSealedOrFinalExpected => Some("compiler.err.non.sealed.sealed.or.final.expected"),
+            SealedClassMustHaveSubclasses => Some("compiler.err.sealed.class.must.have.subclasses"),
+            ModifierNotAllowedHere => Some("compiler.err.mod.not.allowed.here"),
+            MissingMethodBodyOrDeclareAbstract => {
+                Some("compiler.err.missing.meth.body.or.decl.abstract")
+            }
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -538,6 +568,17 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::NotALoopLabel => "not-a-loop-label",
             JavaDiagnosticCode::IncorrectNumberOfPatternComponents => {
                 "incorrect-number-of-pattern-components"
+            }
+            JavaDiagnosticCode::CantInheritFromSealed => "cannot-inherit-from-sealed",
+            JavaDiagnosticCode::SealedSealedOrFinalExpected => {
+                "sealed-non-sealed-or-final-expected"
+            }
+            JavaDiagnosticCode::SealedClassMustHaveSubclasses => {
+                "sealed-class-must-have-subclasses"
+            }
+            JavaDiagnosticCode::ModifierNotAllowedHere => "modifier-not-allowed-here",
+            JavaDiagnosticCode::MissingMethodBodyOrDeclareAbstract => {
+                "missing-method-body-or-declare-abstract"
             }
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",

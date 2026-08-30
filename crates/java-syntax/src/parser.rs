@@ -199,6 +199,37 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Whether the current position begins the three-token sequence
+    /// `non - sealed` that spells the `non-sealed` modifier
+    /// ([JLS §8.1.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1.2)):
+    /// `non-sealed` is not a single lexeme, so the keyword is recognized here
+    /// as `IDENTIFIER(non) MINUS IDENTIFIER(sealed)`.
+    pub(crate) fn at_non_sealed(&self) -> bool {
+        if self.override_token.is_some()
+            || self.current() != Some(IDENTIFIER)
+            || self.current_lexeme() != Some("non")
+        {
+            return false;
+        }
+        self.source.nth(1).is_some_and(|t| t.kind == MINUS)
+            && self
+                .source
+                .nth(2)
+                .is_some_and(|t| t.kind == IDENTIFIER && t.lexeme == "sealed")
+    }
+
+    /// Consumes the three tokens of a `non-sealed` modifier. Returns whether
+    /// anything was consumed.
+    pub(crate) fn eat_non_sealed(&mut self) -> bool {
+        if !self.at_non_sealed() {
+            return false;
+        }
+        self.bump();
+        self.bump();
+        self.bump();
+        true
+    }
+
     pub(crate) fn expect_contextual_kw(&mut self, kw: ContextualKeyword) {
         if !self.eat_contextual_kw(kw) {
             self.error_message("expected contextual keyword");

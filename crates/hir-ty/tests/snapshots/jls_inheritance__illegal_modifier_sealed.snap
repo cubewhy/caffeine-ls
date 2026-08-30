@@ -8,3 +8,4 @@ package com.example;
 sealed final class SF {}
 
 @2:0: illegal-combination-of-modifiers: Illegal combination of modifiers: 'final' and 'sealed'
+@2:19: sealed-class-must-have-subclasses: Sealed class must have subclasses

@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_sealed.rs
+expression: out
+---
+FILE /src/com/example/Sealed.java:
+package com.example;
+
+sealed class Shape permits Circle, Square, Rhombus {
+}
+final class Circle extends Shape {
+}
+non-sealed class Square extends Shape {
+}
+sealed class Rhombus extends Shape permits Diamond {
+}
+final class Diamond extends Rhombus {
+}
+sealed interface Greets permits A, B {
+}
+final class A implements Greets {
+}
+non-sealed class B implements Greets {
+}

@@ -1,0 +1,178 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+sealed class Shape permits Circle, Square {
+}
+final class Circle extends Shape {
+}
+non-sealed class Square extends Shape {
+}
+sealed interface Greets permits A, B {
+}
+
+TOKENS:
+IDENTIFIER "sealed"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Shape"
+WHITESPACE " "
+IDENTIFIER "permits"
+WHITESPACE " "
+IDENTIFIER "Circle"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "Square"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+FINAL_KW "final"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Circle"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Shape"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+IDENTIFIER "non"
+MINUS "-"
+IDENTIFIER "sealed"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Square"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Shape"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+IDENTIFIER "sealed"
+WHITESPACE " "
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "Greets"
+WHITESPACE " "
+IDENTIFIER "permits"
+WHITESPACE " "
+IDENTIFIER "A"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "B"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..166
+  CLASS_DECL@0..45
+    MODIFIER_LIST@0..6
+      IDENTIFIER@0..6 "sealed"
+    WHITESPACE@6..7 " "
+    CLASS_KW@7..12 "class"
+    WHITESPACE@12..13 " "
+    IDENTIFIER@13..18 "Shape"
+    WHITESPACE@18..19 " "
+    PERMITS_CLAUSE@19..41
+      IDENTIFIER@19..26 "permits"
+      WHITESPACE@26..27 " "
+      TYPE@27..33
+        QUALIFIED_NAME@27..33
+          IDENTIFIER@27..33 "Circle"
+      COMMA@33..34 ","
+      WHITESPACE@34..35 " "
+      TYPE@35..41
+        QUALIFIED_NAME@35..41
+          IDENTIFIER@35..41 "Square"
+    WHITESPACE@41..42 " "
+    CLASS_BODY@42..45
+      L_BRACE@42..43 "{"
+      WHITESPACE@43..44 "\n"
+      R_BRACE@44..45 "}"
+  WHITESPACE@45..46 "\n"
+  CLASS_DECL@46..82
+    MODIFIER_LIST@46..51
+      FINAL_KW@46..51 "final"
+    WHITESPACE@51..52 " "
+    CLASS_KW@52..57 "class"
+    WHITESPACE@57..58 " "
+    IDENTIFIER@58..64 "Circle"
+    WHITESPACE@64..65 " "
+    EXTENDS_CLAUSE@65..78
+      EXTENDS_KW@65..72 "extends"
+      WHITESPACE@72..73 " "
+      TYPE@73..78
+        QUALIFIED_NAME@73..78
+          IDENTIFIER@73..78 "Shape"
+    WHITESPACE@78..79 " "
+    CLASS_BODY@79..82
+      L_BRACE@79..80 "{"
+      WHITESPACE@80..81 "\n"
+      R_BRACE@81..82 "}"
+  WHITESPACE@82..83 "\n"
+  CLASS_DECL@83..124
+    MODIFIER_LIST@83..93
+      IDENTIFIER@83..86 "non"
+      MINUS@86..87 "-"
+      IDENTIFIER@87..93 "sealed"
+    WHITESPACE@93..94 " "
+    CLASS_KW@94..99 "class"
+    WHITESPACE@99..100 " "
+    IDENTIFIER@100..106 "Square"
+    WHITESPACE@106..107 " "
+    EXTENDS_CLAUSE@107..120
+      EXTENDS_KW@107..114 "extends"
+      WHITESPACE@114..115 " "
+      TYPE@115..120
+        QUALIFIED_NAME@115..120
+          IDENTIFIER@115..120 "Shape"
+    WHITESPACE@120..121 " "
+    CLASS_BODY@121..124
+      L_BRACE@121..122 "{"
+      WHITESPACE@122..123 "\n"
+      R_BRACE@123..124 "}"
+  WHITESPACE@124..125 "\n"
+  INTERFACE_DECL@125..165
+    MODIFIER_LIST@125..131
+      IDENTIFIER@125..131 "sealed"
+    WHITESPACE@131..132 " "
+    INTERFACE_KW@132..141 "interface"
+    WHITESPACE@141..142 " "
+    IDENTIFIER@142..148 "Greets"
+    WHITESPACE@148..149 " "
+    PERMITS_CLAUSE@149..161
+      IDENTIFIER@149..156 "permits"
+      WHITESPACE@156..157 " "
+      TYPE@157..158
+        QUALIFIED_NAME@157..158
+          IDENTIFIER@157..158 "A"
+      COMMA@158..159 ","
+      WHITESPACE@159..160 " "
+      TYPE@160..161
+        QUALIFIED_NAME@160..161
+          IDENTIFIER@160..161 "B"
+    WHITESPACE@161..162 " "
+    INTERFACE_BODY@162..165
+      L_BRACE@162..163 "{"
+      WHITESPACE@163..164 "\n"
+      R_BRACE@164..165 "}"
+  WHITESPACE@165..166 "\n"

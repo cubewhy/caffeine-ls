@@ -977,3 +977,19 @@ parser_snapshot!(
         }
     "#}
 );
+
+// [JLS §8.1.1.2]: sealed class hierarchies — `sealed`, `permits` and
+// `non-sealed` parse as modifiers / a permits clause.
+parser_snapshot!(
+    parse_sealed_hierarchy,
+    indoc! {r#"
+        sealed class Shape permits Circle, Square {
+        }
+        final class Circle extends Shape {
+        }
+        non-sealed class Square extends Shape {
+        }
+        sealed interface Greets permits A, B {
+        }
+    "#}
+);

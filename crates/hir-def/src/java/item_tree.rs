@@ -315,6 +315,11 @@ pub struct ClassData {
     pub annotations: Vec<AnnotationRef>,
     pub super_class: Option<SpannedTypeRef>,
     pub interfaces: Vec<SpannedTypeRef>,
+    /// The permitted direct subclasses of a `sealed` class or interface
+    /// ([§8.1.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1.2)),
+    /// from its `permits` clause; empty when the declaration has none (the
+    /// permitted set is then the same-module direct subclasses).
+    pub permits: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
     pub range: TextRange,
@@ -348,6 +353,9 @@ pub struct RecordData {
     pub annotations: Vec<AnnotationRef>,
     pub components: Vec<RecordComponent>,
     pub interfaces: Vec<SpannedTypeRef>,
+    /// The permitted direct subclasses of a `sealed` record
+    /// ([§8.1.1.2]), from its `permits` clause.
+    pub permits: Vec<SpannedTypeRef>,
     pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
     pub range: TextRange,

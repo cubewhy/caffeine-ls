@@ -138,6 +138,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let type_params = child_type_params(node);
     let super_class = clause_types(node, J::EXTENDS_CLAUSE).into_iter().next();
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
+    let permits = clause_types(node, J::PERMITS_CLAUSE);
     let body = body_members(ctx, node, J::CLASS_BODY);
     ctx.alloc(ItemData::Class(ClassData {
         name,
@@ -146,6 +147,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         annotations,
         super_class,
         interfaces,
+        permits,
         type_params,
         body,
         range: node.text_range(),
@@ -158,6 +160,7 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let interfaces = clause_types(node, J::INTERFACE_EXTENDS_CLAUSE);
+    let permits = clause_types(node, J::PERMITS_CLAUSE);
     let body = body_members(ctx, node, J::INTERFACE_BODY);
     ctx.alloc(ItemData::Interface(ClassData {
         name,
@@ -166,6 +169,7 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         annotations,
         super_class: None,
         interfaces,
+        permits,
         type_params,
         body,
         range: node.text_range(),
@@ -210,6 +214,7 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         })
         .unwrap_or_default();
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
+    let permits = clause_types(node, J::PERMITS_CLAUSE);
     // The component list `(int x, int y)` is the record's parameter
     // declaration — the "definition" the outline selects.
     let components_range = node
@@ -240,6 +245,7 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
         annotations,
         components,
         interfaces,
+        permits,
         type_params,
         body,
         range: node.text_range(),
@@ -706,9 +712,25 @@ fn child_modifiers_and_annotations(node: &SyntaxNode<Lang>) -> (JavaModifiers, V
         .find(|child| is(child, J::MODIFIER_LIST))
         .map(|mods| {
             let mut modifiers = JavaModifiers::none();
-            for element in mods.children_with_tokens() {
-                if let NodeOrToken::Token(token) = element {
-                    modifiers.push(token.text());
+            // §8.1.1.2: `non-sealed` lexes as `non - sealed` (three tokens);
+            // join them into the single modifier keyword the modifiers model
+            // knows.
+            let tokens: Vec<_> = mods
+                .children_with_tokens()
+                .filter_map(|e| e.as_token().cloned())
+                .collect();
+            let mut i = 0;
+            while i < tokens.len() {
+                let text = tokens[i].text();
+                if text == "non"
+                    && tokens.get(i + 1).is_some_and(|t| t.kind() == J::MINUS)
+                    && tokens.get(i + 2).is_some_and(|t| t.text() == "sealed")
+                {
+                    modifiers.push("non-sealed");
+                    i += 3;
+                } else {
+                    modifiers.push(text);
+                    i += 1;
                 }
             }
             let annotations = annotations_from(&mods);

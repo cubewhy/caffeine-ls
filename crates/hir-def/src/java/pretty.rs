@@ -70,6 +70,7 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 &data.modifiers,
                 data.super_class.as_ref(),
                 &data.interfaces,
+                &data.permits,
                 &data.type_params,
                 data.range,
                 tree,
@@ -85,6 +86,7 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 &data.modifiers,
                 None,
                 &data.interfaces,
+                &data.permits,
                 &data.type_params,
                 data.range,
                 tree,
@@ -117,6 +119,12 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 out.push_str(&format!(
                     " implements {}",
                     render_join(data.interfaces.iter().map(|ty| render_type(ty)), ", ")
+                ));
+            }
+            if !data.permits.is_empty() {
+                out.push_str(&format!(
+                    " permits {}",
+                    render_join(data.permits.iter().map(|ty| render_type(ty)), ", ")
                 ));
             }
             out.push_str(&render_mods(&data.modifiers));
@@ -197,6 +205,7 @@ fn render_type_like(
     modifiers: &JavaModifiers,
     super_class: Option<&SpannedTypeRef>,
     interfaces: &[SpannedTypeRef],
+    permits: &[SpannedTypeRef],
     type_params: &[TypeParam],
     range: rowan::TextRange,
     tree: &ItemTree,
@@ -216,6 +225,12 @@ fn render_type_like(
         out.push_str(&format!(
             " implements {}",
             render_join(interfaces.iter().map(|ty| render_type(ty)), ", ")
+        ));
+    }
+    if !permits.is_empty() {
+        out.push_str(&format!(
+            " permits {}",
+            render_join(permits.iter().map(|ty| render_type(ty)), ", ")
         ));
     }
     out.push_str(&render_mods(modifiers));

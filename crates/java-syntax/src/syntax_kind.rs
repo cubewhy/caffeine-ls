@@ -387,6 +387,7 @@ pub enum SyntaxKind {
     THROWS_CLAUSE,            // throws <exception a>, <exception b>
     INTERFACE_EXTENDS_CLAUSE, // interface <identifier> extends A, B
     IMPLEMENTS_CLAUSE,        // implements <interface 1>, <interface 2>
+    PERMITS_CLAUSE,           // permits <class 1>, <class 2> (sealed [§8.1.1.2])
     CATCH_TYPE,
     CATCH_CLAUSE,
     CATCH_FORMAL_PARAMETER,

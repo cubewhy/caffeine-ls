@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_sealed.rs
+expression: out
+---
+FILE /src/com/example/Sealed.java:
+package com.example;
+
+sealed class Shape permits Circle, Square {
+}
+final class Circle extends Shape {
+}
+non-sealed class Square extends Shape {
+}
+final class Triangle extends Shape {
+}
+
+@8:12: cannot-inherit-from-sealed: Cannot inherit from sealed 'Shape'

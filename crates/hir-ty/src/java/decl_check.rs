@@ -23,7 +23,7 @@ use crate::java::db::TyDatabase;
 use crate::java::method::{self, Access, InvocationContext, InvocationMode, MethodData};
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
-use crate::java::ty::Ty;
+use crate::java::ty::{Ty, TyKind};
 use base_db::LanguageKind;
 
 /// A declaration-level diagnostic.
@@ -300,6 +300,49 @@ pub enum DeclDiagnostic {
         class: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.1.1.2: a class directly extends — or a class or interface directly
+    /// implements/extends — a `sealed` supertype without being named in its
+    /// `permits` clause. javac: `class is not allowed to extend sealed class
+    /// {S}`; the message is IntelliJ's `Cannot inherit from sealed
+    /// 'Shape'`. `super_owner` is the sealed supertype (rendered simple) and
+    /// `range` the subclass's name range.
+    CantInheritFromSealed {
+        super_owner: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.1.1.2: a permitted direct subclass of a `sealed` supertype is
+    /// itself neither `sealed`, `non-sealed` nor `final` — it must be one of
+    /// the three so the hierarchy stays closed. javac: `{sealed, non-sealed
+    /// or final} expected`; the message is javac's, IntelliJ-style. `range`
+    /// is the subclass's name range.
+    SealedSealedOrFinalExpected { range: Option<rowan::TextRange> },
+    /// §8.1.1.2: a `sealed` class or interface has no direct subclasses — a
+    /// sealed type must have at least one. javac: `sealed class must have
+    /// subclasses`; the message is javac's, IntelliJ-style. `range` is the
+    /// sealed declaration's name range. Conservative: only reported when the
+    /// sealed type declares no `permits` clause and no direct subclass
+    /// appears in the same file (cross-file hierarchies are not provably
+    /// subclass-less).
+    SealedClassMustHaveSubclasses { range: Option<rowan::TextRange> },
+    /// §9.4: a modifier on an interface member declaration that the JLS
+    /// forbids for that member's kind — a `protected` interface method, for
+    /// example ([§9.4]). javac: `modifier {m} not allowed here`; the message
+    /// is javac's, IntelliJ-style. `range` is the offending modifier's source
+    /// range.
+    ModifierNotAllowedHere {
+        modifier: &'static str,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.4.5/[§9.4: a method with no body that is neither `abstract` nor
+    /// `native` — an interface `private`/`static`/`default` method without a
+    /// body, or a class method that should be `abstract`. javac: `missing
+    /// method body, or declare abstract`; the message is javac's,
+    /// IntelliJ-style. `method` is the method name and `range` its name
+    /// range.
+    MissingMethodBodyOrDeclareAbstract {
+        method: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -401,6 +444,21 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::GenericCannotExtendThrowable { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::GenericCannotExtendThrowable)
+            }
+            DeclDiagnostic::CantInheritFromSealed { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CantInheritFromSealed)
+            }
+            DeclDiagnostic::SealedSealedOrFinalExpected { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::SealedSealedOrFinalExpected)
+            }
+            DeclDiagnostic::SealedClassMustHaveSubclasses { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::SealedClassMustHaveSubclasses)
+            }
+            DeclDiagnostic::ModifierNotAllowedHere { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ModifierNotAllowedHere)
+            }
+            DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::MissingMethodBodyOrDeclareAbstract)
             }
         }
     }
@@ -610,6 +668,24 @@ impl DeclDiagnostic {
                     class.simple_name()
                 )
             }
+            DeclDiagnostic::CantInheritFromSealed { super_owner, .. } => {
+                format!("Cannot inherit from sealed '{}'", super_owner.simple_name())
+            }
+            DeclDiagnostic::SealedSealedOrFinalExpected { .. } => {
+                "Sealed, non-sealed or final expected".to_owned()
+            }
+            DeclDiagnostic::SealedClassMustHaveSubclasses { .. } => {
+                "Sealed class must have subclasses".to_owned()
+            }
+            DeclDiagnostic::ModifierNotAllowedHere { modifier, .. } => {
+                format!("Modifier '{modifier}' is not allowed here")
+            }
+            DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { method, .. } => {
+                format!(
+                    "Missing method body, or declare abstract for '{}()'",
+                    method.as_str()
+                )
+            }
         }
     }
 
@@ -647,7 +723,12 @@ impl DeclDiagnostic {
             | DeclDiagnostic::RecursiveConstructorInvocation { .. }
             | DeclDiagnostic::DuplicateDeclaration { .. }
             | DeclDiagnostic::FinalFieldNotInitialized { .. }
-            | DeclDiagnostic::GenericCannotExtendThrowable { .. } => "",
+            | DeclDiagnostic::GenericCannotExtendThrowable { .. }
+            | DeclDiagnostic::CantInheritFromSealed { .. }
+            | DeclDiagnostic::SealedSealedOrFinalExpected { .. }
+            | DeclDiagnostic::SealedClassMustHaveSubclasses { .. }
+            | DeclDiagnostic::ModifierNotAllowedHere { .. }
+            | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. } => "",
         }
     }
 
@@ -709,6 +790,21 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::GenericCannotExtendThrowable {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::CantInheritFromSealed {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::SealedSealedOrFinalExpected {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::SealedClassMustHaveSubclasses {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::ModifierNotAllowedHere {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::MissingMethodBodyOrDeclareAbstract {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -1112,6 +1208,69 @@ fn check_class(
         }
     }
 
+    // §8.1.1.2: sealed hierarchies. A class may directly extend — and a class
+    // or interface directly implement/extend — a `sealed` supertype only when
+    // it is named in its `permits` clause (or, without one, is its
+    // same-module direct subclass), and a permitted direct subclass must
+    // itself be `final`, `sealed` or `non-sealed` so the hierarchy closes.
+    sealed_subclass_diagnostics(db, tree, scope, &resolver, item, fqn, &mut out);
+
+    // §8.1.1.2: a `sealed` type must have at least one direct subclass.
+    if class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_sealed())
+        && !has_permits_clause(tree.data(item))
+        && !file_has_direct_subclass(db, file, tree, scope, fqn)
+    {
+        out.push(DeclDiagnostic::SealedClassMustHaveSubclasses {
+            range: Some(tree.data(item).name_range()),
+        });
+    }
+
+    // §8.4.5/[§9.4: interface member-shape rules: a non-`abstract`,
+    // non-`native` method without a body — an interface `private`/`static`/
+    // `default` method that never got its body, or a class method that should
+    // be `abstract` — is a compile-time error; and `protected` is not a legal
+    // interface method modifier ([§9.4]).
+    if matches!(tree.data(item), ItemData::Interface(_)) {
+        for &child in tree.data(item).body() {
+            if let ItemData::Method(method) = tree.data(child) {
+                // §9.4: interface methods may be `public`, `abstract`,
+                // `static`, `default`, `private` or `strictfp` — but never
+                // `protected` (javac points at the method name).
+                if method.modifiers.is_protected() {
+                    out.push(DeclDiagnostic::ModifierNotAllowedHere {
+                        modifier: "protected",
+                        range: Some(method.name_range),
+                    });
+                }
+            }
+        }
+    }
+    // §8.4.5: a non-abstract, non-native method without a body is an error.
+    // In an interface a body-less method is *implicitly abstract* ([§9.4]),
+    // so only the explicitly non-abstract forms (`private`/`static`/
+    // `default`) must carry a body. Annotation type elements are exempt — an
+    // element without a `default` value is implicitly abstract ([§9.6.1]).
+    if !matches!(tree.data(item), ItemData::Annotation(_)) {
+        let is_interface = matches!(tree.data(item), ItemData::Interface(_));
+        for &child in tree.data(item).body() {
+            if let ItemData::Method(method) = tree.data(child)
+                && method.body().is_none()
+                && !method.is_constructor()
+                && !method.modifiers.is_abstract()
+                && !method.modifiers.is_native()
+                && (!is_interface
+                    || method.modifiers.is_static()
+                    || method.modifiers.is_private()
+                    || method.modifiers.is_default())
+            {
+                out.push(DeclDiagnostic::MissingMethodBodyOrDeclareAbstract {
+                    method: method.name.clone(),
+                    range: Some(method.name_range),
+                });
+            }
+        }
+    }
+
     // §8.8 ([§8.10.4] for records): the `SimpleTypeName` of every constructor
     // declaration must be the simple name of the class that contains it, or a
     // compile-time error occurs. The parser accepts any `Name(...)` member as
@@ -1427,6 +1586,198 @@ fn recursive_constructor_diagnostics(
 /// ([JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)).
 fn is_class_like(data: &ItemData) -> bool {
     data.is_type()
+}
+
+/// §8.1.1.2: the canonical fully qualified names named in the `permits`
+/// clause of the sealed class or interface `fqn`, resolved in its declaring
+/// scope; `Some(vec)` for a sealed type (empty when it declares no `permits`
+/// clause — the permitted set is then its same-module direct subclasses).
+/// `None` when `fqn` is not sealed or its declaration cannot be recovered
+/// (conservative — the sealed checks then stay silent).
+fn sealed_permits(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &str,
+) -> Option<Vec<Name>> {
+    let resolved = hir::fqn_resolve(db, scope, fqn)?;
+    match resolved {
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let (permits, sealed) = match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => {
+                    (&d.permits, d.modifiers.is_sealed())
+                }
+                ItemData::Record(d) => (&d.permits, d.modifiers.is_sealed()),
+                _ => return None,
+            };
+            if !sealed {
+                return None;
+            }
+            let file_scope = scope_for_file(db, source.file);
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
+            let resolver = crate::java::resolve::Resolver::new(&tree, type_params, source.item);
+            Some(
+                permits
+                    .iter()
+                    .map(|ty| {
+                        let ty =
+                            crate::java::resolve::resolve_type_ref(db, &file_scope, &resolver, ty);
+                        ty.as_reference(db)
+                            .map(|(name, _)| name.clone())
+                            .unwrap_or_else(|| Name::new(""))
+                    })
+                    .collect(),
+            )
+        }
+        hir::Resolved::Library(resolved_class) => {
+            let record = hir::class_record(db, &resolved_class)?;
+            let hir::ClassOrModuleRecord::Class(class) = record.as_ref() else {
+                return None;
+            };
+            // A library class is sealed exactly when its classfile carries a
+            // `PermittedSubclasses` attribute; an empty one is not provably
+            // sealed, so it is skipped.
+            if class.permitted_subclasses.is_empty() {
+                return None;
+            }
+            Some(
+                class
+                    .permitted_subclasses
+                    .iter()
+                    .map(|tyref| {
+                        crate::java::resolve::ty_from_library(db, tyref)
+                            .as_reference(db)
+                            .map(|(name, _)| name.clone())
+                            .unwrap_or_else(|| Name::new(""))
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// §8.1.1.2: the sealed-hierarchy diagnostics of the class-like declaration
+/// `item` (whose canonical FQN is `fqn`): a direct subclass of a `sealed`
+/// supertype that is not named in its `permits` clause
+/// ([`DeclDiagnostic::CantInheritFromSealed`]), and a permitted direct
+/// subclass that is itself neither `sealed`, `non-sealed` nor `final`
+/// ([`DeclDiagnostic::SealedSealedOrFinalExpected`]).
+fn sealed_subclass_diagnostics(
+    db: &dyn TyDatabase,
+    tree: &hir_def::java::item_tree::ItemTree,
+    scope: &hir::ResolutionScope,
+    resolver: &crate::java::resolve::Resolver,
+    item: hir_def::java::item_tree::ItemId,
+    fqn: &str,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    let data = tree.data(item);
+    let mods = class_like_modifiers(data);
+    let final_ = mods.is_some_and(|m| m.is_final());
+    let sealed = mods.is_some_and(|m| m.is_sealed());
+    let non_sealed = mods.is_some_and(|m| m.is_non_sealed());
+    // §8.1.1.2: an enum and a record are implicitly final ([§8.9], [§8.10]),
+    // so they may always be a permitted subclass.
+    let closed =
+        final_ || sealed || non_sealed || matches!(data, ItemData::Enum(_) | ItemData::Record(_));
+    // The direct supertypes of the declaration: a class's superclass and the
+    // implemented interfaces; an interface's extended interfaces.
+    let super_refs: Vec<&hir_expand::span::SpannedTypeRef> = match data {
+        ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
+        ItemData::Interface(d) => d.interfaces.iter().collect(),
+        ItemData::Record(d) => d.interfaces.iter().collect(),
+        _ => return,
+    };
+    for super_ref in super_refs {
+        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, resolver, super_ref);
+        let TyKind::Reference { name, .. } = super_ty.kind(db) else {
+            continue;
+        };
+        let Some(permits) = sealed_permits(db, scope, name.as_str()) else {
+            continue;
+        };
+        if permits.is_empty() || permits.iter().any(|p| p.as_str() == fqn) {
+            // §8.1.1.2: a permitted (or implicitly permitted) direct subclass
+            // must be `final`, `sealed` or `non-sealed`.
+            if !closed {
+                out.push(DeclDiagnostic::SealedSealedOrFinalExpected {
+                    range: Some(data.name_range()),
+                });
+            }
+        } else {
+            // §8.1.1.2: extending a sealed supertype without being named in
+            // its `permits` clause is an error.
+            out.push(DeclDiagnostic::CantInheritFromSealed {
+                super_owner: name.clone(),
+                range: Some(data.name_range()),
+            });
+        }
+    }
+}
+
+/// Whether the class-like declaration `data` declares a `permits` clause
+/// ([§8.1.1.2]).
+fn has_permits_clause(data: &ItemData) -> bool {
+    match data {
+        ItemData::Class(d) | ItemData::Interface(d) => !d.permits.is_empty(),
+        ItemData::Record(d) => !d.permits.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether any class-like declaration of `file` directly extends or
+/// implements the type `fqn` — its direct-supertype walk, used by the
+/// §8.1.1.2 "sealed class must have subclasses" check. Only the *same file*
+/// is scanned: a sealed type whose subclasses live in another file is never
+/// provably subclass-less, so the check stays silent for it.
+fn file_has_direct_subclass(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    scope: &hir::ResolutionScope,
+    fqn: &str,
+) -> bool {
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
+    fn walk(
+        db: &dyn TyDatabase,
+        tree: &hir_def::java::item_tree::ItemTree,
+        scope: &hir::ResolutionScope,
+        type_params: &rustc_hash::FxHashMap<
+            hir_def::java::item_tree::ItemId,
+            Vec<hir_def::java::item_tree::TypeParam>,
+        >,
+        id: hir_def::java::item_tree::ItemId,
+        fqn: &str,
+    ) -> bool {
+        let data = tree.data(id);
+        let resolver = crate::java::resolve::Resolver::new(tree, type_params, id);
+        let super_refs: Vec<&hir_expand::span::SpannedTypeRef> = match data {
+            ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
+            ItemData::Interface(d) => d.interfaces.iter().collect(),
+            ItemData::Record(d) => d.interfaces.iter().collect(),
+            _ => Vec::new(),
+        };
+        for super_ref in super_refs {
+            let ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+            if let Some((name, _)) = ty.as_reference(db)
+                && name.as_str() == fqn
+            {
+                return true;
+            }
+        }
+        for &child in data.body() {
+            if walk(db, tree, scope, type_params, child, fqn) {
+                return true;
+            }
+        }
+        false
+    }
+    for &top in &tree.top {
+        if walk(db, tree, scope, type_params, top, fqn) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The `public` modifier and simple name of a class-like top-level declaration

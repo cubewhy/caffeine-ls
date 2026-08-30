@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_sealed.rs
+expression: out
+---
+FILE /src/com/example/Iface.java:
+package com.example;
+
+class C {
+    void f();
+}
+interface I {
+    static void s();
+    void a();
+    default void d() {
+    }
+}
+
+@3:9: missing-method-body-or-declare-abstract: Missing method body, or declare abstract for 'f()'
+@6:16: missing-method-body-or-declare-abstract: Missing method body, or declare abstract for 's()'

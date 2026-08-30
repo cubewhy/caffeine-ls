@@ -273,6 +273,11 @@ pub fn record_decl_rest(p: &mut Parser, m: Marker) {
         implements_clause(p);
     }
 
+    // permits
+    if p.at_contextual_kw(ContextualKeyword::Permits) {
+        permits_clause(p);
+    }
+
     // { ... }
     record_body(p);
 
@@ -324,10 +329,40 @@ pub fn class_decl_rest(p: &mut Parser, m: Marker) {
         implements_clause(p);
     }
 
+    // permits
+    if p.at_contextual_kw(ContextualKeyword::Permits) {
+        permits_clause(p);
+    }
+
     // class body
     class_body(p);
 
     m.complete(p, CLASS_DECL);
+}
+
+/// Permits:
+///   permits ClassType (',' ClassType)*
+///
+/// The permitted direct subclasses of a `sealed` class or interface
+/// ([§8.1.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1.2)):
+/// a non-empty comma-separated list of class type names.
+fn permits_clause(p: &mut Parser) {
+    let m = p.start();
+    p.expect_contextual_kw(ContextualKeyword::Permits);
+    if crate::grammar::types::type_(p).is_err() {
+        // Recover to the class body `{` so the declaration still lowers.
+        while !p.is_at_end() && !p.at(L_BRACE) && !p.at(COMMA) {
+            p.bump();
+        }
+        m.complete(p, PERMITS_CLAUSE);
+        return;
+    }
+    while p.eat(COMMA) {
+        if crate::grammar::types::type_(p).is_err() {
+            break;
+        }
+    }
+    m.complete(p, PERMITS_CLAUSE);
 }
 
 pub fn class_body(p: &mut Parser) {
@@ -427,6 +462,11 @@ pub fn interface_decl_rest(p: &mut Parser, m: Marker) {
     // extends
     if p.at(EXTENDS_KW) {
         interface_extends_clause(p);
+    }
+
+    // permits
+    if p.at_contextual_kw(ContextualKeyword::Permits) {
+        permits_clause(p);
     }
 
     interface_body(p);

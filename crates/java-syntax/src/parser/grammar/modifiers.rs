@@ -31,6 +31,11 @@ pub fn modifiers(p: &mut Parser) {
             ContextualKeyword::NonSealed
         ]) {
             p.bump();
+        } else if p.eat_non_sealed() {
+            // `non-sealed` lexes as `non - sealed` (three tokens); the
+            // keyword is recognized and consumed here ([§8.1.1.2]).
+            is_empty = false;
+            continue;
         } else if p.at(AT) && p.nth(1) != Some(INTERFACE_KW) {
             annotation(p);
         } else {

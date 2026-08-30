@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_sealed.rs
+expression: out
+---
+FILE /src/com/example/Iface.java:
+package com.example;
+
+interface I {
+    protected void m();
+}
+
+@3:19: modifier-not-allowed-here: Modifier 'protected' is not allowed here
