@@ -7,6 +7,7 @@ use crate::{
 use ide::LanguageKind;
 use lsp_types::*;
 use rustc_hash::FxHashMap;
+use vfs::FileId;
 
 pub fn on_diagnostic(
     state: GlobalStateSnapshot,
@@ -72,10 +73,21 @@ pub fn on_workspace_diagnostic(
         "request workspace diagnostics"
     );
 
-    let previous_ids: FxHashMap<Uri, String> = params
+    let previous_ids: FxHashMap<FileId, String> = params
         .previous_result_ids
         .into_iter()
-        .map(|previous| (previous.uri, previous.value))
+        .filter_map(|previous| {
+            // Index by FileId instead of comparing URI strings: the client may
+            // spell the same file's URI differently (`d%3A` vs `d:` vs `D:`)
+            // than the server would serialize it, which would otherwise
+            // force every file back to a full report. Unknown/malformed URIs
+            // are dropped and simply come back full.
+            state
+                .url_to_file_id(&previous.uri)
+                .ok()
+                .flatten()
+                .map(|file_id| (file_id, previous.value))
+        })
         .collect();
 
     let items = diagnostics::workspace_diagnostic_reports(&state, &previous_ids)?;

@@ -110,7 +110,7 @@ pub(crate) fn render_id(hash: u64) -> String {
 /// entry.
 pub(crate) fn workspace_diagnostic_reports(
     snapshot: &GlobalStateSnapshot,
-    previous_ids: &FxHashMap<lsp_types::Uri, String>,
+    previous_ids: &FxHashMap<vfs::FileId, String>,
 ) -> anyhow::Result<Vec<lsp_types::WorkspaceDocumentDiagnosticReport>> {
     let _span = tracing::info_span!("workspace_diagnostic").entered();
 
@@ -134,7 +134,7 @@ pub(crate) fn workspace_diagnostic_reports(
         let diagnostics = convert_items(snapshot, file, &workspace_report.report)?;
         let id = render_id(result_id(&diagnostics));
 
-        let report = if previous_ids.get(&uri).map(String::as_str) == Some(id.as_str()) {
+        let report = if previous_ids.get(&file).map(String::as_str) == Some(id.as_str()) {
             lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceUnchangedDocumentDiagnosticReport(
                 lsp_types::WorkspaceUnchangedDocumentDiagnosticReport {
                     uri,

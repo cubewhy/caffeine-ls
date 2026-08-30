@@ -462,7 +462,7 @@ impl GlobalStateSnapshot {
         let path = path
             .as_path()
             .ok_or_else(|| anyhow::format_err!("file has no absolute path: {file_id:?}"))?;
-        Uri::from_file_path(path).map_err(|_| anyhow::format_err!("failed to build URI for {path}"))
+        Ok(crate::lsp::to_proto::url(path))
     }
 
     pub(crate) fn file_line_index(&self, file_id: FileId) -> Cancellable<LineIndex> {
