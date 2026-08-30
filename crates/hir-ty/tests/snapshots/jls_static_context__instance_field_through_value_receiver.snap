@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_static_context.rs
+expression: out
+---
+FILE /src/Main.java:
+class Main {
+    int x;
+    static int helper() {
+        Main m = new Main();
+        return m.x;
+    }
+}

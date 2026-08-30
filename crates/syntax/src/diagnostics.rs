@@ -133,6 +133,16 @@ pub enum JavaDiagnosticCode {
     /// §15.12.3: an unqualified invocation of an instance method from a static
     /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     NonStaticMethodFromStaticContext,
+    /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
+    /// context ([§8.1.3]) — a static method body, a static field initializer,
+    /// a static initializer or an enum constant, where no enclosing instance
+    /// exists. javac reports `non-static variable this cannot be referenced
+    /// from a static context` for both keywords.
+    NonStaticThisFromStaticContext,
+    /// §15.11: a simple-name read or write of an *instance* field of the
+    /// implicit receiver in a static context ([§8.1.3]) — the field can only
+    /// be reached through `this`, which does not exist there.
+    NonStaticFieldFromStaticContext,
     /// §7.4.1: a compilation unit declares more than one `package` declaration
     /// — the second and later are errors.
     DuplicatePackage,
@@ -227,6 +237,8 @@ impl JavaDiagnosticCode {
             MissingReturnValue => Some("compiler.err.missing.ret.stmt"),
             CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
+            NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
+            NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
             DuplicatePackage => None,
             DuplicateClass => Some("compiler.err.duplicate.class"),
@@ -294,6 +306,12 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::UnexpectedPackagePath => "package-path-mismatch",
             JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
                 "non-static-method-from-static-context"
+            }
+            JavaDiagnosticCode::NonStaticThisFromStaticContext => {
+                "non-static-this-from-static-context"
+            }
+            JavaDiagnosticCode::NonStaticFieldFromStaticContext => {
+                "non-static-field-from-static-context"
             }
             JavaDiagnosticCode::DuplicatePackage => "duplicate-package",
             JavaDiagnosticCode::DuplicateClass => "duplicate-class",

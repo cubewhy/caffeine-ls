@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_static_context.rs
+expression: out
+---
+FILE /src/Main.java:
+class Main {
+    int x;
+    static int sx;
+    static int helper = x;
+    static int helper2 = sx;
+
+    static void test() {
+        int a = x;
+        x = 1;
+        int b = sx;
+    }
+
+    void use() {
+        int c = x;
+    }
+}
+
+field helper
+  @3:24..3:25 'x': non-static-field-from-static-context: Non-static field 'x' cannot be referenced from a static context
+method test(): void
+  @7:16..7:17 'x': non-static-field-from-static-context: Non-static field 'x' cannot be referenced from a static context
+  @8:8..8:9 'x': non-static-field-from-static-context: Non-static field 'x' cannot be referenced from a static context

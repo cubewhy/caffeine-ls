@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_static_context.rs
+expression: out
+---
+FILE /src/Main.java:
+class Main {
+    int x;
+    void m() {}
+
+    static void test() {
+        this.x = 1;
+        this.m();
+        int y = this.x;
+    }
+}
+
+method test(): void
+  @5:8..5:12 'this': non-static-this-from-static-context: Non-static variable 'this' cannot be referenced from a static context
+  @6:8..6:12 'this': non-static-this-from-static-context: Non-static variable 'this' cannot be referenced from a static context
+  @7:16..7:20 'this': non-static-this-from-static-context: Non-static variable 'this' cannot be referenced from a static context

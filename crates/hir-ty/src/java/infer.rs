@@ -979,14 +979,30 @@ impl<'a> InferCtx<'a> {
             // §3.10.8: the null literal has the null type.
             ExprData::Null => Ty::null(self.db),
             // §15.8.3: `this` is the type of the enclosing class; a qualified
-            // `TypeName.this` is the class or interface `TypeName`.
-            ExprData::This { qualifier } => match qualifier {
-                Some(type_name) => {
-                    resolve_type_ref(self.db, &self.scope, &self.resolver, &type_name)
+            // `TypeName.this` is the class or interface `TypeName`. §8.1.3: in
+            // a static context — a static method body, a static field
+            // initializer, a static initializer or an enum constant — no
+            // enclosing instance exists, so `this` (bare or qualified) is a
+            // compile-time error.
+            ExprData::This { qualifier } => {
+                if self.static_context {
+                    self.report(TypeError::NonStaticThisFromStaticContext { expr: id });
                 }
-                None => self.enclosing_class.unwrap_or_else(|| self.error()),
-            },
-            ExprData::Super { .. } => self.error(),
+                match qualifier {
+                    Some(type_name) => {
+                        resolve_type_ref(self.db, &self.scope, &self.resolver, &type_name)
+                    }
+                    None => self.enclosing_class.unwrap_or_else(|| self.error()),
+                }
+            }
+            // §15.8.4: like `this`, `super` names the enclosing instance and
+            // is illegal in a static context.
+            ExprData::Super { .. } => {
+                if self.static_context {
+                    self.report(TypeError::NonStaticThisFromStaticContext { expr: id });
+                }
+                self.error()
+            }
             // §15.8.2: `T.class` has type `Class<T>`.
             ExprData::ClassLit(tyref) => {
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
@@ -1452,6 +1468,17 @@ impl<'a> InferCtx<'a> {
                 });
                 return self.error();
             }
+            // §15.11/[§8.1.3]: an *instance* field of the implicit receiver
+            // is reachable only through `this`, which a static context has
+            // none of — a simple-name read of one is a compile-time error. A
+            // static field (or a field read in an instance context) stays
+            // legal.
+            if self.static_context && !field.is_static {
+                self.report(TypeError::NonStaticFieldFromStaticContext {
+                    expr,
+                    name: name.clone(),
+                });
+            }
             return field.ty;
         }
         // §6.5: a simple name that resolves to nothing is a compile-time
@@ -1494,6 +1521,14 @@ impl<'a> InferCtx<'a> {
                 return ty;
             }
             if let Some(field) = self.pick_field_of_chain(last) {
+                // §15.11/[§8.1.3]: a simple-name read of an instance field of
+                // the implicit receiver from a static context.
+                if self.static_context && !field.is_static {
+                    self.report(TypeError::NonStaticFieldFromStaticContext {
+                        expr,
+                        name: name.clone(),
+                    });
+                }
                 return field.ty;
             }
             // §6.5: a simple name that resolves to nothing is a compile-time
@@ -1612,6 +1647,11 @@ impl<'a> InferCtx<'a> {
         // [§15.12.1]): the receiver is the superclass type and the access
         // context is the super invocation mode.
         if matches!(self.tree.expr(target).clone(), ExprData::Super { .. }) {
+            // §8.1.3: `super` names the enclosing instance, which does not
+            // exist in a static context. Reported at the `super` keyword.
+            if self.static_context {
+                self.report(TypeError::NonStaticThisFromStaticContext { expr: target });
+            }
             let receiver = self.super_ty();
             let access = self.access.with_mode(InvocationMode::Super);
             // §15.11.1: a `super` field access selects an instance member of
@@ -1987,7 +2027,7 @@ impl<'a> InferCtx<'a> {
         args: &[ExprId],
         target: Option<Ty>,
     ) -> Ty {
-        let (receiver_ty, mode, method_name_form) = self.receiver_info(receiver, &name);
+        let (receiver_ty, mode, method_name_form) = self.receiver_info(expr, receiver, &name);
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         // §15.12.1: no member of the name on the receiver is a compile-time
@@ -2064,6 +2104,7 @@ impl<'a> InferCtx<'a> {
     /// ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     fn receiver_info(
         &mut self,
+        expr: ExprId,
         receiver: Option<ExprId>,
         name: &Name,
     ) -> (Ty, InvocationMode, bool) {
@@ -2079,6 +2120,14 @@ impl<'a> InferCtx<'a> {
                     // `super.method(...)` — a super invocation whose receiver is
                     // the superclass of the enclosing class ([§15.12.1]).
                     ExprData::Super { qualifier: None } => {
+                        // §8.1.3: `super` names the enclosing instance, which
+                        // does not exist in a static context. Reported at the
+                        // `super` keyword, not the invoked member.
+                        if self.static_context {
+                            self.report(TypeError::NonStaticThisFromStaticContext {
+                                expr: receiver,
+                            });
+                        }
                         (self.super_ty(), InvocationMode::Super, false)
                     }
                     // §15.11.2/§15.12.1: `I.super.m(...)` — a qualified-super
@@ -2088,7 +2137,14 @@ impl<'a> InferCtx<'a> {
                     ExprData::Super {
                         qualifier: Some(qualifier),
                     } => (
-                        resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier),
+                        {
+                            if self.static_context {
+                                self.report(TypeError::NonStaticThisFromStaticContext {
+                                    expr: receiver,
+                                });
+                            }
+                            resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier)
+                        },
                         InvocationMode::Interface,
                         false,
                     ),
@@ -2856,7 +2912,7 @@ impl<'a> InferCtx<'a> {
         else {
             return true;
         };
-        let (receiver_ty, mode, _) = self.receiver_info(receiver, &name);
+        let (receiver_ty, mode, _) = self.receiver_info(id, receiver, &name);
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);

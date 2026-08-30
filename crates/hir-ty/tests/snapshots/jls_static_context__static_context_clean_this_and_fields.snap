@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_static_context.rs
+expression: out
+---
+FILE /src/Main.java:
+import static java.lang.Math.max;
+
+class Main {
+    static int x;
+    static int y = x;
+
+    static void test() {
+        x = max(1, 2);
+        Main m = new Main();
+        m.x = 3;
+        int z = x;
+    }
+}

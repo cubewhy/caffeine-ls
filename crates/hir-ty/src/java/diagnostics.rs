@@ -98,6 +98,16 @@ pub enum TypeError {
     /// invocation occurs in a static context — a static method body, a static
     /// field initializer or a static initializer, where `this` is unavailable.
     NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
+    /// §15.8.3/[§15.8.4]/[§8.1.3]: the `this` or `super` keyword (bare or
+    /// qualified `TypeName.this`/`I.super`) is used in a static context, where
+    /// no enclosing instance exists — javac reports `non-static variable this
+    /// cannot be referenced from a static context` for both keywords.
+    NonStaticThisFromStaticContext { expr: ExprId },
+    /// §15.11/[§8.1.3]: a simple-name read or write of an instance field of
+    /// the implicit receiver in a static context — the field is reachable only
+    /// through `this`, which does not exist there. A *qualified* access
+    /// (`obj.x`) or a static field stays legal.
+    NonStaticFieldFromStaticContext { expr: ExprId, name: Name },
     /// §15.12.2: members of the name exist but none is applicable to the
     /// actual arguments. `required` carries the parameter types of the
     /// closest candidate and `found_tys` the actual argument types (each a
@@ -231,6 +241,12 @@ impl TypeError {
             TypeError::NonStaticMethodFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticMethodFromStaticContext)
             }
+            TypeError::NonStaticThisFromStaticContext { .. } => {
+                DiagnosticCode::Java(NonStaticThisFromStaticContext)
+            }
+            TypeError::NonStaticFieldFromStaticContext { .. } => {
+                DiagnosticCode::Java(NonStaticFieldFromStaticContext)
+            }
             TypeError::WrongArity { .. } => DiagnosticCode::Java(WrongArity),
             TypeError::IncompatibleTypes { .. } => DiagnosticCode::Java(IncompatibleTypes),
             TypeError::NonBooleanCondition { .. } => DiagnosticCode::Java(NonBooleanCondition),
@@ -287,6 +303,8 @@ impl TypeError {
             | NoSuchMethod { expr, .. }
             | NoSuchConstructor { expr, .. }
             | NonStaticMethodFromStaticContext { expr, .. }
+            | NonStaticThisFromStaticContext { expr, .. }
+            | NonStaticFieldFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
             | IncompatibleTypes { expr, .. }
             | NonBooleanCondition { expr, .. }
@@ -365,6 +383,8 @@ impl TypeError {
             | TypeError::NoSuchMethod { expr, .. }
             | TypeError::NoSuchConstructor { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
+            | TypeError::NonStaticThisFromStaticContext { expr, .. }
+            | TypeError::NonStaticFieldFromStaticContext { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
             | TypeError::GenericArrayCreation { expr, .. }
             | TypeError::CannotInstantiateTypeVar { expr, .. }
@@ -429,6 +449,15 @@ impl TypeError {
             NonStaticMethodFromStaticContext { name, .. } => {
                 format!(
                     "Non-static method '{}()' cannot be referenced from a static context",
+                    name.as_str()
+                )
+            }
+            NonStaticThisFromStaticContext { .. } => {
+                "Non-static variable 'this' cannot be referenced from a static context".to_owned()
+            }
+            NonStaticFieldFromStaticContext { name, .. } => {
+                format!(
+                    "Non-static field '{}' cannot be referenced from a static context",
                     name.as_str()
                 )
             }
