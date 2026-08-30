@@ -1047,6 +1047,7 @@ dependencies = [
  "line-index",
  "ra_ap_vfs",
  "rowan",
+ "rust-asm",
  "rustc-hash 2.1.2",
  "salsa",
  "syntax",

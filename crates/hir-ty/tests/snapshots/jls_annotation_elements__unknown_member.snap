@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Ann {
+    int value();
+}
+
+class Anns {
+    @Ann(foo = 1)
+    void run() {}
+}
+
+@7:15: unknown-annotation-member: No annotation member named 'foo'

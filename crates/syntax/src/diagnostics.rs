@@ -157,6 +157,17 @@ pub enum JavaDiagnosticCode {
     /// type is not in its `@Target` set (or, for a type-use annotation, the
     /// target includes neither `TYPE_USE` nor the declaration's element type).
     AnnotationNotApplicable,
+    /// §9.7.1: an annotation element-value pair names an element the annotation
+    /// type does not declare.
+    UnknownAnnotationMember,
+    /// §9.7.1: the same annotation element is given a value twice.
+    DuplicateAnnotationMemberValue,
+    /// §9.7.1/[§5.2]: an annotation element value is not assignable to its
+    /// element's declared type ([§9.6.1]).
+    AnnotationElementTypeMismatch,
+    /// §9.7.1/[§8.9]: an enum-constant element value names a constant that the
+    /// element's (enum) type does not declare.
+    UnknownAnnotationElementConstant,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -248,6 +259,12 @@ impl JavaDiagnosticCode {
             DuplicateClass => Some("compiler.err.duplicate.class"),
             ClassPublicShouldBeInFile => Some("compiler.err.class.public.should.be.in.file"),
             AnnotationNotApplicable => Some("compiler.err.annotation.not.applicable"),
+            UnknownAnnotationMember => Some("compiler.err.no.annotation.member"),
+            DuplicateAnnotationMemberValue => {
+                Some("compiler.err.duplicate.annotation.member.value")
+            }
+            AnnotationElementTypeMismatch => Some("compiler.err.prob.found.req"),
+            UnknownAnnotationElementConstant => Some("compiler.err.cant.resolve.location"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -322,6 +339,14 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::DuplicateClass => "duplicate-class",
             JavaDiagnosticCode::ClassPublicShouldBeInFile => "class-public-should-be-in-file",
             JavaDiagnosticCode::AnnotationNotApplicable => "annotation-not-applicable",
+            JavaDiagnosticCode::UnknownAnnotationMember => "unknown-annotation-member",
+            JavaDiagnosticCode::DuplicateAnnotationMemberValue => {
+                "duplicate-annotation-member-value"
+            }
+            JavaDiagnosticCode::AnnotationElementTypeMismatch => "annotation-element-type-mismatch",
+            JavaDiagnosticCode::UnknownAnnotationElementConstant => {
+                "unknown-annotation-element-constant"
+            }
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

@@ -1,9 +1,16 @@
-//! The `@Target` applicability check of annotations
-//! ([JLS §9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1),
-//! [§9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)):
-//! an annotation type declares the element types it may be applied to via
-//! `@Target`, so an annotation used on a declaration whose element type is not
-//! in that set is a compile-time error.
+//! The annotation checks over a compilation unit ([JLS §9.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6)):
+//!
+//! - The `@Target` applicability check
+//!   ([JLS §9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1),
+//!   [§9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)):
+//!   an annotation type declares the element types it may be applied to via
+//!   `@Target`, so an annotation used on a declaration whose element type is not
+//!   in that set is a compile-time error.
+//! - The element-value argument check
+//!   ([JLS §9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1)):
+//!   every `name = value` pair of an annotation's argument list must name an
+//!   element of the annotation type ([§9.6.1]) exactly once, and the value must
+//!   be assignable to the element's declared type.
 //!
 //! The rules applied here:
 //!
@@ -13,26 +20,35 @@
 //! - A *type-use* annotation `T` on a type of `D` is applicable iff `T`'s
 //!   target contains `TYPE_USE`, or contains `E` itself ([§9.6.4.1] — the
 //!   annotated type belongs to the declaration, so its element type counts).
+//! - An element value `V` is assignable to an element of declared type `T` by
+//!   assignment conversion ([§5.2]), with the §9.7.1 array shorthand (a single
+//!   non-initializer value against `T[]` is checked against `T`) and the
+//!   constant-narrowing of an `int` literal to `byte`/`short`/`char`.
 //!
-//! The `@Target` argument list is read from the annotation type's own
-//! declaration: from *source* via the lowered [`AnnotationRef`]s (whose
-//! element values are the enum constants of `java.lang.annotation.ElementType`),
-//! and from *library* classes via the classfile `RuntimeVisibleAnnotations`
-//! stubs ([`hir::ClassRecord`]), so a `@Target(ElementType.X)` from a
-//! dependency jar is honored the same way.
+//! The `@Target` argument list and the element-value pairs are read from the
+//! annotation type's own declaration: from *source* via the lowered
+//! [`AnnotationRef`]s (whose element values are the enum constants of
+//! `java.lang.annotation.ElementType`), and from *library* classes via the
+//! classfile `RuntimeVisibleAnnotations` and method-signature stubs
+//! ([`hir::ClassRecord`]), so a `@Target(ElementType.X)` from a dependency jar
+//! is honored the same way.
 
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, TypeParam};
 use hir_expand::{
-    body::{BodyTree, ExprId, PatternId, StmtId},
+    body::{BodyTree, ExprId, Literal, PatternId, StmtId},
     name::Name,
     span::{AnnotationArg, AnnotationRef, AnnotationValue, SpannedTypeRef},
 };
+use rust_asm::constants::ACC_ENUM;
 use rustc_hash::FxHashMap;
+use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
 use crate::java::decl_check::DeclDiagnostic;
-use crate::java::resolve::{Resolver, candidate_fqns};
+use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, ty_from_library};
+use crate::java::subtyping::is_assignable;
+use crate::java::ty::{Ty, TyKind};
 
 /// The element types an annotation may be applied to on a *declaration*
 /// ([JLS §9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1)
@@ -57,9 +73,11 @@ fn element_type_of(data: &ItemData) -> Option<&'static str> {
     }
 }
 
-/// The declaration-level `@Target` checks of every annotation in `file`,
-/// declaration and type-use alike, in source order.
-pub(crate) fn annotation_target_diagnostics(
+/// The annotation diagnostics of every annotation in `file`, declaration and
+/// type-use alike, in source order: the `@Target` applicability checks
+/// ([JLS §9.6.4.1], [§9.7.4]) and the element-value argument checks
+/// ([§9.7.1]).
+pub(crate) fn annotation_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
     tree: &ItemTree,
@@ -251,6 +269,9 @@ fn check_target(
     annotation: &AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    // §9.7.1: the element-value arguments are checked against the annotation
+    // type's elements regardless of whether the target check passes.
+    check_annotation_elements(db, resolver, scope, annotation, out);
     let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name.name) else {
         // An unresolvable annotation type (or one without `@Target`) has no
         // target to enforce: empty `@Target` is applicable to every
@@ -311,6 +332,9 @@ fn check_type_use_annotation(
     annotation: &AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    // §9.7.1: the element-value arguments are checked regardless of whether
+    // the target check passes.
+    check_annotation_elements(db, resolver, scope, annotation, out);
     let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name.name) else {
         return;
     };
@@ -700,6 +724,375 @@ fn check_pattern_type_use(
             }
         }
         P::MatchAll => {}
+    }
+}
+
+/// Checks the element-value arguments of one annotation against the elements
+/// of its type ([JLS §9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1)):
+/// each `name = value` pair must name a declared element exactly once
+/// ([§9.6.1]), and the value must be assignable to the element's declared
+/// type ([§5.2]). An annotation type that cannot be resolved (or is not an
+/// annotation) has nothing to check — an unknown annotation is reported by
+/// the name-resolution check.
+fn check_annotation_elements(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    annotation: &AnnotationRef,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    if annotation.args.is_empty() {
+        return;
+    }
+    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name.name)
+    else {
+        return;
+    };
+    for (idx, arg) in annotation.args.iter().enumerate() {
+        // §9.7.1: no element may be given a value twice — the later pair is
+        // the error.
+        if annotation.args[..idx]
+            .iter()
+            .any(|prev| prev.name == arg.name)
+        {
+            out.push(DeclDiagnostic::DuplicateAnnotationMemberValue {
+                name: arg.name.clone(),
+                range: Some(arg.range),
+            });
+            continue;
+        }
+        let Some(element) = elements.iter().find(|element| element.name == arg.name) else {
+            // §9.7.1: the pair names an element the annotation type does not
+            // declare.
+            out.push(DeclDiagnostic::UnknownAnnotationMember {
+                name: arg.name.clone(),
+                range: Some(arg.range),
+            });
+            continue;
+        };
+        check_value_assignable(db, resolver, scope, &arg.value, &element.ty, arg.range, out);
+    }
+}
+
+/// Checks one annotation element value against the element's declared type
+/// ([JLS §9.7.1], [§5.2]). `range` is the source range of the value, where
+/// the mismatch is reported.
+fn check_value_assignable(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    value: &AnnotationValue,
+    element_ty: &Ty,
+    range: rowan::TextRange,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    match value {
+        // An array initializer ([§10.6]) is checked element-wise against the
+        // component type; an initializer where the element is not an array is
+        // a compile-time error ([§9.7.1]).
+        AnnotationValue::Array(values) => match element_ty.kind(db) {
+            TyKind::Array(component) => {
+                for v in values {
+                    check_value_assignable(db, resolver, scope, v, component, range, out);
+                }
+            }
+            _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: Ty::array(db, element_ty.clone()),
+                expected: element_ty.clone(),
+                range: Some(range),
+            }),
+        },
+        // §9.7.1: a single, non-initializer value against an array-typed
+        // element is a one-element array shortcut — check it against the
+        // component type instead.
+        _ => {
+            let target = match element_ty.kind(db) {
+                TyKind::Array(component) => component,
+                _ => element_ty,
+            };
+            check_single_value_assignable(db, resolver, scope, value, target, range, out);
+        }
+    }
+}
+
+/// The §9.7.1 single-value checks of [`check_value_assignable`], against the
+/// effective target type `target` (the component type of an array-typed
+/// element, or the element type itself).
+fn check_single_value_assignable(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    value: &AnnotationValue,
+    target: &Ty,
+    range: rowan::TextRange,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    use hir_expand::span::AnnotationValue as V;
+    match value {
+        // A literal carries its primitive or `String` type ([§15.28]).
+        V::Literal(lit) => {
+            let value_ty = literal_ty(db, lit);
+            // §5.2: an `int` constant narrows to `byte`/`short`/`char` when
+            // its value fits; a value that does not fit is already rejected
+            // by the assignment check below.
+            if let (Literal::Int(v), TyKind::Primitive(p)) = (lit, target.kind(db))
+                && narrows_to(*v, *p).is_some_and(|fits| fits)
+            {
+                return;
+            }
+            if !is_assignable(db, scope, &value_ty, target) {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: value_ty,
+                    expected: target.clone(),
+                    range: Some(range),
+                });
+            }
+        }
+        // An enum constant values its own enum type ([§8.9.1], [§15.8.1]).
+        // A bare `CONST` infers its declaring type from the element's type
+        // ([§9.7.1]); a qualified `E.CONST` names `E` explicitly.
+        V::EnumConstant { qualifier, member } => {
+            if let Some(qualifier) = qualifier {
+                let Some(enum_ty) = resolve_name_ty(db, scope, resolver, qualifier) else {
+                    return;
+                };
+                if let Some(constants) = enum_constants(db, scope, &enum_ty)
+                    && !constants.iter().any(|c| c == member.as_str())
+                {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
+                }
+                if !is_assignable(db, scope, &enum_ty, target) {
+                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                        found: enum_ty,
+                        expected: target.clone(),
+                        range: Some(range),
+                    });
+                }
+            } else if let Some(constants) = enum_constants(db, scope, target) {
+                // §9.7.1: the bare constant's declaring type is the element's
+                // type, which must be an enum declaring the constant.
+                if !constants.iter().any(|c| c == member.as_str()) {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
+                }
+            } else {
+                // The element's type is not an enum, so the bare constant has
+                // no declaring type to resolve against ([§9.7.1]).
+                out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                    member: member.clone(),
+                    range: Some(range),
+                });
+            }
+        }
+        // A class literal `Foo.class` values `Class` ([§15.8.2]).
+        V::ClassLit(_) => {
+            let class = Ty::reference(db, "java.lang.Class", Vec::new());
+            if !is_assignable(db, scope, &class, target) {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: class,
+                    expected: target.clone(),
+                    range: Some(range),
+                });
+            }
+        }
+        // A nested annotation values the annotation type it names
+        // ([§9.7.1]); its own argument list is checked recursively.
+        V::Annotation(inner) => {
+            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name) {
+                if !is_assignable(db, scope, &inner_ty, target) {
+                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                        found: inner_ty,
+                        expected: target.clone(),
+                        range: Some(range),
+                    });
+                }
+            }
+            check_annotation_elements(db, resolver, scope, inner, out);
+        }
+        // A non-constant element value (a unary/binary/conditional
+        // expression) carries no standalone type; javac rejects it (an
+        // annotation element value must be a §15.28 constant) but the raw
+        // text gives nothing to compare — the syntax layer already holds the
+        // failing parse.
+        V::Unresolved { .. } => {}
+        // Unreachable: [`check_value_assignable`] routes array values before
+        // delegating a single value here.
+        V::Array(_) => {}
+    }
+}
+
+/// The [`Ty`] of an annotation element literal ([JLS §15.28]).
+fn literal_ty(db: &dyn TyDatabase, lit: &Literal) -> Ty {
+    match lit {
+        Literal::Int(_) => Ty::primitive(db, PrimitiveType::Int),
+        Literal::Long(_) => Ty::primitive(db, PrimitiveType::Long),
+        Literal::Float => Ty::primitive(db, PrimitiveType::Float),
+        Literal::Double => Ty::primitive(db, PrimitiveType::Double),
+        Literal::Boolean(_) => Ty::primitive(db, PrimitiveType::Boolean),
+        Literal::Char(_) => Ty::primitive(db, PrimitiveType::Char),
+        Literal::Str(_) => Ty::reference(db, "java.lang.String", Vec::new()),
+    }
+}
+
+/// Whether an `int` literal's value fits a narrower primitive target by the
+/// §5.2 constant narrowing; `None` for targets that never narrow from `int`.
+fn narrows_to(value: i64, target: PrimitiveType) -> Option<bool> {
+    let (lo, hi) = match target {
+        PrimitiveType::Byte => (-128, 127),
+        PrimitiveType::Short => (-32_768, 32_767),
+        PrimitiveType::Char => (0, 65_535),
+        _ => return None,
+    };
+    Some((lo..=hi).contains(&value))
+}
+
+/// The [`Ty`] a reference name resolves to, for an annotation argument's
+/// enum qualifier (`@Ann(E.CONST)`) or a nested annotation name. Resolved
+/// like any type name ([JLS §6.5.5.1]); `None` when it does not resolve.
+fn resolve_name_ty(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    name: &Name,
+) -> Option<Ty> {
+    let fqn = candidate_fqns(resolver, name)
+        .into_iter()
+        .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())?;
+    Some(Ty::reference(db, fqn.as_str(), Vec::new()))
+}
+
+/// The enum constants of the type `ty` ([JLS §8.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9)),
+/// when it resolves to an enum on the classpath: the `EnumConstant` children
+/// of a source enum ([§8.9.1]), the `ACC_ENUM` fields ([JVMS §4.1]) of a
+/// library one. `None` when `ty` is not an enum — a bare constant then has no
+/// declaring type to resolve against ([§9.7.1]). Used to validate the
+/// enum-constant element values of an annotation ([§9.7.1]).
+fn enum_constants(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<Vec<String>> {
+    let TyKind::Reference { name, .. } = ty.kind(db) else {
+        return None;
+    };
+    let resolved = hir::fqn_resolve(db, scope, name.as_str())?;
+    match resolved {
+        hir::Resolved::Source(source) => {
+            let source_tree = hir::file_item_tree(db, source.file);
+            if !matches!(source_tree.data(source.item), ItemData::Enum(_)) {
+                return None;
+            }
+            let mut out = Vec::new();
+            for &child in source_tree.data(source.item).body() {
+                if let ItemData::EnumConstant(constant) = source_tree.data(child) {
+                    out.push(constant.name.as_str().to_owned());
+                }
+            }
+            Some(out)
+        }
+        hir::Resolved::Library(resolved) => {
+            let record = hir::class_record(db, &resolved)?;
+            let hir::ClassOrModuleRecord::Class(class) = record.as_ref() else {
+                return None;
+            };
+            if hir::ClassKind::from_flags(class.flags, class.is_record) != hir::ClassKind::Enum {
+                return None;
+            }
+            Some(
+                class
+                    .fields
+                    .iter()
+                    .filter(|field| field.flags & ACC_ENUM != 0)
+                    .map(|field| db.hir_state().interner.resolve(&field.name).to_owned())
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// One element of an annotation type ([JLS §9.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.1)):
+/// its name and the declared type of the value it accepts.
+#[derive(Debug, Clone)]
+struct AnnotationElement {
+    name: Name,
+    ty: Ty,
+}
+
+/// The elements of the annotation type `name` ([§9.6.1]), in declaration
+/// order: each is an abstract method of the annotation declaration whose
+/// return type ([§8.4.5]) is the element's declared type. `None` when `name`
+/// does not resolve to an annotation type (nothing to check).
+fn annotation_type_elements(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    name: &Name,
+) -> Option<Vec<AnnotationElement>> {
+    let fqn = candidate_fqns(resolver, name)
+        .into_iter()
+        .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())?;
+    let fqn = fqn.as_str();
+    match hir::fqn_resolve(db, scope, fqn)? {
+        hir::Resolved::Source(source) => {
+            let source_tree = hir::file_item_tree(db, source.file);
+            if !matches!(source_tree.data(source.item), ItemData::Annotation(_)) {
+                return None;
+            }
+            // The elements are the methods of the annotation declaration; their
+            // return types resolve in the annotation's own file scope
+            // ([§6.5.5.1]).
+            let file_scope = crate::java::resolve::scope_for_file(db, source.file);
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
+            let resolver = Resolver::new(&source_tree, &type_params, source.item);
+            let mut out = Vec::new();
+            for &child in source_tree.data(source.item).body() {
+                if let ItemData::Method(method) = source_tree.data(child)
+                    && let Some(ret) = &method.sig.ret
+                {
+                    out.push(AnnotationElement {
+                        name: method.name.clone(),
+                        ty: resolve_type_ref(db, &file_scope, &resolver, &ret.ty),
+                    });
+                }
+            }
+            Some(out)
+        }
+        hir::Resolved::Library(resolved) => {
+            let record = hir::class_record(db, &resolved)?;
+            let hir::ClassOrModuleRecord::Class(class) = record.as_ref() else {
+                return None;
+            };
+            // §9.6.1: an annotation element is an abstract method stub whose
+            // return type ([§8.4.5]) is the element's declared type.
+            if hir::ClassKind::from_flags(class.flags, class.is_record)
+                != hir::ClassKind::Annotation
+            {
+                return None;
+            }
+            if class.methods.is_empty() {
+                // A stub with no method records (the test fixture's minimal
+                // annotations) or a partially-read classfile carries no
+                // element information — an empty element list would report
+                // every argument as an unknown member, so treat it as
+                // uncheckable instead.
+                return None;
+            }
+            Some(
+                class
+                    .methods
+                    .iter()
+                    .map(|method| AnnotationElement {
+                        name: Name::new(db.hir_state().interner.resolve(&method.name)),
+                        ty: ty_from_library(db, &method.return_type),
+                    })
+                    .collect(),
+            )
+        }
     }
 }
 

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Inner {
+    int value();
+}
+
+@interface Outer {
+    Inner inner();
+}
+
+@Outer(inner = @Inner(value = 1))
+@Outer(inner = @Inner(value = "x"))
+class Anns {}
+
+@11:30: annotation-element-type-mismatch: Incompatible types. Found: 'String', required: 'int'

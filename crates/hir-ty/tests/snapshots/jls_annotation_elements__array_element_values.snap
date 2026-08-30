@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Ann {
+    int[] value();
+}
+
+@Ann(value = { 1, 2, 3 })
+@Ann(value = { 1, "x" })
+@Ann(value = 42)
+@Ann(value = "nope")
+class Anns {}
+
+@7:13: annotation-element-type-mismatch: Incompatible types. Found: 'String', required: 'int'
+@9:13: annotation-element-type-mismatch: Incompatible types. Found: 'String', required: 'int'

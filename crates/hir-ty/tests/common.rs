@@ -595,6 +595,27 @@ pub fn annotation(fqn: &'static str) -> ClassSpec<'static> {
     }
 }
 
+/// An annotation type with element methods, each `(name, descriptor)`
+/// ([JLS §9.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.1)):
+/// a real `@SuppressWarnings`-shaped stub whose elements the annotation
+/// element-value check can enforce ([JLS §9.7.1]).
+pub fn annotation_with_methods(
+    fqn: &'static str,
+    methods: &'static [(&'static str, &'static str)],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        fqn,
+        super_class: None,
+        interfaces: &["java/lang/annotation/Annotation"],
+        access: 0x2601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT | ACC_ANNOTATION
+        fields: &[],
+        methods,
+        method_sigs: &[],
+        method_access: &[],
+        sig: None,
+    }
+}
+
 /// Like [`interface_ext`], but carrying a class-level `Signature` attribute.
 pub fn interface_sig(
     fqn: &'static str,
@@ -951,7 +972,12 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         // ([JLS §9.7], [§9.6.4.4]) and by the annotation fixtures.
         annotation("java/lang/Deprecated"),
         annotation("java/lang/Override"),
-        annotation("java/lang/SuppressWarnings"),
+        // `@SuppressWarnings` elements are enforced by the annotation
+        // element-value check ([§9.7.1]); `value()` is `String[]`.
+        annotation_with_methods(
+            "java/lang/SuppressWarnings",
+            &[("value", "()[Ljava/lang/String;")],
+        ),
         annotation("java/lang/FunctionalInterface"),
         annotation("java/lang/SafeVarargs"),
         annotation("java/lang/annotation/Annotation"),

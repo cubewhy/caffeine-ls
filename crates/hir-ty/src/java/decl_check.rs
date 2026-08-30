@@ -141,6 +141,37 @@ pub enum DeclDiagnostic {
         element_type: &'static str,
         range: Option<rowan::TextRange>,
     },
+    /// §9.7.1: an annotation element-value pair names an element the annotation
+    /// type does not declare — javac's `no annotation member named {name}`.
+    /// `range` is the source range of the offending value expression.
+    UnknownAnnotationMember {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.1: the same annotation element is given a value twice — javac's
+    /// `duplicate annotation member value` on the later pair.
+    DuplicateAnnotationMemberValue {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.1/[§5.2]: an annotation element value is not assignable to its
+    /// element's declared type ([§9.6.1]) — a literal, enum constant, class
+    /// literal, nested annotation or array element of the wrong type. Types are
+    /// stored unresolved (the canonical FQN), rendered simple only in
+    /// [`DeclDiagnostic::message`].
+    AnnotationElementTypeMismatch {
+        found: Ty,
+        expected: Ty,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.1/[§8.9]: an enum-constant element value names a constant the
+    /// element's (enum) type does not declare — javac's `cannot find symbol`. A
+    /// bare `CONST` value infers its declaring type from the element's type
+    /// ([§9.7.1]); a qualified `E.CONST` names `E` explicitly.
+    UnknownAnnotationElementConstant {
+        member: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -191,6 +222,18 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::AnnotationNotApplicable { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::AnnotationNotApplicable)
+            }
+            DeclDiagnostic::UnknownAnnotationMember { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationMember)
+            }
+            DeclDiagnostic::DuplicateAnnotationMemberValue { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DuplicateAnnotationMemberValue)
+            }
+            DeclDiagnostic::AnnotationElementTypeMismatch { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AnnotationElementTypeMismatch)
+            }
+            DeclDiagnostic::UnknownAnnotationElementConstant { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationElementConstant)
             }
         }
     }
@@ -287,6 +330,22 @@ impl DeclDiagnostic {
                     element_type
                 )
             }
+            DeclDiagnostic::UnknownAnnotationMember { name, .. } => {
+                format!("No annotation member named '{}'", name.as_str())
+            }
+            DeclDiagnostic::DuplicateAnnotationMemberValue { name, .. } => {
+                format!("Duplicate annotation member '{}'", name.as_str())
+            }
+            DeclDiagnostic::AnnotationElementTypeMismatch {
+                found, expected, ..
+            } => format!(
+                "Incompatible types. Found: '{}', required: '{}'",
+                found.display_simple(db),
+                expected.display_simple(db)
+            ),
+            DeclDiagnostic::UnknownAnnotationElementConstant { member, .. } => {
+                format!("Cannot resolve symbol '{}'", member.simple_name())
+            }
         }
     }
 
@@ -307,7 +366,11 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicatePackage { .. }
             | DeclDiagnostic::DuplicateClass { .. }
             | DeclDiagnostic::ClassPublicShouldBeInFile { .. }
-            | DeclDiagnostic::AnnotationNotApplicable { .. } => "",
+            | DeclDiagnostic::AnnotationNotApplicable { .. }
+            | DeclDiagnostic::UnknownAnnotationMember { .. }
+            | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
+            | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
+            | DeclDiagnostic::UnknownAnnotationElementConstant { .. } => "",
         }
     }
 
@@ -327,6 +390,18 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicateClass { name_range, .. }
             | DeclDiagnostic::ClassPublicShouldBeInFile { name_range, .. }
             | DeclDiagnostic::AnnotationNotApplicable {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::UnknownAnnotationMember {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::DuplicateAnnotationMemberValue {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AnnotationElementTypeMismatch {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::UnknownAnnotationElementConstant {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -372,9 +447,12 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // across the source set (cross-file as well as same-file).
     out.extend(duplicate_class_diagnostics(db, file, &tree));
 
-    // §9.6.4.1/[§9.7.4]: the `@Target` applicability of every annotation,
-    // declaration and type-use alike (see [`crate::java::annotation_check`]).
-    out.extend(crate::java::annotation_check::annotation_target_diagnostics(db, file, &tree));
+    // §9.6.4.1/[§9.7.4]/[§9.7.1]: the `@Target` applicability and the
+    // element-value arguments of every annotation, declaration and type-use
+    // alike (see [`crate::java::annotation_check`]).
+    out.extend(crate::java::annotation_check::annotation_diagnostics(
+        db, file, &tree,
+    ));
 
     fn walk(
         db: &dyn TyDatabase,

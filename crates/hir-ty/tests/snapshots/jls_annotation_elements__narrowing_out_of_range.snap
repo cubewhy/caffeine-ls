@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface AnnB {
+    byte value();
+}
+
+@AnnB(value = 1000)
+class Anns {}
+
+@6:14: annotation-element-type-mismatch: Incompatible types. Found: 'int', required: 'byte'

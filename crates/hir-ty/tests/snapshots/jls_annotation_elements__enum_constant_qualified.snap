@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+enum Color { RED, GREEN }
+
+enum Shape { CIRCLE }
+
+@interface ColorAnn {
+    Color value();
+}
+
+@interface ShapeAnn {
+    Shape value();
+}
+
+@ColorAnn(value = Color.RED)
+@ColorAnn(value = Color.BLUE)
+@ShapeAnn(value = Color.RED)
+class Anns {}
+
+@15:18: unknown-annotation-element-constant: Cannot resolve symbol 'BLUE'
+@16:18: annotation-element-type-mismatch: Incompatible types. Found: 'Color', required: 'Shape'

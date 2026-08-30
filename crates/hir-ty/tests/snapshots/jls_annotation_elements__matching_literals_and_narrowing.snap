@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface AnnI {
+    int value();
+}
+
+@interface AnnS {
+    String value();
+}
+
+@interface AnnB {
+    byte value();
+}
+
+@AnnI(value = 7)
+@AnnS(value = "text")
+@AnnB(value = 100)
+class Anns {}
