@@ -55,7 +55,7 @@ use vfs::FileId;
 use crate::{
     java::const_eval::{Const, ConstEnv},
     java::db::{TyDatabase, type_params_map_query},
-    java::diagnostics::TypeError,
+    java::diagnostics::{NonStaticThisKind, TypeError},
     java::inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
     java::method::{
         FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
@@ -986,7 +986,10 @@ impl<'a> InferCtx<'a> {
             // compile-time error.
             ExprData::This { qualifier } => {
                 if self.static_context {
-                    self.report(TypeError::NonStaticThisFromStaticContext { expr: id });
+                    self.report(TypeError::NonStaticThisFromStaticContext {
+                        expr: id,
+                        keyword: NonStaticThisKind::This,
+                    });
                 }
                 match qualifier {
                     Some(type_name) => {
@@ -999,7 +1002,10 @@ impl<'a> InferCtx<'a> {
             // is illegal in a static context.
             ExprData::Super { .. } => {
                 if self.static_context {
-                    self.report(TypeError::NonStaticThisFromStaticContext { expr: id });
+                    self.report(TypeError::NonStaticThisFromStaticContext {
+                        expr: id,
+                        keyword: NonStaticThisKind::Super,
+                    });
                 }
                 self.error()
             }
@@ -1650,7 +1656,10 @@ impl<'a> InferCtx<'a> {
             // §8.1.3: `super` names the enclosing instance, which does not
             // exist in a static context. Reported at the `super` keyword.
             if self.static_context {
-                self.report(TypeError::NonStaticThisFromStaticContext { expr: target });
+                self.report(TypeError::NonStaticThisFromStaticContext {
+                    expr: target,
+                    keyword: NonStaticThisKind::Super,
+                });
             }
             let receiver = self.super_ty();
             let access = self.access.with_mode(InvocationMode::Super);
@@ -2168,6 +2177,7 @@ impl<'a> InferCtx<'a> {
                         if self.static_context {
                             self.report(TypeError::NonStaticThisFromStaticContext {
                                 expr: receiver,
+                                keyword: NonStaticThisKind::Super,
                             });
                         }
                         (self.super_ty(), InvocationMode::Super, false)
@@ -2183,6 +2193,7 @@ impl<'a> InferCtx<'a> {
                             if self.static_context {
                                 self.report(TypeError::NonStaticThisFromStaticContext {
                                     expr: receiver,
+                                    keyword: NonStaticThisKind::Super,
                                 });
                             }
                             resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier)

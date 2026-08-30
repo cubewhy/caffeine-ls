@@ -100,9 +100,13 @@ pub enum TypeError {
     NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
     /// §15.8.3/[§15.8.4]/[§8.1.3]: the `this` or `super` keyword (bare or
     /// qualified `TypeName.this`/`I.super`) is used in a static context, where
-    /// no enclosing instance exists — javac reports `non-static variable this
-    /// cannot be referenced from a static context` for both keywords.
-    NonStaticThisFromStaticContext { expr: ExprId },
+    /// no enclosing instance exists. Both keywords map to javac's
+    /// `compiler.err.non-static.cant.be.ref`, but the message quotes the
+    /// actual keyword, so which form was flagged is recorded in [`NonStaticThisKind`].
+    NonStaticThisFromStaticContext {
+        expr: ExprId,
+        keyword: NonStaticThisKind,
+    },
     /// §15.11/[§8.1.3]: a simple-name read or write of an instance field of
     /// the implicit receiver in a static context — the field is reachable only
     /// through `this`, which does not exist there. A *qualified* access
@@ -454,9 +458,16 @@ impl TypeError {
                     name.as_str()
                 )
             }
-            NonStaticThisFromStaticContext { .. } => {
-                "Non-static variable 'this' cannot be referenced from a static context".to_owned()
-            }
+            NonStaticThisFromStaticContext { keyword, .. } => match keyword {
+                NonStaticThisKind::This => {
+                    "Non-static variable 'this' cannot be referenced from a static context"
+                        .to_owned()
+                }
+                NonStaticThisKind::Super => {
+                    "Non-static variable 'super' cannot be referenced from a static context"
+                        .to_owned()
+                }
+            },
             NonStaticFieldFromStaticContext { name, .. } => {
                 format!(
                     "Non-static field '{}' cannot be referenced from a static context",
@@ -672,6 +683,18 @@ impl TypeError {
             _ => Vec::new(),
         }
     }
+}
+
+/// Which keyword a [`TypeError::NonStaticThisFromStaticContext`] flags: the
+/// `this` or the `super` form. Both name the enclosing instance and are
+/// illegal in a static context, but the user-facing message must quote the
+/// keyword that actually appears in source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonStaticThisKind {
+    /// The bare or qualified `TypeName.this` form ([§15.8.3]).
+    This,
+    /// The bare `super` or qualified `I.super` form ([§15.8.4]).
+    Super,
 }
 
 /// The simple-name rendering of a [`Ty`] for a diagnostic message.
