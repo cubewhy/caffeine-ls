@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Catch.java:
+package com.example;
+
+class L<T> {
+    void m() {
+        try {
+        } catch (T t) {
+        }
+    }
+    void n() {
+        try {
+        } catch (RuntimeException e) {
+        }
+    }
+}
+
+method m(): void
+  @5:17..5:20 'T t': cannot-catch-type-variable: Cannot catch type variables

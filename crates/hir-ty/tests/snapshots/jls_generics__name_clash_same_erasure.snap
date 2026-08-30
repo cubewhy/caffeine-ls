@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Clash.java:
+package com.example;
+
+import java.util.List;
+
+class Clash {
+    void m(List<String> l) {
+    }
+    void m(List<Integer> l) {
+    }
+}
+
+method m: name-clash-same-erasure: 'm(List<String>)' clashes with 'm(List<Integer>)'; both methods have same erasure

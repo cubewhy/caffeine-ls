@@ -722,6 +722,103 @@ pub(crate) fn class_is_generic(
     }
 }
 
+/// §4.5.1: whether the type argument `arg` satisfies the declared bounds
+/// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
+/// of the type parameter it fills in the class named by `class_fqn`.
+///
+/// Returns the first violated bound as `(type parameter, argument, bound)`,
+/// or `None` when the arguments are within bounds. Conservative by
+/// construction: when the class's type parameters or a bound cannot be
+/// recovered (a partial classpath, a raw use, an arity mismatch), or a bound
+/// or argument carries an inference variable ([`TyKind::InferenceVar`], which
+/// the subtype machinery cannot decide mid-inference), no violation is
+/// reported. Bound references to the class's own type parameters are
+/// substituted with the actual arguments first, so `class M<T extends Number>`
+/// used as `M<String>` checks `String <: Number` and reports the pair.
+pub fn type_argument_bound_violation(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    class_fqn: &Name,
+    args: &[Ty],
+) -> Option<(Name, Ty, Ty)> {
+    let resolved = hir::fqn_resolve(db, scope, class_fqn.as_str())?;
+    // The declared type parameters as (name, resolved bounds).
+    let type_params: Vec<(Name, Vec<Ty>)> = match &resolved {
+        hir::Resolved::Library(_) => {
+            let info = hir::class_generic_info(db, &resolved)?;
+            if info.type_params.len() != args.len() {
+                return None;
+            }
+            let interner = &db.hir_state().interner;
+            info.type_params
+                .iter()
+                .map(|tp| {
+                    (
+                        Name::new(interner.resolve(&tp.name)),
+                        tp.bounds.iter().map(|b| ty_from_library(db, b)).collect(),
+                    )
+                })
+                .collect()
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let params = (match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
+                ItemData::Record(d) => Some(&d.type_params),
+                _ => None,
+            })?;
+            if params.len() != args.len() {
+                return None;
+            }
+            let file_scope = scope_for_file(db, source.file);
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
+            let resolver = Resolver::new(&tree, type_params, source.item);
+            params
+                .iter()
+                .map(|tp| {
+                    (
+                        tp.name.clone(),
+                        tp.bounds
+                            .iter()
+                            .map(|b| resolve_type_ref(db, &file_scope, &resolver, b))
+                            .collect(),
+                    )
+                })
+                .collect()
+        }
+    };
+    let binding: FxHashMap<Name, Ty> = type_params
+        .iter()
+        .map(|(name, _)| name.clone())
+        .zip(args.iter().copied())
+        .collect();
+    for (name, bounds) in type_params {
+        let Some(arg) = binding.get(&name).copied() else {
+            continue;
+        };
+        // §4.5.1: a wildcard is not a concrete type argument — its own bounds
+        // are checked against the type parameter, not the subtype of a bound.
+        // The subtype machinery cannot decide a wildcard against a bound
+        // without capture conversion, so skip it (conservative).
+        if arg.is_wildcard(db) {
+            continue;
+        }
+        for bound in bounds {
+            let bound = bound.substitute(db, &binding);
+            if arg.is_error(db) || bound.is_error(db) {
+                continue;
+            }
+            if arg.contains_infer_var(db) || bound.contains_infer_var(db) {
+                continue;
+            }
+            if !crate::java::subtyping::is_subtype(db, scope, &arg, &bound) {
+                return Some((name, arg, bound));
+            }
+        }
+    }
+    None
+}
+
 /// The declared type of an item: the type of a field, the return type of a
 /// method, or the type of a class/interface/enum/record/annotation
 /// declaration. Memoized per (file, item) by the tracked query in [`crate::java::db`].

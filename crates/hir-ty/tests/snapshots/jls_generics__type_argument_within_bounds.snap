@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Bounds.java:
+package com.example;
+
+class M<T extends Number> {
+    void m() {
+        M<T> a = new M<T>();
+    }
+}

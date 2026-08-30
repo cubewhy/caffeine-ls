@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Throwable.java:
+package com.example;
+
+class I<T> extends Exception {
+}
+
+class J<T> {
+}
+
+@2:6: generic-cannot-extend-throwable: Generic class 'I' may not subclass java.lang.Throwable

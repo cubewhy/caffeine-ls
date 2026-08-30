@@ -55,14 +55,16 @@ use vfs::FileId;
 use crate::{
     java::const_eval::{Const, ConstEnv},
     java::db::{TyDatabase, type_params_map_query},
-    java::diagnostics::{IllegalAccessKind, NonStaticThisKind, TypeError},
+    java::diagnostics::{DiagLocation, IllegalAccessKind, NonStaticThisKind, TypeError},
     java::inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
     java::method::{
         Access, FieldData, InvocationContext, InvocationMode, MethodData, access_context,
         member_set, member_set_ignoring_access, pick_field, pick_field_ignoring_access,
         pick_method, single_abstract_method,
     },
-    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
+    java::resolve::{
+        Resolver, item_data, resolve_type_ref, scope_for_file, type_argument_bound_violation,
+    },
     java::subtyping::supertypes_impl,
     java::ty::{Ty, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive},
 };
@@ -918,6 +920,46 @@ impl<'a> InferCtx<'a> {
         }
     }
 
+    /// §4.7: whether `ty` is a reifiable type — one whose runtime
+    /// representation is fully known at compile time
+    /// ([JLS §4.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.7)):
+    /// a primitive, a non-generic class or interface, a raw type, an
+    /// unbounded-wildcard parameterization (`List<?>`), or an array of
+    /// reifiable. A type variable, or a parameterized type with a type-variable,
+    /// concrete or bounded-wildcard argument (`List<String>`,
+    /// `List<? extends Number>`, `ArrayList<T>`), is not.
+    fn is_reifiable(&self, ty: &Ty) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Primitive(_) => true,
+            TyKind::Reference { args, .. } => args
+                .iter()
+                .all(|a| matches!(a.kind(self.db), TyKind::Wildcard(None))),
+            TyKind::Array(inner) => self.is_reifiable(inner),
+            _ => false,
+        }
+    }
+
+    /// §15.20.2/[§4.7]: a type reference in `instanceof` position is
+    /// bounds-checked ([§4.5.1]) and must be reifiable — a type variable or a
+    /// parameterized type with a non-wildcard argument cannot be tested.
+    fn check_instanceof_target(&mut self, expr: ExprId, spanned: &SpannedTypeRef) {
+        self.check_type_argument_bounds(DiagLocation::Expr(expr), spanned);
+        let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, spanned);
+        if !ty.is_error(self.db) && !self.is_reifiable(&ty) {
+            self.report(TypeError::IllegalGenericInstanceOf { expr, ty });
+        }
+    }
+
+    /// The written type reference of a pattern ([JLS §14.30]) — the pattern
+    /// type of a `TYPE_PATTERN`/`RECORD_PATTERN`, `None` for a `MatchAll`.
+    fn pattern_type_ref(&self, id: PatternId) -> Option<SpannedTypeRef> {
+        match self.tree.pattern(id).clone() {
+            PatternData::Type(tp) => Some(tp.ty),
+            PatternData::Record(rp) => Some(rp.ty),
+            PatternData::MatchAll => None,
+        }
+    }
+
     /// §4.12.2: reports a declared local whose type is a raw type.
     fn warn_raw_declared_type(&mut self, local: LocalId) {
         let Some(ty) = self.locals.get(&local).copied() else {
@@ -928,6 +970,48 @@ impl<'a> InferCtx<'a> {
         {
             self.report(TypeError::RawTypeUse { local, ty });
         }
+    }
+
+    /// §4.5.1: reports a parameterized type reference whose type argument is
+    /// not within the bounds of the type parameter it fills
+    /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
+    /// e.g. `M<String>` for `class M<T extends Number>`. The check is
+    /// conservative (see [`type_argument_bound_violation`]): anything the
+    /// subtype machinery cannot decide is silently skipped. `location` anchors
+    /// the diagnostic to the local, expression or pattern the type reference
+    /// belongs to; the report's range is the reference name itself, matching
+    /// javac's caret.
+    fn check_type_argument_bounds(&mut self, location: DiagLocation, spanned: &SpannedTypeRef) {
+        let TypeRef::Reference {
+            name: _,
+            generic_args,
+        } = &spanned.ty
+        else {
+            return;
+        };
+        if generic_args.is_empty() {
+            return;
+        }
+        let resolved = resolve_type_ref(self.db, &self.scope, &self.resolver, &spanned.ty);
+        let TyKind::Reference {
+            name: fqn, args, ..
+        } = resolved.kind(self.db)
+        else {
+            return;
+        };
+        let Some((param, arg, bound)) =
+            type_argument_bound_violation(self.db, &self.scope, fqn, args)
+        else {
+            return;
+        };
+        let range = spanned.first_ref().and_then(|r| r.range);
+        self.report(TypeError::TypeArgumentOutOfBounds {
+            location,
+            name: param,
+            arg,
+            bound,
+            range,
+        });
     }
 
     /// §5.1.9/§5.2: an assignment whose source is a raw type and whose target
@@ -1277,6 +1361,8 @@ impl<'a> InferCtx<'a> {
             // standalone expression per §15.16, so plain method calls are not
             // given the target here.)
             ExprData::Cast { ty, expr } => {
+                // §4.5.1: a cast type argument that is not within bounds.
+                self.check_type_argument_bounds(DiagLocation::Expr(expr), &ty);
                 if expr_is_poly(&self.tree, expr) {
                     let cast_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
                     let _ = self.with_target(Some(cast_ty), |this| this.infer_expr(expr));
@@ -1303,13 +1389,20 @@ impl<'a> InferCtx<'a> {
                     cast_ty
                 }
             }
-            // §15.20.2: `instanceof` always has type `boolean`; a pattern test
+            // §15.20.2: `instanceof` always has type `boolean`; the reference type of
+            // the check must be reifiable ([§4.7]), and a pattern test
             // ([§14.30]) additionally resolves the pattern, recording the type
             // of each variable it binds ([§14.30.1], [§14.30.2]).
-            ExprData::InstanceOf { expr, pattern, .. } => {
+            ExprData::InstanceOf { expr, pattern, ty } => {
                 let _ = self.infer_expr(expr);
+                if let Some(ty) = &ty {
+                    self.check_instanceof_target(expr, ty);
+                }
                 if let Some(pattern) = pattern {
                     let _ = self.pattern_type(pattern);
+                    if let Some(spanned) = self.pattern_type_ref(pattern) {
+                        self.check_instanceof_target(expr, &spanned);
+                    }
                 }
                 self.primitive(PrimitiveType::Boolean)
             }
@@ -3382,6 +3475,22 @@ impl<'a> InferCtx<'a> {
         } else {
             class_ty
         };
+        // §15.9/[§4.5.1]: a wildcard type argument names no concrete type, so
+        // `new ArrayList<?>()` creates nothing — and a type argument not within
+        // its bounds is rejected ([§4.5.1]). The wildcard check reads the
+        // *written* type reference: a diamond `new ArrayList<>()` has no
+        // written arguments, and the type inferred for it (from the target)
+        // may legitimately carry wildcards.
+        if let TypeRef::Reference { generic_args, .. } = &ty.ty
+            && generic_args
+                .iter()
+                .any(|a| matches!(a, TypeRef::Wildcard { .. }))
+        {
+            self.types.insert(expr, self.error());
+            self.report(TypeError::CannotInstantiateWildcard { expr, ty: class_ty });
+            return self.error();
+        }
+        self.check_type_argument_bounds(DiagLocation::Expr(expr), &ty);
         // §15.9: instantiating a type variable, an interface, an abstract
         // class or an enum with `new` is a compile-time error — unless an
         // anonymous class body implements the interface or extends the
@@ -4685,6 +4794,11 @@ impl<'a> InferCtx<'a> {
                 // §4.12.2: a declared type naming a generic class without its
                 // arguments is a raw type — legal, reported as a warning.
                 self.warn_raw_declared_type(*local);
+                // §4.5.1: a declared type argument that is not within the
+                // bounds of the type parameter it fills.
+                if let Some(tyref) = self.tree.local(*local).ty.clone() {
+                    self.check_type_argument_bounds(DiagLocation::Local(*local), &tyref);
+                }
                 if initializer.is_none() {
                     // §16: a declarator without an initializer is not
                     // definitely assigned until a later assignment reaches it.
@@ -5154,6 +5268,17 @@ impl<'a> InferCtx<'a> {
                         all_exits &= exits;
                         self.scopes.pop();
                         continue;
+                    }
+                    // §14.20: a catch parameter type must be a class, never a
+                    // type variable ([§4.4]) — a type parameter is not a class,
+                    // so `catch (T t)` is rejected.
+                    if clause_tys
+                        .iter()
+                        .any(|ty| matches!(ty.kind(self.db), TyKind::TypeVar { .. }))
+                    {
+                        self.report(TypeError::CannotCatchTypeVariable {
+                            local: clause.param,
+                        });
                     }
                     if clause_tys.iter().all(|clause_ty| {
                         catch_tys.iter().any(|earlier| {

@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Clash.java:
+package com.example;
+
+import java.util.List;
+
+class Ok {
+    void m(List<String> l) {
+    }
+    void m(String s) {
+    }
+    <E> void n(E e) {
+    }
+    <F> void n(String s) {
+    }
+}

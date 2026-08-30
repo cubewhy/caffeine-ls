@@ -280,6 +280,41 @@ pub enum TypeError {
     /// shadow an enclosing local. javac: `{x} is already defined in {y}`.
     /// `local` is the later binding and `name` the duplicated name.
     VariableAlreadyDefined { local: LocalId, name: Name },
+    /// §4.5.1: a type argument of a parameterized type is not within the
+    /// bounds of the type parameter it fills — `class M<T extends Number>`
+    /// used as `M<String>`. javac: `type argument {a} is not within bounds of
+    /// type-variable {T}`; the message is IntelliJ's `Type argument 'String'
+    /// is not within bounds of type-variable 'T'`. `name` is the type
+    /// parameter, `arg` the offending argument and `bound` the violated bound;
+    /// `location` anchors the diagnostic (the local, expression or pattern the
+    /// type reference belongs to) and `range` the type reference's own name
+    /// span (matching javac's caret).
+    TypeArgumentOutOfBounds {
+        location: DiagLocation,
+        name: Name,
+        arg: Ty,
+        bound: Ty,
+        range: Option<TextRange>,
+    },
+    /// §15.9: a class instance creation whose type argument is a wildcard
+    /// (`new ArrayList<?>()`) — a wildcard never names a concrete type, so
+    /// nothing is created. javac: `unexpected type; required: exact type,
+    /// found: ?`; the message is IntelliJ's `Cannot instantiate wildcard
+    /// parameterized type 'ArrayList<?>'`.
+    CannotInstantiateWildcard { expr: ExprId, ty: Ty },
+    /// §14.20: a catch clause parameter declared with a type variable — an
+    /// exception type must be a concrete class, not a type parameter. javac:
+    /// `unexpected type; required: class, found: type parameter T`; the
+    /// message is javac's `Cannot catch type variables` (IntelliJ-style,
+    /// reported at the clause parameter).
+    CannotCatchTypeVariable { local: LocalId },
+    /// §4.7/[§15.20.2]: the reference type of an `instanceof` check must be
+    /// reifiable — a type variable, or a parameterized type with a type
+    /// variable, concrete or bounded-wildcard argument (like `List<String>` or
+    /// `List<? extends Number>`), is not. javac: `inconvertible types; cannot
+    /// cast {o} to {T}`; the message is IntelliJ's `Cannot perform instanceof
+    /// check against non-reifiable type 'List<String>'`.
+    IllegalGenericInstanceOf { expr: ExprId, ty: Ty },
 }
 
 impl TypeError {
@@ -353,6 +388,18 @@ impl TypeError {
                 DiagnosticCode::Java(VariableMustBeEffectivelyFinal)
             }
             TypeError::VariableAlreadyDefined { .. } => DiagnosticCode::Java(DuplicateDeclaration),
+            TypeError::TypeArgumentOutOfBounds { .. } => {
+                DiagnosticCode::Java(TypeArgumentOutOfBounds)
+            }
+            TypeError::CannotInstantiateWildcard { .. } => {
+                DiagnosticCode::Java(CannotInstantiateWildcard)
+            }
+            TypeError::CannotCatchTypeVariable { .. } => {
+                DiagnosticCode::Java(CannotCatchTypeVariable)
+            }
+            TypeError::IllegalGenericInstanceOf { .. } => {
+                DiagnosticCode::Java(IllegalGenericInstanceOf)
+            }
         }
     }
 
@@ -401,6 +448,7 @@ impl TypeError {
             UnreachableStatement { stmt } => DiagLocation::Stmt(*stmt),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
+            CannotCatchTypeVariable { local } => DiagLocation::Local(*local),
             IllegalAccess { expr, .. } => DiagLocation::Expr(*expr),
             RecursiveConstructorInvocation { expr }
             | ConstructorCallNotFirst { expr }
@@ -408,9 +456,12 @@ impl TypeError {
             | CannotAssignToFinalVariable { expr, .. }
             | VariableMustBeEffectivelyFinal { expr, .. } => DiagLocation::Expr(*expr),
             VariableAlreadyDefined { local, .. } => DiagLocation::Local(*local),
+            CannotInstantiateWildcard { expr, .. } => DiagLocation::Expr(*expr),
+            IllegalGenericInstanceOf { expr, .. } => DiagLocation::Expr(*expr),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
-            | ModuleNotAccessible { location, .. } => location.clone(),
+            | ModuleNotAccessible { location, .. }
+            | TypeArgumentOutOfBounds { location, .. } => location.clone(),
             AlreadyCaught { local, .. } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
@@ -424,6 +475,7 @@ impl TypeError {
             TypeError::CannotResolveType { range, .. }
             | TypeError::AmbiguousName { range, .. }
             | TypeError::ModuleNotAccessible { range, .. }
+            | TypeError::TypeArgumentOutOfBounds { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
             // §15.12.2: a wrong-argument diagnostic points at a *single*
             // offending argument (IntelliJ-style), never a merged span — the
@@ -472,6 +524,8 @@ impl TypeError {
             | TypeError::NonIterableForEach { expr, .. }
             | TypeError::GenericArrayCreation { expr, .. }
             | TypeError::CannotInstantiateTypeVar { expr, .. }
+            | TypeError::CannotInstantiateWildcard { expr, .. }
+            | TypeError::IllegalGenericInstanceOf { expr, .. }
             | TypeError::SwitchSelectorType { expr, .. }
             | TypeError::NotAFunctionalInterface { expr, .. }
             | TypeError::IllegalForwardReference { expr, .. }
@@ -711,6 +765,25 @@ impl TypeError {
                     name.as_str()
                 )
             }
+            TypeArgumentOutOfBounds {
+                name,
+                arg,
+                bound: _,
+                ..
+            } => format!(
+                "Type argument '{}' is not within bounds of type-variable '{}'",
+                render_simple(db, *arg),
+                name.as_str()
+            ),
+            CannotInstantiateWildcard { ty, .. } => format!(
+                "Cannot instantiate wildcard parameterized type '{}'",
+                render_simple(db, *ty)
+            ),
+            CannotCatchTypeVariable { .. } => "Cannot catch type variables".to_owned(),
+            IllegalGenericInstanceOf { ty, .. } => format!(
+                "Cannot perform instanceof check against non-reifiable type '{}'",
+                render_simple(db, *ty)
+            ),
         }
     }
 
@@ -801,6 +874,17 @@ impl TypeError {
                         primary.unwrap_or_default(),
                     ),
                 ]
+            }
+            TypeArgumentOutOfBounds { arg, bound, .. } => {
+                let primary = self.range(tree);
+                vec![(
+                    format!(
+                        "reason: '{}' is not a subtype of '{}'",
+                        render_simple(db, *arg),
+                        render_simple(db, *bound)
+                    ),
+                    primary.unwrap_or_default(),
+                )]
             }
             _ => Vec::new(),
         }

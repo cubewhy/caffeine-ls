@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Bounds.java:
+package com.example;
+
+class Box<T extends Number> {
+    M<String> a;
+    void m(M<String> p) {
+    }
+    M<Integer> n() {
+        return null;
+    }
+}
+class M<T extends Number> {
+}

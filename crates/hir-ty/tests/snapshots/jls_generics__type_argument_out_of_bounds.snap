@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Bounds.java:
+package com.example;
+
+class M<T extends Number> {
+    void m() {
+        M<String> a = new M<String>();
+        M<Integer> b = new M<Integer>();
+    }
+}
+
+method m(): void
+  @4:8..4:9 'M': type-argument-not-within-bounds: Type argument 'String' is not within bounds of type-variable 'T'
+    -> @4:8..4:9 'M': reason: 'String' is not a subtype of 'Number'
+  @4:26..4:27 'M': type-argument-not-within-bounds: Type argument 'String' is not within bounds of type-variable 'T'
+    -> @4:26..4:27 'M': reason: 'String' is not a subtype of 'Number'

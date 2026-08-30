@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Inst.java:
+package com.example;
+
+class P<T> {
+    void m() {
+        Object o = new Object();
+        if (o instanceof T) {
+        }
+    }
+}
+
+method m(): void
+  @5:12..5:13 'o': illegal-generic-instanceof: Cannot perform instanceof check against non-reifiable type 'T'

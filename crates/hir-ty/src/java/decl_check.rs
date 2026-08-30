@@ -278,6 +278,28 @@ pub enum DeclDiagnostic {
         field: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.4.2: two methods of one class-like declaration have the same
+    /// erasure ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
+    /// but different parameterized signatures — `void m(List<String>)` and
+    /// `void m(List<Integer>)` — and neither overrides the other. javac:
+    /// `name clash: {m1} and {m2} have the same erasure, yet neither overrides
+    /// the other`; the message is IntelliJ's. The methods' parameter types are
+    /// stored so the message can render both signatures; both are declared in
+    /// the same class, so no owner is needed.
+    NameClashSameErasure {
+        method: Name,
+        params: Vec<Ty>,
+        other_params: Vec<Ty>,
+    },
+    /// §8.1.2: a *generic* class may not be a direct or indirect subclass of
+    /// `java.lang.Throwable` — an exception type must be a concrete class.
+    /// javac: `generic class {C} may not subclass java.lang.Throwable`; the
+    /// message is javac's. `class` is the generic class and `range` its name
+    /// range.
+    GenericCannotExtendThrowable {
+        class: Name,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -373,6 +395,12 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::FinalFieldNotInitialized { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::FinalFieldNotInitialized)
+            }
+            DeclDiagnostic::NameClashSameErasure { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::NameClashSameErasure)
+            }
+            DeclDiagnostic::GenericCannotExtendThrowable { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::GenericCannotExtendThrowable)
             }
         }
     }
@@ -557,6 +585,31 @@ impl DeclDiagnostic {
                     field.as_str()
                 )
             }
+            DeclDiagnostic::NameClashSameErasure {
+                method,
+                params,
+                other_params,
+            } => {
+                let render = |ty: &Ty| ty.display_simple(db).to_string();
+                let sig = |name: &str, params: &[Ty]| {
+                    format!(
+                        "{}({})",
+                        name,
+                        params.iter().map(render).collect::<Vec<_>>().join(", ")
+                    )
+                };
+                format!(
+                    "'{}' clashes with '{}'; both methods have same erasure",
+                    sig(method.as_str(), params),
+                    sig(method.as_str(), other_params)
+                )
+            }
+            DeclDiagnostic::GenericCannotExtendThrowable { class, .. } => {
+                format!(
+                    "Generic class '{}' may not subclass java.lang.Throwable",
+                    class.simple_name()
+                )
+            }
         }
     }
 
@@ -567,7 +620,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::ConflictingDefaults { method }
             | DeclDiagnostic::MethodDoesNotOverride { method }
             | DeclDiagnostic::CannotOverrideFinalMethod { method, .. }
-            | DeclDiagnostic::WeakerAccessPrivileges { method, .. } => method.as_str(),
+            | DeclDiagnostic::WeakerAccessPrivileges { method, .. }
+            | DeclDiagnostic::NameClashSameErasure { method, .. } => method.as_str(),
             DeclDiagnostic::CannotResolveType { .. }
             | DeclDiagnostic::AmbiguousName { .. }
             | DeclDiagnostic::UnresolvedImport { .. }
@@ -592,7 +646,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::NoDefaultConstructor { .. }
             | DeclDiagnostic::RecursiveConstructorInvocation { .. }
             | DeclDiagnostic::DuplicateDeclaration { .. }
-            | DeclDiagnostic::FinalFieldNotInitialized { .. } => "",
+            | DeclDiagnostic::FinalFieldNotInitialized { .. }
+            | DeclDiagnostic::GenericCannotExtendThrowable { .. } => "",
         }
     }
 
@@ -651,6 +706,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::FinalFieldNotInitialized {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::GenericCannotExtendThrowable {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -1005,6 +1063,52 @@ fn check_class(
                     method: Name::new(&method.name),
                 });
             }
+        }
+    }
+
+    // §8.4.2: two methods *declared by the class itself* whose erasures
+    // ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
+    // are equal but whose parameterized signatures differ — the JVM cannot
+    // load them both, and neither overrides the other. Each later method is
+    // reported against each earlier clashing one.
+    for (i, a) in declared.iter().enumerate() {
+        for b in &declared[i + 1..] {
+            if a.name != b.name || a.params.len() != b.params.len() {
+                continue;
+            }
+            let same_erasure = a
+                .params
+                .iter()
+                .zip(&b.params)
+                .all(|(x, y)| x.erasure(db) == y.erasure(db));
+            // Identical signatures are a *duplicate declaration*, not a name
+            // clash — they collide even without generics.
+            let identical = a.params == b.params;
+            if same_erasure && !identical {
+                out.push(DeclDiagnostic::NameClashSameErasure {
+                    method: Name::new(&a.name),
+                    params: a.params.clone(),
+                    other_params: b.params.clone(),
+                });
+            }
+        }
+    }
+
+    // §8.1.2: a generic class — one declaring type parameters — may not be a
+    // direct or indirect subclass of `java.lang.Throwable`; an exception type
+    // must be a concrete class. Interfaces are exempt (they never extend
+    // classes).
+    if let ItemData::Class(class) = tree.data(item)
+        && !class.type_params.is_empty()
+        && let Some(super_ref) = &class.super_class
+    {
+        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+        let throwable = Ty::reference(db, "java.lang.Throwable", Vec::new());
+        if crate::java::subtyping::is_subtype(db, scope, &super_ty, &throwable) {
+            out.push(DeclDiagnostic::GenericCannotExtendThrowable {
+                class: class.name.clone(),
+                range: Some(class.name_range),
+            });
         }
     }
 

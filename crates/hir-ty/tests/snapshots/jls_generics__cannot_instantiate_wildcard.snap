@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Wild.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Wild {
+    void m() {
+        List<?> x = new ArrayList<?>();
+    }
+    void n() {
+        List<?> y = new ArrayList<String>();
+        List<?> z = new ArrayList<>();
+    }
+}
+
+method m(): void
+  @7:20..7:38 'new ArrayList<?>()': cannot-instantiate-wildcard: Cannot instantiate wildcard parameterized type 'ArrayList<?>'

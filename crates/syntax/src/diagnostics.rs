@@ -246,6 +246,36 @@ pub enum JavaDiagnosticCode {
     /// nested-block local shadowing an enclosing local. javac: `{x} is already
     /// defined in {y}`.
     DuplicateDeclaration,
+    /// §4.5.1: a type argument of a parameterized type is not within the bounds
+    /// of the type parameter it fills — `class M<T extends Number>` used as
+    /// `M<String>`. javac: `type argument {a} is not within bounds of
+    /// type-variable {T}`.
+    TypeArgumentOutOfBounds,
+    /// §8.4.2: two methods of one class have the same erasure
+    /// ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
+    /// but different parameterized signatures — `void m(List<String>)` and
+    /// `void m(List<Integer>)` — and neither overrides the other. javac: `name
+    /// clash: {m1} and {m2} have the same erasure, yet neither overrides the
+    /// other`.
+    NameClashSameErasure,
+    /// §15.9: a class instance creation whose type argument is a wildcard
+    /// (`new ArrayList<?>()`) — a wildcard never names a concrete type. javac:
+    /// `unexpected type; required: exact type, found: ?`.
+    CannotInstantiateWildcard,
+    /// §8.1.2/[§8.1.1.1]: a *generic* class may not be a direct or indirect
+    /// subclass of `java.lang.Throwable`. javac: `generic class {C} may not
+    /// subclass java.lang.Throwable`.
+    GenericCannotExtendThrowable,
+    /// §14.20: a catch clause parameter declared with a type variable — an
+    /// exception type must be a concrete class, not a type parameter. javac:
+    /// `unexpected type; required: class, found: type parameter T`.
+    CannotCatchTypeVariable,
+    /// §4.7/[§15.20.2]: the reference type of an `instanceof` check must be
+    /// reifiable — a type variable or a parameterized type with a non-wildcard
+    /// (or bounded-wildcard) argument is not. javac: `inconvertible types;
+    /// cannot cast {o} to {T}` / `cannot perform instanceof check against
+    /// non-reifiable type`.
+    IllegalGenericInstanceOf,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -361,6 +391,12 @@ impl JavaDiagnosticCode {
                 Some("compiler.err.cant.ref.non.effectively.final.var")
             }
             DuplicateDeclaration => Some("compiler.err.already.defined"),
+            TypeArgumentOutOfBounds => Some("compiler.err.not.within.bounds"),
+            NameClashSameErasure => Some("compiler.err.name.clash.same.erasure"),
+            CannotInstantiateWildcard => Some("compiler.err.type.found.req"),
+            GenericCannotExtendThrowable => Some("compiler.err.generic.throwable"),
+            CannotCatchTypeVariable => Some("compiler.err.type.found.req"),
+            IllegalGenericInstanceOf => Some("compiler.err.instanceof.reifiable.not.safe"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -463,6 +499,12 @@ impl JavaDiagnosticCode {
                 "variable-must-be-effectively-final"
             }
             JavaDiagnosticCode::DuplicateDeclaration => "duplicate-declaration",
+            JavaDiagnosticCode::TypeArgumentOutOfBounds => "type-argument-not-within-bounds",
+            JavaDiagnosticCode::NameClashSameErasure => "name-clash-same-erasure",
+            JavaDiagnosticCode::CannotInstantiateWildcard => "cannot-instantiate-wildcard",
+            JavaDiagnosticCode::GenericCannotExtendThrowable => "generic-cannot-extend-throwable",
+            JavaDiagnosticCode::CannotCatchTypeVariable => "cannot-catch-type-variable",
+            JavaDiagnosticCode::IllegalGenericInstanceOf => "illegal-generic-instanceof",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Inst.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Inst {
+    void m() {
+        Object o = new Object();
+        if (o instanceof List<? extends String>) {
+        }
+        if (o instanceof ArrayList<String>) {
+        }
+    }
+    void n() {
+        Object o = new Object();
+        if (o instanceof List<?>) {
+        }
+        if (o instanceof List) {
+        }
+        if (o instanceof String) {
+        }
+    }
+}
+
+method m(): void
+  @8:12..8:13 'o': illegal-generic-instanceof: Cannot perform instanceof check against non-reifiable type 'List<? extends String>'
+  @10:12..10:13 'o': illegal-generic-instanceof: Cannot perform instanceof check against non-reifiable type 'ArrayList<String>'
