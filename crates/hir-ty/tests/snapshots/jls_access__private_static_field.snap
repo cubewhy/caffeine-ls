@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/com/example/Guarded.java:
+package com.example;
+
+class Guarded {
+    private static int count;
+}
+
+class Use {
+    void f() {
+        int c = Guarded.count;
+    }
+}
+
+method f(): void
+  @8:24..8:29 'count': illegal-access: Variable 'count' has private access in 'Guarded'

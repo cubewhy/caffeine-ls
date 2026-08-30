@@ -204,6 +204,11 @@ pub enum JavaDiagnosticCode {
     /// chain — `class A extends B` with `class B extends A`. javac: `cyclic
     /// inheritance involving {C}`.
     CyclicInheritance,
+    /// §6.6: a field, method or constructor exists on the receiver type with
+    /// the referenced name but is not accessible from the enclosing class —
+    /// its access is more restrictive than [§6.6.1]/[§6.6.2] allows at the
+    /// access site. javac: `{member} has {access} access in {owner}`.
+    IllegalAccess,
     // Lexical ([JLS §3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html)).
     UnexpectedChar,
     UnterminatedString,
@@ -308,6 +313,7 @@ impl JavaDiagnosticCode {
             WeakerAccessPrivileges => Some("compiler.err.override.weaker.access"),
             UnimplementedAbstractMethod => Some("compiler.err.does.not.override.abstract"),
             CyclicInheritance => Some("compiler.err.cyclic.inheritance"),
+            IllegalAccess => Some("compiler.err.report.access"),
             UnexpectedChar | InvalidChar => Some("compiler.err.illegal.char"),
             UnterminatedString => Some("compiler.err.unclosed.str.lit"),
             UnterminatedComment => Some("compiler.err.unclosed.comment"),
@@ -397,6 +403,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::WeakerAccessPrivileges => "weaker-access-privileges",
             JavaDiagnosticCode::UnimplementedAbstractMethod => "unimplemented-abstract-method",
             JavaDiagnosticCode::CyclicInheritance => "cyclic-inheritance",
+            JavaDiagnosticCode::IllegalAccess => "illegal-access",
             JavaDiagnosticCode::UnexpectedChar => "unexpected-char",
             JavaDiagnosticCode::UnterminatedString => "unterminated-string",
             JavaDiagnosticCode::UnterminatedComment => "unterminated-comment",

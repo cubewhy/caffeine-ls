@@ -55,11 +55,12 @@ use vfs::FileId;
 use crate::{
     java::const_eval::{Const, ConstEnv},
     java::db::{TyDatabase, type_params_map_query},
-    java::diagnostics::{NonStaticThisKind, TypeError},
+    java::diagnostics::{IllegalAccessKind, NonStaticThisKind, TypeError},
     java::inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
     java::method::{
-        FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
-        pick_field, pick_method, single_abstract_method,
+        Access, FieldData, InvocationContext, InvocationMode, MethodData, access_context,
+        member_set, member_set_ignoring_access, pick_field, pick_field_ignoring_access,
+        pick_method, single_abstract_method,
     },
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::subtyping::supertypes_impl,
@@ -1708,6 +1709,11 @@ impl<'a> InferCtx<'a> {
             // loaded libraries surface their static members through the
             // member set ([`LibraryIndex`]).
             None if is_static => {
+                // §6.6: a private / protected / package-private static field
+                // exists but is not accessible from the enclosing class.
+                if self.report_illegal_field_access(expr, receiver, name.as_str()) {
+                    return self.error();
+                }
                 let is_source = self.receiver_fqn(&receiver).is_some_and(|fqn| {
                     matches!(
                         hir::fqn_resolve(self.db, &self.scope, fqn),
@@ -1735,6 +1741,12 @@ impl<'a> InferCtx<'a> {
                 }
             }
             None => {
+                // §6.6: a field of the name exists but is not accessible from
+                // the enclosing class — report the access violation rather
+                // than a missing member (§15.11).
+                if self.report_illegal_field_access(expr, receiver, name.as_str()) {
+                    return self.error();
+                }
                 // §15.11: no (accessible) field of the name on the receiver.
                 self.report(TypeError::NoSuchField {
                     expr,
@@ -1845,6 +1857,56 @@ impl<'a> InferCtx<'a> {
             }
         }
         None
+    }
+
+    /// §6.6: the access probe of a field access ([§15.11]) — after the
+    /// accessible [`pick_field`] missed on `receiver`, a field of the name may
+    /// still exist there with a more restrictive access than the access site
+    /// allows. Reports the field as `IllegalAccess` and returns `true` when
+    /// so; the caller falls back to a no-such-member error otherwise.
+    fn report_illegal_field_access(&mut self, expr: ExprId, receiver: Ty, name: &str) -> bool {
+        let Some(field) =
+            pick_field_ignoring_access(self.db, &self.scope, &receiver, name, &self.access)
+        else {
+            return false;
+        };
+        self.report(TypeError::IllegalAccess {
+            expr,
+            kind: IllegalAccessKind::Field,
+            name: Name::new(&field.name),
+            owner: Name::new(&field.owner),
+            access: access_keyword(field.access),
+        });
+        true
+    }
+
+    /// §6.6: the access probe of a method invocation
+    /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)) —
+    /// after the accessible [`member_set`] missed on `receiver`, a method of
+    /// the name may still exist there with a more restrictive access. The
+    /// invocation mode ([§15.12.3]) is honored via `ctx` — a static form of an
+    /// instance method (or `super` of a static one) is a mode mismatch, not an
+    /// access violation, so it stays a no-such-member error. Reports the
+    /// most-derived one as `IllegalAccess` and returns `true` when so.
+    fn report_illegal_method_access(
+        &mut self,
+        expr: ExprId,
+        receiver: Ty,
+        name: &str,
+        ctx: &InvocationContext,
+    ) -> bool {
+        let members = member_set_ignoring_access(self.db, &self.scope, &receiver, name, ctx);
+        let Some(method) = members.first() else {
+            return false;
+        };
+        self.report(TypeError::IllegalAccess {
+            expr,
+            kind: IllegalAccessKind::Method,
+            name: Name::new(&method.name),
+            owner: Name::new(&method.owner),
+            access: access_keyword(method.access),
+        });
+        true
     }
 
     /// The type a (possibly qualified) *type* name denotes, probed candidate
@@ -2128,10 +2190,19 @@ impl<'a> InferCtx<'a> {
                 // call) has reported its own error — do not cascade.
                 if members.is_empty() {
                     if !receiver_ty.is_error(self.db) {
-                        self.report(TypeError::NoSuchMethod {
+                        // §6.6: methods of the name exist but are not
+                        // accessible from the enclosing class.
+                        if !self.report_illegal_method_access(
                             expr,
-                            name: name.clone(),
-                        });
+                            receiver_ty,
+                            name.as_str(),
+                            &access,
+                        ) {
+                            self.report(TypeError::NoSuchMethod {
+                                expr,
+                                name: name.clone(),
+                            });
+                        }
                     }
                 } else {
                     // §15.12.2: members of the name exist but none is
@@ -5387,5 +5458,18 @@ impl InferCtx<'_> {
                     || finally.is_some_and(|finally| self.stmt_has_valued_return(finally))
             }
         }
+    }
+}
+
+/// The keyword naming the access of a member
+/// ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
+/// for the `has {access} access` wording of an [`IllegalAccess`]
+/// (e.g. javac's `secret has private access in p.Priv`).
+fn access_keyword(access: Access) -> &'static str {
+    match access {
+        Access::Private => "private",
+        Access::Protected => "protected",
+        Access::Package => "package-private",
+        Access::Public => "public",
     }
 }

@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/holder/Base.java:
+package holder;
+
+public class Base {
+    protected int prot;
+    public int pub;
+}
+
+FILE /src/consumer/Use.java:
+package consumer;
+
+import holder.Base;
+
+class Use {
+    void f(Base b) {
+        int x = b.prot;
+        int y = b.pub;
+    }
+}
+
+method f(holder.Base): void
+  @6:18..6:22 'prot': illegal-access: Variable 'prot' has protected access in 'Base'

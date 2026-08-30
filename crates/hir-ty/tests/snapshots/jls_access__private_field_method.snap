@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/com/example/Guarded.java:
+package com.example;
+
+class Guarded {
+    private int secret;
+    private void run() {}
+}
+
+class Use {
+    void f() {
+        Guarded g = new Guarded();
+        g.secret;
+        g.run();
+    }
+}
+
+method f(): void
+  @10:10..10:16 'secret': illegal-access: Variable 'secret' has private access in 'Guarded'
+  @11:10..11:13 'run': illegal-access: 'run()' has private access in 'Guarded'

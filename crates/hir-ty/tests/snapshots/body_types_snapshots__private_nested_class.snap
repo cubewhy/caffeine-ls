@@ -27,4 +27,4 @@ method use(com.example.Outer): void
 method use(com.example.Outer): void
   locals: l1: com.example.Outer
   exprs: e4: com.example.Outer | e5: <error> | e6: int | e7: <error>
-  diags: e5@14:10: no-such-field: Cannot resolve symbol 'secret'
+  diags: e5@14:10: illegal-access: Variable 'secret' has private access in 'Outer'

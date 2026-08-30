@@ -1,0 +1,245 @@
+//! JLS SE 26 scenario snapshots for *access control at the use site*
+//! ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
+//! a member (field or method) that exists on the receiver type but is not
+//! accessible from the enclosing class — `private` outside its top-level class
+//! ([§6.6.1]), `protected` outside its package and not through a subclass
+//! ([§6.6.2]), package-private outside its package — is reported as an access
+//! violation (javac `report.access`) rather than a missing member. Red cases
+//! render the diagnostics body inference must report; green cases confirm
+//! legal accesses pass without diagnostics.
+
+#[macro_use]
+mod common;
+
+use crate::common::check_body_diagnostic_spans;
+
+// -- red: private members accessed from another top-level class --------------
+
+snapshot!(
+    private_field_method,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Guarded.java",
+        "\
+package com.example;
+
+class Guarded {
+    private int secret;
+    private void run() {}
+}
+
+class Use {
+    void f() {
+        Guarded g = new Guarded();
+        g.secret;
+        g.run();
+    }
+}
+",
+    )])
+);
+// Red: `secret` and `run()` are `private` to `Guarded` and accessed from the
+// unrelated top-level class `Use` — both reported as access violations, not as
+// missing members (§6.6.1).
+
+snapshot!(
+    private_static_field,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Guarded.java",
+        "\
+package com.example;
+
+class Guarded {
+    private static int count;
+}
+
+class Use {
+    void f() {
+        int c = Guarded.count;
+    }
+}
+",
+    )])
+);
+// Red: a `private static` field accessed through its declaring class by name.
+
+// -- green: private members within their own top-level class -----------------
+
+snapshot!(
+    same_top_level_private,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Guarded.java",
+        "\
+package com.example;
+
+class Guarded {
+    private int secret;
+    private void run() {}
+
+    void use() {
+        int s = this.secret;
+        run();
+    }
+}
+",
+    )])
+);
+// Green: §6.6.1 scopes private access to the whole top-level class, so the
+// enclosing class's own private members are reachable.
+
+// -- red/green: `protected` across packages ([§6.6.2]) -----------------------
+
+snapshot!(
+    protected_cross_package,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/holder/Base.java",
+            "\
+package holder;
+
+public class Base {
+    protected int prot;
+    public int pub;
+}
+",
+        ),
+        (
+            "/src/consumer/Use.java",
+            "\
+package consumer;
+
+import holder.Base;
+
+class Use {
+    void f(Base b) {
+        int x = b.prot;
+        int y = b.pub;
+    }
+}
+",
+        ),
+    ])
+);
+// Red/Green: `b.prot` is `protected` in an unrelated package — not accessible
+// (§6.6.2) — while the `public` field is.
+
+snapshot!(
+    protected_subclass_cross_package,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/holder/Base.java",
+            "\
+package holder;
+
+public class Base {
+    protected int prot;
+}
+",
+        ),
+        (
+            "/src/consumer/Sub.java",
+            "\
+package consumer;
+
+import holder.Base;
+
+class Sub extends Base {
+    void f() {
+        int x = this.prot;
+    }
+}
+",
+        ),
+    ])
+);
+// Green: a subclass in a different package may access its superclass's
+// `protected` members through a receiver of its own subtype (§6.6.2).
+
+// -- red: package-private member across packages -----------------------------
+
+snapshot!(
+    package_private_cross_package,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/holder/Base.java",
+            "\
+package holder;
+
+public class Base {
+    int pkg() {
+        return 1;
+    }
+    private void hidden() {}
+}
+",
+        ),
+        (
+            "/src/consumer/Use.java",
+            "\
+package consumer;
+
+import holder.Base;
+
+class Use {
+    void f(Base b) {
+        b.pkg();
+        b.hidden();
+    }
+}
+",
+        ),
+    ])
+);
+// Red/Green: the package-private method is inaccessible from `consumer`
+// (§6.6.1); the `private` method reports its own access violation.
+
+snapshot!(
+    same_package_package_private,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Same.java",
+        "\
+package com.example;
+
+class A {
+    void pkg() {}
+    int field;
+}
+
+class B {
+    void f() {
+        A a = new A();
+        a.pkg();
+        int x = a.field;
+    }
+}
+",
+    )])
+);
+// Green: package-private members of a same-package top-level class are
+// accessible from another top-level class in the same package.
+
+// -- green: inaccessible members are not confused with missing ones ----------
+
+snapshot!(
+    missing_member_still_reported,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Guarded.java",
+        "\
+package com.example;
+
+class Owner {
+    private int secret;
+}
+
+class Use {
+    void f() {
+        Owner o = new Owner();
+        o.missing;
+        o.gone();
+    }
+}
+",
+    )])
+);
+// Green: a member that truly does not exist stays a no-such-member error — only
+// members that exist (but are hidden by access control) become access
+// violations.

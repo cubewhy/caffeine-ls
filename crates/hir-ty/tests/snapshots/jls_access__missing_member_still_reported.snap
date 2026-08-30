@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/com/example/Guarded.java:
+package com.example;
+
+class Owner {
+    private int secret;
+}
+
+class Use {
+    void f() {
+        Owner o = new Owner();
+        o.missing;
+        o.gone();
+    }
+}
+
+method f(): void
+  @9:10..9:17 'missing': no-such-field: Cannot resolve symbol 'missing'
+  @10:10..10:14 'gone': no-such-method: Cannot resolve method 'gone()'

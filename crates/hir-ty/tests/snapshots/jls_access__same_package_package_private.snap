@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/com/example/Same.java:
+package com.example;
+
+class A {
+    void pkg() {}
+    int field;
+}
+
+class B {
+    void f() {
+        A a = new A();
+        a.pkg();
+        int x = a.field;
+    }
+}

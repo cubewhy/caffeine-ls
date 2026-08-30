@@ -323,6 +323,24 @@ pub fn member_set(
     member_set_query(db, scope, receiver.id, Name::new(name), ctx)
 }
 
+/// The methods named `name` on `receiver` and its supertypes *regardless of
+/// access control* ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
+/// the access-probe companion of [`member_set`]. When the accessible member
+/// set is empty but this one is not, a method of the name exists yet is not
+/// accessible from the access site — the §6.6 error reported by the body
+/// inference layer as `IllegalAccess`. The invocation mode ([§15.12.3]) is
+/// still honored, so a static/instance mismatch does not masquerade as an
+/// access violation.
+pub fn member_set_ignoring_access(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &str,
+    ctx: &InvocationContext,
+) -> Vec<MethodData> {
+    member_set_impl(db, scope, receiver, name, ctx, true, false)
+}
+
 /// All methods of `ty` across its supertype closure, most-derived first and
 /// deduped by overriding signature
 /// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1)):
@@ -335,7 +353,7 @@ pub fn all_methods(
     receiver: &Ty,
     ctx: &InvocationContext,
 ) -> Vec<MethodData> {
-    member_set_impl(db, scope, receiver, "", ctx, true)
+    member_set_impl(db, scope, receiver, "", ctx, true, true)
 }
 
 /// Every member visible from `receiver` **without** the most-derived dedup
@@ -348,7 +366,7 @@ pub fn all_methods_raw(
     receiver: &Ty,
     ctx: &InvocationContext,
 ) -> Vec<MethodData> {
-    member_set_impl(db, scope, receiver, "", ctx, false)
+    member_set_impl(db, scope, receiver, "", ctx, false, true)
 }
 
 /// The default methods `receiver` inherits, **without** the most-derived
@@ -403,10 +421,15 @@ pub(crate) fn member_set_query(
         name.as_str(),
         &InvocationContext::from_key(db, ctx),
         true,
+        true,
     )
 }
 
-/// The non-memoized form of [`member_set`].
+/// The non-memoized form of [`member_set`]. `strict_access` selects whether
+/// the candidates are filtered by accessibility at `ctx`'s access site
+/// ([§6.6]) — `false` is the access probe used by the `IllegalAccess`
+/// diagnostics of the body inference layer (see
+/// [`member_set_ignoring_access`]).
 fn member_set_impl(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -414,6 +437,7 @@ fn member_set_impl(
     name: &str,
     ctx: &InvocationContext,
     dedupe: bool,
+    strict_access: bool,
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
@@ -431,7 +455,8 @@ fn member_set_impl(
             class_methods(db, &scope_id, &ty, name)
                 .into_iter()
                 .filter(|method| {
-                    mode_allows(method, ctx) && is_accessible(db, scope, method, &receiver, ctx)
+                    mode_allows(method, ctx)
+                        && (!strict_access || is_accessible(db, scope, method, &receiver, ctx))
                 }),
         );
         for parent in supertypes_query(db, scope_id, ty.id) {
@@ -1888,6 +1913,36 @@ pub fn pick_field(
     name: &str,
     ctx: &InvocationContext,
 ) -> Option<FieldData> {
+    pick_field_impl(db, scope, receiver, name, ctx, true)
+}
+
+/// The most-derived field named `name` on the receiver *regardless of access
+/// control* ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
+/// the access-probe companion of [`pick_field`]. When the accessible
+/// [`pick_field`] misses but this hits, a field of the name exists yet is not
+/// accessible from the access site — the §6.6 error reported by the body
+/// inference layer as `IllegalAccess`.
+pub fn pick_field_ignoring_access(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &str,
+    ctx: &InvocationContext,
+) -> Option<FieldData> {
+    pick_field_impl(db, scope, receiver, name, ctx, false)
+}
+
+/// The non-memoized form of [`pick_field`] and
+/// [`pick_field_ignoring_access`]: the most-derived declaration of `name` on
+/// the receiver, filtered by accessibility only when `strict_access` is set.
+fn pick_field_impl(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver: &Ty,
+    name: &str,
+    ctx: &InvocationContext,
+    strict_access: bool,
+) -> Option<FieldData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
     let mut stack = match receiver.kind(db) {
@@ -1900,17 +1955,19 @@ pub fn pick_field(
             continue;
         }
         for field in class_fields(db, &scope_id, &ty, name) {
-            if member_accessible(
-                db,
-                scope,
-                field.access,
-                field.declaring_package.as_deref(),
-                field.owner.as_str(),
-                field.declaring_top_level.as_deref(),
-                &receiver,
-                field.is_static,
-                ctx,
-            ) {
+            if !strict_access
+                || member_accessible(
+                    db,
+                    scope,
+                    field.access,
+                    field.declaring_package.as_deref(),
+                    field.owner.as_str(),
+                    field.declaring_top_level.as_deref(),
+                    &receiver,
+                    field.is_static,
+                    ctx,
+                )
+            {
                 return Some(field);
             }
         }

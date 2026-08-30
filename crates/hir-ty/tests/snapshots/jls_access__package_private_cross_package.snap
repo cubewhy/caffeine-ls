@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/holder/Base.java:
+package holder;
+
+public class Base {
+    int pkg() {
+        return 1;
+    }
+    private void hidden() {}
+}
+
+FILE /src/consumer/Use.java:
+package consumer;
+
+import holder.Base;
+
+class Use {
+    void f(Base b) {
+        b.pkg();
+        b.hidden();
+    }
+}
+
+method f(holder.Base): void
+  @6:10..6:13 'pkg': illegal-access: 'pkg()' has package-private access in 'Base'
+  @7:10..7:16 'hidden': illegal-access: 'hidden()' has private access in 'Base'

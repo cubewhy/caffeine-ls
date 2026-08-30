@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/com/example/Guarded.java:
+package com.example;
+
+class Guarded {
+    private int secret;
+    private void run() {}
+
+    void use() {
+        int s = this.secret;
+        run();
+    }
+}

@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/holder/Base.java:
+package holder;
+
+public class Base {
+    protected int prot;
+}
+
+FILE /src/consumer/Sub.java:
+package consumer;
+
+import holder.Base;
+
+class Sub extends Base {
+    void f() {
+        int x = this.prot;
+    }
+}

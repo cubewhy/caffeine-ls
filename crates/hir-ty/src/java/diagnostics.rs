@@ -232,6 +232,21 @@ pub enum TypeError {
     /// §11.2.3: a `catch` clause names a checked exception that the `try`
     /// block cannot throw.
     CatchNeverThrown { local: LocalId, caught: Ty },
+    /// §6.6: a field or method exists on the receiver type with the referenced
+    /// name but is not accessible from the enclosing class — its access is
+    /// more restrictive than [§6.6.1]/[§6.6.2] allows at the access site.
+    /// javac: `{member} has {access} access in {owner}`; the message here is
+    /// IntelliJ-style. `kind` selects the field/method wording, `name` the
+    /// referenced member's simple name, `owner` the simple name of its
+    /// declaring class and `access` the keyword (`private`/`protected`/
+    /// `package-private`) that fails.
+    IllegalAccess {
+        expr: ExprId,
+        kind: IllegalAccessKind,
+        name: Name,
+        owner: Name,
+        access: &'static str,
+    },
 }
 
 impl TypeError {
@@ -288,6 +303,7 @@ impl TypeError {
             TypeError::UnreachableStatement { .. } => DiagnosticCode::Java(UnreachableStatement),
             TypeError::MissingReturnValue { .. } => DiagnosticCode::Java(MissingReturnValue),
             TypeError::CatchNeverThrown { .. } => DiagnosticCode::Java(CatchNeverThrown),
+            TypeError::IllegalAccess { .. } => DiagnosticCode::Java(IllegalAccess),
         }
     }
 
@@ -336,6 +352,7 @@ impl TypeError {
             UnreachableStatement { stmt } => DiagLocation::Stmt(*stmt),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
+            IllegalAccess { expr, .. } => DiagLocation::Expr(*expr),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. } => location.clone(),
@@ -388,6 +405,7 @@ impl TypeError {
             | TypeError::NoSuchField { expr, .. }
             | TypeError::NoSuchMethod { expr, .. }
             | TypeError::NoSuchConstructor { expr, .. }
+            | TypeError::IllegalAccess { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
@@ -589,6 +607,26 @@ impl TypeError {
                 "Exception '{}' is never thrown in the corresponding try block",
                 render_simple(db, *caught)
             ),
+            IllegalAccess {
+                kind,
+                name,
+                owner,
+                access,
+                ..
+            } => match kind {
+                IllegalAccessKind::Field => format!(
+                    "Variable '{}' has {} access in '{}'",
+                    name.as_str(),
+                    access,
+                    owner.simple_name()
+                ),
+                IllegalAccessKind::Method => format!(
+                    "'{}()' has {} access in '{}'",
+                    name.as_str(),
+                    access,
+                    owner.simple_name()
+                ),
+            },
         }
     }
 
@@ -695,6 +733,17 @@ pub enum NonStaticThisKind {
     This,
     /// The bare `super` or qualified `I.super` form ([§15.8.4]).
     Super,
+}
+
+/// Which member form a [`TypeError::IllegalAccess`] flags, selecting the
+/// user-facing wording: `Variable 'x' has private access…` for a field and
+/// `'f()' has private access…` for a method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IllegalAccessKind {
+    /// A field access ([§15.11]).
+    Field,
+    /// A method invocation ([§15.12.1]).
+    Method,
 }
 
 /// The simple-name rendering of a [`Ty`] for a diagnostic message.
