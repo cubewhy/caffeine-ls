@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Bounds.java:
+package com.example;
+
+import java.util.EnumSet;
+
+enum SearchType { CLASS, MEMBER }
+
+class Body {
+    void m() {
+        EnumSet<String> types = null;
+    }
+}
+
+method m(): void
+  @8:8..8:15 'EnumSet': type-argument-not-within-bounds: Type argument 'String' is not within bounds of type-variable 'E'
+    -> @8:8..8:15 'EnumSet': reason: 'String' is not a subtype of 'Enum<String>'

@@ -214,7 +214,14 @@ pub(crate) fn source_supertypes(
         ),
         ItemData::Interface(d) => (None, d.interfaces.clone()),
         ItemData::Record(d) => (Some(implicit("java.lang.Record")), d.interfaces.clone()),
-        ItemData::Enum(d) => (Some(implicit("java.lang.Enum")), d.interfaces.clone()),
+        // §8.9.2: the direct superclass of an enum type `E` is the
+        // *parameterized* `java.lang.Enum<E>` — its own name as the type
+        // argument — not the raw `java.lang.Enum`. A raw superclass erases
+        // the `Enum<E>` bound ([§4.8]), so `E <: java.lang.Enum<E>` would
+        // fail and a `EnumSet<E>`/`EnumMap<E,…>` use would report its bound
+        // violated; with the parameterized superclass the enum is a subtype
+        // of its own `Enum<E>` supertype as javac resolves it.
+        ItemData::Enum(d) => (Some(enum_superclass(db, source)), d.interfaces.clone()),
         ItemData::Annotation(_) => (
             Some(implicit("java.lang.annotation.Annotation")),
             Vec::new(),
@@ -245,6 +252,23 @@ pub(crate) fn source_supertypes(
     }
     out.extend(interfaces.iter().map(instantiate));
     out
+}
+
+/// §8.9.2: the implicit direct superclass of the enum `source` —
+/// `java.lang.Enum<E>`, where `E` is the enum's own type. The enum type is
+/// never generic ([§8.9]), so the self type argument is the enum's fully
+/// qualified name with no type arguments of its own.
+fn enum_superclass(db: &dyn TyDatabase, source: hir::SourceClass) -> SpannedTypeRef {
+    let fqn = hir::source_class_fqn(db, source.file, source.item)
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_default();
+    SpannedTypeRef::synthetic(TypeRef::Reference {
+        name: Name::new("java.lang.Enum"),
+        generic_args: vec![TypeRef::Reference {
+            name: Name::new(&fqn),
+            generic_args: Vec::new(),
+        }],
+    })
 }
 
 /// Resolves `name` against the classes of `scope`, honoring classpath order:

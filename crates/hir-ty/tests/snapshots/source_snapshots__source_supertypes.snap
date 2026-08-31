@@ -45,7 +45,7 @@ A -> java.lang.Object
 B -> com.example.A
 I -> java.lang.Object
 C -> com.example.A, com.example.I, java.io.Serializable
-E -> java.lang.Enum
+E -> java.lang.Enum<com.example.E>
 R -> java.lang.Record
 Anno -> java.lang.annotation.Annotation, java.lang.Object
 Nested.Inner -> com.example.A

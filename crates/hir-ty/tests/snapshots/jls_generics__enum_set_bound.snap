@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_generics.rs
+expression: out
+---
+FILE /src/com/example/Bounds.java:
+package com.example;
+
+import java.util.EnumMap;
+import java.util.EnumSet;
+
+enum SearchType { CLASS, MEMBER }
+
+class Body {
+    void m() {
+        EnumSet<SearchType> types = null;
+        EnumMap<SearchType, Long> counts = null;
+    }
+}

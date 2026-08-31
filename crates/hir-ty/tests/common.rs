@@ -975,6 +975,21 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[0x0001, 0x0001], // ACC_PUBLIC (methods)
             Some("<E:Ljava/lang/Enum<TE;>;Ljava/lang/Object;"),
         ),
+        // §8.9.2: an enum's direct superclass is `java.lang.Enum<E>`; the
+        // enum collections bound their type parameters by it, so the enum
+        // bound-check scenario (`EnumSet<E>`/`EnumMap<K,V>`) needs them.
+        class_sig(
+            "java/util/EnumSet",
+            Some("java/lang/Object"),
+            &[],
+            Some("<E:Ljava/lang/Enum<TE;>;>Ljava/lang/Object;"),
+        ),
+        class_sig(
+            "java/util/EnumMap",
+            Some("java/lang/Object"),
+            &[],
+            Some("<K:Ljava/lang/Enum<TK;>;V:Ljava/lang/Object;>Ljava/lang/Object;"),
+        ),
         class_with_methods_access(
             "java/lang/Math",
             Some("java/lang/Object"),

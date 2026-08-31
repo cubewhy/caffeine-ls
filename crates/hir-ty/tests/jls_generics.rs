@@ -77,6 +77,52 @@ class M<T extends Number> {
 // body layer reports them at local/`new`/cast/`instanceof` positions only), so
 // this file carries no diagnostics.
 
+snapshot!(
+    enum_set_bound,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Bounds.java",
+        "\
+package com.example;
+
+import java.util.EnumMap;
+import java.util.EnumSet;
+
+enum SearchType { CLASS, MEMBER }
+
+class Body {
+    void m() {
+        EnumSet<SearchType> types = null;
+        EnumMap<SearchType, Long> counts = null;
+    }
+}
+",
+    )])
+);
+// Green: `EnumSet<E extends Enum<E>>` and `EnumMap<K extends Enum<K>, V>`
+// accept an enum argument — the enum's direct superclass is the parameterized
+// `java.lang.Enum<E>` ([§8.9.2]), so `SearchType <: java.lang.Enum<SearchType>`.
+
+snapshot!(
+    enum_set_bound_violated,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Bounds.java",
+        "\
+package com.example;
+
+import java.util.EnumSet;
+
+enum SearchType { CLASS, MEMBER }
+
+class Body {
+    void m() {
+        EnumSet<String> types = null;
+    }
+}
+",
+    )])
+);
+// Red: `String` is not an enum type, so it violates `E extends Enum<E>`.
+
 // -- §8.4.2: name clash by same erasure ---------------------------------------
 
 snapshot!(
