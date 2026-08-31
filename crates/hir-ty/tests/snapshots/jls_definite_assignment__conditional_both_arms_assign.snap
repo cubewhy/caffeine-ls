@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 412
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    int m(boolean p) {
+        int k;
+        int x = p ? (k = 1) : (k = 2);
+        return k;
+    }
+}
+
+method m(boolean): int
+  locals: l0: boolean | l1: int | l2: int
+  exprs: e0: boolean | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int | e7: int | e8: int | e9: int | e10: int

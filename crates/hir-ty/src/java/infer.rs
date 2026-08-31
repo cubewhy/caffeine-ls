@@ -155,7 +155,9 @@ pub(crate) fn body_types_impl(
         loop_depth: 0,
         switch_depth: 0,
         labels: Vec::new(),
+        loop_breaks: Vec::new(),
         probing: false,
+        bool_outcomes: None,
         rethrow_sets: FxHashMap::default(),
     };
     // §8.3.1.2/[§16]: seed the body's already-assigned set with the blank
@@ -465,6 +467,42 @@ impl Flow {
     }
 }
 
+/// §16.2.10/[§16.2.12]: the definite-assignment flows captured at the `break`
+/// statements that target one enclosing loop — the only paths by which a
+/// constant-`true` loop ([§16.1.1]) completes normally (JLS Example 16-1).
+/// Each `break` records the [`Flow`] at the break, so the after-loop join
+/// collects exactly the assignments made before the exits, not the whole body.
+#[derive(Clone)]
+struct LoopBreakFrame {
+    /// The label naming this loop ([§14.14]), when it has one — a labeled
+    /// `break label` records on exactly this frame.
+    label: Option<Name>,
+    /// The flows at each `break` targeting this loop reached so far.
+    flows: Vec<Flow>,
+}
+
+impl LoopBreakFrame {
+    /// A fresh frame for the loop about to be inferred.
+    fn new(label: Option<Name>) -> Self {
+        LoopBreakFrame {
+            label,
+            flows: Vec::new(),
+        }
+    }
+
+    /// The join of every recorded break flow ([§16.1]): a local is definitely
+    /// assigned after the loop only when *every* break path assigned it. `None`
+    /// when no break was recorded — the loop cannot complete normally.
+    fn joined(&self) -> Option<Flow> {
+        let mut iter = self.flows.iter();
+        let mut joined = iter.next()?.clone();
+        for flow in iter {
+            joined.join_definite(flow);
+        }
+        Some(joined)
+    }
+}
+
 struct InferCtx<'a> {
     db: &'a dyn TyDatabase,
     scope: hir::ResolutionScope,
@@ -602,12 +640,27 @@ struct InferCtx<'a> {
     /// may target any labeled statement, a labeled `continue` only a labeled
     /// loop ([§14.16]).
     labels: Vec<(Name, bool)>,
+    /// §16.2.10: the definite-assignment flows at the `break` statements that
+    /// target each enclosing loop — one frame per loop, innermost first. A
+    /// constant-condition loop ([§16.1.1]) completes normally only through
+    /// those breaks, so their flows join into the after-loop state (JLS
+    /// Example 16-1). See [`LoopBreakFrame`].
+    loop_breaks: Vec<LoopBreakFrame>,
     /// Whether the current inference is *speculative* — the applicability
     /// probe of an overload candidate ([§15.12.2]): like javac, diagnostics
     /// from speculatively attributed arguments are discarded, so a nested
     /// resolution failure is reported once (by the final re-inference or the
     /// total-failure path), not once per probed candidate.
     probing: bool,
+    /// §16.1.2–[§16.1.5]: the definite-assignment flows after the
+    /// most-recently-inferred boolean expression when it evaluates to `true`
+    /// and to `false`. Every expression but the conditional boolean forms
+    /// (`&&`, `||`, `!`, `?:`) leaves both outcomes equal to the
+    /// after-expression flow ([§16.1.7]); the conditional forms split them so
+    /// the enclosing statement feeds each branch its own flow. Consumed by
+    /// [`Self::check_condition`]'s callers; `None` before an expression has
+    /// been inferred.
+    bool_outcomes: Option<(Flow, Flow)>,
     /// The precise rethrow set of each catch parameter in scope
     /// ([JLS §11.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-11.html#jls-11.2.2)):
     /// the checked exceptions the try block can throw that are assignable to
@@ -647,6 +700,50 @@ impl<'a> InferCtx<'a> {
         let result = f(self);
         self.target = saved;
         result
+    }
+
+    /// Consumes and returns the true/false outcome flows of the most recently
+    /// inferred expression ([§16.1.2]–[§16.1.5]). Every expression records
+    /// them (a non-boolean form sets both to the after-flow, [§16.1.7]); falls
+    /// back to the current flow for a bare expression that skipped the record
+    /// (e.g. a condition degraded to an error).
+    fn take_bool_outcomes(&mut self) -> (Flow, Flow) {
+        self.bool_outcomes
+            .take()
+            .unwrap_or_else(|| (self.flow.clone(), self.flow.clone()))
+    }
+
+    /// Whether the boolean expression `id` is a constant expression
+    /// ([JLS §15.29], [§16.1.1]) whose value the flow analysis may rely on:
+    /// a literal `true`/`false`, or a `&&`/`||`/`!`/`?:`/comparison folding of
+    /// constant operands. The constant-variable environment
+    /// ([§4.12.4]) is captured at the current position.
+    fn const_bool(&self, id: ExprId) -> Option<bool> {
+        match self.const_value(id) {
+            Some(Const::Bool(b)) => Some(b),
+            _ => None,
+        }
+    }
+
+    /// Whether the boolean expression `id` is one whose *conditional* flow
+    /// analysis the analysis specializes: `&&`, `||`, `!` or `?:` — the forms
+    /// of [§16.1.2]–[§16.1.5], whose operands run under the true/false flows of
+    /// their left context. Any other boolean expression is analyzed under both
+    /// outcomes identically ([§16.1.7]). Parentheses are transparent
+    /// ([§16.1.7]: `(a && b)` behaves like `a && b`).
+    fn is_bool_flow_expr(&self, id: ExprId) -> bool {
+        match self.tree.expr(id).clone() {
+            ExprData::Paren(inner) => self.is_bool_flow_expr(inner),
+            ExprData::Binary {
+                op: BinaryOp::And | BinaryOp::Or,
+                ..
+            } => true,
+            ExprData::Unary {
+                op: UnaryOp::Not, ..
+            } => true,
+            ExprData::Conditional { .. } => true,
+            _ => false,
+        }
     }
 
     /// Runs `f` in *speculative* mode: diagnostics reported inside are
@@ -1595,6 +1692,14 @@ impl<'a> InferCtx<'a> {
                 // (`v instanceof T t ? t.f() : ...`), its false flow in the
                 // else-arm (`!(v instanceof T t) ? "" : t.f()`).
                 let (cond_true, cond_false) = self.pattern_flow(cond).unwrap_or_default();
+                // §16.1.5: the definite-assignment outcome of a conditional:
+                // the then-arm runs under the condition's *true* flow, the
+                // else-arm under its *false* flow, and the expression's
+                // after-flow is their join — a local is definitely assigned
+                // after `c ? b : d` only when both arms assigned it. The
+                // boolean-outcome flow of the condition is threaded into the
+                // arm whose branch the value takes.
+                let (cond_true_flow, cond_false_flow) = self.take_bool_outcomes();
                 // §15.25.2: a conditional whose arms are poly expressions is a poly
                 // expression with the target type; the target propagates into
                 // the arms so they are typed against it — `List<TableCandidate>
@@ -1606,18 +1711,36 @@ impl<'a> InferCtx<'a> {
                 let cond_has_poly_arm =
                     expr_is_poly_ext(&self.tree, then) || expr_is_poly_ext(&self.tree, els);
                 if cond_has_poly_arm && self.target.is_some() {
-                    self.scopes.push(FxHashMap::default());
-                    for binding in &cond_true {
-                        self.scope_binding(*binding);
-                    }
-                    let then_ty = self.infer_expr(then);
-                    self.scopes.pop();
-                    self.scopes.push(FxHashMap::default());
-                    for binding in &cond_false {
-                        self.scope_binding(*binding);
-                    }
-                    let els_ty = self.infer_expr(els);
-                    self.scopes.pop();
+                    let (then_end, then_ty) = {
+                        self.scopes.push(FxHashMap::default());
+                        self.flow = cond_true_flow;
+                        for binding in &cond_true {
+                            self.scope_binding(*binding);
+                        }
+                        let ty = self.infer_expr(then);
+                        let end = self.flow.clone();
+                        self.scopes.pop();
+                        (end, ty)
+                    };
+                    let (els_end, els_ty) = {
+                        self.scopes.push(FxHashMap::default());
+                        self.flow = cond_false_flow;
+                        for binding in &cond_false {
+                            self.scope_binding(*binding);
+                        }
+                        let ty = self.infer_expr(els);
+                        let end = self.flow.clone();
+                        self.scopes.pop();
+                        (end, ty)
+                    };
+                    // §16.1.5: join the two arms' end flows.
+                    let mut joined = then_end;
+                    joined.join_definite(&els_end);
+                    // §16.1.5 (non-boolean arms) / §16.1.7: both outcomes of the
+                    // conditional equal its after-flow — an enclosing boolean
+                    // context sees the arm-join on either outcome.
+                    self.bool_outcomes = Some((joined.clone(), joined.clone()));
+                    self.flow = joined;
                     // §15.25.2: the conditional's type is the target only when
                     // the arms actually accept it — a lambda arm against a
                     // *non-functional* target (`Object c = b ? s -> s : ...`)
@@ -1629,18 +1752,34 @@ impl<'a> InferCtx<'a> {
                         self.target.expect("target checked above")
                     }
                 } else {
-                    self.scopes.push(FxHashMap::default());
-                    for binding in &cond_true {
-                        self.scope_binding(*binding);
-                    }
-                    let then_ty = self.infer_expr(then);
-                    self.scopes.pop();
-                    self.scopes.push(FxHashMap::default());
-                    for binding in &cond_false {
-                        self.scope_binding(*binding);
-                    }
-                    let els_ty = self.infer_expr(els);
-                    self.scopes.pop();
+                    let (then_end, then_ty) = {
+                        self.scopes.push(FxHashMap::default());
+                        self.flow = cond_true_flow;
+                        for binding in &cond_true {
+                            self.scope_binding(*binding);
+                        }
+                        let ty = self.infer_expr(then);
+                        let end = self.flow.clone();
+                        self.scopes.pop();
+                        (end, ty)
+                    };
+                    let (els_end, els_ty) = {
+                        self.scopes.push(FxHashMap::default());
+                        self.flow = cond_false_flow;
+                        for binding in &cond_false {
+                            self.scope_binding(*binding);
+                        }
+                        let ty = self.infer_expr(els);
+                        let end = self.flow.clone();
+                        self.scopes.pop();
+                        (end, ty)
+                    };
+                    let mut joined = then_end;
+                    joined.join_definite(&els_end);
+                    // §16.1.5 (non-boolean arms) / §16.1.7: both outcomes of the
+                    // conditional equal its after-flow.
+                    self.bool_outcomes = Some((joined.clone(), joined.clone()));
+                    self.flow = joined;
                     let ty = self.conditional_type(then_ty, els_ty);
                     // §15.25: a boolean operand against an unrelated
                     // primitive makes the conditional ill-typed — report the
@@ -1804,6 +1943,15 @@ impl<'a> InferCtx<'a> {
             ExprData::Missing => self.error(),
         };
         self.types.insert(id, ty);
+        // §16.1.7: every expression but the conditional boolean forms
+        // (`&&`, `||`, `!`, `?:`) leaves both outcomes equal to the
+        // after-expression flow. The forms set [`Self::bool_outcomes`]
+        // themselves inside their handlers; this default must not clobber
+        // those.
+        if !self.is_bool_flow_expr(id) {
+            let flow = self.flow.clone();
+            self.bool_outcomes = Some((flow.clone(), flow));
+        }
         ty
     }
 
@@ -2323,6 +2471,32 @@ impl<'a> InferCtx<'a> {
         // let the block complete normally.
         if recovered_exit {
             self.exited = true;
+        }
+    }
+
+    /// §16.2.10/[§16.2.12]: records the current flow at a `break` that targets
+    /// an enclosing loop, so a constant-condition loop can join its break
+    /// paths into the after-loop state (JLS Example 16-1). An *unlabeled*
+    /// break targets the nearest enclosing loop **or** switch ([§14.15]) — so
+    /// one inside a `switch` is a switch's break, not a loop's, and is not
+    /// recorded. A labeled break records on the loop whose label names it (the
+    /// frame exists for any label the break legally targets — a loop is
+    /// always labeled before its body is inferred); a labeled break out of a
+    /// labeled *block* matches no frame and contributes nothing.
+    fn record_break_flow(&mut self, label: Option<&Name>) {
+        if let Some(name) = label {
+            for frame in self.loop_breaks.iter_mut().rev() {
+                if frame.label.as_ref().is_some_and(|n| n == name) {
+                    frame.flows.push(self.flow.clone());
+                    return;
+                }
+            }
+            return;
+        }
+        if self.switch_depth == 0
+            && let Some(innermost) = self.loop_breaks.last_mut()
+        {
+            innermost.flows.push(self.flow.clone());
         }
     }
 
@@ -4942,6 +5116,9 @@ impl<'a> InferCtx<'a> {
                     }
                     self.error()
                 } else {
+                    // §16.1.4: `!a` swaps the true and false outcome flows.
+                    let (true_flow, false_flow) = self.take_bool_outcomes();
+                    self.bool_outcomes = Some((false_flow, true_flow));
                     self.primitive(PrimitiveType::Boolean)
                 }
             }
@@ -5081,7 +5258,16 @@ impl<'a> InferCtx<'a> {
         // the ordinary two-operand pass below would re-infer the right-hand
         // operand without the pattern variables in scope.
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
+            // §16.1.2/[§16.1.3]: the definite-assignment outcomes of `a && b`
+            // (and `a || b`): the left operand is inferred first and its
+            // true/false flows captured; the right operand then runs under the
+            // left's *matched* flow (`&&` → true, `||` → false), and the whole
+            // expression's outcomes join the two ways the value arises. This
+            // is what lets `if (v > 0 && (k = read()) >= 0) use(k)` (JLS
+            // Example 16-1) treat `k` as definitely assigned in the guarded
+            // code.
             self.check_condition(lhs);
+            let (lhs_true_flow, lhs_false_flow) = self.take_bool_outcomes();
             self.scopes.push(FxHashMap::default());
             // §6.3.2: the pattern variables of the left operand that are
             // *definitely matched* when the right operand evaluates are in
@@ -5094,12 +5280,45 @@ impl<'a> InferCtx<'a> {
                     BinaryOp::And => lhs_true,
                     _ => lhs_false,
                 };
+                self.flow = match op {
+                    BinaryOp::And => lhs_true_flow.clone(),
+                    _ => lhs_false_flow.clone(),
+                };
                 for binding in matched {
                     self.scope_binding(binding);
                 }
+            } else {
+                self.flow = match op {
+                    BinaryOp::And => lhs_true_flow.clone(),
+                    _ => lhs_false_flow.clone(),
+                };
             }
             self.check_condition(rhs);
+            let (rhs_true_flow, rhs_false_flow) = self.take_bool_outcomes();
             self.scopes.pop();
+            // §16.1.2/[§16.1.3]: `a && b` is true only via (a true, b true);
+            // false via (a false) or (a true, b false). `a || b` is true via
+            // (a true) or (a false, b true); false only via (a false,
+            // b false). The join ([§16.1]) intersects the definite sets and
+            // unions the touched fields.
+            let (true_flow, false_flow) = match op {
+                BinaryOp::And => {
+                    let mut false_flow = lhs_false_flow;
+                    false_flow.join_definite(&rhs_false_flow);
+                    (rhs_true_flow, false_flow)
+                }
+                _ => {
+                    let mut true_flow = lhs_true_flow;
+                    true_flow.join_definite(&rhs_true_flow);
+                    (true_flow, rhs_false_flow)
+                }
+            };
+            // §16.1.2/[§16.1.3]: the after-expression flow for a non-condition
+            // consumer is the join of both outcomes.
+            let mut joined = true_flow.clone();
+            joined.join_definite(&false_flow);
+            self.flow = joined;
+            self.bool_outcomes = Some((true_flow, false_flow));
             return self.primitive(PrimitiveType::Boolean);
         }
         let lhs_ty = self.infer_expr(lhs);
@@ -5701,12 +5920,30 @@ impl<'a> InferCtx<'a> {
                 self.labels.pop();
             }
             StmtData::If { cond, then, els } => {
+                // §16.2.7: the flow before the condition is the pre-statement
+                // flow — the fallback when every branch exits and the code
+                // after the `if` is unreachable.
+                let before = self.flow.clone();
+                let before_exited = self.exited;
                 self.check_condition(*cond);
+                // §16.1.2–[§16.1.5]: the condition's true flow enters the then
+                // arm, its false flow the else arm — an assignment made only on
+                // the condition's true flow (e.g. the right operand of a `&&`
+                // that runs only when the left matched, JLS Example 16-1) is
+                // definitely assigned inside the guarded then arm.
+                let (cond_true_flow, cond_false_flow) = self.take_bool_outcomes();
+                // §16.1.1: a condition that is a boolean *constant expression*
+                // of value `true` (or `false`) can never take the other branch
+                // — the impossible branch's flow is vacuous, so only the taken
+                // arm constrains the code after the `if`. `final int c = 5;
+                // if (c > 2)` folds (JLS Example 16-2's contrast).
+                let const_bool = self.const_bool(*cond);
                 // §14.30.3: the condition's true-flow pattern bindings are in
                 // scope in the `then` arm; its false-flow bindings in the
                 // `else` arm.
                 let (true_flow, false_flow) = self.pattern_flow(*cond).unwrap_or_default();
                 self.scopes.push(FxHashMap::default());
+                self.flow = cond_true_flow;
                 for binding in &true_flow {
                     self.scope_binding(*binding);
                 }
@@ -5716,18 +5953,25 @@ impl<'a> InferCtx<'a> {
                 // no constraint. A blank `final` field is *touched* if either
                 // surviving path assigned it ([§8.3.1.2]): after the `if`, a
                 // later write to it is the already-assigned error.
-                let before = self.flow.clone();
-                let before_exited = self.exited;
                 self.infer_stmt(*then);
                 self.scopes.pop();
                 let then_flow = std::mem::replace(&mut self.flow, before.clone());
-                let then_exited = std::mem::replace(&mut self.exited, before_exited);
+                let mut then_exited = std::mem::replace(&mut self.exited, before_exited);
+                // §16.1.1: a constant-`false` condition's then arm can never
+                // run — its flow is vacuous, so the arm contributes nothing to
+                // the join and the after-`if` state is the else arm's alone.
+                if const_bool == Some(false) {
+                    then_exited = true;
+                }
                 // The else path's end state; the else-less form's false path
-                // is `before`.
-                let mut else_flow = before.clone();
+                // is the condition's false flow. A constant condition makes
+                // one branch impossible: its flow is vacuous and it can never
+                // reach the join ([§16.1.1]).
+                let mut else_flow = cond_false_flow.clone();
                 let mut else_exited = before_exited;
                 if let Some(els) = els {
                     self.scopes.push(FxHashMap::default());
+                    self.flow = cond_false_flow;
                     for binding in &false_flow {
                         self.scope_binding(*binding);
                     }
@@ -5740,9 +5984,16 @@ impl<'a> InferCtx<'a> {
                     // only way past this statement is the condition's false
                     // flow — its pattern bindings stay in scope after it
                     // (`if (!(x instanceof T v)) return;` makes `v` known).
+                    self.flow = cond_false_flow;
                     for binding in &false_flow {
                         self.scope_binding(*binding);
                     }
+                    else_flow = self.flow.clone();
+                }
+                // §16.1.1: a constant-`true` condition's else arm (or the
+                // else-less false path) can never run — it is vacuous.
+                if const_bool == Some(true) {
+                    else_exited = true;
                 }
                 // §16.1/§8.3.1.2: join the surviving paths. A path that
                 // completes abruptly never reaches the join; when no path
@@ -5777,31 +6028,67 @@ impl<'a> InferCtx<'a> {
                 self.exited = then_exited && else_exited;
             }
             StmtData::While { cond, body } => {
+                // §16.2.10: the flow before the condition is the pre-loop
+                // state — the fallback for the after-loop join.
+                let before = self.flow.clone();
                 self.check_condition(*cond);
                 // §16.1.10: the body may run zero times, so nothing it
                 // assigns is definitely assigned after the loop, and a blank
                 // `final` field it touches stays *definitely unassigned* after
                 // it ([§8.3.1.2]) — a later write is still a fresh
                 // initialization, not an already-assigned one.
-                let before = self.flow.clone();
+                // §16.2.10: a `while` whose condition is a constant expression
+                // ([§16.1.1]) of value `true` can never complete through the
+                // condition — the only way past it is a `break` — so the
+                // assignments the body made before each `break` carry past the
+                // loop. The body is inferred under the condition's true flow;
+                // the loop's end flow is the join of the recorded break flows
+                // (JLS Example 16-1).
+                let const_bool = self.const_bool(*cond);
+                let (cond_true_flow, _) = self.take_bool_outcomes();
                 self.loop_depth += 1;
+                self.loop_breaks.push(LoopBreakFrame::new(None));
+                if const_bool == Some(true) {
+                    self.flow = cond_true_flow;
+                }
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
-                self.flow = before;
+                let frame = self.loop_breaks.pop().expect("frame pushed above");
+                self.flow = if const_bool == Some(true) {
+                    // Only the break paths survive: a constant-true loop never
+                    // reaches the join through its condition. When no break was
+                    // recorded the loop cannot complete normally, so the
+                    // pre-loop state stands (the code after is unreachable).
+                    frame.joined().unwrap_or(before)
+                } else {
+                    before
+                };
                 self.exited = false;
             }
             StmtData::DoWhile { body, cond } => {
                 // §16.1.11: a do-loop's body runs at least once, so its
                 // assignments carry past the loop when the body falls
-                // through; an exiting body constrains nothing.
+                // through; an exiting body constrains nothing. A do-loop whose
+                // condition is a constant `true` ([§16.1.1]) never exits
+                // through the condition — only its `break` paths reach the
+                // join ([§16.2.11]), like a constant-true `while`.
                 let before = self.flow.clone();
+                let const_bool = self.const_bool(*cond);
                 self.loop_depth += 1;
+                self.loop_breaks.push(LoopBreakFrame::new(None));
                 self.infer_stmt(*body);
-                self.loop_depth -= 1;
-                if self.exited {
-                    self.flow = before;
+                if const_bool == Some(true) {
+                    // The body's fall-through feeds the condition (always
+                    // true); only the recorded breaks escape the loop.
+                } else if self.exited {
+                    self.flow = before.clone();
                 }
                 self.check_condition(*cond);
+                self.loop_depth -= 1;
+                let frame = self.loop_breaks.pop().expect("frame pushed above");
+                if const_bool == Some(true) {
+                    self.flow = frame.joined().unwrap_or(before);
+                }
                 self.exited = false;
             }
             StmtData::For {
@@ -5814,18 +6101,42 @@ impl<'a> InferCtx<'a> {
                 for &init in init {
                     self.infer_stmt(init);
                 }
+                // A missing condition is an implicit constant `true`
+                // ([§16.2.12]: a condition-less `for (;;)` never completes
+                // through a false value).
+                let const_bool = match cond {
+                    Some(c) => self.const_bool(*c),
+                    None => Some(true),
+                };
                 if let Some(cond) = cond {
                     self.check_condition(*cond);
                 }
+                // §16.2.10: the body runs under the condition's *true* flow
+                // when the condition is a constant `true`; capture the
+                // outcomes right here — the step expressions below would
+                // overwrite [`Self::bool_outcomes`].
+                let (cond_true_flow, _) = self.take_bool_outcomes();
                 for &step in step {
                     let _ = self.infer_expr(step);
                 }
-                // §16.1.14: like `while`, the body may run zero times.
+                // §16.1.14: like `while`, the body may run zero times — except
+                // a `for` whose condition is a constant `true` **or absent**,
+                // which — like a constant-true `while` ([§16.2.12]) — escapes
+                // only through its `break` paths.
                 let before = self.flow.clone();
                 self.loop_depth += 1;
+                self.loop_breaks.push(LoopBreakFrame::new(None));
+                if const_bool == Some(true) {
+                    self.flow = cond_true_flow;
+                }
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
-                self.flow = before;
+                let frame = self.loop_breaks.pop().expect("frame pushed above");
+                self.flow = if const_bool == Some(true) {
+                    frame.joined().unwrap_or(before)
+                } else {
+                    before
+                };
                 self.exited = false;
                 self.scopes.pop();
             }
@@ -6050,6 +6361,9 @@ impl<'a> InferCtx<'a> {
                                 label: name.as_str().to_owned(),
                             });
                         }
+                        // §16.2.10: the break's flow joins the after-loop state
+                        // of a constant-condition loop (JLS Example 16-1).
+                        self.record_break_flow(Some(&name));
                     }
                     None => {
                         // §14.15: an unlabeled `break` needs an enclosing
@@ -6057,6 +6371,7 @@ impl<'a> InferCtx<'a> {
                         if self.loop_depth == 0 && self.switch_depth == 0 {
                             self.report(TypeError::BreakOutsideSwitchOrLoop { stmt: id });
                         }
+                        self.record_break_flow(None);
                     }
                 }
             }

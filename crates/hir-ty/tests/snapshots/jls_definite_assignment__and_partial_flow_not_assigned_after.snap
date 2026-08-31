@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 341
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    int read() { return 0; }
+
+    void m(int v) {
+        int k;
+        boolean b = v > 0 && (k = read()) >= 0;
+        int y = k;
+    }
+}
+
+method read(): int
+  locals: 
+  exprs: e0: int
+method m(int): void
+  locals: l0: int | l1: int | l2: boolean | l3: int
+  exprs: e1: int | e2: int | e3: boolean | e4: int | e5: int | e6: int | e7: int | e8: int | e9: boolean | e10: boolean | e11: <error>
+  diags: e11@8:16: variable-might-not-have-been-initialized: Variable 'k' might not have been initialized

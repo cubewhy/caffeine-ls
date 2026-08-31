@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 571
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    void m(int n) {
+        int k;
+        final int constant = 5;
+        if (constant > 2)
+            k = 3;
+        int y = k;
+    }
+}
+
+method m(int): void
+  locals: l0: int | l1: int | l2: int | l3: int
+  exprs: e0: int | e1: int | e2: int | e3: boolean | e4: boolean | e5: int | e6: int | e7: int | e8: int
