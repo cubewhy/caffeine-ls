@@ -22,4 +22,3 @@ class Holder<K, T extends Box<K, T>> {
 method copy(com.example.Holder<K, T>): void
   locals: l0: com.example.Holder<K, T>
   exprs: e0: com.example.Holder<K, T> | e1: com.example.Box<K, T> | e2: com.example.Holder<K, T> | e3: com.example.Box<K, T> | e4: com.example.Box<K, T>
-  diags: e3@11:19: incompatible-types: Incompatible types. Found: 'Box<K, T>', required: 'Box<K, T>'

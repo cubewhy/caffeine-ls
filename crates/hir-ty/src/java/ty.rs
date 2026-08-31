@@ -314,6 +314,44 @@ impl Ty {
         }
     }
 
+    /// Whether this type is identical to `other` *by name*, ignoring the
+    /// representation of type-variable bounds.
+    ///
+    /// [`Ty`] equality is interned-id equality, so two `Box<K, T>` handles
+    /// with the *same* type variables are only equal when the variables'
+    /// declared bounds intern identically. They usually do — bounds are
+    /// resolved once per file — but a *self-referential* bound
+    /// ([JLS §4.4]: `class Box<K, T extends Box<K, T>>`) is resolved
+    /// independently by each `Resolver` context: the recursion guard of
+    /// [§4.4] bound resolution truncates the recursive `T` reference at
+    /// different depths, so the field type (from the receiver's args,
+    /// [§4.10.2] substitution) and the parameter type (from the method's own
+    /// scope) intern to *different* handles. Assignment and return
+    /// ([§5.2], [§14.17]) then ask the subtype machinery to decide an
+    /// identical pair and it fails. Per [§4.10.2] same erasure — and because
+    /// both handles are the *same* declared type variable — the pair is
+    /// identical regardless of how the recursive bound got truncated.
+    pub fn same_shape(&self, db: &dyn TyDatabase, other: &Ty) -> bool {
+        match (self.kind(db), other.kind(db)) {
+            (TyKind::Reference { name: a, args: aa }, TyKind::Reference { name: b, args: bb }) => {
+                a == b
+                    && aa.len() == bb.len()
+                    && aa.iter().zip(bb).all(|(x, y)| x.same_shape(db, y))
+            }
+            (TyKind::Array(a), TyKind::Array(b)) => a.same_shape(db, b),
+            (TyKind::Wildcard(ab), TyKind::Wildcard(bb)) => match (ab, bb) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.kind == b.kind && a.ty.same_shape(db, &b.ty),
+                _ => false,
+            },
+            (TyKind::TypeVar { name: a, .. }, TyKind::TypeVar { name: b, .. }) => a == b,
+            (TyKind::Intersection(a), TyKind::Intersection(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same_shape(db, y))
+            }
+            _ => self == other,
+        }
+    }
+
     pub fn is_error(&self, db: &dyn TyDatabase) -> bool {
         matches!(self.kind(db), TyKind::Error)
     }

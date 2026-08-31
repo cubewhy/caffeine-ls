@@ -390,6 +390,14 @@ pub(crate) fn is_subtype_query(
     if sub == sup {
         return true;
     }
+    // §4.10.2: reference-type reflexivity holds for a parameterized type
+    // identical *by name* even when the two handles intern differently — the
+    // recursion guard of §4.4 bound resolution truncates a self-referential
+    // bound (`T extends Box<K,T>`) at different depths per resolver context.
+    // A type variable is a subtype of itself and of its own parameterization.
+    if sub.same_shape(db, &sup) {
+        return true;
+    }
     match (sub.kind(db), sup.kind(db)) {
         // §4.10.1: the primitive partial order is identity only (widening is
         // a conversion, not a subtyping).
@@ -459,7 +467,11 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
             continue;
         }
         for bound in bounds {
-            if bound == &sup {
+            // §4.10.2: a bound identical to the target *by name* — a
+            // self-referential bound (`T extends Box<K,T>`) is resolved to
+            // differently-deep handles per resolver context — satisfies the
+            // subtyping directly.
+            if bound == &sup || bound.same_shape(db, &sup) {
                 return true;
             }
             match bound.kind(db) {
@@ -598,6 +610,17 @@ pub fn is_assignable(
     dst: &Ty,
 ) -> bool {
     if src == dst {
+        return true;
+    }
+    // §4.10.2/[§5.2]: a parameterized type whose type variables are the same
+    // *by name* is identical even when the two handles intern differently —
+    // the recursion guard of §4.4 bound resolution truncates a
+    // self-referential bound (`T extends Box<K,T>`) at different depths per
+    // resolver context. Subtyping cannot decide the pair (`is_subtype` has no
+    // reflexivity for separately-interned same-shape handles), so the
+    // assignment/return of an identical pair ([§5.2], [§14.17]) is accepted
+    // directly here.
+    if src.same_shape(db, dst) {
         return true;
     }
     match (src.kind(db), dst.kind(db)) {

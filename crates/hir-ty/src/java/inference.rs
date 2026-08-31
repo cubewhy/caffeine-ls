@@ -315,7 +315,12 @@ impl Inference {
         // *itself* as a lower bound (`⟨U → U⟩` from the merge function
         // `(first, ignored) -> first` of `Collectors.toMap`) and poison the
         // bound set with a self-reference that no resolution order can break.
-        if s == t {
+        // The identity test is *name-wise*: a self-referential type variable
+        // bound (`T extends Box<K,T>`, §4.4) is resolved to differently-deep
+        // interned handles per resolver context, so `Box<K,T> → Box<K,T>`
+        // must be a tautology too — it never reduces to the invariant
+        // equality `⟨T = T⟩`, which the recursion guard would fail.
+        if s.same_shape(db, t) {
             return true;
         }
         // §5.1.10/§18.2.2: a wildcard on the *source* side stands for its
