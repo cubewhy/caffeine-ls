@@ -101,6 +101,8 @@ impl InferCtx<'_> {
             explicit_type_args,
         )
     }
+    /// candidate is probed in its own fresh inference table.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn choose_candidate(
         &mut self,
         members: &[MethodData],
@@ -150,6 +152,8 @@ impl InferCtx<'_> {
         let (_, invocation, deferred) = applicable.remove(index);
         Some((invocation, deferred))
     }
+    /// resolved formals are collected in `deferred`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn try_candidate(
         &mut self,
         inference: &mut Inference,
@@ -863,6 +867,8 @@ impl InferCtx<'_> {
             inference, &members, &arg_kinds, phase, true, &formal, explicit,
         )
     }
+    /// this phase or the applicable ones are ambiguous ([JLS §15.12.2.5]).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn choose_nested_candidate(
         &mut self,
         inference: &mut Inference,

@@ -18,7 +18,8 @@ use crate::java::{
 };
 
 use super::{
-    InferCtx, body_types, find_method_item,
+    InferCtx, body_types,
+    context::find_method_item,
     poly::{ArgInfo, ArgKind, reinfer_poly_standalone},
 };
 
