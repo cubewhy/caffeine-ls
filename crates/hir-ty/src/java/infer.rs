@@ -52,23 +52,27 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 use vfs::FileId;
 
+mod flow;
+mod lambda;
+mod operator;
+mod poly;
+
+use self::poly::*;
+
 use crate::{
     java::const_eval::{Const, ConstEnv},
     java::db::{TyDatabase, type_params_map_query},
     java::diagnostics::{DiagLocation, IllegalAccessKind, NonStaticThisKind, TypeError},
-    java::inference::{Constraint, Inference, InvocationPhase, least_upper_bound},
+    java::inference::{Constraint, Inference, InvocationPhase},
     java::method::{
-        Access, FieldData, InvocationContext, InvocationMode, MethodData, access_context,
-        member_set, member_set_ignoring_access, pick_field, pick_field_ignoring_access,
-        pick_method, single_abstract_method,
+        FieldData, InvocationContext, InvocationMode, MethodData, access_context, member_set,
+        member_set_ignoring_access, pick_field, pick_field_ignoring_access, single_abstract_method,
     },
     java::resolve::{
         Resolver, item_data, resolve_type_ref, scope_for_file, type_argument_bound_violation,
     },
     java::subtyping::supertypes_impl,
-    java::ty::{
-        Ty, TyData, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive,
-    },
+    java::ty::{Ty, TyData, TyKind, boxed_type, capture_conversion, unboxed_primitive},
 };
 
 /// The inferred types of a method or constructor body.
@@ -76,26 +80,16 @@ use crate::{
 pub struct BodyTypes {
     /// The body the types were inferred for.
     pub body: Option<BodyId>,
-    /// The type of every expression reachable from the body's statements,
     /// keyed by its arena id.
     pub exprs: FxHashMap<ExprId, Ty>,
-    /// The type of every local of the body — parameters, declared locals,
     /// for-loop variables, catch parameters — keyed by its arena id.
     pub locals: FxHashMap<LocalId, Ty>,
     /// The type errors reported while inferring the body, in report order.
     pub diagnostics: Vec<TypeError>,
-    /// The blank `final` fields of the enclosing class that the body's
-    /// execution *touches* on some path ([§8.3.1.2], [§16]): every name
-    /// assigned by a plain `name = …`/`this.name = …` reachable through the
-    /// body's flow. A later sibling initializer body (or a constructor after
-    /// the instance initializers) seeds its already-assigned set with these,
-    /// so a second write to the same blank final is the already-assigned
     /// error.
     pub field_touched: FxHashSet<String>,
 }
 
-/// Infers the types of the body of `item` in `file`, memoized per (file,
-/// item) by the tracked query in [`crate::java::db`]. `None` when the item has no
 /// body (a declaration without statements) or is not a body-carrying item.
 pub fn body_types(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<Arc<BodyTypes>> {
     crate::java::db::body_types_query(db, crate::java::db::ItemKey::new(db, file, item))
@@ -381,7 +375,7 @@ pub(crate) fn body_types_impl(
     // the *final* inference pass's body-tree participates (each `body_types`
     // invocation re-runs it).
     if let Some(body_id) = body {
-        let (mutated, captures) = effective_final_scan(&ctx.tree, body_id);
+        let (mutated, captures) = flow::effective_final_scan(&ctx.tree, body_id);
         let mut reported: FxHashSet<(Name, ExprId)> = FxHashSet::default();
         for (name, expr) in captures {
             if mutated.contains(&name) && reported.insert((name.clone(), expr)) {
@@ -398,57 +392,36 @@ pub(crate) fn body_types_impl(
     })
 }
 
-/// The kind of *initializer* body being inferred — the only contexts in which
-/// a blank `final` field may be assigned once ([JLS §8.3.1.2], [§16]). A
-/// static field initializer and a static initializer are **static** contexts;
-/// an instance field initializer, an instance initializer and a constructor
-/// are **instance** contexts. `None` for method bodies and enum constant
 /// argument lists, where no blank `final` field write is legal.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitCtx {
     /// A static initializer or a static field initializer ([JLS §8.7]).
     Static,
-    /// An instance initializer, an instance field initializer or a
     /// constructor ([JLS §8.6], [§8.8]).
     Instance,
 }
 
-/// The verdict on a write to a `final` field ([JLS §8.3.1.2], [§16]): the
-/// once-only blank-`final` initialization, a second (already-assigned) write,
 /// or any other illegal `final`-field write.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FinalFieldWrite {
     /// The write is the legal blank-final initialization.
     Legal,
-    /// The write targets a blank final already assigned on some path — javac:
     /// `variable {f} might already have been assigned`.
     AlreadyAssigned,
-    /// Any other illegal `final`-field write — javac: `cannot assign a value
     /// to {final|static final} variable {f}`.
     CannotAssign,
 }
 
-/// The definite-assignment flow state of the body ([JLS §16]): which locals
-/// are definitely assigned, and which blank `final` fields of the enclosing
-/// class are *touched* (assigned on some path) so a later write to one is the
-/// already-assigned error ([§8.3.1.2]). The two sets are threaded through the
-/// branch machinery together — a branch save/restore/join must move both in
 /// lockstep — so they are bundled here rather than as two loose fields.
 #[derive(Clone, Default)]
 struct Flow {
     /// The locals definitely assigned at the current position ([§16]).
     definite: FxHashSet<LocalId>,
-    /// The blank `final` fields of the enclosing class assigned on *some* path
     /// so far ([§8.3.1.2], [§16]).
     field_touched: FxHashSet<String>,
 }
 
 impl Flow {
-    /// §16.1: the *definite-assignment* join of two paths — a local (or blank
-    /// final field) is definitely assigned after a join only when it was
-    /// definitely assigned on *every* incoming path, so the definite set is
-    /// the intersection. The field-touched set, by contrast, records "may
-    /// already be assigned": a blank final that either path touched may no
     /// longer be assigned, so it is the *union*.
     fn join_definite(&mut self, other: &Flow) {
         self.definite.retain(|local| other.definite.contains(local));
@@ -457,9 +430,6 @@ impl Flow {
         }
     }
 
-    /// The field-touched union used where an abrupt-completing branch
-    /// contributes no *definite* assignments but may still have touched a
-    /// blank final ([§16]): the surviving field is the union of the surviving
     /// path's set and the pre-branch set.
     fn union_touched(&mut self, other: &Flow) {
         for touched in &other.field_touched {
@@ -468,16 +438,9 @@ impl Flow {
     }
 }
 
-/// §16.2.9–[§16.2.12]: the definite-assignment flows captured at the `break`
-/// statements that target one enclosing loop or `switch` — the paths by which
-/// a constant-`true` loop ([§16.1.1]) completes normally (JLS Example 16-1),
-/// and the normal-completing paths of a `switch` arm ([§14.15]: a `break`
-/// exits to just after the switch, so the statement after it is reachable).
-/// Each `break` records the [`Flow`] at the break, so a join collects exactly
 /// the assignments made before the exits, not the whole body.
 #[derive(Clone)]
 struct BreakFrame {
-    /// The label naming this loop ([§14.14]), when it has one — a labeled
     /// `break label` records on exactly this frame. A `switch` has no label.
     label: Option<Name>,
     /// The flows at each `break` targeting this frame reached so far.
@@ -493,9 +456,6 @@ impl BreakFrame {
         }
     }
 
-    /// The join of every recorded break flow ([§16.1]): a local is definitely
-    /// assigned after the breakable only when *every* break path assigned it.
-    /// `None` when no break was recorded — a constant-true loop with no break
     /// cannot complete normally.
     fn joined(&self) -> Option<Flow> {
         let mut iter = self.flows.iter();
@@ -514,169 +474,68 @@ struct InferCtx<'a> {
     resolver: Resolver,
     access: InvocationContext,
     enclosing_class: Option<Ty>,
-    /// Every enclosing class-like declaration, innermost first ([§6.3]):
-    /// their static members are in scope by simple name inside a nested
     /// class ([§6.5.5.1], [§8.1.3]).
     enclosing_chain: Vec<Ty>,
-    /// The return type of the enclosing method or constructor: the target
     /// type ([JLS §18.5.2.4]) of the expressions it returns.
     enclosing_ret: Option<Ty>,
-    /// The declared `throws` clause of the enclosing method or constructor
-    /// ([§8.4.6]): the discharge targets of the checked-exception liability
     /// check ([§11.2]).
     enclosing_throws: Vec<Ty>,
-    /// Checked exceptions thrown so far at the current position and not yet
-    /// discharged by a catch clause, with the expression that threw them
-    /// ([§11.2]): entries are appended by invocations of throwing methods
-    /// ([§11.2.1]) and `throw` statements ([§14.18]), and removed when a
     /// `catch` clause handles their type.
     thrown: Vec<(Ty, ExprId)>,
-    /// The names of same-class fields declared *textually after* the field
-    /// whose initializer is currently being inferred and of the same
-    /// static/instance kind ([§8.3.3]): reading one by simple name is an
     /// illegal forward reference.
     forward_names: Vec<Name>,
-    /// Whether the body is in a static context
-    /// ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
-    /// the body of a static method, a static field initializer or a static
-    /// initializer, where `this` is unavailable. An unqualified invocation of
-    /// an instance method from such a body is a compile-time error
     /// ([§15.12.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.3)).
     static_context: bool,
-    /// Whether the body of the *constructor* currently being inferred is
-    /// before its supertype constructor has been called
-    /// ([JLS §8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
-    /// the explicit `this(...)`/`super(...)` invocation has not been reached
-    /// yet (or the body has none, in which case the implicit `super()` runs
-    /// before the first statement and the window is empty). While set, a
-    /// reference to `this`, `super` or an instance member is a compile-time
     /// error ([`TypeError::CannotReferenceBeforeSuper`]).
     before_super: bool,
-    /// The definite-assignment flow state ([JLS §16]): the definitely-assigned
     /// locals and the blank-`final` fields already touched (see [`Flow`]).
     flow: Flow,
-    /// Whether control flow has exited (return/break/continue/throw/yield)
-    /// on every path to the current position ([§14.22] in effect): reads past
     /// this point are not definite-assignment errors.
     exited: bool,
-    /// Whether the expression currently being inferred is the left-hand side
-    /// of a simple assignment — a write, not a value read ([§15.26.1],
     /// [§16]).
     writing: bool,
-    /// Whether the expression currently being inferred is the target of a
-    /// write — an assignment (simple or compound) or an increment/decrement
-    /// ([§15.26], [§15.14], [§15.15.1]). Unlike [`Self::writing`] (which only
-    /// marks the *simple*-assignment left-hand side, for the §16 definite-
-    /// assignment rule), this marks every mutating target, so the
-    /// `CannotAssignToFinalVariable` check can reject writes to `final`
     /// variables and fields.
     mutating: bool,
-    /// Whether the body being inferred is a constructor
-    /// ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)):
-    /// a **blank** `final` field may be assigned once, in a constructor of
     /// its own class, as its initialization ([§8.3.1.2], [§16]).
     in_constructor: bool,
-    /// The *initializer* context of the body, when it is one
-    /// ([JLS §8.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.6),
-    /// [§8.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.7)):
-    /// a static initializer or static field initializer is a **static**
-    /// context in which a blank `static final` field may be assigned once; an
-    /// instance initializer, instance field initializer or constructor is an
-    /// **instance** context in which a blank `final` instance field may be
-    /// assigned once ([§8.3.1.2], [§16]). `None` for method bodies and enum
     /// constant argument lists, where no blank `final` field write is legal.
     init_ctx: Option<InitCtx>,
-    /// The **blank** `final` locals of the body ([§4.12.4], [§16]): declared
-    /// `final` with no initializer. Unlike every other `final` variable
-    /// (parameters, catch/foreach/resource variables, finals with an
-    /// initializer), a blank one may still be assigned — once, by definite
     /// assignment — so the `CannotAssignToFinalVariable` check exempts it.
     blank_finals: FxHashSet<LocalId>,
-    /// The nesting depth of enclosing lambda bodies ([JLS §15.27]): a lambda
-    /// body can never be the once-only blank-`final`-field initialization —
-    /// the lambda may execute any number of times ([§8.3.1.2], [§16]) — so a
     /// blank-final-field write inside a lambda is always an error.
     lambda_depth: usize,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
-    /// The type errors reported so far, in report order ([§14.4.1], [§8.3.3]).
-    /// Every entry corresponds to a source construct the compiler degrades to
     /// [`Ty::error`]; the diagnostics layer collects them per file.
     diagnostics: Vec<TypeError>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.
     scopes: Vec<FxHashMap<Name, LocalId>>,
-    /// The lambda parameter scopes in effect ([JLS §6.3], [§15.27.2]): a
-    /// lambda's parameters are in scope throughout its body, shadowed by any
-    /// locals declared inside. The lambda expression itself carries no
     /// [`LocalId`]s, so these are tracked separately from [`Self::scopes`].
     lambda_params: Vec<FxHashMap<Name, Ty>>,
-    /// The types of the valued `return` expressions seen so far in each
-    /// enclosing *block* lambda body, innermost frame last ([§15.27.3]):
-    /// the frame stack mirrors [`Self::lambda_params`]' nesting, and a
-    /// frame's contents are the result expressions from which the block
     /// body's type is inferred during overload probing.
     lambda_returns: Vec<Vec<Ty>>,
-    /// The expected type of the expression currently being inferred — set
-    /// where the context fixes the type: a declaration initializer, an
     /// assignment right-hand side, or a return statement.
     target: Option<Ty>,
-    /// The target types of the enclosing switch expressions, innermost last
-    /// ([JLS §14.21]): a `yield` value has the type of its switch expression
     /// as target, not the enclosing method's return type.
     switch_targets: Vec<Option<Ty>>,
-    /// The constant variables in scope ([JLS §4.12.4]): a `final` local whose
-    /// initializer was itself a constant expression, with its value — reads
     /// of it are constant expressions ([§15.28]).
     const_locals: FxHashMap<LocalId, Const>,
-    /// The constant values of the case labels seen in the enclosing switch,
-    /// innermost last ([§14.11.1]): a label repeating an earlier value is
     /// reported as duplicate.
     case_values: Vec<FxHashMap<String, ()>>,
-    /// The nesting depth of enclosing loops — `while`, `do`, `for` and
-    /// enhanced `for` ([§14.12]-[§14.14]): an unlabeled `continue` is legal
-    /// only inside a loop ([§14.16]) and an unlabeled `break` only inside a
     /// loop or a `switch` ([§14.15]).
     loop_depth: usize,
-    /// The nesting depth of enclosing `switch` statements ([§14.11]): an
     /// unlabeled `break` may target the nearest enclosing switch.
     switch_depth: usize,
-    /// The labels in scope, innermost last: `(name, is_loop)` — `break label`
-    /// may target any labeled statement, a labeled `continue` only a labeled
     /// loop ([§14.16]).
     labels: Vec<(Name, bool)>,
-    /// §16.2.9–[§16.2.12]: the definite-assignment flows at the `break`
-    /// statements that target each enclosing breakable — one frame per loop or
-    /// `switch`, innermost first. A constant-condition loop ([§16.1.1])
-    /// completes normally only through those breaks, so their flows join into
-    /// the after-loop state (JLS Example 16-1); a `switch`'s breaks are the
     /// normal-completing arm paths ([§16.2.9]). See [`BreakFrame`].
     loop_breaks: Vec<BreakFrame>,
-    /// §14.14: the label of the labeled loop currently about to be inferred —
-    /// [`StmtData::Labeled`] sets it and the loop statement's handler consumes
-    /// it into the [`BreakFrame`], so a labeled `break label` inside the loop
     /// records on that loop's frame.
     pending_loop_label: Option<Name>,
-    /// Whether the current inference is *speculative* — the applicability
-    /// probe of an overload candidate ([§15.12.2]): like javac, diagnostics
-    /// from speculatively attributed arguments are discarded, so a nested
-    /// resolution failure is reported once (by the final re-inference or the
     /// total-failure path), not once per probed candidate.
     probing: bool,
-    /// §16.1.2–[§16.1.5]: the definite-assignment flows after the
-    /// most-recently-inferred boolean expression when it evaluates to `true`
-    /// and to `false`. Every expression but the conditional boolean forms
-    /// (`&&`, `||`, `!`, `?:`) leaves both outcomes equal to the
-    /// after-expression flow ([§16.1.7]); the conditional forms split them so
-    /// the enclosing statement feeds each branch its own flow. Consumed by
-    /// [`Self::check_condition`]'s callers; `None` before an expression has
     /// been inferred.
     bool_outcomes: Option<(Flow, Flow)>,
-    /// The precise rethrow set of each catch parameter in scope
-    /// ([JLS §11.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-11.html#jls-11.2.2)):
-    /// the checked exceptions the try block can throw that are assignable to
-    /// the parameter's type and were not caught by an earlier clause. A
-    /// `throw e` of such a parameter throws these types — not the parameter's
-    /// declared type — provided the parameter stays effectively final; an
     /// assignment to it drops the entry ([§14.20]).
     rethrow_sets: FxHashMap<LocalId, Vec<Ty>>,
 }
@@ -686,13 +545,6 @@ impl<'a> InferCtx<'a> {
         Ty::error(self.db)
     }
 
-    /// Records a type error. The construct it reports degrades to
-    /// [`Ty::error`] so that downstream resolution of the body keeps working;
-    /// the diagnostics layer collects these per file via
-    /// [`BodyTypes::diagnostics`]. Suppressed while speculatively probing an
-    /// overload candidate ([`Self::probing`]): javac also discards the
-    /// diagnostics of speculatively attributed arguments, so a nested failure
-    /// is reported once — by the chosen candidate's re-inference or by the
     /// total-failure path — not once per probed overload.
     fn report(&mut self, diagnostic: TypeError) {
         if self.probing {
@@ -701,8 +553,6 @@ impl<'a> InferCtx<'a> {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Infers `expr` under the expected type `target`, restoring the previous
-    /// target afterwards. The target participates in method invocation type
     /// inference ([JLS §18.5.2.4]).
     fn with_target<T>(&mut self, target: Option<Ty>, f: impl FnOnce(&mut Self) -> T) -> T {
         let saved = self.target;
@@ -712,10 +562,6 @@ impl<'a> InferCtx<'a> {
         result
     }
 
-    /// Consumes and returns the true/false outcome flows of the most recently
-    /// inferred expression ([§16.1.2]–[§16.1.5]). Every expression records
-    /// them (a non-boolean form sets both to the after-flow, [§16.1.7]); falls
-    /// back to the current flow for a bare expression that skipped the record
     /// (e.g. a condition degraded to an error).
     fn take_bool_outcomes(&mut self) -> (Flow, Flow) {
         self.bool_outcomes
@@ -723,10 +569,6 @@ impl<'a> InferCtx<'a> {
             .unwrap_or_else(|| (self.flow.clone(), self.flow.clone()))
     }
 
-    /// Whether the boolean expression `id` is a constant expression
-    /// ([JLS §15.29], [§16.1.1]) whose value the flow analysis may rely on:
-    /// a literal `true`/`false`, or a `&&`/`||`/`!`/`?:`/comparison folding of
-    /// constant operands. The constant-variable environment
     /// ([§4.12.4]) is captured at the current position.
     fn const_bool(&self, id: ExprId) -> Option<bool> {
         match self.const_value(id) {
@@ -735,11 +577,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether the boolean expression `id` is one whose *conditional* flow
-    /// analysis the analysis specializes: `&&`, `||`, `!` or `?:` — the forms
-    /// of [§16.1.2]–[§16.1.5], whose operands run under the true/false flows of
-    /// their left context. Any other boolean expression is analyzed under both
-    /// outcomes identically ([§16.1.7]). Parentheses are transparent
     /// ([§16.1.7]: `(a && b)` behaves like `a && b`).
     fn is_bool_flow_expr(&self, id: ExprId) -> bool {
         match self.tree.expr(id).clone() {
@@ -756,8 +593,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Runs `f` in *speculative* mode: diagnostics reported inside are
-    /// discarded ([`Self::probing`]). Used for the applicability probes of
     /// overload resolution ([§15.12.2]).
     fn with_probing<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         let saved = std::mem::replace(&mut self.probing, true);
@@ -786,7 +621,6 @@ impl<'a> InferCtx<'a> {
         matches!(ty.kind(self.db), TyKind::Reference { name, .. } if name.as_str() == "java.lang.String")
     }
 
-    /// Whether `ty` is `boolean` in a condition position ([JLS §14.9], [§15.25.1]):
     /// a primitive `boolean`, or a boxed `Boolean` after unboxing ([§5.1.8]).
     fn is_boolean(&self, ty: Ty) -> bool {
         match ty.kind(self.db) {
@@ -798,9 +632,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether `ty` is numeric for a unary/binary numeric or shift operator
-    /// ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1),
-    /// [§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2)):
     /// a primitive other than `boolean`, or a boxed primitive after unboxing.
     fn is_numeric_operand(&self, ty: Ty) -> bool {
         match ty.kind(self.db) {
@@ -813,8 +644,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether `ty` is a reference type in the loose sense used by the
-    /// comparison and castability checks: a class, interface, array, type
     /// variable or intersection type ([JLS §4.3]).
     fn is_reference_like(&self, ty: Ty) -> bool {
         matches!(
@@ -827,10 +656,6 @@ impl<'a> InferCtx<'a> {
         )
     }
 
-    /// Infers the condition expression of an `if`/`while`/`do`/`for`/`assert`
-    /// ([§14.9], [§14.11], [§14.16]), the scrutinee-free condition of a
-    /// conditional expression ([§15.25.1]) and the boolean operand positions
-    /// of `!`, `&&`/`||`. A condition that is not `boolean` degrades to the
     /// error type and is reported.
     fn check_condition(&mut self, cond: ExprId) {
         let ty = self.infer_expr(cond);
@@ -848,10 +673,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether the two operand types of an equality or relational operator are
-    /// comparable ([§15.20], [§15.21]): both numeric (after boxing/unboxing),
-    /// both boolean-like, or reference types that could be related. The
-    /// provably-unrelated reference case (`String == Integer`) is rejected by
     /// demanding a subtype link when exactly one operand unboxes.
     fn comparable(&self, a: Ty, b: Ty) -> bool {
         let boolean_like = |t: Ty| match t.kind(self.db) {
@@ -896,9 +717,6 @@ impl<'a> InferCtx<'a> {
         true
     }
 
-    /// Whether `from` can be cast to `to` by a casting conversion
-    /// ([JLS §5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5)):
-    /// identity, primitive widening/narrowing with boxing/unboxing, or a
     /// reference widening/narrowing cast.
     fn castable(&self, from: Ty, to: Ty) -> bool {
         if from == to {
@@ -959,13 +777,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether a reference-to-reference casting conversion exists
-    /// ([JLS §5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5),
-    /// [§5.5.1], [§5.1.6.3]): the cast fails only when the two types are
-    /// *provably distinct* — both class-like (`class`/`enum`/`record`) with
-    /// neither a subtype of the other, which single inheritance makes final:
-    /// no common subclass can ever implement both. Casts involving interfaces,
-    /// arrays or unresolvable types always succeed here (the runtime check may
     /// still fail; that is not a compile-time error per §5.5.1).
     fn reference_castable(&self, from: Ty, to: Ty) -> bool {
         let sub = crate::java::subtyping::is_subtype(self.db, &self.scope, &from, &to);
@@ -982,10 +793,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Infers a `switch` selector and checks its type
-    /// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1)):
-    /// the selector must be convertible to `int` — a primitive `char`,
-    /// `byte`, `short` or `int`, one of their boxed types, or an unboxing
     /// reference — or be a `String` or an enum type.
     fn infer_switch_selector(&mut self, scrutinee: ExprId) -> Ty {
         let ty = self.infer_expr(scrutinee);
@@ -998,8 +805,6 @@ impl<'a> InferCtx<'a> {
         ty
     }
 
-    /// §14.11.1/§15.28: whether the arms of a switch expression cover every
-    /// selector value. A `default` label is always exhaustive; an enum
     /// selector requires every constant to be named by some label.
     fn switch_is_exhaustive(&self, selector: &Ty, arms: &[SwitchArm]) -> bool {
         let mut covered: Vec<Name> = Vec::new();
@@ -1028,10 +833,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §14.11.1: whether the selector type is supported by `switch`. A    /// primitive selector must be one of the int-compatible types
-    /// (`char`, `byte`, `short`, `int`); any reference or type-variable
-    /// selector is supported ([§14.11]: pattern labels match arbitrary
-    /// reference types), while `long`, `float`, `double` and `boolean` are
     /// never selectable.
     fn switchable(&self, ty: &Ty) -> bool {
         match ty.kind(self.db) {
@@ -1047,11 +848,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// A `case` label of a switch with the given selector
-    /// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1)):
-    /// against an enum selector a bare-name label is the enum constant of that
-    /// name ([§8.9.1]) — ordinary name resolution does not see constants of a
-    /// type, so it is resolved here; every other label is an ordinary
     /// constant expression, which must be assignable to the selector.
     fn infer_switch_label(&mut self, label: ExprId, selector: &Ty) {
         if let ExprData::Var(name) = self.tree.expr(label).clone()
@@ -1086,11 +882,6 @@ impl<'a> InferCtx<'a> {
         self.check_case_label(label, selector);
     }
 
-    /// Whether `expr` is a constant expression of value `v` that narrows to
-    /// the primitive type `dst` in assignment context
-    /// ([JLS §5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2)):
-    /// an int-typed constant expression ([§4.12.4], [§15.28]) may narrow to
-    /// `byte`, `short` or `char` when its value is representable in the
     /// target type ([§5.1.3] narrowing of constants).
     fn constant_narrowable(&self, expr: ExprId, src: Ty, dst: Ty) -> bool {
         let (TyKind::Primitive(p), TyKind::Primitive(d)) = (src.kind(self.db), dst.kind(self.db))
@@ -1116,8 +907,6 @@ impl<'a> InferCtx<'a> {
             .is_some_and(|value| crate::java::subtyping::fits_primitive(value, *d))
     }
 
-    /// Whether every result expression of `arms` is an int constant that
-    /// narrows to `d` ([JLS §5.2] applied per result expression of a switch
     /// expression in assignment context, [§15.28]).
     fn switch_results_narrowable(&self, arms: &[SwitchArm], d: PrimitiveType) -> bool {
         let mut results = Vec::new();
@@ -1131,7 +920,6 @@ impl<'a> InferCtx<'a> {
             })
     }
 
-    /// The result expressions of a switch arm: an arrow arm's value
     /// expression, and the `yield` values of a block arm.
     fn collect_switch_results(&self, stmts: &[StmtId], out: &mut Vec<ExprId>) {
         for &stmt in stmts {
@@ -1144,22 +932,16 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The value of an int-typed constant expression
-    /// ([JLS §4.12.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4),
-    /// [§15.28](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.28)):
-    /// literals, parenthesized forms, the constant operators, and simple
     /// names of constant variables — evaluated by [`crate::java::const_eval`].
     fn const_int_value(&self, id: ExprId) -> Option<i64> {
         self.const_value(id).and_then(|value| value.as_int())
     }
 
-    /// The value of a constant expression ([§15.28]) in the current
     /// environment of constant variables ([§4.12.4]).
     fn const_value(&self, id: ExprId) -> Option<Const> {
         ConstEnv::new(&self.tree, &self.const_locals).eval(id)
     }
 
-    /// §4.12.2: whether `ty` is a *raw type* — a reference to a generic class
     /// ([§8.1.2]) used without its type arguments.
     fn is_raw_type(&self, ty: &Ty) -> bool {
         match ty.kind(self.db) {
@@ -1171,13 +953,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §4.7: whether `ty` is a reifiable type — one whose runtime
-    /// representation is fully known at compile time
-    /// ([JLS §4.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.7)):
-    /// a primitive, a non-generic class or interface, a raw type, an
-    /// unbounded-wildcard parameterization (`List<?>`), or an array of
-    /// reifiable. A type variable, or a parameterized type with a type-variable,
-    /// concrete or bounded-wildcard argument (`List<String>`,
     /// `List<? extends Number>`, `ArrayList<T>`), is not.
     fn is_reifiable(&self, ty: &Ty) -> bool {
         match ty.kind(self.db) {
@@ -1190,8 +965,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §15.20.2/[§4.7]: a type reference in `instanceof` position is
-    /// bounds-checked ([§4.5.1]) and must be reifiable — a type variable or a
     /// parameterized type with a non-wildcard argument cannot be tested.
     fn check_instanceof_target(&mut self, expr: ExprId, spanned: &SpannedTypeRef) {
         self.check_type_argument_bounds(DiagLocation::Expr(expr), spanned);
@@ -1201,7 +974,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The written type reference of a pattern ([JLS §14.30]) — the pattern
     /// type of a `TYPE_PATTERN`/`RECORD_PATTERN`, `None` for a `MatchAll`.
     fn pattern_type_ref(&self, id: PatternId) -> Option<SpannedTypeRef> {
         match self.tree.pattern(id).clone() {
@@ -1223,14 +995,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §4.5.1: reports a parameterized type reference whose type argument is
-    /// not within the bounds of the type parameter it fills
-    /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
-    /// e.g. `M<String>` for `class M<T extends Number>`. The check is
-    /// conservative (see [`type_argument_bound_violation`]): anything the
-    /// subtype machinery cannot decide is silently skipped. `location` anchors
-    /// the diagnostic to the local, expression or pattern the type reference
-    /// belongs to; the report's range is the reference name itself, matching
     /// javac's caret.
     fn check_type_argument_bounds(&mut self, location: DiagLocation, spanned: &SpannedTypeRef) {
         let TypeRef::Reference {
@@ -1265,7 +1029,6 @@ impl<'a> InferCtx<'a> {
         });
     }
 
-    /// §5.1.9/§5.2: an assignment whose source is a raw type and whose target
     /// is parameterized succeeds by *unchecked conversion*; report it.
     fn warn_unchecked(&mut self, expr: ExprId, src: &Ty, dst: &Ty) {
         if src.is_error(self.db) || dst.is_error(self.db) || !self.is_raw_type(src) {
@@ -1283,9 +1046,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §14.11.1: a `case` label of a switch whose selector is int-compatible
-    /// or `String` must be a constant expression ([§15.28]); two labels of
-    /// one switch may not declare the same value. Enum selectors are exempt —
     /// their bare-name labels are resolved as constants above.
     fn check_case_label(&mut self, label: ExprId, selector: &Ty) {
         if matches!(self.tree.expr(label).clone(), ExprData::Missing)
@@ -1344,8 +1104,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §11.2: whether the type is a *checked* exception — assignable to
-    /// `Throwable` but not to `RuntimeException` or `Error`
     /// ([§11.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-11.html#jls-11.1.1)).
     fn is_checked(&self, ty: &Ty) -> bool {
         let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
@@ -1359,10 +1117,6 @@ impl<'a> InferCtx<'a> {
         })
     }
 
-    /// §11.2: at the end of a body, every remaining checked exception that no
-    /// catch clause discharged and no `throws` clause declares is reported at
-    /// the expression that threw it. A precise rethrow contributes several
-    /// entries for one `throw` expression; like javac, the first uncovered
     /// type is reported and the rest of that statement's set is left alone.
     fn check_thrown_liability(&mut self) {
         let declared = self.enclosing_throws.clone();
@@ -1965,10 +1719,6 @@ impl<'a> InferCtx<'a> {
         ty
     }
 
-    /// Infers `expr` as a *read*, suppressing the mutating / writing flags
-    /// that a surrounding assignment target set ([§15.26], [§16]). A receiver
-    /// expression — the target of a qualified field access or the array of a
-    /// subscript — is always evaluated for its value, so `final` variables in
     /// receiver position must not be mistaken for the assigned target.
     fn infer_read_expr(&mut self, id: ExprId) -> Ty {
         let saved_mutating = self.mutating;
@@ -1981,7 +1731,6 @@ impl<'a> InferCtx<'a> {
         ty
     }
 
-    /// A bare name: a local variable or parameter, or — when no local — a
     /// field of the implicit receiver ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)).
     fn var(&mut self, expr: ExprId, name: Name) -> Ty {
         // §6.3/[§15.27.2]: a lambda parameter is in scope throughout the
@@ -2095,8 +1844,6 @@ impl<'a> InferCtx<'a> {
         self.error()
     }
 
-    /// A static field ([§7.5.4]) named by a static import: `import static
-    /// pkg.Type.FIELD`, or the on-demand form `import static pkg.Type.*`,
     /// makes the simple name `FIELD` a static member access (§15.11.1).
     fn static_import_field(&self, simple: &str) -> Option<Ty> {
         for (owner, member) in self.resolver.static_import_owners(simple) {
@@ -2111,9 +1858,6 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// A qualified name in expression position: `Type.field` (a static field
-    /// access, [§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1))
-    /// when the prefix resolves to a type; a simple non-local name falls back
     /// to a field of the implicit receiver.
     fn name_path(&mut self, expr: ExprId, name: Name) -> Ty {
         let text = name.as_str();
@@ -2164,11 +1908,6 @@ impl<'a> InferCtx<'a> {
         self.error()
     }
 
-    /// A bare type name in receiver position: `Type.name` — a static member
-    /// access ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1))
-    /// or `Type.method(...)` call
-    /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
-    /// whose receiver is a type, not a value. `None` when `name` is a local
     /// variable or does not resolve to a type.
     fn type_name_ty(&self, name: &Name) -> Option<Ty> {
         if self.lookup_local(name).is_some() {
@@ -2188,11 +1927,6 @@ impl<'a> InferCtx<'a> {
         (hir::fqn_resolve(self.db, &self.scope, resolved.as_str()).is_some()).then_some(ty)
     }
 
-    /// The type named by a pure name chain (`Type`, `pkg.Type`,
-    /// `java.util.Map.Entry`) — a (possibly qualified) type name used as a
-    /// static member receiver ([§6.5.5], [§15.11.1]). Every segment must be a
-    /// plain name — no segment may be a local variable — and the canonical
-    /// fully qualified name must resolve on the classpath. `None` otherwise,
     /// so ordinary instance field chains keep their expression treatment.
     fn dotted_type_name(&self, id: ExprId) -> Option<Ty> {
         let mut parts: Vec<String> = Vec::new();
@@ -2397,12 +2131,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Whether `name` is a *member type* (a nested class, interface, enum,
-    /// record or annotation, [JLS §6.5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.2))
-    /// of the class `receiver`. A qualified name `Type.Name` whose last
-    /// component is a nested type is itself a type, not a field access, so it
-    /// is not reported as a missing field. Source classes nest with dots
-    /// ([JLS §6.7]); library nested classes use the `Outer$Inner` binary name
     /// ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)).
     fn receiver_has_nested_type(&self, receiver: &Ty, name: &str) -> bool {
         let Some(fqn) = self.receiver_fqn(receiver) else {
@@ -2420,7 +2148,6 @@ impl<'a> InferCtx<'a> {
         hir::fqn_resolve(self.db, &self.scope, &candidate).is_some()
     }
 
-    /// The canonical fully qualified name of a reference receiver type, or
     /// `None` for a non-reference (array, type variable, primitive, error).
     fn receiver_fqn(&self, receiver: &Ty) -> Option<&str> {
         let TyKind::Reference { name, .. } = receiver.kind(self.db) else {
@@ -2429,10 +2156,6 @@ impl<'a> InferCtx<'a> {
         Some(name.as_str())
     }
 
-    /// Whether the reference receiver resolves to an *enum* class on the
-    /// classpath (a library class carrying ACC_ENUM, [JVMS §4.1]). Enum
-    /// constants are the only static members whose presence in a classfile is
-    /// guaranteed complete, so an unknown constant of a library enum is a
     /// genuine §8.9.2/§15.11 error rather than a partial-record artifact.
     fn receiver_is_library_enum(&self, receiver: &Ty) -> bool {
         let Some(fqn) = self.receiver_fqn(receiver) else {
@@ -2457,10 +2180,6 @@ impl<'a> InferCtx<'a> {
         pick_field(self.db, &self.scope, &receiver, name, &self.access)
     }
 
-    /// The statements of one block ([JLS §14.2]). §14.22: a statement is
-    /// reachable only if the preceding statement can complete normally — a
-    /// statement after an abruptly-completing one is a compile-time error.
-    /// It is still inferred (as reachable) so its own diagnostics stay
     /// complete, matching javac's cadence of one report per block.
     fn infer_block_statements(&mut self, stmts: &[StmtId]) {
         let mut reported_unreachable = false;
@@ -2484,11 +2203,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §16.2.9–[§16.2.12]: records the current flow at a `break` that targets
-    /// an enclosing loop or `switch`. An *unlabeled* break targets the nearest
-    /// enclosing breakable ([§14.15]); a labeled break records on the frame
-    /// whose label names it (a loop or labeled block — a `switch` has no
-    /// label, so a labeled break out of a labeled block matches no frame and
     /// contributes nothing).
     fn record_break_flow(&mut self, label: Option<&Name>) {
         if let Some(name) = label {
@@ -2505,8 +2219,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// A simple-name field read inside the body: the implicit receiver is not
-    /// just the immediately enclosing class but every enclosing declaration,
     /// innermost first ([§6.5.5.1], [§8.3]).
     fn pick_field_of_chain(&mut self, name: &str) -> Option<FieldData> {
         for class in std::iter::once(&self.enclosing_class)
@@ -2520,14 +2232,6 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// §16/[§8.3.1.2]: records the *plain* assignment `lhs`'s target into
-    /// [`Self::field_touched`] — a blank `final` field of the enclosing class
-    /// that is assigned by `name = …` or `this.name = …`. Called for every
-    /// simple assignment; the field's name enters the "might already be
-    /// assigned" set so a later write to the same blank final is the
-    /// already-assigned error ([`TypeError::VariableAlreadyAssigned`]). The
-    /// assignment itself is validated (as legal blank-final initialization or
-    /// as the cannot-assign error) at the field-write check in [`Self::var`]
     /// and [`Self::field_access`].
     fn record_field_write(&mut self, lhs: ExprId) {
         let name = match self.tree.expr(lhs).clone() {
@@ -2562,9 +2266,6 @@ impl<'a> InferCtx<'a> {
         self.flow.field_touched.insert(name.as_str().to_owned());
     }
 
-    /// Whether `field` is a *blank* (initializer-less) `final` field of a
-    /// source class ([JLS §8.3.1.2]): the once-only initialization rule
-    /// applies to a field with no initializer (and to a record component,
     /// which is implicitly blank, [§8.10.4]).
     fn field_is_blank(&self, field: &FieldData) -> bool {
         let Some(owner_file) = field.owner_file else {
@@ -2605,17 +2306,6 @@ impl<'a> InferCtx<'a> {
         found_blank
     }
 
-    /// §8.3.1.2/[§16]: the verdict on writing the `final` field `field`
-    /// through `bare_this` at the current position. [`FinalFieldWrite::Legal`]
-    /// is the once-only blank-`final` initialization — a blank (initializer-
-    /// less) field of the class being initialized, written through its own
-    /// `this` receiver from the matching initializer context: a blank
-    /// `static final` from a static initializer or static field initializer
-    /// ([§8.7], [§8.3.2]), a blank `final` instance field from an instance
-    /// initializer, instance field initializer or a constructor ([§8.6],
-    /// [§8.3.2], [§8.8]). [`FinalFieldWrite::AlreadyAssigned`] is a second
-    /// write to a blank final that some earlier statement or alternative path
-    /// has *already* assigned ([§16]); every other `final`-field write is
     /// [`FinalFieldWrite::CannotAssign`].
     fn final_field_write_verdict(&self, field: &FieldData, bare_this: bool) -> FinalFieldWrite {
         if !bare_this || self.lambda_depth > 0 {
@@ -2656,10 +2346,6 @@ impl<'a> InferCtx<'a> {
         FinalFieldWrite::Legal
     }
 
-    /// §6.6: the access probe of a field access ([§15.11]) — after the
-    /// accessible [`pick_field`] missed on `receiver`, a field of the name may
-    /// still exist there with a more restrictive access than the access site
-    /// allows. Reports the field as `IllegalAccess` and returns `true` when
     /// so; the caller falls back to a no-such-member error otherwise.
     fn report_illegal_field_access(&mut self, expr: ExprId, receiver: Ty, name: &str) -> bool {
         let Some(field) =
@@ -2677,13 +2363,6 @@ impl<'a> InferCtx<'a> {
         true
     }
 
-    /// §6.6: the access probe of a method invocation
-    /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)) —
-    /// after the accessible [`member_set`] missed on `receiver`, a method of
-    /// the name may still exist there with a more restrictive access. The
-    /// invocation mode ([§15.12.3]) is honored via `ctx` — a static form of an
-    /// instance method (or `super` of a static one) is a mode mismatch, not an
-    /// access violation, so it stays a no-such-member error. Reports the
     /// most-derived one as `IllegalAccess` and returns `true` when so.
     fn report_illegal_method_access(
         &mut self,
@@ -2706,11 +2385,6 @@ impl<'a> InferCtx<'a> {
         true
     }
 
-    /// The type a (possibly qualified) *type* name denotes, probed candidate
-    /// by candidate ([§6.5.5.1], [§6.5.5.2]) — unlike
-    /// [`crate::java::resolve::resolve_type_ref`], which degrades an unresolvable
-    /// name to its most-qualified candidate for display, this reports
-    /// failure so expression-position receivers can fall back to value
     /// treatment.
     fn resolve_type_name_checked(&self, name: &Name) -> Option<Ty> {
         let candidates = crate::java::resolve::candidate_fqns(&self.resolver, name);
@@ -2722,13 +2396,6 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// An explicit constructor invocation `this(args)` / `super(args)`
-    /// ([JLS §8.8.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7.1)):
-    /// the candidates are the constructors of the enclosing class (for
-    /// `this`) or of its direct superclass (for `super`) — methods named
-    /// after the target class with no return type — resolved by the same
-    /// applicability phases as a method invocation
-    /// ([§15.12.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2)).
     /// The invocation is a statement form and has no value.
     fn ctor_call(
         &mut self,
@@ -2826,14 +2493,6 @@ impl<'a> InferCtx<'a> {
         self.primitive(PrimitiveType::Void)
     }
 
-    /// Builds the `cant.apply.symbol` diagnostic for a failed invocation:
-    /// the *closest* candidate by arity carries the `required:` list, and the
-    /// inferred argument types carry the `found:` list — javac's verbatim
-    /// message block ([JLS §15.12.2]). When some candidate has exactly the
-    /// given arity, the reason is the first argument-to-formal conversion
-    /// failure against it (`incompatible types: …`); otherwise the arities
-    /// differ and javac's argument-list-length text applies. `owner` is
-    /// `Some` for a constructor invocation ([§15.9], [§8.8.7.1]) and opens
     /// the message with javac's `constructor {Owner}() cannot be applied…`.
     fn report_wrong_arity(
         &mut self,
@@ -3052,14 +2711,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The receiver type, invocation mode and *form* of an invocation
-    /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)):
-    /// a bare type name in receiver position is a static invocation whose
-    /// receiver is a type, not a value; an unqualified call is an implicit
-    /// `this` invocation; a `super` receiver is the superclass of the
-    /// enclosing class. The third element reports whether the invocation has
-    /// the simple `MethodName` form — an unqualified name that is not a static
-    /// import ([§7.5.4]) — which §15.12.3 restricts in static contexts
     /// ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     fn receiver_info(
         &mut self,
@@ -3138,15 +2789,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The receiver of a simple `MethodName` invocation
-    /// ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1),
-    /// [§6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1)):
-    /// the *innermost enclosing declaration* that has a member of the name —
-    /// not just the immediately enclosing class. An inner class holds an
-    /// enclosing instance ([§8.1.3]), so an instance method of an outer class
-    /// is invokable by simple name from an inner body (`log(...)` inside an
-    /// anonymous listener). Resolution stops at the first level declaring the
-    /// name; a subsequent illegal use is reported there rather than silently
     /// skipped ([§15.12.3]).
     fn unqualified_method_receiver(&self, name: &str) -> Ty {
         let mut levels: Vec<Ty> = Vec::new();
@@ -3162,9 +2804,6 @@ impl<'a> InferCtx<'a> {
         self.enclosing_class.unwrap_or_else(|| self.error())
     }
 
-    /// The receiver of an unqualified call that names a statically imported
-    /// method ([§7.5.4]): the declaring type, when that type has a static
-    /// member of the name. `None` otherwise — the call falls back to the
     /// implicit `this` receiver.
     fn static_import_method_receiver(&self, simple: &str) -> Option<Ty> {
         for (owner, member) in self.resolver.static_import_owners(simple) {
@@ -3180,10 +2819,6 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// The type of `super` in the current class: the direct superclass
-    /// ([JLS §8.1.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.4)),
-    /// with the enclosing class's type arguments substituted. The direct
-    /// supertypes of a class list the superclass first
     /// ([`supertypes_impl`]).
     fn super_ty(&self) -> Ty {
         let Some(enclosing) = self.enclosing_class else {
@@ -3195,10 +2830,6 @@ impl<'a> InferCtx<'a> {
             .unwrap_or_else(|| self.error())
     }
 
-    /// The kinds of the actual arguments of an invocation for joint inference:
-    /// each argument decomposes into its poly leaves ([JLS §15.2]) — a lambda,
-    /// method reference or method invocation, or a parenthesized or conditional
-    /// expression of them. An argument with no poly leaves is a concrete
     /// argument, inferred standalone.
     fn arg_kinds(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
         args.iter().map(|arg| self.arg_info(*arg)).collect()
@@ -3243,14 +2874,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Resolves an invocation `receiver.name(args)` by the applicability
-    /// phases of [JLS §15.12.2]: strict invocation
-    /// ([§15.12.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.2)),
-    /// then loose invocation ([§15.12.2.3]), then variable arity
-    /// ([§15.12.2.4]); the most specific applicable method
-    /// ([§15.12.2.5]) wins. Returns the inferred invocation type and the poly
-    /// arguments to re-infer against the resolved formal parameters
-    /// ([JLS §18.5.2.4]). `None` when no method is applicable or the
     /// applicable ones are ambiguous.
     fn resolve_call(
         &mut self,
@@ -3284,8 +2907,6 @@ impl<'a> InferCtx<'a> {
         )
     }
 
-    /// The most specific applicable candidate in `phase`, or `None` when none
-    /// applies or the applicable ones are ambiguous ([JLS §15.12.2.5]). Each
     /// candidate is probed in its own fresh inference table.
     #[allow(clippy::too_many_arguments)]
     fn choose_candidate(
@@ -3338,14 +2959,6 @@ impl<'a> InferCtx<'a> {
         Some((invocation, deferred))
     }
 
-    /// Instantiates `method` against `arg_kinds` in `phase`, contributing the
-    /// argument and target constraints to `inference`. When `resolve` is set
-    /// the inference is solved to the invocation type
-    /// ([JLS §15.12.2.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.6));
-    /// otherwise only consistency is checked — the nested poly invocation
-    /// probe of §18.5.2.4, which must not fix variables before the enclosing
-    /// invocation's constraints are all in. `None` when `method` is not
-    /// applicable in this phase. The poly arguments to re-infer against the
     /// resolved formals are collected in `deferred`.
     #[allow(clippy::too_many_arguments)]
     fn try_candidate(
@@ -3656,11 +3269,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Contributes one poly leaf (or concrete argument) against the formal
-    /// parameter `formal` ([JLS §18.5.2.2]): a concrete argument constrains
-    /// the formal by `⟨S → T⟩`; a lambda or method reference is deferred to the
-    /// resolved formal; a nested invocation is resolved against the formal by
-    /// contributing its constraints to the shared table ([JLS §18.5.2.4]).
     /// `false` when the nested invocation has no applicable method.
     fn contribute_leaf(
         &mut self,
@@ -3787,9 +3395,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §15.9.3: a diamond `new Foo<>()` argument registers the created
-    /// class's type variables in the shared inference table and constrains
-    /// the parameterized created type against the enclosing formal —
     /// `synchronizedList(new ArrayList<>())` against `List<String>`.
     fn contribute_diamond_new(
         &mut self,
@@ -3874,11 +3479,6 @@ impl<'a> InferCtx<'a> {
         true
     }
 
-    /// Replaces the capture variables of a captured type ([JLS §5.1.10]) by
-    /// the wildcard bounds they stand for — `CAP#n` with lower bound `L`
-    /// becomes `L`, otherwise its first upper bound. Applied recursively to
-    /// type arguments and array elements, so constraints derived against a
-    /// captured SAM signature reach the underlying inference variables
     /// instead of dead-ending on the captures themselves.
     fn decapture(&self, ty: &Ty) -> Ty {
         match ty.kind(self.db) {
@@ -3916,12 +3516,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Infers a lambda's parameter scopes and body against the single abstract
-    /// method `sam`, returning the body's result type
-    /// ([JLS §15.27.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.3)):
-    /// an expression lambda's body type directly, a block lambda's type from
-    /// its `return` expressions (`None` when no return carries a value). The
-    /// types are recorded speculatively; the final re-inference against the
     /// resolved formal overwrites them.
     fn infer_lambda_body_result(
         &mut self,
@@ -4030,16 +3624,6 @@ impl<'a> InferCtx<'a> {
         result
     }
 
-    /// Resolves a nested poly invocation argument against the target formal
-    /// ([JLS §18.5.2.4]) by contributing the constraints of its most specific
-    /// applicable candidate to the enclosing invocation's inference table.
-    /// Each candidate is probed against its own snapshot of the table — the
-    /// fresh bound set of [JLS §18.5.1] — so no candidate sees another's
-    /// constraints; the applicable ones are collected, and the most specific
-    /// ([§15.12.2.5], [JLS §18.5.4]) wins. Only the winner's constraints are
-    /// lifted into the enclosing table, the B3 of
-    /// [JLS §18.5.2.1]/[§18.5.2.2]; the losing candidates leave no trace, so
-    /// a less specific candidate can never poison the enclosing inference.
     /// `false` when no candidate is applicable against the formal.
     fn contribute_invocation(
         &mut self,
@@ -4091,8 +3675,6 @@ impl<'a> InferCtx<'a> {
         )
     }
 
-    /// The most specific applicable candidate of `members` against the target
-    /// `formal`, contributed to the shared table. `false` when none applies in
     /// this phase or the applicable ones are ambiguous ([JLS §15.12.2.5]).
     #[allow(clippy::too_many_arguments)]
     fn choose_nested_candidate(
@@ -4169,9 +3751,6 @@ impl<'a> InferCtx<'a> {
         true
     }
 
-    /// Re-infers the poly arguments against the resolved formal parameters of
-    /// the chosen candidate ([JLS §18.5.2.4]): the lambda, method reference or
-    /// nested invocation is typed by its target — the instantiated formal — so
     /// its expression tree records the target-dependent types.
     fn reinfer_deferred(&mut self, method: &MethodData, deferred: &[(ExprId, usize)]) {
         for (arg, index) in deferred {
@@ -4181,11 +3760,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// A class instance creation ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)):
-    /// the created class's type. Constructors are resolved so the arguments
-    /// are checked against the same joint inference as a method invocation —
-    /// `new Job(() -> {})` types the lambda argument against the resolved
-    /// constructor's formal parameter. Source constructors are named after the
     /// class, library constructors are `<init>`.
     fn new_expr(
         &mut self,
@@ -4313,12 +3887,6 @@ impl<'a> InferCtx<'a> {
         class_ty
     }
 
-    /// §15.9: a class instance creation must instantiate a class and not a
-    /// type variable, an interface, an abstract class or an enum
-    /// ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9)).
-    /// Source declarations are known directly; library classes are not flagged
-    /// (their access flags are not surfaced). Returns whether the creation was
-    /// rejected — the caller must not double-report a missing constructor on
     /// top of the instantiation error.
     fn check_instantiable(&mut self, expr: ExprId, class_ty: Ty) -> bool {
         let (TyKind::TypeVar { .. } | TyKind::Reference { .. }) = class_ty.kind(self.db) else {
@@ -4357,14 +3925,6 @@ impl<'a> InferCtx<'a> {
         non_instantiable
     }
 
-    /// §15.9.2: the diamond operator — the created class's type arguments are
-    /// inferred from the target type. When the target is a reference type
-    /// whose erasure is the created class ([§15.9.2.1]), its type arguments
-    /// are taken; a *supertype* target (`List<String> l =
-    /// new ArrayList<>();`) is handled by unifying the created class's
-    /// parameterized supertype named by the target with the target's
-    /// arguments — every supertype argument that is one of the created
-    /// class's own type variables binds that variable. Otherwise the class
     /// is created raw ([§15.9.2.2]).
     fn diamond_instantiation(&self, class_ty: Ty, target: Option<Ty>) -> Ty {
         let Some(target) = target else {
@@ -4456,8 +4016,6 @@ impl<'a> InferCtx<'a> {
         class_ty
     }
 
-    /// The declared type parameters of the class-like declaration `fqn` as
-    /// bare type-variable types ([JLS §8.1.2]); empty for non-generic classes
     /// and unresolvable names.
     fn class_type_var_names(&self, fqn: &Name) -> Vec<Ty> {
         let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) else {
@@ -4495,10 +4053,6 @@ impl<'a> InferCtx<'a> {
             .collect()
     }
 
-    /// The declared type parameters of the class-like declaration `fqn` with
-    /// their resolved bounds ([JLS §8.1.2], [§4.4]); empty for non-generic
-    /// classes and unresolvable names. Used by the diamond-from-constructor
-    /// inference ([§15.9.2.2]) to register the class's type variables as
     /// inference variables.
     fn class_type_param_bounds(&self, fqn: &Name) -> Vec<crate::java::method::MethodTypeParam> {
         let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) else {
@@ -4549,13 +4103,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §15.9.2.2: `new Foo<>()` with no target type infers the created
-    /// class's type arguments from the constructor's formal parameters —
-    /// `new Analyzer<>(new BasicInterpreter())` infers `Analyzer<BasicValue>`
-    /// through the `Analyzer(Interpreter<V>)` constructor. The class's type
-    /// parameters are registered as inference variables and constrained by
-    /// the argument types exactly like a generic method invocation; the first
-    /// applicable constructor's solution instantiates the class. Falls back
     /// to the raw `class_ty` when no constructor decides it.
     fn diamond_instantiation_from_ctor_args(
         &mut self,
@@ -4628,918 +4175,8 @@ impl<'a> InferCtx<'a> {
         }
         class_ty
     }
-    /// The type of a lambda expression ([JLS §15.27.2]): the target
-    /// functional interface ([§15.27.3], [JLS §18.5.2.4]). The lambda's
-    /// parameters are typed from the single abstract method of the target
-    /// ([JLS §9.8]) and its body is inferred against the SAM's return type —
-    /// a return statement inside a lambda body returns from the lambda, not
-    /// from the enclosing method.
-    fn lambda_type(
-        &mut self,
-        expr: ExprId,
-        params: &[(Name, Option<SpannedTypeRef>, TextRange)],
-        body: LambdaBody,
-    ) -> Ty {
-        let Some(target) = self.target else {
-            return self.error();
-        };
-        // §9.8/§15.27.3: a lambda expression's target must be a functional
-        // interface — one with exactly one abstract method.
-        let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
-            if !target.is_error(self.db) {
-                self.report(TypeError::NotAFunctionalInterface {
-                    expr,
-                    target: target,
-                });
-            }
-            return self.error();
-        };
-        if sam.params.len() != params.len() {
-            return self.error();
-        }
-        self.lambda_params.push(FxHashMap::default());
-        for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
-            let ty = match declared {
-                Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-                // An inferred parameter takes the SAM formal's type
-                // ([§15.27.3]); a captured super wildcard (`Consumer<?
-                // super Element>`) contributes its *lower* bound, whose
-                // members the parameter actually has.
-                None => {
-                    let ty = *formal;
-                    match ty.kind(self.db) {
-                        TyKind::TypeVar {
-                            lower: Some(lower), ..
-                        } => *lower,
-                        _ => ty,
-                    }
-                }
-            };
-            self.check_lambda_param_duplicate(expr, name, *range);
-            self.lambda_params
-                .last_mut()
-                .expect("lambda param scope pushed")
-                .insert(name.clone(), ty);
-        }
-        let saved_ret = self.enclosing_ret.replace(self.decapture(&sam.ret));
-        // The lambda body is its own flow context ([§15.27.2]): whether it
-        // completes normally and which locals it definitely assigns say
-        // nothing about the statement that contains the lambda. Its
-        // checked-exception liability is likewise settled against the
-        // *functional interface's* throws clause ([§15.27.3], [§11.2.1]) —
-        // neither discharged by, nor propagated to, the enclosing method.
-        let saved_throws = std::mem::replace(&mut self.enclosing_throws, sam.throws.clone());
-        let saved_exited = self.exited;
-        let saved_flow = self.flow.clone();
-        // §15.27/[§8.3.1.2]: a lambda body is never the once-only blank-final
-        // field initialization — the lambda may execute any number of times —
-        // so a blank-final write inside it is always an error. Track the
-        // depth so the write check rejects them.
-        self.lambda_depth += 1;
-        let thrown_before: FxHashSet<ExprId> = self.thrown.iter().map(|(_, e)| *e).collect();
-        match body {
-            // §15.27.2: an expression lambda's body is a poly expression
-            // whose target is the SAM's return type — decaptured ([§5.1.10])
-            // like [`Self::infer_lambda_body_result`]'s target, so a nested
-            // generic invocation constrains the wildcard bound instead of
-            // dead-ending on the capture variable.
-            LambdaBody::Expr(expr) => {
-                let _ =
-                    self.with_target(Some(self.decapture(&sam.ret)), |this| this.infer_expr(expr));
-            }
-            LambdaBody::Block(stmt) => self.infer_stmt(stmt),
-        }
-        self.lambda_depth -= 1;
-        self.settle_lambda_thrown(&sam.throws, &thrown_before);
-        self.enclosing_throws = saved_throws;
-        self.exited = saved_exited;
-        self.flow = saved_flow;
-        self.enclosing_ret = saved_ret;
-        self.lambda_params.pop();
-        target
-    }
 
-    /// Settles the checked-exception liability accumulated while inferring a
-    /// lambda body ([§15.27.3]): every entry added by the body — entries whose
-    /// throwing expression was not seen before the body — is checked against
-    /// the functional interface's throws clause, reported there when no
-    /// declared exception covers it, and always drained so that none of the
-    /// body's liability leaks into the enclosing method's.
-    fn settle_lambda_thrown(&mut self, throws: &[Ty], before: &FxHashSet<ExprId>) {
-        let new_entries: Vec<(Ty, ExprId)> = self
-            .thrown
-            .iter()
-            .filter(|(_, expr)| !before.contains(expr))
-            .cloned()
-            .collect();
-        for (ty, expr) in &new_entries {
-            if !throws.iter().any(|declared| {
-                crate::java::subtyping::is_assignable(self.db, &self.scope, ty, declared)
-            }) {
-                self.report(TypeError::UnreportedException {
-                    expr: *expr,
-                    thrown: *ty,
-                });
-            }
-        }
-        if !new_entries.is_empty() {
-            self.thrown.retain(|(_, expr)| before.contains(expr));
-        }
-    }
-
-    /// The type of a method reference ([JLS §15.13.2]): the target functional
-    /// interface. The referenced method is resolved against the SAM's
-    /// parameters ([§15.13.3]) so the qualifier is inferred.
-    fn method_ref_type(
-        &mut self,
-        expr: ExprId,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-    ) -> Ty {
-        let Some(target) = self.target else {
-            return self.error();
-        };
-        // §9.8/§15.13: a method reference's target must be a functional
-        // interface too.
-        let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
-            if !target.is_error(self.db) {
-                self.report(TypeError::NotAFunctionalInterface {
-                    expr,
-                    target: target,
-                });
-            }
-            return self.error();
-        };
-        self.resolve_method_ref(qualifier, type_name, name, &sam.params);
-        target
-    }
-
-    /// The reference type, member-lookup context and *form* of a method
-    /// reference ([JLS §15.13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.1)):
-    /// a *type qualifier* — a bare name, `pkg.Type` or a nested `Outer.Inner`
-    /// — resolves a type and yields a type-qualified (`Type::m`) reference; an
-    /// instance qualifier is inferred as an expression and yields a bound
-    /// (`expr::m`) reference. A type-qualified reference (`Path::of`,
-    /// `List::stream`) may resolve a static method of an interface as well as
-    /// of a class, so the member lookup uses `TypeQualified` mode: the
-    /// virtual-invocation member filter of §15.12.3 must not swallow those
-    /// static members, or `map`'s `<R>` stays unbound and the chain types
-    /// `List<Object>`. `None` when neither qualifier form applies.
-    fn method_ref_target(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-    ) -> Option<(Ty, InvocationContext, bool)> {
-        let (ref_ty, type_qualified) = match (type_name, qualifier) {
-            (Some(tyref), _) => (
-                resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
-                true,
-            ),
-            (None, Some(expr)) => {
-                if let Some(ty) = self.dotted_type_name(expr) {
-                    (ty, true)
-                } else if let ExprData::Var(name) = self.tree.expr(expr).clone()
-                    && let Some(ty) = self.type_name_ty(&name)
-                {
-                    (ty, true)
-                } else {
-                    (self.infer_expr(expr), false)
-                }
-            }
-            _ => return None,
-        };
-        // §15.13.1: a *type-qualified* reference (`Path::of`, `List::stream`)
-        // may resolve a static method of an interface as well as of a class,
-        // so the virtual-invocation member filter of §15.12.3 must not swallow
-        // it — the static members of `Path` (`of(String, String…)`,
-        // `of(URI)`) are invisible to `Virtual` mode, which left `map`'s `<R>`
-        // unbound and typed the chain `List<Object>`.
-        let ctx = if type_qualified {
-            self.access.with_mode(InvocationMode::TypeQualified)
-        } else {
-            self.access.clone()
-        };
-        Some((ref_ty, ctx, type_qualified))
-    }
-
-    /// The member set the referenced method `name` resolves to against the
-    /// single abstract method's parameters ([JLS §15.13.3]) and the kind of
-    /// reference — how the SAM's parameters map onto the method's. `List::stream`
-    /// as a `Function<List<MatchDecision>, ? extends Stream<…>>` calls
-    /// `stream()` on `List<MatchDecision>`, so its result is
-    /// `Stream<MatchDecision>` rather than a raw `Stream` that would erase the
-    /// element type and leave `R` unconstrained. `None` when the reference does
-    /// not name a reference type.
-    fn method_ref_members(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) -> Option<(Vec<MethodData>, MethodRefKind)> {
-        let (ref_ty, ctx, type_qualified) = self.method_ref_target(qualifier, type_name)?;
-        if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
-            return None;
-        }
-        let methods_on_type = member_set(self.db, &self.scope, &ref_ty, name.as_str(), &ctx);
-        // §15.13.1/§15.13.3: a *static* reference (`Type::m` naming a static
-        // member) and a *bound* reference (`expr::m` — the qualifier value is
-        // the receiver) take the SAM's parameters as the method's own; only an
-        // *unbound* instance reference (`Type::m` naming an instance member)
-        // takes the SAM's first parameter as the receiver, which carries the
-        // type arguments the bare type name lacks.
-        let kind = if type_qualified && methods_on_type.iter().any(|m| m.is_static) {
-            MethodRefKind::Static
-        } else if type_qualified {
-            MethodRefKind::Unbound
-        } else {
-            MethodRefKind::Bound
-        };
-        let receiver = match kind {
-            MethodRefKind::Static | MethodRefKind::Bound => ref_ty,
-            MethodRefKind::Unbound => {
-                // Use the SAM receiver only when it is a *parameterized*
-                // reference once inference has made it concrete — an
-                // uninstantiated inference variable (`EntityId::externalName`
-                // probed against `Function<? super α, …>`) carries no members
-                // yet, and a plain or raw receiver (`? super EntityId`,
-                // `Object`) adds no type arguments, so the bare type-name
-                // lookup keeps the existing resolution (`EntityId::kind`,
-                // `String::length`) untouched.
-                match sam_params.first() {
-                    Some(first) => {
-                        let first = self.decapture(first);
-                        if matches!(
-                            first.kind(self.db),
-                            TyKind::Reference { args, .. } if !args.is_empty()
-                        ) {
-                            first
-                        } else {
-                            ref_ty
-                        }
-                    }
-                    None => ref_ty,
-                }
-            }
-        };
-        let methods = member_set(self.db, &self.scope, &receiver, name.as_str(), &ctx);
-        Some((methods, kind))
-    }
-
-    /// The method a method reference names that is *potentially applicable*
-    /// against the single abstract method's parameters ([JLS §15.13.1] inexact
-    /// references): the applicable overload of the member set
-    /// [`Self::method_ref_members`] resolves against, chosen by the SAM's
-    /// arity and per-parameter compatibility. `None` when the reference names
-    /// no reference type or no overload is congruent.
-    fn method_ref_candidate(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) -> Option<MethodData> {
-        let (methods, kind) = self.method_ref_members(qualifier, type_name, name, sam_params)?;
-        self.pick_method_ref(&methods, sam_params, kind)
-    }
-
-    /// Whether the method reference is *congruent* with the functional
-    /// interface it targets ([JLS §15.13.2]): the referenced member set
-    /// contains an overload applicable to the SAM — the check
-    /// [`Self::method_ref_candidate`] performs. A reference that names no
-    /// member at all reports `cannot find symbol` itself ([§15.12.1]) and a
-    /// constructor or array-creation reference is congruent by arity alone, so
-    /// neither turns an overload inapplicable before its own diagnostic fires.
-    /// `false` means the reference cannot be compatible with this SAM at all —
-    /// the hint that lets overload resolution reject the wrong candidate (a
-    /// `thenComparing(Comparator)` overload probed with a `Foo::length`
-    /// argument, whose `compare` SAM takes one more parameter than the
-    /// reference's function descriptor) instead of leaving it applicable and
-    /// ambiguous.
-    fn method_ref_congruent(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) -> bool {
-        let Some((ref_ty, _, _)) = self.method_ref_target(qualifier, type_name) else {
-            return true;
-        };
-        // §15.13.1/§15.13.4: `Type::new` is a constructor reference — also an
-        // *array-creation* reference `T[]::new`; its congruence with a SAM is
-        // a matter of constructor arity, resolved against the qualifier type.
-        if matches!(
-            ref_ty.kind(self.db),
-            TyKind::Reference { .. } | TyKind::Array(_)
-        ) && (name.as_str() == "new" || name.as_str() == "<missing>")
-        {
-            return true;
-        }
-        let Some((methods, kind)) = self.method_ref_members(qualifier, type_name, name, sam_params)
-        else {
-            return true;
-        };
-        if methods.is_empty() {
-            // §15.12.1: an unknown name is a `cannot find symbol` on the
-            // reference itself, not a reason to prefer another overload.
-            return true;
-        }
-        self.pick_method_ref(&methods, sam_params, kind).is_some()
-    }
-
-    /// The return type a method reference contributes to inference
-    /// ([JLS §15.13.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.3)):
-    /// the referenced method's declared return type instantiated with the
-    /// qualifier's type arguments, or — for a constructor reference — the
-    /// qualifier type itself. `<error>` when the reference does not resolve;
-    /// the caller then simply skips the constraint.
-    fn method_ref_return(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) -> Ty {
-        let Some((ref_ty, _, _)) = self.method_ref_target(qualifier, type_name) else {
-            return self.error();
-        };
-        // §15.13.1/§15.13.4: `Type::new` is a constructor reference whose
-        // "return" is the class itself — also an *array-creation* reference
-        // `T[]::new`, whose "return" is the array type (the bounds are the
-        // parameters, §15.13.4). The lowering records the `new` token of a
-        // constructor reference as `<missing>`, so a missing member name on a
-        // type qualifier is a constructor reference too.
-        if matches!(
-            ref_ty.kind(self.db),
-            TyKind::Reference { .. } | TyKind::Array(_)
-        ) && (name.as_str() == "new" || name.as_str() == "<missing>")
-        {
-            return ref_ty;
-        }
-        if !matches!(ref_ty.kind(self.db), TyKind::Reference { .. }) {
-            return self.error();
-        }
-        // §15.13.1: an *inexact* reference to an overloaded method selects the
-        // applicable candidate by the target functional interface — the SAM's
-        // arity and per-parameter compatibility — not the first declared
-        // overload, whose result would otherwise steer the enclosing
-        // inference (`list.stream().map(P::of)` binding `map`'s `<R>`) to
-        // `Object` and reject a `List<P>` constructor argument.
-        self.method_ref_candidate(qualifier, type_name, name, sam_params)
-            .map(|method| method.ret)
-            .unwrap_or_else(|| self.error())
-    }
-
-    /// The method of a method reference's member set that is a *potentially
-    /// applicable* candidate against the single abstract method's parameter
-    /// types ([JLS §15.13.1] inexact references): arity — `sam_params.len()`
-    /// value parameters for a static or bound reference, one fewer for an
-    /// unbound instance reference whose receiver is the SAM's first parameter
-    /// ([§15.13.3]) — and each corresponding SAM parameter assignable
-    /// to the method's parameter in a loose invocation context
-    /// ([§15.12.2.3]). The most specific applicable candidate
-    /// ([§15.12.2.5]) wins; `None` when no overload is congruent, so the
-    /// reference does not steer inference with a result.
-    fn pick_method_ref(
-        &self,
-        methods: &[MethodData],
-        sam_params: &[Ty],
-        kind: MethodRefKind,
-    ) -> Option<MethodData> {
-        let sam_count = sam_params.len();
-        // The value parameters the referenced method must accept: all the
-        // SAM's for a static or bound reference, all but the leading receiver
-        // for an unbound instance reference.
-        let base = match kind {
-            MethodRefKind::Static | MethodRefKind::Bound => sam_count,
-            MethodRefKind::Unbound => sam_count.saturating_sub(1),
-        };
-        // The SAM index of the referenced method's first value parameter: the
-        // receiver is the SAM's first parameter for an unbound instance
-        // reference, so the method's parameters start one slot in.
-        let offset = match kind {
-            MethodRefKind::Unbound => 1,
-            MethodRefKind::Static | MethodRefKind::Bound => 0,
-        };
-        let mut applicable: Vec<MethodData> = Vec::new();
-        for method in methods {
-            let params = &method.params;
-            // §15.12.2.4: a variable-arity method is applicable when the SAM
-            // supplies at least its fixed parameters; the remainder pack into
-            // the trailing array element.
-            let (fixed, tail) = if method.varargs {
-                if params.is_empty() || base < params.len() - 1 {
-                    continue;
-                }
-                let split = params.len() - 1;
-                match params[split].element(self.db) {
-                    Some(element) => (&params[..split], Some((*element, base - split))),
-                    None => continue,
-                }
-            } else {
-                if params.len() != base {
-                    continue;
-                }
-                (params.as_slice(), None)
-            };
-            let mut ok = true;
-            for (i, method_param) in fixed.iter().enumerate() {
-                if !self.method_ref_param_compatible(sam_params.get(i + offset), method_param) {
-                    ok = false;
-                    break;
-                }
-            }
-            if ok && let Some((element, tail_count)) = &tail {
-                for k in 0..*tail_count {
-                    if !self.method_ref_param_compatible(
-                        sam_params.get(fixed.len() + k + offset),
-                        element,
-                    ) {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if ok {
-                applicable.push(method.clone());
-            }
-        }
-        if applicable.is_empty() {
-            return None;
-        }
-        let pairs: Vec<(MethodData, MethodData)> =
-            applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
-            .or_else(|| applicable.into_iter().next())
-    }
-
-    /// Whether the referenced method's parameter accepts the SAM's
-    /// corresponding parameter ([JLS §15.13.2]): the SAM type converts to the
-    /// method's type in a loose invocation context ([§15.12.2.3]). A SAM
-    /// parameter still carrying unresolved inference variables cannot be
-    /// decided — the candidate stays applicable rather than steering inference
-    /// away from a valid overload.
-    fn method_ref_param_compatible(&self, sam_param: Option<&Ty>, method_param: &Ty) -> bool {
-        let Some(decaptured) = sam_param.map(|sam_param| self.decapture(sam_param)) else {
-            return false;
-        };
-        if decaptured.contains_infer_var(self.db) || method_param.contains_infer_var(self.db) {
-            return true;
-        }
-        crate::java::subtyping::is_assignable(self.db, &self.scope, &decaptured, method_param)
-    }
-
-    fn resolve_method_ref(
-        &mut self,
-        qualifier: Option<ExprId>,
-        type_name: Option<&SpannedTypeRef>,
-        name: &Name,
-        sam_params: &[Ty],
-    ) {
-        // §15.13.1: resolve the applicable overload against the SAM — the same
-        // selection [`Self::method_ref_return`] feeds the inference constraints
-        // with — so a reference to a name that resolves only to inapplicable
-        // overloads does not silently type against the first declaration.
-        let _ = self.method_ref_candidate(qualifier, type_name, name, sam_params);
-    }
-
-    fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {
-        // §15.15.1/§15.15.2: `++`/`--` mutate their operand.
-        self.mutating = matches!(op, UnaryOp::Inc | UnaryOp::Dec);
-        let inner = self.infer_expr(expr);
-        self.mutating = false;
-        match op {
-            // §15.15.6: `!` has type `boolean` and its operand must be a
-            // `boolean` ([§15.15.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.15.6)).
-            UnaryOp::Not => {
-                if !self.is_boolean(inner) {
-                    if !inner.is_error(self.db) {
-                        self.types.insert(expr, self.error());
-                        self.report(TypeError::NonBooleanCondition { expr, found: inner });
-                    }
-                    self.error()
-                } else {
-                    // §16.1.4: `!a` swaps the true and false outcome flows.
-                    let (true_flow, false_flow) = self.take_bool_outcomes();
-                    self.bool_outcomes = Some((false_flow, true_flow));
-                    self.primitive(PrimitiveType::Boolean)
-                }
-            }
-            // §15.15.1-3: unary numeric promotion (§5.6.1).
-            UnaryOp::Plus | UnaryOp::Minus | UnaryOp::BitNot => {
-                let promoted = self.unary_promotion(inner);
-                if promoted.is_error(self.db) {
-                    if !inner.is_error(self.db) {
-                        self.types.insert(expr, self.error());
-                        self.report(TypeError::IncompatibleOperand {
-                            expr,
-                            op: unary_op_symbol(op),
-                            found: inner,
-                            other: None,
-                        });
-                    }
-                    self.error()
-                } else {
-                    promoted
-                }
-            }
-            // §15.15.1/§15.15.2: `++`/`--` have the operand's type.
-            UnaryOp::Inc | UnaryOp::Dec => inner,
-        }
-    }
-
-    /// The type of a conditional expression over two operands, following the
-    /// rules of [§15.25.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25.2)
-    /// and [§15.25.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.25.3):
-    /// identical types keep their type, operands convertible to a numeric type
-    /// (primitive or boxed, [§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8))
-    /// follow binary numeric promotion ([§5.6.2]), the null type yields the
-    /// reference operand, and reference types fall back to the least upper
-    /// bound ([§4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)).
-    fn conditional_type(&self, then_ty: Ty, els_ty: Ty) -> Ty {
-        if then_ty == els_ty {
-            return then_ty;
-        }
-        // §15.25: when at least one operand is primitive *and* the other
-        // unboxes to a primitive too, the primitive rules apply. A primitive
-        // against an unrelated reference takes the least upper bound below,
-        // as do two references: two boxed numerics never promote (`c ?
-        // Integer : Long` is `Number`, not `long`).
-        let then_prim = matches!(then_ty.kind(self.db), TyKind::Primitive(_));
-        let els_prim = matches!(els_ty.kind(self.db), TyKind::Primitive(_));
-        if then_prim || els_prim {
-            let l = self.unboxed_operand(then_ty);
-            let r = self.unboxed_operand(els_ty);
-            let both_primitive = matches!(l.kind(self.db), TyKind::Primitive(_))
-                && matches!(r.kind(self.db), TyKind::Primitive(_));
-            if both_primitive {
-                // §15.25: the boolean rules — a `boolean`/`Boolean` mix has
-                // type `boolean`; a boolean against any other primitive is
-                // ill-typed (not silently promoted).
-                let boolean = matches!(l.kind(self.db), TyKind::Primitive(PrimitiveType::Boolean))
-                    || matches!(r.kind(self.db), TyKind::Primitive(PrimitiveType::Boolean));
-                if boolean {
-                    return match (l.kind(self.db), r.kind(self.db)) {
-                        (
-                            TyKind::Primitive(PrimitiveType::Boolean),
-                            TyKind::Primitive(PrimitiveType::Boolean),
-                        ) => self.primitive(PrimitiveType::Boolean),
-                        _ => self.error(),
-                    };
-                }
-                return self.binary_numeric_promotion(l, r);
-            }
-        }
-        // §15.25: the null rules — `cond ? null : T` has type T (and
-        // symmetrically). An array is a reference type ([§4.3.1]), so a
-        // null/arm-array pair keeps the array type instead of taking a
-        // meaningless lub. A *primitive* arm against `null` is boxed
-        // ([§5.1.7]): `cond ? null : 5` has type `Integer` and
-        // `cond ? true : null` has type `Boolean` (javac assigns them to the
-        // boxed types), not the lub of the primitive and `null`.
-        if then_ty.is_null(self.db) && (els_ty.is_reference(self.db) || els_ty.is_array(self.db)) {
-            return els_ty;
-        }
-        if els_ty.is_null(self.db) && (then_ty.is_reference(self.db) || then_ty.is_array(self.db)) {
-            return then_ty;
-        }
-        if then_ty.is_null(self.db) && els_ty.is_primitive(self.db) {
-            return self.box_primitive(els_ty);
-        }
-        if els_ty.is_null(self.db) && then_ty.is_primitive(self.db) {
-            return self.box_primitive(then_ty);
-        }
-        // §5.1.10: the lub of two references is never a wildcard — a bare
-        // `?` from the lcta degenerates to its capture so the expression has
-        // a valid type.
-        let lub = least_upper_bound(self.db, &self.scope, &[then_ty, els_ty]);
-        if matches!(lub.kind(self.db), TyKind::Wildcard(_)) {
-            capture_conversion(self.db, &self.scope, lub)
-        } else {
-            lub
-        }
-    }
-
-    /// The operand of a conditional in its unboxed form ([JLS §5.1.8]): a
-    /// primitive keeps its type; a boxed reference unboxes; anything else is
-    /// left for [`Self::binary_numeric_promotion`] to reject.
-    fn unboxed_operand(&self, ty: Ty) -> Ty {
-        match ty.kind(self.db) {
-            TyKind::Primitive(_) => ty,
-            TyKind::Reference { name, .. } => match unboxed_primitive(name.as_str()) {
-                Some(p) => Ty::primitive(self.db, p),
-                None => ty,
-            },
-            _ => ty,
-        }
-    }
-
-    /// Unary numeric promotion ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1)):
-    /// a boxed operand is first unboxed ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
-    /// then `byte`, `short` and `char` promote to `int`; everything else keeps
-    /// its type.
-    fn unary_promotion(&self, ty: Ty) -> Ty {
-        match ty.kind(self.db) {
-            TyKind::Primitive(PrimitiveType::Byte | PrimitiveType::Short | PrimitiveType::Char) => {
-                self.primitive(PrimitiveType::Int)
-            }
-            TyKind::Primitive(_) => ty,
-            // A boxed primitive operand is unboxed before the promotion
-            // applies (§5.6.1, §5.1.8): `-Integer` is `int`, `~Long` is `long`.
-            TyKind::Reference { name, .. } => match unboxed_primitive(name.as_str()) {
-                Some(p) => self.unary_promotion(Ty::primitive(self.db, p)),
-                None => self.error(),
-            },
-            _ => self.error(),
-        }
-    }
-
-    fn binary(&mut self, op: BinaryOp, lhs: ExprId, rhs: ExprId) -> Ty {
-        // §15.23: `&&`/`||` always have type `boolean`. §14.30.3: a pattern
-        // variable of the left operand is in scope in the right-hand operand
-        // (flow scoping), so the operands are inferred once, in that order —
-        // the ordinary two-operand pass below would re-infer the right-hand
-        // operand without the pattern variables in scope.
-        if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            // §16.1.2/[§16.1.3]: the definite-assignment outcomes of `a && b`
-            // (and `a || b`): the left operand is inferred first and its
-            // true/false flows captured; the right operand then runs under the
-            // left's *matched* flow (`&&` → true, `||` → false), and the whole
-            // expression's outcomes join the two ways the value arises. This
-            // is what lets `if (v > 0 && (k = read()) >= 0) use(k)` (JLS
-            // Example 16-1) treat `k` as definitely assigned in the guarded
-            // code.
-            self.check_condition(lhs);
-            let (lhs_true_flow, lhs_false_flow) = self.take_bool_outcomes();
-            self.scopes.push(FxHashMap::default());
-            // §6.3.2: the pattern variables of the left operand that are
-            // *definitely matched* when the right operand evaluates are in
-            // scope there — for `a && b` the true flow of `a` (b runs only
-            // when a matched), for `a || b` its false flow (b runs only when
-            // a failed, so a negated pattern `!(x instanceof T t)` has t
-            // matched there).
-            if let Some((lhs_true, lhs_false)) = self.pattern_flow(lhs) {
-                let matched = match op {
-                    BinaryOp::And => lhs_true,
-                    _ => lhs_false,
-                };
-                self.flow = match op {
-                    BinaryOp::And => lhs_true_flow.clone(),
-                    _ => lhs_false_flow.clone(),
-                };
-                for binding in matched {
-                    self.scope_binding(binding);
-                }
-            } else {
-                self.flow = match op {
-                    BinaryOp::And => lhs_true_flow.clone(),
-                    _ => lhs_false_flow.clone(),
-                };
-            }
-            self.check_condition(rhs);
-            let (rhs_true_flow, rhs_false_flow) = self.take_bool_outcomes();
-            self.scopes.pop();
-            // §16.1.2/[§16.1.3]: `a && b` is true only via (a true, b true);
-            // false via (a false) or (a true, b false). `a || b` is true via
-            // (a true) or (a false, b true); false only via (a false,
-            // b false). The join ([§16.1]) intersects the definite sets and
-            // unions the touched fields.
-            let (true_flow, false_flow) = match op {
-                BinaryOp::And => {
-                    let mut false_flow = lhs_false_flow;
-                    false_flow.join_definite(&rhs_false_flow);
-                    (rhs_true_flow, false_flow)
-                }
-                _ => {
-                    let mut true_flow = lhs_true_flow;
-                    true_flow.join_definite(&rhs_true_flow);
-                    (true_flow, rhs_false_flow)
-                }
-            };
-            // §16.1.2/[§16.1.3]: the after-expression flow for a non-condition
-            // consumer is the join of both outcomes.
-            let mut joined = true_flow.clone();
-            joined.join_definite(&false_flow);
-            self.flow = joined;
-            self.bool_outcomes = Some((true_flow, false_flow));
-            return self.primitive(PrimitiveType::Boolean);
-        }
-        let lhs_ty = self.infer_expr(lhs);
-        let rhs_ty = self.infer_expr(rhs);
-        match op {
-            BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem | BinaryOp::Add | BinaryOp::Sub => {
-                // §15.18.1: `+` with a `String` operand is string
-                // concatenation and has type `String`.
-                if matches!(op, BinaryOp::Add) && (self.is_string(lhs_ty) || self.is_string(rhs_ty))
-                {
-                    return self.string();
-                }
-                let promoted = self.binary_numeric_promotion(lhs_ty, rhs_ty);
-                if promoted.is_error(self.db) {
-                    // §15.17/§15.18/§15.22: a numeric operator on a non-numeric
-                    // operand is a compile-time error.
-                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
-                        let bad = if !self.is_numeric_operand(lhs_ty) {
-                            lhs
-                        } else {
-                            rhs
-                        };
-                        self.types.insert(bad, self.error());
-                        let (bad_ty, other_ty) = if bad == lhs {
-                            (lhs_ty, rhs_ty)
-                        } else {
-                            (rhs_ty, lhs_ty)
-                        };
-                        self.report(TypeError::IncompatibleOperand {
-                            expr: bad,
-                            op: binary_op_symbol(op),
-                            found: bad_ty,
-                            other: Some(other_ty),
-                        });
-                    }
-                    self.error()
-                } else {
-                    promoted
-                }
-            }
-            // §15.22.1/§15.22.2: the bitwise/logical operators are binary
-            // numeric promotion on numeric operands (§15.22.1) or boolean
-            // logical operators on `boolean` operands (§15.22.2); a `boolean`
-            // mixed with a non-`boolean` operand is an error.
-            BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
-                let (a_bool, b_bool) = (self.is_boolean(lhs_ty), self.is_boolean(rhs_ty));
-                if a_bool && b_bool {
-                    return self.primitive(PrimitiveType::Boolean);
-                }
-                if a_bool != b_bool {
-                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
-                        let bad = if a_bool { rhs } else { lhs };
-                        self.types.insert(bad, self.error());
-                        let (bad_ty, other_ty) = if bad == lhs {
-                            (lhs_ty, rhs_ty)
-                        } else {
-                            (rhs_ty, lhs_ty)
-                        };
-                        self.report(TypeError::IncompatibleOperand {
-                            expr: bad,
-                            op: binary_op_symbol(op),
-                            found: bad_ty,
-                            other: Some(other_ty),
-                        });
-                    }
-                    return self.error();
-                }
-                let promoted = self.binary_numeric_promotion(lhs_ty, rhs_ty);
-                if promoted.is_error(self.db) {
-                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
-                        let bad = if !self.is_numeric_operand(lhs_ty) {
-                            lhs
-                        } else {
-                            rhs
-                        };
-                        self.types.insert(bad, self.error());
-                        let (bad_ty, other_ty) = if bad == lhs {
-                            (lhs_ty, rhs_ty)
-                        } else {
-                            (rhs_ty, lhs_ty)
-                        };
-                        self.report(TypeError::IncompatibleOperand {
-                            expr: bad,
-                            op: binary_op_symbol(op),
-                            found: bad_ty,
-                            other: Some(other_ty),
-                        });
-                    }
-                    self.error()
-                } else {
-                    promoted
-                }
-            }
-            // §15.19: a shift has the unary-promoted type of the left operand, and
-            // each of the operands undergoes unary numeric promotion
-            // ([§5.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.1))
-            // — a non-numeric operand on either side is an error.
-            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::UShr => {
-                let promoted = self.unary_promotion(lhs_ty);
-                let rhs_numeric = self.is_numeric_operand(rhs_ty);
-                if promoted.is_error(self.db) || !rhs_numeric {
-                    if !lhs_ty.is_error(self.db) && !rhs_ty.is_error(self.db) {
-                        let bad = if promoted.is_error(self.db) { lhs } else { rhs };
-                        self.types.insert(bad, self.error());
-                        let (bad_ty, other_ty) = if bad == lhs {
-                            (lhs_ty, rhs_ty)
-                        } else {
-                            (rhs_ty, lhs_ty)
-                        };
-                        self.report(TypeError::IncompatibleOperand {
-                            expr: bad,
-                            op: binary_op_symbol(op),
-                            found: bad_ty,
-                            other: Some(other_ty),
-                        });
-                    }
-                    self.error()
-                } else {
-                    promoted
-                }
-            }
-            // §15.20-15.24: relational, equality and boolean-logical
-            // expressions have type `boolean`; §15.20/§15.21 demand comparable
-            // operands.
-            BinaryOp::Lt
-            | BinaryOp::Gt
-            | BinaryOp::Le
-            | BinaryOp::Ge
-            | BinaryOp::Eq
-            | BinaryOp::Ne => {
-                if !self.comparable(lhs_ty, rhs_ty)
-                    && !lhs_ty.is_error(self.db)
-                    && !rhs_ty.is_error(self.db)
-                {
-                    self.types.insert(lhs, self.error());
-                    self.report(TypeError::IncomparableTypes {
-                        expr: lhs,
-                        op: binary_op_symbol(op),
-                        found: lhs_ty,
-                        other: rhs_ty,
-                    });
-                }
-                self.primitive(PrimitiveType::Boolean)
-            }
-            // Handled above: `&&`/`||` are inferred with pattern flow scoping.
-            BinaryOp::And | BinaryOp::Or => self.primitive(PrimitiveType::Boolean),
-        }
-    }
-
-    /// Binary numeric promotion ([§5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.6.2)):
-    /// the promoted type is the "widest" of the two operand types; `byte`,
-    /// `short` and `char` promote to `int`. A boxed reference operand is first
-    /// unboxed ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
-    /// so `Integer + Integer` and `int + Integer` both promote to `int`
-    /// ([§5.6.2]). A non-numeric reference operand cannot be unboxed and makes
-    /// the expression ill-typed.
-    fn binary_numeric_promotion(&self, lhs: Ty, rhs: Ty) -> Ty {
-        // §5.6.2: `byte`, `short` and `char` promote to `int`; the wider of
-        // the two operand types is the promoted type. The same applies to a
-        // boxed operand after unboxing ([§5.1.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.8)),
-        // so `Integer + Integer` and `Character + Character` both promote to
-        // `int` ([§5.6.2]).
-        let promote = |ty: Ty| match ty.kind(self.db) {
-            TyKind::Primitive(p) => Some(numeric_promotion(*p)),
-            TyKind::Reference { name, .. } => {
-                unboxed_primitive(name.as_str()).map(numeric_promotion)
-            }
-            _ => None,
-        };
-        let (lhs, rhs) = (promote(lhs), promote(rhs));
-        let promoted = match (lhs, rhs) {
-            (Some(PrimitiveType::Double), _) | (_, Some(PrimitiveType::Double)) => {
-                PrimitiveType::Double
-            }
-            (Some(PrimitiveType::Float), _) | (_, Some(PrimitiveType::Float)) => {
-                PrimitiveType::Float
-            }
-            (Some(PrimitiveType::Long), _) | (_, Some(PrimitiveType::Long)) => PrimitiveType::Long,
-            (Some(PrimitiveType::Int), _) | (_, Some(PrimitiveType::Int)) => PrimitiveType::Int,
-            _ => return self.error(),
-        };
-        // §5.6.2: an operand that did not promote — a reference type that
-        // cannot be unboxed, or a non-numeric type — makes the expression
-        // ill-typed even when the other operand promotes.
-        if lhs.is_none() || rhs.is_none() {
-            return self.error();
-        }
-        self.primitive(promoted)
-    }
-
-    /// The element type of an `Iterable<T>` for a for-each loop
-    /// ([§14.14.2.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14.2.1)):
-    /// the `T` of the `Iterable<T>` — the `E` of the `Iterator<E>` returned by
-    /// `iterator()`. `None` when the type is not an `Iterable` (the caller
     /// reports [`TypeError::NonIterableForEach`]).
-    fn iterable_element(&self, iterable: Ty) -> Option<Ty> {
-        let iterator = pick_method(
-            self.db,
-            &self.scope,
-            &iterable,
-            "iterator",
-            &[],
-            &self.access,
-            None,
-        )?;
-        pick_method(
-            self.db,
-            &self.scope,
-            &iterator.ret,
-            "next",
-            &[],
-            &self.access,
-            None,
-        )
-        .map(|method| method.ret)
-    }
 
     fn declare_local(&mut self, id: LocalId) {
         let local = self.tree.local(id).clone();
@@ -5550,8 +4187,6 @@ impl<'a> InferCtx<'a> {
         self.bind_local(id, local.name, ty);
     }
 
-    /// Declares a formal parameter, which is definitely assigned throughout
-    /// its body ([JLS §16.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html#jls-16.1.5),
     /// [§16.1.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html#jls-16.1.9)).
     fn declare_param(&mut self, id: LocalId) {
         self.declare_local(id);
@@ -5603,12 +4238,6 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// §6.4: a lambda parameter may not duplicate a name already declared in
-    /// an enclosing scope — an enclosing lambda parameter or a local variable,
-    /// parameter, catch/foreach/resource variable of the enclosing body.
-    /// (Lambda parameters *do* shadow enclosing locals; the duplicate is only
-    /// an error when the enclosing declaration is in scope at the lambda —
-    /// a local declared textually after the lambda is not.) Reported at the
     /// parameter's own name range, matching javac.
     fn check_lambda_param_duplicate(&mut self, expr: ExprId, name: &Name, range: TextRange) {
         // §15.27.1: the lambda's own parameter list may not repeat a name —
@@ -5633,8 +4262,6 @@ impl<'a> InferCtx<'a> {
 
     // -- patterns ([JLS §14.30]) ---------------------------------------------
 
-    /// Resolves the type of a pattern ([JLS §14.30]), recording the type of
-    /// each variable it binds ([§14.30.1], [§14.30.2]) into [`Self::locals`].
     /// Returns the pattern's type; the match-all `_` ([§14.30.3]) has none.
     fn pattern_type(&mut self, id: PatternId) -> Ty {
         match self.tree.pattern(id).clone() {
@@ -5669,9 +4296,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The number of components ([§8.10.1]) of the record type `ty`, from its
-    /// source declaration or its classfile `Record` attribute. `None` when
-    /// `ty` is not a record or its components cannot be recovered — the
     /// pattern-arity check ([§14.30.2]) then stays silent.
     fn record_component_count(&self, ty: &Ty) -> Option<usize> {
         let TyKind::Reference { name, .. } = ty.kind(self.db) else {
@@ -5698,7 +4322,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The pattern variables a pattern binds, recursively through record
     /// components ([JLS §14.30.1], [§14.30.2]).
     fn pattern_bindings_of(&self, id: PatternId) -> Vec<LocalId> {
         match self.tree.pattern(id).clone() {
@@ -5712,17 +4335,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// The pattern variables of the `instanceof` expression `id`, recursing
-    /// through parenthesization and `&&`/`||` chains ([JLS §14.30.3]) — the
-    /// bindings whose scope extends to the enclosing `if` then-arm (or the
-    /// right-hand operand of the `&&`/`||`). `None` when `id` is not a
-    /// pattern-carrying condition.
-    /// The pattern bindings of a boolean expression on each flow outcome:
-    /// `(true_flow, false_flow)`
-    /// ([JLS §14.30.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.3)
-    /// flow scoping). An `instanceof` pattern binds on its true flow only;
-    /// `&&` joins the flows of its operands (`a && b` matches on `a`'s true
-    /// flow *and* `b`'s, fails on either failure), `||` symmetrically, `!`
     /// swaps the flows, and parentheses are transparent.
     fn pattern_flow(&self, id: ExprId) -> Option<(Vec<LocalId>, Vec<LocalId>)> {
         match self.tree.expr(id).clone() {
@@ -5773,8 +4385,6 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// Establishes the scope of a pattern variable ([JLS §14.30.3]) in the
-    /// current innermost scope. The variable's type was already recorded by
     /// [`Self::pattern_type`] during expression inference.
     fn scope_binding(&mut self, id: LocalId) {
         let name = self.tree.local(id).name.clone();
@@ -6761,10 +5371,6 @@ impl<'a> InferCtx<'a> {
     }
 }
 
-/// The names a field initializer may not read by simple name
-/// ([JLS §8.3.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.3.3)):
-/// same-class fields declared textually *after* `field` with the same
-/// static/instance kind. A cross-kind read (an instance initializer reading a
 /// later static, or vice versa) is legal.
 fn forward_field_names(
     tree: &hir_def::java::item_tree::ItemTree,
@@ -6810,12 +5416,6 @@ fn forward_field_names(
     Vec::new()
 }
 
-/// Whether the innermost enclosing declaration of the item is a static
-/// context ([JLS §8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)):
-/// a construct occurs in a static context when the innermost method, field,
-/// constructor, instance initializer or static initializer that encloses it is
-/// a static method, a static field or a static initializer. Constructors and
-/// instance initializers are never static contexts. An enum constant is an
 /// implicitly static field, so its argument expressions are a static context.
 fn static_context_of(tree: &hir_def::java::item_tree::ItemTree, item: ItemId) -> bool {
     match tree.data(item) {
@@ -6829,12 +5429,6 @@ fn static_context_of(tree: &hir_def::java::item_tree::ItemTree, item: ItemId) ->
     }
 }
 
-/// The self-type of the innermost enclosing class-like declaration
-/// ([JLS §8.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.2)):
-/// within the body of a generic class `C<T1..Tn>` the simple name `C` denotes
-/// the parameterized type `C<T1..Tn>`, so member lookup against the enclosing
-/// class must be instantiated with the declared type variables — not the raw
-/// type, whose instance members are erased ([§4.8]). `None` when `item` lies
 /// outside any class-like declaration.
 fn enclosing_self_ty(
     db: &dyn TyDatabase,
@@ -6898,21 +5492,6 @@ fn enclosing_self_ty(
     None
 }
 
-/// §8.3.1.2/[§16]: the blank `final` fields of the enclosing class that
-/// *earlier* initializer bodies — which run before `item`'s body — may have
-/// assigned on some path ([§8.3.2], [§8.6], [§8.7], [§8.8]):
-///
-/// - for a **static** field initializer or static initializer: the earlier
-///   static field initializers and static initializers of the same class;
-/// - for an **instance** field initializer or instance initializer: the
-///   earlier instance field initializers and instance initializers;
-/// - for a **constructor**: *every* instance field initializer and instance
-///   initializer (the implicit `super()` precedes the whole body, so they
-///   have all run; [§8.8.7.1]).
-///
-/// The seed is the union of those bodies' own already-touched sets — the
-/// already-assigned analysis is path-sensitive *within* each body, so a
-/// write only reachable through a path that cannot have run is not seeded. A
 /// later write to a seeded blank final is the already-assigned error.
 fn prior_initializer_writes(
     db: &dyn TyDatabase,
@@ -6995,9 +5574,6 @@ fn prior_initializer_writes(
     seeded
 }
 
-/// The source `ItemId` of the source method `method` (whose [`MethodData`]
-/// was resolved from `method.owner_file`), found by name and arity — the
-/// overloads of one class are distinguished by their parameter count for the
 /// purposes of the blank-final-field delegation tracking ([§8.8.7.1]).
 fn find_method_item(
     db: &dyn TyDatabase,
@@ -7033,608 +5609,4 @@ fn find_method_rec(
         }
     }
     None
-}
-
-/// The source symbol of a unary operator, for [`TypeError::IncompatibleOperand`].
-fn unary_op_symbol(op: UnaryOp) -> &'static str {
-    match op {
-        UnaryOp::Plus => "+",
-        UnaryOp::Minus => "-",
-        UnaryOp::BitNot => "~",
-        UnaryOp::Inc => "++",
-        UnaryOp::Dec => "--",
-        UnaryOp::Not => "!",
-    }
-}
-
-/// The source symbol of a binary operator, for [`TypeError::IncompatibleOperand`].
-fn binary_op_symbol(op: BinaryOp) -> &'static str {
-    match op {
-        BinaryOp::Mul => "*",
-        BinaryOp::Div => "/",
-        BinaryOp::Rem => "%",
-        BinaryOp::Add => "+",
-        BinaryOp::Sub => "-",
-        BinaryOp::Shl => "<<",
-        BinaryOp::Shr => ">>",
-        BinaryOp::UShr => ">>>",
-        BinaryOp::Lt => "<",
-        BinaryOp::Gt => ">",
-        BinaryOp::Le => "<=",
-        BinaryOp::Ge => ">=",
-        BinaryOp::Eq => "==",
-        BinaryOp::Ne => "!=",
-        BinaryOp::BitAnd => "&",
-        BinaryOp::BitXor => "^",
-        BinaryOp::BitOr => "|",
-        BinaryOp::And => "&&",
-        BinaryOp::Or => "||",
-    }
-}
-
-/// Whether `expr` is a poly expression ([JLS §15.2]): a lambda or method
-/// reference, or a parenthesized or conditional expression whose arms are
-/// poly. Such an expression has no standalone type; its type is the target
-/// functional interface ([JLS §15.27.3]).
-fn expr_is_poly(tree: &BodyTree, id: ExprId) -> bool {
-    match tree.expr(id).clone() {
-        ExprData::Lambda { .. } | ExprData::MethodRef { .. } => true,
-        ExprData::Paren(inner) => expr_is_poly(tree, inner),
-        ExprData::Conditional { then, els, .. } => {
-            expr_is_poly(tree, then) && expr_is_poly(tree, els)
-        }
-        _ => false,
-    }
-}
-
-/// Whether `expr` is a poly expression, additionally treating a method
-/// invocation as poly ([JLS §18.5.2.4]): a nested generic invocation is a poly
-/// expression whose type is inferred against the target (its enclosing
-/// invocation's resolved formal). Used for the §15.25.2 conditional rule where
-/// a conditional with poly invocation arms must be treated as poly, without
-/// deferring invocation arguments during overload resolution.
-fn expr_is_poly_ext(tree: &BodyTree, id: ExprId) -> bool {
-    match tree.expr(id).clone() {
-        ExprData::Lambda { .. } | ExprData::MethodRef { .. } | ExprData::MethodCall { .. } => true,
-        // §15.9.3: a diamond class instance creation is a poly expression in
-        // an invocation or assignment context.
-        ExprData::New { diamond: true, .. } => true,
-        ExprData::Paren(inner) => expr_is_poly_ext(tree, inner),
-        ExprData::Conditional { then, els, .. } => {
-            expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els)
-        }
-        _ => false,
-    }
-}
-
-/// Whether `expr` is (possibly parenthesized) a method invocation, used to
-/// recognize conditional expressions whose arms are poly invocations.
-fn expr_is_call(tree: &BodyTree, id: ExprId) -> bool {
-    match tree.expr(id).clone() {
-        ExprData::MethodCall { .. } => true,
-        ExprData::Paren(inner) => expr_is_call(tree, inner),
-        _ => false,
-    }
-}
-
-/// The form of a method reference ([JLS §15.13.1]): how its target's single
-/// abstract method's parameters map onto the referenced method's. A *static*
-/// reference (`Type::m` naming a static member) and a *bound* reference
-/// (`expr::m` — the qualifier value is the receiver) take the SAM's parameters
-/// as the method's own; an *unbound* instance reference (`Type::m` naming an
-/// instance member) takes the SAM's first parameter as the receiver
-/// ([§15.13.3]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MethodRefKind {
-    Static,
-    Unbound,
-    Bound,
-}
-
-/// The kinds of the actual arguments of a method invocation for the joint
-/// inference of §18.5.2.4: a concrete argument has a standalone type; a poly
-/// argument is a lambda or method reference deferred to its target formal
-/// ([JLS §18.5.2.2], [§15.27.3], [§15.13.2]), a nested method invocation
-/// whose inference shares the enclosing invocation's table
-/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)),
-/// or a diamond class instance creation, which is a poly expression in an
-/// invocation context ([JLS §15.9.3]).
-#[derive(Clone)]
-enum ArgKind {
-    /// An argument with a concrete standalone type.
-    Concrete(Ty),
-    /// A lambda or method reference; the arity check of §15.12.2.2/§15.12.2.3
-    /// is run against the target formal's single abstract method. A method
-    /// reference is not arity-checkable without resolving the referenced
-    /// method, so its arity is `None`. The lambda's body additionally
-    /// constrains the SAM return type's instantiation ([JLS §18.5.2.2]).
-    Lambda { id: ExprId, arity: Option<usize> },
-    /// A nested method invocation, resolved against the target formal by
-    /// contributing its constraints to the enclosing invocation's table.
-    Invocation { id: ExprId },
-    /// A diamond `new Foo<>()` in an invocation context
-    /// ([JLS §15.9.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.3)):
-    /// its type arguments are inferred from the enclosing invocation's formal
-    /// — `synchronizedList(new ArrayList<>())` against a `List<String>`
-    /// target. The created class's type variables are registered in the
-    /// shared table and constrained by the formal.
-    DiamondNew { id: ExprId },
-}
-
-/// One actual argument of an invocation: its poly leaves — each contributing a
-/// constraint to the candidate's inference — and whether the argument itself is
-/// a poly expression whose type is the target formal and so must be re-inferred
-/// against it after resolution ([JLS §18.5.2.4]).
-struct ArgInfo {
-    /// The argument expression, re-inferred against the resolved formal.
-    id: ExprId,
-    /// Whether the argument is a poly expression: its type is the target
-    /// formal, so it is deferred to the post-resolution re-inference.
-    poly: bool,
-    /// The poly leaves of the argument ([JLS §15.2]), each contributed against
-    /// the formal during candidate probing. A concrete argument has a single
-    /// `Concrete` leaf.
-    leaves: Vec<ArgKind>,
-}
-
-/// An applicable candidate in [`InferCtx::choose_candidate`]: the declared
-/// method, its inferred invocation type, and the deferred poly arguments to
-/// re-infer against the resolved formal parameters ([JLS §18.5.2.4]).
-type ApplicableCandidate = (MethodData, MethodData, Vec<(ExprId, usize)>);
-
-/// Infers the *poly* arguments standalone — the recovery when an invocation
-/// has no applicable method ([§15.12.2]): a lambda or method reference keeps
-/// its error type and a nested invocation resolves in isolation, so every
-/// argument expression still carries a recorded type. The inference is truly
-/// standalone ([§15.12.2.6]): the enclosing context's target does not reach
-/// an *argument* position — only its invocation formal constrains it — so it
-/// is cleared here. The concrete arguments were already inferred while
-/// collecting [`ArgInfo`] and are left untouched.
-fn reinfer_poly_standalone(ctx: &mut InferCtx<'_>, arg_kinds: &[ArgInfo]) {
-    for info in arg_kinds.iter().filter(|info| info.poly) {
-        let _ = ctx.with_target(None, |this| this.infer_expr(info.id));
-    }
-}
-
-/// The poly leaves of an argument ([JLS §15.2]): a lambda, method reference or
-/// method invocation, or the leaves of a parenthesized or conditional
-/// expression whose arms are poly ([JLS §18.5.2.4]). An argument that is not a
-/// poly expression has no leaves — it is inferred standalone.
-fn poly_leaves(tree: &BodyTree, id: ExprId) -> Vec<ExprId> {
-    match tree.expr(id).clone() {
-        ExprData::Lambda { .. }
-        | ExprData::MethodRef { .. }
-        | ExprData::MethodCall { .. }
-        // §15.9.3: a diamond class instance creation is a poly expression in
-        // an invocation context.
-        | ExprData::New { diamond: true, .. } => vec![id],
-        ExprData::Paren(inner) => poly_leaves(tree, inner),
-        ExprData::Conditional { then, els, .. } => {
-            // §15.25.2: a conditional is a poly expression only when both arms
-            // are poly.
-            if expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els) {
-                let mut leaves = poly_leaves(tree, then);
-                leaves.extend(poly_leaves(tree, els));
-                leaves
-            } else {
-                Vec::new()
-            }
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// The parameter count of a lambda argument ([§15.12.2.2]), used to check the
-/// applicability of an overload candidate against the lambda's arity. A method
-/// reference is not arity-checkable without resolving it, so it is `None`.
-fn poly_arity(tree: &BodyTree, id: ExprId) -> Option<usize> {
-    match tree.expr(id).clone() {
-        ExprData::Lambda { params, .. } => Some(params.len()),
-        ExprData::Paren(inner) => poly_arity(tree, inner),
-        ExprData::Conditional { then, els, .. } => {
-            poly_arity(tree, then).filter(|n| poly_arity(tree, els) == Some(*n))
-        }
-        _ => None,
-    }
-}
-
-impl InferCtx<'_> {
-    /// Whether a block lambda contains a `return` statement carrying a value —
-    /// the syntactic core of value compatibility
-    /// ([JLS §15.27.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.3),
-    /// [§14.17](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17)):
-    /// every path must return a value or throw. A block without any valued
-    /// `return` is only void-compatible, so it cannot target a functional
-    /// interface whose function type produces a result.
-    fn lambda_block_has_value(&self, body: &LambdaBody) -> bool {
-        let LambdaBody::Block(stmt) = *body else {
-            // An expression lambda's value compatibility is decided against
-            // its inferred result, not syntactically.
-            return true;
-        };
-        self.stmt_has_valued_return(stmt)
-    }
-
-    fn stmt_has_valued_return(&self, stmt: StmtId) -> bool {
-        match self.tree.stmt(stmt).clone() {
-            StmtData::Return(Some(_)) | StmtData::Yield(_) => true,
-            StmtData::Return(None)
-            | StmtData::Empty
-            | StmtData::Decl { .. }
-            | StmtData::Expr(_)
-            | StmtData::Break(_)
-            | StmtData::Continue(_)
-            | StmtData::Throw(_)
-            | StmtData::Assert { .. }
-            | StmtData::LocalClass { .. }
-            | StmtData::Missing => false,
-            StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
-                stmts.iter().any(|stmt| self.stmt_has_valued_return(*stmt))
-            }
-            StmtData::Labeled { stmt, .. }
-            | StmtData::While { body: stmt, .. }
-            | StmtData::DoWhile { body: stmt, .. }
-            | StmtData::ForEach { body: stmt, .. }
-            | StmtData::Synchronized { body: stmt, .. } => self.stmt_has_valued_return(stmt),
-            StmtData::If { then, els, .. } => {
-                self.stmt_has_valued_return(then)
-                    || els.is_some_and(|els| self.stmt_has_valued_return(els))
-            }
-            StmtData::For { body: stmt, .. } => self.stmt_has_valued_return(stmt),
-            StmtData::Switch { arms, .. } => arms.iter().any(|arm| {
-                arm.body
-                    .iter()
-                    .any(|stmt| self.stmt_has_valued_return(*stmt))
-            }),
-            StmtData::Try {
-                body,
-                catches,
-                finally,
-                ..
-            } => {
-                self.stmt_has_valued_return(body)
-                    || catches
-                        .iter()
-                        .any(|catch| self.stmt_has_valued_return(catch.body))
-                    || finally.is_some_and(|finally| self.stmt_has_valued_return(finally))
-            }
-        }
-    }
-}
-
-/// The keyword naming the access of a member
-/// ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
-/// for the `has {access} access` wording of an [`IllegalAccess`]
-/// (e.g. javac's `secret has private access in p.Priv`).
-fn access_keyword(access: Access) -> &'static str {
-    match access {
-        Access::Private => "private",
-        Access::Protected => "protected",
-        Access::Package => "package-private",
-        Access::Public => "public",
-    }
-}
-
-/// §6.5.6.1/[§15.27.2]: a body-tree scan — independent of inference — that
-/// finds (a) every local variable that is *mutated* anywhere in the body
-/// (`mutated`, keyed by name), and (b) every reference to an enclosing local
-/// inside a lambda expression (`captures`), with the reference's expression.
-/// A local that is both captured by a lambda and mutated anywhere in its scope
-/// is not *effectively final*, and every capture of it is an error.
-fn effective_final_scan(
-    bodies: &BodyTree,
-    body_id: BodyId,
-) -> (FxHashSet<Name>, Vec<(Name, ExprId)>) {
-    fn resolve<'a>(scopes: &'a [FxHashSet<Name>], name: &Name) -> Option<usize> {
-        scopes.iter().rposition(|scope| scope.contains(name))
-    }
-    struct Scan<'a> {
-        bodies: &'a BodyTree,
-        scopes: Vec<FxHashSet<Name>>,
-        lambda_entries: Vec<usize>,
-        mutated: FxHashSet<Name>,
-        captures: Vec<(Name, ExprId)>,
-    }
-    impl Scan<'_> {
-        fn in_lambda(&self) -> bool {
-            !self.lambda_entries.is_empty()
-        }
-        fn walk_stmt(&mut self, stmt: StmtId) {
-            use hir_expand::body::StmtData;
-            let data = self.bodies.stmt(stmt);
-            match data.clone() {
-                StmtData::Empty | StmtData::Missing => {}
-                StmtData::Block(inner) => {
-                    self.scopes.push(FxHashSet::default());
-                    for s in inner {
-                        self.walk_stmt(s);
-                    }
-                    self.scopes.pop();
-                }
-                StmtData::Decl { local, initializer } => {
-                    let name = self.bodies.local(local).name.clone();
-                    self.scopes.last_mut().expect("scope").insert(name);
-                    if let Some(initializer) = initializer {
-                        self.walk_expr(initializer);
-                    }
-                }
-                StmtData::DeclGroup(inner) => {
-                    for s in inner {
-                        self.walk_stmt(s);
-                    }
-                }
-                StmtData::Expr(expr) => self.walk_expr(expr),
-                StmtData::Labeled { stmt, .. } => self.walk_stmt(stmt),
-                StmtData::If { cond, then, els } => {
-                    self.walk_expr(cond);
-                    self.walk_stmt(then);
-                    if let Some(els) = els {
-                        self.walk_stmt(els);
-                    }
-                }
-                StmtData::While { cond, body } | StmtData::DoWhile { body, cond } => {
-                    self.walk_expr(cond);
-                    self.walk_stmt(body);
-                }
-                StmtData::For {
-                    init,
-                    cond,
-                    step,
-                    body,
-                } => {
-                    self.scopes.push(FxHashSet::default());
-                    for s in init {
-                        self.walk_stmt(s);
-                    }
-                    if let Some(cond) = cond {
-                        self.walk_expr(cond);
-                    }
-                    for e in step {
-                        self.walk_expr(e);
-                    }
-                    self.walk_stmt(body);
-                    self.scopes.pop();
-                }
-                StmtData::ForEach {
-                    var,
-                    iterable,
-                    body,
-                } => {
-                    self.scopes.push(FxHashSet::default());
-                    let name = self.bodies.local(var).name.clone();
-                    self.scopes.last_mut().expect("scope").insert(name);
-                    self.walk_expr(iterable);
-                    self.walk_stmt(body);
-                    self.scopes.pop();
-                }
-                StmtData::Switch { scrutinee, arms } => {
-                    self.walk_expr(scrutinee);
-                    for arm in arms {
-                        for label in arm.labels {
-                            if let hir_expand::body::SwitchLabel::Expr(e) = label {
-                                self.walk_expr(e);
-                            }
-                        }
-                        for s in arm.body {
-                            self.walk_stmt(s);
-                        }
-                    }
-                }
-                StmtData::Return(ret) => {
-                    if let Some(ret) = ret {
-                        self.walk_expr(ret);
-                    }
-                }
-                StmtData::Throw(expr) => self.walk_expr(expr),
-                StmtData::Break(_) | StmtData::Continue(_) => {}
-                StmtData::Yield(expr) => self.walk_expr(expr),
-                StmtData::Synchronized { expr, body } => {
-                    self.walk_expr(expr);
-                    self.walk_stmt(body);
-                }
-                StmtData::Try {
-                    resources,
-                    body,
-                    catches,
-                    finally,
-                } => {
-                    for resource in resources {
-                        let name = self.bodies.local(resource.local).name.clone();
-                        self.scopes.last_mut().expect("scope").insert(name);
-                        if let Some(init) = resource.initializer {
-                            self.walk_expr(init);
-                        }
-                    }
-                    self.walk_stmt(body);
-                    for clause in catches {
-                        self.scopes.push(FxHashSet::default());
-                        let name = self.bodies.local(clause.param).name.clone();
-                        self.scopes.last_mut().expect("scope").insert(name);
-                        self.walk_stmt(clause.body);
-                        self.scopes.pop();
-                    }
-                    if let Some(finally) = finally {
-                        self.walk_stmt(finally);
-                    }
-                }
-                StmtData::Assert { cond, msg } => {
-                    self.walk_expr(cond);
-                    if let Some(msg) = msg {
-                        self.walk_expr(msg);
-                    }
-                }
-                StmtData::LocalClass { .. } => {}
-            }
-        }
-        fn walk_expr(&mut self, expr: ExprId) {
-            use hir_expand::body::ExprData;
-            let data = self.bodies.expr(expr);
-            match data.clone() {
-                ExprData::Var(name) | ExprData::NamePath(name) => {
-                    if self.in_lambda()
-                        && resolve(&self.scopes, &name).is_some_and(|frame| {
-                            self.lambda_entries
-                                .last()
-                                // §15.27.2/[§6.3]: the lambda's own parameter
-                                // frame is the last pushed before the entry
-                                // marker — index `entry - 1`. A reference that
-                                // resolves to it (or deeper, to a local of the
-                                // lambda body) is *not* a capture of an
-                                // enclosing variable; only a frame strictly
-                                // before it is.
-                                .is_some_and(|&entry| frame + 1 < entry)
-                        })
-                    {
-                        self.captures.push((name, expr));
-                    }
-                }
-                ExprData::Literal(_)
-                | ExprData::Null
-                | ExprData::This { .. }
-                | ExprData::Super { .. }
-                | ExprData::Missing => {}
-                ExprData::Template { args } => {
-                    for a in args {
-                        self.walk_expr(a);
-                    }
-                }
-                ExprData::ClassLit(_) => {}
-                ExprData::FieldAccess { target, .. } => {
-                    if let Some(target) = target {
-                        self.walk_expr(target);
-                    }
-                }
-                ExprData::ArrayAccess { array, index } => {
-                    self.walk_expr(array);
-                    self.walk_expr(index);
-                }
-                ExprData::MethodCall { receiver, args, .. } => {
-                    if let Some(receiver) = receiver {
-                        self.walk_expr(receiver);
-                    }
-                    for a in args {
-                        self.walk_expr(a);
-                    }
-                }
-                ExprData::New { args, receiver, .. } => {
-                    if let Some(receiver) = receiver {
-                        self.walk_expr(receiver);
-                    }
-                    for a in args {
-                        self.walk_expr(a);
-                    }
-                }
-                ExprData::CtorCall { args, .. } => {
-                    for a in args {
-                        self.walk_expr(a);
-                    }
-                }
-                ExprData::NewArray {
-                    dims, initializer, ..
-                } => {
-                    for d in dims {
-                        self.walk_expr(d);
-                    }
-                    if let Some(elems) = initializer {
-                        for e in elems {
-                            self.walk_expr(e);
-                        }
-                    }
-                }
-                ExprData::ArrayInit(elems) => {
-                    for e in elems {
-                        self.walk_expr(e);
-                    }
-                }
-                ExprData::Unary { expr: inner, op } => {
-                    if matches!(
-                        op,
-                        hir_expand::body::UnaryOp::Inc | hir_expand::body::UnaryOp::Dec
-                    ) {
-                        self.mark_mutation(inner);
-                    }
-                    self.walk_expr(inner);
-                }
-                ExprData::Postfix { expr: inner, .. } => {
-                    self.mark_mutation(inner);
-                    self.walk_expr(inner);
-                }
-                ExprData::Binary { lhs, rhs, .. } => {
-                    self.walk_expr(lhs);
-                    self.walk_expr(rhs);
-                }
-                ExprData::Assign { lhs, rhs, .. } => {
-                    self.mark_mutation(lhs);
-                    self.walk_expr(lhs);
-                    self.walk_expr(rhs);
-                }
-                ExprData::Cast { expr: inner, .. } => self.walk_expr(inner),
-                ExprData::InstanceOf {
-                    expr: inner,
-                    pattern,
-                    ..
-                } => {
-                    self.walk_expr(inner);
-                    let _ = pattern;
-                }
-                ExprData::Conditional { cond, then, els } => {
-                    self.walk_expr(cond);
-                    self.walk_expr(then);
-                    self.walk_expr(els);
-                }
-                ExprData::Lambda { params, body } => {
-                    self.scopes.push(FxHashSet::default());
-                    for (name, _, _) in &params {
-                        self.scopes.last_mut().expect("scope").insert(name.clone());
-                    }
-                    self.lambda_entries.push(self.scopes.len());
-                    match body {
-                        hir_expand::body::LambdaBody::Expr(inner) => self.walk_expr(inner),
-                        hir_expand::body::LambdaBody::Block(stmt) => self.walk_stmt(stmt),
-                    }
-                    self.lambda_entries.pop();
-                    self.scopes.pop();
-                }
-                ExprData::MethodRef { qualifier, .. } => {
-                    if let Some(qualifier) = qualifier {
-                        self.walk_expr(qualifier);
-                    }
-                }
-                ExprData::Switch { scrutinee, arms } => {
-                    self.walk_expr(scrutinee);
-                    for arm in arms {
-                        for label in arm.labels {
-                            if let hir_expand::body::SwitchLabel::Expr(e) = label {
-                                self.walk_expr(e);
-                            }
-                        }
-                        for s in arm.body {
-                            self.walk_stmt(s);
-                        }
-                    }
-                }
-                ExprData::Paren(inner) => self.walk_expr(inner),
-            }
-        }
-        fn mark_mutation(&mut self, expr: ExprId) {
-            if let ExprData::Var(name) = self.bodies.expr(expr).clone() {
-                self.mutated.insert(name);
-            }
-        }
-    }
-    let mut scan = Scan {
-        bodies,
-        scopes: vec![FxHashSet::default()],
-        lambda_entries: Vec::new(),
-        mutated: FxHashSet::default(),
-        captures: Vec::new(),
-    };
-    for &param in &bodies.body(body_id).params {
-        let name = bodies.local(param).name.clone();
-        scan.scopes.last_mut().expect("scope").insert(name);
-    }
-    for &stmt in &bodies.body(body_id).stmts {
-        scan.walk_stmt(stmt);
-    }
-    (scan.mutated, scan.captures)
 }
