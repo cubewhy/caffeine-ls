@@ -470,6 +470,25 @@ impl InferCtx<'_> {
                 // assigned after the switch only when it is assigned on every
                 // normal-completing arm ([§16.1.9]). A blank `final` field is
                 // touched if any surviving arm touched it ([§8.3.1.2]).
+                //
+                // §14.21: a switch *statement* with no `default` label can
+                // complete normally even when *every* arm ends abruptly — the
+                // selector may match no arm, so the statement is one more
+                // normal-completing path ([JLS §14.21: "A switch statement
+                // without a default label can complete normally only if it
+                // contains at least one ... `switch` block statement group" —
+                // more precisely the group or rule may be absent]). The
+                // `default` label lowers as a `Missing` expression
+                // ([`SwitchLabel::Expr`]), which marks the arm as the default.
+                let has_default = arms.iter().any(|arm| {
+                    arm.labels.iter().any(|label| {
+                        matches!(
+                            label,
+                            SwitchLabel::Expr(e)
+                                if matches!(self.tree.expr(*e).clone(), ExprData::Missing)
+                        )
+                    })
+                });
                 let before = self.flow.clone();
                 let before_exited = self.exited;
                 // §16.2.9: a `break` targeting the switch completes it
@@ -535,10 +554,17 @@ impl InferCtx<'_> {
                 }
                 let any_normal = live_joined.is_some();
                 self.flow = live_joined.unwrap_or_else(|| before.clone());
-                // §16.2.9: the switch completes normally when any fall-through
-                // arm or break path reaches the join; abruptly only when every
-                // path exited (and no break escaped).
-                self.exited = if any_normal {
+                // §14.21/[§16.2.9]: the switch completes normally when any
+                // fall-through arm or break path reaches the join. A switch
+                // *statement* without a `default` always has one more
+                // normal-completing path — the empty no-match run — so it
+                // completes normally regardless of how its arms exit; with a
+                // `default` it completes normally exactly when some arm does.
+                // A switch *expression* ([§15.28]) is exhaustive by
+                // construction, so its completion is exactly the arm join.
+                self.exited = if !has_default {
+                    false
+                } else if any_normal {
                     false
                 } else {
                     paths.iter().all(|(_, exited)| *exited)
