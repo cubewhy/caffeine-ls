@@ -158,6 +158,42 @@ impl Ty {
         )
     }
 
+    /// The declared bounds of this type variable
+    /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
+    /// or an empty slice for non-type-variable types.
+    pub fn bounds<'a>(&self, db: &'a dyn TyDatabase) -> &'a [Ty] {
+        match self.kind(db) {
+            TyKind::TypeVar { bounds, .. } => bounds,
+            _ => &[],
+        }
+    }
+
+    /// The lower bound of this (capture) type variable
+    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
+    /// or `None` for ordinary type variables.
+    pub fn lower(&self, db: &dyn TyDatabase) -> Option<Ty> {
+        match self.kind(db) {
+            TyKind::TypeVar { lower, .. } => *lower,
+            _ => None,
+        }
+    }
+
+    /// A copy of this type variable carrying the given `lower` bound
+    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)).
+    pub(crate) fn with_lower(self, db: &dyn TyDatabase, lower: Option<Ty>) -> Ty {
+        match self.kind(db) {
+            TyKind::TypeVar { name, bounds, .. } => Ty::new(
+                db,
+                TyKind::TypeVar {
+                    name: name.clone(),
+                    bounds: bounds.clone(),
+                    lower,
+                },
+            ),
+            _ => self,
+        }
+    }
+
     /// A capture variable ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
     /// a fresh type variable with the `Object` upper bound and the `lower`
     /// bound (the `? super T` capture).
@@ -417,26 +453,6 @@ impl Ty {
         }
     }
 
-    /// The declared bounds of this type variable
-    /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
-    /// or an empty slice for non-type-variable types.
-    pub fn bounds<'a>(&self, db: &'a dyn TyDatabase) -> &'a [Ty] {
-        match self.kind(db) {
-            TyKind::TypeVar { bounds, .. } => bounds,
-            _ => &[],
-        }
-    }
-
-    /// The lower bound of this (capture) type variable
-    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)),
-    /// or `None` for ordinary type variables.
-    pub fn lower(&self, db: &dyn TyDatabase) -> Option<Ty> {
-        match self.kind(db) {
-            TyKind::TypeVar { lower, .. } => *lower,
-            _ => None,
-        }
-    }
-
     /// Replaces every type variable named in `binding` with its type argument.
     /// Used to instantiate the supertypes of a parameterized type
     /// ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)):
@@ -465,6 +481,66 @@ impl Ty {
                 members.iter().map(|m| m.substitute(db, binding)).collect(),
             ),
             TyKind::InferenceVar(_) => *self,
+        }
+    }
+
+    /// Replaces every type variable named in `binding` with its type argument,
+    /// **including inside the bounds of a re-encountered type variable**. This
+    /// is the one-pass analogue of the eager inlining that a non-recursive
+    /// [`substitute`] performs through the interner: when the type variable's
+    /// *bounds* reference the parameter being substituted (`T extends Box<K,T>`
+    /// with `T → V`), inlining the name yields `V extends Box<K,V>` directly,
+    /// where the plain [`substitute`] would leave the recursive `T` bound
+    /// behind.
+    ///
+    /// Substituting a type variable into its own occurrence closes the
+    /// recursion: the substituted variable is that occurrence's argument, so
+    /// the bound references it by its *new* name only ([JLS §4.4] recursion,
+    /// `Comparable<T>`-style). A distinct variable keeps its bounds exactly —
+    /// the two names cannot recurse (the class's parameters are distinct), so
+    /// substituting them is a shallow name replacement.
+    pub fn substitute_incl_bounds(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
+        match self.kind(db) {
+            TyKind::TypeVar {
+                name,
+                bounds,
+                lower,
+            } => {
+                if let Some(ty) = binding.get(name) {
+                    ty.substitute(db, binding)
+                } else {
+                    let bounds = bounds
+                        .iter()
+                        .map(|b| b.substitute(db, binding))
+                        .collect::<Vec<_>>();
+                    Ty::type_var(db, name.clone(), bounds).with_lower(db, *lower)
+                }
+            }
+            TyKind::Reference { name, args } => {
+                let args: Vec<Ty> = args
+                    .iter()
+                    .map(|arg| arg.substitute_incl_bounds(db, binding))
+                    .collect();
+                Ty::reference(db, name.clone(), args)
+            }
+            TyKind::Array(inner) => Ty::array(db, inner.substitute_incl_bounds(db, binding)),
+            TyKind::Wildcard(bound) => Ty::wildcard(
+                db,
+                bound.as_deref().map(|b| {
+                    Box::new(WildcardBound {
+                        kind: b.kind,
+                        ty: b.ty.substitute_incl_bounds(db, binding),
+                    })
+                }),
+            ),
+            TyKind::Intersection(members) => Ty::intersection(
+                db,
+                members
+                    .iter()
+                    .map(|m| m.substitute_incl_bounds(db, binding))
+                    .collect(),
+            ),
+            _ => *self,
         }
     }
 

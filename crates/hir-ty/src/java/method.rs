@@ -441,7 +441,13 @@ fn member_set_impl(
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
+    // §4.4: a type variable's *effective* upper bound is its declared bounds,
+    // or `java.lang.Object` when it declares none — the member set of the
+    // receiver is the member set of that bound.
     let mut stack = match receiver.kind(db) {
+        TyKind::TypeVar { bounds, .. } if bounds.is_empty() => {
+            vec![Ty::reference(db, "java.lang.Object", Vec::new())]
+        }
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
         _ => vec![receiver],
     };
@@ -1977,7 +1983,12 @@ fn pick_field_impl(
 ) -> Option<FieldData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
+    // §4.4: an unbounded type variable's effective upper bound is
+    // `java.lang.Object`, so its fields are the fields of `Object` (none).
     let mut stack = match receiver.kind(db) {
+        TyKind::TypeVar { bounds, .. } if bounds.is_empty() => {
+            vec![Ty::reference(db, "java.lang.Object", Vec::new())]
+        }
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
         _ => vec![receiver],
     };
@@ -2140,7 +2151,7 @@ fn source_class_fields(
                 let key = ItemKey::new(db, source.file, item);
                 // JLS 4.8: the fields of a raw type have erased types.
                 let ty = {
-                    let ty = item_ty_query(db, key).substitute(db, &binding);
+                    let ty = item_ty_query(db, key).substitute_incl_bounds(db, &binding);
                     if is_raw { ty.erasure(db) } else { ty }
                 };
                 out.push(FieldData {
