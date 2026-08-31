@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 681
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    int m(int n, boolean p) {
+        int k;
+        do {
+            if (p) break;
+            k = n;
+        } while (true);
+        return k;
+    }
+}
+
+method m(int, boolean): int
+  locals: l0: int | l1: boolean | l2: int
+  exprs: e0: boolean | e1: boolean | e2: int | e3: int | e4: int | e5: boolean | e6: boolean | e7: <error>
+  diags: e7@9:15: variable-might-not-have-been-initialized: Variable 'k' might not have been initialized

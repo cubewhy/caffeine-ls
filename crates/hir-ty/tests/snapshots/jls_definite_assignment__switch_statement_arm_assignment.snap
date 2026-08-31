@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 815
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    int m(int i) {
+        int k;
+        switch (i) {
+            case 1:
+                k = 1;
+                break;
+            case 2:
+                k = 2;
+                break;
+            default:
+                k = 3;
+        }
+        return k;
+    }
+}
+
+method m(int): int
+  locals: l0: int | l1: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int | e7: int | e8: int | e9: <error> | e10: int | e11: int | e12: int | e13: int

@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_definite_assignment.rs
+assertion_line: 904
+expression: out
+---
+FILE /src/com/example/Da.java:
+package com.example;
+
+class Da {
+    static void step() {}
+
+    int m() {
+        int k;
+        try {
+            step();
+            k = 1;
+        } catch (RuntimeException e) {
+            k = 2;
+        }
+        return k;
+    }
+}
+
+method step(): void
+  locals: 
+  exprs: 
+method m(): int
+  locals: l0: int | l1: java.lang.RuntimeException
+  exprs: e0: void | e1: int | e2: int | e3: int | e4: int | e5: int | e6: int | e7: int

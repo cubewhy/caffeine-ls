@@ -592,3 +592,338 @@ class Da {
 // (§15.29, the relational operator over constants) of value `true`: the `if`
 // always takes the then arm and `k` is definitely assigned ([§16.1.1]). javac
 // accepts this.
+
+// -- §16.2.10: two `break` paths of a constant-true loop join ---------------
+
+snapshot!(
+    while_true_two_breaks,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int n, boolean p) {
+        int k;
+        while (true) {
+            if (p) {
+                k = n;
+                break;
+            }
+            k = n + 1;
+            break;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: every `break` runs after assigning `k`, so the joined break flows
+// leave it definitely assigned after the loop ([§16.2.10]).
+
+snapshot!(
+    while_true_one_break_misses_assignment,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int n, boolean p) {
+        int k;
+        while (true) {
+            if (p) {
+                k = n;
+                break;
+            }
+            break;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Red: one `break` runs before `k` was assigned, so the join keeps `k`
+// not-definitely-assigned ([§16.2.10]).
+
+// -- §16.2.12: a condition-less `for(;;)` escapes only through `break` -------
+
+snapshot!(
+    for_no_cond_break_after_loop_statement,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    void m(int n) {
+        int k;
+        for (;;) {
+            k = n;
+            if (k >= 5) continue;
+            if (k <= 3) break;
+            k = n - 1;
+            break;
+        }
+        int y = k;
+    }
+}
+",
+    )])
+);
+// Green: every `break` runs after an assignment, and a `continue` only feeds
+// the (always-true) condition — the break flows still join to `k` assigned.
+
+// -- §16.2.11: a constant-true do-loop with a guarded break -------------------
+
+snapshot!(
+    do_while_true_guarded_break,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int n, boolean p) {
+        int k;
+        do {
+            if (p) break;
+            k = n;
+        } while (true);
+        return k;
+    }
+}
+",
+    )])
+);
+// Red: the first `break` runs before the assignment, so the joined break flow
+// leaves `k` unassigned.
+
+// -- §16.2.7: an if whose then arm returns keeps only the else assignments ---
+
+snapshot!(
+    if_then_return_else_assignment,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(boolean p) {
+        int k;
+        if (p) {
+            return 0;
+        } else {
+            k = 1;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: the then arm exits, so only the else arm reaches the join — its
+// assignment makes `k` definitely assigned after ([§16.2.7]).
+
+snapshot!(
+    if_then_return_no_else,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(boolean p) {
+        int k;
+        if (p) {
+            k = 1;
+            return k;
+        }
+        return 0;
+    }
+}
+",
+    )])
+);
+// Green: the then arm's exit means the else-less false path (where `k` was
+// never assigned) is the only surviving path — but it returns 0 without
+// reading `k`, so no error. The *false* path's `return 0` is reached through
+// the condition's false flow which carries no `k` assignment.
+
+// -- §16.1.8: assignment inside a try block is not definitely assigned after a
+// non-covering catch that exits ----------------------------------------------
+
+snapshot!(
+    try_assignment_catch_returns,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    static void step() {}
+
+    int m() {
+        int k;
+        try {
+            k = 1;
+            step();
+        } catch (RuntimeException e) {
+            return 0;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: the catch arm exits, so only the try block's normal-completing path
+// reaches the join — `k` was assigned there ([§16.2.15]).
+
+// -- §16.2.15: an abrupt-completing try leaves the finally's assignments ------
+
+snapshot!(
+    try_finally_assigns,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    static void step() {}
+
+    int m() {
+        int k;
+        try {
+            step();
+        } finally {
+            k = 1;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: the `finally` block always runs, so its assignment makes `k`
+// definitely assigned after the try ([§16.2.15], [§14.20.2]).
+
+// -- §16.1.9: a switch statement's arms join by intersection ----------------
+
+snapshot!(
+    switch_statement_arm_assignment,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int i) {
+        int k;
+        switch (i) {
+            case 1:
+                k = 1;
+                break;
+            case 2:
+                k = 2;
+                break;
+            default:
+                k = 3;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: every normal-completing arm assigns `k`, so it is definitely
+// assigned after the switch statement ([§16.2.9]).
+
+snapshot!(
+    switch_statement_arm_missing_assignment,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int i) {
+        int k;
+        switch (i) {
+            case 1:
+                k = 1;
+                break;
+            default:
+                break;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Red: the `default` arm completes without assigning `k`, so the join leaves
+// it unassigned ([§16.2.9]).
+
+// -- §14.15/[§16.2.9]: a labeled `break` from a switch arm exits the loop ----
+
+snapshot!(
+    labeled_break_out_of_switch,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    int m(int i) {
+        int k;
+        outer: while (true) {
+            switch (i) {
+                case 1:
+                    k = 1;
+                    break outer;
+                default:
+                    k = 2;
+                    break;
+            }
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: `break outer` records on the labeled loop's frame, the switch's
+// unlabeled `break` on its own — every path that exits the loop assigned `k`
+// first, so it is definitely assigned after ([§16.2.10], [§16.2.9]).
+
+// -- §16.2.15: an abrupt-completing try that does not reach its catch ---------
+
+snapshot!(
+    try_catch_all_arms_assign,
+    check_body_types(&[(
+        "/src/com/example/Da.java",
+        "\
+package com.example;
+
+class Da {
+    static void step() {}
+
+    int m() {
+        int k;
+        try {
+            step();
+            k = 1;
+        } catch (RuntimeException e) {
+            k = 2;
+        }
+        return k;
+    }
+}
+",
+    )])
+);
+// Green: the try block and the catch clause assign `k`, so it is definitely
+// assigned after the try on every path ([§16.2.15]).

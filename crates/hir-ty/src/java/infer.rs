@@ -156,6 +156,7 @@ pub(crate) fn body_types_impl(
         switch_depth: 0,
         labels: Vec::new(),
         loop_breaks: Vec::new(),
+        pending_loop_label: None,
         probing: false,
         bool_outcomes: None,
         rethrow_sets: FxHashMap::default(),
@@ -467,32 +468,35 @@ impl Flow {
     }
 }
 
-/// §16.2.10/[§16.2.12]: the definite-assignment flows captured at the `break`
-/// statements that target one enclosing loop — the only paths by which a
-/// constant-`true` loop ([§16.1.1]) completes normally (JLS Example 16-1).
-/// Each `break` records the [`Flow`] at the break, so the after-loop join
-/// collects exactly the assignments made before the exits, not the whole body.
+/// §16.2.9–[§16.2.12]: the definite-assignment flows captured at the `break`
+/// statements that target one enclosing loop or `switch` — the paths by which
+/// a constant-`true` loop ([§16.1.1]) completes normally (JLS Example 16-1),
+/// and the normal-completing paths of a `switch` arm ([§14.15]: a `break`
+/// exits to just after the switch, so the statement after it is reachable).
+/// Each `break` records the [`Flow`] at the break, so a join collects exactly
+/// the assignments made before the exits, not the whole body.
 #[derive(Clone)]
-struct LoopBreakFrame {
+struct BreakFrame {
     /// The label naming this loop ([§14.14]), when it has one — a labeled
-    /// `break label` records on exactly this frame.
+    /// `break label` records on exactly this frame. A `switch` has no label.
     label: Option<Name>,
-    /// The flows at each `break` targeting this loop reached so far.
+    /// The flows at each `break` targeting this frame reached so far.
     flows: Vec<Flow>,
 }
 
-impl LoopBreakFrame {
-    /// A fresh frame for the loop about to be inferred.
+impl BreakFrame {
+    /// A fresh frame for the breakable statement about to be inferred.
     fn new(label: Option<Name>) -> Self {
-        LoopBreakFrame {
+        BreakFrame {
             label,
             flows: Vec::new(),
         }
     }
 
     /// The join of every recorded break flow ([§16.1]): a local is definitely
-    /// assigned after the loop only when *every* break path assigned it. `None`
-    /// when no break was recorded — the loop cannot complete normally.
+    /// assigned after the breakable only when *every* break path assigned it.
+    /// `None` when no break was recorded — a constant-true loop with no break
+    /// cannot complete normally.
     fn joined(&self) -> Option<Flow> {
         let mut iter = self.flows.iter();
         let mut joined = iter.next()?.clone();
@@ -640,12 +644,18 @@ struct InferCtx<'a> {
     /// may target any labeled statement, a labeled `continue` only a labeled
     /// loop ([§14.16]).
     labels: Vec<(Name, bool)>,
-    /// §16.2.10: the definite-assignment flows at the `break` statements that
-    /// target each enclosing loop — one frame per loop, innermost first. A
-    /// constant-condition loop ([§16.1.1]) completes normally only through
-    /// those breaks, so their flows join into the after-loop state (JLS
-    /// Example 16-1). See [`LoopBreakFrame`].
-    loop_breaks: Vec<LoopBreakFrame>,
+    /// §16.2.9–[§16.2.12]: the definite-assignment flows at the `break`
+    /// statements that target each enclosing breakable — one frame per loop or
+    /// `switch`, innermost first. A constant-condition loop ([§16.1.1])
+    /// completes normally only through those breaks, so their flows join into
+    /// the after-loop state (JLS Example 16-1); a `switch`'s breaks are the
+    /// normal-completing arm paths ([§16.2.9]). See [`BreakFrame`].
+    loop_breaks: Vec<BreakFrame>,
+    /// §14.14: the label of the labeled loop currently about to be inferred —
+    /// [`StmtData::Labeled`] sets it and the loop statement's handler consumes
+    /// it into the [`BreakFrame`], so a labeled `break label` inside the loop
+    /// records on that loop's frame.
+    pending_loop_label: Option<Name>,
     /// Whether the current inference is *speculative* — the applicability
     /// probe of an overload candidate ([§15.12.2]): like javac, diagnostics
     /// from speculatively attributed arguments are discarded, so a nested
@@ -2474,15 +2484,12 @@ impl<'a> InferCtx<'a> {
         }
     }
 
-    /// §16.2.10/[§16.2.12]: records the current flow at a `break` that targets
-    /// an enclosing loop, so a constant-condition loop can join its break
-    /// paths into the after-loop state (JLS Example 16-1). An *unlabeled*
-    /// break targets the nearest enclosing loop **or** switch ([§14.15]) — so
-    /// one inside a `switch` is a switch's break, not a loop's, and is not
-    /// recorded. A labeled break records on the loop whose label names it (the
-    /// frame exists for any label the break legally targets — a loop is
-    /// always labeled before its body is inferred); a labeled break out of a
-    /// labeled *block* matches no frame and contributes nothing.
+    /// §16.2.9–[§16.2.12]: records the current flow at a `break` that targets
+    /// an enclosing loop or `switch`. An *unlabeled* break targets the nearest
+    /// enclosing breakable ([§14.15]); a labeled break records on the frame
+    /// whose label names it (a loop or labeled block — a `switch` has no
+    /// label, so a labeled break out of a labeled block matches no frame and
+    /// contributes nothing).
     fn record_break_flow(&mut self, label: Option<&Name>) {
         if let Some(name) = label {
             for frame in self.loop_breaks.iter_mut().rev() {
@@ -2493,9 +2500,7 @@ impl<'a> InferCtx<'a> {
             }
             return;
         }
-        if self.switch_depth == 0
-            && let Some(innermost) = self.loop_breaks.last_mut()
-        {
+        if let Some(innermost) = self.loop_breaks.last_mut() {
             innermost.flows.push(self.flow.clone());
         }
     }
@@ -5915,8 +5920,20 @@ impl<'a> InferCtx<'a> {
                         | StmtData::For { .. }
                         | StmtData::ForEach { .. }
                 );
-                self.labels.push((name, is_loop));
+                self.labels.push((name.clone(), is_loop));
+                // §14.14: a labeled loop's name identifies its break frame —
+                // the loop handler consumes this into the frame it pushes, so
+                // `break label` (and a labeled `break outer` from a nested
+                // `switch`) records on the right loop.
+                let previous = if is_loop {
+                    self.pending_loop_label.replace(name)
+                } else {
+                    None
+                };
                 self.infer_stmt(*stmt);
+                if is_loop {
+                    self.pending_loop_label = previous;
+                }
                 self.labels.pop();
             }
             StmtData::If { cond, then, els } => {
@@ -6047,7 +6064,8 @@ impl<'a> InferCtx<'a> {
                 let const_bool = self.const_bool(*cond);
                 let (cond_true_flow, _) = self.take_bool_outcomes();
                 self.loop_depth += 1;
-                self.loop_breaks.push(LoopBreakFrame::new(None));
+                self.loop_breaks
+                    .push(BreakFrame::new(self.pending_loop_label.take()));
                 if const_bool == Some(true) {
                     self.flow = cond_true_flow;
                 }
@@ -6075,7 +6093,8 @@ impl<'a> InferCtx<'a> {
                 let before = self.flow.clone();
                 let const_bool = self.const_bool(*cond);
                 self.loop_depth += 1;
-                self.loop_breaks.push(LoopBreakFrame::new(None));
+                self.loop_breaks
+                    .push(BreakFrame::new(self.pending_loop_label.take()));
                 self.infer_stmt(*body);
                 if const_bool == Some(true) {
                     // The body's fall-through feeds the condition (always
@@ -6125,7 +6144,8 @@ impl<'a> InferCtx<'a> {
                 // only through its `break` paths.
                 let before = self.flow.clone();
                 self.loop_depth += 1;
-                self.loop_breaks.push(LoopBreakFrame::new(None));
+                self.loop_breaks
+                    .push(BreakFrame::new(self.pending_loop_label.take()));
                 if const_bool == Some(true) {
                     self.flow = cond_true_flow;
                 }
@@ -6172,11 +6192,17 @@ impl<'a> InferCtx<'a> {
                 };
                 self.scopes.push(FxHashMap::default());
                 self.declare_local_ty(*var, element);
-                // §16.1.11: like `while`, the body may run zero times.
+                // §16.1.11: like `while`, the body may run zero times. A
+                // labeled `break label` still needs the frame to record on
+                // (a for-each is never constant-condition, so the recorded
+                // flows are only used for the label bookkeeping).
                 let before = self.flow.clone();
                 self.loop_depth += 1;
+                self.loop_breaks
+                    .push(BreakFrame::new(self.pending_loop_label.take()));
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
+                self.loop_breaks.pop();
                 self.flow = before;
                 self.exited = false;
                 self.scopes.pop();
@@ -6194,6 +6220,11 @@ impl<'a> InferCtx<'a> {
                 // touched if any surviving arm touched it ([§8.3.1.2]).
                 let before = self.flow.clone();
                 let before_exited = self.exited;
+                // §16.2.9: a `break` targeting the switch completes it
+                // *normally* ([§14.15]) — its flow is one of the
+                // normal-completing arm paths, not an abrupt exit. The frame
+                // collects those flows so the arm's "exit" does not drop them.
+                self.loop_breaks.push(BreakFrame::new(None));
                 let mut paths: Vec<(Flow, bool)> = Vec::new();
                 for arm in arms {
                     self.flow = before.clone();
@@ -6227,8 +6258,12 @@ impl<'a> InferCtx<'a> {
                     paths.push((end_state, exits));
                     self.scopes.pop();
                 }
+                // The switch's break flows are normal-completing paths.
+                let break_frame = self.loop_breaks.pop().expect("frame pushed above");
+                let breaks = break_frame.joined();
                 // The join of §16.1.9: only normal-completing arms reach the
-                // statement after the switch; when no arm does, the switch
+                // statement after the switch — arms that fall through, plus
+                // the break paths ([§16.2.9]); when none does, the switch
                 // completes abruptly and the following code is unreachable.
                 let mut live_joined: Option<Flow> = None;
                 for (path, exited) in &paths {
@@ -6240,8 +6275,22 @@ impl<'a> InferCtx<'a> {
                         Some(acc) => acc.join_definite(path),
                     }
                 }
+                if let Some(ref breaks) = breaks {
+                    match &mut live_joined {
+                        None => live_joined = Some(breaks.clone()),
+                        Some(acc) => acc.join_definite(breaks),
+                    }
+                }
+                let any_normal = live_joined.is_some();
                 self.flow = live_joined.unwrap_or_else(|| before.clone());
-                self.exited = paths.iter().all(|(_, exited)| *exited);
+                // §16.2.9: the switch completes normally when any fall-through
+                // arm or break path reaches the join; abruptly only when every
+                // path exited (and no break escaped).
+                self.exited = if any_normal {
+                    false
+                } else {
+                    paths.iter().all(|(_, exited)| *exited)
+                };
                 self.scopes.pop();
                 self.case_values.pop();
                 self.switch_depth -= 1;
