@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 34
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box<K, T extends Box<K, T>> {
+    private Box<K, T> inner;
+
+    Box<K, T> get() {
+        return this.inner;
+    }
+
+    void set(Box<K, T> value) {
+        this.inner = value;
+    }
+
+    void combine(Box<K, T> value) {
+        Box<K, T> local = this.get();
+        this.set(local);
+        this.set(value);
+    }
+}
+
+method get(): com.example.Box<K, T>
+  locals: 
+  exprs: e0: com.example.Box<K, T> | e1: com.example.Box<K, T>
+  diags: e1@6:15: incompatible-types: Incompatible types. Found: 'Box<K, T>', required: 'Box<K, T>'
+method set(com.example.Box<K, T>): void
+  locals: l0: com.example.Box<K, T>
+  exprs: e2: com.example.Box<K, T> | e3: com.example.Box<K, T> | e4: com.example.Box<K, T> | e5: com.example.Box<K, T>
+  diags: e4@10:21: incompatible-types: Incompatible types. Found: 'Box<K, T>', required: 'Box<K, T>'
+method combine(com.example.Box<K, T>): void
+  locals: l1: com.example.Box<K, T> | l2: com.example.Box<K, T>
+  exprs: e6: com.example.Box<K, T> | e7: com.example.Box<K, T> | e8: com.example.Box<K, T> | e9: com.example.Box<K, T> | e10: <error> | e11: com.example.Box<K, T> | e12: com.example.Box<K, T> | e13: <error>
+  diags: l2@14:8: type-argument-not-within-bounds: Type argument 'T' is not within bounds of type-variable 'T' | e7@14:26: incompatible-types: Incompatible types. Found: 'Box<K, T>', required: 'Box<K, T>' | e10@15:17: wrong-argument-count: Method 'set()' cannot be applied to given types | e13@16:17: wrong-argument-count: Method 'set()' cannot be applied to given types

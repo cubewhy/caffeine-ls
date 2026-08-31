@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 168
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(Object o) {
+        if (o instanceof Object) {
+        }
+        int[] bad = (int[]) "lit";
+    }
+}
+
+method m(java.lang.Object): void
+  @6:28..6:33 '"lit"': bad-cast: Inconvertible types; cannot cast 'String' to 'int[]'

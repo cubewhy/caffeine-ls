@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 67
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box<K, T extends Box<K, T>> {
+}
+
+class Node extends Box<Node, Node> {
+}
+
+class Holder<K, T extends Box<K, T>> {
+    Box<K, T> box;
+    void copy(Holder<K, T> other) {
+        this.box = other.box;
+    }
+}
+
+method copy(com.example.Holder<K, T>): void
+  locals: l0: com.example.Holder<K, T>
+  exprs: e0: com.example.Holder<K, T> | e1: com.example.Box<K, T> | e2: com.example.Holder<K, T> | e3: com.example.Box<K, T> | e4: com.example.Box<K, T>
+  diags: e3@11:19: incompatible-types: Incompatible types. Found: 'Box<K, T>', required: 'Box<K, T>'

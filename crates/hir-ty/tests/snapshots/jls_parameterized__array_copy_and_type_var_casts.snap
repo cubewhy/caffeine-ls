@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 97
+expression: out
+---
+FILE /src/com/example/Snap.java:
+package com.example;
+
+import java.util.Arrays;
+
+class Snap<T extends Value<R, ?>, R> {
+    private T source;
+
+    void set(Object object) {
+        if (object instanceof Object[]) {
+            Object[] copy = Arrays.copyOf((Object[]) object, ((Object[]) object).length);
+        }
+    }
+
+    boolean isDefault() {
+        R defaultValue = this.source.getDefaultValue();
+        if (defaultValue instanceof Object[]) {
+            return Arrays.equals((Object[]) defaultValue, (Object[]) this.source.currentValue());
+        }
+        if (defaultValue instanceof double[]) {
+            return Arrays.equals((double[]) defaultValue, (double[]) this.source.currentValue());
+        }
+        return true;
+    }
+}
+
+class Value<R, T> {
+    R getDefaultValue() {
+        return null;
+    }
+    R currentValue() {
+        return null;
+    }
+}
+
+method isDefault(): boolean
+  @16:44..16:56 'defaultValue': bad-cast: Inconvertible types; cannot cast 'R' to 'Object[]'
+  @16:69..16:95 'this.source.currentValue()': bad-cast: Inconvertible types; cannot cast 'R' to 'Object[]'
+  @19:44..19:56 'defaultValue': bad-cast: Inconvertible types; cannot cast 'R' to 'double[]'
+  @19:69..19:95 'this.source.currentValue()': bad-cast: Inconvertible types; cannot cast 'R' to 'double[]'

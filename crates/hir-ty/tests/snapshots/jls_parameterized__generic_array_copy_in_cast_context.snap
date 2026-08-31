@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 166
+expression: out
+---
+FILE /src/com/example/Snap.java:
+package com.example;
+
+import java.util.Arrays;
+
+class Snap<T extends Value<R, ?>, R> {
+    private Object value;
+
+    void set(Object object) {
+        if (object instanceof Object[]) {
+            this.value = (R) Arrays.copyOf((Object[]) object, ((Object[]) object).length);
+        }
+    }
+}
+
+class Value<R, T> {
+}
+
+method set(java.lang.Object): void
+  locals: l0: java.lang.Object
+  exprs: e0: java.lang.Object | e1: boolean | e2: boolean | e3: com.example.Snap<T, R> | e4: java.lang.Object | e5: java.lang.Object | e6: java.lang.Object[] | e7: java.lang.Object | e8: java.lang.Object[] | e9: java.lang.Object[] | e10: int | e12: java.lang.Object[] | e13: R | e14: java.lang.Object

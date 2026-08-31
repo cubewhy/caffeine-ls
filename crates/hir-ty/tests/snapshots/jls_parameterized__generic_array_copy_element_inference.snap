@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 145
+expression: out
+---
+FILE /src/com/example/Snap.java:
+package com.example;
+
+import java.util.Arrays;
+
+class Snap {
+    String[] copy(String[] src) {
+        return Arrays.copyOf(src, src.length);
+    }
+}
+
+method copy(java.lang.String[]): java.lang.String[]
+  locals: l0: java.lang.String[]
+  exprs: e0: java.lang.String[] | e1: java.lang.String[] | e2: int | e4: java.lang.String[]

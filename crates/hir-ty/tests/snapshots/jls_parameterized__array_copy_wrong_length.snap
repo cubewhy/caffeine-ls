@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+assertion_line: 191
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Arrays;
+
+class Body {
+    void m(String[] src) {
+        String[] bad = Arrays.copyOf(src, "nope");
+    }
+}
+
+method m(java.lang.String[]): void
+  @6:37..6:40 'src': wrong-argument-count: Method 'copyOf()' cannot be applied to given types
+    -> @6:37..6:40 'src': required: T[], int
+    -> @6:37..6:40 'src': found: String[], String
+    -> @6:37..6:40 'src': reason: 'String[]' cannot be converted to 'T[]'
+  @6:42..6:48 '"nope"': incompatible-types: Incompatible types. Found: 'String', required: 'int'
+    -> @6:42..6:48 '"nope"': required: int
+    -> @6:42..6:48 '"nope"': found: String
