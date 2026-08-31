@@ -158,6 +158,30 @@ class Body {
     )])
 );
 
+// -- green: boxing and unboxing casts in casting context ([§15.16], [§5.5]) ------
+// A cast performs one of the conversions of [§5.5]: boxing a primitive
+// ([§5.1.7]), unboxing a wrapper ([§5.1.8]) and the combined boxing-then-
+// widening form (`(Number) i`). `javac` 25 accepts every cast below.
+
+snapshot!(
+    cast_context_boxing,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m(int i, Integer box) {
+        Integer boxed = (Integer) i;
+        int unboxed = (int) box;
+        Number widened = (Number) i;
+        Object up = (Object) i;
+    }
+}
+",
+    )])
+);
+
 // -- §15.25: conditional expression typing ----------------------------------------
 // The numeric promotion of a conditional applies only when at least one
 // operand is primitive ([§15.25]): `int ? : Integer` unboxes and promotes,

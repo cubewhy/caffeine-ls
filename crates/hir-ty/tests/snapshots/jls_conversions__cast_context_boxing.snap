@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(int i, Integer box) {
+        Integer boxed = (Integer) i;
+        int unboxed = (int) box;
+        Number widened = (Number) i;
+        Object up = (Object) i;
+    }
+}
+
+method m(int, java.lang.Integer): void
+  locals: l0: int | l1: java.lang.Integer | l2: java.lang.Integer | l3: int | l4: java.lang.Number | l5: java.lang.Object
+  exprs: e0: int | e1: java.lang.Integer | e2: java.lang.Integer | e3: int | e4: int | e5: java.lang.Number | e6: int | e7: java.lang.Object
