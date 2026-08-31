@@ -683,6 +683,11 @@ pub fn functional_interface(
 pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
     vec![
         class("java/lang/Object", None, &[]),
+        // Records have an implicit superclass `java.lang.Record`
+        // ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10)),
+        // whose abstract `equals`/`hashCode`/`toString` the record's implicit
+        // member synthesis ([JLS §8.10.3]) implements; see `jls_records.rs`.
+        class("java/lang/Record", Some("java/lang/Object"), &[]),
         class("java/lang/Class", Some("java/lang/Object"), &[]),
         interface("java/lang/CharSequence"),
         interface_sig(

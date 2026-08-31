@@ -1653,8 +1653,18 @@ fn recursive_constructor_diagnostics(
         return Vec::new();
     }
     let bodies = hir::file_body_tree(db, file);
-    // The arity of each constructor, for the delegation-target lookup.
+    // The arity of each constructor: the declared formal-parameter count, or —
+    // for a record *compact* constructor ([§8.10.4]) — the record's component
+    // count. A compact constructor is lowered without a formal parameter list
+    // ([`crate::hir_def`]), so its true signature (the component list it
+    // assigns) must be recovered from the record declaration; without it a
+    // delegating `this(...)` resolves against the compact constructor's
+    // empty declared signature and fabricates a self-cycle.
     let arity = |id: ItemId| match tree.data(id) {
+        I::Method(m) if m.is_compact_constructor() => match tree.data(item) {
+            I::Record(record) => record.components.len(),
+            _ => 0,
+        },
         I::Method(m) => m.sig.params.len(),
         _ => 0,
     };

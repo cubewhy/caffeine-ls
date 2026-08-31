@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_records.rs
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+record Rec(int x, String s) {
+    Rec {
+        if (s == null) {
+            s = "";
+        }
+    }
+    Rec(int x) {
+        this(x, "a");
+    }
+    Rec(String s) {
+        this(0, s);
+    }
+}

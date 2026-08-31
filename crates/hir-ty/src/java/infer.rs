@@ -2142,7 +2142,10 @@ impl<'a> InferCtx<'a> {
             return false;
         }
         // The field must be blank — a source field with no initializer (its
-        // initializer is what makes a later assignment a double-write).
+        // initializer is what makes a later assignment a double-write). A
+        // record component field is implicitly blank ([§8.10.4]): the
+        // canonical and compact constructors may assign it, and no component
+        // ever carries an initializer.
         let Some(owner_file) = field.owner_file else {
             return false;
         };
@@ -2161,6 +2164,13 @@ impl<'a> InferCtx<'a> {
                 hir_def::java::item_tree::ItemData::Field(f) if f.name.as_str() == name => {
                     *found = f.initializer.is_none();
                     return;
+                }
+                // §8.10.1: a record's components become blank final fields.
+                hir_def::java::item_tree::ItemData::Record(r) => {
+                    if r.components.iter().any(|c| c.name.as_str() == name) {
+                        *found = true;
+                        return;
+                    }
                 }
                 _ => {}
             }

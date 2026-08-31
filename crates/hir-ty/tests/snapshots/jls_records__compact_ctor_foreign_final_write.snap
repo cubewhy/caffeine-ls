@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_records.rs
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+class Other {
+    final int f = 1;
+    Other() {
+        f = 2;
+    }
+}
+
+record Rec(int x) {
+    Rec {
+        this.x = 1;
+        final int z = 1;
+        z = 2;
+        Other o = new Other();
+    }
+}
+
+method Other(): <init>
+  @5:8..5:9 'f': cannot-assign-to-final-variable: Cannot assign a value to final variable 'f'
+method Rec(): <init>
+  @13:8..13:9 'z': cannot-assign-to-final-variable: Cannot assign a value to final variable 'z'

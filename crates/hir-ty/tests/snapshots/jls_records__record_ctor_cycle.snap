@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_records.rs
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+record Rec(int x) {
+    Rec {
+        this();
+    }
+    Rec() {
+        this(1);
+    }
+}
+
+@4:8: recursive-constructor-invocation: Recursive constructor invocation
+@7:8: recursive-constructor-invocation: Recursive constructor invocation

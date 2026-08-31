@@ -294,6 +294,7 @@ fn lower_method(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
         sig,
         extra: MethodExtra::Java(MethodExtraJava {
             is_constructor: false,
+            is_compact_constructor: false,
             body: None,
             default_value: None,
             default_expr: None,
@@ -340,6 +341,7 @@ fn lower_constructor(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>, compact: bool)
         sig,
         extra: MethodExtra::Java(MethodExtraJava {
             is_constructor: true,
+            is_compact_constructor: compact,
             body: None,
             default_value: None,
             default_expr: None,
@@ -384,6 +386,7 @@ fn lower_annotation_element(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Opti
         },
         extra: MethodExtra::Java(MethodExtraJava {
             is_constructor: false,
+            is_compact_constructor: false,
             body: None,
             default_value,
             default_expr: None,

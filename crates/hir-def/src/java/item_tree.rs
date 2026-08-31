@@ -409,6 +409,14 @@ pub struct MethodExtraJava {
     /// Whether the method is a constructor or compact constructor
     /// ([JLS §8.8]).
     pub is_constructor: bool,
+    /// Whether the constructor is a record *compact* constructor
+    /// ([JLS §8.10.4]): one whose parameter list is the record's component
+    /// list, written as `record R(int x) { R { … } }`. A compact constructor
+    /// declares no formal parameters, so its signature in [`Signature::params`]
+    /// is empty; the component list supplies the *implicit* parameters that
+    /// the compact body assigns. `false` for ordinary constructors (including
+    /// a genuine zero-argument one) and methods.
+    pub is_compact_constructor: bool,
     /// The lowered body of the method, if it declares one.
     pub body: Option<BodyId>,
     /// The source range of an annotation element's default value
@@ -437,6 +445,18 @@ impl MethodData {
     /// ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)).
     pub fn is_constructor(&self) -> bool {
         matches!(&self.extra, MethodExtra::Java(java) if java.is_constructor)
+    }
+
+    /// Whether the constructor is a record *compact* constructor
+    /// ([JLS §8.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.4)):
+    /// one whose parameter list is the record's component list. Its declared
+    /// formal-parameter list is empty (the signature is the component list),
+    /// which matters wherever a constructor's arity is derived.
+    pub fn is_compact_constructor(&self) -> bool {
+        matches!(
+            &self.extra,
+            MethodExtra::Java(java) if java.is_compact_constructor
+        )
     }
 
     /// The lowered body of the method, if it declares one.
