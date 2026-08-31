@@ -9,7 +9,9 @@ mod common;
 use hir_ty::{Ty, member_set};
 use syntax::stub::PrimitiveType;
 
-use crate::common::{TestDatabase, check_methods, check_source_methods};
+use crate::common::{
+    TestDatabase, check_body_diagnostic_spans, check_methods, check_source_methods,
+};
 
 fn r(db: &TestDatabase, name: &str) -> Ty {
     Ty::reference(db, name, Vec::new())
@@ -142,4 +144,45 @@ class Dog extends Animal {}
             ("Dog.nope()", |db| r(db, "com.example.Dog"), "nope", &[]),
         ],
     ),
+}
+
+// -- §15.12.2.2: explicit type arguments instantiate directly ---------------------
+// `Expr.<String>m(...)` names the method's type arguments instead of relying on
+// inference ([JLS §15.12.1]/[§15.12.2.2]): the invocation is applicable when
+// the named arguments respect the method's bounds, and the result is the
+// substitution of those arguments — a varargs generic method also resolves
+// through the varargs phase ([§15.12.2.4]) with zero or element arguments.
+// `javac` 25 accepts every call below except the bound violation.
+
+snapshot! {
+    explicit_type_arguments,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Explicit.java",
+        "\
+package com.example;
+
+class Explicit {
+    static <T> T identity(T t) {
+        return t;
+    }
+
+    static <T> T[] makeArray(T... ts) {
+        return ts;
+    }
+
+    static <T extends Number> T num(T n) {
+        return n;
+    }
+
+    void m(Object o) {
+        String s = Explicit.<String>identity(\"ok\");
+        Number n = Explicit.<Integer>identity(5);
+        String[] arr = Explicit.<String>makeArray();
+        String[] arr2 = Explicit.<String>makeArray(\"a\", \"b\");
+        Double d = Explicit.<Double>num(1.0);
+        Integer wrong = Explicit.<Double>num(1.0);
+    }
+}
+",
+    )]),
 }

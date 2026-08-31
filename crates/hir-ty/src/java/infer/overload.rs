@@ -370,8 +370,14 @@ impl InferCtx<'_> {
         // it appears ([JLS §15.12.2.6]); a non-generic one is only a poly
         // expression as a nested *argument* (the `resolve == false` probe of
         // [`Self::choose_nested_candidate`]), where its fixed return type must
-        // still be compatible with the enclosing formal.
-        let constrains_target = target.is_some() && (!method.type_params.is_empty() || !resolve);
+        // still be compatible with the enclosing formal. Explicit type
+        // arguments ([§15.12.2.2]) make the invocation *standalone* (§15.2,
+        // [§15.12.3]): the target never constrains it — the written arguments
+        // fix the type variables, so `Long x = <Double>num(1.0)` is an
+        // applicable call whose result simply does not convert to the target.
+        let constrains_target = target.is_some()
+            && explicit_type_args.is_none()
+            && (!method.type_params.is_empty() || !resolve);
         if let (Some(target), true) = (target, constrains_target) {
             inference.add_constraint(Constraint::Sub(ret, target));
         }

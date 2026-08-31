@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/method_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Explicit.java:
+package com.example;
+
+class Explicit {
+    static <T> T identity(T t) {
+        return t;
+    }
+
+    static <T> T[] makeArray(T... ts) {
+        return ts;
+    }
+
+    static <T extends Number> T num(T n) {
+        return n;
+    }
+
+    void m(Object o) {
+        String s = Explicit.<String>identity("ok");
+        Number n = Explicit.<Integer>identity(5);
+        String[] arr = Explicit.<String>makeArray();
+        String[] arr2 = Explicit.<String>makeArray("a", "b");
+        Double d = Explicit.<Double>num(1.0);
+        Integer wrong = Explicit.<Double>num(1.0);
+    }
+}
+
+method m(java.lang.Object): void
+  @21:24..21:49 'Explicit.<Double>num(1.0)': incompatible-types: Incompatible types. Found: 'Double', required: 'Integer'
+    -> @21:24..21:49 'Explicit.<Double>num(1.0)': required: Integer
+    -> @21:24..21:49 'Explicit.<Double>num(1.0)': found: Double
