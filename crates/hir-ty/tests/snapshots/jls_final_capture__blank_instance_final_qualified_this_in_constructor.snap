@@ -1,13 +1,13 @@
 ---
-source: crates/hir-ty/tests/jls_false_flags.rs
+source: crates/hir-ty/tests/jls_final_capture.rs
 expression: out
 ---
 FILE /src/com/example/Final.java:
 package com.example;
 
 class Final {
-    static final int sf;
-    static {
-        sf = 1;
+    final int f;
+    Final() {
+        this.f = 1;
     }
 }

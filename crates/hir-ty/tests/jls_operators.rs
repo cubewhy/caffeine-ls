@@ -10,7 +10,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_body_types;
+use crate::common::{check_body_diagnostic_spans, check_body_types};
 
 // -- green: operators type correctly ----------------------------------------
 
@@ -292,3 +292,27 @@ class Body {
 // §15.25: `cond ? null : T` has type `T`. An array is a reference type
 // ([§4.3.1]), so a null/array-arm pair keeps the array type instead of taking
 // a meaningless lub — `pick` returns `byte[]`.
+
+snapshot!(
+    conditional_null_primitives_box,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static Boolean f(boolean b) {
+        return b ? true : null;
+    }
+    static Integer g(boolean b) {
+        return b ? null : 5;
+    }
+    static Long h(boolean b) {
+        return b ? null : 5L;
+    }
+}
+",
+    )])
+);
+// §15.25: a conditional with a primitive arm and `null` boxes the primitive —
+// `b ? true : null` has type `Boolean`, `b ? null : 5` has type `Integer`.

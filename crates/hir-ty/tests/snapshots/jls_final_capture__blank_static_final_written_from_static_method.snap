@@ -1,5 +1,5 @@
 ---
-source: crates/hir-ty/tests/jls_false_flags.rs
+source: crates/hir-ty/tests/jls_final_capture.rs
 expression: out
 ---
 FILE /src/com/example/Final.java:
@@ -10,10 +10,10 @@ class Final {
     static {
         sf = 1;
     }
-    Final() {
+    static void m() {
         sf = 2;
     }
 }
 
-method Final(): <init>
+method m(): void
   @8:8..8:10 'sf': cannot-assign-to-final-variable: Cannot assign a value to final variable 'sf'

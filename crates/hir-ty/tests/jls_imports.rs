@@ -15,7 +15,9 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_class_diagnostics;
+use crate::common::{
+    ClassSpec, check_body_types_with_libs, check_class_diagnostics, class_with_methods_access,
+};
 
 // -- green: on-demand imports that resolve against the classpath ---------------
 
@@ -139,3 +141,64 @@ class Imports {
 );
 // The declaring type is a same-package source class, so the static on-demand
 // import resolves and nothing is reported ([JLS §7.5.4]).
+
+// -- §7.5.2: an on-demand import imports only *accessible* types ---------------
+// A package-private class of another package is not a candidate, so a simple
+// name that only the inaccessible class supplies is not ambiguous — it
+// resolves to the accessible one.
+
+snapshot!(
+    on_demand_import_ignores_inaccessible,
+    check_body_types_with_libs(
+        &[
+            class_with_methods_access(
+                "org/objectweb/asm/tree/analysis/Frame",
+                Some("java/lang/Object"),
+                &[],
+                &[("getStackSize", "()I")],
+                &[""],
+                &[0x0001], // ACC_PUBLIC
+            ),
+            class_with_methods_access(
+                "org/objectweb/asm/tree/analysis/SourceValue",
+                Some("java/lang/Object"),
+                &[],
+                &[],
+                &[],
+                &[],
+            ),
+            // A package-private class (`ACC_PUBLIC` unset) named `Frame` in
+            // another package must not be a candidate of `import a.*`.
+            ClassSpec {
+                fqn: "org/objectweb/asm/Frame",
+                super_class: Some("java/lang/Object"),
+                interfaces: &[],
+                access: 0x0020, // ACC_SUPER, package-private (no ACC_PUBLIC)
+                fields: &[],
+                methods: &[],
+                method_sigs: &[],
+                method_access: &[],
+                sig: None,
+            },
+        ],
+        &[(
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.SourceValue;
+
+class Body {
+    Frame<SourceValue>[] frames;
+    int m() {
+        return frames[0].getStackSize();
+    }
+}
+",
+        )],
+    )
+);
+// Green: the only *accessible* `Frame` is the public `tree.analysis.Frame`; the
+// package-private `org.objectweb.asm.Frame` (same simple name) is not a
+// candidate, so the simple name resolves unambiguously ([§7.5.2]).

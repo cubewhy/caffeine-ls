@@ -13,7 +13,10 @@
 #[macro_use]
 mod common;
 
-use crate::common::{check_body_diagnostic_spans, check_class_diagnostics};
+use crate::common::{
+    check_body_diagnostic_spans, check_body_types_with_libs, check_class_diagnostics,
+    class_with_methods_access,
+};
 
 // -- §4.5.1: type argument not within bounds ----------------------------------
 
@@ -304,3 +307,40 @@ class P<T> {
 );
 // Red: a type variable is never reifiable — the check erases to `Object` and
 // can never be safe.
+
+// -- §15.9.3/[§15.9.2.2]: diamond in an invocation context ---------------------
+// A diamond creation is a poly expression in an invocation context —
+// `synchronizedList(new ArrayList<>())` against a `List<String>` target infers
+// `ArrayList<String>`.
+
+snapshot!(
+    diamond_in_invocation_context,
+    check_body_types_with_libs(
+        &[class_with_methods_access(
+            "java/util/WrapUtil",
+            None,
+            &[],
+            &[("synchronizedList", "(Ljava/util/List;)Ljava/util/List;")],
+            &["<T:Ljava/lang/Object;>(Ljava/util/List<TT;>;)Ljava/util/List<TT;>;"],
+            &[0x0009], // ACC_PUBLIC | ACC_STATIC
+        )],
+        &[(
+            "/src/com/example/Body.java",
+            "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.WrapUtil;
+
+class Body {
+    List<String> m() {
+        return WrapUtil.synchronizedList(new ArrayList<>());
+    }
+}
+",
+        )],
+    )
+);
+// Green: `new ArrayList<>()` is typed against the invocation's
+// `List<String>` target, inferring `ArrayList<String>`.

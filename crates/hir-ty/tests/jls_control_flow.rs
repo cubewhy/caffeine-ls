@@ -353,3 +353,38 @@ class Body {
 // §14.30.3: a pattern in a conditional condition binds its variables in the
 // arm where they are definitely matched — the condition's true flow in the
 // then-arm, its false flow (via `!`) in the else-arm.
+
+// -- §14.14.2: the enhanced-for loop variable is not implicitly final ----------
+// A `for (String s : l)` variable may be reassigned in the body; only an
+// explicit `final` modifier marks it.
+
+snapshot!(
+    enhanced_for_variable_mutable,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    static class Holder {
+        int value;
+    }
+    void m(List<String> l, List<Holder> h, int[] arr) {
+        for (String s : l) {
+            s = \"x\";
+        }
+        for (int x : arr) {
+            x = 5;
+        }
+        for (Holder holder : h) {
+            holder.value = 1;
+        }
+    }
+}
+",
+    )])
+);
+// Green: reassigning the loop variable is legal ([§14.14.2]); writing a field
+// through the reference merely reads the variable.

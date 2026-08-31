@@ -1,5 +1,5 @@
 ---
-source: crates/hir-ty/tests/jls_false_flags.rs
+source: crates/hir-ty/tests/jls_members.rs
 expression: out
 ---
 FILE /src/com/example/Body.java:

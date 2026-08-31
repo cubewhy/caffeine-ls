@@ -228,6 +228,51 @@ snapshot!(
 // [§4.10.1]. Without it, `StringBuilder.append(char)` (overridden along
 // `AbstractStringBuilder`) and `String.valueOf(int)` collapsed to ambiguity.
 
+snapshot!(
+    generic_non_generic_most_specific,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Map;
+
+class Body {
+    private static void increment(Map<String, Integer> map, String key) {
+    }
+    private static <T> void increment(Map<T, Integer> map, T key) {
+    }
+
+    static class Subject {
+        static class Builder {
+            <T> ObjectArraySubject<T> that(T[] a) {
+                return null;
+            }
+
+            Subject that(Object o) {
+                return null;
+            }
+        }
+
+        static class ObjectArraySubject<T> extends Subject {
+            ObjectArraySubject<T> asList() {
+                return null;
+            }
+        }
+    }
+
+    void m(Map<String, Integer> actual, String[] strings, Subject.Builder b) {
+        increment(actual, \"x\");
+        b.that(strings).asList();
+    }
+}
+",
+    )])
+);
+// §15.12.2.5: a non-generic overload is more specific than a generic one when
+// the generic method can instantiate to the non-generic's signature; and a
+// generic `that(T[])` beats `that(Object)` for an array argument.
+
 // -- declaration-level view of the same scenarios ------------------------------
 
 snapshot!(

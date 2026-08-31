@@ -1,5 +1,5 @@
 ---
-source: crates/hir-ty/tests/jls_false_flags.rs
+source: crates/hir-ty/tests/jls_final_capture.rs
 expression: out
 ---
 FILE /src/com/example/Final.java:
@@ -9,9 +9,11 @@ class Final {
     static final int sf;
     static {
         sf = 1;
+    }
+    static {
         sf = 2;
     }
 }
 
 static {}
-  @6:8..6:10 'sf': variable-already-assigned: Variable 'sf' might already have been assigned
+  @8:8..8:10 'sf': variable-already-assigned: Variable 'sf' might already have been assigned

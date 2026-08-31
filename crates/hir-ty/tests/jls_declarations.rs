@@ -13,7 +13,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_body_types;
+use crate::common::{check_body_diagnostic_spans, check_body_types};
 
 // -- green: declarations ---------------------------------------------------
 
@@ -150,3 +150,31 @@ class Body {
 ",
     )])
 );
+
+// -- §3.9: restricted identifiers are ordinary method/field names -------------
+// `record`, `sealed` and `permits` cannot name a *type*, but a method or field
+// of those names is perfectly legal ([JLS §3.9]).
+
+snapshot!(
+    restricted_identifier_method_names,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    private void record(int x, int y) {}
+    private void sealed() {}
+    private void permits() {}
+    private int record;
+    void m(int a) {
+        record(a, a);
+        sealed();
+        permits();
+    }
+}
+",
+    )])
+);
+// Green: restricted-identifier method and field names type and resolve without
+// diagnostics.

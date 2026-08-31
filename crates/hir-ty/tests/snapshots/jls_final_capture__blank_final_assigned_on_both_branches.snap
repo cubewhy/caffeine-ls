@@ -1,5 +1,5 @@
 ---
-source: crates/hir-ty/tests/jls_false_flags.rs
+source: crates/hir-ty/tests/jls_final_capture.rs
 expression: out
 ---
 FILE /src/com/example/Final.java:
@@ -13,9 +13,5 @@ class Final {
         } else {
             sf = 2;
         }
-        sf = 3;
     }
 }
-
-static {}
-  @10:8..10:10 'sf': variable-already-assigned: Variable 'sf' might already have been assigned

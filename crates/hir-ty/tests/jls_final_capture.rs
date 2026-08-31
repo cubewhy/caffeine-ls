@@ -441,3 +441,513 @@ class Shadow {
 // Green: nested lambda parameters with distinct names, the inner referencing
 // both its own and the outer's parameter — no capture, no duplicate (§6.3,
 // §6.4).
+
+// -- §15.26/[§15.11.1]: a qualified field write does not assign the receiver --
+// `final Holder h; h.value = 1` writes the *field*, not the local `h`; a
+// `final` array reference and index are likewise only read by `a[i] = v`.
+
+snapshot!(
+    field_write_through_final_receiver,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static class Holder {
+        int value;
+        int[] data;
+    }
+    void m(final Holder h, final int[] arr, final int idx) {
+        h.value = 5;
+        h.data[0] = 6;
+        arr[idx] = 7;
+    }
+}
+",
+    )])
+);
+// Green: writing a field through a `final` receiver reads only the receiver,
+// never assigns it — no cannot-assign-to-final-variable.
+
+// -- §8.3.1.2/[§16]: a blank static final field is assigned once in a static
+// initializer or a static field initializer — the legal initialization, not a
+// cannot-assign error.
+
+snapshot!(
+    blank_static_final_in_static_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+}
+",
+    )])
+);
+// Green: the static initializer's write is the legal one-time assignment.
+
+snapshot!(
+    blank_static_final_in_static_field_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static int copy = sf = 1;
+}
+",
+    )])
+);
+// Green: a static field initializer assigning the blank final is legal.
+
+// -- §8.3.1.2/[§16]: a blank final instance field is assigned once in a
+// constructor or an instance initializer (via a bare simple name or a bare
+// `this.field`) — the legal initialization.
+
+snapshot!(
+    blank_instance_final_in_constructor,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    Final(int x) {
+        this();
+    }
+}
+",
+    )])
+);
+// Green: `f` is assigned in the primary constructor; the delegating
+// constructor defers to it.
+
+snapshot!(
+    blank_instance_final_in_instance_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    Final() {
+    }
+}
+",
+    )])
+);
+// Green: the instance initializer's write is the legal one-time assignment.
+
+snapshot!(
+    blank_instance_final_qualified_this_in_constructor,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        this.f = 1;
+    }
+}
+",
+    )])
+);
+// Green: the qualified `this.f = 1` is the bare-receiver one-time assignment.
+
+// -- §8.3.1.2/[§16]: a *second* write to a blank final field is the
+// already-assigned error — javac: `variable {f} might already have been
+// assigned` — reported at the second write's target. Across sibling bodies
+// that run before it (another static initializer, a later instance
+// initializer, a constructor after the instance initializers) and within one
+// body after a branch both of whose paths assigned the field.
+
+snapshot!(
+    blank_static_final_double_assignment_same_block,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Red: the second write in the same static initializer.
+
+snapshot!(
+    blank_static_final_double_assignment_sibling_blocks,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    static {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Red: a later sibling static initializer's write.
+
+snapshot!(
+    blank_static_final_double_assignment_field_init_then_block,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static int copy = sf = 1;
+    static {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Red: a static field initializer assigns first, a later static initializer
+// reassigns.
+
+snapshot!(
+    blank_instance_final_ctor_after_instance_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    Final() {
+        f = 2;
+    }
+}
+",
+    )])
+);
+// Red: an instance initializer assigns first, the constructor reassigns.
+
+snapshot!(
+    blank_instance_final_double_assignment_two_initializers,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    {
+        f = 2;
+    }
+    Final() {
+    }
+}
+",
+    )])
+);
+// Red: a later instance initializer's write.
+
+snapshot!(
+    blank_final_after_both_branches_assigned,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+        } else {
+            sf = 2;
+        }
+        sf = 3;
+    }
+}
+",
+    )])
+);
+// Red: both `if` branches assign, so the trailing write is a second
+// assignment on every path.
+
+// -- §8.3.1.2/[§16]: the *legal* one-time assignments that must not be
+// flagged: a blank final assigned on both branches of an `if`/`else`, and a
+// write after an `if` whose then-arm exits.
+
+snapshot!(
+    blank_final_assigned_on_both_branches,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+        } else {
+            sf = 2;
+        }
+    }
+}
+",
+    )])
+);
+// Green: each path assigns exactly once.
+
+snapshot!(
+    blank_final_after_exiting_if_branch,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+            throw new RuntimeException();
+        }
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Green: the then-arm exits, so only the fall-through path reaches the write.
+
+// -- §8.3.1.2/[§16]: a blank final field written from a *method*, an instance
+// context writing a static final, a static context writing an instance final,
+// a qualified `Type.field`/`Type.this.field` write, and a non-blank final
+// reassignment are all errors — the cannot-assign or non-static errors.
+
+snapshot!(
+    blank_final_after_this_delegation,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final(int x) {
+        f = 1;
+    }
+    Final() {
+        this(1);
+        f = 2;
+    }
+}
+",
+    )])
+);
+// Red: the delegating constructor's write is a second assignment (the
+// delegated constructor already assigned `f`).
+
+snapshot!(
+    blank_final_this_delegation_no_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final(int x) {
+        f = 1;
+    }
+    Final() {
+        this(1);
+    }
+}
+",
+    )])
+);
+// Green: the delegating constructor writes nothing — the delegated
+// constructor's assignment covers it.
+
+snapshot!(
+    blank_static_final_written_from_static_method,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    static void m() {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Red: a method body is never a legal blank-final assignment point.
+
+snapshot!(
+    blank_instance_final_written_from_instance_method,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    void m() {
+        f = 2;
+    }
+}
+",
+    )])
+);
+// Red: the instance method's write is a second assignment.
+
+snapshot!(
+    static_final_written_from_instance_context,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    Final() {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+// Red: a static final written from a constructor (instance context) is
+// cannot-assign.
+
+snapshot!(
+    instance_final_written_from_static_context,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    static {
+        f = 2;
+    }
+}
+",
+    )])
+);
+// Red: an instance final written from a static initializer is both a
+// non-static-from-static-context error and a cannot-assign error.
+
+snapshot!(
+    blank_final_qualified_type_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        Final.sf = 1;
+    }
+}
+",
+    )])
+);
+// Red: the qualified `Final.sf = 1` write is not the bare one-time
+// assignment — reported as cannot-assign.
+
+snapshot!(
+    blank_final_qualified_this_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        Final.this.f = 1;
+    }
+}
+",
+    )])
+);
+// Red: the *qualified* `Final.this.f = 1` write is not the bare
+// `this.f = 1` assignment form.
+
+snapshot!(
+    initialized_final_field_reassignment,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f = 1;
+    static final int sf = 2;
+    void m() {
+        f = 3;
+    }
+    static void sm() {
+        sf = 4;
+    }
+}
+",
+    )])
+);
+// Red: a `final` field with an initializer is never blank, so both methods'
+// writes are cannot-assign.

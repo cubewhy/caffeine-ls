@@ -118,3 +118,52 @@ class Names extends java.util.AbstractList<String> {
 ",
     ),])
 );
+
+// -- §5.1.9: an array of a raw type converts unchecked to a parameterized
+// array — `Frame<BasicValue>[] f = new Frame[7]`.
+
+snapshot!(
+    raw_array_unchecked_conversion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static class Frame<T> {
+    }
+    Frame<String>[] m() {
+        Frame<String>[] f = new Frame[7];
+        return f;
+    }
+}
+",
+    )])
+);
+// Green: `new Frame[7]` is a raw array; it converts unchecked to
+// `Frame<String>[]` ([§5.1.9]).
+
+// -- §5.1.9: a *multi-dimensional* array of a raw type converts unchecked to
+// an array of the parameterized element — `ArrayList[][] → List<String>[][]`
+// is legal, exactly like the 1-D `Frame[] → Frame<String>[]` case.
+
+snapshot!(
+    multi_dim_raw_array_unchecked_conversion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    List<String>[][] foo() {
+        ArrayList[][] arrayListArrayArray = new ArrayList[1][];
+        return arrayListArrayArray;
+    }
+}
+",
+    )])
+);
+// Green: the raw element type of every dimension converts unchecked.
