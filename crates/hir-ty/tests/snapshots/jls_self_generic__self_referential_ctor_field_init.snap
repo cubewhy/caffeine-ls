@@ -1,0 +1,46 @@
+---
+source: crates/hir-ty/tests/jls_self_generic.rs
+expression: out
+---
+FILE /src/com/example/Store.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+abstract class Value<K, T extends Value<K, T>> {
+    private ValueAccessor<K, T> accessor;
+    private final DirectValueAccessor<K, T> directAccessor;
+    private final List<ValueChangeValidator<T, K>> validators;
+
+    abstract class ValueAccessor<K, T> {}
+
+    class DirectValueAccessor<K, T> extends ValueAccessor<K, T> {
+        DirectValueAccessor(Value<K, T> value) {
+            super();
+        }
+    }
+
+    static class ValueChangeValidator<T, K> {}
+
+    public Value(K defaultValue) {
+        this.validators = new ArrayList<ValueChangeValidator<T, K>>();
+        this.directAccessor = new DirectValueAccessor<K, T>(this);
+        this.accessor = this.directAccessor;
+    }
+
+    public void useDirectAccessor() {
+        this.accessor = this.directAccessor;
+    }
+}
+
+method DirectValueAccessor(com.example.Value<K, T>): <init>
+  locals: l0: com.example.Value<K, T>
+  exprs: e0: void
+method Value(K): <init>
+  locals: l1: K
+  exprs: e1: com.example.Value<K, T> | e2: java.util.List<com.example.Value.ValueChangeValidator<T, K>> | e3: java.util.ArrayList<com.example.Value.ValueChangeValidator<T, K>> | e4: java.util.List<com.example.Value.ValueChangeValidator<T, K>> | e5: com.example.Value<K, T> | e6: com.example.Value.DirectValueAccessor<K, T> | e7: com.example.Value<K, T> | e8: com.example.Value.DirectValueAccessor<K, T> | e9: com.example.Value.DirectValueAccessor<K, T> | e10: com.example.Value<K, T> | e11: com.example.Value.ValueAccessor<K, T> | e12: com.example.Value<K, T> | e13: com.example.Value.DirectValueAccessor<K, T> | e14: com.example.Value.ValueAccessor<K, T>
+  diags: e3@21:26: incompatible-types: Incompatible types. Found: 'ArrayList<ValueChangeValidator<T, K>>', required: 'List<ValueChangeValidator<T, K>>'
+method useDirectAccessor(): void
+  locals: 
+  exprs: e15: com.example.Value<K, T> | e16: com.example.Value.ValueAccessor<K, T> | e17: com.example.Value<K, T> | e18: com.example.Value.DirectValueAccessor<K, T> | e19: com.example.Value.ValueAccessor<K, T>

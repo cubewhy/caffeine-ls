@@ -12,5 +12,5 @@ List<String>.subList(int,int): java.util.List.subList(int, int) -> java.util.Lis
 List<String>.subList(String): <none> [args: java.lang.String]
 ArrayList<String>.add(String): java.util.List.add(java.lang.String) -> boolean [args: java.lang.String]
 ArrayList<String>.add(Integer): <none> [args: java.lang.Integer]
-String.toString(): <none> [args: ]
+String.toString(): java.lang.Object.toString() -> java.lang.String [args: ]
 int.parseInt(): <none> [args: ]

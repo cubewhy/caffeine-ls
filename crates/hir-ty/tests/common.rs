@@ -682,7 +682,38 @@ pub fn functional_interface(
 /// The small JDK subset the tests resolve and subtype against.
 pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
     vec![
-        class("java/lang/Object", None, &[]),
+        // §4.3.2/§8.4.4: `java.lang.Object`'s canonical members — an unbounded
+        // type variable's effective upper bound is `Object` ([JLS §4.4]), so
+        // its member set (and the `Object` receiver's own) resolves `equals`,
+        // `hashCode` and `toString` through this class. The methods mirror the
+        // real jimage shapes: `clone` is `protected` and non-final, `finalize`
+        // is `protected`, everything else is `public`.
+        ClassSpec {
+            fqn: "java/lang/Object",
+            super_class: None,
+            interfaces: &[],
+            access: 0x0021,
+            methods: &[
+                ("getClass", "()Ljava/lang/Class;"),
+                ("hashCode", "()I"),
+                ("equals", "(Ljava/lang/Object;)Z"),
+                ("clone", "()Ljava/lang/Object;"),
+                ("toString", "()Ljava/lang/String;"),
+                ("notify", "()V"),
+                ("notifyAll", "()V"),
+                ("wait", "()V"),
+                ("wait", "(J)V"),
+                ("wait", "(JI)V"),
+                ("finalize", "()V"),
+            ],
+            method_sigs: &["", "", "", "", "", "", "", "", "", "", ""],
+            method_access: &[
+                0x0001, 0x0001, 0x0001, 0x0004, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001,
+                0x0004,
+            ],
+            sig: None,
+            fields: &[],
+        },
         // Records have an implicit superclass `java.lang.Record`
         // ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10)),
         // which declares `equals`, `hashCode` and `toString` abstract

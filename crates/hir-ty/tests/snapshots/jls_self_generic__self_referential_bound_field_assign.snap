@@ -1,0 +1,50 @@
+---
+source: crates/hir-ty/tests/jls_self_generic.rs
+expression: out
+---
+FILE /src/com/example/Store.java:
+package com.example;
+
+abstract class Value<K, T extends Value<K, T>> {
+    private ValueAccessor<K, T> accessor;
+    protected ValueAccessor<K, T> selfTyped;
+
+    abstract class ValueAccessor<K, T> {}
+
+    class DirectValueAccessor<K, T> extends ValueAccessor<K, T> {
+        DirectValueAccessor(Value<K, T> value) {
+            super();
+        }
+    }
+
+    public void useDirectAccessor() {
+        this.accessor = this.selfTyped;
+    }
+
+    public boolean isDefault() {
+        K k = getValue();
+        K k2 = getDefaultValue();
+        return k2.equals(k);
+    }
+
+    abstract K getValue();
+    abstract K getDefaultValue();
+
+    public String getDisplayValue() {
+        K k = getValue();
+        return k.toString();
+    }
+}
+
+method DirectValueAccessor(com.example.Value<K, T>): <init>
+  locals: l0: com.example.Value<K, T>
+  exprs: e0: void
+method useDirectAccessor(): void
+  locals: 
+  exprs: e1: com.example.Value<K, T> | e2: com.example.Value.ValueAccessor<K, T> | e3: com.example.Value<K, T> | e4: com.example.Value.ValueAccessor<K, T> | e5: com.example.Value.ValueAccessor<K, T>
+method isDefault(): boolean
+  locals: l1: K | l2: K
+  exprs: e6: K | e7: K | e8: K | e9: K | e10: boolean
+method getDisplayValue(): java.lang.String
+  locals: l3: K
+  exprs: e11: K | e12: K | e13: java.lang.String
