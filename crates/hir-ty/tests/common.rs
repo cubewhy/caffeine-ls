@@ -685,9 +685,21 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         class("java/lang/Object", None, &[]),
         // Records have an implicit superclass `java.lang.Record`
         // ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10)),
-        // whose abstract `equals`/`hashCode`/`toString` the record's implicit
-        // member synthesis ([JLS §8.10.3]) implements; see `jls_records.rs`.
-        class("java/lang/Record", Some("java/lang/Object"), &[]),
+        // which declares `equals`, `hashCode` and `toString` abstract
+        // ([JLS §8.10.3]); the record's implicit member synthesis implements
+        // them. See `jls_records.rs`.
+        class_with_methods_access(
+            "java/lang/Record",
+            Some("java/lang/Object"),
+            &[],
+            &[
+                ("equals", "(Ljava/lang/Object;)Z"),
+                ("hashCode", "()I"),
+                ("toString", "()Ljava/lang/String;"),
+            ],
+            &["", "", ""],
+            &[0x0401, 0x0401, 0x0401], // ACC_PUBLIC | ACC_ABSTRACT
+        ),
         class("java/lang/Class", Some("java/lang/Object"), &[]),
         interface("java/lang/CharSequence"),
         interface_sig(

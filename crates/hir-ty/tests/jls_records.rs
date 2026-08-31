@@ -156,3 +156,58 @@ record Rec(int x) {
 // Red: the compact constructor's `this()` and the explicit `Rec()` `this(1)`
 // close a delegation cycle that never reaches the supertype constructor — the
 // arity-aware resolution still reports it.
+
+// -- §8.10.3: implicit equals/hashCode/toString ---------------------------------
+
+snapshot!(
+    record_implicit_members,
+    check_class_diagnostics(&[(
+        "/src/com/example/Rec.java",
+        "\
+package com.example;
+
+record Rec(int x, String s) {
+    Rec {
+        if (s == null) {
+            s = \"\";
+        }
+    }
+}
+
+record Empty() {}
+",
+    )])
+);
+// Green: `java.lang.Record` declares `equals`/`hashCode`/`toString` abstract
+// and the record implicitly implements them ([§8.10.3]) — no
+// does-not-override-abstract, whether or not a compact constructor is present.
+
+snapshot!(
+    record_explicit_members,
+    check_class_diagnostics(&[(
+        "/src/com/example/Rec.java",
+        "\
+package com.example;
+
+record Rec(int x) {
+    Rec {
+        x = x < 0 ? 0 : x;
+    }
+
+    @Override public boolean equals(Object o) {
+        return o instanceof Rec r && r.x == x;
+    }
+
+    @Override public int hashCode() {
+        return Integer.hashCode(x);
+    }
+
+    @Override public String toString() {
+        return \"Rec(\" + x + \")\";
+    }
+}
+",
+    )])
+);
+// Green: an explicit declaration of a member signature *replaces* the implicit
+// one ([§8.10.3]), so no duplicate is synthesized and `@Override` is accepted.

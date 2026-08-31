@@ -1118,6 +1118,69 @@ fn source_class_methods(
                 type_params: Vec::new(),
             });
         }
+        // §8.10.3: every record implicitly implements `equals`, `hashCode`
+        // and `toString`, whose signatures are those mandated by
+        // `java.lang.Record` — a concrete `equals(Object): boolean`, a
+        // concrete `hashCode(): int` and a concrete `toString(): String`.
+        // An explicit declaration of the signature in the record body
+        // *replaces* the implicit one ([§8.10.3]), so the implicit members
+        // are only added when the record does not declare it itself. Without
+        // them the abstract `equals`/`hashCode`/`toString` of
+        // `java.lang.Record` look unimplemented ([§8.1.1.1]): `Object`'s
+        // concrete members are its *supertypes'* methods, not its subtypes',
+        // so they never count as implementations of the record's abstract
+        // superclass.
+        let string_ty = Ty::reference(db, "java.lang.String", Vec::new());
+        let object_ty = Ty::reference(db, "java.lang.Object", Vec::new());
+        let implicit_record_members: [(&str, Vec<Ty>, Ty); 3] = [
+            (
+                "equals",
+                vec![object_ty.clone()],
+                Ty::primitive(db, syntax::stub::PrimitiveType::Boolean),
+            ),
+            (
+                "hashCode",
+                Vec::new(),
+                Ty::primitive(db, syntax::stub::PrimitiveType::Int),
+            ),
+            ("toString", Vec::new(), string_ty.clone()),
+        ];
+        for (member_name, params, ret) in implicit_record_members {
+            // An empty name is the wildcard of the declaration-level walk
+            // ([§9.8], [`crate::java::decl_check`]); a non-empty lookup name
+            // filters the implicit members like every other member — a
+            // constructor lookup for the record's simple name must not see
+            // `equals(Object)` as a candidate, or `new Rec("s")` would
+            // resolve against it.
+            if !name.is_empty() && member_name != name {
+                continue;
+            }
+            let declared = out.iter().any(|m| {
+                m.name.as_str() == member_name
+                    && m.params.len() == params.len()
+                    && m.params.iter().zip(&params).all(|(x, y)| x == y)
+            });
+            if declared {
+                continue;
+            }
+            out.push(MethodData {
+                name: member_name.to_owned(),
+                owner: fqn.clone(),
+                owner_file: Some(source.file),
+                params,
+                ret,
+                throws: Vec::new(),
+                varargs: false,
+                is_static: false,
+                abstract_: false,
+                is_final: false,
+                access: Access::Public,
+                declaring_package: declaring_package.clone(),
+                declaring_top_level: declaring_top_level.clone(),
+                declaring_interface: false,
+                type_params: Vec::new(),
+            });
+        }
         // §8.10.4: a record has a *canonical constructor* whose parameters
         // mirror the component list — same names, types and order — unless
         // the body declares a constructor with that signature itself (a

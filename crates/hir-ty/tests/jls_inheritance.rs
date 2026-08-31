@@ -317,6 +317,52 @@ class Bad {
 // as unimplemented (javac also reports the `does.not.override.abstract` shape
 // `class Bad does not override abstract method self() in Bad`).
 
+snapshot!(
+    unimplemented_enum_constant_bodies,
+    check_class_diagnostics(&[(
+        "/src/com/example/Abstract.java",
+        "\
+package com.example;
+
+class DiffNode {}
+
+enum TreeSide {
+    OLD {
+        @Override boolean matches(DiffNode node) { return true; }
+    },
+    NEW {
+        @Override boolean matches(DiffNode node) { return false; }
+    };
+    abstract boolean matches(DiffNode node);
+}
+",
+    )])
+);
+// Green: the enum's abstract `matches` is implemented by the bodies of its
+// constants ([§8.9.1]) — each constant body is an anonymous subclass — so the
+// enum itself is not required to declare a concrete method.
+
+snapshot!(
+    unimplemented_enum_abstract,
+    check_class_diagnostics(&[(
+        "/src/com/example/Abstract.java",
+        "\
+package com.example;
+
+class DiffNode {}
+
+enum TreeSide {
+    OLD,
+    NEW;
+    abstract boolean matches(DiffNode node);
+}
+",
+    )])
+);
+// Red: no constant body implements `matches`, so the enum must declare a
+// concrete method itself — javac: `TreeSide is not abstract and does not
+// override abstract method matches(DiffNode) in TreeSide`.
+
 // -- red: cyclic inheritance ([§8.1.4], [§9.1.3]) ----------------------------
 
 snapshot!(

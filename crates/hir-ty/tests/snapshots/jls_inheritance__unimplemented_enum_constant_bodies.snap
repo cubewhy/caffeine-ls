@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Abstract.java:
+package com.example;
+
+class DiffNode {}
+
+enum TreeSide {
+    OLD {
+        @Override boolean matches(DiffNode node) { return true; }
+    },
+    NEW {
+        @Override boolean matches(DiffNode node) { return false; }
+    };
+    abstract boolean matches(DiffNode node);
+}

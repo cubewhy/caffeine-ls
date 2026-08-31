@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_records.rs
+expression: out
+---
+FILE /src/com/example/Rec.java:
+package com.example;
+
+record Rec(int x) {
+    Rec {
+        x = x < 0 ? 0 : x;
+    }
+
+    @Override public boolean equals(Object o) {
+        return o instanceof Rec r && r.x == x;
+    }
+
+    @Override public int hashCode() {
+        return Integer.hashCode(x);
+    }
+
+    @Override public String toString() {
+        return "Rec(" + x + ")";
+    }
+}

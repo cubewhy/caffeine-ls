@@ -1183,6 +1183,12 @@ fn check_class(
     if !declaring_interface_item(tree, item)
         && !class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_abstract())
     {
+        // §8.9.1: an enum's abstract methods are implemented by the bodies of
+        // its constants — each constant body is the class body of an anonymous
+        // subclass, so a constant carrying a matching method discharges the
+        // enum's own obligation. javac reports the does-not-override-abstract
+        // error on the enum only when *no* constant body implements the method.
+        let is_enum = matches!(tree.data(item), ItemData::Enum(_));
         // The most-derived declaration of each overriding signature: the raw
         // member walk is derived-first, so the first occurrence of a
         // signature is its effective member. An abstract member whose
@@ -1204,7 +1210,8 @@ fn check_class(
                                 &Ty::reference(db, candidate.owner.as_str(), Vec::new()),
                                 &Ty::reference(db, abstract_method.owner.as_str(), Vec::new()),
                             ))
-                });
+                }) || (is_enum
+                    && enum_constant_body_implements(db, file, tree, item, abstract_method));
                 if !implemented {
                     out.push(DeclDiagnostic::UnimplementedAbstractMethod {
                         class: class_like_simple_name(tree.data(item)),
@@ -1625,6 +1632,86 @@ fn has_no_accessible_no_arg_ctor(
         .iter()
         .any(|method| method.params.is_empty());
     Some(!has_no_arg)
+}
+
+/// §8.9.1: whether the abstract method `method` of the enum `item` is
+/// implemented by the body of any of its constants. Each enum constant with a
+/// body is an anonymous subclass of the enum type
+/// ([§8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)),
+/// and it is there — not in the enum's own member list — that the abstract
+/// methods of the enum are overridden. A constant body declaring a method of
+/// the same name and arity discharges the enum's obligation; javac reports
+/// the does-not-override-abstract error on the enum only when no constant
+/// body implements the method. The constant bodies are not lowered into the
+/// item tree (their methods live in the anonymous subclass), so the match is
+/// read from the file's class bodies by name and formal-parameter count — a
+/// deliberately conservative test: it cannot fabricate an implementation, and
+/// a same-name same-arity method of a different parameter type is a
+/// per-constant error javac reports separately.
+fn enum_constant_body_implements(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: hir_def::java::item_tree::ItemId,
+    method: &MethodData,
+) -> bool {
+    use syntax::java::{SourceFile as JavaSourceFile, SyntaxKind as J};
+    let hir_def::java::item_tree::ItemData::Enum(data) = tree.data(item) else {
+        return false;
+    };
+    let text = db.file_text(file).text(db);
+    for &constant in &data.body {
+        let hir_def::java::item_tree::ItemData::EnumConstant(constant) = tree.data(constant) else {
+            continue;
+        };
+        let Some(class_body) = constant.class_body else {
+            continue;
+        };
+        // Re-parse the constant's class body as an anonymous class of the
+        // enum, and look for a method declaration matching by name and arity.
+        let body_text: String = text[class_body].to_string();
+        let wrapped = format!("class __EnumConstant__ {body_text}");
+        let parse = JavaSourceFile::parse(&wrapped);
+        let root = parse.syntax_node();
+        let mut found = false;
+        for node in root.descendants() {
+            if node.kind() != J::METHOD_DECL {
+                continue;
+            }
+            let name = node
+                .children_with_tokens()
+                .find_map(|element| match element {
+                    rowan::NodeOrToken::Token(token) if token.kind() == J::IDENTIFIER => {
+                        Some(token.text().to_owned())
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if name != method.name {
+                continue;
+            }
+            let arity = node
+                .children()
+                .find(|child| child.kind() == J::FORMAL_PARAMETERS)
+                .map(|params| {
+                    params
+                        .children()
+                        .filter(|child| {
+                            matches!(child.kind(), J::FORMAL_PARAMETER | J::SPREAD_PARAMETER)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            if arity == method.params.len() {
+                found = true;
+                break;
+            }
+        }
+        if found {
+            return true;
+        }
+    }
+    false
 }
 
 /// §8.8.7.1: a constructor delegation (`this(...)`) cycle among the class's
