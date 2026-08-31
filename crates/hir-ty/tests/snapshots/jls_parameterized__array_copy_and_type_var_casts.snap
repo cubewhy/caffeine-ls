@@ -37,9 +37,3 @@ class Value<R, T> {
         return null;
     }
 }
-
-method isDefault(): boolean
-  @16:44..16:56 'defaultValue': bad-cast: Inconvertible types; cannot cast 'R' to 'Object[]'
-  @16:69..16:95 'this.source.currentValue()': bad-cast: Inconvertible types; cannot cast 'R' to 'Object[]'
-  @19:44..19:56 'defaultValue': bad-cast: Inconvertible types; cannot cast 'R' to 'double[]'
-  @19:69..19:95 'this.source.currentValue()': bad-cast: Inconvertible types; cannot cast 'R' to 'double[]'

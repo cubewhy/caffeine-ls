@@ -246,6 +246,14 @@ impl InferCtx<'_> {
                 name.as_str(),
                 "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
             ),
+            // §5.5.1: a cast *from* a type variable — `R`, `R[]`, or a
+            // parameterized `R` — is always a legal compile-time cast: the
+            // runtime check compares the operand's runtime class against the
+            // *erasure* of the target ([§4.6]), so it can never be rejected
+            // statically. Only the target's erasure decides. (The `(R) o`
+            // casts of a generic snapshot holder, where `R` is a fresh type
+            // parameter of the enclosing method, rely on this.)
+            (TyKind::TypeVar { .. }, TyKind::Array(_)) => true,
             (TyKind::TypeVar { .. }, TyKind::Reference { .. }) => true,
             (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
                 self.reference_castable(from, to)
