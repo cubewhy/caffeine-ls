@@ -31,6 +31,7 @@ pub struct LspHarness {
     client_connection: Connection,
     next_id: AtomicI32,
     pub workspace_root: TempDir,
+    cache_dir: TempDir,
     config: serde_json::Value,
     client_capabilities: ClientCapabilities,
     notification_sender: crossbeam_channel::Sender<Notification>,
@@ -59,6 +60,7 @@ impl LspHarness {
         S: FnOnce(&std::path::Path),
     {
         let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
+        let cache_dir = tempfile::tempdir().expect("Failed to create temporary cache dir");
 
         setup(workspace_root.path());
 
@@ -77,6 +79,7 @@ impl LspHarness {
             client_connection,
             next_id: AtomicI32::new(1),
             workspace_root,
+            cache_dir,
             config,
             client_capabilities: ClientCapabilities {
                 ..Default::default()
@@ -138,6 +141,7 @@ impl LspHarness {
         S: FnOnce(&std::path::Path),
     {
         let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
+        let cache_dir = tempfile::tempdir().expect("Failed to create temporary cache dir");
 
         setup(workspace_root.path());
 
@@ -156,6 +160,7 @@ impl LspHarness {
             client_connection,
             next_id: AtomicI32::new(1),
             workspace_root,
+            cache_dir,
             config,
             client_capabilities: ClientCapabilities {
                 window: Some(lsp_types::WindowClientCapabilities {
@@ -214,10 +219,30 @@ impl LspHarness {
         let root_uri = Uri::from_file_path(self.workspace_root.path())
             .expect("Failed to convert workspace path to URI");
 
+        let cache_dir = self
+            .cache_dir
+            .path()
+            .to_str()
+            .expect("cache dir path is not valid UTF-8")
+            .to_owned();
+
+        let mut config = self.config.clone();
+        let cache_dir_value = serde_json::Value::String(cache_dir);
+        match &mut config {
+            serde_json::Value::Object(obj) => {
+                obj.insert("cache_dir".to_owned(), cache_dir_value);
+            }
+            _ => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("cache_dir".to_owned(), cache_dir_value);
+                config = serde_json::Value::Object(obj);
+            }
+        }
+
         #[allow(deprecated)]
         let init_params = InitializeParams {
             root_uri: Some(root_uri.clone()),
-            initialization_options: Some(self.config.clone()),
+            initialization_options: Some(config),
             capabilities: self.client_capabilities.clone(),
             workspace_folders_initialize_params: WorkspaceFoldersInitializeParams::new(Some(
                 vec![WorkspaceFolder {
