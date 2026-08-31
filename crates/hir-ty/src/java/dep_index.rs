@@ -455,7 +455,7 @@ fn walk_expr_members(bodies: &BodyTree, id: ExprId, out: &mut FxHashSet<Name>) {
         Paren(expr) => walk_expr_members(bodies, *expr, out),
         Missing => {}
         Lambda { params, body } => {
-            for (_, ty) in params {
+            for (_, ty, _) in params {
                 let _ = ty; // parameter types are collected by the type-ref walk
             }
             match body {

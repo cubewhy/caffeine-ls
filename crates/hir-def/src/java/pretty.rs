@@ -834,7 +834,7 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             "{id}: lambda ({}) -> {}",
             params
                 .iter()
-                .map(|(name, ty)| ty
+                .map(|(name, ty, _)| ty
                     .as_ref()
                     .map(|t| format!("{} {}", render_type(t), name))
                     .unwrap_or_else(|| name.to_string()))

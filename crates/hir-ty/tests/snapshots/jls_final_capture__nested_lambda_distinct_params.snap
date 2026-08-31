@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Shadow.java:
+package com.example;
+
+import java.util.function.Consumer;
+
+class Shadow {
+    void h(Consumer<String> c) {}
+    void sink(String s) {}
+
+    void m() {
+        h(i -> h(j -> {
+            sink(i + j);
+        }));
+    }
+}

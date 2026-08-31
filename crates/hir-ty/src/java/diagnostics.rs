@@ -280,6 +280,18 @@ pub enum TypeError {
     /// shadow an enclosing local. javac: `{x} is already defined in {y}`.
     /// `local` is the later binding and `name` the duplicated name.
     VariableAlreadyDefined { local: LocalId, name: Name },
+    /// §6.4: a lambda parameter ([§15.27.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.1))
+    /// re-declares a name already in scope — an enclosing lambda parameter, or
+    /// a local variable, formal parameter, exception parameter, loop or
+    /// resource variable of the enclosing body ([§6.4]). javac:
+    /// `{x} is already defined in {y}`, anchored at the parameter name.
+    /// `lambda` is the lambda expression, `name` the duplicated parameter name
+    /// and `range` the parameter's name range.
+    LambdaParameterAlreadyDefined {
+        lambda: ExprId,
+        name: Name,
+        range: TextRange,
+    },
     /// §4.5.1: a type argument of a parameterized type is not within the
     /// bounds of the type parameter it fills — `class M<T extends Number>`
     /// used as `M<String>`. javac: `type argument {a} is not within bounds of
@@ -416,6 +428,9 @@ impl TypeError {
                 DiagnosticCode::Java(VariableMustBeEffectivelyFinal)
             }
             TypeError::VariableAlreadyDefined { .. } => DiagnosticCode::Java(DuplicateDeclaration),
+            TypeError::LambdaParameterAlreadyDefined { .. } => {
+                DiagnosticCode::Java(DuplicateDeclaration)
+            }
             TypeError::TypeArgumentOutOfBounds { .. } => {
                 DiagnosticCode::Java(TypeArgumentOutOfBounds)
             }
@@ -498,6 +513,7 @@ impl TypeError {
             | CannotAssignToFinalVariable { expr, .. }
             | VariableMustBeEffectivelyFinal { expr, .. } => DiagLocation::Expr(*expr),
             VariableAlreadyDefined { local, .. } => DiagLocation::Local(*local),
+            LambdaParameterAlreadyDefined { lambda, .. } => DiagLocation::Expr(*lambda),
             CannotInstantiateWildcard { expr, .. } => DiagLocation::Expr(*expr),
             IllegalGenericInstanceOf { expr, .. } => DiagLocation::Expr(*expr),
             CannotResolveType { location, .. }
@@ -519,6 +535,8 @@ impl TypeError {
             | TypeError::ModuleNotAccessible { range, .. }
             | TypeError::TypeArgumentOutOfBounds { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
+            // The lambda parameter's name range, recorded at lowering time.
+            TypeError::LambdaParameterAlreadyDefined { range, .. } => Some(*range),
             // §15.12.2: a wrong-argument diagnostic points at a *single*
             // offending argument (IntelliJ-style), never a merged span — the
             // first incompatible argument when the arities match ([§5.3]
@@ -802,6 +820,12 @@ impl TypeError {
                 name.as_str()
             ),
             VariableAlreadyDefined { name, .. } => {
+                format!(
+                    "Variable '{}' is already defined in the scope",
+                    name.as_str()
+                )
+            }
+            LambdaParameterAlreadyDefined { name, .. } => {
                 format!(
                     "Variable '{}' is already defined in the scope",
                     name.as_str()

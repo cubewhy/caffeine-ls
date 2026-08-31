@@ -1584,26 +1584,36 @@ fn anonymous_members(class_body: &SyntaxNode<Lang>) -> Vec<AnonymousMethod> {
 
 fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     use J::*;
-    let mut params: Vec<(Name, Option<SpannedTypeRef>)> = Vec::new();
+    let mut params: Vec<(Name, Option<SpannedTypeRef>, TextRange)> = Vec::new();
     // A single-parameter lambda `x -> body` lowers the parameter as a bare
     // identifier token ([JLS §15.27.1]); the other forms are parenthesized
     // node children (`FORMAL_PARAMETERS` for typed parameters,
     // `INFERRED_PARAMETERS` for `(a, b)`, each parameter nested one level
-    // deep).
-    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<SpannedTypeRef>) {
+    // deep). Each parameter carries its name's range so a duplicate-
+    // declaration diagnostic can underline it exactly like javac ([JLS §6.4]).
+    fn name_range(c: &SyntaxNode<Lang>) -> TextRange {
+        first_identifier_token(c)
+            .map(|token| token.text_range())
+            .unwrap_or_else(|| c.text_range())
+    }
+    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<SpannedTypeRef>, TextRange) {
         let name = first_identifier(c).unwrap_or_else(missing_name);
+        let range = name_range(c);
         let ty = c
             .children()
             .find(|t| t.kind() == TYPE)
             .map(|t| type_from(&t));
-        (name, ty)
+        (name, ty, range)
     }
-    fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<(Name, Option<SpannedTypeRef>)>) {
+    fn inferred_params(
+        c: &SyntaxNode<Lang>,
+        out: &mut Vec<(Name, Option<SpannedTypeRef>, TextRange)>,
+    ) {
         for t in c.children_with_tokens() {
             match t {
                 rowan::NodeOrToken::Token(token) => {
                     if token_is(&token, J::IDENTIFIER) || token_is(&token, J::UNDERSCORE) {
-                        out.push((Name::new(token.text()), None));
+                        out.push((Name::new(token.text()), None, token.text_range()));
                     }
                 }
                 rowan::NodeOrToken::Node(node) => inferred_params(&node, out),
@@ -1614,7 +1624,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
         match c {
             rowan::NodeOrToken::Token(token) => {
                 if token.kind() == IDENTIFIER || token.kind() == UNDERSCORE {
-                    params.push((Name::new(token.text()), None));
+                    params.push((Name::new(token.text()), None, token.text_range()));
                 }
             }
             rowan::NodeOrToken::Node(c) => match c.kind() {
@@ -1740,10 +1750,14 @@ fn first_stmt_or_block(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang
 }
 
 fn first_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
+    first_identifier_token(node).map(|t| Name::new(t.text()))
+}
+
+/// The first IDENTIFIER token of the node, in source order.
+fn first_identifier_token(node: &SyntaxNode<Lang>) -> Option<SyntaxToken<Lang>> {
     node.children_with_tokens()
         .filter_map(|e| e.as_token().cloned())
         .find(|t| token_is(t, J::IDENTIFIER))
-        .map(|t| Name::new(t.text()))
 }
 
 fn identifier_of(node: &SyntaxNode<Lang>) -> Option<Name> {

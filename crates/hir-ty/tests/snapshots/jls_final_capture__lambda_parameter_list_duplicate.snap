@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Shadow.java:
+package com.example;
+
+import java.util.function.BiConsumer;
+
+class Shadow {
+    void h(BiConsumer<String, String> c) {}
+
+    void m() {
+        h((x, x) -> {});
+    }
+}
+
+method m(): void
+  @8:14..8:15 'x': duplicate-declaration: Variable 'x' is already defined in the scope

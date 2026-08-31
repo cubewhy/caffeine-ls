@@ -509,8 +509,10 @@ pub enum ExprData {
         els: ExprId,
     },
     /// A lambda expression ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)).
+    /// Each parameter carries its name's source range ([JLS §6.4] anchors the
+    /// "already defined" diagnostic at the parameter name).
     Lambda {
-        params: Vec<(Name, Option<SpannedTypeRef>)>,
+        params: Vec<(Name, Option<SpannedTypeRef>, TextRange)>,
         body: LambdaBody,
     },
     /// A method reference `Type::name` / `expr::name` / `Type::new`

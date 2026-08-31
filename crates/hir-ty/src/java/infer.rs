@@ -1696,6 +1696,16 @@ impl<'a> InferCtx<'a> {
     /// A bare name: a local variable or parameter, or — when no local — a
     /// field of the implicit receiver ([§15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)).
     fn var(&mut self, expr: ExprId, name: Name) -> Ty {
+        // §6.3/[§15.27.2]: a lambda parameter is in scope throughout the
+        // lambda body, shadowing every enclosing local and parameter (and the
+        // enclosing class's fields, [§6.5.6.1]). It is checked ahead of the
+        // enclosing locals so a bare name in a lambda body binds to its own
+        // parameter, not to a same-named outer local ([§6.4]).
+        for scope in self.lambda_params.iter().rev() {
+            if let Some(ty) = scope.get(&name) {
+                return *ty;
+            }
+        }
         if let Some(local) = self.lookup_local(&name) {
             // §8.3.1.2/[§16]: writing a `final` local that is not *blank*
             // (a parameter, a catch/foreach/resource variable, or one with an
@@ -1727,12 +1737,6 @@ impl<'a> InferCtx<'a> {
                 .get(&local)
                 .copied()
                 .unwrap_or_else(|| self.error());
-        }
-        // A lambda parameter shadows the enclosing class's fields ([§6.3]).
-        for scope in self.lambda_params.iter().rev() {
-            if let Some(ty) = scope.get(&name) {
-                return *ty;
-            }
         }
         // §7.5.4: a simple name may name a statically imported member — a
         // static field read through its declaring type.
@@ -3301,7 +3305,8 @@ impl<'a> InferCtx<'a> {
                     let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
                         return true;
                     };
-                    let Some(body_ty) = self.infer_lambda_body_result(&params, body, &sam) else {
+                    let Some(body_ty) = self.infer_lambda_body_result(*id, &params, body, &sam)
+                    else {
                         return true;
                     };
                     // An error-typed body (a speculative probe whose
@@ -3330,8 +3335,8 @@ impl<'a> InferCtx<'a> {
                     // declared type must conform to, exactly as for the return
                     // side above.
                     if sam.params.len() == params.len() {
-                        for (declared, formal_param) in params.iter().zip(&sam.params) {
-                            let Some(tyref) = &declared.1 else {
+                        for ((_, declared, _), formal_param) in params.iter().zip(&sam.params) {
+                            let Some(tyref) = declared else {
                                 continue;
                             };
                             let declared_ty =
@@ -3496,12 +3501,13 @@ impl<'a> InferCtx<'a> {
     /// resolved formal overwrites them.
     fn infer_lambda_body_result(
         &mut self,
-        params: &[(Name, Option<SpannedTypeRef>)],
+        expr: ExprId,
+        params: &[(Name, Option<SpannedTypeRef>, TextRange)],
         body: LambdaBody,
         sam: &MethodData,
     ) -> Option<Ty> {
         self.lambda_params.push(FxHashMap::default());
-        for ((name, declared), formal) in params.iter().zip(&sam.params) {
+        for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
             let ty = match declared {
                 Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
                 None => match formal.kind(self.db) {
@@ -3519,6 +3525,7 @@ impl<'a> InferCtx<'a> {
                     _ => *formal,
                 },
             };
+            self.check_lambda_param_duplicate(expr, name, *range);
             self.lambda_params
                 .last_mut()
                 .expect("lambda param scope pushed")
@@ -4202,7 +4209,7 @@ impl<'a> InferCtx<'a> {
     fn lambda_type(
         &mut self,
         expr: ExprId,
-        params: &[(Name, Option<SpannedTypeRef>)],
+        params: &[(Name, Option<SpannedTypeRef>, TextRange)],
         body: LambdaBody,
     ) -> Ty {
         let Some(target) = self.target else {
@@ -4223,7 +4230,7 @@ impl<'a> InferCtx<'a> {
             return self.error();
         }
         self.lambda_params.push(FxHashMap::default());
-        for ((name, declared), formal) in params.iter().zip(&sam.params) {
+        for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
             let ty = match declared {
                 Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
                 // An inferred parameter takes the SAM formal's type
@@ -4240,6 +4247,7 @@ impl<'a> InferCtx<'a> {
                     }
                 }
             };
+            self.check_lambda_param_duplicate(expr, name, *range);
             self.lambda_params
                 .last_mut()
                 .expect("lambda param scope pushed")
@@ -5085,7 +5093,13 @@ impl<'a> InferCtx<'a> {
         // resource variable may not duplicate a name already declared as a
         // local in the same or an *enclosing* scope — local variables do not
         // shadow each other ([§6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4)).
-        let duplicate = self.lookup_local(&name).is_some();
+        // A local declared inside a lambda body likewise may not shadow an
+        // enclosing lambda parameter ([§15.27.2], [§6.4]).
+        let duplicate = self.lookup_local(&name).is_some()
+            || self
+                .lambda_params
+                .iter()
+                .any(|scope| scope.contains_key(&name));
         self.locals.insert(id, ty);
         // Every binding form except a bare declarator initializes its local
         // (parameters, initializers, catch/foreach/resource variables,
@@ -5108,6 +5122,34 @@ impl<'a> InferCtx<'a> {
             }
         }
         None
+    }
+
+    /// §6.4: a lambda parameter may not duplicate a name already declared in
+    /// an enclosing scope — an enclosing lambda parameter or a local variable,
+    /// parameter, catch/foreach/resource variable of the enclosing body.
+    /// (Lambda parameters *do* shadow enclosing locals; the duplicate is only
+    /// an error when the enclosing declaration is in scope at the lambda —
+    /// a local declared textually after the lambda is not.) Reported at the
+    /// parameter's own name range, matching javac.
+    fn check_lambda_param_duplicate(&mut self, expr: ExprId, name: &Name, range: TextRange) {
+        // §15.27.1: the lambda's own parameter list may not repeat a name —
+        // `(x, x) -> ...` is a compile-time error. The innermost (just-pushed)
+        // frame already holds the earlier parameters, so `.iter().rev()`
+        // finds a same-list duplicate first, then an enclosing lambda's
+        // parameter ([§6.4] innermost-out).
+        let duplicate = self
+            .lambda_params
+            .iter()
+            .rev()
+            .any(|scope| scope.contains_key(name))
+            || self.lookup_local(name).is_some();
+        if duplicate {
+            self.report(TypeError::LambdaParameterAlreadyDefined {
+                lambda: expr,
+                name: name.clone(),
+                range,
+            });
+        }
     }
 
     // -- patterns ([JLS §14.30]) ---------------------------------------------
@@ -6650,7 +6692,14 @@ fn effective_final_scan(
                         && resolve(&self.scopes, &name).is_some_and(|frame| {
                             self.lambda_entries
                                 .last()
-                                .is_some_and(|&entry| frame < entry)
+                                // §15.27.2/[§6.3]: the lambda's own parameter
+                                // frame is the last pushed before the entry
+                                // marker — index `entry - 1`. A reference that
+                                // resolves to it (or deeper, to a local of the
+                                // lambda body) is *not* a capture of an
+                                // enclosing variable; only a frame strictly
+                                // before it is.
+                                .is_some_and(|&entry| frame + 1 < entry)
                         })
                     {
                         self.captures.push((name, expr));
@@ -6752,7 +6801,7 @@ fn effective_final_scan(
                 }
                 ExprData::Lambda { params, body } => {
                     self.scopes.push(FxHashSet::default());
-                    for (name, _) in &params {
+                    for (name, _, _) in &params {
                         self.scopes.last_mut().expect("scope").insert(name.clone());
                     }
                     self.lambda_entries.push(self.scopes.len());

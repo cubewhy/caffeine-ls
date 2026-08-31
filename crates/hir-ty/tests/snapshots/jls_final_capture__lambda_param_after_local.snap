@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Shadow.java:
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m() {
+        go(i -> i == "");
+        String i = "outer";
+    }
+}

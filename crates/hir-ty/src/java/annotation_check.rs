@@ -612,7 +612,7 @@ fn check_expr_type_use(
             }
         }
         E::Lambda { params, body } => {
-            for (_, declared) in params {
+            for (_, declared, _) in params {
                 if let Some(ty) = declared {
                     check_type_use(db, resolver, scope, element_type, &ty, out);
                 }

@@ -235,3 +235,209 @@ class Dup {
 );
 // Red: `q` is declared twice in one method scope, and the nested block's `r`
 // shadows the enclosing method's `r` — both already defined (§6.4).
+
+// -- §6.4: lambda parameters may not shadow an enclosing declaration ---------
+// A lambda parameter ([§15.27.1]) is in scope throughout its body ([§6.3])
+// and may not re-declare a name already in scope: an enclosing lambda
+// parameter, or a local/parameter of the enclosing body ([§6.4]). A local
+// declared textually *after* the lambda is not in scope at it, so the
+// shadowing is legal there.
+
+snapshot!(
+    lambda_param_shadows_local,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m() {
+        String i = \"\";
+        go(i -> i == \"\");
+
+        String a;
+        go(a -> a == \"\");
+
+        go(x -> x == \"\");
+    }
+}
+",
+    )])
+);
+// Red: the lambda parameter `i` re-declares the enclosing local `i` — reported
+// at the parameter name, matching javac; the body reference `i` binds to the
+// parameter ([§6.3]), so no effectively-final or not-initialized error is
+// reported for the enclosing locals. `a` (declared without an initializer) is
+// likewise shadowed — javac reports `already defined`, not `not initialized`.
+// Green: `x` clashes with nothing, and the reference binds to the parameter.
+
+snapshot!(
+    lambda_param_shadows_method_param,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m(String i) {
+        go(i -> i == \"\");
+    }
+}
+",
+    )])
+);
+// Red: a lambda parameter may not shadow a formal parameter of the enclosing
+// method (§6.4).
+
+snapshot!(
+    lambda_param_after_local,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m() {
+        go(i -> i == \"\");
+        String i = \"outer\";
+    }
+}
+",
+    )])
+);
+// Green: the local `i` is declared after the lambda, so it is not in scope at
+// the lambda — the parameter does not shadow anything (§6.4).
+
+snapshot!(
+    lambda_param_sibling_block_local,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m() {
+        {
+            String i = \"outer\";
+        }
+        go(i -> i == \"\");
+    }
+}
+",
+    )])
+);
+// Green: the local `i` is declared in a sibling block that has ended, so it is
+// not in scope at the lambda (§6.3) — the parameter does not shadow anything.
+
+snapshot!(
+    lambda_parameter_list_duplicate,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.BiConsumer;
+
+class Shadow {
+    void h(BiConsumer<String, String> c) {}
+
+    void m() {
+        h((x, x) -> {});
+    }
+}
+",
+    )])
+);
+// Red: a lambda parameter list may not repeat a name — the second `x` is
+// already defined ([§15.27.1], §6.4).
+
+snapshot!(
+    lambda_body_local_shadows_param,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Consumer;
+
+class Shadow {
+    void h(Consumer<String> c) {}
+
+    void m() {
+        h(i -> {
+            String i = \"inner\";
+        });
+    }
+}
+",
+    )])
+);
+// Red: a local declared inside a lambda body may not shadow the lambda's own
+// parameter (§6.4).
+
+snapshot!(
+    nested_lambda_param_shadows_outer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Consumer;
+
+class Shadow {
+    void h(Consumer<String> c) {}
+    void sink(String s) {}
+
+    void m() {
+        h(i -> h(i -> {
+            sink(i);
+        }));
+    }
+}
+",
+    )])
+);
+// Red: a nested lambda's parameter may not shadow an enclosing lambda's
+// parameter (§6.4).
+
+snapshot!(
+    nested_lambda_distinct_params,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Shadow.java",
+        "\
+package com.example;
+
+import java.util.function.Consumer;
+
+class Shadow {
+    void h(Consumer<String> c) {}
+    void sink(String s) {}
+
+    void m() {
+        h(i -> h(j -> {
+            sink(i + j);
+        }));
+    }
+}
+",
+    )])
+);
+// Green: nested lambda parameters with distinct names, the inner referencing
+// both its own and the outer's parameter — no capture, no duplicate (§6.3,
+// §6.4).

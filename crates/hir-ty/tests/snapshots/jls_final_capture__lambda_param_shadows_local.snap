@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Shadow.java:
+package com.example;
+
+import java.util.function.Predicate;
+
+class Shadow {
+    void go(Predicate<String> p) {}
+
+    void m() {
+        String i = "";
+        go(i -> i == "");
+
+        String a;
+        go(a -> a == "");
+
+        go(x -> x == "");
+    }
+}
+
+method m(): void
+  @9:11..9:12 'i': duplicate-declaration: Variable 'i' is already defined in the scope
+  @12:11..12:12 'a': duplicate-declaration: Variable 'a' is already defined in the scope
