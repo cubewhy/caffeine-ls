@@ -210,7 +210,7 @@ impl GlobalState {
         };
 
         let analysis_host = AnalysisHost::new();
-        if enable_persistent_stub_cache(analysis_host.raw_database()) {
+        if enable_persistent_stub_cache(analysis_host.raw_database(), &config.get_cache_dir()) {
             tracing::debug!("persistent stub cache enabled");
         }
 

@@ -10,6 +10,8 @@
 //! resolve queries ([`fqn_resolve`]) search exactly those libraries, in
 //! classpath order.
 
+use std::path::Path;
+
 use triomphe::Arc;
 
 use base_db::{
@@ -306,18 +308,15 @@ pub fn warmup_library(db: &dyn HirDatabase, id: LibraryId) {
 }
 
 /// Enables the persistent LMDB stub cache for this session, pointing it at
-/// the platform default cache directory. Idempotent; later calls after the
-/// first use have no effect. Also cleans up leftover pre-LMDB v1 cache
+/// `cache_dir/stubs/v{CACHE_FORMAT_VERSION}`. Idempotent; later calls after
+/// the first use have no effect. Also cleans up leftover pre-LMDB v1 cache
 /// files. Returns whether persistent caching could be enabled.
-pub fn enable_persistent_stub_cache(db: &dyn HirDatabase) -> bool {
-    match lmdb_store::cache_dir() {
-        Some(dir) => {
-            db.hir_state().stub_store.open_at(dir.clone());
-            lmdb_store::remove_legacy_v1_files(&dir);
-            true
-        }
-        None => false,
-    }
+pub fn enable_persistent_stub_cache(db: &dyn HirDatabase, cache_dir: &Path) -> bool {
+    let dir = cache_dir
+        .join("stubs")
+        .join(format!("v{}", lmdb_store::CACHE_FORMAT_VERSION));
+    db.hir_state().stub_store.open_at(dir.clone());
+    true
 }
 
 /// Prunes stub-cache entries of unregistered libraries that have gone stale,

@@ -1,7 +1,7 @@
 //! Persistent LMDB-backed cache for library stubs.
 //!
-//! A single LMDB environment (opened at
-//! `$XDG_CACHE_HOME/caffeine-ls/stubs/vN`) holds every library. The unnamed
+//! A single LMDB environment (opened at `<config cache dir>/stubs/vN`, see
+//! [`crate::db::enable_persistent_stub_cache`]) holds every library. The unnamed
 //! database uses fixed 13-byte big-endian composite keys so that all entries
 //! of one library form a contiguous, prefix-deletable range:
 //!
@@ -114,10 +114,10 @@ struct StoreInner {
 /// Handle to the persistent stub cache.
 ///
 /// The store starts disabled and must be pointed at a directory once via
-/// [`StubStore::open_at`] (or [`StubStore::open_default_cache_dir`]); the
-/// environment is created lazily on first use, so constructing or cloning a
-/// store never touches the filesystem until then. Every method degrades
-/// gracefully to a no-op when the store is disabled or failed to open.
+/// [`StubStore::open_at`]; the environment is created lazily on first use,
+/// so constructing or cloning a store never touches the filesystem until
+/// then. Every method degrades gracefully to a no-op when the store is
+/// disabled or failed to open.
 ///
 /// Cheap to clone: all clones share one environment.
 #[derive(Clone, Default)]
@@ -152,18 +152,6 @@ impl StubStore {
             return;
         }
         *self.shared.dir.lock() = Some(dir);
-    }
-
-    /// Points the store at the platform default cache directory. Returns
-    /// whether such a directory could be determined.
-    pub fn open_default_cache_dir(&self) -> bool {
-        match cache_dir() {
-            Some(dir) => {
-                self.open_at(dir);
-                true
-            }
-            None => false,
-        }
     }
 
     /// Whether persistence is available (used by tests).
@@ -411,49 +399,6 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or_default()
-}
-
-/// Platform-specific cache directory for library stubs
-/// (`$XDG_CACHE_HOME/caffeine-ls/stubs/vN`, falling back to `~/.cache` or
-/// `%LOCALAPPDATA%`).
-pub fn cache_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))?;
-    Some(
-        base.join("caffeine-ls")
-            .join("stubs")
-            .join(format!("v{CACHE_FORMAT_VERSION}")),
-    )
-}
-
-/// Removes leftover `{id}.names` / `{id}.stubs` files of the pre-LMDB v1
-/// cache layout. Best-effort; called once when the persistent store opens.
-pub fn remove_legacy_v1_files(cache_dir: &Path) {
-    let Some(parent) = cache_dir.parent() else {
-        return;
-    };
-    let legacy = parent.join(format!("v{}", CACHE_FORMAT_VERSION - 1));
-    let Ok(entries) = std::fs::read_dir(&legacy) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let stem = name
-            .strip_suffix(".names")
-            .or_else(|| name.strip_suffix(".stubs"));
-        let is_legacy_entry = stem
-            .is_some_and(|stem| stem.len() == 16 && stem.chars().all(|c| c.is_ascii_hexdigit()));
-        if is_legacy_entry && std::fs::remove_file(&path).is_ok() {
-            tracing::debug!(file = %path.display(), "removed legacy v1 stub cache file");
-        }
-    }
-    // Remove the emptied directory too (fails silently when non-empty).
-    let _ = std::fs::remove_dir(&legacy);
 }
 
 #[cfg(test)]
