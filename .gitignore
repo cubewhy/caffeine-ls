@@ -1,4 +1,5 @@
 /target
+/stubs
 dist/
 node_modules
 /.direnv

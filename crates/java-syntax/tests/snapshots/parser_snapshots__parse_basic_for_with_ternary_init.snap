@@ -1,0 +1,187 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        for (Object cursor = head == null ? null : head.getNext();
+             cursor != null; cursor = cursor.getNext()) {
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Object"
+WHITESPACE " "
+IDENTIFIER "cursor"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "head"
+WHITESPACE " "
+EQUAL_EQUAL "=="
+WHITESPACE " "
+NULL_LITERAL "null"
+WHITESPACE " "
+QUESTION "?"
+WHITESPACE " "
+NULL_LITERAL "null"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "head"
+DOT "."
+IDENTIFIER "getNext"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n             "
+IDENTIFIER "cursor"
+WHITESPACE " "
+NOT_EQUAL "!="
+WHITESPACE " "
+NULL_LITERAL "null"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "cursor"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "cursor"
+DOT "."
+IDENTIFIER "getNext"
+L_PAREN "("
+R_PAREN ")"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..174
+  CLASS_DECL@0..173
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..173
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..171
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        WHITESPACE@28..29 " "
+        BLOCK@29..171
+          L_BRACE@29..30 "{"
+          WHITESPACE@30..39 "\n        "
+          FOR_STMT@39..165
+            FOR_KW@39..42 "for"
+            WHITESPACE@42..43 " "
+            L_PAREN@43..44 "("
+            LOCAL_VARIABLE_DECLARATION@44..96
+              TYPE@44..50
+                QUALIFIED_NAME@44..50
+                  IDENTIFIER@44..50 "Object"
+              WHITESPACE@50..51 " "
+              VARIABLE_DECLARATOR_LIST@51..96
+                VARIABLE_DECLARATOR@51..96
+                  IDENTIFIER@51..57 "cursor"
+                  WHITESPACE@57..58 " "
+                  EQUAL@58..59 "="
+                  WHITESPACE@59..60 " "
+                  COND_EXPR@60..96
+                    BINARY_EXPR@60..72
+                      LITERAL@60..64
+                        IDENTIFIER@60..64 "head"
+                      WHITESPACE@64..65 " "
+                      EQUAL_EQUAL@65..67 "=="
+                      WHITESPACE@67..68 " "
+                      LITERAL@68..72
+                        NULL_LITERAL@68..72 "null"
+                    WHITESPACE@72..73 " "
+                    QUESTION@73..74 "?"
+                    WHITESPACE@74..75 " "
+                    LITERAL@75..79
+                      NULL_LITERAL@75..79 "null"
+                    WHITESPACE@79..80 " "
+                    COLON@80..81 ":"
+                    WHITESPACE@81..82 " "
+                    METHOD_CALL@82..96
+                      FIELD_ACCESS@82..94
+                        LITERAL@82..86
+                          IDENTIFIER@82..86 "head"
+                        DOT@86..87 "."
+                        IDENTIFIER@87..94 "getNext"
+                      ARGUMENT_LIST@94..96
+                        L_PAREN@94..95 "("
+                        R_PAREN@95..96 ")"
+            SEMICOLON@96..97 ";"
+            WHITESPACE@97..111 "\n             "
+            BINARY_EXPR@111..125
+              LITERAL@111..117
+                IDENTIFIER@111..117 "cursor"
+              WHITESPACE@117..118 " "
+              NOT_EQUAL@118..120 "!="
+              WHITESPACE@120..121 " "
+              LITERAL@121..125
+                NULL_LITERAL@121..125 "null"
+            SEMICOLON@125..126 ";"
+            WHITESPACE@126..127 " "
+            ASSIGN_EXPR@127..152
+              LITERAL@127..133
+                IDENTIFIER@127..133 "cursor"
+              WHITESPACE@133..134 " "
+              EQUAL@134..135 "="
+              WHITESPACE@135..136 " "
+              METHOD_CALL@136..152
+                FIELD_ACCESS@136..150
+                  LITERAL@136..142
+                    IDENTIFIER@136..142 "cursor"
+                  DOT@142..143 "."
+                  IDENTIFIER@143..150 "getNext"
+                ARGUMENT_LIST@150..152
+                  L_PAREN@150..151 "("
+                  R_PAREN@151..152 ")"
+            R_PAREN@152..153 ")"
+            WHITESPACE@153..154 " "
+            BLOCK@154..165
+              L_BRACE@154..155 "{"
+              WHITESPACE@155..164 "\n        "
+              R_BRACE@164..165 "}"
+          WHITESPACE@165..170 "\n    "
+          R_BRACE@170..171 "}"
+      WHITESPACE@171..172 "\n"
+      R_BRACE@172..173 "}"
+  WHITESPACE@173..174 "\n"

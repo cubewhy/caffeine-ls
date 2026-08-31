@@ -690,6 +690,35 @@ parser_snapshot!(
 );
 
 parser_snapshot!(
+    // §14.14: a conditional `:` inside a *basic* for initializer must not be
+    // mistaken for the enhanced-for separator.
+    parse_basic_for_with_ternary_init,
+    indoc! {r#"
+        class Test {
+            void test() {
+                for (Object cursor = head == null ? null : head.getNext();
+                     cursor != null; cursor = cursor.getNext()) {
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    // §14.14: a method reference `::` in a for initializer is not a colon.
+    parse_basic_for_with_method_ref_init,
+    indoc! {r#"
+        class Test {
+            void test() {
+                for (java.util.function.Supplier<String> s = Test::get;
+                     s.get() != null; ) {
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
     parse_assign_expr,
     indoc! {r#"
         class Test {

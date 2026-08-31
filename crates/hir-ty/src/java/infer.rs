@@ -66,7 +66,9 @@ use crate::{
         Resolver, item_data, resolve_type_ref, scope_for_file, type_argument_bound_violation,
     },
     java::subtyping::supertypes_impl,
-    java::ty::{Ty, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive},
+    java::ty::{
+        Ty, TyData, TyKind, boxed_type, capture_conversion, numeric_promotion, unboxed_primitive,
+    },
 };
 
 /// The inferred types of a method or constructor body.
@@ -540,6 +542,14 @@ impl<'a> InferCtx<'a> {
 
     fn primitive(&self, p: PrimitiveType) -> Ty {
         Ty::primitive(self.db, p)
+    }
+
+    /// The boxed form of a primitive type ([§5.1.7]): `int` → `Integer`.
+    fn box_primitive(&self, ty: Ty) -> Ty {
+        let TyKind::Primitive(p) = ty.kind(self.db) else {
+            return ty;
+        };
+        Ty::reference(self.db, boxed_type(*p), Vec::new())
     }
 
     fn string(&self) -> Ty {
@@ -1213,8 +1223,13 @@ impl<'a> InferCtx<'a> {
             ExprData::FieldAccess { target, name } => self.field_access(id, target, name),
             // §15.13: the type of `array[index]` is the array's element type.
             ExprData::ArrayAccess { array, index } => {
-                let _ = self.infer_expr(index);
-                let array_ty = self.infer_expr(array);
+                // §15.26: the array expression and the index of a subscript
+                // expression are both evaluated for their values — `a[i] = v`
+                // writes the element, not `a` or `i`. The mutating flag set
+                // for the assignment target must not reach them, or a
+                // `final` array or index variable would be misreported.
+                let _ = self.infer_read_expr(index);
+                let array_ty = self.infer_read_expr(array);
                 if array_ty.is_array(self.db) {
                     array_ty
                         .element(self.db)
@@ -1227,9 +1242,24 @@ impl<'a> InferCtx<'a> {
             ExprData::MethodCall {
                 receiver,
                 name,
+                type_args,
                 args,
-                ..
-            } => self.method_call(id, receiver, name, &args, self.target),
+            } => {
+                // §15.12.1/[§15.12.2.2]: explicit type arguments
+                // (`obj.<String>m(...)`) instantiate the method's type
+                // parameters directly instead of by inference.
+                let explicit = if type_args.is_empty() {
+                    None
+                } else {
+                    Some(
+                        type_args
+                            .iter()
+                            .map(|t| resolve_type_ref(self.db, &self.scope, &self.resolver, t))
+                            .collect::<Vec<Ty>>(),
+                    )
+                };
+                self.method_call(id, receiver, name, &args, self.target, explicit)
+            }
             // §8.8.7.1: `this(args)` delegates to another constructor of the
             // enclosing class.
             ExprData::CtorCall { args, target } => self.ctor_call(id, &args, target),
@@ -1438,31 +1468,39 @@ impl<'a> InferCtx<'a> {
                 // (`v instanceof T t ? t.f() : ...`), its false flow in the
                 // else-arm (`!(v instanceof T t) ? "" : t.f()`).
                 let (cond_true, cond_false) = self.pattern_flow(cond).unwrap_or_default();
-                let cond_is_poly =
-                    expr_is_poly_ext(&self.tree, then) && expr_is_poly_ext(&self.tree, els);
-                let target_is_fi = self.target.is_some_and(|target| {
-                    crate::java::method::single_abstract_method(self.db, &self.scope, &target)
-                        .is_some()
-                });
-                let both_arms_calls =
-                    expr_is_call(&self.tree, then) && expr_is_call(&self.tree, els);
-                if cond_is_poly && self.target.is_some() && (target_is_fi || both_arms_calls) {
-                    // §15.25.2: a conditional whose arms are poly expressions
-                    // is a poly expression with the target type; the target
-                    // propagates into the arms so they are typed against it.
+                // §15.25.2: a conditional whose arms are poly expressions is a poly
+                // expression with the target type; the target propagates into
+                // the arms so they are typed against it — `List<TableCandidate>
+                // c = b ? new ArrayList<>() : outerCandidates(...)` infers the
+                // diamond arm from the declared type instead of degrading to
+                // `List<?>`. javac propagates the target even when only one
+                // arm is poly (`b ? new ArrayList<>() : someField`); a
+                // conditional of two concrete arms keeps its own type.
+                let cond_has_poly_arm =
+                    expr_is_poly_ext(&self.tree, then) || expr_is_poly_ext(&self.tree, els);
+                if cond_has_poly_arm && self.target.is_some() {
                     self.scopes.push(FxHashMap::default());
                     for binding in &cond_true {
                         self.scope_binding(*binding);
                     }
-                    let _ = self.infer_expr(then);
+                    let then_ty = self.infer_expr(then);
                     self.scopes.pop();
                     self.scopes.push(FxHashMap::default());
                     for binding in &cond_false {
                         self.scope_binding(*binding);
                     }
-                    let _ = self.infer_expr(els);
+                    let els_ty = self.infer_expr(els);
                     self.scopes.pop();
-                    self.target.expect("target checked above")
+                    // §15.25.2: the conditional's type is the target only when
+                    // the arms actually accept it — a lambda arm against a
+                    // *non-functional* target (`Object c = b ? s -> s : ...`)
+                    // is itself ill-typed, and the conditional degrades to the
+                    // error type rather than silently standing for the target.
+                    if then_ty.is_error(self.db) || els_ty.is_error(self.db) {
+                        self.error()
+                    } else {
+                        self.target.expect("target checked above")
+                    }
                 } else {
                     self.scopes.push(FxHashMap::default());
                     for binding in &cond_true {
@@ -1636,6 +1674,22 @@ impl<'a> InferCtx<'a> {
             ExprData::Missing => self.error(),
         };
         self.types.insert(id, ty);
+        ty
+    }
+
+    /// Infers `expr` as a *read*, suppressing the mutating / writing flags
+    /// that a surrounding assignment target set ([§15.26], [§16]). A receiver
+    /// expression — the target of a qualified field access or the array of a
+    /// subscript — is always evaluated for its value, so `final` variables in
+    /// receiver position must not be mistaken for the assigned target.
+    fn infer_read_expr(&mut self, id: ExprId) -> Ty {
+        let saved_mutating = self.mutating;
+        let saved_writing = self.writing;
+        self.mutating = false;
+        self.writing = false;
+        let ty = self.infer_expr(id);
+        self.mutating = saved_mutating;
+        self.writing = saved_writing;
         ty
     }
 
@@ -1936,7 +1990,13 @@ impl<'a> InferCtx<'a> {
         // qualified name such as `java.util.Collections`.
         let (receiver, is_static) = match self.dotted_type_name(target) {
             Some(ty) => (ty, true),
-            None => (self.infer_expr(target), false),
+            // §15.26: the receiver of a qualified field access is evaluated
+            // for its *value* even on the left-hand side of an assignment —
+            // `a.b = v` writes `b`, not `a` ([§15.11.1]). The mutating /
+            // writing flags set for the assignment target must not reach the
+            // receiver, or a `final` variable holding the object (`final
+            // Holder h; h.field = v`) would be misreported as reassigned.
+            None => (self.infer_read_expr(target), false),
         };
         // §10.7: every array type has a public final `length` field.
         if receiver.is_array(self.db) && name.as_str() == "length" {
@@ -2298,7 +2358,7 @@ impl<'a> InferCtx<'a> {
         };
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
-        match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access) {
+        match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
             Some((method, deferred)) => {
                 self.reinfer_deferred(&method, &deferred);
                 // §11.2.1: a delegating constructor's declared exceptions add
@@ -2471,6 +2531,7 @@ impl<'a> InferCtx<'a> {
         name: Name,
         args: &[ExprId],
         target: Option<Ty>,
+        explicit_type_args: Option<Vec<Ty>>,
     ) -> Ty {
         let (receiver_ty, mode, method_name_form) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
@@ -2479,7 +2540,14 @@ impl<'a> InferCtx<'a> {
         // error; members of the name that are all inapplicable (§15.12.2) is a
         // wrong-argument-count error.
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
-        match self.resolve_call(&receiver_ty, &name, &arg_kinds, target, &access) {
+        match self.resolve_call(
+            &receiver_ty,
+            &name,
+            &arg_kinds,
+            target,
+            &access,
+            explicit_type_args,
+        ) {
             Some((method, deferred)) => {
                 // §18.5.2.2/§18.5.2.4: the resolved formal parameters are the
                 // target types of the poly arguments — the lambda, method
@@ -2711,10 +2779,19 @@ impl<'a> InferCtx<'a> {
     fn arg_info(&mut self, arg: ExprId) -> ArgInfo {
         let leaves = poly_leaves(&self.tree, arg);
         if leaves.is_empty() {
+            // §18.5.2.2: a concrete argument is not a poly expression — its
+            // type is its standalone type ([§15.12.2.6]). The enclosing
+            // invocation's own target type must not reach it, or a nested
+            // generic call inside the argument would be constrained by an
+            // unrelated expectation (`new Ctor(..., l.toArray(new T[0]))`
+            // would demand `toArray`'s return to be `Ctor`). Only the *poly*
+            // arguments are typed by the resolved formal parameter.
             ArgInfo {
                 id: arg,
                 poly: false,
-                leaves: vec![ArgKind::Concrete(self.infer_expr(arg))],
+                leaves: vec![ArgKind::Concrete(
+                    self.with_target(None, |this| this.infer_expr(arg)),
+                )],
             }
         } else {
             ArgInfo {
@@ -2728,7 +2805,10 @@ impl<'a> InferCtx<'a> {
                             arity: poly_arity(&self.tree, *leaf),
                         },
                         ExprData::MethodCall { .. } => ArgKind::Invocation { id: *leaf },
-                        _ => unreachable!("a poly leaf is a lambda, method reference or call"),
+                        ExprData::New { diamond: true, .. } => ArgKind::DiamondNew { id: *leaf },
+                        _ => unreachable!(
+                            "a poly leaf is a lambda, method reference, call or diamond new"
+                        ),
                     })
                     .collect(),
             }
@@ -2751,19 +2831,35 @@ impl<'a> InferCtx<'a> {
         arg_kinds: &[ArgInfo],
         target: Option<Ty>,
         ctx: &InvocationContext,
+        explicit_type_args: Option<Vec<Ty>>,
     ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
         let members = member_set(self.db, &self.scope, receiver_ty, name.as_str(), ctx);
         for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
-            if let Some(chosen) = self.choose_candidate(&members, arg_kinds, phase, false, target) {
+            if let Some(chosen) = self.choose_candidate(
+                &members,
+                arg_kinds,
+                phase,
+                false,
+                target,
+                explicit_type_args.clone(),
+            ) {
                 return Some(chosen);
             }
         }
-        self.choose_candidate(&members, arg_kinds, InvocationPhase::Loose, true, target)
+        self.choose_candidate(
+            &members,
+            arg_kinds,
+            InvocationPhase::Loose,
+            true,
+            target,
+            explicit_type_args,
+        )
     }
 
     /// The most specific applicable candidate in `phase`, or `None` when none
     /// applies or the applicable ones are ambiguous ([JLS §15.12.2.5]). Each
     /// candidate is probed in its own fresh inference table.
+    #[allow(clippy::too_many_arguments)]
     fn choose_candidate(
         &mut self,
         members: &[MethodData],
@@ -2771,6 +2867,7 @@ impl<'a> InferCtx<'a> {
         phase: InvocationPhase,
         varargs: bool,
         target: Option<Ty>,
+        explicit_type_args: Option<Vec<Ty>>,
     ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
         let mut applicable: Vec<ApplicableCandidate> = Vec::new();
         for member in members {
@@ -2786,6 +2883,7 @@ impl<'a> InferCtx<'a> {
                     phase,
                     varargs,
                     target,
+                    explicit_type_args.as_deref(),
                     &mut deferred,
                     true,
                 )
@@ -2794,6 +2892,7 @@ impl<'a> InferCtx<'a> {
             }
         }
         if applicable.is_empty() {
+            if members.iter().any(|m| m.name == "allOf") {}
             return None;
         }
         // The most specific applicable candidate ([§15.12.2.5]); identical
@@ -2829,10 +2928,37 @@ impl<'a> InferCtx<'a> {
         phase: InvocationPhase,
         varargs: bool,
         target: Option<Ty>,
+        explicit_type_args: Option<&[Ty]>,
         deferred: &mut Vec<(ExprId, usize)>,
         resolve: bool,
     ) -> Option<MethodData> {
-        let (formals, ret, throws_formals) = inference.register_method(self.db, method);
+        // §15.12.2.2: explicit type arguments (`obj.<String>m(...)`) bind the
+        // method's type parameters directly — the formals, return type and
+        // throws clause are substituted with the written arguments and nothing
+        // is left to inference.
+        let (formals, ret, throws_formals) = match explicit_type_args {
+            Some(explicit) => {
+                let subst: FxHashMap<Name, Ty> = method
+                    .type_params
+                    .iter()
+                    .zip(explicit.iter().copied())
+                    .map(|(tp, ty)| (tp.name.clone(), ty))
+                    .collect();
+                let formals: Vec<Ty> = method
+                    .params
+                    .iter()
+                    .map(|p| p.substitute(self.db, &subst))
+                    .collect();
+                let ret = method.ret.substitute(self.db, &subst);
+                let throws: Vec<Ty> = method
+                    .throws
+                    .iter()
+                    .map(|t| t.substitute(self.db, &subst))
+                    .collect();
+                (formals, ret, throws)
+            }
+            None => inference.register_method(self.db, method),
+        };
         // §15.12.2.2/§15.12.2.3/§15.13.2: a lambda or method reference is a
         // poly expression whose type *is* the target functional interface —
         // be compatible with a formal parameter only when that formal is a
@@ -2952,6 +3078,23 @@ impl<'a> InferCtx<'a> {
                             return None;
                         }
                     }
+                    // §15.12.2.4: a single trailing *poly* leaf that is itself
+                    // an array — a nested call (`allOf(futures.toArray(...))`)
+                    // — is used as-is against the varargs array type, not
+                    // packed against the element. `toArray` cannot convert a
+                    // `CompletableFuture[]` result to a single
+                    // `CompletableFuture<?>` element. A nested invocation is
+                    // probed against the array type first (it fails to
+                    // resolve there when it is not array-typed) and packed
+                    // against the element otherwise.
+                    ArgKind::Invocation { .. } | ArgKind::DiamondNew { .. } => {
+                        if !self.contribute_leaf(inference, rest[0], last[0], phase) {
+                            let element = last[0].element(self.db).copied()?;
+                            if !self.contribute_leaf(inference, rest[0], element, phase) {
+                                return None;
+                            }
+                        }
+                    }
                     _ => {
                         let element = last[0].element(self.db).copied()?;
                         for kind in rest {
@@ -3023,7 +3166,13 @@ impl<'a> InferCtx<'a> {
             type_params: method.type_params.clone(),
         };
         if resolve {
-            let resolved = inference.solve_after(self.db, &self.scope, phase)?;
+            let resolved = match inference.solve_after(self.db, &self.scope, phase) {
+                Some(r) => r,
+                None => {
+                    if method.name == "unmodifiableMap" {}
+                    return None;
+                }
+            };
             // §18.5.4: the resolved invocation type must still satisfy the
             // target — element-level bounds alone do not guarantee array- or
             // parameterized-level compatibility after substitution
@@ -3197,7 +3346,103 @@ impl<'a> InferCtx<'a> {
                 true
             }
             ArgKind::Invocation { id } => self.contribute_invocation(inference, *id, formal, phase),
+            // §15.9.3: a diamond class instance creation in an invocation
+            // context contributes the created class — its type variables
+            // registered in the shared table — constrained by the formal:
+            // `synchronizedList(new ArrayList<>())` contributes
+            // `ArrayList<α> <: List<T>`, so the target `List<String>` reaches
+            // the element type.
+            ArgKind::DiamondNew { id } => {
+                self.contribute_diamond_new(inference, *id, formal, phase)
+            }
         }
+    }
+
+    /// §15.9.3: a diamond `new Foo<>()` argument registers the created
+    /// class's type variables in the shared inference table and constrains
+    /// the parameterized created type against the enclosing formal —
+    /// `synchronizedList(new ArrayList<>())` against `List<String>`.
+    fn contribute_diamond_new(
+        &mut self,
+        inference: &mut Inference,
+        id: ExprId,
+        formal: Ty,
+        phase: InvocationPhase,
+    ) -> bool {
+        let ExprData::New { ty, args, .. } = self.tree.expr(id).clone() else {
+            return true;
+        };
+        let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
+        let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
+            return true;
+        };
+        let type_params = self.class_type_param_bounds(&name);
+        if type_params.is_empty() {
+            return true;
+        }
+        let subst = inference.register_class_type_params(self.db, &type_params);
+        // The created type with its type variables as fresh inference vars:
+        // `ArrayList<α>`.
+        let created = Ty::reference(
+            self.db,
+            name.clone(),
+            type_params
+                .iter()
+                .map(|tp| {
+                    Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone())
+                        .substitute(self.db, &subst)
+                })
+                .collect(),
+        );
+        // The constructor arguments constrain the variables too
+        // (`new Analyzer<>(new BasicInterpreter())`); relate them against the
+        // parameterized constructor's formals. Each candidate constructor is
+        // probed against a snapshot of the shared table — `LinkedHashMap`
+        // declares several single-parameter constructors (`LinkedHashMap(int)`,
+        // `LinkedHashMap(Map)`), and only the one whose formals are compatible
+        // with the actual arguments may constrain the variables.
+        let bare: Vec<Ty> = type_params
+            .iter()
+            .map(|tp| Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone()))
+            .collect();
+        let param_class = Ty::reference(self.db, name.clone(), bare.clone());
+        let access = self.access.clone();
+        let ctor_name = match hir::fqn_resolve(self.db, &self.scope, name.as_str()) {
+            Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
+            _ => name.simple_name().to_owned(),
+        };
+        let members = member_set(self.db, &self.scope, &param_class, &ctor_name, &access);
+        let arg_kinds = self.arg_kinds(&args);
+        for member in members {
+            if member.params.len() != arg_kinds.len() {
+                continue;
+            }
+            let base = inference.snapshot();
+            let formals: Vec<Ty> = member
+                .params
+                .iter()
+                .map(|p| p.substitute(self.db, &subst))
+                .collect();
+            let mut ok = true;
+            for (info, formal) in arg_kinds.iter().zip(&formals) {
+                for leaf in &info.leaves {
+                    if !self.contribute_leaf(inference, leaf, *formal, phase) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    break;
+                }
+            }
+            if ok && inference.check_consistent(self.db, &self.scope, phase) {
+                break;
+            }
+            inference.restore(base);
+        }
+        // §15.9.3: the created class is compatible with the formal.
+        inference.add_constraint(Constraint::Sub(created, formal));
+        true
     }
 
     /// Replaces the capture variables of a captured type ([JLS §5.1.10]) by
@@ -3371,8 +3616,8 @@ impl<'a> InferCtx<'a> {
         let ExprData::MethodCall {
             receiver,
             name,
+            type_args,
             args,
-            ..
         } = self.tree.expr(id).clone()
         else {
             return true;
@@ -3381,19 +3626,40 @@ impl<'a> InferCtx<'a> {
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
         let arg_kinds = self.arg_kinds(&args);
+        let explicit = if type_args.is_empty() {
+            None
+        } else {
+            Some(
+                type_args
+                    .iter()
+                    .map(|t| resolve_type_ref(self.db, &self.scope, &self.resolver, t))
+                    .collect::<Vec<Ty>>(),
+            )
+        };
         // The nested invocation is resolved in the *same* phase as its
         // enclosing invocation ([§15.12.2.2], [§15.12.2.3]): a strictly
         // probed member must not admit a loosely resolved argument, or
         // boxed-formal overloads would appear strictly applicable.
-        if self.choose_nested_candidate(inference, &members, &arg_kinds, phase, false, &formal) {
+        if self.choose_nested_candidate(
+            inference,
+            &members,
+            &arg_kinds,
+            phase,
+            false,
+            &formal,
+            explicit.clone(),
+        ) {
             return true;
         }
-        self.choose_nested_candidate(inference, &members, &arg_kinds, phase, true, &formal)
+        self.choose_nested_candidate(
+            inference, &members, &arg_kinds, phase, true, &formal, explicit,
+        )
     }
 
     /// The most specific applicable candidate of `members` against the target
     /// `formal`, contributed to the shared table. `false` when none applies in
     /// this phase or the applicable ones are ambiguous ([JLS §15.12.2.5]).
+    #[allow(clippy::too_many_arguments)]
     fn choose_nested_candidate(
         &mut self,
         inference: &mut Inference,
@@ -3402,6 +3668,7 @@ impl<'a> InferCtx<'a> {
         phase: InvocationPhase,
         varargs: bool,
         formal: &Ty,
+        explicit_type_args: Option<Vec<Ty>>,
     ) -> bool {
         let base = inference.snapshot();
         let mut applicable: Vec<MethodData> = Vec::new();
@@ -3419,6 +3686,7 @@ impl<'a> InferCtx<'a> {
                         phase,
                         varargs,
                         Some(*formal),
+                        explicit_type_args.as_deref(),
                         &mut deferred,
                         false,
                     )
@@ -3458,6 +3726,7 @@ impl<'a> InferCtx<'a> {
                 phase,
                 varargs,
                 Some(*formal),
+                explicit_type_args.as_deref(),
                 &mut deferred,
                 false,
             )
@@ -3493,13 +3762,6 @@ impl<'a> InferCtx<'a> {
         anonymous_body: bool,
     ) -> Ty {
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
-        // §15.9.2: `new Foo<>()` — the created class's type arguments are
-        // inferred from the target type ([§15.9.2.2]).
-        let class_ty = if diamond {
-            self.diamond_instantiation(class_ty, target)
-        } else {
-            class_ty
-        };
         // §15.9/[§4.5.1]: a wildcard type argument names no concrete type, so
         // `new ArrayList<?>()` creates nothing — and a type argument not within
         // its bounds is rejected ([§4.5.1]). The wildcard check reads the
@@ -3533,6 +3795,32 @@ impl<'a> InferCtx<'a> {
             _ => name.simple_name().to_owned(),
         };
         let arg_kinds = self.arg_kinds(args);
+        // §15.9.2: `new Foo<>()` — the created class's type arguments are
+        // inferred from the target type ([§15.9.2.2]); when the target fixes
+        // none, they are inferred from the constructor's formal parameters —
+        // `new Analyzer<>(new BasicInterpreter())` infers
+        // `Analyzer<BasicValue>` even without a target.
+        let class_ty = if diamond {
+            let from_target = self.diamond_instantiation(class_ty, target);
+            let raw = matches!(
+                from_target.kind(self.db),
+                TyKind::Reference { args, .. } if args.is_empty()
+            );
+            if raw {
+                self.diamond_instantiation_from_ctor_args(
+                    from_target,
+                    &arg_kinds,
+                    &constructor_name,
+                )
+            } else {
+                from_target
+            }
+        } else {
+            class_ty
+        };
+        let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
+            return class_ty;
+        };
         let access = self.access.clone();
         if let Some((method, deferred)) = self.resolve_call(
             &class_ty,
@@ -3540,6 +3828,7 @@ impl<'a> InferCtx<'a> {
             &arg_kinds,
             None,
             &access,
+            None,
         ) {
             self.reinfer_deferred(&method, &deferred);
             // §11.2.1: a class instance creation throws the checked
@@ -3670,38 +3959,63 @@ impl<'a> InferCtx<'a> {
         }
         // A parameterized supertype of the created class matching the
         // target's erasure: its type arguments witness the created class's
-        // own type variables ([§15.9.2]). The walk runs against the
-        // *parameterized* self-type — a raw receiver would erase its
-        // supertypes ([§4.8]) and lose the witness.
+        // own type variables ([§15.9.2]). The walk is *transitive* — the
+        // supertype may be several levels up (`new LinkedHashMap<>()` to a
+        // `Map<K,V>` target through `HashMap<K,V>` / `AbstractMap<K,V>`) —
+        // and runs against the *parameterized* self-type: a raw receiver
+        // would erase its supertypes ([§4.8]) and lose the witness.
         let declared_params = self.class_type_var_names(class_name);
         let probe = if declared_params.is_empty() {
             class_ty
         } else {
             Ty::reference(self.db, class_name.clone(), declared_params.clone())
         };
-        for parent in crate::java::subtyping::supertypes_impl(self.db, &self.scope, &probe) {
-            let TyKind::Reference {
-                name: parent_name,
-                args: parent_args,
-            } = parent.kind(self.db)
-            else {
-                continue;
-            };
-            if parent_name.as_str() != target_name.as_str()
-                || parent_args.len() != target_args.len()
-            {
+        let mut stack = vec![probe];
+        let mut visited: FxHashSet<TyData> = FxHashSet::default();
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current.id) {
                 continue;
             }
-            let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
-            for (parent_arg, target_arg) in parent_args.iter().zip(target_args.iter()) {
-                if let TyKind::TypeVar { name, .. } = parent_arg.kind(self.db)
-                    && !target_arg.contains_infer_var(self.db)
+            for parent in crate::java::subtyping::supertypes_impl(self.db, &self.scope, &current) {
+                let TyKind::Reference {
+                    name: parent_name,
+                    args: parent_args,
+                } = parent.kind(self.db)
+                else {
+                    continue;
+                };
+                if parent_name.as_str() != target_name.as_str()
+                    || parent_args.len() != target_args.len()
                 {
-                    binding.insert(name.clone(), *target_arg);
+                    stack.push(parent);
+                    continue;
                 }
-            }
-            if !binding.is_empty() {
-                return probe.substitute(self.db, &binding);
+                let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
+                for (parent_arg, target_arg) in parent_args.iter().zip(target_args.iter()) {
+                    if let TyKind::TypeVar { name, .. } = parent_arg.kind(self.db) {
+                        // §15.9.2.2: a *wildcard* target argument bounds the
+                        // created class's type variable — `? extends X` gives
+                        // it the upper bound X, `? super X` the lower bound X
+                        // — and the diamond instantiates to X in both cases.
+                        // Binding the bare wildcard would create a nested
+                        // wildcard (`LinkedHashMap<? extends ? extends X>`)
+                        // that no later constructor application can use.
+                        let instantiation = match target_arg.kind(self.db) {
+                            TyKind::Wildcard(Some(bound))
+                                if !bound.ty.contains_infer_var(self.db) =>
+                            {
+                                bound.ty
+                            }
+                            _ if !target_arg.contains_infer_var(self.db) => *target_arg,
+                            _ => continue,
+                        };
+                        binding.insert(name.clone(), instantiation);
+                    }
+                }
+                if !binding.is_empty() {
+                    return probe.substitute(self.db, &binding);
+                }
+                stack.push(parent);
             }
         }
         class_ty
@@ -3744,6 +4058,140 @@ impl<'a> InferCtx<'a> {
             .into_iter()
             .map(|name| Ty::type_var(self.db, name, Vec::new()))
             .collect()
+    }
+
+    /// The declared type parameters of the class-like declaration `fqn` with
+    /// their resolved bounds ([JLS §8.1.2], [§4.4]); empty for non-generic
+    /// classes and unresolvable names. Used by the diamond-from-constructor
+    /// inference ([§15.9.2.2]) to register the class's type variables as
+    /// inference variables.
+    fn class_type_param_bounds(&self, fqn: &Name) -> Vec<crate::java::method::MethodTypeParam> {
+        let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) else {
+            return Vec::new();
+        };
+        match resolved {
+            hir::Resolved::Library(library) => {
+                let Some(info) = hir::class_generic_info(self.db, &hir::Resolved::Library(library))
+                else {
+                    return Vec::new();
+                };
+                let interner = &self.db.hir_state().interner;
+                info.type_params
+                    .iter()
+                    .map(|tp| crate::java::method::MethodTypeParam {
+                        name: Name::new(interner.resolve(&tp.name)),
+                        bounds: tp
+                            .bounds
+                            .iter()
+                            .map(|bound| crate::java::resolve::ty_from_library(self.db, bound))
+                            .collect(),
+                    })
+                    .collect()
+            }
+            hir::Resolved::Source(source) => {
+                let tree = hir::file_item_tree(self.db, source.file);
+                let declared = match crate::java::resolve::item_data(&tree, source.item) {
+                    Some(hir_def::java::item_tree::ItemData::Class(d)) => Some(&d.type_params),
+                    Some(hir_def::java::item_tree::ItemData::Interface(d)) => Some(&d.type_params),
+                    Some(hir_def::java::item_tree::ItemData::Record(d)) => Some(&d.type_params),
+                    _ => None,
+                };
+                match declared {
+                    Some(declared) => declared
+                        .iter()
+                        .map(|tp| crate::java::method::MethodTypeParam {
+                            name: tp.name.clone(),
+                            bounds: tp
+                                .bounds
+                                .iter()
+                                .map(|b| resolve_type_ref(self.db, &self.scope, &self.resolver, b))
+                                .collect(),
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                }
+            }
+        }
+    }
+
+    /// §15.9.2.2: `new Foo<>()` with no target type infers the created
+    /// class's type arguments from the constructor's formal parameters —
+    /// `new Analyzer<>(new BasicInterpreter())` infers `Analyzer<BasicValue>`
+    /// through the `Analyzer(Interpreter<V>)` constructor. The class's type
+    /// parameters are registered as inference variables and constrained by
+    /// the argument types exactly like a generic method invocation; the first
+    /// applicable constructor's solution instantiates the class. Falls back
+    /// to the raw `class_ty` when no constructor decides it.
+    fn diamond_instantiation_from_ctor_args(
+        &mut self,
+        class_ty: Ty,
+        arg_kinds: &[ArgInfo],
+        ctor_name: &str,
+    ) -> Ty {
+        let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
+            return class_ty;
+        };
+        let type_params = self.class_type_param_bounds(&name);
+        if type_params.is_empty() {
+            return class_ty;
+        }
+        let bare: Vec<Ty> = type_params
+            .iter()
+            .map(|tp| Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone()))
+            .collect();
+        // Resolve the constructors against the *parameterized* class so the
+        // formal parameter types keep the class's type variables ([§15.9.2.2]).
+        let param_class = Ty::reference(self.db, name.clone(), bare.clone());
+        let access = self.access.clone();
+        let members = member_set(self.db, &self.scope, &param_class, ctor_name, &access);
+        for member in members {
+            if member.params.len() != arg_kinds.len() {
+                continue;
+            }
+            let mut inference = Inference::new();
+            let subst = inference.register_class_type_params(self.db, &type_params);
+            let formals: Vec<Ty> = member
+                .params
+                .iter()
+                .map(|p| p.substitute(self.db, &subst))
+                .collect();
+            let mut ok = true;
+            for (info, formal) in arg_kinds.iter().zip(&formals) {
+                for leaf in &info.leaves {
+                    if !self.contribute_leaf(&mut inference, leaf, *formal, InvocationPhase::Loose)
+                    {
+                        ok = false;
+                        break;
+                    }
+                }
+                if !ok {
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            if let Some(resolved) =
+                inference.solve_after(self.db, &self.scope, InvocationPhase::Loose)
+            {
+                let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
+                for (tp_name, var) in &subst {
+                    if let Some(var_id) = var.as_infer_var(self.db)
+                        && let Some(inst) = resolved.get(&var_id)
+                    {
+                        binding.insert(tp_name.clone(), *inst);
+                    }
+                }
+                if binding.len() == type_params.len() {
+                    let args = bare
+                        .iter()
+                        .map(|t| t.substitute(self.db, &binding))
+                        .collect();
+                    return Ty::reference(self.db, name.clone(), args);
+                }
+            }
+        }
+        class_ty
     }
     /// The type of a lambda expression ([JLS §15.27.2]): the target
     /// functional interface ([§15.27.3], [JLS §18.5.2.4]). The lambda's
@@ -4302,12 +4750,21 @@ impl<'a> InferCtx<'a> {
         // §15.25: the null rules — `cond ? null : T` has type T (and
         // symmetrically). An array is a reference type ([§4.3.1]), so a
         // null/arm-array pair keeps the array type instead of taking a
-        // meaningless lub.
+        // meaningless lub. A *primitive* arm against `null` is boxed
+        // ([§5.1.7]): `cond ? null : 5` has type `Integer` and
+        // `cond ? true : null` has type `Boolean` (javac assigns them to the
+        // boxed types), not the lub of the primitive and `null`.
         if then_ty.is_null(self.db) && (els_ty.is_reference(self.db) || els_ty.is_array(self.db)) {
             return els_ty;
         }
         if els_ty.is_null(self.db) && (then_ty.is_reference(self.db) || then_ty.is_array(self.db)) {
             return then_ty;
+        }
+        if then_ty.is_null(self.db) && els_ty.is_primitive(self.db) {
+            return self.box_primitive(els_ty);
+        }
+        if els_ty.is_null(self.db) && then_ty.is_primitive(self.db) {
+            return self.box_primitive(then_ty);
         }
         // §5.1.10: the lub of two references is never a wildcard — a bare
         // `?` from the lcta degenerates to its capture so the expression has
@@ -5814,6 +6271,9 @@ fn expr_is_poly(tree: &BodyTree, id: ExprId) -> bool {
 fn expr_is_poly_ext(tree: &BodyTree, id: ExprId) -> bool {
     match tree.expr(id).clone() {
         ExprData::Lambda { .. } | ExprData::MethodRef { .. } | ExprData::MethodCall { .. } => true,
+        // §15.9.3: a diamond class instance creation is a poly expression in
+        // an invocation or assignment context.
+        ExprData::New { diamond: true, .. } => true,
         ExprData::Paren(inner) => expr_is_poly_ext(tree, inner),
         ExprData::Conditional { then, els, .. } => {
             expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els)
@@ -5849,9 +6309,11 @@ enum MethodRefKind {
 /// The kinds of the actual arguments of a method invocation for the joint
 /// inference of §18.5.2.4: a concrete argument has a standalone type; a poly
 /// argument is a lambda or method reference deferred to its target formal
-/// ([JLS §18.5.2.2], [§15.27.3], [§15.13.2]), or a nested method invocation
+/// ([JLS §18.5.2.2], [§15.27.3], [§15.13.2]), a nested method invocation
 /// whose inference shares the enclosing invocation's table
-/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)).
+/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)),
+/// or a diamond class instance creation, which is a poly expression in an
+/// invocation context ([JLS §15.9.3]).
 #[derive(Clone)]
 enum ArgKind {
     /// An argument with a concrete standalone type.
@@ -5865,6 +6327,13 @@ enum ArgKind {
     /// A nested method invocation, resolved against the target formal by
     /// contributing its constraints to the enclosing invocation's table.
     Invocation { id: ExprId },
+    /// A diamond `new Foo<>()` in an invocation context
+    /// ([JLS §15.9.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.3)):
+    /// its type arguments are inferred from the enclosing invocation's formal
+    /// — `synchronizedList(new ArrayList<>())` against a `List<String>`
+    /// target. The created class's type variables are registered in the
+    /// shared table and constrained by the formal.
+    DiamondNew { id: ExprId },
 }
 
 /// One actual argument of an invocation: its poly leaves — each contributing a
@@ -5908,9 +6377,12 @@ fn reinfer_poly_standalone(ctx: &mut InferCtx<'_>, arg_kinds: &[ArgInfo]) {
 /// poly expression has no leaves — it is inferred standalone.
 fn poly_leaves(tree: &BodyTree, id: ExprId) -> Vec<ExprId> {
     match tree.expr(id).clone() {
-        ExprData::Lambda { .. } | ExprData::MethodRef { .. } | ExprData::MethodCall { .. } => {
-            vec![id]
-        }
+        ExprData::Lambda { .. }
+        | ExprData::MethodRef { .. }
+        | ExprData::MethodCall { .. }
+        // §15.9.3: a diamond class instance creation is a poly expression in
+        // an invocation context.
+        | ExprData::New { diamond: true, .. } => vec![id],
         ExprData::Paren(inner) => poly_leaves(tree, inner),
         ExprData::Conditional { then, els, .. } => {
             // §15.25.2: a conditional is a poly expression only when both arms

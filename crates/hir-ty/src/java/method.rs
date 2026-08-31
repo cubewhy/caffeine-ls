@@ -1661,69 +1661,31 @@ pub(crate) fn more_specific(
     if m1.varargs != m2.varargs {
         return !m1.varargs;
     }
-    // §18.5.4 note: even when m1 is generic, its type parameters stay type
-    // variables during the comparison — no substitution is applied to its
-    // formals.
-    let object = Ty::reference(db, "java.lang.Object", Vec::new());
-    let m2_formals: Vec<Ty> = if m2.type_params.is_empty() || m1.type_params.is_empty() {
-        // Different genericity: m2's type parameters instantiate to their
-        // declared bounds (the §18.5.4 initial bound set); m1's formals keep
-        // their own type variables.
-        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
-        for tp in &m2.type_params {
-            let bound = tp.bounds.first().copied().unwrap_or(object);
-            subst.insert(tp.name.clone(), bound);
-        }
-        m2.params.iter().map(|p| p.substitute(db, &subst)).collect()
-    } else {
-        // Both generic: compare the type-parameter-relative signatures. m2's
-        // type parameters are substituted by m1's (excess become `Object`),
-        // and m1 must be at least as restrictive: its declared bounds are
-        // subtypes of m2's, and its parameters are subtypes of m2's.
-        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
-        for (i, tp2) in m2.type_params.iter().enumerate() {
-            let t1 = match m1.type_params.get(i) {
-                // §18.5.4: m2's type parameters are replaced by m1's type
-                // variables. The variables are interned *without* their
-                // declared bounds — that is exactly how the same variable is
-                // interned inside the method's own signature types (source
-                // and classfile alike), so substituting a bound-carrying copy
-                // would make `T` and `T` distinct ids and every identity
-                // comparison (`List<? extends T> <: List<? extends T>`) fail.
-                // The bound comparison is done on the declared bounds
-                // themselves, above ([§8.4.4], [§15.12.2.5]).
-                Some(tp1) => Ty::type_var(db, tp1.name.clone(), Vec::new()),
-                None => object,
-            };
-            subst.insert(tp2.name.clone(), t1);
-        }
-        let bounds_ok = m1
-            .type_params
-            .iter()
-            .zip(&m2.type_params)
-            .all(|(tp1, tp2)| {
-                let b1: Vec<Ty> = if tp1.bounds.is_empty() {
-                    vec![object]
-                } else {
-                    tp1.bounds.clone()
-                };
-                let b2: Vec<Ty> = if tp2.bounds.is_empty() {
-                    vec![object]
-                } else {
-                    tp2.bounds.clone()
-                };
-                b1.iter()
-                    .all(|x| b2.iter().any(|y| is_subtype(db, scope, x, y)))
-            });
-        if !bounds_ok {
-            return false;
-        }
-        m2.params.iter().map(|p| p.substitute(db, &subst)).collect()
-    };
-    m1.params
-        .iter()
-        .zip(&m2_formals)
-        .all(|(param1, param2)| formal_subtype(db, scope, param1, param2))
+    // §15.12.2.5 as javac implements it: `m1` is more specific than `m2` iff
+    // `m2` is *applicable* to `m1`'s formal parameter types treated as the
+    // invocation arguments (`signatureMoreSpecific`) — `m2`'s type
+    // parameters are instantiated from `m1`'s parameter types, not from
+    // their declared bounds. This resolves both the mixed-genericity cases
+    // javac handles:
+    //   `increment(Map<String,Integer>, String)` (non-generic) beats
+    //     `<T> increment(Map<T,Integer>, T)` — the generic one instantiates
+    //     `T := String` from the non-generic's parameters;
+    //   `<T> Subject that(T[])` beats `that(Object)` for an array argument —
+    //     the generic method's parameters are `T[]`, and `that(Object)` is
+    //     applicable to them, while the reverse is not (`Object` is not an
+    //     array). The constraint set is exactly an invocation type inference
+    //     table ([JLS §18.5.2]); consistency means `m2` accepts `m1`'s
+    //     parameters, i.e. `m1`'s signature is a subsignature of `m2`'s
+    //     instantiated one.
+    let mut inference = Inference::new();
+    let (m2_formals, _, _) = inference.register_method(db, m2);
+    if m2_formals.len() != m1.params.len() {
+        return false;
+    }
+    for (param, formal) in m1.params.iter().zip(&m2_formals) {
+        inference.add_constraint(Constraint::Sub(*param, *formal));
+    }
+    inference.check_consistent(db, scope, InvocationPhase::Loose)
 }
 
 /// Whether `param1` is a subtype of `param2` for the most-specific comparison

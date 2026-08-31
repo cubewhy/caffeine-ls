@@ -1200,7 +1200,8 @@ class Body {
 
 // Diamond instantiation ([JLS §15.9.2]): `new Foo<>()` in a field initializer
 // inherits the target field's type arguments ([§15.9.2.1]); with an unrelated
-// target the class is created raw ([§15.9.2.2]).
+// target the type variables resolve to their upper bound `Object`
+// ([§15.9.2.2]), not a raw type.
 
 snapshot!(
     diamond_infer,

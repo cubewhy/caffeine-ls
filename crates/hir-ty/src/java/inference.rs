@@ -28,7 +28,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     java::db::TyDatabase,
-    java::method::MethodData,
+    java::method::{MethodData, MethodTypeParam},
     java::subtyping::{is_assignable, is_subtype, strict_conversion, supertypes_impl},
     java::ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type},
 };
@@ -218,6 +218,33 @@ impl Inference {
     /// Restores the table to a [`Self::snapshot`].
     pub(crate) fn restore(&mut self, snapshot: Self) {
         *self = snapshot;
+    }
+
+    /// Registers a class's type parameters as fresh inference variables with
+    /// their declared bounds, returning the name-to-variable substitution.
+    /// Used by diamond `new Foo<>()` inference from constructor arguments
+    /// ([JLS §15.9.2.2]): the created class's type variables are constrained
+    /// by the argument types exactly like a generic method's type parameters,
+    /// and the resolved values instantiate the class.
+    pub(crate) fn register_class_type_params(
+        &mut self,
+        db: &dyn TyDatabase,
+        type_params: &[MethodTypeParam],
+    ) -> FxHashMap<Name, Ty> {
+        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+        for tp in type_params {
+            let var = self.fresh_var(db);
+            subst.insert(tp.name.clone(), var);
+            let bounds: Vec<Ty> = tp.bounds.iter().map(|b| b.substitute(db, &subst)).collect();
+            if bounds.is_empty() {
+                self.add_upper(db, var, Ty::reference(db, "java.lang.Object", Vec::new()));
+            } else {
+                for bound in bounds {
+                    self.add_upper(db, var, bound);
+                }
+            }
+        }
+        subst
     }
 
     /// Instantiates `method`'s type parameters ([JLS §18.5.2.2]) as fresh
@@ -523,12 +550,29 @@ impl Inference {
         if s == t {
             return true;
         }
+        // §18.2.1: `⟨α = β⟩` equates two variables. A variable that already
+        // carries an equality bound must not lose it — `⟨T = α⟩` then
+        // `⟨T = String⟩` (an invariant-argument chain like
+        // `synchronizedList(new ArrayList<>())` against a `List<String>`
+        // target) would otherwise overwrite `α` with `String` and leave `α`
+        // to resolve to `Object`. Instead the two equalities are related:
+        // `α = T` and `T = String` imply `α = String`.
         if let Some(id) = t.as_infer_var(db) {
-            self.bounds.entry(id).or_default().equality = Some(*s);
+            let bound = self.bounds.entry(id).or_default();
+            if let Some(existing) = bound.equality {
+                worklist.push_back(Constraint::Eq(existing, *s));
+                return true;
+            }
+            bound.equality = Some(*s);
             return true;
         }
         if let Some(id) = s.as_infer_var(db) {
-            self.bounds.entry(id).or_default().equality = Some(*t);
+            let bound = self.bounds.entry(id).or_default();
+            if let Some(existing) = bound.equality {
+                worklist.push_back(Constraint::Eq(existing, *t));
+                return true;
+            }
+            bound.equality = Some(*t);
             return true;
         }
         match (s.kind(db), t.kind(db)) {
@@ -692,10 +736,26 @@ impl Inference {
                 let upper = b.upper.clone();
                 for l in &lower {
                     for u in &upper {
-                        if !l.contains_infer_var(db)
-                            && !u.contains_infer_var(db)
-                            && !is_subtype(db, scope, l, u)
+                        // §18.3.1 bound validation: a proper lower bound `S`
+                        // and a proper upper bound `T` must satisfy `S <: T`.
+                        // Like `pick_instantiation`, this is *assignment*
+                        // compatibility ([§5.2]) — a raw lower bound
+                        // (`CompletableFuture` from `new CompletableFuture[0]`)
+                        // converts to a parameterized upper
+                        // (`CompletableFuture<?>`) by unchecked conversion
+                        // ([§5.1.9]), exactly as in javac's bound check. Two
+                        // primitives relate only by identity here ([§4.10.1]).
+                        if l.contains_infer_var(db) || u.contains_infer_var(db) {
+                            continue;
+                        }
+                        let ok = if matches!(l.kind(db), TyKind::Primitive(_))
+                            && matches!(u.kind(db), TyKind::Primitive(_))
                         {
+                            l == u
+                        } else {
+                            is_subtype(db, scope, l, u) || is_assignable(db, scope, l, u)
+                        };
+                        if !ok {
                             return false;
                         }
                     }

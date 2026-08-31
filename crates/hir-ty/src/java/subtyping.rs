@@ -634,6 +634,19 @@ pub fn is_assignable(
         (TyKind::Array(_), TyKind::Reference { .. } | TyKind::TypeVar { .. }) => {
             is_subtype(db, scope, src, dst)
         }
+        // §4.10.3/§5.2: array to array — element-wise covariance (a widening
+        // reference conversion of the elements, so `Frame<BasicValue>[]` is
+        // assignable to `Frame<?>[]`), plus the §5.1.9 *unchecked* conversion
+        // of an array of a raw type: `Frame[]` (from `new Frame[7]`) converts
+        // to `Frame<BasicValue>[]` exactly as the raw element type does.
+        (TyKind::Array(si), TyKind::Array(ti)) => {
+            if is_subtype(db, scope, src, dst) {
+                return true;
+            }
+            !si.contains_infer_var(db)
+                && !ti.contains_infer_var(db)
+                && unchecked_conversion(db, scope, si, ti)
+        }
         // §5.1.8 with §5.1.10: an expression typed by a *captured* type
         // variable with a lower bound `L` (the capture of `? super L`) holds
         // an `L`, which unboxes to its primitive.

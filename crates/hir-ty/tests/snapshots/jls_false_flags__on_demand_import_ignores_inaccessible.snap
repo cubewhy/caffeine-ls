@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.SourceValue;
+
+class Body {
+    Frame<SourceValue>[] frames;
+    int m() {
+        return frames[0].getStackSize();
+    }
+}
+
+method m(): int
+  locals: 
+  exprs: e0: org.objectweb.asm.tree.analysis.Frame<org.objectweb.asm.tree.analysis.SourceValue>[] | e1: int | e2: org.objectweb.asm.tree.analysis.Frame<org.objectweb.asm.tree.analysis.SourceValue> | e3: int

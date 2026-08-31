@@ -367,14 +367,24 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                     let range = var
                         .as_ref()
                         .map_or_else(|| node.text_range(), |d| d.text_range());
+                    // §14.14.2: the enhanced-for loop variable is final *only*
+                    // when the `final` modifier is written (its
+                    // `OptionalModifier`). Unlike a resource variable
+                    // ([§14.20.3]) it is not implicitly final — it may be
+                    // reassigned inside the body.
+                    let is_final = node
+                        .children()
+                        .find(|c| c.kind() == J::MODIFIER_LIST)
+                        .is_some_and(|mods| {
+                            mods.children_with_tokens()
+                                .any(|e| e.as_token().is_some_and(|t| t.kind() == J::FINAL_KW))
+                        });
                     alloc_local(
                         ctx,
                         Local {
                             name,
                             ty: if is_var { None } else { Some(ty) },
-                            // §14.20.3: a resource variable is effectively
-                            // final, so it may be a constant variable.
-                            is_final: true,
+                            is_final,
                         },
                         range,
                     )

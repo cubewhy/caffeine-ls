@@ -133,7 +133,7 @@ fn lower_member(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> Option<ItemId> {
 
 fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
-        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
+        decl_type_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let super_class = clause_types(node, J::EXTENDS_CLAUSE).into_iter().next();
@@ -156,7 +156,7 @@ fn lower_class(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
 fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
-        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
+        decl_type_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let interfaces = clause_types(node, J::INTERFACE_EXTENDS_CLAUSE);
@@ -178,7 +178,7 @@ fn lower_interface(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
 fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
-        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
+        decl_type_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let interfaces = clause_types(node, J::IMPLEMENTS_CLAUSE);
     let body = node
@@ -199,7 +199,7 @@ fn lower_enum(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
 fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
-        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
+        decl_type_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(node);
     let components = node
@@ -254,7 +254,7 @@ fn lower_record(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
 
 fn lower_annotation_type(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> ItemId {
     let (name, name_range) =
-        decl_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
+        decl_type_identifier(node).unwrap_or_else(|| (missing_name(), node.text_range()));
     let (modifiers, annotations) = child_modifiers_and_annotations(node);
     let body = body_members(ctx, node, J::ANNOTATION_TYPE_BODY);
     ctx.alloc(ItemData::Annotation(AnnotationData {
@@ -687,23 +687,31 @@ pub(super) fn trimmed_text(node: &SyntaxNode<Lang>) -> String {
 /// (e.g. `record`, `open`). For a declaration this is the declared name. The
 /// token's source range is returned alongside so the IDE can point the LSP
 /// `selectionRange` at the name (rather than the whole declaration).
+/// The declared name of a class-like type declaration.
+///
+/// Unlike a method or constructor name, a type name may not be one of the
+/// restricted identifiers `record`, `sealed` or `permits` ([JLS
+/// §3.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.9)):
+/// `record` is a restricted *type* name (it precedes the type in a record
+/// declaration, which this helper is not called on) and the three cannot name
+/// a type at all. The exclusion applies only here — the same tokens are
+/// ordinary method, field and constructor identifiers elsewhere (§3.9).
+fn decl_type_identifier(node: &SyntaxNode<Lang>) -> Option<(Name, TextRange)> {
+    for element in node.children_with_tokens() {
+        if let Some(token) = element.as_token()
+            && token.kind() == J::IDENTIFIER
+            && !matches!(token.text(), "record" | "sealed" | "non-sealed" | "permits")
+        {
+            return Some((Name::new(token.text()), token.text_range()));
+        }
+    }
+    None
+}
+
 fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<(Name, TextRange)> {
     for element in node.children_with_tokens() {
         if let Some(token) = element.as_token()
             && token.kind() == J::IDENTIFIER
-            && !matches!(
-                token.text(),
-                // §3.9: the restricted identifiers `record`, `sealed`,
-                // `non-sealed` and `permits` may precede a type name but are
-                // not the declared name (and cannot name a type). `open` is
-                // only restricted in *module* positions (the module
-                // declaration is lowered separately), so a member method
-                // named `open` is a perfectly ordinary declaration — it must
-                // not be dropped here (an anonymous-class `close()` method is
-                // fine; a `static InputStream open(...)` that vanished would
-                // leave every call site reporting "cannot find symbol").
-                "record" | "sealed" | "non-sealed" | "permits"
-            )
         {
             return Some((Name::new(token.text()), token.text_range()));
         }

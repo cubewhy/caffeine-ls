@@ -289,10 +289,34 @@ fn resolve_reference_name(
     name: &Name,
 ) -> Name {
     let text = name.as_str();
-    let candidates = candidate_fqns(resolver, name);
-    for candidate in &candidates {
-        if let Some(canonical) = canonical_type_name(db, scope, candidate) {
-            return canonical;
+    if let Some((prefix, rest)) = text.split_once('.') {
+        // §6.5.5.2: a qualified name is tried as-is, then with each
+        // simple-name resolution of its prefix. The on-demand accessibility
+        // filter ([§7.5.2]) applies to the simple *prefix* step through
+        // [`simple_candidates_with_kind`] below; the qualified probe itself
+        // is shared with the checked path.
+        let mut candidates = vec![name.clone()];
+        for candidate in simple_candidates(resolver, prefix) {
+            candidates.push(join(&candidate, rest));
+        }
+        for candidate in &candidates {
+            if let Some(canonical) = canonical_type_name(db, scope, candidate) {
+                return canonical;
+            }
+        }
+    } else {
+        // §6.5.5.1: a simple name walks the candidate steps in order; an
+        // on-demand import ([§7.5.2]) contributes only *accessible* types,
+        // so an inaccessible candidate does not shadow the later steps.
+        for (step, candidate) in simple_candidates_with_kind(resolver, text) {
+            if step == CandidateStep::OnDemand
+                && !on_demand_candidate_accessible(db, scope, resolver, &candidate)
+            {
+                continue;
+            }
+            if let Some(canonical) = canonical_type_name(db, scope, &candidate) {
+                return canonical;
+            }
         }
     }
     // §6.5.5.1: a member type *inherited* by an enclosing declaration is in
@@ -307,6 +331,7 @@ fn resolve_reference_name(
     // Nothing resolved (pre-workspace silence): degrade to the most
     // qualified *non-member* candidate — an enclosing-member prefix would
     // invent a nested type that was never declared.
+    let candidates = candidate_fqns(resolver, name);
     let degraded = candidates.iter().find(|candidate| {
         !resolver
             .enclosing()
@@ -498,6 +523,58 @@ fn simple_candidates_with_kind(resolver: &Resolver, simple: &str) -> Vec<(Candid
     out
 }
 
+/// §7.5.2: whether the type `fqn` — reached through a *type-import-on-demand*
+/// (`import pkg.*;`) — is imported by that import from the current compilation
+/// unit. An on-demand import imports only *accessible* types
+/// ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
+/// a top-level class of another package is imported only when it is `public`
+/// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1),
+/// `ACC_PUBLIC = 0x0001`). A package-private class of the *current* package
+/// would be reached at the current-package step instead ([§7.4.2]), so it is
+/// not a candidate of the on-demand step either. Without this filter, two
+/// on-demand imports of different packages — `org.objectweb.asm.*` and
+/// `org.objectweb.asm.tree.analysis.*` — would both "provide" the simple name
+/// `Frame` when the former's `Frame` is package-private, and javac resolves
+/// to the only accessible one instead of reporting an ambiguity.
+fn on_demand_candidate_accessible(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    fqn: &Name,
+) -> bool {
+    let same_package = match resolver.package() {
+        Some(pkg) => match fqn.as_str().rsplit_once('.') {
+            Some((p, _)) => p == pkg.as_str(),
+            None => true,
+        },
+        // The unnamed package: only a same-unnamed-package class is
+        // accessible by package rule, and it is a current-package candidate,
+        // not an on-demand one.
+        None => fqn.as_str().find('.').is_none(),
+    };
+    if same_package {
+        return true;
+    }
+    match hir::fqn_resolve(db, scope, fqn.as_str()) {
+        Some(hir::Resolved::Library(class)) => class.entry.flags & 0x0001 != 0,
+        Some(hir::Resolved::Source(source)) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
+                return false;
+            };
+            match data {
+                hir_def::java::item_tree::ItemData::Class(d) => d.modifiers.is_public(),
+                hir_def::java::item_tree::ItemData::Interface(d) => d.modifiers.is_public(),
+                hir_def::java::item_tree::ItemData::Enum(d) => d.modifiers.is_public(),
+                hir_def::java::item_tree::ItemData::Record(d) => d.modifiers.is_public(),
+                hir_def::java::item_tree::ItemData::Annotation(d) => d.modifiers.is_public(),
+                _ => false,
+            }
+        }
+        None => false,
+    }
+}
+
 /// The outcome of a *checked* name resolution ([JLS §6.5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5))
 /// — the primitive the unknown-type diagnostics are built from. Unlike
 /// [`resolve_reference_name`], which degrades an unresolvable name to its
@@ -638,14 +715,22 @@ pub fn resolve_name_checked(
                 continue;
             }
             if *step == CandidateStep::OnDemand {
+                // §7.5.2: an on-demand import imports only *accessible* types
+                // ([§6.6]) — a package-private class of another package is
+                // not a candidate, and the name falls through to later steps.
+                if !on_demand_candidate_accessible(db, scope, resolver, candidate) {
+                    continue;
+                }
                 // §6.5.5.1/[§7.5.2]: two or more on-demand imports that supply
                 // the simple name from different types make the name
-                // ambiguous — a compile-time error.
+                // ambiguous — a compile-time error. Only *accessible* types
+                // participate: an inaccessible one is not imported.
                 let mut conflicting = Vec::new();
                 for (later_step, later) in &candidates[idx + 1..] {
                     if *later_step == CandidateStep::OnDemand
                         && hir::fqn_resolve(db, scope, later.as_str()).is_some()
                         && fqn_visible(db, &module_ctx, later.as_str())
+                        && on_demand_candidate_accessible(db, scope, resolver, later)
                         && later != candidate
                     {
                         conflicting.push(later.clone());

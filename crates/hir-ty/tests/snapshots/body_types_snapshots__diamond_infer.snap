@@ -26,4 +26,4 @@ field b
   exprs: e1: com.example.Foo<java.lang.Integer>
 field c
   locals: 
-  exprs: e2: com.example.Foo
+  exprs: e2: com.example.Foo<java.lang.Object>

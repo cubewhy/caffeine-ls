@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.WrapUtil;
+
+class Body {
+    List<String> m() {
+        return WrapUtil.synchronizedList(new ArrayList<>());
+    }
+}
+
+method m(): java.util.List<java.lang.String>
+  locals: 
+  exprs: e0: java.util.ArrayList<java.lang.String> | e2: java.util.List<java.lang.String>

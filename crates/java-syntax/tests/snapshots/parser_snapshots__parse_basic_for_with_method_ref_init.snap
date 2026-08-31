@@ -1,0 +1,161 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        for (java.util.function.Supplier<String> s = Test::get;
+             s.get() != null; ) {
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "function"
+DOT "."
+IDENTIFIER "Supplier"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "s"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "Test"
+COLON_COLON "::"
+IDENTIFIER "get"
+SEMICOLON ";"
+WHITESPACE "\n             "
+IDENTIFIER "s"
+DOT "."
+IDENTIFIER "get"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+NOT_EQUAL "!="
+WHITESPACE " "
+NULL_LITERAL "null"
+SEMICOLON ";"
+WHITESPACE " "
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..147
+  CLASS_DECL@0..146
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..146
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..144
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        WHITESPACE@28..29 " "
+        BLOCK@29..144
+          L_BRACE@29..30 "{"
+          WHITESPACE@30..39 "\n        "
+          FOR_STMT@39..138
+            FOR_KW@39..42 "for"
+            WHITESPACE@42..43 " "
+            L_PAREN@43..44 "("
+            LOCAL_VARIABLE_DECLARATION@44..93
+              TYPE@44..79
+                QUALIFIED_NAME@44..71
+                  IDENTIFIER@44..48 "java"
+                  DOT@48..49 "."
+                  IDENTIFIER@49..53 "util"
+                  DOT@53..54 "."
+                  IDENTIFIER@54..62 "function"
+                  DOT@62..63 "."
+                  IDENTIFIER@63..71 "Supplier"
+                TYPE_ARGUMENTS@71..79
+                  LESS@71..72 "<"
+                  TYPE_ARGUMENT@72..78
+                    TYPE@72..78
+                      QUALIFIED_NAME@72..78
+                        IDENTIFIER@72..78 "String"
+                  GREATER@78..79 ">"
+              WHITESPACE@79..80 " "
+              VARIABLE_DECLARATOR_LIST@80..93
+                VARIABLE_DECLARATOR@80..93
+                  IDENTIFIER@80..81 "s"
+                  WHITESPACE@81..82 " "
+                  EQUAL@82..83 "="
+                  WHITESPACE@83..84 " "
+                  METHOD_REFERENCE@84..93
+                    LITERAL@84..88
+                      IDENTIFIER@84..88 "Test"
+                    COLON_COLON@88..90 "::"
+                    IDENTIFIER@90..93 "get"
+            SEMICOLON@93..94 ";"
+            WHITESPACE@94..108 "\n             "
+            BINARY_EXPR@108..123
+              METHOD_CALL@108..115
+                FIELD_ACCESS@108..113
+                  LITERAL@108..109
+                    IDENTIFIER@108..109 "s"
+                  DOT@109..110 "."
+                  IDENTIFIER@110..113 "get"
+                ARGUMENT_LIST@113..115
+                  L_PAREN@113..114 "("
+                  R_PAREN@114..115 ")"
+              WHITESPACE@115..116 " "
+              NOT_EQUAL@116..118 "!="
+              WHITESPACE@118..119 " "
+              LITERAL@119..123
+                NULL_LITERAL@119..123 "null"
+            SEMICOLON@123..124 ";"
+            WHITESPACE@124..125 " "
+            R_PAREN@125..126 ")"
+            WHITESPACE@126..127 " "
+            BLOCK@127..138
+              L_BRACE@127..128 "{"
+              WHITESPACE@128..137 "\n        "
+              R_BRACE@137..138 "}"
+          WHITESPACE@138..143 "\n    "
+          R_BRACE@143..144 "}"
+      WHITESPACE@144..145 "\n"
+      R_BRACE@145..146 "}"
+  WHITESPACE@146..147 "\n"

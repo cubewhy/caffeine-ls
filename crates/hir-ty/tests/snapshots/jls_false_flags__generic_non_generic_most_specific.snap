@@ -1,0 +1,57 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Map;
+
+class Body {
+    private static void increment(Map<String, Integer> map, String key) {
+    }
+    private static <T> void increment(Map<T, Integer> map, T key) {
+    }
+
+    static class Subject {
+        static class Builder {
+            <T> ObjectArraySubject<T> that(T[] a) {
+                return null;
+            }
+
+            Subject that(Object o) {
+                return null;
+            }
+        }
+
+        static class ObjectArraySubject<T> extends Subject {
+            ObjectArraySubject<T> asList() {
+                return null;
+            }
+        }
+    }
+
+    void m(Map<String, Integer> actual, String[] strings, Subject.Builder b) {
+        increment(actual, "x");
+        b.that(strings).asList();
+    }
+}
+
+method increment(java.util.Map<java.lang.String, java.lang.Integer>, java.lang.String): void
+  locals: l0: java.util.Map<java.lang.String, java.lang.Integer> | l1: java.lang.String
+  exprs: 
+method increment(java.util.Map<T, java.lang.Integer>, T): void
+  locals: l2: java.util.Map<T, java.lang.Integer> | l3: T
+  exprs: 
+method that(T[]): com.example.Body.Subject.ObjectArraySubject<T>
+  locals: l4: T[]
+  exprs: e0: null
+method that(java.lang.Object): com.example.Body.Subject
+  locals: l5: java.lang.Object
+  exprs: e1: null
+method asList(): com.example.Body.Subject.ObjectArraySubject<T>
+  locals: 
+  exprs: e2: null
+method m(java.util.Map<java.lang.String, java.lang.Integer>, java.lang.String[], com.example.Body.Subject.Builder): void
+  locals: l6: java.util.Map<java.lang.String, java.lang.Integer> | l7: java.lang.String[] | l8: com.example.Body.Subject.Builder
+  exprs: e3: java.util.Map<java.lang.String, java.lang.Integer> | e4: java.lang.String | e5: void | e6: java.lang.String[] | e7: com.example.Body.Subject.Builder | e8: com.example.Body.Subject.ObjectArraySubject<java.lang.String> | e9: com.example.Body.Subject.ObjectArraySubject<java.lang.String>

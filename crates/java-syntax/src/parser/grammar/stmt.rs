@@ -321,17 +321,33 @@ fn for_statement(p: &mut Parser) {
 fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
     fn inner(p: &mut Parser) -> Option<SyntaxKind> {
         let mut paren_depth = 0;
+        // §14.14: the `:` of a conditional expression (`for (T x = a ? b : c; …)`)
+        // is not the enhanced-for separator, and a method reference's `::` is
+        // not a colon at all. Track the pending `?`s of the conditional
+        // operator so its matching `:` is consumed as an operator, not a
+        // separator.
+        let mut ternary_depth = 0usize;
         while !p.at(EOF) {
             if p.at(L_PAREN) {
                 paren_depth += 1;
             } else if p.at(R_PAREN) {
                 paren_depth -= 1;
             } else if paren_depth == 0 {
-                if p.at(SEMICOLON) {
-                    return Some(SEMICOLON);
-                }
-                if p.at(COLON) {
-                    return Some(COLON);
+                if p.at(QUESTION) {
+                    ternary_depth += 1;
+                } else if p.at(COLON) && p.nth(1) == Some(COLON) {
+                    // `::` — a method reference; skip both colons.
+                    p.bump();
+                } else if p.at(COLON) && ternary_depth > 0 {
+                    // The `:` closing a conditional operator.
+                    ternary_depth -= 1;
+                } else if ternary_depth == 0 {
+                    if p.at(SEMICOLON) {
+                        return Some(SEMICOLON);
+                    }
+                    if p.at(COLON) {
+                        return Some(COLON);
+                    }
                 }
             }
             p.bump();
