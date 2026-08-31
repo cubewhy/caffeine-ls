@@ -1135,7 +1135,7 @@ fn source_class_methods(
         let implicit_record_members: [(&str, Vec<Ty>, Ty); 3] = [
             (
                 "equals",
-                vec![object_ty.clone()],
+                vec![object_ty],
                 Ty::primitive(db, syntax::stub::PrimitiveType::Boolean),
             ),
             (
@@ -1143,7 +1143,7 @@ fn source_class_methods(
                 Vec::new(),
                 Ty::primitive(db, syntax::stub::PrimitiveType::Int),
             ),
-            ("toString", Vec::new(), string_ty.clone()),
+            ("toString", Vec::new(), string_ty),
         ];
         for (member_name, params, ret) in implicit_record_members {
             // An empty name is the wildcard of the declaration-level walk
