@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    static {
+        f = 2;
+    }
+}
+
+static {}
+  @8:8..8:9 'f': non-static-field-from-static-context: Non-static field 'f' cannot be referenced from a static context
+  @8:8..8:9 'f': cannot-assign-to-final-variable: Cannot assign a value to final variable 'f'

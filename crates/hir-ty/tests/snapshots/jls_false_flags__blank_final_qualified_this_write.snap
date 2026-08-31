@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        Final.this.f = 1;
+    }
+}
+
+method Final(): <init>
+  @5:19..5:20 'f': cannot-assign-to-final-variable: Cannot assign a value to final variable 'f'

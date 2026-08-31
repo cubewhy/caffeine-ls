@@ -99,6 +99,11 @@ pub enum JavaDiagnosticCode {
     /// §16: a local variable's value is read before it is definitely
     /// assigned.
     VariableMightNotHaveBeenInitialized,
+    /// §8.3.1.2/[§16]: a blank `final` field (or blank `final` local) is
+    /// assigned a second time — after an earlier assignment already reached
+    /// it on every path. javac: `variable {x} might already have been
+    /// assigned`.
+    VariableAlreadyAssigned,
     /// §14.11.1/§15.28: a switch expression does not cover all possible
     /// selector values.
     NotExhaustive,
@@ -405,6 +410,7 @@ impl JavaDiagnosticCode {
             VariableMightNotHaveBeenInitialized => {
                 Some("compiler.err.var.might.not.have.been.initialized")
             }
+            VariableAlreadyAssigned => Some("compiler.err.var.might.already.be.assigned"),
             NotExhaustive => Some("compiler.err.not.exhaustive"),
             NonConstantCaseLabel => Some("compiler.err.const.expr.req"),
             DuplicateCaseLabel => Some("compiler.err.duplicate.case.label"),
@@ -522,6 +528,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::VariableMightNotHaveBeenInitialized => {
                 "variable-might-not-have-been-initialized"
             }
+            JavaDiagnosticCode::VariableAlreadyAssigned => "variable-already-assigned",
             JavaDiagnosticCode::NotExhaustive => "not-exhaustive",
             JavaDiagnosticCode::NonConstantCaseLabel => "non-constant-case-label",
             JavaDiagnosticCode::DuplicateCaseLabel => "duplicate-case-label",

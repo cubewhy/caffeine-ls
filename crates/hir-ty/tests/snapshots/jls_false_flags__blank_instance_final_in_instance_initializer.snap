@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    Final() {
+    }
+}

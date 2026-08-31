@@ -279,3 +279,477 @@ class Body {
         )],
     )
 );
+
+// -- §8.3.1.2/[§16]: a blank static final field is assigned once in a static
+// initializer or a static field initializer — the legal initialization, not a
+// cannot-assign error.
+
+snapshot!(
+    blank_static_final_in_static_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_static_final_in_static_field_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static int copy = sf = 1;
+}
+",
+    )])
+);
+
+// -- §8.3.1.2/[§16]: a blank final instance field is assigned once in a
+// constructor or an instance initializer (via a bare simple name or a bare
+// `this.field`) — the legal initialization.
+
+snapshot!(
+    blank_instance_final_in_constructor,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    Final(int x) {
+        this();
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_instance_final_in_instance_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    Final() {
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_instance_final_qualified_this_in_constructor,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        this.f = 1;
+    }
+}
+",
+    )])
+);
+
+// -- §8.3.1.2/[§16]: a *second* write to a blank final field is the
+// already-assigned error — javac: `variable {f} might already have been
+// assigned` — reported at the second write's target. Across sibling bodies
+// that run before it (another static initializer, a later instance
+// initializer, a constructor after the instance initializers) and within one
+// body after a branch both of whose paths assigned the field.
+
+snapshot!(
+    blank_static_final_double_assignment_same_block,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_static_final_double_assignment_sibling_blocks,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    static {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_static_final_double_assignment_field_init_then_block,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static int copy = sf = 1;
+    static {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_instance_final_ctor_after_instance_initializer,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    Final() {
+        f = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_instance_final_double_assignment_two_initializers,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    {
+        f = 1;
+    }
+    {
+        f = 2;
+    }
+    Final() {
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_final_after_both_branches_assigned,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+        } else {
+            sf = 2;
+        }
+        sf = 3;
+    }
+}
+",
+    )])
+);
+
+// -- §8.3.1.2/[§16]: the *legal* one-time assignments that must not be
+// flagged: a blank final assigned on both branches of an `if`/`else`, and a
+// write after an `if` whose then-arm exits.
+
+snapshot!(
+    blank_final_assigned_on_both_branches,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+        } else {
+            sf = 2;
+        }
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_final_after_exiting_if_branch,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if (\"x\".length() > 0) {
+            sf = 1;
+            throw new RuntimeException();
+        }
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+// -- §8.3.1.2/[§16]: a blank final field written from a *method*, an instance
+// context writing a static final, a static context writing an instance final,
+// a qualified `Type.field`/`Type.this.field` write, and a non-blank final
+// reassignment are all errors — the cannot-assign or non-static errors.
+
+snapshot!(
+    blank_final_after_this_delegation,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final(int x) {
+        f = 1;
+    }
+    Final() {
+        this(1);
+        f = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_final_this_delegation_no_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final(int x) {
+        f = 1;
+    }
+    Final() {
+        this(1);
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_static_final_written_from_static_method,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    static void m() {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_instance_final_written_from_instance_method,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    void m() {
+        f = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    static_final_written_from_instance_context,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        sf = 1;
+    }
+    Final() {
+        sf = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    instance_final_written_from_static_context,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        f = 1;
+    }
+    static {
+        f = 2;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_final_qualified_type_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        Final.sf = 1;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    blank_final_qualified_this_write,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f;
+    Final() {
+        Final.this.f = 1;
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    initialized_final_field_reassignment,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Final.java",
+        "\
+package com.example;
+
+class Final {
+    final int f = 1;
+    static final int sf = 2;
+    void m() {
+        f = 3;
+    }
+    static void sm() {
+        sf = 4;
+    }
+}
+",
+    )])
+);
+
+// -- §5.1.9: a *multi-dimensional* array of a raw type converts unchecked to
+// an array of the parameterized element — `ArrayList[][] → List<String>[][]`
+// is legal, exactly like the 1-D `Frame[] → Frame<String>[]` case.
+
+snapshot!(
+    multi_dim_raw_array_unchecked_conversion,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Body {
+    List<String>[][] foo() {
+        ArrayList[][] arrayListArrayArray = new ArrayList[1][];
+        return arrayListArrayArray;
+    }
+}
+",
+    )])
+);

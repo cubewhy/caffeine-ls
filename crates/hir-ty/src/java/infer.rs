@@ -84,6 +84,14 @@ pub struct BodyTypes {
     pub locals: FxHashMap<LocalId, Ty>,
     /// The type errors reported while inferring the body, in report order.
     pub diagnostics: Vec<TypeError>,
+    /// The blank `final` fields of the enclosing class that the body's
+    /// execution *touches* on some path ([§8.3.1.2], [§16]): every name
+    /// assigned by a plain `name = …`/`this.name = …` reachable through the
+    /// body's flow. A later sibling initializer body (or a constructor after
+    /// the instance initializers) seeds its already-assigned set with these,
+    /// so a second write to the same blank final is the already-assigned
+    /// error.
+    pub field_touched: FxHashSet<String>,
 }
 
 /// Infers the types of the body of `item` in `file`, memoized per (file,
@@ -126,12 +134,14 @@ pub(crate) fn body_types_impl(
         forward_names: Vec::new(),
         static_context: static_context_of(&tree, item),
         before_super: false,
-        definite: FxHashSet::default(),
+        flow: Flow::default(),
         exited: false,
         writing: false,
         mutating: false,
         in_constructor: false,
+        init_ctx: None,
         blank_finals: FxHashSet::default(),
+        lambda_depth: 0,
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
         diagnostics: Vec::new(),
@@ -148,6 +158,17 @@ pub(crate) fn body_types_impl(
         probing: false,
         rethrow_sets: FxHashMap::default(),
     };
+    // §8.3.1.2/[§16]: seed the body's already-assigned set with the blank
+    // `final` fields that *earlier* initializer bodies of the same class —
+    // which run before this one — may have assigned ([§8.3.2], [§8.6],
+    // [§8.7], [§8.8]): a static field initializer / static initializer runs
+    // after the earlier static ones; an instance field initializer /
+    // instance initializer runs after the earlier instance ones; and a
+    // constructor runs after *every* instance initializer and instance field
+    // initializer ([§8.8.7.1] — the implicit `super()` precedes the whole
+    // body, so the instance initializers have already run). A second write to
+    // such a field is then the already-assigned error.
+    ctx.flow.field_touched = prior_initializer_writes(db, file, &tree, item);
     let mut body = None;
     // §6.5.5.1: the expression forests of body-less items (field
     // initializers, enum constant arguments, annotation element defaults),
@@ -239,6 +260,9 @@ pub(crate) fn body_types_impl(
             }
         }
         hir_def::java::item_tree::ItemData::StaticInit(init) => {
+            // §8.7: a static initializer may assign the class's blank
+            // `static final` fields once ([§8.3.1.2], [§16]).
+            ctx.init_ctx = Some(InitCtx::Static);
             let body_id = init.body?;
             body = Some(body_id);
             for &param in &bodies.body(body_id).params {
@@ -247,6 +271,9 @@ pub(crate) fn body_types_impl(
             ctx.infer_block_statements(&bodies.body(body_id).stmts);
         }
         hir_def::java::item_tree::ItemData::InstanceInit(init) => {
+            // §8.6: an instance initializer may assign the class's blank
+            // `final` instance fields once ([§8.3.1.2], [§16]).
+            ctx.init_ctx = Some(InitCtx::Instance);
             let body_id = init.body?;
             body = Some(body_id);
             for &param in &bodies.body(body_id).params {
@@ -260,6 +287,15 @@ pub(crate) fn body_types_impl(
         // A field initializer ([§8.3.3]): a poly expression whose target is
         // the field's declared type.
         hir_def::java::item_tree::ItemData::Field(field) => {
+            // §8.3.1.2/[§8.3.2]: a field initializer runs in the context of
+            // its own static/instance kind — a static field initializer may
+            // assign a blank `static final` and an instance field initializer
+            // a blank `final` instance field, once ([§16]).
+            ctx.init_ctx = Some(if field.modifiers.is_static() {
+                InitCtx::Static
+            } else {
+                InitCtx::Instance
+            });
             let initializer = field.initializer_expr?;
             let target = resolve_type_ref(db, &ctx.scope, &ctx.resolver, &field.ty);
             // §8.3.3: the names this initializer may not read by simple name
@@ -355,7 +391,78 @@ pub(crate) fn body_types_impl(
         exprs: ctx.types,
         locals: ctx.locals,
         diagnostics: ctx.diagnostics,
+        field_touched: ctx.flow.field_touched,
     })
+}
+
+/// The kind of *initializer* body being inferred — the only contexts in which
+/// a blank `final` field may be assigned once ([JLS §8.3.1.2], [§16]). A
+/// static field initializer and a static initializer are **static** contexts;
+/// an instance field initializer, an instance initializer and a constructor
+/// are **instance** contexts. `None` for method bodies and enum constant
+/// argument lists, where no blank `final` field write is legal.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InitCtx {
+    /// A static initializer or a static field initializer ([JLS §8.7]).
+    Static,
+    /// An instance initializer, an instance field initializer or a
+    /// constructor ([JLS §8.6], [§8.8]).
+    Instance,
+}
+
+/// The verdict on a write to a `final` field ([JLS §8.3.1.2], [§16]): the
+/// once-only blank-`final` initialization, a second (already-assigned) write,
+/// or any other illegal `final`-field write.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FinalFieldWrite {
+    /// The write is the legal blank-final initialization.
+    Legal,
+    /// The write targets a blank final already assigned on some path — javac:
+    /// `variable {f} might already have been assigned`.
+    AlreadyAssigned,
+    /// Any other illegal `final`-field write — javac: `cannot assign a value
+    /// to {final|static final} variable {f}`.
+    CannotAssign,
+}
+
+/// The definite-assignment flow state of the body ([JLS §16]): which locals
+/// are definitely assigned, and which blank `final` fields of the enclosing
+/// class are *touched* (assigned on some path) so a later write to one is the
+/// already-assigned error ([§8.3.1.2]). The two sets are threaded through the
+/// branch machinery together — a branch save/restore/join must move both in
+/// lockstep — so they are bundled here rather than as two loose fields.
+#[derive(Clone, Default)]
+struct Flow {
+    /// The locals definitely assigned at the current position ([§16]).
+    definite: FxHashSet<LocalId>,
+    /// The blank `final` fields of the enclosing class assigned on *some* path
+    /// so far ([§8.3.1.2], [§16]).
+    field_touched: FxHashSet<String>,
+}
+
+impl Flow {
+    /// §16.1: the *definite-assignment* join of two paths — a local (or blank
+    /// final field) is definitely assigned after a join only when it was
+    /// definitely assigned on *every* incoming path, so the definite set is
+    /// the intersection. The field-touched set, by contrast, records "may
+    /// already be assigned": a blank final that either path touched may no
+    /// longer be assigned, so it is the *union*.
+    fn join_definite(&mut self, other: &Flow) {
+        self.definite.retain(|local| other.definite.contains(local));
+        for touched in &other.field_touched {
+            self.field_touched.insert(touched.clone());
+        }
+    }
+
+    /// The field-touched union used where an abrupt-completing branch
+    /// contributes no *definite* assignments but may still have touched a
+    /// blank final ([§16]): the surviving field is the union of the surviving
+    /// path's set and the pre-branch set.
+    fn union_touched(&mut self, other: &Flow) {
+        for touched in &other.field_touched {
+            self.field_touched.insert(touched.clone());
+        }
+    }
 }
 
 struct InferCtx<'a> {
@@ -403,12 +510,9 @@ struct InferCtx<'a> {
     /// reference to `this`, `super` or an instance member is a compile-time
     /// error ([`TypeError::CannotReferenceBeforeSuper`]).
     before_super: bool,
-    /// The locals definitely assigned at the current position
-    /// ([§16](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html)):
-    /// parameters start assigned; a declarator with an initializer or the
-    /// target of a simple assignment joins. Branch-sensitive — see
-    /// [`InferCtx::infer_stmt_data`].
-    definite: FxHashSet<LocalId>,
+    /// The definite-assignment flow state ([JLS §16]): the definitely-assigned
+    /// locals and the blank-`final` fields already touched (see [`Flow`]).
+    flow: Flow,
     /// Whether control flow has exited (return/break/continue/throw/yield)
     /// on every path to the current position ([§14.22] in effect): reads past
     /// this point are not definite-assignment errors.
@@ -430,12 +534,27 @@ struct InferCtx<'a> {
     /// a **blank** `final` field may be assigned once, in a constructor of
     /// its own class, as its initialization ([§8.3.1.2], [§16]).
     in_constructor: bool,
+    /// The *initializer* context of the body, when it is one
+    /// ([JLS §8.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.6),
+    /// [§8.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.7)):
+    /// a static initializer or static field initializer is a **static**
+    /// context in which a blank `static final` field may be assigned once; an
+    /// instance initializer, instance field initializer or constructor is an
+    /// **instance** context in which a blank `final` instance field may be
+    /// assigned once ([§8.3.1.2], [§16]). `None` for method bodies and enum
+    /// constant argument lists, where no blank `final` field write is legal.
+    init_ctx: Option<InitCtx>,
     /// The **blank** `final` locals of the body ([§4.12.4], [§16]): declared
     /// `final` with no initializer. Unlike every other `final` variable
     /// (parameters, catch/foreach/resource variables, finals with an
     /// initializer), a blank one may still be assigned — once, by definite
     /// assignment — so the `CannotAssignToFinalVariable` check exempts it.
     blank_finals: FxHashSet<LocalId>,
+    /// The nesting depth of enclosing lambda bodies ([JLS §15.27]): a lambda
+    /// body can never be the once-only blank-`final`-field initialization —
+    /// the lambda may execute any number of times ([§8.3.1.2], [§16]) — so a
+    /// blank-final-field write inside a lambda is always an error.
+    lambda_depth: usize,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
     /// The type errors reported so far, in report order ([§14.4.1], [§8.3.3]).
@@ -1374,8 +1493,16 @@ impl<'a> InferCtx<'a> {
                     && let ExprData::Var(name) = self.tree.expr(lhs).clone()
                     && let Some(local) = self.lookup_local(&name)
                 {
-                    self.definite.insert(local);
+                    self.flow.definite.insert(local);
                     self.rethrow_sets.remove(&local);
+                }
+                // §16/[§8.3.1.2]: a *plain* assignment to a blank `final`
+                // field of the enclosing class initializes it (or, if the
+                // field is already assigned, is the already-assigned error
+                // reported at the write's target) — either way the field is
+                // now assigned, so it joins the field-assignment tracking.
+                if matches!(op, AssignOp::Assign) {
+                    self.record_field_write(lhs);
                 }
                 if matches!(op, AssignOp::Assign)
                     && !lhs_ty.is_error(self.db)
@@ -1556,17 +1683,19 @@ impl<'a> InferCtx<'a> {
                 // abrupt-completion state into the enclosing block ([§14.22]).
                 // Each arm is probed from the pre-switch state.
                 let before_exited = self.exited;
-                let before_definite = self.definite.clone();
+                let before_flow = self.flow.clone();
                 let mut result_tys: Vec<Ty> = Vec::new();
                 // §16.1.9 extended to expressions ([§14.11.1], [§15.28]): a
                 // local assigned on every normal-completing arm is definitely
                 // assigned after the switch expression. Each arm's end state
                 // joins by intersection over the non-abrupt arms — the same
-                // join the statement form performs.
-                let mut arm_end_states: Vec<(FxHashSet<LocalId>, bool)> = Vec::new();
+                // join the statement form performs. The blank-`final`-field
+                // touched set joins by union (any arm that touched a field
+                // rules out a later assignment to it, [§8.3.1.2]).
+                let mut arm_end_states: Vec<(Flow, bool)> = Vec::new();
                 for arm in &arms {
                     self.exited = before_exited;
-                    self.definite = before_definite.clone();
+                    self.flow = before_flow.clone();
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
                     self.scopes.push(FxHashMap::default());
@@ -1619,8 +1748,8 @@ impl<'a> InferCtx<'a> {
                     // Record the arm's end state: abrupt completion (throw /
                     // return) contributes no path; a normal-completing arm
                     // contributes its definite-assignment set.
-                    arm_end_states.push((self.definite.clone(), self.exited));
-                    self.definite = before_definite.clone();
+                    arm_end_states.push((self.flow.clone(), self.exited));
+                    self.flow = before_flow.clone();
                     self.exited = before_exited;
                     self.scopes.pop();
                 }
@@ -1628,18 +1757,19 @@ impl<'a> InferCtx<'a> {
                 // *every* non-abrupt path are definitely assigned after the
                 // switch expression. With only abrupt arms the pre-switch
                 // state stands (the expression never completed normally).
-                let mut joined: Option<FxHashSet<LocalId>> = None;
+                let mut joined: Option<Flow> = None;
                 for (end_state, exited) in &arm_end_states {
                     if *exited {
                         continue;
                     }
                     match &mut joined {
                         None => joined = Some(end_state.clone()),
-                        Some(acc) => acc.retain(|local| end_state.contains(local)),
+                        Some(acc) => acc.join_definite(end_state),
                     }
                 }
                 if let Some(joined) = joined {
-                    self.definite.extend(joined);
+                    self.flow.definite.extend(joined.definite.clone());
+                    self.flow.union_touched(&joined);
                 }
                 self.case_values.pop();
                 self.switch_targets.pop();
@@ -1725,7 +1855,7 @@ impl<'a> InferCtx<'a> {
             // (return/break/throw) are not checked — the path is unreachable —
             // and the left-hand side of a simple assignment is written, not
             // read ([§15.26.1]).
-            if !self.exited && !self.writing && !self.definite.contains(&local) {
+            if !self.exited && !self.writing && !self.flow.definite.contains(&local) {
                 self.report(TypeError::NotDefinitelyAssigned {
                     expr,
                     name: name.clone(),
@@ -1775,13 +1905,26 @@ impl<'a> InferCtx<'a> {
                 });
             }
             // §8.3.1.2/[§16]: writing a `final` field through its simple name
-            // (implicit `this`) is only legal as the blank-final constructor
-            // initialization.
-            if self.mutating && field.is_final && !self.final_field_write_legal(&field) {
-                self.report(TypeError::CannotAssignToFinalVariable {
-                    expr,
-                    name: name.clone(),
-                });
+            // (implicit `this`) is only legal as the blank-final
+            // initialization; a write to a blank final that an earlier
+            // statement (or path) has already assigned is the
+            // already-assigned error.
+            if self.mutating && field.is_final {
+                match self.final_field_write_verdict(&field, true) {
+                    FinalFieldWrite::Legal => {}
+                    FinalFieldWrite::AlreadyAssigned => {
+                        self.report(TypeError::VariableAlreadyAssigned {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
+                    FinalFieldWrite::CannotAssign => {
+                        self.report(TypeError::CannotAssignToFinalVariable {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
+                }
             }
             return field.ty;
         }
@@ -2009,17 +2152,30 @@ impl<'a> InferCtx<'a> {
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => {
                 // §8.3.1.2/[§16]: writing a `final` field is legal only as the
-                // blank-final initialization through `this` in a constructor
-                // of the field's own class; every other final-field write is
-                // an error.
+                // blank-final initialization through a bare `this` receiver in
+                // the matching initializer context of the field's own class;
+                // a write to a blank final already assigned is the
+                // already-assigned error; every other final-field write is an
+                // error.
                 if self.mutating && field.is_final {
-                    let receiver_is_this =
-                        matches!(self.tree.expr(target).clone(), ExprData::This { .. });
-                    if !(receiver_is_this && self.final_field_write_legal(&field)) {
-                        self.report(TypeError::CannotAssignToFinalVariable {
-                            expr,
-                            name: name.clone(),
-                        });
+                    let bare_this = matches!(
+                        self.tree.expr(target).clone(),
+                        ExprData::This { qualifier: None }
+                    );
+                    match self.final_field_write_verdict(&field, bare_this) {
+                        FinalFieldWrite::Legal => {}
+                        FinalFieldWrite::AlreadyAssigned => {
+                            self.report(TypeError::VariableAlreadyAssigned {
+                                expr,
+                                name: name.clone(),
+                            });
+                        }
+                        FinalFieldWrite::CannotAssign => {
+                            self.report(TypeError::CannotAssignToFinalVariable {
+                                expr,
+                                name: name.clone(),
+                            });
+                        }
                     }
                 }
                 field.ty
@@ -2185,31 +2341,53 @@ impl<'a> InferCtx<'a> {
         None
     }
 
-    /// §8.3.1.2/[§16]: whether writing to the `final` field `field` is the
-    /// *legal* blank-`final` initialization — a blank (initializer-less)
-    /// instance field of the class under construction may be assigned once, in
-    /// a constructor of that class, through its own `this` receiver. Every
-    /// other `final`-field assignment (a field with an initializer, a static
-    /// field, an external receiver, a library field) is a compile-time error
-    /// ([`TypeError::CannotAssignToFinalVariable`]).
-    fn final_field_write_legal(&self, field: &FieldData) -> bool {
-        if !self.in_constructor {
-            return false;
+    /// §16/[§8.3.1.2]: records the *plain* assignment `lhs`'s target into
+    /// [`Self::field_touched`] — a blank `final` field of the enclosing class
+    /// that is assigned by `name = …` or `this.name = …`. Called for every
+    /// simple assignment; the field's name enters the "might already be
+    /// assigned" set so a later write to the same blank final is the
+    /// already-assigned error ([`TypeError::VariableAlreadyAssigned`]). The
+    /// assignment itself is validated (as legal blank-final initialization or
+    /// as the cannot-assign error) at the field-write check in [`Self::var`]
+    /// and [`Self::field_access`].
+    fn record_field_write(&mut self, lhs: ExprId) {
+        let name = match self.tree.expr(lhs).clone() {
+            ExprData::Var(name) => name,
+            ExprData::FieldAccess { target, name } => {
+                // Only a bare `this.name` (the implicit receiver) can be the
+                // class's own field; `Type.name` and `obj.name` assign a
+                // member of another object and never touch the enclosing
+                // class's blank finals.
+                let Some(target) = target else {
+                    return;
+                };
+                if !matches!(
+                    self.tree.expr(target).clone(),
+                    ExprData::This { qualifier: None }
+                ) {
+                    return;
+                }
+                name
+            }
+            _ => return,
+        };
+        let Some(field) = self.pick_field_of_chain(name.as_str()) else {
+            return;
+        };
+        // §8.3.1.2/[§16]: only *blank* finals are one-shot — a final with an
+        // initializer can never be assigned, and is reported elsewhere; it is
+        // not "assigned here".
+        if !field.is_final || !self.field_is_blank(&field) {
+            return;
         }
-        // The field must belong to the class under construction.
-        let same_class = self
-            .enclosing_class
-            .as_ref()
-            .and_then(|ty| ty.as_reference(self.db))
-            .is_some_and(|(fqn, _)| fqn.as_str() == field.owner);
-        if !same_class {
-            return false;
-        }
-        // The field must be blank — a source field with no initializer (its
-        // initializer is what makes a later assignment a double-write). A
-        // record component field is implicitly blank ([§8.10.4]): the
-        // canonical and compact constructors may assign it, and no component
-        // ever carries an initializer.
+        self.flow.field_touched.insert(name.as_str().to_owned());
+    }
+
+    /// Whether `field` is a *blank* (initializer-less) `final` field of a
+    /// source class ([JLS §8.3.1.2]): the once-only initialization rule
+    /// applies to a field with no initializer (and to a record component,
+    /// which is implicitly blank, [§8.10.4]).
+    fn field_is_blank(&self, field: &FieldData) -> bool {
         let Some(owner_file) = field.owner_file else {
             return false;
         };
@@ -2246,6 +2424,57 @@ impl<'a> InferCtx<'a> {
             walk(&tree, top, &field.name, &mut found_blank);
         }
         found_blank
+    }
+
+    /// §8.3.1.2/[§16]: the verdict on writing the `final` field `field`
+    /// through `bare_this` at the current position. [`FinalFieldWrite::Legal`]
+    /// is the once-only blank-`final` initialization — a blank (initializer-
+    /// less) field of the class being initialized, written through its own
+    /// `this` receiver from the matching initializer context: a blank
+    /// `static final` from a static initializer or static field initializer
+    /// ([§8.7], [§8.3.2]), a blank `final` instance field from an instance
+    /// initializer, instance field initializer or a constructor ([§8.6],
+    /// [§8.3.2], [§8.8]). [`FinalFieldWrite::AlreadyAssigned`] is a second
+    /// write to a blank final that some earlier statement or alternative path
+    /// has *already* assigned ([§16]); every other `final`-field write is
+    /// [`FinalFieldWrite::CannotAssign`].
+    fn final_field_write_verdict(&self, field: &FieldData, bare_this: bool) -> FinalFieldWrite {
+        if !bare_this || self.lambda_depth > 0 {
+            return FinalFieldWrite::CannotAssign;
+        }
+        // The context must match the field's static/instance kind.
+        let ctx_ok = if field.is_static {
+            self.init_ctx == Some(InitCtx::Static)
+        } else {
+            self.in_constructor || self.init_ctx == Some(InitCtx::Instance)
+        };
+        if !ctx_ok {
+            return FinalFieldWrite::CannotAssign;
+        }
+        // The field must belong to the class being initialized.
+        let same_class = self
+            .enclosing_class
+            .as_ref()
+            .and_then(|ty| ty.as_reference(self.db))
+            .is_some_and(|(fqn, _)| fqn.as_str() == field.owner);
+        if !same_class {
+            return FinalFieldWrite::CannotAssign;
+        }
+        // The field must be blank — a source field with no initializer (its
+        // initializer is what makes a later assignment a double-write). A
+        // record component field is implicitly blank ([§8.10.4]): the
+        // canonical and compact constructors may assign it, and no component
+        // ever carries an initializer.
+        if !self.field_is_blank(field) {
+            return FinalFieldWrite::CannotAssign;
+        }
+        // A blank final may be assigned only once: a write to one already
+        // assigned on some path is the already-assigned error, not a fresh
+        // initialization.
+        if self.flow.field_touched.contains(field.name.as_str()) {
+            return FinalFieldWrite::AlreadyAssigned;
+        }
+        FinalFieldWrite::Legal
     }
 
     /// §6.6: the access probe of a field access ([§15.11]) — after the
@@ -2370,6 +2599,22 @@ impl<'a> InferCtx<'a> {
                 for thrown in &method.throws {
                     if self.is_checked(thrown) {
                         self.thrown.push((thrown.clone(), expr));
+                    }
+                }
+                // §8.8.7.1/[§16]: a `this(...)` delegation runs the target
+                // constructor before the rest of this body, so any blank
+                // `final` field the target assigns is already assigned for
+                // the remainder of *this* constructor — a later write to it
+                // is the already-assigned error. (A `super(...)` delegation
+                // assigns only the superclass's fields, which this class
+                // cannot initialize.)
+                if target == hir_expand::body::CtorCallTarget::This
+                    && let Some(owner_file) = method.owner_file
+                    && let Some(method_item) = find_method_item(self.db, owner_file, &method)
+                    && let Some(types) = body_types(self.db, owner_file, method_item)
+                {
+                    for touched in &types.field_touched {
+                        self.flow.field_touched.insert(touched.clone());
                     }
                 }
             }
@@ -3537,7 +3782,10 @@ impl<'a> InferCtx<'a> {
         // enclosing statement's state.
         let saved_throws_ctx = std::mem::replace(&mut self.enclosing_throws, sam.throws.clone());
         let saved_exited = self.exited;
-        let saved_definite = self.definite.clone();
+        let saved_flow = self.flow.clone();
+        // §15.27/[§8.3.1.2]: a lambda body is never the once-only blank-final
+        // field initialization (the lambda may execute any number of times).
+        self.lambda_depth += 1;
         // The speculative body inference must leave no liability behind: its
         // entries reuse the *same* expression ids the final re-inference will
         // add, so they are drained here — otherwise
@@ -3596,7 +3844,8 @@ impl<'a> InferCtx<'a> {
         self.thrown.retain(|(_, expr)| thrown_before.contains(expr));
         self.enclosing_throws = saved_throws_ctx;
         self.exited = saved_exited;
-        self.definite = saved_definite;
+        self.flow = saved_flow;
+        self.lambda_depth -= 1;
         self.enclosing_ret = saved_ret;
         self.lambda_params.pop();
         result
@@ -4262,7 +4511,12 @@ impl<'a> InferCtx<'a> {
         // neither discharged by, nor propagated to, the enclosing method.
         let saved_throws = std::mem::replace(&mut self.enclosing_throws, sam.throws.clone());
         let saved_exited = self.exited;
-        let saved_definite = self.definite.clone();
+        let saved_flow = self.flow.clone();
+        // §15.27/[§8.3.1.2]: a lambda body is never the once-only blank-final
+        // field initialization — the lambda may execute any number of times —
+        // so a blank-final write inside it is always an error. Track the
+        // depth so the write check rejects them.
+        self.lambda_depth += 1;
         let thrown_before: FxHashSet<ExprId> = self.thrown.iter().map(|(_, e)| *e).collect();
         match body {
             // §15.27.2: an expression lambda's body is a poly expression
@@ -4276,10 +4530,11 @@ impl<'a> InferCtx<'a> {
             }
             LambdaBody::Block(stmt) => self.infer_stmt(stmt),
         }
+        self.lambda_depth -= 1;
         self.settle_lambda_thrown(&sam.throws, &thrown_before);
         self.enclosing_throws = saved_throws;
         self.exited = saved_exited;
-        self.definite = saved_definite;
+        self.flow = saved_flow;
         self.enclosing_ret = saved_ret;
         self.lambda_params.pop();
         target
@@ -5076,7 +5331,7 @@ impl<'a> InferCtx<'a> {
     /// [§16.1.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-16.html#jls-16.1.9)).
     fn declare_param(&mut self, id: LocalId) {
         self.declare_local(id);
-        self.definite.insert(id);
+        self.flow.definite.insert(id);
     }
 
     fn declare_local_ty(&mut self, id: LocalId, fallback: Ty) {
@@ -5104,7 +5359,7 @@ impl<'a> InferCtx<'a> {
         // Every binding form except a bare declarator initializes its local
         // (parameters, initializers, catch/foreach/resource variables,
         // pattern bindings), so it is definitely assigned ([§16]).
-        self.definite.insert(id);
+        self.flow.definite.insert(id);
         self.scopes
             .last_mut()
             .expect("scope stack non-empty")
@@ -5301,7 +5556,7 @@ impl<'a> InferCtx<'a> {
         let name = self.tree.local(id).name.clone();
         // A pattern variable is definitely assigned wherever it is in scope
         // ([§16.1.13]): it is bound exactly when the pattern matched.
-        self.definite.insert(id);
+        self.flow.definite.insert(id);
         self.scopes
             .last_mut()
             .expect("scope stack non-empty")
@@ -5368,7 +5623,7 @@ impl<'a> InferCtx<'a> {
                 if initializer.is_none() {
                     // §16: a declarator without an initializer is not
                     // definitely assigned until a later assignment reaches it.
-                    self.definite.remove(local);
+                    self.flow.definite.remove(local);
                     // §4.12.4: a `final` declarator with no initializer is a
                     // *blank* final — it may still be assigned once by
                     // definite assignment, so it is not an un-assignable
@@ -5458,13 +5713,19 @@ impl<'a> InferCtx<'a> {
                 // §16: after the `if`, a local is definitely assigned only if
                 // it is assigned on *both* paths — the then branch and (when
                 // present) the else branch; a branch that exits contributes
-                // no constraint.
-                let before = self.definite.clone();
+                // no constraint. A blank `final` field is *touched* if either
+                // surviving path assigned it ([§8.3.1.2]): after the `if`, a
+                // later write to it is the already-assigned error.
+                let before = self.flow.clone();
                 let before_exited = self.exited;
                 self.infer_stmt(*then);
                 self.scopes.pop();
-                let mut then_set = std::mem::replace(&mut self.definite, before.clone());
+                let then_flow = std::mem::replace(&mut self.flow, before.clone());
                 let then_exited = std::mem::replace(&mut self.exited, before_exited);
+                // The else path's end state; the else-less form's false path
+                // is `before`.
+                let mut else_flow = before.clone();
+                let mut else_exited = before_exited;
                 if let Some(els) = els {
                     self.scopes.push(FxHashMap::default());
                     for binding in &false_flow {
@@ -5472,6 +5733,8 @@ impl<'a> InferCtx<'a> {
                     }
                     self.infer_stmt(*els);
                     self.scopes.pop();
+                    else_flow = std::mem::replace(&mut self.flow, before.clone());
+                    else_exited = std::mem::replace(&mut self.exited, before_exited);
                 } else if then_exited && !before_exited {
                     // §14.30.3/§16: when the then arm completes abruptly, the
                     // only way past this statement is the condition's false
@@ -5481,43 +5744,62 @@ impl<'a> InferCtx<'a> {
                         self.scope_binding(*binding);
                     }
                 }
-                // The else-less form leaves `definite` at `before` already.
-                if els.is_some() {
-                    if then_exited && !self.exited {
-                        // Only the else path falls through: keep its set.
-                    } else if self.exited && !then_exited {
-                        // Only the then path falls through: keep its set —
-                        // `definite` currently holds the *else* path's end
-                        // state, so restore the saved then state.
-                        self.definite = then_set;
-                    } else {
-                        then_set.retain(|local| self.definite.contains(local));
-                        self.definite = then_set;
+                // §16.1/§8.3.1.2: join the surviving paths. A path that
+                // completes abruptly never reaches the join; when no path
+                // does, the following code is unreachable and `before` stands.
+                let then_survives = !then_exited;
+                let else_survives = !else_exited;
+                match (then_survives, else_survives) {
+                    (true, true) => {
+                        // Both paths fall through: definite intersects,
+                        // touched unions.
+                        let mut then_flow = then_flow;
+                        then_flow
+                            .definite
+                            .retain(|local| else_flow.definite.contains(local));
+                        then_flow.union_touched(&else_flow);
+                        self.flow = then_flow;
                     }
-                    self.exited = then_exited && self.exited;
+                    (true, false) => {
+                        // Only the then path falls through.
+                        self.flow = then_flow;
+                    }
+                    (false, true) => {
+                        // Only the else path falls through — it already holds
+                        // `before` plus its own writes.
+                        self.flow = else_flow;
+                    }
+                    (false, false) => {
+                        // Both exit: the following code is unreachable.
+                        self.flow = before.clone();
+                    }
                 }
+                self.exited = then_exited && else_exited;
             }
             StmtData::While { cond, body } => {
                 self.check_condition(*cond);
                 // §16.1.10: the body may run zero times, so nothing it
-                // assigns is definitely assigned after the loop.
-                let before = self.definite.clone();
+                // assigns is definitely assigned after the loop, and a blank
+                // `final` field it touches stays *definitely unassigned* after
+                // it ([§8.3.1.2]) — a later write is still a fresh
+                // initialization, not an already-assigned one.
+                let before = self.flow.clone();
                 self.loop_depth += 1;
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
-                self.definite = before;
+                self.flow = before;
                 self.exited = false;
             }
             StmtData::DoWhile { body, cond } => {
                 // §16.1.11: a do-loop's body runs at least once, so its
                 // assignments carry past the loop when the body falls
                 // through; an exiting body constrains nothing.
-                let before = self.definite.clone();
+                let before = self.flow.clone();
                 self.loop_depth += 1;
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
                 if self.exited {
-                    self.definite = before;
+                    self.flow = before;
                 }
                 self.check_condition(*cond);
                 self.exited = false;
@@ -5539,11 +5821,11 @@ impl<'a> InferCtx<'a> {
                     let _ = self.infer_expr(step);
                 }
                 // §16.1.14: like `while`, the body may run zero times.
-                let before = self.definite.clone();
+                let before = self.flow.clone();
                 self.loop_depth += 1;
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
-                self.definite = before;
+                self.flow = before;
                 self.exited = false;
                 self.scopes.pop();
             }
@@ -5580,11 +5862,11 @@ impl<'a> InferCtx<'a> {
                 self.scopes.push(FxHashMap::default());
                 self.declare_local_ty(*var, element);
                 // §16.1.11: like `while`, the body may run zero times.
-                let before = self.definite.clone();
+                let before = self.flow.clone();
                 self.loop_depth += 1;
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
-                self.definite = before;
+                self.flow = before;
                 self.exited = false;
                 self.scopes.pop();
             }
@@ -5597,12 +5879,13 @@ impl<'a> InferCtx<'a> {
                 // the pre-switch state; the switch completes normally iff at
                 // least one arm completes normally, and a local is definitely
                 // assigned after the switch only when it is assigned on every
-                // normal-completing arm ([§16.1.9]).
-                let before = self.definite.clone();
+                // normal-completing arm ([§16.1.9]). A blank `final` field is
+                // touched if any surviving arm touched it ([§8.3.1.2]).
+                let before = self.flow.clone();
                 let before_exited = self.exited;
-                let mut paths: Vec<(FxHashSet<LocalId>, bool)> = Vec::new();
+                let mut paths: Vec<(Flow, bool)> = Vec::new();
                 for arm in arms {
-                    self.definite = before.clone();
+                    self.flow = before.clone();
                     self.exited = before_exited;
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
@@ -5628,7 +5911,7 @@ impl<'a> InferCtx<'a> {
                     for &stmt in &arm.body {
                         self.infer_stmt(stmt);
                     }
-                    let end_state = std::mem::replace(&mut self.definite, before.clone());
+                    let end_state = std::mem::replace(&mut self.flow, before.clone());
                     let exits = std::mem::replace(&mut self.exited, before_exited);
                     paths.push((end_state, exits));
                     self.scopes.pop();
@@ -5636,17 +5919,17 @@ impl<'a> InferCtx<'a> {
                 // The join of §16.1.9: only normal-completing arms reach the
                 // statement after the switch; when no arm does, the switch
                 // completes abruptly and the following code is unreachable.
-                let mut live_joined: Option<FxHashSet<LocalId>> = None;
+                let mut live_joined: Option<Flow> = None;
                 for (path, exited) in &paths {
                     if *exited {
                         continue;
                     }
                     match &mut live_joined {
                         None => live_joined = Some(path.clone()),
-                        Some(acc) => acc.retain(|local| path.contains(local)),
+                        Some(acc) => acc.join_definite(path),
                     }
                 }
-                self.definite = live_joined.unwrap_or_else(|| before.clone());
+                self.flow = live_joined.unwrap_or_else(|| before.clone());
                 self.exited = paths.iter().all(|(_, exited)| *exited);
                 self.scopes.pop();
                 self.case_values.pop();
@@ -5881,15 +6164,14 @@ impl<'a> InferCtx<'a> {
                 // assigned at the end of *every* path — the intersection of
                 // the try block and each catch clause. A `finally` always
                 // runs, so its assignments override.
-                let before = self.definite.clone();
+                let before = self.flow.clone();
                 let before_exited = self.exited;
                 self.infer_stmt(*body);
                 // The end-of-body state is one path; each catch clause adds
                 // another, starting from the pre-try state.
                 // Each path is its end state plus whether the path reaches
                 // the join at all (a clause that completed abruptly does not).
-                let mut paths: Vec<(FxHashSet<LocalId>, bool)> =
-                    vec![(self.definite.clone(), self.exited)];
+                let mut paths: Vec<(Flow, bool)> = vec![(self.flow.clone(), self.exited)];
                 let mut all_exits = self.exited;
                 // exceptions assignable to its declared type; a clause whose
                 // type is a subtype of an *earlier* clause's type is
@@ -5910,7 +6192,7 @@ impl<'a> InferCtx<'a> {
                 for clause in catches {
                     // Each catch clause is an alternative path that starts
                     // from the pre-try state ([§16.1.8]).
-                    self.definite = before.clone();
+                    self.flow = before.clone();
                     self.exited = before_exited;
                     self.scopes.push(FxHashMap::default());
                     // The entries still pending when this clause begins — the
@@ -5938,7 +6220,7 @@ impl<'a> InferCtx<'a> {
                         // infers its body for its own diagnostics.
                         self.declare_local(clause.param);
                         self.infer_stmt(clause.body);
-                        let end_state = std::mem::replace(&mut self.definite, before.clone());
+                        let end_state = std::mem::replace(&mut self.flow, before.clone());
                         let exits = std::mem::replace(&mut self.exited, before_exited);
                         paths.push((end_state, exits));
                         all_exits &= exits;
@@ -6057,7 +6339,7 @@ impl<'a> InferCtx<'a> {
                     self.declare_local(clause.param);
                     self.infer_stmt(clause.body);
                     // The clause's end state joins the other paths.
-                    let end_state = std::mem::replace(&mut self.definite, before.clone());
+                    let end_state = std::mem::replace(&mut self.flow, before.clone());
                     let exits = std::mem::replace(&mut self.exited, before_exited);
                     paths.push((end_state, exits));
                     all_exits &= exits;
@@ -6070,17 +6352,17 @@ impl<'a> InferCtx<'a> {
                 // the join and constrains nothing; when no path reaches it,
                 // the following code is unreachable and the pre-try state
                 // stands.
-                let mut live_joined: Option<FxHashSet<LocalId>> = None;
+                let mut live_joined: Option<Flow> = None;
                 for (path, exited) in &paths {
                     if *exited {
                         continue;
                     }
                     match &mut live_joined {
                         None => live_joined = Some(path.clone()),
-                        Some(acc) => acc.retain(|local| path.contains(local)),
+                        Some(acc) => acc.join_definite(path),
                     }
                 }
-                self.definite = live_joined.unwrap_or_else(|| before.clone());
+                self.flow = live_joined.unwrap_or_else(|| before.clone());
                 self.exited = all_exits;
                 self.scopes.pop();
                 if let Some(finally) = finally {
@@ -6248,6 +6530,143 @@ fn enclosing_self_ty(
             return Some(Ty::reference(db, fqn.as_str(), args));
         }
         current = links.get(&id).copied();
+    }
+    None
+}
+
+/// §8.3.1.2/[§16]: the blank `final` fields of the enclosing class that
+/// *earlier* initializer bodies — which run before `item`'s body — may have
+/// assigned on some path ([§8.3.2], [§8.6], [§8.7], [§8.8]):
+///
+/// - for a **static** field initializer or static initializer: the earlier
+///   static field initializers and static initializers of the same class;
+/// - for an **instance** field initializer or instance initializer: the
+///   earlier instance field initializers and instance initializers;
+/// - for a **constructor**: *every* instance field initializer and instance
+///   initializer (the implicit `super()` precedes the whole body, so they
+///   have all run; [§8.8.7.1]).
+///
+/// The seed is the union of those bodies' own already-touched sets — the
+/// already-assigned analysis is path-sensitive *within* each body, so a
+/// write only reachable through a path that cannot have run is not seeded. A
+/// later write to a seeded blank final is the already-assigned error.
+fn prior_initializer_writes(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: ItemId,
+) -> FxHashSet<String> {
+    use hir_def::java::item_tree::ItemData as I;
+    // The item's parent links (the same shape as
+    // [`enclosing_self_ty`]'s `parents`).
+    fn parents(tree: &hir_def::java::item_tree::ItemTree, map: &mut FxHashMap<ItemId, ItemId>) {
+        fn walk(
+            tree: &hir_def::java::item_tree::ItemTree,
+            id: ItemId,
+            parents: &mut FxHashMap<ItemId, ItemId>,
+        ) {
+            for &child in tree.data(id).body() {
+                parents.insert(child, id);
+                walk(tree, child, parents);
+            }
+        }
+        for &top in &tree.top {
+            walk(tree, top, map);
+        }
+    }
+    let mut links: FxHashMap<ItemId, ItemId> = FxHashMap::default();
+    parents(tree, &mut links);
+    // The innermost class-like declaration owning `item`; the sibling
+    // initializers live in its body.
+    let mut class_item = None;
+    let mut current = links.get(&item).copied();
+    while let Some(id) = current {
+        if tree.data(id).is_type() {
+            class_item = Some(id);
+            break;
+        }
+        current = links.get(&id).copied();
+    }
+    let Some(class_item) = class_item else {
+        return FxHashSet::default();
+    };
+
+    // The kind of sibling bodies that run *before* `item`: whether they are
+    // the static or the instance initializers, and whether `item` is itself a
+    // constructor (which runs after every instance initializer).
+    let (sibling_is_static, all_prior) = match tree.data(item) {
+        I::Field(field) => (field.modifiers.is_static(), false),
+        I::StaticInit(_) => (true, false),
+        I::InstanceInit(_) => (false, false),
+        I::Method(method) => (false, method.is_constructor()),
+        _ => return FxHashSet::default(),
+    };
+
+    let mut seeded = FxHashSet::default();
+    for &child in tree.data(class_item).body() {
+        // For a constructor, every instance field initializer and instance
+        // initializer precedes the body ([§8.8.7.1]); for a field initializer
+        // or initializer, only its earlier same-kind siblings do.
+        let is_prior = match tree.data(child) {
+            I::Field(f) if all_prior => !f.modifiers.is_static(),
+            I::InstanceInit(_) if all_prior => true,
+            I::Field(f) => {
+                !all_prior && f.modifiers.is_static() == sibling_is_static && child < item
+            }
+            I::StaticInit(_) => !all_prior && sibling_is_static && child < item,
+            I::InstanceInit(_) => !all_prior && !sibling_is_static && child < item,
+            _ => false,
+        };
+        if !is_prior {
+            continue;
+        }
+        // A body-less field has no initializer to run; every body-carrying
+        // sibling contributes its already-touched set.
+        if let Some(types) = body_types(db, file, child) {
+            for touched in &types.field_touched {
+                seeded.insert(touched.clone());
+            }
+        }
+    }
+    seeded
+}
+
+/// The source `ItemId` of the source method `method` (whose [`MethodData`]
+/// was resolved from `method.owner_file`), found by name and arity — the
+/// overloads of one class are distinguished by their parameter count for the
+/// purposes of the blank-final-field delegation tracking ([§8.8.7.1]).
+fn find_method_item(
+    db: &dyn TyDatabase,
+    file: FileId,
+    method: &crate::java::method::MethodData,
+) -> Option<ItemId> {
+    let tree = hir::file_item_tree(db, file);
+    for top in &tree.top {
+        if let Some(found) = find_method_rec(&tree, *top, method) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn find_method_rec(
+    tree: &hir_def::java::item_tree::ItemTree,
+    id: ItemId,
+    method: &crate::java::method::MethodData,
+) -> Option<ItemId> {
+    use hir_def::java::item_tree::ItemData as I;
+    match tree.data(id) {
+        I::Method(m)
+            if m.name.as_str() == method.name && m.sig.params.len() == method.params.len() =>
+        {
+            return Some(id);
+        }
+        _ => {}
+    }
+    for &child in tree.data(id).body() {
+        if let Some(found) = find_method_rec(tree, child, method) {
+            return Some(found);
+        }
     }
     None
 }

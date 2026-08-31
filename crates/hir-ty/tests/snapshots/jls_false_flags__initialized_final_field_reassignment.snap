@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int f = 1;
+    static final int sf = 2;
+    void m() {
+        f = 3;
+    }
+    static void sm() {
+        sf = 4;
+    }
+}
+
+method m(): void
+  @6:8..6:9 'f': cannot-assign-to-final-variable: Cannot assign a value to final variable 'f'
+method sm(): void
+  @9:8..9:10 'sf': cannot-assign-to-final-variable: Cannot assign a value to final variable 'sf'

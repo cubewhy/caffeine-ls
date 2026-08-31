@@ -206,6 +206,12 @@ pub enum TypeError {
     /// §16 (definite assignment): the value of a blank or not-yet-assigned
     /// local is read before an assignment reaches the read.
     NotDefinitelyAssigned { expr: ExprId, name: Name },
+    /// §8.3.1.2/[§16]: a blank `final` field (or blank `final` local) is
+    /// assigned a second time — an earlier assignment has already reached the
+    /// write on every path. javac: `variable {x} might already have been
+    /// assigned`; the message is IntelliJ-style, reported at the offending
+    /// write's target.
+    VariableAlreadyAssigned { expr: ExprId, name: Name },
     /// §14.11.1/§15.28: a switch expression is not exhaustive — some selector
     /// values have no matching arm and there is no `default`.
     NotExhaustive { expr: ExprId },
@@ -403,6 +409,9 @@ impl TypeError {
             TypeError::NotDefinitelyAssigned { .. } => {
                 DiagnosticCode::Java(VariableMightNotHaveBeenInitialized)
             }
+            TypeError::VariableAlreadyAssigned { .. } => {
+                DiagnosticCode::Java(VariableAlreadyAssigned)
+            }
             TypeError::NotExhaustive { .. } => DiagnosticCode::Java(NotExhaustive),
             TypeError::NonConstantCaseLabel { .. } => DiagnosticCode::Java(NonConstantCaseLabel),
             TypeError::DuplicateCaseLabel { .. } => DiagnosticCode::Java(DuplicateCaseLabel),
@@ -493,6 +502,7 @@ impl TypeError {
             | NotAFunctionalInterface { expr, .. }
             | IllegalForwardReference { expr, .. }
             | NotDefinitelyAssigned { expr, .. }
+            | VariableAlreadyAssigned { expr, .. }
             | NotExhaustive { expr, .. }
             | NonConstantCaseLabel { expr, .. }
             | DuplicateCaseLabel { expr, .. }
@@ -590,6 +600,7 @@ impl TypeError {
             | TypeError::NotAFunctionalInterface { expr, .. }
             | TypeError::IllegalForwardReference { expr, .. }
             | TypeError::NotDefinitelyAssigned { expr, .. }
+            | TypeError::VariableAlreadyAssigned { expr, .. }
             | TypeError::DuplicateCaseLabel { expr, .. }
             | TypeError::UncheckedConversion { expr, .. } => tree
                 .expr_name_range(*expr)
@@ -754,6 +765,12 @@ impl TypeError {
             NotDefinitelyAssigned { name, .. } => {
                 format!(
                     "Variable '{}' might not have been initialized",
+                    name.as_str()
+                )
+            }
+            VariableAlreadyAssigned { name, .. } => {
+                format!(
+                    "Variable '{}' might already have been assigned",
                     name.as_str()
                 )
             }

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    final int f;
+    Final(int x) {
+        f = 1;
+    }
+    Final() {
+        this(1);
+        f = 2;
+    }
+}
+
+method Final(): <init>
+  @9:8..9:9 'f': variable-already-assigned: Variable 'f' might already have been assigned

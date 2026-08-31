@@ -687,13 +687,27 @@ pub fn is_assignable(
 /// §5.1.9: whether `src` is a *raw type* — a parameterized class used without
 /// its type arguments — whose erasure has `dst`'s erasure among its
 /// supertypes. The conversion is unchecked ([§5.2]): legal, but carrying no
-/// element-type guarantee.
+/// element-type guarantee. An *array* of such a raw element converts
+/// unchecked to an array of the parameterized element ([§5.1.9], [§10]): the
+/// runtime array type is the erased element's array, so the conversion is
+/// exactly the element-level unchecked conversion with the array dimensions
+/// peeled on both sides.
 fn unchecked_conversion(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     src: &Ty,
     dst: &Ty,
 ) -> bool {
+    // §5.1.9/[§10]: `raw E[]` converts unchecked to `param E'[]` iff `raw E`
+    // converts unchecked to `param E'` — peel the array dimensions on both
+    // sides and recurse on the elements.
+    match (src.kind(db), dst.kind(db)) {
+        (TyKind::Array(si), TyKind::Array(ti)) => {
+            return unchecked_conversion(db, scope, si, ti);
+        }
+        (TyKind::Array(_), _) | (_, TyKind::Array(_)) => return false,
+        _ => {}
+    }
     let Some((src_name, src_args)) = src.as_reference(db) else {
         return false;
     };

@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_false_flags.rs
+expression: out
+---
+FILE /src/com/example/Final.java:
+package com.example;
+
+class Final {
+    static final int sf;
+    static {
+        if ("x".length() > 0) {
+            sf = 1;
+        } else {
+            sf = 2;
+        }
+    }
+}
