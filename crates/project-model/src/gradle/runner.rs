@@ -18,16 +18,35 @@ pub fn import_gradle_workspace(
     log_file: Option<&Path>,
     on_output: &mut (dyn FnMut(String) + Send),
 ) -> anyhow::Result<GradleWorkspace> {
-    let gradlew_path = if cfg!(windows) {
+    let gradlew_script = if cfg!(windows) {
         workspace_root.join("gradlew.bat")
     } else {
         workspace_root.join("gradlew")
     };
 
-    let gradle_cmd = if gradlew_path.exists() {
-        gradlew_path.to_string_lossy().into_owned()
+    let wrapper_jar = workspace_root
+        .join("gradle")
+        .join("wrapper")
+        .join("gradle-wrapper.jar");
+
+    // Resolve the command runner:
+    // 1. gradlew / gradlew.bat if present
+    // 2. java -jar gradle-wrapper.jar if the script is missing but the wrapper jar exists
+    // 3. System installed "gradle" executable
+    let mut command = if gradlew_script.is_file() {
+        Command::new(gradlew_script)
+    } else if wrapper_jar.is_file() {
+        let java_binary = if cfg!(windows) {
+            java_home.join("bin").join("java.exe")
+        } else {
+            java_home.join("bin").join("java")
+        };
+
+        let mut cmd = Command::new(java_binary);
+        cmd.arg("-jar").arg(wrapper_jar);
+        cmd
     } else {
-        "gradle".to_string()
+        Command::new("gradle")
     };
 
     let selected_script = crate::gradle::script::GRADLE_INIT_SCRIPT;
@@ -36,7 +55,6 @@ pub fn import_gradle_workspace(
     init_script.write_all(selected_script.as_bytes())?;
     init_script.flush()?;
 
-    let mut command = Command::new(&gradle_cmd);
     command
         .env("JAVA_HOME", java_home)
         .current_dir(workspace_root)
