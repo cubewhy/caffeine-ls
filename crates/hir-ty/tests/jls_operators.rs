@@ -316,3 +316,34 @@ class Body {
 );
 // §15.25: a conditional with a primitive arm and `null` boxes the primitive —
 // `b ? true : null` has type `Boolean`, `b ? null : 5` has type `Integer`.
+
+// -- §15.20.2/[§4.7]: instanceof array targets follow reifiability -----------------
+// An array type is reifiable exactly when its component type is ([§4.7]): the
+// concrete `String[]`/`int[]`, the unbounded-wildcard `List<?>[]` and the
+// raw `List[]` are legal `instanceof` targets, while `List<String>[]` carries
+// a non-reifiable component and is rejected — `javac` 25 reports "Object cannot
+// be safely cast to List<String>[]".
+
+snapshot!(
+    instanceof_array_reifiability,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void m(Object o, String[] s) {
+        boolean a = o instanceof String[];
+        boolean b = o instanceof int[];
+        boolean c = o instanceof int[][];
+        boolean d = s instanceof Object[];
+        boolean e = o instanceof List<?>[];
+        boolean f = o instanceof List[];
+        boolean bad = o instanceof List<String>[];
+    }
+}
+",
+    )])
+);

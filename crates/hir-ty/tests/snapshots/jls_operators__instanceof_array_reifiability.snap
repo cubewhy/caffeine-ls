@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void m(Object o, String[] s) {
+        boolean a = o instanceof String[];
+        boolean b = o instanceof int[];
+        boolean c = o instanceof int[][];
+        boolean d = s instanceof Object[];
+        boolean e = o instanceof List<?>[];
+        boolean f = o instanceof List[];
+        boolean bad = o instanceof List<String>[];
+    }
+}
+
+method m(java.lang.Object, java.lang.String[]): void
+  @12:22..12:23 'o': illegal-generic-instanceof: Cannot perform instanceof check against non-reifiable type 'List<String>[]'
