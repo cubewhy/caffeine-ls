@@ -138,6 +138,36 @@ class Body {
     )])
 );
 
+// -- §5.1.3/§4.12.4/§15.28: narrowing through constant variables ------------------
+// A `final` local initialized with a constant expression is itself a constant
+// variable ([§4.12.4]): the assignment context narrowing of an `int` constant
+// ([§5.2], [§5.1.3]) applies to `final int N` reads and `final char` reads
+// widen normally — but a value outside the target's range stays an error.
+// `javac` 25 accepts the green forms and rejects the lossy one.
+
+snapshot!(
+    constant_variable_narrowing,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m() {
+        final int N = 100;
+        byte b = N;
+        final int Z = 200;
+        char c = Z;
+        final char L = 'a';
+        int i = L;
+        final int BIG = 300;
+        byte bad = BIG;
+    }
+}
+",
+    )])
+);
+
 // -- red: a cast between provably distinct class types ([§5.5.1]) ----------------
 // `String` and `Integer` are unrelated final classes, so no common subclass
 // can exist and the cast is inconvertible; `javac` 25 rejects it the same way.
