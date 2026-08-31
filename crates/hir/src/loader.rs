@@ -461,12 +461,6 @@ mod tests {
         zip.finish().unwrap();
     }
 
-    fn cache_dir_fixture() -> (tempfile::TempDir, Utf8PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("caffeine-ls").join("stubs").join("v1");
-        (dir, Utf8PathBuf::from_path_buf(path).unwrap())
-    }
-
     #[test]
     fn full_pipeline_builds_and_loads_cache() {
         let dir = tempfile::TempDir::new().unwrap();
