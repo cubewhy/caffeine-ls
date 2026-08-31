@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                return 10;
+            default:
+                return 20;
+        }
+        return 0;
+    }
+}
+
+method m(int): int
+  locals: l0: int
+  exprs: e0: int | e1: int | e2: int | e3: <error> | e4: int | e5: int
+  diags: ss3@10:8: unreachable-statement: Unreachable statement

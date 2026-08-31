@@ -391,3 +391,83 @@ class Body {
 // ([§15.28]): every arm's result expression must independently be a
 // representable `byte` constant — the `-1`/`1` literals narrow, so the switch
 // expression as a whole is assignable to `byte`.
+
+// -- green: trailing code after an all-returning switch *statement* ------------
+// [JLS §14.21]: a switch *statement* with no `default` label can complete
+// normally — the selector may match nothing — even when every arm ends in
+// `return`. The trailing `return 0` is therefore reachable ([§14.22]) and the
+// method completes normally on the no-match path; neither
+// `unreachable-statement` nor `missing-return-statement` may be reported.
+
+snapshot!(
+    trailing_return_after_all_returning_switch,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                return 10;
+            case 2:
+                return 20;
+        }
+        return 0;
+    }
+}
+",
+    )])
+);
+
+// -- red: trailing code after an all-returning switch *with* default -----------
+// With a `default` label every selector value matches some arm, so the switch
+// statement cannot complete normally ([§14.21]); the trailing `return` is
+// unreachable ([§14.22]).
+
+snapshot!(
+    trailing_return_after_switch_with_default,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                return 10;
+            default:
+                return 20;
+        }
+        return 0;
+    }
+}
+",
+    )])
+);
+
+// -- green: an all-returning switch without default is not a missing-return ---
+// The no-match path falls out of the switch and is completed by the trailing
+// `return`, so the method needs no `return` inside the switch at all.
+
+snapshot!(
+    fallthrough_tail_completes_method,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                return 10;
+        }
+        return 0;
+    }
+}
+",
+    )])
+);
