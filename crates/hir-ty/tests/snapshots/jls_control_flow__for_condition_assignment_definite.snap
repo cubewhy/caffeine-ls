@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void m(String s) {
+        char c;
+        int i = 0;
+        for (; i < s.length() && (c = s.charAt(i)) != '\u0000'; i++) {
+            System.out.println(c);
+        }
+        if (c == '\u0000') {
+            return;
+        }
+    }
+}
+
+method m(java.lang.String): void
+  @6:40..6:46 'charAt': no-such-method: Cannot resolve method 'charAt()'
+  @7:12..7:18 'System': cannot-resolve-symbol: Cannot resolve symbol 'System'
+  @7:19..7:22 'out': no-such-field: Cannot resolve symbol 'out'
+  @9:12..9:13 'c': variable-might-not-have-been-initialized: Variable 'c' might not have been initialized

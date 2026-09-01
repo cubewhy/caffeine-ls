@@ -178,11 +178,32 @@ impl InferCtx<'_> {
                 // `break label` (and a labeled `break outer` from a nested
                 // `switch`) records on the right loop.
                 let previous = if is_loop {
-                    self.pending_loop_label.replace(name)
+                    self.pending_loop_label.replace(name.clone())
                 } else {
                     None
                 };
-                self.infer_stmt(*stmt);
+                if is_loop {
+                    self.infer_stmt(*stmt);
+                } else {
+                    // §14.7/[§14.15]: a labeled *block* (`block6: { … break
+                    // block6; … }`) is also a valid `break` target. The
+                    // block's `break label` completes the labeled statement
+                    // *normally* ([§14.15]) — its flow joins the block's
+                    // fall-through — so a break frame records it, exactly like
+                    // a loop's breaks ([§16.2.9]).
+                    self.loop_breaks.push(BreakFrame::new(Some(name)));
+                    self.infer_stmt(*stmt);
+                    let frame = self.loop_breaks.pop().expect("frame pushed above");
+                    let breaks = frame.joined();
+                    // The labeled block's end: the fall-through flow (when the
+                    // block completes normally) joined with every break flow.
+                    if self.exited {
+                        self.flow = breaks.unwrap_or_else(|| self.flow.clone());
+                    } else if let Some(breaks) = breaks {
+                        self.flow.join_definite(&breaks);
+                    }
+                    self.exited = false;
+                }
                 if is_loop {
                     self.pending_loop_label = previous;
                 }
@@ -314,7 +335,7 @@ impl InferCtx<'_> {
                 // the loop's end flow is the join of the recorded break flows
                 // (JLS Example 16-1).
                 let const_bool = self.const_bool(*cond);
-                let (cond_true_flow, _) = self.take_bool_outcomes();
+                let (cond_true_flow, cond_false_flow) = self.take_bool_outcomes();
                 self.loop_depth += 1;
                 self.loop_breaks
                     .push(BreakFrame::new(self.pending_loop_label.take()));
@@ -331,7 +352,14 @@ impl InferCtx<'_> {
                     // pre-loop state stands (the code after is unreachable).
                     frame.joined().unwrap_or(before)
                 } else {
-                    before
+                    // §16.2.10: a non-constant loop exits *through its
+                    // condition being false* — the after-loop flow is the
+                    // condition's false flow, not the pre-condition state. The
+                    // condition expression is evaluated before each test, so an
+                    // assignment inside it (e.g. `while (contains(x = next())
+                    // || …)`) is definitely assigned after the loop even when
+                    // the body never runs (JLS Example 16-1).
+                    cond_false_flow
                 };
                 self.exited = false;
             }
@@ -386,7 +414,7 @@ impl InferCtx<'_> {
                 // when the condition is a constant `true`; capture the
                 // outcomes right here — the step expressions below would
                 // overwrite [`Self::bool_outcomes`].
-                let (cond_true_flow, _) = self.take_bool_outcomes();
+                let (cond_true_flow, cond_false_flow) = self.take_bool_outcomes();
                 for &step in step {
                     let _ = self.infer_expr(step);
                 }
@@ -398,16 +426,22 @@ impl InferCtx<'_> {
                 self.loop_depth += 1;
                 self.loop_breaks
                     .push(BreakFrame::new(self.pending_loop_label.take()));
-                if const_bool == Some(true) {
-                    self.flow = cond_true_flow;
-                }
+                // §16.2.12: the body runs *only when the condition is true*, so
+                // even for a non-constant condition it is inferred under the
+                // condition's true flow — an assignment made on that flow
+                // (`for (…; i < n && (c = s.charAt(i)) != -1; …)` uses `c` in
+                // the body) is definitely assigned there.
+                self.flow = cond_true_flow;
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
                 let frame = self.loop_breaks.pop().expect("frame pushed above");
                 self.flow = if const_bool == Some(true) {
                     frame.joined().unwrap_or(before)
                 } else {
-                    before
+                    // §16.2.12: a non-constant loop exits through its
+                    // condition being false — the condition's false flow
+                    // carries assignments made while evaluating it.
+                    cond_false_flow
                 };
                 self.exited = false;
                 self.scopes.pop();

@@ -8,7 +8,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_body_types;
+use crate::common::{check_body_diagnostic_spans, check_body_types};
 
 // -- green: statement forms ------------------------------------------------
 
@@ -388,3 +388,95 @@ class Body {
 );
 // Green: reassigning the loop variable is legal ([§14.14.2]); writing a field
 // through the reference merely reads the variable.
+
+// -- §14.7/[§14.15]: labeled-block break completes it normally ----------------
+// `block6: { block5: { try { if (…) break block5; } catch (…) { … } …; break
+// block6; } … }` — a `break label` targeting a plain block (not a loop or
+// switch) transfers control to just past that block, so the code after the
+// labeled block is reachable.
+
+snapshot!(
+    labeled_block_break,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    String m(boolean refresh) {
+        String cached = null;
+        block6: {
+            block5: {
+                if (refresh && cached != null) break block5;
+                cached = \"computed\";
+                break block6;
+            }
+            if (cached == null) {
+                return \"\";
+            }
+        }
+        return cached;
+    }
+}
+",
+    )])
+);
+// Green: the `break block5`/`break block6` labeled-block breaks complete each
+// labeled block normally; the code after the labeled blocks and the final
+// `return cached` are reachable.
+
+// -- §16.2.10/[§16.2.12]: a condition-assigned local is definite after the loop
+// A `while (contains(x = next()) || …)` assigns `x` while evaluating the
+// condition — the condition always runs before each test, so `x` is definitely
+// assigned after the loop even when the body never runs (JLS Example 16-1).
+
+snapshot!(
+    while_condition_assignment_definite,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    int m(int n) {
+        int x;
+        while ((x = n) >= 0 && n > 0) {
+            n--;
+        }
+        return x;
+    }
+}
+",
+    )])
+);
+// Green: `x` is assigned by the loop condition before each test, so the
+// `return x` after the loop sees it definitely assigned.
+
+// §16.2.12: a `for` loop's condition-assigned local is definitely assigned in
+// the body and after the loop — `for (…; i < len && (c = s.charAt(i)) != -1;
+// …)` uses `c` inside the body.
+
+snapshot!(
+    for_condition_assignment_definite,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    void m(String s) {
+        char c;
+        int i = 0;
+        for (; i < s.length() && (c = s.charAt(i)) != '\\u0000'; i++) {
+            System.out.println(c);
+        }
+        if (c == '\\u0000') {
+            return;
+        }
+    }
+}
+",
+    )])
+);
+// Green: `c` is assigned in the loop condition's right operand and is definite
+// in the loop body and after the loop.

@@ -51,7 +51,18 @@ impl InferCtx<'_> {
     /// and [`Self::field_access`].
     pub(super) fn record_field_write(&mut self, lhs: ExprId) {
         let name = match self.tree.expr(lhs).clone() {
-            ExprData::Var(name) => name,
+            ExprData::Var(name) => {
+                // A bare `Var` names a local variable or parameter when one is
+                // in scope ([§6.5.6.1]) — `mappedMember = false` assigning a
+                // constructor parameter must not be mistaken for a write to a
+                // same-named *field* of the enclosing class. Only when no
+                // local of the name exists does a bare name denote the
+                // implicit `this` field ([§6.5.6.1], [§15.26.1]).
+                if self.lookup_local(&name).is_some() {
+                    return;
+                }
+                name
+            }
             ExprData::FieldAccess { target, name } => {
                 // Only a bare `this.name` (the implicit receiver) can be the
                 // class's own field; `Type.name` and `obj.name` assign a
