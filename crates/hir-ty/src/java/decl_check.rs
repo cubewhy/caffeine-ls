@@ -45,8 +45,13 @@ pub enum DeclDiagnostic {
     ConflictingDefaults { method: Name },
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method — either nothing matches, or the annotated method is
-    /// `static` (static methods hide, they never override).
-    MethodDoesNotOverride { method: Name },
+    /// `static` (static methods hide, they never override). `range` is the
+    /// annotated method's name range, so the diagnostic stays on the right
+    /// overload when several methods share the name.
+    MethodDoesNotOverride {
+        method: Name,
+        range: Option<rowan::TextRange>,
+    },
     /// §6.5.5.1: a reference type name in a *declaration* — a field type, a
     /// method's parameter/return/`throws` type, a type-parameter bound, a
     /// superclass or implemented interface, a record component type or a
@@ -523,7 +528,7 @@ impl DeclDiagnostic {
                     name
                 )
             }
-            DeclDiagnostic::MethodDoesNotOverride { method } => {
+            DeclDiagnostic::MethodDoesNotOverride { method, .. } => {
                 let name = method.as_str();
                 format!(
                     "Method '{}()' annotated @Override does not override or implement a method from a supertype",
@@ -743,7 +748,7 @@ impl DeclDiagnostic {
         match self {
             DeclDiagnostic::IncompatibleOverride { method, .. }
             | DeclDiagnostic::ConflictingDefaults { method }
-            | DeclDiagnostic::MethodDoesNotOverride { method }
+            | DeclDiagnostic::MethodDoesNotOverride { method, .. }
             | DeclDiagnostic::CannotOverrideFinalMethod { method, .. }
             | DeclDiagnostic::WeakerAccessPrivileges { method, .. }
             | DeclDiagnostic::NameClashSameErasure { method, .. } => method.as_str(),
@@ -815,6 +820,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::ConstructorNameMismatch {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::MethodDoesNotOverride {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::IllegalModifierCombination {
@@ -1294,10 +1302,24 @@ fn check_class(
                 is_override_annotation(db, scope, &resolver, &annotation.name.name)
             })
         {
-            let Some(method) = declared
-                .iter()
-                .find(|d| d.name == m.name.as_str() && d.params.len() == m.sig.params.len())
-            else {
+            // §8.4.2: the annotated declaration must be matched to its own
+            // [`MethodData`] by *signature*, not just name and arity — a class
+            // may declare two same-arity overloads (`static void T(C[])` and
+            // `@Override void T(Buffer)`) and the declared list is walked in
+            // body order, so a name+arity match could land on the wrong
+            // overload and misreport a correct `@Override` as orphaned.
+            let Some(method) = declared.iter().find(|d| {
+                d.name == m.name.as_str()
+                    && d.params.len() == m.sig.params.len()
+                    && d.params.iter().zip(&m.sig.params).all(|(ty, param)| {
+                        let declared_ty =
+                            crate::java::resolve::resolve_type_ref(db, scope, &resolver, &param.ty);
+                        ty.is_error(db)
+                            || declared_ty.is_error(db)
+                            || ty.same_shape(db, &declared_ty)
+                            || ty.erasure(db) == declared_ty.erasure(db)
+                    })
+            }) else {
                 continue;
             };
             let is_record_accessor = record_components
@@ -1310,6 +1332,7 @@ fn check_class(
             if method.is_static || !overrides {
                 out.push(DeclDiagnostic::MethodDoesNotOverride {
                     method: Name::new(&method.name),
+                    range: Some(m.name_range),
                 });
             }
         }

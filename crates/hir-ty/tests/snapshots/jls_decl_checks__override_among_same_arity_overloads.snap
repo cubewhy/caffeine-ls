@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Contract.java:
+package com.example;
+
+class GuiComponent {
+}
+
+interface Contract {
+    void T(Buffer b);
+}
+
+class Buffer {
+}
+
+class C implements Contract {
+    static void T(GuiComponent[] g) {
+    }
+
+    @Override
+    public void T(Buffer b) {
+    }
+}

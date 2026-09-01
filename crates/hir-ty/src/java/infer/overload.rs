@@ -16,7 +16,7 @@ use crate::java::{
     inference::{Constraint, Inference, InvocationPhase},
     method::{InvocationContext, MethodData, member_set, single_abstract_method},
     resolve::resolve_type_ref,
-    ty::{Ty, TyKind, boxed_type},
+    ty::{BoundKind, Ty, TyKind, WildcardBound, boxed_type},
 };
 
 use super::{
@@ -82,6 +82,7 @@ impl InferCtx<'_> {
         let members = member_set(self.db, &self.scope, receiver_ty, name.as_str(), ctx);
         for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
             if let Some(chosen) = self.choose_candidate(
+                receiver_ty,
                 &members,
                 arg_kinds,
                 phase,
@@ -93,6 +94,7 @@ impl InferCtx<'_> {
             }
         }
         self.choose_candidate(
+            receiver_ty,
             &members,
             arg_kinds,
             InvocationPhase::Loose,
@@ -105,6 +107,7 @@ impl InferCtx<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn choose_candidate(
         &mut self,
+        receiver_ty: &Ty,
         members: &[MethodData],
         arg_kinds: &[ArgInfo],
         phase: InvocationPhase,
@@ -122,6 +125,7 @@ impl InferCtx<'_> {
                 this.try_candidate(
                     &mut inference,
                     member,
+                    receiver_ty,
                     arg_kinds,
                     phase,
                     varargs,
@@ -158,6 +162,7 @@ impl InferCtx<'_> {
         &mut self,
         inference: &mut Inference,
         method: &MethodData,
+        receiver_ty: &Ty,
         arg_kinds: &[ArgInfo],
         phase: InvocationPhase,
         varargs: bool,
@@ -170,7 +175,7 @@ impl InferCtx<'_> {
         // method's type parameters directly — the formals, return type and
         // throws clause are substituted with the written arguments and nothing
         // is left to inference.
-        let (formals, ret, throws_formals) = match explicit_type_args {
+        let (formals, mut ret, throws_formals) = match explicit_type_args {
             Some(explicit) => {
                 let subst: FxHashMap<Name, Ty> = method
                     .type_params
@@ -193,6 +198,34 @@ impl InferCtx<'_> {
             }
             None => inference.register_method(self.db, method),
         };
+        // §15.12.2.6: when the chosen method is `Object.getClass` — the method
+        // searched on `T`, erasure `|T|` ([§4.6]) — the invocation type is the
+        // method's type with the return type `Class<? extends |T|>`. javac
+        // gives `module.getClass()` the type `Class<? extends Module>` rather
+        // than the declared `Class<?>`, so `Map<Class<? extends Mod>, Mod>`
+        // accepts `put(module.getClass(), …)` and `<T extends Mod> T
+        // getMod(Class<T>)` infers `T := Mod` from `getMod(module.getClass())`.
+        let is_get_class = method.name == "getClass"
+            && method.owner == "java.lang.Object"
+            && method.params.is_empty()
+            && explicit_type_args.is_none();
+        if is_get_class {
+            let erased = receiver_ty.erasure(self.db);
+            // `Class<? extends |T|>` — the unbounded-wildcard alternative
+            // would lose the lower bound that makes the receiver's type usable
+            // as a `Class<? extends T>` argument.
+            ret = Ty::reference(
+                self.db,
+                "java.lang.Class",
+                vec![Ty::wildcard(
+                    self.db,
+                    Some(Box::new(WildcardBound {
+                        kind: BoundKind::Upper,
+                        ty: erased,
+                    })),
+                )],
+            );
+        }
         // §15.12.2.2/§15.12.2.3/§15.13.2: a lambda or method reference is a
         // poly expression whose type *is* the target functional interface —
         // be compatible with a formal parameter only when that formal is a
@@ -873,6 +906,7 @@ impl InferCtx<'_> {
         // boxed-formal overloads would appear strictly applicable.
         if self.choose_nested_candidate(
             inference,
+            &receiver_ty,
             &members,
             &arg_kinds,
             phase,
@@ -883,7 +917,14 @@ impl InferCtx<'_> {
             return true;
         }
         self.choose_nested_candidate(
-            inference, &members, &arg_kinds, phase, true, &formal, explicit,
+            inference,
+            &receiver_ty,
+            &members,
+            &arg_kinds,
+            phase,
+            true,
+            &formal,
+            explicit,
         )
     }
     /// this phase or the applicable ones are ambiguous ([JLS §15.12.2.5]).
@@ -891,6 +932,7 @@ impl InferCtx<'_> {
     pub(super) fn choose_nested_candidate(
         &mut self,
         inference: &mut Inference,
+        receiver_ty: &Ty,
         members: &[MethodData],
         arg_kinds: &[ArgInfo],
         phase: InvocationPhase,
@@ -910,6 +952,7 @@ impl InferCtx<'_> {
                     this.try_candidate(
                         inference,
                         member,
+                        receiver_ty,
                         arg_kinds,
                         phase,
                         varargs,
@@ -950,6 +993,7 @@ impl InferCtx<'_> {
             this.try_candidate(
                 inference,
                 &winner,
+                receiver_ty,
                 arg_kinds,
                 phase,
                 varargs,

@@ -279,6 +279,43 @@ class Outer {
     )])
 );
 
+// -- green/red: `@Override` on one overload of a same-arity pair ---------------
+// §8.4.2: the annotated method is matched to its own declaration by signature,
+// not name + arity alone. `C.T(GuiComponent[])` (static) and `@Override
+// C.T(Buffer)` (instance) share the name and arity; the @Override must be
+// checked against the *instance* one, which overrides the interface's
+// `T(Buffer)` — otherwise the static overload shadows the match and the
+// correct annotation is misreported as orphaned.
+
+snapshot!(
+    override_among_same_arity_overloads,
+    check_class_diagnostics(&[(
+        "/src/com/example/Contract.java",
+        "\
+package com.example;
+
+class GuiComponent {
+}
+
+interface Contract {
+    void T(Buffer b);
+}
+
+class Buffer {
+}
+
+class C implements Contract {
+    static void T(GuiComponent[] g) {
+    }
+
+    @Override
+    public void T(Buffer b) {
+    }
+}
+",
+    )])
+);
+
 // -- §7.6: duplicate top-level classes (same file and cross-file) ----------------
 
 snapshot!(
