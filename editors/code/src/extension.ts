@@ -1,7 +1,9 @@
 import * as path from "path";
+import { spawn } from "child_process";
+import * as vscode from "vscode";
 import { window, workspace, ExtensionContext, commands } from "vscode";
 import {
-  Executable,
+  ChildProcessInfo,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
@@ -9,6 +11,7 @@ import {
 import { getClientConfig, selectProjectJdkAction } from "./config";
 
 let client: LanguageClient;
+let currentServerPid: number | undefined;
 
 export function activate(context: ExtensionContext) {
   const ext = process.platform === "win32" ? ".exe" : "";
@@ -18,16 +21,28 @@ export function activate(context: ExtensionContext) {
     process.env.CAFFEINE_LS_PATH ||
     context.asAbsolutePath(path.join("bin", binaryName));
 
-  const logLevel = workspace
-    .getConfiguration("caffeine_ls")
-    .get<string>("logLevel", "warn");
+  const serverOptions: ServerOptions = () => {
+    const config = workspace.getConfiguration("caffeine_ls");
+    const logLevel = config.get<string>("logLevel", "warn");
+    const waitForDebugger = config.get<boolean>("waitForDebugger", false);
 
-  const run: Executable = {
-    command,
-    options: { env: { ...process.env, CAFFEINE_LS_LOG: logLevel } },
+    const child = spawn(command, waitForDebugger ? ["--wait-dbg"] : [], {
+      env: { ...process.env, CAFFEINE_LS_LOG: logLevel },
+    });
+    if (!child.pid) {
+      return Promise.reject(
+        new Error("Failed to launch the Caffeine LS server process."),
+      );
+    }
+    currentServerPid = child.pid;
+    if (waitForDebugger) {
+      promptWaitForDebugger();
+    }
+    return Promise.resolve<ChildProcessInfo>({
+      process: child,
+      detached: false,
+    });
   };
-
-  const serverOptions: ServerOptions = { run, debug: run };
 
   const initialConfig = getClientConfig(context);
 
@@ -67,6 +82,24 @@ export function activate(context: ExtensionContext) {
   );
 
   context.subscriptions.push(
+    commands.registerCommand("caffeine_ls.disableWaitForDebugger", async () => {
+      await workspace
+        .getConfiguration("caffeine_ls")
+        .update("waitForDebugger", false, vscode.ConfigurationTarget.Global);
+      window
+        .showInformationMessage(
+          "Wait for debugger disabled. Restart the language server to apply it.",
+          "Restart",
+        )
+        .then((selected) => {
+          if (selected === "Restart") {
+            client.restart();
+          }
+        });
+    }),
+  );
+
+  context.subscriptions.push(
     workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("caffeine_ls.logLevel")) {
         const choice = "Restart";
@@ -85,6 +118,19 @@ export function activate(context: ExtensionContext) {
   );
 
   client.start();
+}
+
+function promptWaitForDebugger() {
+  window
+    .showInformationMessage(
+      `Caffeine LS started with the "wait for debugger" option enabled (PID ${currentServerPid}). Attach a debugger to the process to continue. If you're not on Windows, you need to modify the variable 'd' (make it not equal to 4) to continue.`,
+      "Disable Wait for Debugger",
+    )
+    .then((selected) => {
+      if (selected === "Disable Wait for Debugger") {
+        commands.executeCommand("caffeine_ls.disableWaitForDebugger");
+      }
+    });
 }
 
 export function deactivate(): Thenable<void> | undefined {

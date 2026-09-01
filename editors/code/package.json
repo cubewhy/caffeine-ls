@@ -49,6 +49,11 @@
         "command": "caffeine_ls.restart",
         "title": "Restart Language Server",
         "category": "Caffeine LS"
+      },
+      {
+        "command": "caffeine_ls.disableWaitForDebugger",
+        "title": "Disable Wait for Debugger",
+        "category": "Caffeine LS"
       }
     ],
     "configuration": {
@@ -58,6 +63,11 @@
           "type": "string",
           "default": "warn",
           "description": "LSP server log level (tracing EnvFilter). Passed to the server via CAFFEINE_LS_LOG. Requires restart to take effect."
+        },
+        "caffeine_ls.waitForDebugger": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Start the language server with the `--wait-dbg` flag. The server blocks on startup until a debugger attaches (debug builds only). You'll be notified with the server's PID and can turn the option off from there. Requires restart to take effect."
         }
       }
     }
