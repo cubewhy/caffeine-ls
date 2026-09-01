@@ -33,7 +33,7 @@ impl Config {
     pub fn get_cache_dir(&self) -> PathBuf {
         self.client_config
             .clone()
-            .map(|c| c.cache_dir)
+            .and_then(|c| c.cache_dir)
             .unwrap_or_else(|| {
                 if let Some(proj_dirs) = ProjectDirs::from("org", "cubewhy", "caffeine_ls") {
                     // Linux: ~/.cache/caffeine_ls/
@@ -146,7 +146,7 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 #[serde(default)]
 pub struct ClientConfig {
-    pub cache_dir: PathBuf,
+    pub cache_dir: Option<PathBuf>,
     pub java_home: Option<PathBuf>,
     /// Enabled `-Xlint`-style warnings ([JLS-adjacent]; javac emits
     /// `rawtypes` and `unchecked` only with an explicit flag). Recognized
