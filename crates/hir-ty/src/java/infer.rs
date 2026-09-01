@@ -44,6 +44,7 @@ use hir_expand::{
     name::Name,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use vfs::FileId;
 
 mod context;
@@ -92,11 +93,52 @@ pub fn body_types(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Option<Arc
     crate::java::db::body_types_query(db, crate::java::db::ItemKey::new(db, file, item))
 }
 
+// The `(file, item)` bodies whose `body_types` is currently being computed on
+// this thread, innermost last. The blank-final-field seeding of a `this(...)`
+// delegation ([`InferCtx::ctor_call`]) resolves the delegation target and runs
+// `body_types` on it; a recursive chain (`class A { A() { this(); } }`,
+// `Pair() { this(1); }` / `Pair(int) { this(); }`) resolves the target to a
+// constructor whose `body_types_query` is still in flight — a salsa
+// dependency-graph cycle when another Rayon worker is collecting the same
+// body's diagnostics in parallel. The seeding re-entry is skipped when the
+// target is already in flight; a *legitimate* chain that bottoms out in
+// `super()` seeds every level, because no intermediate target is in flight.
+thread_local! {
+    static BODY_STACK: RefCell<Vec<(FileId, ItemId)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Whether `body_types` is currently being computed for `(file, item)` on this
+/// thread — the in-flight probe of the recursive-`this(...)` guard.
+pub(crate) fn body_in_flight(file: FileId, item: ItemId) -> bool {
+    BODY_STACK.with(|stack| stack.borrow().iter().any(|&(f, i)| f == file && i == item))
+}
+
+/// Scoped push of the current body onto the in-flight-body stack: the
+/// `(file, item)` is pushed on construction and popped on drop, so it is
+/// exactly the in-flight set while `body_types_impl` runs.
+struct BodyScope;
+
+impl BodyScope {
+    fn new(file: FileId, item: ItemId) -> Self {
+        BODY_STACK.with(|stack| stack.borrow_mut().push((file, item)));
+        Self
+    }
+}
+
+impl Drop for BodyScope {
+    fn drop(&mut self) {
+        BODY_STACK.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
 pub(crate) fn body_types_impl(
     db: &dyn TyDatabase,
     file: FileId,
     item: ItemId,
 ) -> Option<BodyTypes> {
+    let _scope = BodyScope::new(file, item);
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
     let scope = scope_for_file(db, file);

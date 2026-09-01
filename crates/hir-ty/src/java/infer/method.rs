@@ -18,7 +18,7 @@ use crate::java::{
 };
 
 use super::{
-    InferCtx, body_types,
+    InferCtx, body_in_flight, body_types,
     context::find_method_item,
     poly::{ArgInfo, ArgKind, reinfer_poly_standalone},
 };
@@ -92,10 +92,18 @@ impl InferCtx<'_> {
                 // the remainder of *this* constructor — a later write to it
                 // is the already-assigned error. (A `super(...)` delegation
                 // assigns only the superclass's fields, which this class
-                // cannot initialize.)
+                // cannot initialize.) A recursive chain
+                // (`class A { A() { this(); } }`) resolves the target to a
+                // constructor whose `body_types_query` is still being computed
+                // — a salsa dependency-graph cycle under parallel diagnostics
+                // collection — so a delegation target that is on the current
+                // in-flight body (self) or already being tracked (mutual) skips
+                // the seeding conservatively: the seeding simply does not run,
+                // and the outer body still seeds from prior initializer bodies.
                 if target == hir_expand::body::CtorCallTarget::This
                     && let Some(owner_file) = method.owner_file
                     && let Some(method_item) = find_method_item(self.db, owner_file, &method)
+                    && !body_in_flight(owner_file, method_item)
                     && let Some(types) = body_types(self.db, owner_file, method_item)
                 {
                     for touched in &types.field_touched {

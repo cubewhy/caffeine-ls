@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Self {
+    Self() {
+        this();
+    }
+}

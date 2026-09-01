@@ -104,6 +104,47 @@ class Pair {
 // Red: `Pair()` delegates to `Pair(int)` which delegates back — the cycle
 // never reaches the supertype constructor.
 
+// Red/Green (body pass): the *body* inference of a recursive delegation must
+// complete without re-entering its own `body_types_query` — `find_method_item`
+// resolves the `this(...)` target to this very constructor, and re-fetching the
+// still-computing body is a salsa dependency-graph cycle under parallel
+// diagnostics collection. The blanket-final-field seeding is skipped; the
+// declaration-level `RecursiveConstructorInvocation` (§8.8.7.1) still reports.
+snapshot!(
+    self_recursive_ctor_body,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class Self {
+    Self() {
+        this();
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    mutually_recursive_ctors_body,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class Pair {
+    Pair() {
+        this(1);
+    }
+    Pair(int x) {
+        this();
+    }
+}
+",
+    )])
+);
+
 snapshot!(
     non_recursive_delegation,
     check_class_diagnostics(&[(
