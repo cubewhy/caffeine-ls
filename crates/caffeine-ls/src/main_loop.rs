@@ -2,7 +2,7 @@ use std::{
     panic::AssertUnwindSafe,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use camino::Utf8PathBuf;
@@ -11,7 +11,7 @@ use hir::{Classpath, ClasspathEntry as HirClasspathEntry, LibraryInfo, LibraryKi
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId, salsa::Cancelled};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
-use project_model::{ClasspathEntry, SyncError};
+use project_model::{ClasspathEntry, SyncError, SyncPhase, SyncProgress};
 use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
 use vfs::AbsPathBuf;
@@ -29,12 +29,16 @@ use crate::{
 
 const OPEN_BUILD_TOOL_LOG_ACTION: &str = "Open Build Tool Log";
 
-/// Minimum interval between consecutive progress bar flashes of build tool
-/// output lines.
-const BUILD_TOOL_FLASH_INTERVAL: Duration = Duration::from_millis(150);
-
-/// Maximum length of a build tool line flashed in the progress bar.
-const BUILD_TOOL_FLASH_MAX_LEN: usize = 200;
+/// Percentage ranges assigned to each sync phase. Together they always span
+/// 0..=99; the sync completes by reporting 100% explicitly once the workspace
+/// model is parsed (right before the `WorkDoneProgressEnd`).
+const PHASE_PERCENTAGE_RANGES: [(SyncPhase, (u32, u32)); 5] = [
+    (SyncPhase::Resolving, (0, 15)),
+    (SyncPhase::Downloading, (15, 60)),
+    (SyncPhase::Configuring, (60, 85)),
+    (SyncPhase::Compiling, (85, 99)),
+    (SyncPhase::Exporting, (85, 99)),
+];
 
 pub fn main_loop(config: Config, connection: Connection) -> anyhow::Result<()> {
     tracing::info!("initial config: {:#?}", config);
@@ -334,6 +338,8 @@ impl GlobalState {
                     .then(|| self.build_tool_log_path(&root, system));
 
                 self.thread_pool.execute(move || {
+                    let system_name = system.name();
+
                     let finish_progress = || {
                         task_sender
                             .send(BackgroundTaskEvent::Progress(ProgressEvent {
@@ -346,90 +352,79 @@ impl GlobalState {
                             .ok();
                     };
 
-                    let system_name = system.name();
-                    let mut in_model = false;
-                    let mut last_flash: Option<Instant> = None;
-                    let mut pending_flash: Option<String> = None;
+                    // Aggregates structured SyncProgress events into a single
+                    // phase-budgeted percentage, so the client sees a moving
+                    // bar instead of a spinner plus raw line flashes. Both the
+                    // output and progress callbacks run on this worker thread,
+                    // so an Arc<Mutex> lets them share the aggregator without
+                    // a second mutable borrow (the pool requires Send).
+                    let aggregator = std::sync::Arc::new(parking_lot::Mutex::new(
+                        PhaseProgressAggregator::new(),
+                    ));
 
-                    let mut on_output = |line: String| {
-                        let is_marker = line.contains("WORKSPACE_MODEL_BEGIN")
-                            || line.contains("WORKSPACE_MODEL_END");
-
-                        if is_marker || in_model {
-                            tracing::debug!("[{system_name}] {line}");
-                        } else {
-                            tracing::info!("[{system_name}] {line}");
-                        }
-
-                        if line.contains("WORKSPACE_MODEL_BEGIN") {
-                            in_model = true;
-                        }
-                        if line.contains("WORKSPACE_MODEL_END") {
-                            in_model = false;
-                        }
-
-                        // Flash non-noise lines in the progress bar, throttled
-                        // to avoid flooding the client. The last pending line
-                        // is flushed once the sync finishes.
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() || is_marker || in_model {
+                    let report = |aggregator: &std::sync::Arc<
+                        parking_lot::Mutex<PhaseProgressAggregator>,
+                    >| {
+                        let Some((message, percentage)) = aggregator.lock().current_status() else {
                             return;
-                        }
-
-                        let message = if trimmed.chars().count() > BUILD_TOOL_FLASH_MAX_LEN {
-                            let mut capped: String =
-                                trimmed.chars().take(BUILD_TOOL_FLASH_MAX_LEN).collect();
-                            capped.push('…');
-                            capped
-                        } else {
-                            trimmed.to_string()
                         };
-                        pending_flash = Some(message.clone());
-
-                        let now = Instant::now();
-                        if let Some(last) = last_flash
-                            && now.duration_since(last) < BUILD_TOOL_FLASH_INTERVAL
-                        {
-                            return;
-                        }
-                        last_flash = Some(now);
-
                         task_sender
                             .send(BackgroundTaskEvent::Progress(ProgressEvent {
                                 token: progress_token.clone(),
                                 title: String::new(),
                                 message: Some(message),
-                                percentage: None,
+                                percentage: Some(percentage),
                                 state: ProgressState::Report,
                             }))
                             .ok();
-                        pending_flash = None;
                     };
 
-                    let sync_result = system.get_executor().sync(
+                    let mut on_output = {
+                        let aggregator = std::sync::Arc::clone(&aggregator);
+                        move |line: String| {
+                            let is_marker = line.contains("WORKSPACE_MODEL_BEGIN")
+                                || line.contains("WORKSPACE_MODEL_END");
+
+                            if is_marker {
+                                tracing::debug!("[{system_name}] {line}");
+                            } else {
+                                tracing::info!("[{system_name}] {line}");
+                            }
+
+                            if line.contains("WORKSPACE_MODEL_BEGIN") {
+                                // The structural model is being printed: we are
+                                // in the final phase and can already guarantee
+                                // success once the closing marker arrives.
+                                aggregator.lock().on_model_begin();
+                            } else if line.contains("WORKSPACE_MODEL_END") {
+                                aggregator.lock().on_model_end();
+                            } else {
+                                aggregator.lock().on_line(&line);
+                            }
+                            report(&aggregator);
+                        }
+                    };
+
+                    let mut on_progress = {
+                        let aggregator = std::sync::Arc::clone(&aggregator);
+                        move |event: SyncProgress| {
+                            aggregator.lock().on_event(event);
+                            report(&aggregator);
+                        }
+                    };
+
+                    let sync_result = system.get_executor().sync_with_progress(
                         root.as_ref(),
                         &java_home,
                         log_file.as_deref(),
                         &mut on_output,
+                        &mut on_progress,
                     );
-
-                    let mut flush_pending_flash = || {
-                        if let Some(message) = pending_flash.take() {
-                            task_sender
-                                .send(BackgroundTaskEvent::Progress(ProgressEvent {
-                                    token: progress_token.clone(),
-                                    title: String::new(),
-                                    message: Some(message),
-                                    percentage: None,
-                                    state: ProgressState::Report,
-                                }))
-                                .ok();
-                        }
-                    };
 
                     match sync_result {
                         Ok(graph) => {
-                            flush_pending_flash();
+                            aggregator.lock().on_sync_complete(true);
+                            report(&aggregator);
                             finish_progress();
                             if let Some(log_file) = &log_file {
                                 let _ = std::fs::remove_file(log_file);
@@ -440,7 +435,8 @@ impl GlobalState {
                         }
                         Err(err) => {
                             tracing::error!(?root, "Metadata compilation failure: {}", err);
-                            flush_pending_flash();
+                            aggregator.lock().on_sync_complete(false);
+                            report(&aggregator);
                             finish_progress();
 
                             match err.downcast::<SyncError>() {
@@ -1084,4 +1080,375 @@ fn collect_ignored_paths(root: &AbsPathBuf) -> Vec<AbsPathBuf> {
 
     ignored_dirs.extend(ignored_files);
     ignored_dirs
+}
+
+/// Aggregates structured [`SyncProgress`] events into a single phase-budgeted
+/// percentage and a human-readable status message, so the LSP client sees a
+/// moving bar (IntelliJ-style) instead of a spinner plus raw line flashes.
+///
+/// Budgets: each phase owns a fixed percentage window (see
+/// [`PHASE_PERCENTAGE_RANGES`]). Within a window the bar advances on every
+/// meaningful event; when no events arrive the last reported position is kept.
+/// `on_model_end` forces the "Exporting" phase to its window end, and
+/// `on_sync_complete(true)` reports exactly 100% — both guarantees that a
+/// successful sync always reaches 100% right before the progress token ends.
+struct PhaseProgressAggregator {
+    phase: SyncPhase,
+    /// Cumulative bytes downloaded across all `Download` events.
+    bytes_downloaded: u64,
+    /// Total bytes expected once known; `None` until a size-bearing download.
+    bytes_total: Option<u64>,
+    download_count: u64,
+    /// Module the tool is currently working on, if any.
+    current_project: Option<String>,
+    current_project_index: u32,
+    current_project_total: u32,
+    model_parsed: bool,
+    finished: bool,
+    last_report: Option<(String, u32)>,
+}
+
+impl PhaseProgressAggregator {
+    fn new() -> Self {
+        Self {
+            phase: SyncPhase::Resolving,
+            bytes_downloaded: 0,
+            bytes_total: None,
+            download_count: 0,
+            current_project: None,
+            current_project_index: 0,
+            current_project_total: 0,
+            model_parsed: false,
+            finished: false,
+            last_report: None,
+        }
+    }
+
+    fn on_event(&mut self, event: SyncProgress) {
+        match event {
+            SyncProgress::Phase(phase) => {
+                // Terminal phases (Done/Failed) are set by the sync result, not
+                // by tool output; ignore them here so a stray "BUILD SUCCESS"
+                // line does not end the bar early.
+                if phase != SyncPhase::Done && phase != SyncPhase::Failed {
+                    self.phase = phase;
+                }
+            }
+            SyncProgress::Download {
+                bytes_downloaded,
+                bytes_total,
+                ..
+            } => {
+                self.phase = SyncPhase::Downloading;
+                self.download_count += 1;
+                // A "Downloaded …" completion line carries the full size; track
+                // it as both the running total and the expected total so the
+                // bar approaches its window end as transfers finish.
+                if bytes_total.is_some() && bytes_downloaded > self.bytes_downloaded {
+                    self.bytes_downloaded = bytes_downloaded;
+                }
+                if let Some(total) = bytes_total {
+                    self.bytes_total = Some(total);
+                }
+            }
+            SyncProgress::Project {
+                name,
+                index,
+                total,
+                action,
+            } => {
+                self.current_project = Some(name.clone());
+                if index > 0 {
+                    self.current_project_index = index;
+                }
+                if total > 0 {
+                    self.current_project_total = total;
+                }
+                match action.as_str() {
+                    "building" | "compileJava" | "compileTestJava" => {
+                        self.phase = SyncPhase::Compiling;
+                    }
+                    "configuring" => {
+                        self.phase = SyncPhase::Configuring;
+                    }
+                    _ => {}
+                }
+            }
+            SyncProgress::Info(_) => {
+                // Free-form text carries no phase semantics; leave the phase
+                // as-is so the message is not misleading.
+            }
+        }
+    }
+
+    /// A non-model output line arrived; nudge the phase along so a tool that
+    /// never emits structured events still shows progress.
+    fn on_line(&mut self, _line: &str) {
+        // No-op: keeping this hook gives future per-line nudging (e.g. task
+        // counts) a single chokepoint without coupling the parser here.
+    }
+
+    /// The `WORKSPACE_MODEL_BEGIN` marker was printed: the tool is serializing
+    /// the final model, so the Exporting phase is in progress.
+    fn on_model_begin(&mut self) {
+        self.phase = SyncPhase::Exporting;
+    }
+
+    /// The `WORKSPACE_MODEL_END` marker was printed: the model is fully on
+    /// stdout and the sync is guaranteed to succeed from here.
+    fn on_model_end(&mut self) {
+        self.phase = SyncPhase::Exporting;
+        self.model_parsed = true;
+    }
+
+    /// Marks the sync finished, driving the percentage to exactly 100% on
+    /// success (per the guaranteed-completion contract).
+    fn on_sync_complete(&mut self, success: bool) {
+        self.finished = true;
+        if success {
+            self.phase = SyncPhase::Done;
+        } else {
+            self.phase = SyncPhase::Failed;
+        }
+    }
+
+    /// The current (message, percentage) to report, or `None` while the phase
+    /// is still Resolving with no information at all.
+    fn current_status(&mut self) -> Option<(String, u32)> {
+        let percentage = if self.finished {
+            match self.phase {
+                SyncPhase::Done => 100,
+                SyncPhase::Failed => 100,
+                _ => self.budgeted_percentage(),
+            }
+        } else if self.model_parsed {
+            // Model fully serialized but sync not yet marked complete: hold at
+            // the top of the Exporting window instead of jumping to 100 early.
+            self.budgeted_percentage()
+        } else {
+            self.budgeted_percentage()
+        };
+
+        let message = if self.finished && self.phase == SyncPhase::Failed {
+            "Sync failed".to_string()
+        } else if self.finished {
+            "Sync complete".to_string()
+        } else {
+            self.status_message()
+        };
+
+        if self.last_report.as_ref() == Some(&(message.clone(), percentage)) {
+            return None;
+        }
+        self.last_report = Some((message.clone(), percentage));
+        Some((message, percentage))
+    }
+
+    fn budgeted_percentage(&self) -> u32 {
+        let range = PHASE_PERCENTAGE_RANGES
+            .iter()
+            .find(|(phase, _)| *phase == self.phase)
+            .map(|(_, (lo, hi))| (*lo, *hi))
+            .unwrap_or((0, 99));
+
+        let (lo, hi) = range;
+        match self.phase {
+            SyncPhase::Downloading => {
+                // Within the download window, advance proportional to bytes.
+                let total = self.bytes_total.unwrap_or(0);
+                if total > 0 && self.bytes_downloaded > 0 {
+                    let ratio = self.bytes_downloaded.min(total) as f64 / total as f64;
+                    lo + ((hi - lo) as f64 * ratio) as u32
+                } else {
+                    lo
+                }
+            }
+            SyncPhase::Configuring | SyncPhase::Compiling => {
+                // Advance through the window by module index when known.
+                if self.current_project_total > 0 {
+                    let ratio = (self.current_project_index as f64
+                        / self.current_project_total as f64)
+                        .min(1.0);
+                    lo + ((hi - lo) as f64 * ratio) as u32
+                } else {
+                    lo
+                }
+            }
+            SyncPhase::Exporting => hi,
+            _ => lo,
+        }
+    }
+
+    fn status_message(&self) -> String {
+        match self.phase {
+            SyncPhase::Resolving => "Resolving dependencies…".to_string(),
+            SyncPhase::Downloading => {
+                let downloads = if self.download_count > 0 {
+                    format!("{} dependencies", self.download_count)
+                } else {
+                    "dependencies".to_string()
+                };
+                match (self.bytes_downloaded, self.bytes_total) {
+                    (d, Some(t)) if t > 0 && d > 0 => {
+                        format!(
+                            "Downloading {downloads} · {} / {}",
+                            human_bytes(d),
+                            human_bytes(t)
+                        )
+                    }
+                    (d, None) if d > 0 => format!("Downloading {downloads} · {}", human_bytes(d)),
+                    _ => format!("Downloading {downloads}…"),
+                }
+            }
+            SyncPhase::Configuring => {
+                if let Some(project) = &self.current_project {
+                    let idx = module_label(self.current_project_index, self.current_project_total);
+                    format!("Configuring project {project}{idx}…")
+                } else {
+                    "Configuring projects…".to_string()
+                }
+            }
+            SyncPhase::Compiling => {
+                if let Some(project) = &self.current_project {
+                    let idx = module_label(self.current_project_index, self.current_project_total);
+                    format!("Compiling project {project}{idx}…")
+                } else {
+                    "Compiling projects…".to_string()
+                }
+            }
+            SyncPhase::Exporting => {
+                if self.model_parsed {
+                    "Finalizing workspace model…".to_string()
+                } else {
+                    "Exporting workspace model…".to_string()
+                }
+            }
+            SyncPhase::Done => "Sync complete".to_string(),
+            SyncPhase::Failed => "Sync failed".to_string(),
+        }
+    }
+}
+
+/// Formats a `(index, total)` module position as ` (i/n)` when known, else "".
+fn module_label(index: u32, total: u32) -> String {
+    if total > 0 && index >= 1 {
+        format!(" ({index}/{total})")
+    } else {
+        String::new()
+    }
+}
+
+/// Formats a byte count for the status message.
+fn human_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GiB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MiB", b / MB)
+    } else if b >= KB {
+        format!("{:.1} KiB", b / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_advances_within_window() {
+        let mut agg = PhaseProgressAggregator::new();
+        agg.on_event(SyncProgress::Phase(SyncPhase::Downloading));
+        agg.on_event(SyncProgress::Download {
+            dependency: "x.jar".into(),
+            bytes_downloaded: 0,
+            bytes_total: Some(100),
+        });
+        assert_eq!(
+            agg.current_status(),
+            Some(("Downloading 1 dependencies…".into(), 15))
+        );
+
+        agg.on_event(SyncProgress::Download {
+            dependency: "x.jar".into(),
+            bytes_downloaded: 50,
+            bytes_total: Some(100),
+        });
+        assert_eq!(
+            agg.current_status(),
+            Some(("Downloading 2 dependencies · 50 B / 100 B".into(), 37))
+        );
+
+        agg.on_event(SyncProgress::Download {
+            dependency: "x.jar".into(),
+            bytes_downloaded: 100,
+            bytes_total: Some(100),
+        });
+        assert_eq!(
+            agg.current_status(),
+            Some(("Downloading 3 dependencies · 100 B / 100 B".into(), 60))
+        );
+    }
+
+    #[test]
+    fn configuring_advances_by_module() {
+        let mut agg = PhaseProgressAggregator::new();
+        agg.on_event(SyncProgress::Project {
+            name: ":app".into(),
+            index: 1,
+            total: 3,
+            action: "configuring".into(),
+        });
+        assert_eq!(
+            agg.current_status(),
+            Some(("Configuring project :app (1/3)…".into(), 68))
+        );
+    }
+
+    #[test]
+    fn model_end_and_complete_reach_100() {
+        let mut agg = PhaseProgressAggregator::new();
+        agg.on_model_begin();
+        assert_eq!(
+            agg.current_status(),
+            Some(("Exporting workspace model…".into(), 99))
+        );
+        agg.on_model_end();
+        assert_eq!(
+            agg.current_status(),
+            Some(("Finalizing workspace model…".into(), 99))
+        );
+        agg.on_sync_complete(true);
+        assert_eq!(agg.current_status(), Some(("Sync complete".into(), 100)));
+    }
+
+    #[test]
+    fn failure_reports_failed() {
+        let mut agg = PhaseProgressAggregator::new();
+        agg.on_sync_complete(false);
+        assert_eq!(agg.current_status(), Some(("Sync failed".into(), 100)));
+    }
+
+    #[test]
+    fn duplicate_status_not_reemitted() {
+        let mut agg = PhaseProgressAggregator::new();
+        agg.on_model_begin();
+        let first = agg.current_status();
+        let second = agg.current_status();
+        assert_eq!(first, Some(("Exporting workspace model…".into(), 99)));
+        assert_eq!(second, None);
+    }
+
+    #[test]
+    fn human_bytes_formats() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(500), "500 B");
+        assert_eq!(human_bytes(2048), "2.0 KiB");
+        assert_eq!(human_bytes(12_897_485), "12.3 MiB");
+        assert_eq!(human_bytes(2 * 1024 * 1024 * 1024), "2.0 GiB");
+    }
 }
