@@ -327,6 +327,13 @@ fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
         // operator so its matching `:` is consumed as an operator, not a
         // separator.
         let mut ternary_depth = 0usize;
+        // §4.5.1: the `?` of a wildcard type argument (`List<? extends T>`,
+        // `List<? super T>`) is a *type* `?`, not a ternary `?`. A ternary `?`
+        // is always preceded by an expression ([§15.25]); a wildcard `?`
+        // directly follows the `<` or `,` that opens its type-argument
+        // position. The previous significant token (trivia is filtered out of
+        // the token stream) distinguishes the two.
+        let mut previous: Option<SyntaxKind> = None;
         while !p.at(EOF) {
             if p.at(L_PAREN) {
                 paren_depth += 1;
@@ -334,10 +341,11 @@ fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
                 paren_depth -= 1;
             } else if paren_depth == 0 {
                 if p.at(QUESTION) {
-                    ternary_depth += 1;
-                } else if p.at(COLON) && p.nth(1) == Some(COLON) {
-                    // `::` — a method reference; skip both colons.
-                    p.bump();
+                    // `<?` or `,?` opens a wildcard type argument (§4.5.1);
+                    // otherwise `?` is the conditional operator (§15.25).
+                    if !matches!(previous, Some(LESS) | Some(COMMA)) {
+                        ternary_depth += 1;
+                    }
                 } else if p.at(COLON) && ternary_depth > 0 {
                     // The `:` closing a conditional operator.
                     ternary_depth -= 1;
@@ -350,6 +358,7 @@ fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
                     }
                 }
             }
+            previous = p.current();
             p.bump();
         }
         None

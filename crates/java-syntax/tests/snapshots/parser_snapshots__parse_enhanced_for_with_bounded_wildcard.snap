@@ -1,0 +1,162 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func(java.util.List<Class<? extends Runnable>> list) {
+        for (Class<? extends Runnable> cls : list) {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "Class"
+LESS "<"
+QUESTION "?"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Runnable"
+RIGHT_SHIFT ">>"
+WHITESPACE " "
+IDENTIFIER "list"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Class"
+LESS "<"
+QUESTION "?"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Runnable"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "cls"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "list"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..139
+  CLASS_DECL@0..138
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..138
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..136
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..74
+          L_PAREN@26..27 "("
+          FORMAL_PARAMETER@27..73
+            TYPE@27..68
+              QUALIFIED_NAME@27..41
+                IDENTIFIER@27..31 "java"
+                DOT@31..32 "."
+                IDENTIFIER@32..36 "util"
+                DOT@36..37 "."
+                IDENTIFIER@37..41 "List"
+              TYPE_ARGUMENTS@41..68
+                LESS@41..42 "<"
+                TYPE_ARGUMENT@42..67
+                  TYPE@42..67
+                    QUALIFIED_NAME@42..47
+                      IDENTIFIER@42..47 "Class"
+                    TYPE_ARGUMENTS@47..67
+                      LESS@47..48 "<"
+                      TYPE_ARGUMENT@48..66
+                        WILDCARD_TYPE@48..66
+                          QUESTION@48..49 "?"
+                          WHITESPACE@49..50 " "
+                          WILDCARD_BOUNDS@50..66
+                            EXTENDS_KW@50..57 "extends"
+                            WHITESPACE@57..58 " "
+                            TYPE@58..66
+                              QUALIFIED_NAME@58..66
+                                IDENTIFIER@58..66 "Runnable"
+                      RIGHT_SHIFT@66..67 ">"
+                GREATER@67..68 ">"
+            WHITESPACE@68..69 " "
+            IDENTIFIER@69..73 "list"
+          R_PAREN@73..74 ")"
+        WHITESPACE@74..75 " "
+        BLOCK@75..136
+          L_BRACE@75..76 "{"
+          WHITESPACE@76..85 "\n        "
+          ENHANCED_FOR_STMT@85..130
+            FOR_KW@85..88 "for"
+            WHITESPACE@88..89 " "
+            L_PAREN@89..90 "("
+            TYPE@90..115
+              QUALIFIED_NAME@90..95
+                IDENTIFIER@90..95 "Class"
+              TYPE_ARGUMENTS@95..115
+                LESS@95..96 "<"
+                TYPE_ARGUMENT@96..114
+                  WILDCARD_TYPE@96..114
+                    QUESTION@96..97 "?"
+                    WHITESPACE@97..98 " "
+                    WILDCARD_BOUNDS@98..114
+                      EXTENDS_KW@98..105 "extends"
+                      WHITESPACE@105..106 " "
+                      TYPE@106..114
+                        QUALIFIED_NAME@106..114
+                          IDENTIFIER@106..114 "Runnable"
+                GREATER@114..115 ">"
+            WHITESPACE@115..116 " "
+            VARIABLE_DECLARATOR@116..119
+              IDENTIFIER@116..119 "cls"
+            WHITESPACE@119..120 " "
+            COLON@120..121 ":"
+            WHITESPACE@121..122 " "
+            LITERAL@122..126
+              IDENTIFIER@122..126 "list"
+            R_PAREN@126..127 ")"
+            WHITESPACE@127..128 " "
+            BLOCK@128..130
+              L_BRACE@128..129 "{"
+              R_BRACE@129..130 "}"
+          WHITESPACE@130..135 "\n    "
+          R_BRACE@135..136 "}"
+      WHITESPACE@136..137 "\n"
+      R_BRACE@137..138 "}"
+  WHITESPACE@138..139 "\n"

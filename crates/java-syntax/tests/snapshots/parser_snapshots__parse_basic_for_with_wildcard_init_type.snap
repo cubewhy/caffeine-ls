@@ -1,0 +1,170 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func(Class<?> owner) {
+        for (Class<?> cls = owner; cls != null; cls = cls.getSuperclass()) {}
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+IDENTIFIER "Class"
+LESS "<"
+QUESTION "?"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "owner"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Class"
+LESS "<"
+QUESTION "?"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "cls"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "owner"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "cls"
+WHITESPACE " "
+NOT_EQUAL "!="
+WHITESPACE " "
+NULL_LITERAL "null"
+SEMICOLON ";"
+WHITESPACE " "
+IDENTIFIER "cls"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "cls"
+DOT "."
+IDENTIFIER "getSuperclass"
+L_PAREN "("
+R_PAREN ")"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..131
+  CLASS_DECL@0..130
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..130
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..128
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..42
+          L_PAREN@26..27 "("
+          FORMAL_PARAMETER@27..41
+            TYPE@27..35
+              QUALIFIED_NAME@27..32
+                IDENTIFIER@27..32 "Class"
+              TYPE_ARGUMENTS@32..35
+                LESS@32..33 "<"
+                TYPE_ARGUMENT@33..34
+                  WILDCARD_TYPE@33..34
+                    QUESTION@33..34 "?"
+                GREATER@34..35 ">"
+            WHITESPACE@35..36 " "
+            IDENTIFIER@36..41 "owner"
+          R_PAREN@41..42 ")"
+        WHITESPACE@42..43 " "
+        BLOCK@43..128
+          L_BRACE@43..44 "{"
+          WHITESPACE@44..53 "\n        "
+          FOR_STMT@53..122
+            FOR_KW@53..56 "for"
+            WHITESPACE@56..57 " "
+            L_PAREN@57..58 "("
+            LOCAL_VARIABLE_DECLARATION@58..78
+              TYPE@58..66
+                QUALIFIED_NAME@58..63
+                  IDENTIFIER@58..63 "Class"
+                TYPE_ARGUMENTS@63..66
+                  LESS@63..64 "<"
+                  TYPE_ARGUMENT@64..65
+                    WILDCARD_TYPE@64..65
+                      QUESTION@64..65 "?"
+                  GREATER@65..66 ">"
+              WHITESPACE@66..67 " "
+              VARIABLE_DECLARATOR_LIST@67..78
+                VARIABLE_DECLARATOR@67..78
+                  IDENTIFIER@67..70 "cls"
+                  WHITESPACE@70..71 " "
+                  EQUAL@71..72 "="
+                  WHITESPACE@72..73 " "
+                  LITERAL@73..78
+                    IDENTIFIER@73..78 "owner"
+            SEMICOLON@78..79 ";"
+            WHITESPACE@79..80 " "
+            BINARY_EXPR@80..91
+              LITERAL@80..83
+                IDENTIFIER@80..83 "cls"
+              WHITESPACE@83..84 " "
+              NOT_EQUAL@84..86 "!="
+              WHITESPACE@86..87 " "
+              LITERAL@87..91
+                NULL_LITERAL@87..91 "null"
+            SEMICOLON@91..92 ";"
+            WHITESPACE@92..93 " "
+            ASSIGN_EXPR@93..118
+              LITERAL@93..96
+                IDENTIFIER@93..96 "cls"
+              WHITESPACE@96..97 " "
+              EQUAL@97..98 "="
+              WHITESPACE@98..99 " "
+              METHOD_CALL@99..118
+                FIELD_ACCESS@99..116
+                  LITERAL@99..102
+                    IDENTIFIER@99..102 "cls"
+                  DOT@102..103 "."
+                  IDENTIFIER@103..116 "getSuperclass"
+                ARGUMENT_LIST@116..118
+                  L_PAREN@116..117 "("
+                  R_PAREN@117..118 ")"
+            R_PAREN@118..119 ")"
+            WHITESPACE@119..120 " "
+            BLOCK@120..122
+              L_BRACE@120..121 "{"
+              R_BRACE@121..122 "}"
+          WHITESPACE@122..127 "\n    "
+          R_BRACE@127..128 "}"
+      WHITESPACE@128..129 "\n"
+      R_BRACE@129..130 "}"
+  WHITESPACE@130..131 "\n"

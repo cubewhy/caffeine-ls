@@ -451,6 +451,48 @@ parser_snapshot!(
 );
 
 parser_snapshot!(
+    // §14.14.2/[§4.5.1]: the `?` of wildcard type arguments in an
+    // enhanced-for's local-variable type is a type `?`, not a ternary `?` —
+    // the `:` after `value` is the for-each separator.
+    parse_enhanced_for_with_wildcard_type_args,
+    indoc! {r#"
+        class Test {
+            void func(java.util.List<Value<?, ?>> values) {
+                for (Value<?, ?> value : values) {}
+            }
+        }
+        class Value<K, T> {}
+    "#}
+);
+
+parser_snapshot!(
+    // §14.14.2/[§4.5.1]: a `? extends`/`? super` wildcard in the for-each
+    // header must not confuse the separator scan either.
+    parse_enhanced_for_with_bounded_wildcard,
+    indoc! {r#"
+        class Test {
+            void func(java.util.List<Class<? extends Runnable>> list) {
+                for (Class<? extends Runnable> cls : list) {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    // §14.14.1: a *basic* for whose initializer declares a wildcard-typed
+    // variable (`Class<?>`) — the `?` is a type argument, and the `;` after
+    // it is the basic-for separator.
+    parse_basic_for_with_wildcard_init_type,
+    indoc! {r#"
+        class Test {
+            void func(Class<?> owner) {
+                for (Class<?> cls = owner; cls != null; cls = cls.getSuperclass()) {}
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
     parse_underscope_variable_id,
     indoc! {r#"
         class Test {

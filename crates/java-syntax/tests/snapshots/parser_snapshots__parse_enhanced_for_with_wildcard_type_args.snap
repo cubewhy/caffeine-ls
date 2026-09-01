@@ -1,0 +1,188 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func(java.util.List<Value<?, ?>> values) {
+        for (Value<?, ?> value : values) {}
+    }
+}
+class Value<K, T> {}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "Value"
+LESS "<"
+QUESTION "?"
+COMMA ","
+WHITESPACE " "
+QUESTION "?"
+RIGHT_SHIFT ">>"
+WHITESPACE " "
+IDENTIFIER "values"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+FOR_KW "for"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "Value"
+LESS "<"
+QUESTION "?"
+COMMA ","
+WHITESPACE " "
+QUESTION "?"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "value"
+WHITESPACE " "
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "values"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Value"
+LESS "<"
+IDENTIFIER "K"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "T"
+GREATER ">"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..138
+  CLASS_DECL@0..116
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..116
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..114
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..62
+          L_PAREN@26..27 "("
+          FORMAL_PARAMETER@27..61
+            TYPE@27..54
+              QUALIFIED_NAME@27..41
+                IDENTIFIER@27..31 "java"
+                DOT@31..32 "."
+                IDENTIFIER@32..36 "util"
+                DOT@36..37 "."
+                IDENTIFIER@37..41 "List"
+              TYPE_ARGUMENTS@41..54
+                LESS@41..42 "<"
+                TYPE_ARGUMENT@42..53
+                  TYPE@42..53
+                    QUALIFIED_NAME@42..47
+                      IDENTIFIER@42..47 "Value"
+                    TYPE_ARGUMENTS@47..53
+                      LESS@47..48 "<"
+                      TYPE_ARGUMENT@48..49
+                        WILDCARD_TYPE@48..49
+                          QUESTION@48..49 "?"
+                      COMMA@49..50 ","
+                      WHITESPACE@50..51 " "
+                      TYPE_ARGUMENT@51..52
+                        WILDCARD_TYPE@51..52
+                          QUESTION@51..52 "?"
+                      RIGHT_SHIFT@52..53 ">"
+                GREATER@53..54 ">"
+            WHITESPACE@54..55 " "
+            IDENTIFIER@55..61 "values"
+          R_PAREN@61..62 ")"
+        WHITESPACE@62..63 " "
+        BLOCK@63..114
+          L_BRACE@63..64 "{"
+          WHITESPACE@64..73 "\n        "
+          ENHANCED_FOR_STMT@73..108
+            FOR_KW@73..76 "for"
+            WHITESPACE@76..77 " "
+            L_PAREN@77..78 "("
+            TYPE@78..89
+              QUALIFIED_NAME@78..83
+                IDENTIFIER@78..83 "Value"
+              TYPE_ARGUMENTS@83..89
+                LESS@83..84 "<"
+                TYPE_ARGUMENT@84..85
+                  WILDCARD_TYPE@84..85
+                    QUESTION@84..85 "?"
+                COMMA@85..86 ","
+                WHITESPACE@86..87 " "
+                TYPE_ARGUMENT@87..88
+                  WILDCARD_TYPE@87..88
+                    QUESTION@87..88 "?"
+                GREATER@88..89 ">"
+            WHITESPACE@89..90 " "
+            VARIABLE_DECLARATOR@90..95
+              IDENTIFIER@90..95 "value"
+            WHITESPACE@95..96 " "
+            COLON@96..97 ":"
+            WHITESPACE@97..98 " "
+            LITERAL@98..104
+              IDENTIFIER@98..104 "values"
+            R_PAREN@104..105 ")"
+            WHITESPACE@105..106 " "
+            BLOCK@106..108
+              L_BRACE@106..107 "{"
+              R_BRACE@107..108 "}"
+          WHITESPACE@108..113 "\n    "
+          R_BRACE@113..114 "}"
+      WHITESPACE@114..115 "\n"
+      R_BRACE@115..116 "}"
+  WHITESPACE@116..117 "\n"
+  CLASS_DECL@117..137
+    CLASS_KW@117..122 "class"
+    WHITESPACE@122..123 " "
+    IDENTIFIER@123..128 "Value"
+    TYPE_PARAMETERS@128..134
+      LESS@128..129 "<"
+      TYPE_PARAMETER@129..130
+        IDENTIFIER@129..130 "K"
+      COMMA@130..131 ","
+      WHITESPACE@131..132 " "
+      TYPE_PARAMETER@132..133
+        IDENTIFIER@132..133 "T"
+      GREATER@133..134 ">"
+    WHITESPACE@134..135 " "
+    CLASS_BODY@135..137
+      L_BRACE@135..136 "{"
+      R_BRACE@136..137 "}"
+  WHITESPACE@137..138 "\n"
