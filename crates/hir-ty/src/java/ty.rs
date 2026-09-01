@@ -825,11 +825,7 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
     let fresh = |bound: Ty| {
         let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ty::type_var(
-            db,
-            Name::new(&format!("CAP#{id}")),
-            vec![capture_conversion(db, scope, bound)],
-        )
+        Ty::type_var(db, Name::new(&format!("CAP#{id}")), vec![bound])
     };
     match ty.kind(db) {
         TyKind::Reference { name, args } => {
@@ -864,12 +860,10 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                     .enumerate()
                     .map(|(i, arg)| match arg.kind(db) {
                         TyKind::Wildcard(Some(bound)) => match bound.kind {
-                            BoundKind::Upper => fresh(bound.ty),
+                            BoundKind::Upper => fresh(bound.ty.clone()),
                             // `? super T`: a capture variable with the `Object`
                             // upper bound and the `T` lower bound (§5.1.10).
-                            BoundKind::Lower => {
-                                Ty::captured_var(db, capture_conversion(db, scope, bound.ty))
-                            }
+                            BoundKind::Lower => Ty::captured_var(db, bound.ty.clone()),
                         },
                         TyKind::Wildcard(None) => {
                             let bound = declared.get(i).copied().unwrap_or_else(|| {
@@ -877,17 +871,26 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                             });
                             fresh(bound)
                         }
-                        _ => capture_conversion(db, scope, *arg),
+                        // §5.1.10: capture conversion is *not* recursively
+                        // applied to the non-wildcard type arguments — only the
+                        // top-level wildcard arguments of the receiver's own
+                        // type are replaced. A nested `Class<?>` inside
+                        // `Map<Class<?>, String>` stays `Class<?>` (javac
+                        // accepts `map.put(Class<Boolean>, …)` against it), and
+                        // recursively capturing would turn it into a fresh
+                        // `Class<CAP#n>` that no concrete `Class<B>` is a
+                        // subtype of.
+                        _ => *arg,
                     })
                     .collect(),
             )
         }
-        TyKind::Array(inner) => Ty::array(db, capture_conversion(db, scope, **inner)),
+        TyKind::Array(inner) => Ty::array(db, **inner),
         TyKind::Wildcard(Some(bound)) => match bound.kind {
-            BoundKind::Upper => fresh(bound.ty),
+            BoundKind::Upper => fresh(bound.ty.clone()),
             // `? super T`: a capture variable with the `Object` upper bound
             // and the `T` lower bound (§5.1.10).
-            BoundKind::Lower => Ty::captured_var(db, capture_conversion(db, scope, bound.ty)),
+            BoundKind::Lower => Ty::captured_var(db, bound.ty.clone()),
         },
         TyKind::Wildcard(None) => fresh(Ty::reference(db, "java.lang.Object", Vec::new())),
         // Intersection and type-variable receivers are not parameterized by

@@ -426,21 +426,22 @@ impl InferCtx<'_> {
                 !t.contains_infer_var(self.db) && !t.contains_type_var_named_capture(self.db)
             });
             if let (Some(target), true) = (target, constrains_target && target_proper) {
+                // §18.5.2.4: the target constraint ⟨R → T⟩ is an *assignment*
+                // context ([§5.2]) — boxing and unboxing are allowed — no
+                // matter which invocation phase the *arguments* were probed
+                // in. A `return unchecked(() -> getFloat())` over
+                // `<T> T unchecked(CheckedSupplier<T>)` (T := Float) must be
+                // accepted against the `float` return even when the argument
+                // probe happened to be strict; using strict conversion here
+                // would wrongly reject the value-returning overload and leave
+                // only the `void` one applicable.
                 let ok = invocation.ret == target
-                    || match phase {
-                        InvocationPhase::Strict => crate::java::subtyping::strict_conversion(
-                            self.db,
-                            &self.scope,
-                            &invocation.ret,
-                            &target,
-                        ),
-                        InvocationPhase::Loose => crate::java::subtyping::is_assignable(
-                            self.db,
-                            &self.scope,
-                            &invocation.ret,
-                            &target,
-                        ),
-                    };
+                    || crate::java::subtyping::is_assignable(
+                        self.db,
+                        &self.scope,
+                        &invocation.ret,
+                        &target,
+                    );
                 if !ok {
                     // A residual mismatch between two parameterizations of
                     // the *same* generic type is wildcard/capture

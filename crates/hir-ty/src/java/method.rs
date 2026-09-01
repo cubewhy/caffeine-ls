@@ -1667,6 +1667,24 @@ pub(crate) fn more_specific(
     if m1.varargs != m2.varargs {
         return !m1.varargs;
     }
+    // §15.12.2.5 (functional interface specificity): when the invocation's
+    // argument is a lambda, a functional interface type `S` is more specific
+    // than a functional interface type `T` when — beyond matching formal
+    // parameter lists — `T`'s function type has a `void` return and `S`'s does
+    // not, or `S`'s return type is a subtype of `T`'s (the `RS`/`RT`
+    // conditions of §15.12.2.5). This is what resolves the
+    // `CheckedSupplier<T>`/`CheckedRunnable` pair that the ordinary
+    // subsignature test cannot: `Sub(CheckedSupplier<α>, CheckedRunnable)`
+    // reduces to false (different erasures), yet a lambda whose body produces
+    // a value must select the value-returning overload regardless of the
+    // invocation's target (§15.12.2.5) — `return unchecked(() -> getFloat())`
+    // selects `<T> T unchecked(CheckedSupplier<T>)`, not the `void`
+    // `unchecked(CheckedRunnable)`. Without it the void overload wins the
+    // tie-break and the enclosing `return` misreports the selected `void`
+    // against the primitive return type.
+    if let Some(win) = functional_interface_specificity(db, scope, m1, m2) {
+        return win;
+    }
     // §15.12.2.5 as javac implements it: `m1` is more specific than `m2` iff
     // `m2` is *applicable* to `m1`'s formal parameter types treated as the
     // invocation arguments (`signatureMoreSpecific`) — `m2`'s type
@@ -1692,6 +1710,85 @@ pub(crate) fn more_specific(
         inference.add_constraint(Constraint::Sub(*param, *formal));
     }
     inference.check_consistent(db, scope, InvocationPhase::Loose)
+}
+
+/// The functional-interface half of the most-specific test
+/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
+/// whether `m1` is more specific than `m2` because their corresponding
+/// parameters are *functional interface* types `S` (m1's) and `T` (m2's)
+/// whose function types differ only in their return type — `T` returning
+/// `void` while `S` returns a value, or `S`'s return being a subtype of
+/// `T`'s. `Some(true)`/`Some(false)` when the rule decides the pair, `None`
+/// when the parameters are not a comparable functional-interface pair (the
+/// ordinary subsignature test must decide).
+///
+/// This is the rule javac applies to a lambda argument that is *value
+/// compatible* with both overloads: `use(() -> now())` over
+/// `void use(V)` / `<T> T use(I<T>)` selects the value-returning `I<T>`
+/// overload even in a statement context with no target. The two functional
+/// interfaces need not be subtypes of each other (indeed `CheckedSupplier`
+/// and `CheckedRunnable` are unrelated), so the generic subsignature test
+/// above cannot compare them.
+fn functional_interface_specificity(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    m1: &MethodData,
+    m2: &MethodData,
+) -> Option<bool> {
+    if m1.params.len() != m2.params.len() {
+        return None;
+    }
+    let mut s_ret: Option<Ty> = None;
+    let mut t_ret: Option<Ty> = None;
+    for (s, t) in m1.params.iter().zip(&m2.params) {
+        // The rule applies to a *lambda argument*: both formals must be
+        // functional interfaces with matching SAM parameter lists.
+        let (Some(ssam), Some(tsam)) = (
+            single_abstract_method(db, scope, s),
+            single_abstract_method(db, scope, t),
+        ) else {
+            return None;
+        };
+        if ssam.params != tsam.params {
+            return None;
+        }
+        // The adapt-and-capture nuance of §15.12.2.5 (S's wildcards captured)
+        // is approximated by the SAM returns as extracted.
+        match (&s_ret, &t_ret) {
+            (None, None) => {
+                s_ret = Some(ssam.ret);
+                t_ret = Some(tsam.ret);
+            }
+            (Some(a), Some(b)) => {
+                if a != &ssam.ret || b != &tsam.ret {
+                    return None;
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    let (s_ret, t_ret) = (s_ret?, t_ret?);
+    // `RT is void` (m2's SAM returns void) makes `S` more specific than `T`
+    // for a lambda that is value-compatible with both — the value-returning
+    // overload beats the void one. Otherwise `RS <: RT` (m1's return a subtype
+    // of m2's) makes `S` more specific.
+    if t_ret.is_void_like(db) && !s_ret.is_void_like(db) {
+        return Some(true);
+    }
+    if s_ret.is_void_like(db) && !t_ret.is_void_like(db) {
+        return Some(false);
+    }
+    if !s_ret.is_void_like(db) && !t_ret.is_void_like(db) {
+        let s_cap = crate::java::ty::capture_conversion(db, scope, s_ret);
+        if crate::java::subtyping::is_subtype(db, scope, &s_cap, &t_ret) {
+            return Some(true);
+        }
+        let t_cap = crate::java::ty::capture_conversion(db, scope, t_ret);
+        if crate::java::subtyping::is_subtype(db, scope, &t_cap, &s_ret) {
+            return Some(false);
+        }
+    }
+    None
 }
 
 /// Whether `param1` is a subtype of `param2` for the most-specific comparison

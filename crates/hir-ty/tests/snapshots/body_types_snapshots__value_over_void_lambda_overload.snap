@@ -1,0 +1,60 @@
+---
+source: crates/hir-ty/tests/body_types_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Map.java:
+package com.example;
+
+class Map {
+    @FunctionalInterface interface CheckedSupplier<T> {
+        T get() throws Exception;
+    }
+
+    @FunctionalInterface interface CheckedRunnable {
+        void run() throws Exception;
+    }
+
+    static <T> T unchecked(CheckedSupplier<T> supplier) {
+        try {
+            return supplier.get();
+        }
+        catch (Exception exception) {
+            return null;
+        }
+    }
+
+    static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        }
+        catch (Exception exception) {}
+    }
+
+    static float getFloatField() {
+        return 1.0f;
+    }
+
+    static float f1() {
+        return unchecked(() -> getFloatField());
+    }
+
+    static void f2() {
+        unchecked(() -> getFloatField());
+    }
+}
+
+method unchecked(com.example.Map.CheckedSupplier<T>): T
+  locals: l0: com.example.Map.CheckedSupplier<T> | l1: java.lang.Exception
+  exprs: e0: com.example.Map.CheckedSupplier<T> | e1: T | e2: null
+method unchecked(com.example.Map.CheckedRunnable): void
+  locals: l2: com.example.Map.CheckedRunnable | l3: java.lang.Exception
+  exprs: e3: com.example.Map.CheckedRunnable | e4: void
+method getFloatField(): float
+  locals: 
+  exprs: e5: float
+method f1(): float
+  locals: 
+  exprs: e6: float | e7: com.example.Map.CheckedSupplier<java.lang.Float> | e8: java.lang.Float
+method f2(): void
+  locals: 
+  exprs: e9: float | e10: com.example.Map.CheckedSupplier<java.lang.Float> | e11: java.lang.Float

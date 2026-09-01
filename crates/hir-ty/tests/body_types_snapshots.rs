@@ -1222,3 +1222,58 @@ class Body {
 ",
     )])
 );
+
+// §15.12.2.5/[§15.27.3]: a value-returning functional-interface overload is
+// more specific than a `void` one for a lambda whose body produces a value —
+// `return unchecked(() -> getFloat())` over `<T> T unchecked(CheckedSupplier<T>)`
+// and `void unchecked(CheckedRunnable)` selects `CheckedSupplier<Float>`, not
+// `CheckedRunnable`. The void overload's `void` must not be reported against
+// the `float` return type.
+
+snapshot!(
+    value_over_void_lambda_overload,
+    check_body_types(&[(
+        "/src/com/example/Map.java",
+        "\
+package com.example;
+
+class Map {
+    @FunctionalInterface interface CheckedSupplier<T> {
+        T get() throws Exception;
+    }
+
+    @FunctionalInterface interface CheckedRunnable {
+        void run() throws Exception;
+    }
+
+    static <T> T unchecked(CheckedSupplier<T> supplier) {
+        try {
+            return supplier.get();
+        }
+        catch (Exception exception) {
+            return null;
+        }
+    }
+
+    static void unchecked(CheckedRunnable runnable) {
+        try {
+            runnable.run();
+        }
+        catch (Exception exception) {}
+    }
+
+    static float getFloatField() {
+        return 1.0f;
+    }
+
+    static float f1() {
+        return unchecked(() -> getFloatField());
+    }
+
+    static void f2() {
+        unchecked(() -> getFloatField());
+    }
+}
+",
+    )])
+);
