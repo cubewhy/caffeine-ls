@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_invocations.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+import java.util.function.Predicate;
+
+class C {
+    static class Entity {
+    }
+
+    static class RayTraceResult {
+    }
+
+    static RayTraceResult U(Entity e, double d, float f, boolean b, Predicate<Entity> predicate) {
+        return null;
+    }
+
+    boolean canRayTraceEntity(Entity entity) {
+        return true;
+    }
+
+    RayTraceResult m(boolean cond) {
+        return U(null, 0.0, 0.0f, true, cond ? null : this::canRayTraceEntity);
+    }
+}

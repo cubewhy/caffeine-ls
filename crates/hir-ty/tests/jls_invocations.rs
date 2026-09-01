@@ -240,3 +240,43 @@ class C {
 );
 // Green: the method reference `C::lambda$0` is a `Predicate<IEvent>` and the
 // zero-length array is the empty varargs argument — both resolve.
+
+// §15.25.2: a conditional with a poly arm in a target context is a poly
+// expression — `U(..., cond ? null : this::canRayTraceEntity)` against a
+// `Predicate<Entity>` parameter carries the method-reference arm's leaves, so
+// the target reaches it and the arm is typed as `Predicate<Entity>`, not
+// `Object`.
+
+snapshot!(
+    conditional_poly_arm_method_ref,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/C.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class C {
+    static class Entity {
+    }
+
+    static class RayTraceResult {
+    }
+
+    static RayTraceResult U(Entity e, double d, float f, boolean b, Predicate<Entity> predicate) {
+        return null;
+    }
+
+    boolean canRayTraceEntity(Entity entity) {
+        return true;
+    }
+
+    RayTraceResult m(boolean cond) {
+        return U(null, 0.0, 0.0f, true, cond ? null : this::canRayTraceEntity);
+    }
+}
+",
+    )])
+);
+// Green: the conditional `cond ? null : this::canRayTraceEntity` is typed
+// against the `Predicate<Entity>` parameter, so the invocation resolves.

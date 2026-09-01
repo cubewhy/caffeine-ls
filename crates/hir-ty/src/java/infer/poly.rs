@@ -139,11 +139,21 @@ pub(super) fn poly_leaves(tree: &BodyTree, id: ExprId) -> Vec<ExprId> {
         | ExprData::New { diamond: true, .. } => vec![id],
         ExprData::Paren(inner) => poly_leaves(tree, inner),
         ExprData::Conditional { then, els, .. } => {
-            // §15.25.2: a conditional is a poly expression only when both arms
-            // are poly.
-            if expr_is_poly_ext(tree, then) && expr_is_poly_ext(tree, els) {
-                let mut leaves = poly_leaves(tree, then);
-                leaves.extend(poly_leaves(tree, els));
+            // §15.25.2: a conditional in a target context is a poly expression
+            // when *at least one* arm is poly (`b ? f() : null` against a
+            // `Predicate<Entity>` target carries the poly arm's leaves), so the
+            // target reaches the poly arm through the enclosing invocation.
+            // A conditional of two concrete arms has no leaves.
+            let then_poly = expr_is_poly_ext(tree, then);
+            let els_poly = expr_is_poly_ext(tree, els);
+            if then_poly || els_poly {
+                let mut leaves = Vec::new();
+                if then_poly {
+                    leaves.extend(poly_leaves(tree, then));
+                }
+                if els_poly {
+                    leaves.extend(poly_leaves(tree, els));
+                }
                 leaves
             } else {
                 Vec::new()
