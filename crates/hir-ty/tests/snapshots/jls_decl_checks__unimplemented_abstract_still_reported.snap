@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+import java.util.Comparator;
+
+class C implements Comparator<String> {
+}
+
+@4:6: unimplemented-abstract-method: Class 'C' must either be declared abstract or implement abstract method 'compare()' in 'Comparator'

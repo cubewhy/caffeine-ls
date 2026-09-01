@@ -492,3 +492,55 @@ enum Seasons {
 // actually reports the enum spelling as `enum constant not expected here`;
 // both agree the declaration is invalid and the mismatch is the visible
 // cause.)
+
+// §8.1.1.1/[§8.4.8.1]: a concrete member inherited from any supertype
+// satisfies an abstract interface method of the same overriding signature —
+// `Object.equals(Object)` satisfies `java.util.Comparator.equals(Object)`
+// because the class inherits both, so a `Comparator<T>` implementation that
+// declares only `compare` is complete.
+
+snapshot!(
+    comparator_equals_satisfied_by_object,
+    check_class_diagnostics(&[(
+        "/src/com/example/C.java",
+        "\
+package com.example;
+
+import java.util.Comparator;
+
+class Snap {
+    int sortPriority() {
+        return 0;
+    }
+}
+
+class C implements Comparator<Snap> {
+    @Override
+    public int compare(Snap left, Snap right) {
+        return Integer.compare(right.sortPriority(), left.sortPriority());
+    }
+}
+",
+    )])
+);
+// Green: `compare` is the only abstract method of `Comparator<Snap>` that the
+// class must declare — `equals` is provided by `Object.equals`.
+
+// §8.1.1.1: a class that genuinely omits an abstract interface method is still
+// reported.
+
+snapshot!(
+    unimplemented_abstract_still_reported,
+    check_class_diagnostics(&[(
+        "/src/com/example/C.java",
+        "\
+package com.example;
+
+import java.util.Comparator;
+
+class C implements Comparator<String> {
+}
+",
+    )])
+);
+// Red: `compare(String, String)` is not implemented anywhere in the hierarchy.

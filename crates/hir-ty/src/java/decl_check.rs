@@ -1203,13 +1203,18 @@ fn check_class(
                     !candidate.abstract_
                         && !candidate.is_static
                         && same_signature(db, candidate, abstract_method)
-                        && (candidate.owner == abstract_method.owner
-                            || subtyping::is_subtype(
-                                db,
-                                scope,
-                                &Ty::reference(db, candidate.owner.as_str(), Vec::new()),
-                                &Ty::reference(db, abstract_method.owner.as_str(), Vec::new()),
-                            ))
+                    // §8.4.8.1: a concrete instance member of the class's own
+                    // member set satisfies the abstract method when it has the
+                    // same overriding signature — the class inherits the
+                    // concrete member (every member of `all` is declared by
+                    // the class or one of its supertypes). No owner
+                    // relationship is required: `Object.equals` (owner
+                    // `Object`) satisfies `Comparator.equals` (owner
+                    // `Comparator`) because the class inherits both and
+                    // `Object` is its superclass; a class-declared `compare`
+                    // satisfies the interface's `compare` the same way. Only
+                    // an abstract member with no same-signature concrete
+                    // inheritor is reported ([§8.4.8.1]).
                 }) || (is_enum
                     && enum_constant_body_implements(db, file, tree, item, abstract_method));
                 if !implemented {

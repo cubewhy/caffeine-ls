@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+import java.util.Comparator;
+
+class Snap {
+    int sortPriority() {
+        return 0;
+    }
+}
+
+class C implements Comparator<Snap> {
+    @Override
+    public int compare(Snap left, Snap right) {
+        return Integer.compare(right.sortPriority(), left.sortPriority());
+    }
+}
