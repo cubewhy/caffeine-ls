@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    static class Row {
+        Runnable removeCallback;
+    }
+
+    void m(Row row, boolean content) {
+        Runnable runnable;
+        if (content && (runnable = row.removeCallback) != null) {
+            new Thread(() -> System.out.println(runnable)).start();
+        }
+    }
+}
+
+method m(com.example.Capture.Row, boolean): void
+  @10:59..10:64 'start': no-such-method: Cannot resolve method 'start()'
+  @10:16..10:22 'Thread': cannot-resolve-type: Cannot resolve symbol 'Thread'

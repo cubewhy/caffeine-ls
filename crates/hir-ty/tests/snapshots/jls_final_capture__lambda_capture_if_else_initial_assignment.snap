@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    void m(boolean b) {
+        int x;
+        if (b) {
+            x = 1;
+        } else {
+            x = 2;
+        }
+        Runnable r = () -> System.out.println(x);
+    }
+}
+
+method m(boolean): void
+  @10:27..10:33 'System': cannot-resolve-symbol: Cannot resolve symbol 'System'
+  @10:34..10:37 'out': no-such-field: Cannot resolve symbol 'out'

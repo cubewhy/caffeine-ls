@@ -7,6 +7,8 @@
 
 use std::{collections::HashMap, fs::File, io::Write as _};
 
+use rustc_hash::FxHashMap;
+
 use base_db::{
     DepsMap, FileChange, FileSourceRootInput, FileText, Files, LanguageKind, Nonce, SourceDatabase,
     SourceRoot, SourceRootId, SourceRootInput, salsa::Durability,
@@ -1876,7 +1878,36 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
             }
         }
     }
-    lines.join("\n")
+    normalize_caps(&lines.join("\n"))
+}
+
+/// Renders `input` with the capture-variable ids (`CAP#<n>`) renumbered by
+/// first-seen order. The ids come from a process-global counter
+/// ([`crate::java::ty::capture_conversion`]), so their absolute values depend
+/// on test scheduling; normalizing keeps snapshots deterministic.
+pub fn normalize_caps(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut map: FxHashMap<String, usize> = FxHashMap::default();
+    let mut i = 0;
+    while i < input.len() {
+        let bytes = input.as_bytes();
+        if input[i..].starts_with("CAP#") {
+            let mut j = i + 4;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            let number = &input[i + 4..j];
+            let next = map.len();
+            let ordinal = *map.entry(number.to_owned()).or_insert(next);
+            out.push_str(&format!("CAP#{ordinal}"));
+            i = j;
+        } else {
+            let ch = input[i..].chars().next().expect("non-empty");
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
 }
 
 /// Renders the source files and the parsed annotations of every declaration

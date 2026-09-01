@@ -192,6 +192,91 @@ class Capture {
 );
 // Green: `y` is never reassigned, so the capture is fine.
 
+// §4.12.4: a blank local assigned once on a guarded path is effectively final —
+// the `(runnable = ...) != null` condition assigns it for the first time, and
+// the capturing lambda runs only after that.
+
+snapshot!(
+    lambda_capture_guarded_first_assignment,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    static class Row {
+        Runnable removeCallback;
+    }
+
+    void m(Row row, boolean content) {
+        Runnable runnable;
+        if (content && (runnable = row.removeCallback) != null) {
+            new Thread(() -> System.out.println(runnable)).start();
+        }
+    }
+}
+",
+    )])
+);
+// Green: `runnable` is blank-declared and assigned exactly once (its initial
+// assignment) inside the condition — javac treats it as effectively final.
+
+// §4.12.4: a blank local assigned once in each `if`/`else` branch — one
+// assignment per path — stays effectively final.
+
+snapshot!(
+    lambda_capture_if_else_initial_assignment,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    void m(boolean b) {
+        int x;
+        if (b) {
+            x = 1;
+        } else {
+            x = 2;
+        }
+        Runnable r = () -> System.out.println(x);
+    }
+}
+",
+    )])
+);
+// Green: `x` is assigned once on every path reaching the lambda.
+
+// §6.4/[§15.27.2]: same-named locals in sibling scopes must not collide — one
+// local's assignment must not flag a distinct captured local of the same name.
+
+snapshot!(
+    lambda_capture_sibling_scope_same_name,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Capture.java",
+        "\
+package com.example;
+
+class Capture {
+    void m(java.util.List<Object> list) {
+        for (Object o : list) {
+            int n = 1;
+            Runnable r = () -> System.out.println(n);
+        }
+        for (Object o : list) {
+            int n = 1;
+            n = 2;
+            System.out.println(n);
+        }
+    }
+}
+",
+    )])
+);
+// Green: the `n` captured in the first loop is never reassigned; the `n`
+// reassigned in the second loop is a distinct local and must not flag the
+// first loop's capture.
+
 // -- §6.4: duplicate declarations ---------------------------------------------
 
 snapshot!(

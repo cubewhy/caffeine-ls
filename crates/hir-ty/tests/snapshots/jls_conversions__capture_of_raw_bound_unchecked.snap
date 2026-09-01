@@ -26,4 +26,4 @@ method getJsonFactory(): java.util.function.Function<java.lang.String, ? extends
   exprs: e0: null
 method fromJson(java.lang.String, com.example.Body.Factory): com.example.Body.Cond<?>
   locals: l0: java.lang.String | l1: com.example.Body.Factory
-  exprs: e1: java.lang.String | e2: com.example.Body.Factory | e3: java.util.function.Function<java.lang.String, ? extends com.example.Body.Cond> | e4: CAP#5
+  exprs: e1: java.lang.String | e2: com.example.Body.Factory | e3: java.util.function.Function<java.lang.String, ? extends com.example.Body.Cond> | e4: CAP#0

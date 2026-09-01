@@ -416,8 +416,8 @@ pub(crate) fn body_types_impl(
     if let Some(body_id) = body {
         let (mutated, captures) = flow::effective_final_scan(&ctx.tree, body_id);
         let mut reported: FxHashSet<(Name, ExprId)> = FxHashSet::default();
-        for (name, expr) in captures {
-            if mutated.contains(&name) && reported.insert((name.clone(), expr)) {
+        for (local, name, expr) in captures {
+            if mutated.contains(&local) && reported.insert((name.clone(), expr)) {
                 ctx.report(TypeError::VariableMustBeEffectivelyFinal { expr, name });
             }
         }

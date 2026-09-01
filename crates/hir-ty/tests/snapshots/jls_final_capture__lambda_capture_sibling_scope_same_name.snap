@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Capture.java:
+package com.example;
+
+class Capture {
+    void m(java.util.List<Object> list) {
+        for (Object o : list) {
+            int n = 1;
+            Runnable r = () -> System.out.println(n);
+        }
+        for (Object o : list) {
+            int n = 1;
+            n = 2;
+            System.out.println(n);
+        }
+    }
+}
+
+method m(java.util.List<java.lang.Object>): void
+  @6:31..6:37 'System': cannot-resolve-symbol: Cannot resolve symbol 'System'
+  @6:38..6:41 'out': no-such-field: Cannot resolve symbol 'out'
+  @11:12..11:18 'System': cannot-resolve-symbol: Cannot resolve symbol 'System'
+  @11:19..11:22 'out': no-such-field: Cannot resolve symbol 'out'
