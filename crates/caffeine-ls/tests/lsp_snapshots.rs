@@ -52,6 +52,15 @@ fn create_lsp_with_progress() -> LspHarness {
     LspHarness::start_with_setup_progress(client_config, |_| {}, run_server)
 }
 
+fn create_lsp_with_progress_and_setup(
+    setup: impl FnOnce(&std::path::Path) + Send + 'static,
+) -> LspHarness {
+    LazyLock::force(&SETUP);
+    let client_config = json!({});
+
+    LspHarness::start_with_setup_progress(client_config, setup, run_server)
+}
+
 fn run_server(connection: lsp_server::Connection) {
     let (initialize_id, initialize_params) = connection.initialize_start().unwrap();
 
@@ -380,6 +389,136 @@ fn test_workspace_load_reports_progress() {
     );
 
     lsp.shutdown();
+}
+
+/// A fake `gradle` executable that replays realistic console output, so the
+/// server's Gradle sync path (and its structured progress reporting) can be
+/// exercised without a real JVM/Gradle install.
+#[test]
+fn test_build_sync_reports_structured_progress() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+echo "Welcome to Gradle 8.0!"
+echo "> Task :lib:compileJava"
+echo "Downloading https://repo.maven.apache.org/foo-1.0.jar (4.0 KiB)"
+echo "Downloaded https://repo.maven.apache.org/foo-1.0.jar (4.0 KiB)"
+echo "Configuring project :app"
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    // Pick a real directory for JAVA_HOME (get_java_home requires is_dir).
+    // The temp workspace root is created by the harness later, so fall back to
+    // the crate root which certainly exists.
+    let java_home = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|p| std::path::Path::new(p).is_dir())
+        .unwrap_or_else(|| env!("CARGO_MANIFEST_DIR").to_string());
+
+    // Set PATH/JAVA_HOME so the server's `Command::new("gradle")` finds the
+    // shim and `get_java_home` succeeds. Restored on drop.
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: single-threaded test process; no other thread reads the
+            // env var concurrently in a way that would be unsound.
+            unsafe {
+                std::env::remove_var("JAVA_HOME");
+            }
+        }
+    }
+    // SAFETY: test process is single-threaded at this point.
+    unsafe {
+        std::env::set_var("JAVA_HOME", &java_home);
+    }
+    let _guard = EnvGuard;
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: test process is single-threaded at this point.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let lsp = create_lsp_with_progress_and_setup(|root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java")).unwrap();
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut messages: Vec<String> = Vec::new();
+    let mut saw_100 = false;
+
+    while std::time::Instant::now() < deadline {
+        match lsp
+            .notification_receiver
+            .recv_timeout(std::time::Duration::from_millis(100))
+        {
+            Ok(notif) if notif.method == "$/progress" => {
+                let token = notif
+                    .params
+                    .get("token")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if !token.starts_with("sync-") {
+                    continue;
+                }
+                if let Some(msg) = notif
+                    .params
+                    .get("value")
+                    .and_then(|v| v.get("message"))
+                    .and_then(|m| m.as_str())
+                {
+                    messages.push(msg.to_string());
+                }
+                if let Some(100) = notif
+                    .params
+                    .get("value")
+                    .and_then(|v| v.get("percentage"))
+                    .and_then(|p| p.as_u64())
+                {
+                    saw_100 = true;
+                }
+            }
+            _ => {}
+        }
+
+        if saw_100 {
+            break;
+        }
+    }
+
+    lsp.shutdown();
+
+    assert!(
+        saw_100,
+        "sync progress never reported 100%; messages: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("Configuring project")),
+        "expected a Configuring-phase message, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Downloading") && m.contains("KiB")),
+        "expected a Downloading-phase message with a byte size, got: {messages:?}"
+    );
 }
 
 #[test]
