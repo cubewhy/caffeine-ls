@@ -7,7 +7,11 @@ use lsp_types::{
 };
 use vfs::AbsPathBuf;
 
-use crate::{config::Config, config::ConfigChange, config::ConfigErrors, from_json};
+use crate::{
+    config::{Config, ConfigChange, ConfigErrors},
+    from_json,
+    task_pool::TASK_STACK_SIZE,
+};
 
 /// Performs the LSP initialize handshake on `connection`, builds the
 /// [`Config`] from the client's `InitializeParams` and runs the main loop
@@ -109,6 +113,7 @@ pub fn run(connection: Connection) -> anyhow::Result<()> {
     // the test binary alongside other suites) is a no-op error we can ignore.
     let _ = rayon::ThreadPoolBuilder::new()
         .thread_name(|ix| format!("RayonWorker{}", ix))
+        .stack_size(TASK_STACK_SIZE)
         .build_global();
 
     crate::main_loop(config, connection)?;
