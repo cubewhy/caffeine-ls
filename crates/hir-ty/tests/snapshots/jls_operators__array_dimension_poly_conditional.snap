@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    double[] m(boolean cond, List<Integer> xs) {
+        int extra = 1;
+        double[] d = new double[(cond ? xs.size() : 0) + extra];
+        return d;
+    }
+}

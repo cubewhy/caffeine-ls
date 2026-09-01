@@ -347,3 +347,29 @@ class Body {
 ",
     )])
 );
+
+// §15.10.1: an array-creation dimension expression is standalone — its
+// conditional with a poly arm (`(c ? xs.size() : 0)`) must be typed as `int`,
+// not against the enclosing `double[]` target.
+
+snapshot!(
+    array_dimension_poly_conditional,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    double[] m(boolean cond, List<Integer> xs) {
+        int extra = 1;
+        double[] d = new double[(cond ? xs.size() : 0) + extra];
+        return d;
+    }
+}
+",
+    )])
+);
+// Green: the dimension expression `(cond ? xs.size() : 0) + extra` is an int
+// constant-sized dimension; the `double[]` creation is legal.

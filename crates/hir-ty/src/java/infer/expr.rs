@@ -157,14 +157,22 @@ impl InferCtx<'_> {
                 dims,
                 initializer,
             } => {
-                for &dim in &dims {
-                    let _ = self.infer_expr(dim);
-                }
-                if let Some(elems) = initializer {
-                    for elem in elems {
-                        let _ = self.infer_expr(elem);
+                // §15.10.1: each dimension expression is a *standalone*
+                // expression whose type is `int` — the enclosing array
+                // creation's target type must not reach it, or a conditional
+                // dimension with a poly arm (`new double[(c ? a.size() : 0) +
+                // 1]`) would be typed against the `double[]` target and
+                // degrade its arms.
+                self.with_target(None, |this| {
+                    for &dim in &dims {
+                        let _ = this.infer_expr(dim);
                     }
-                }
+                    if let Some(elems) = initializer {
+                        for elem in elems {
+                            let _ = this.infer_expr(elem);
+                        }
+                    }
+                });
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
                 let non_reifiable = match inner.kind(self.db) {
                     TyKind::TypeVar { .. } => true,
