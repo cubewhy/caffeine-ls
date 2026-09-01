@@ -150,6 +150,17 @@ snapshot! {
                     |db| r(db, "java.lang.Object"),
                 ],
             ),
+            (
+                // §4.10.4: when every operand shares the *same* parameterization
+                // of the candidate, `lcp` is that parameterization exactly —
+                // `lub(ArrayList<String>, ArrayList<String>)` is
+                // `ArrayList<String>`, not `ArrayList<? extends Object>`.
+                "arraylist_string_arraylist_string",
+                &[
+                    |db| of(db, "java.util.ArrayList", r(db, "java.lang.String")),
+                    |db| of(db, "java.util.ArrayList", r(db, "java.lang.String")),
+                ],
+            ),
         ],
     ),
 }

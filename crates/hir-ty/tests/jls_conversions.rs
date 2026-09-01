@@ -307,3 +307,65 @@ class Body {
 ",
     )])
 );
+
+// -- §5.1.9 unchecked conversion through a raw supertype -----------------------
+// `DirectValueAccessor<K,T>` extends the *raw* `ValueAccessor`; assigning it to
+// a `ValueAccessor<K,T>` field is a subtype-then-unchecked chain javac accepts
+// (with an unchecked warning), not a type error. The unbounded `K, T` on both
+// sides makes this a self-referential generic assignment.
+
+snapshot!(
+    unchecked_through_raw_supertype,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static class ValueAccessor<K, T> {}
+
+    static class DirectValueAccessor<K, T> extends ValueAccessor {}
+
+    static class Value<K, T> {
+        private ValueAccessor<K, T> accessor;
+        private final DirectValueAccessor<K, T> directAccessor = null;
+
+        void useDirectAccessor() {
+            this.accessor = this.directAccessor;
+        }
+    }
+}
+",
+    )])
+);
+
+// -- §5.1.9/§4.10.2: a capture variable whose bound is raw converts unchecked --
+// `Function<JsonObject, ? extends Cond>` captures to a variable bounded by the
+// raw `Cond`; `apply(...)` returns that variable, which must convert to a
+// `Cond<?>` target by the raw→parameterized unchecked conversion.
+
+snapshot!(
+    capture_of_raw_bound_unchecked,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Body {
+    interface Cond<T extends Cond<?>> {}
+
+    static class Factory {
+        Function<String, ? extends Cond> getJsonFactory() {
+            return null;
+        }
+    }
+
+    Cond<?> fromJson(String s, Factory factory) {
+        return factory.getJsonFactory().apply(s);
+    }
+}
+",
+    )])
+);

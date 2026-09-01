@@ -40,7 +40,6 @@ method DirectValueAccessor(com.example.Value<K, T>): <init>
 method Value(K): <init>
   locals: l1: K
   exprs: e1: com.example.Value<K, T> | e2: java.util.List<com.example.Value.ValueChangeValidator<T, K>> | e3: java.util.ArrayList<com.example.Value.ValueChangeValidator<T, K>> | e4: java.util.List<com.example.Value.ValueChangeValidator<T, K>> | e5: com.example.Value<K, T> | e6: com.example.Value.DirectValueAccessor<K, T> | e7: com.example.Value<K, T> | e8: com.example.Value.DirectValueAccessor<K, T> | e9: com.example.Value.DirectValueAccessor<K, T> | e10: com.example.Value<K, T> | e11: com.example.Value.ValueAccessor<K, T> | e12: com.example.Value<K, T> | e13: com.example.Value.DirectValueAccessor<K, T> | e14: com.example.Value.ValueAccessor<K, T>
-  diags: e3@21:26: incompatible-types: Incompatible types. Found: 'ArrayList<ValueChangeValidator<T, K>>', required: 'List<ValueChangeValidator<T, K>>'
 method useDirectAccessor(): void
   locals: 
   exprs: e15: com.example.Value<K, T> | e16: com.example.Value.ValueAccessor<K, T> | e17: com.example.Value<K, T> | e18: com.example.Value.DirectValueAccessor<K, T> | e19: com.example.Value.ValueAccessor<K, T>

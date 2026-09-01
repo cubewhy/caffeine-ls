@@ -5,3 +5,4 @@ expression: out
 list_string_list_object lub(java.util.List<java.lang.String>, java.util.List<java.lang.Object>) -> java.util.List<?>
 arraylist_string_arraylist_integer lub(java.util.ArrayList<java.lang.String>, java.util.ArrayList<java.lang.Integer>) -> java.util.ArrayList<? extends java.lang.Comparable<?> & java.io.Serializable>
 list_string_object lub(java.util.List<java.lang.String>, java.lang.Object) -> java.lang.Object
+arraylist_string_arraylist_string lub(java.util.ArrayList<java.lang.String>, java.util.ArrayList<java.lang.String>) -> java.util.ArrayList<java.lang.String>

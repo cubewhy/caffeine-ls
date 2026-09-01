@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    static class ValueAccessor<K, T> {}
+
+    static class DirectValueAccessor<K, T> extends ValueAccessor {}
+
+    static class Value<K, T> {
+        private ValueAccessor<K, T> accessor;
+        private final DirectValueAccessor<K, T> directAccessor = null;
+
+        void useDirectAccessor() {
+            this.accessor = this.directAccessor;
+        }
+    }
+}
+
+field directAccessor
+  locals: 
+  exprs: e0: null
+method useDirectAccessor(): void
+  locals: 
+  exprs: e1: com.example.Body.Value<K, T> | e2: com.example.Body.ValueAccessor<K, T> | e3: com.example.Body.Value<K, T> | e4: com.example.Body.DirectValueAccessor<K, T> | e5: com.example.Body.ValueAccessor<K, T>

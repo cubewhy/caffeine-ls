@@ -700,7 +700,20 @@ pub fn is_assignable(
         | (
             TyKind::Reference { .. } | TyKind::Intersection(_) | TyKind::Null,
             TyKind::TypeVar { .. },
-        ) => is_subtype(db, scope, src, dst),
+        ) => {
+            is_subtype(db, scope, src, dst)
+                // §5.1.9 with §4.10.2: a type variable whose *bound* is a raw
+                // type converts to a parameterization of that class by
+                // unchecked conversion — `CAP <: Cond` (raw) from a
+                // `Function<JsonObject, ? extends Cond>` receiver, assigned to
+                // a `Cond<?>` target, is exactly the raw→parameterized
+                // unchecked conversion javac admits.
+                || (!dst.is_type_var(db)
+                    && src
+                        .bounds(db)
+                        .iter()
+                        .any(|bound| unchecked_conversion(db, scope, bound, dst)))
+        }
         // §5.1.4/§5.1.5: the null literal is assignable to any reference type.
         (TyKind::Null, _) => is_subtype(db, scope, src, dst),
         _ => false,
@@ -731,18 +744,19 @@ fn unchecked_conversion(
         (TyKind::Array(_), _) | (_, TyKind::Array(_)) => return false,
         _ => {}
     }
-    let Some((src_name, src_args)) = src.as_reference(db) else {
+    let Some((src_name, _)) = src.as_reference(db) else {
         return false;
     };
-    if !src_args.is_empty() {
-        return false;
-    }
-    let Some((dst_name, _)) = dst.as_reference(db) else {
+    let Some((dst_name, dst_args)) = dst.as_reference(db) else {
         return false;
     };
     // §5.1.9: the destination may be a parameterization of the raw type's own
-    // generic class — `raw List` converts to `List<String>` directly.
-    if src_name == dst_name {
+    // generic class — `raw List` converts to `List<String>` directly. A
+    // *parameterized* source (`DirectValueAccessor<K,T>` whose superclass is
+    // the raw `ValueAccessor`) also converts unchecked when its raw erasure is
+    // a supertype of the destination's raw erasure — the walk below starts
+    // from the source's raw form either way.
+    if !dst_args.is_empty() && src_name == dst_name {
         return true;
     }
     let raw_src = Ty::reference(db, src_name.clone(), Vec::new());

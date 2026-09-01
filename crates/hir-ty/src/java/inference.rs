@@ -1110,15 +1110,16 @@ impl Lub<'_> {
     /// relevant (possibly several) parameterizations (§4.10.4): `lcp`.
     fn candidate(&mut self, name: Name, relevant: &[Ty]) -> Ty {
         if relevant.len() == 1 {
-            // lcp(G<X1, ..., Xn>) = G<lcta(X1), ..., lcta(Xn)>
-            let args = relevant[0]
-                .as_reference(self.db)
-                .expect("parameterized type")
-                .1
-                .iter()
-                .map(|arg| self.lcta_unary(*arg))
-                .collect();
-            return Ty::reference(self.db, name, args);
+            // §4.10.4: when every input shares the *same* parameterization of
+            // the candidate — `lub(Modern, Legacy)` where both ST sets contain
+            // `FreecamController<Freecam>` — the least containing
+            // parameterization is that parameterization itself. Mapping the
+            // single (deduplicated) argument through `lcta_unary` would widen
+            // the concrete `Freecam` to `? extends Object` and lose the exact
+            // type the assignment `FreecamController<Freecam> y = b ? new
+            // Modern() : new Legacy()` requires (§4.10.4: `lcp(G<X>) =
+            // G<lcta(X)>`, and `lcta(X) = X` when `X` is proper).
+            return relevant[0];
         }
         let mut acc = relevant[0];
         for w in &relevant[1..] {
@@ -1186,33 +1187,6 @@ impl Lub<'_> {
                     self.upper_wildcard(merged)
                 }
             }
-        }
-    }
-
-    /// lcta(U), the least containing type argument for a single argument
-    /// ([JLS §4.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.4)):
-    /// `?` when the upper bound is `Object`, otherwise `? extends lub(U, Object)`.
-    fn lcta_unary(&self, x: Ty) -> Ty {
-        let upper = match x.kind(self.db) {
-            TyKind::Wildcard(Some(bound)) if bound.kind == BoundKind::Lower => self.object(),
-            TyKind::Wildcard(Some(bound)) => bound.ty,
-            TyKind::Wildcard(None) => self.object(),
-            _ => x,
-        };
-        if upper.is_object(self.db) {
-            Ty::wildcard(self.db, None)
-        } else {
-            let TyKind::Wildcard(_) = x.kind(self.db) else {
-                // A concrete type argument: `? extends lub(U, Object)`.
-                return Ty::wildcard(
-                    self.db,
-                    Some(Box::new(WildcardBound {
-                        kind: BoundKind::Upper,
-                        ty: self.object(),
-                    })),
-                );
-            };
-            self.upper_wildcard(x)
         }
     }
 

@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_conversions.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Body {
+    interface Cond<T extends Cond<?>> {}
+
+    static class Factory {
+        Function<String, ? extends Cond> getJsonFactory() {
+            return null;
+        }
+    }
+
+    Cond<?> fromJson(String s, Factory factory) {
+        return factory.getJsonFactory().apply(s);
+    }
+}
+
+method getJsonFactory(): java.util.function.Function<java.lang.String, ? extends com.example.Body.Cond>
+  locals: 
+  exprs: e0: null
+method fromJson(java.lang.String, com.example.Body.Factory): com.example.Body.Cond<?>
+  locals: l0: java.lang.String | l1: com.example.Body.Factory
+  exprs: e1: java.lang.String | e2: com.example.Body.Factory | e3: java.util.function.Function<java.lang.String, ? extends com.example.Body.Cond> | e4: CAP#5
