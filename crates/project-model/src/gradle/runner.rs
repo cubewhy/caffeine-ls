@@ -1,7 +1,8 @@
 use crate::gradle::model::{GradleClasspathEntry, GradleWorkspace};
+use crate::gradle::progress;
 use crate::{
     ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    SyncError, WorkspaceGraph,
+    SyncError, SyncProgress, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -17,6 +18,7 @@ pub fn import_gradle_workspace(
     java_home: &Path,
     log_file: Option<&Path>,
     on_output: &mut (dyn FnMut(String) + Send),
+    on_progress: &mut (dyn FnMut(SyncProgress) + Send),
 ) -> anyhow::Result<GradleWorkspace> {
     let gradlew_script = if cfg!(windows) {
         workspace_root.join("gradlew.bat")
@@ -63,11 +65,23 @@ pub fn import_gradle_workspace(
         // a strict configuration cache don't fail. A system property is used
         // instead of `--no-configuration-cache` for Gradle 4.x - 6.x support.
         .arg("-Dorg.gradle.configuration-cache=false")
+        // Plain console keeps every status line a single self-contained line,
+        // which the progress parser pattern-matches on (default console uses
+        // live cursor control and wraps lines).
+        .arg("--console=plain")
         .arg("--init-script")
         .arg(init_script.path())
         .arg("exportWorkspaceModel");
 
-    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    // Let the line parser derive structured progress events; the raw lines
+    // still flow to `on_output` for the build tool log.
+    let outcome = {
+        let mut parsed = |line: String| {
+            progress::parse_line(&line, on_progress);
+            on_output(line);
+        };
+        crate::run_command_streaming(&mut command, log_file, &mut parsed)?
+    };
 
     if !outcome.status.success() {
         return Err(SyncError {

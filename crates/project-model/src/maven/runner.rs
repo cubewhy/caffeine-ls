@@ -1,8 +1,9 @@
 use crate::maven::model::{MavenClasspathEntry, MavenWorkspace};
+use crate::maven::progress;
 use crate::maven::sidecar::{self, SIDECAR_ARTIFACT, SIDECAR_GROUP, SIDECAR_VERSION};
 use crate::{
     ClasspathEntry, CommandOutcome, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData,
-    SourceSetKind, SyncError, WorkspaceGraph,
+    SourceSetKind, SyncError, SyncProgress, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -16,6 +17,7 @@ pub fn import_maven_workspace(
     java_exec: &Path,
     log_file: Option<&Path>,
     on_output: &mut (dyn FnMut(String) + Send),
+    on_progress: &mut (dyn FnMut(SyncProgress) + Send),
 ) -> anyhow::Result<MavenWorkspace> {
     let mvnw_path = if cfg!(windows) {
         workspace_root.join("mvnw.cmd")
@@ -53,6 +55,16 @@ pub fn import_maven_workspace(
         command
     };
 
+    // The raw lines still flow to `on_output` for the build tool log; the
+    // parser derives structured progress events alongside.
+    let mut stream = |command: &mut Command| {
+        let mut parsed = |line: String| {
+            progress::parse_line(&line, on_progress);
+            on_output(line);
+        };
+        crate::run_command_streaming(command, log_file, &mut parsed)
+    };
+
     // The primary run compiles the reactor so that inter-module dependencies
     // resolve. Projects with compile errors fail here; the first retry runs
     // only `generate-sources` — still executing the generator plugins
@@ -61,7 +73,7 @@ pub fn import_maven_workspace(
     // resort runs the bare goal, because the model fundamentally needs only
     // the resolved project metadata, not compiled output.
     let mut command = build_command(&["test-compile"]);
-    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    let outcome = stream(&mut command)?;
     if outcome.status.success() {
         return maven_workspace_from_outcome(outcome);
     }
@@ -72,7 +84,7 @@ pub fn import_maven_workspace(
         primary_failure.status.code().unwrap_or(-1)
     );
     let mut command = build_command(&["generate-sources"]);
-    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    let outcome = stream(&mut command)?;
     if outcome.status.success() {
         return maven_workspace_from_outcome(outcome);
     }
@@ -82,7 +94,7 @@ pub fn import_maven_workspace(
         outcome.status.code().unwrap_or(-1)
     );
     let mut command = build_command(&[]);
-    let outcome = crate::run_command_streaming(&mut command, log_file, on_output)?;
+    let outcome = stream(&mut command)?;
     if !outcome.status.success() {
         return Err(SyncError {
             message: format!(

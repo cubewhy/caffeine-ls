@@ -19,6 +19,58 @@ use crate::{
 pub const WORKSPACE_MODEL_BEGIN: &str = "WORKSPACE_MODEL_BEGIN";
 pub const WORKSPACE_MODEL_END: &str = "WORKSPACE_MODEL_END";
 
+/// A structured, tool-agnostic progress event emitted during a build-system
+/// sync. Unlike raw output lines, these carry semantics the LSP layer can turn
+/// into a phase-budgeted percentage and the headless CLI can render live.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncProgress {
+    /// The build tool entered a coarse lifecycle phase.
+    Phase(SyncPhase),
+    /// A dependency download began/made progress. `bytes_total` is `None` when
+    /// the tool does not report a size (older Maven/Gradle versions).
+    Download {
+        dependency: String,
+        bytes_downloaded: u64,
+        bytes_total: Option<u64>,
+    },
+    /// The build tool is working on one module of a multi-module build.
+    Project {
+        name: String,
+        index: u32,
+        total: u32,
+        action: String,
+    },
+    /// Free-form status text without structured meaning.
+    Info(String),
+}
+
+/// Coarse lifecycle phases a build-system sync moves through. Kept in a fixed
+/// order so a consumer can map them onto bounded percentage ranges.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SyncPhase {
+    Resolving,
+    Downloading,
+    Configuring,
+    Compiling,
+    Exporting,
+    Done,
+    Failed,
+}
+
+impl SyncPhase {
+    pub fn label(self) -> &'static str {
+        match self {
+            SyncPhase::Resolving => "Resolving dependencies",
+            SyncPhase::Downloading => "Downloading dependencies",
+            SyncPhase::Configuring => "Configuring projects",
+            SyncPhase::Compiling => "Compiling projects",
+            SyncPhase::Exporting => "Exporting workspace model",
+            SyncPhase::Done => "Sync complete",
+            SyncPhase::Failed => "Sync failed",
+        }
+    }
+}
+
 /// Maximum number of tail lines kept in memory for error messages. The full
 /// output is streamed to a log file instead.
 const TAIL_MAX_LINES: usize = 20;
@@ -235,7 +287,25 @@ pub trait BuildSystem: Send + Sync {
         java_home: &Path,
         log_file: Option<&Path>,
         on_output: &mut (dyn FnMut(String) + Send),
-    ) -> anyhow::Result<WorkspaceGraph>;
+    ) -> anyhow::Result<WorkspaceGraph> {
+        self.sync_with_progress(workspace_root, java_home, log_file, on_output, &mut |_| {})
+    }
+
+    /// Executes the tool like [`Self::sync`], additionally reporting structured
+    /// [`SyncProgress`] events as they happen. The default implementation runs
+    /// the sync while dropping all progress events, so tools that do not opt in
+    /// (Eclipse, IDEA) keep working unchanged.
+    fn sync_with_progress(
+        &self,
+        workspace_root: &Path,
+        java_home: &Path,
+        log_file: Option<&Path>,
+        on_output: &mut (dyn FnMut(String) + Send),
+        on_progress: &mut (dyn FnMut(SyncProgress) + Send),
+    ) -> anyhow::Result<WorkspaceGraph> {
+        let _ = on_progress;
+        self.sync(workspace_root, java_home, log_file, on_output)
+    }
 
     fn system_type(&self) -> BuildSystemType;
 }
