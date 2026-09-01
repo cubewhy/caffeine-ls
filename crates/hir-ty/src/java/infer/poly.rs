@@ -46,16 +46,6 @@ pub(super) fn expr_is_poly_ext(tree: &BodyTree, id: ExprId) -> bool {
     }
 }
 
-/// Whether `expr` is (possibly parenthesized) a method invocation, used to
-/// recognize conditional expressions whose arms are poly invocations.
-pub(super) fn expr_is_call(tree: &BodyTree, id: ExprId) -> bool {
-    match tree.expr(id).clone() {
-        ExprData::MethodCall { .. } => true,
-        ExprData::Paren(inner) => expr_is_call(tree, inner),
-        _ => false,
-    }
-}
-
 /// The form of a method reference ([JLS §15.13.1]): how its target's single
 /// abstract method's parameters map onto the referenced method's. A *static*
 /// reference (`Type::m` naming a static member) and a *bound* reference

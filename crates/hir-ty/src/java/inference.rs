@@ -1045,7 +1045,7 @@ impl Lub<'_> {
                 if relevant.is_empty() {
                     *candidate
                 } else {
-                    self.candidate(name, &relevant)
+                    self.candidate(&relevant)
                 }
             })
             .collect();
@@ -1108,7 +1108,7 @@ impl Lub<'_> {
 
     /// The candidate parameterization of a generic candidate from its
     /// relevant (possibly several) parameterizations (§4.10.4): `lcp`.
-    fn candidate(&mut self, name: Name, relevant: &[Ty]) -> Ty {
+    fn candidate(&mut self, relevant: &[Ty]) -> Ty {
         if relevant.len() == 1 {
             // §4.10.4: when every input shares the *same* parameterization of
             // the candidate — `lub(Modern, Legacy)` where both ST sets contain

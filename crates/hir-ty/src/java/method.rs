@@ -1795,59 +1795,6 @@ fn functional_interface_specificity(
 /// ([JLS §15.12.2.5], [§4.10.1]): reference types by subtyping, primitive
 /// types by the primitive supertype order (double ≻ float ≻ long ≻ int ≻
 /// {char, short, byte}).
-fn formal_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, p1: &Ty, p2: &Ty) -> bool {
-    if let (TyKind::Primitive(a), TyKind::Primitive(b)) = (p1.kind(db), p2.kind(db)) {
-        return a == b || crate::java::subtyping::widening_primitive(*a, *b);
-    }
-    // §15.12.2.5 (loose invocation): a primitive formal boxes before the
-    // subtyping test, so `valueOf(int)` is more specific than
-    // `valueOf(long)` *and* than `valueOf(Object)`.
-    if let TyKind::Primitive(p) = p1.kind(db) {
-        let boxed = Ty::reference(db, boxed_type(*p), Vec::new());
-        return is_subtype(db, scope, &boxed, p2);
-    }
-    // Arrays compare element-wise through the same rules ([§4.10.3]
-    // covariance for reference elements, boxing for primitive ones): the
-    // §18.5.4 probe instantiates `that(T[])`'s type parameter to its bound,
-    // so `that(int[])` is more specific than `<T> that(T[])` exactly when
-    // the *element* `int` is more specific than the bound — which boxing
-    // makes true against `Object`.
-    if let (TyKind::Array(e1), TyKind::Array(e2)) = (p1.kind(db), p2.kind(db)) {
-        return formal_subtype(db, scope, e1, e2);
-    }
-    // §4.10.2/§15.12.2.5: in the most-specific test for two generic methods
-    // ([§18.5.4]) the less specific method's type parameters are substituted
-    // with the other's type variables, so the target formal can be a *bare*
-    // type variable (`<X> that(Object)` comparing `that(List)` against `that(T)`).
-    // A type variable is a subtype of its declared bound ([§4.10.2]) — the
-    // comparison goes through the bound, exactly as javac's `isSubtype`
-    // reduces a type-variable target to its upper bound. Otherwise
-    // `that(List<? extends E>)` would tie with `that(T)` and the overload
-    // resolution would report an ambiguity that javac resolves in favour of
-    // the List overload.
-    if let TyKind::TypeVar {
-        bounds,
-        lower: None,
-        ..
-    } = p2.kind(db)
-    {
-        // §4.4: an unbounded type parameter has `java.lang.Object` as its
-        // implicit upper bound; the resolution below fills the empty bound
-        // list with `Object` too.
-        let object = Ty::reference(db, "java.lang.Object", Vec::new());
-        if bounds.is_empty() {
-            return is_subtype(db, scope, p1, &object);
-        }
-        return bounds.iter().any(|bound| is_subtype(db, scope, p1, bound));
-    }
-    is_subtype(db, scope, p1, p2)
-}
-
-/// The most specific method among `candidates`, all applicable by the same
-/// phase ([JLS §15.12.2.5]). Each candidate is the `(generic member, inferred
-/// invocation)` pair produced by [`instantiate`]; specificity is decided on the
-/// generic member. `None` when no candidate is strictly more specific than
-/// every other (an ambiguity error), or when the set is empty.
 pub(crate) fn choose_most_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
