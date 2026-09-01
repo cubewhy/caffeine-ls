@@ -69,11 +69,24 @@ impl InferCtx<'_> {
         // `Analyzer<BasicValue>` even without a target.
         let class_ty = if diamond {
             let from_target = self.diamond_instantiation(class_ty, target);
+            // §15.9.2.2: a diamond's type arguments are fixed by the target
+            // only when the target names them concretely. A target that
+            // leaves them all as wildcards (`ValueSnapshot<?, ?>` for
+            // `new ValueSnapshot<>(…)`) fixes nothing — the type variables
+            // are inferred from the constructor arguments instead, exactly as
+            // if there were no target at all. So a *raw* diamond (no target
+            // args) and an all-wildcard diamond both fall through to the
+            // constructor-argument inference.
             let raw = matches!(
                 from_target.kind(self.db),
                 TyKind::Reference { args, .. } if args.is_empty()
             );
-            if raw {
+            let all_wildcards = matches!(
+                from_target.kind(self.db),
+                TyKind::Reference { args, .. }
+                    if !args.is_empty() && args.iter().all(|arg| arg.is_wildcard(self.db))
+            );
+            if raw || all_wildcards {
                 self.diamond_instantiation_from_ctor_args(
                     from_target,
                     &arg_kinds,

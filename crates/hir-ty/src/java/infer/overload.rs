@@ -21,7 +21,7 @@ use crate::java::{
 
 use super::{
     InferCtx,
-    poly::{ApplicableCandidate, ArgInfo, ArgKind, poly_arity, poly_leaves},
+    poly::{ApplicableCandidate, ArgInfo, ArgKind, MethodRefKind, poly_arity, poly_leaves},
 };
 
 impl InferCtx<'_> {
@@ -548,6 +548,70 @@ impl InferCtx<'_> {
                     let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
                         return true;
                     };
+                    // §15.13.3/§18.5.2.2: the *parameters* of a method
+                    // reference constrain the target functional interface's
+                    // type variables too — `comparingInt(Friend::order)`
+                    // against `ToIntFunction<? super T>` fixes `T` from the
+                    // referenced method's parameter `Friend`, exactly as a
+                    // lambda with a declared parameter type does (§18.5.2.1).
+                    // Without it, `T` resolves to `Object` and a chained
+                    // `thenComparing(...)` receiver degrades to
+                    // `Comparator<Object>`, making every `Comparator<Friend>`
+                    // overload inapplicable.
+                    let ref_method = self
+                        .method_ref_members(qualifier, type_name.as_ref(), &name, &sam.params)
+                        .and_then(|(members, kind)| {
+                            self.pick_method_ref(&members, &sam.params, kind)
+                                .map(|method| (method, kind))
+                        });
+                    if let Some((ref_method, kind)) = ref_method {
+                        let base = match kind {
+                            MethodRefKind::Static | MethodRefKind::Bound => 0,
+                            // §15.13.3: the unbound instance receiver is the
+                            // SAM's first parameter; the method's own
+                            // parameters start one slot in.
+                            MethodRefKind::Unbound => 1,
+                        };
+                        for (i, (ref_param, sam_param)) in ref_method
+                            .params
+                            .iter()
+                            .zip(&sam.params[base.min(sam.params.len())..])
+                            .enumerate()
+                        {
+                            let _ = i;
+                            // §5.1.10: the SAM was extracted from a *captured*
+                            // formal (`? super T`), so its parameter carries a
+                            // capture variable standing for the wildcard;
+                            // [`Self::decapture`] recovers the wildcard's bound
+                            // — for `? super T` the lower bound `T`. A method
+                            // reference `Friend::order` is a
+                            // `ToIntFunction<Friend>`, which converts to
+                            // `ToIntFunction<? super T>` when `T <: Friend`, so
+                            // the referenced parameter bounds the inference
+                            // variable from above: `⟨T → Friend⟩`.
+                            let target = self.decapture(sam_param);
+                            inference.add_constraint(Constraint::Sub(target, ref_param.clone()));
+                        }
+                        // §15.13.3: an *unbound* instance reference takes the
+                        // SAM's first parameter as the receiver — the
+                        // qualifier type itself. `Friend::getDisplayName`
+                        // against `Function<? super T, ? extends U>` is a
+                        // `Function<Friend, …>`, so `⟨T → Friend⟩` bounds the
+                        // inference variable from above by the receiver type.
+                        if kind == MethodRefKind::Unbound
+                            && let Some((receiver_ty, _, _)) =
+                                self.method_ref_target(qualifier, type_name.as_ref())
+                            && !receiver_ty.contains_infer_var(self.db)
+                            && let Some(sam_first) = sam.params.first()
+                        {
+                            let target = self.decapture(sam_first);
+                            if !target.contains_infer_var(self.db)
+                                || !receiver_ty.is_object(self.db)
+                            {
+                                inference.add_constraint(Constraint::Sub(target, receiver_ty));
+                            }
+                        }
+                    }
                     let ref_ret =
                         self.method_ref_return(qualifier, type_name.as_ref(), &name, &sam.params);
                     // §15.13.2: a *void-compatible* reference constrains

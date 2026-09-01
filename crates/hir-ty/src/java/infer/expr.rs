@@ -294,7 +294,16 @@ impl InferCtx<'_> {
                     let _ = self.with_target(Some(cast_ty), |this| this.infer_expr(expr));
                     cast_ty
                 } else {
-                    let operand = self.infer_expr(expr);
+                    // §15.16: a cast whose operand is not a lambda or method
+                    // reference is a *standalone* expression — the cast type
+                    // does not reach the operand, and neither does the
+                    // enclosing context's target. `(R) Arrays.copyOf((Object[])
+                    // object, …)` inside `R x = …` must infer `copyOf` as
+                    // `Object[]` (T := Object) and then perform the (unchecked)
+                    // cast to `R`, not constrain `copyOf`'s `T[]` return
+                    // against the type variable `R`, which no invocation type
+                    // can satisfy.
+                    let operand = self.with_target(None, |this| this.infer_expr(expr));
                     let cast_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
                     // §5.5/§15.16: a cast that is prohibited by the casting
                     // conversion rules is a compile-time error. A cast to a

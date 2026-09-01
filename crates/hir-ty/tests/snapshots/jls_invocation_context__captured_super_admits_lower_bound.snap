@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_invocation_context.rs
+expression: out
+---
+FILE /src/gg/vape/N.java:
+package gg.vape;
+
+import java.util.function.Consumer;
+
+class N {
+    static <T> void apply(T value, Consumer<? super T> consumer) {
+        consumer.accept(value);
+    }
+}
+
+method apply(T, java.util.function.Consumer<? super T>): void
+  locals: l0: T | l1: java.util.function.Consumer<? super T>
+  exprs: e0: T | e1: java.util.function.Consumer<? super T> | e2: void

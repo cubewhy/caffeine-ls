@@ -1,0 +1,54 @@
+---
+source: crates/hir-ty/tests/jls_invocation_context.rs
+expression: out
+---
+FILE /src/gg/vape/C.java:
+package gg.vape;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+
+class OnlineFriend {
+    OnlineStatus getStatus() {
+        return null;
+    }
+
+    String getDisplayName() {
+        return null;
+    }
+}
+
+enum OnlineStatus {
+    OFFLINE,
+    ONLINE
+}
+
+class C {
+    private static int getOnlineStatusOrder(OnlineFriend f) {
+        return 0;
+    }
+
+    private static String getOnlineFriendName(OnlineFriend f) {
+        return "";
+    }
+
+    void m(ArrayList<OnlineFriend> list) {
+        list.sort(Comparator.comparingInt(C::getOnlineStatusOrder).thenComparing(C::getOnlineFriendName, String.CASE_INSENSITIVE_ORDER));
+    }
+}
+
+method getStatus(): gg.vape.OnlineStatus
+  locals: 
+  exprs: e0: null
+method getDisplayName(): java.lang.String
+  locals: 
+  exprs: e1: null
+method getOnlineStatusOrder(gg.vape.OnlineFriend): int
+  locals: l0: gg.vape.OnlineFriend
+  exprs: e2: int
+method getOnlineFriendName(gg.vape.OnlineFriend): java.lang.String
+  locals: l1: gg.vape.OnlineFriend
+  exprs: e3: java.lang.String
+method m(java.util.ArrayList<gg.vape.OnlineFriend>): void
+  locals: l2: java.util.ArrayList<gg.vape.OnlineFriend>
+  exprs: e5: java.util.function.Function<? super gg.vape.OnlineFriend, ? extends java.lang.String> | e7: java.util.Comparator | e9: java.util.function.ToIntFunction<? super gg.vape.OnlineFriend> | e11: java.util.Comparator<gg.vape.OnlineFriend> | e12: java.util.Comparator<gg.vape.OnlineFriend> | e13: java.util.ArrayList<gg.vape.OnlineFriend> | e14: void

@@ -412,17 +412,21 @@ pub(crate) fn is_subtype_query(
             name.as_str(),
             "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
         ),
-        // §4.10.2: a type variable is a subtype of its declared bounds.
-        (TyKind::TypeVar { .. }, TyKind::Reference { .. })
-        | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
         // §4.10.2 with §5.1.10: a type variable with a lower bound `L` ranges
-        // over `L <: X`, so `S <: CAP` is provable from `S <: L`.
+        // over `L <: X`, so `S <: CAP` is provable from `S <: L`. A *type
+        // variable* source is subsumed here too — `consumer.accept(value)`
+        // with `consumer: Consumer<? super T>` and `value: T` captures the
+        // wildcard to `CAP` with lower bound `T`, and `T <: CAP` holds by the
+        // lower bound. (The arm must precede the type-variable-vs-type-variable
+        // match below, or the lower bound is never consulted.)
         (
             _,
             TyKind::TypeVar {
                 lower: Some(lower), ..
             },
         ) => is_subtype_query(db, scope, sub.id, lower.id),
+        (TyKind::TypeVar { .. }, TyKind::Reference { .. })
+        | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
             reference_subtype(db, scope, sub, sup)
         }

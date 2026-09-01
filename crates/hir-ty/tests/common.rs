@@ -762,13 +762,19 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[0x0411],
             None,
         ),
-        class_with_methods(
-            "java/lang/String",
-            Some("java/lang/Object"),
-            &["java/lang/CharSequence"],
-            &[("length", "()I")],
-            &[""],
-        ),
+        // `String.CASE_INSENSITIVE_ORDER`: the `Comparator<String>` constant
+        // the `thenComparing(Function, Comparator)` chain resolves against.
+        ClassSpec {
+            fqn: "java/lang/String",
+            super_class: Some("java/lang/Object"),
+            interfaces: &["java/lang/CharSequence"],
+            access: 0x0031,
+            fields: &[("CASE_INSENSITIVE_ORDER", "Ljava/util/Comparator;")],
+            methods: &[("length", "()I")],
+            method_sigs: &[""],
+            method_access: &[0x0001],
+            sig: None,
+        },
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         class("java/lang/Integer", Some("java/lang/Number"), &[]),
         class("java/lang/Long", Some("java/lang/Number"), &[]),
@@ -835,16 +841,39 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                     "thenComparing",
                     "(Ljava/util/Comparator;)Ljava/util/Comparator;",
                 ),
+                (
+                    "thenComparing",
+                    "(Ljava/util/function/Function;Ljava/util/Comparator;)Ljava/util/Comparator;",
+                ),
+                (
+                    "comparingInt",
+                    "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;",
+                ),
+                (
+                    "thenComparingInt",
+                    "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;",
+                ),
             ],
             method_sigs: &[
                 "(TT;TT;)I",
                 "<T:Ljava/lang/Object;U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Comparator<TT;>;",
                 "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Comparator<TT;>;",
                 "(Ljava/util/Comparator<-TT;>;)Ljava/util/Comparator<TT;>;",
+                "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;Ljava/util/Comparator<-TU;>;)Ljava/util/Comparator<TT;>;",
+                "<T:Ljava/lang/Object;>(Ljava/util/function/ToIntFunction<-TT;>;)Ljava/util/Comparator<TT;>;",
+                "(Ljava/util/function/ToIntFunction<-TT;>;)Ljava/util/Comparator<TT;>;",
             ],
-            method_access: &[0x0401, 0x0409, 0x0001, 0x0001],
+            method_access: &[0x0401, 0x0409, 0x0001, 0x0001, 0x0001, 0x0409, 0x0001],
             sig: Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
         },
+        // §9.4.4: the primitive `ToIntFunction` functional interface backing
+        // `Comparator.comparingInt`/`thenComparingInt` ([JLS §9.8]).
+        functional_interface(
+            "java/util/function/ToIntFunction",
+            "<T:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[("applyAsInt", "(Ljava/lang/Object;)I")],
+            &["(TT;)I"],
+        ),
         // Both `collect` overloads in real classfile order (the 3-arg form is
         // emitted first by javac), so overload resolution exercises the same
         // member set a real jimage produces ([JLS §15.12.2]).

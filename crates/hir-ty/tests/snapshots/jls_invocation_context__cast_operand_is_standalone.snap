@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_invocation_context.rs
+expression: out
+---
+FILE /src/gg/vape/C.java:
+package gg.vape;
+
+import java.util.Arrays;
+
+class C<T extends Value<R, ?>, R> {
+    void m(Object object) {
+        R x = (R) Arrays.copyOf((Object[]) object, ((Object[]) object).length);
+    }
+}
+
+class Value<R, V> {
+}
+
+method m(java.lang.Object): void
+  locals: l0: java.lang.Object | l1: R
+  exprs: e0: java.lang.Object | e1: java.lang.Object[] | e2: java.lang.Object | e3: java.lang.Object[] | e4: java.lang.Object[] | e5: int | e7: java.lang.Object[] | e8: R
