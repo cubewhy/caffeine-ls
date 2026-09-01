@@ -12,32 +12,30 @@ pub fn parse_line(line: &str, on_progress: &mut (dyn FnMut(SyncProgress) + Send)
     let trimmed = line.trim();
 
     // "[INFO] Downloading from central: https://..." — a transfer started.
-    if let Some(rest) = trimmed.strip_prefix("[INFO] Downloading from ") {
-        if let Some(url) = rest.split_once(':').map(|(_, url)| url.trim()) {
-            if !url.is_empty() {
-                on_progress(SyncProgress::Phase(crate::SyncPhase::Downloading));
-                on_progress(SyncProgress::Download {
-                    dependency: url.to_string(),
-                    bytes_downloaded: 0,
-                    bytes_total: None,
-                });
-                return;
-            }
-        }
+    if let Some(rest) = trimmed.strip_prefix("[INFO] Downloading from ")
+        && let Some(url) = rest.split_once(':').map(|(_, url)| url.trim())
+        && !url.is_empty()
+    {
+        on_progress(SyncProgress::Phase(crate::SyncPhase::Downloading));
+        on_progress(SyncProgress::Download {
+            dependency: url.to_string(),
+            bytes_downloaded: 0,
+            bytes_total: None,
+        });
+        return;
     }
 
     // "[INFO] Downloaded from central: https://..." — a transfer finished.
-    if let Some(rest) = trimmed.strip_prefix("[INFO] Downloaded from ") {
-        if let Some(url) = rest.split_once(':').map(|(_, url)| url.trim()) {
-            if !url.is_empty() {
-                on_progress(SyncProgress::Download {
-                    dependency: url.to_string(),
-                    bytes_downloaded: 0,
-                    bytes_total: None,
-                });
-                return;
-            }
-        }
+    if let Some(rest) = trimmed.strip_prefix("[INFO] Downloaded from ")
+        && let Some(url) = rest.split_once(':').map(|(_, url)| url.trim())
+        && !url.is_empty()
+    {
+        on_progress(SyncProgress::Download {
+            dependency: url.to_string(),
+            bytes_downloaded: 0,
+            bytes_total: None,
+        });
+        return;
     }
 
     // "[INFO] Building artifactId 1.0" / "[INFO] Building artifactId 1.0 [i/n]"

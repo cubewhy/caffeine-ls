@@ -52,6 +52,11 @@ pub struct DiagnosticsArgs {
     /// JDK home directory used for workspace loading and library indexing
     #[arg(long)]
     pub java_home: Option<PathBuf>,
+
+    /// Disable the live sync-progress line printed to stderr while the
+    /// workspace loads
+    #[arg(long)]
+    pub no_progress: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

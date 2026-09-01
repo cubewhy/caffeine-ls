@@ -36,7 +36,8 @@ pub fn run(args: &DiagnosticsArgs) -> anyhow::Result<i32> {
     )
     .context("failed to start headless language server")?;
 
-    let analysis = analyze(&server, root.as_ref(), &files, args);
+    let render_progress = !args.no_progress;
+    let analysis = analyze(&server, root.as_ref(), &files, args, render_progress);
     let shutdown = server.shutdown();
 
     let report = analysis?;
@@ -148,8 +149,9 @@ fn analyze(
     root: &Path,
     files: &[PathBuf],
     args: &DiagnosticsArgs,
+    render_progress: bool,
 ) -> anyhow::Result<report::DiagnosticReport> {
-    server.wait_workspace_ready()?;
+    server.wait_workspace_ready(render_progress)?;
     check_server_errors(server)?;
 
     let max_rank = args.min_severity.max_rank();

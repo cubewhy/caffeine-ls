@@ -13,28 +13,28 @@ pub fn parse_line(line: &str, on_progress: &mut (dyn FnMut(SyncProgress) + Send)
     let trimmed = line.trim();
 
     // "Downloading https://repo/... (some mib)" — no size on older Gradle.
-    if let Some(url) = trimmed.strip_prefix("Downloading ") {
-        if let Some((url, size)) = split_download_size(url) {
-            on_progress(SyncProgress::Phase(crate::SyncPhase::Downloading));
-            on_progress(SyncProgress::Download {
-                dependency: url.to_string(),
-                bytes_downloaded: 0,
-                bytes_total: Some(size),
-            });
-            return;
-        }
+    if let Some(url) = trimmed.strip_prefix("Downloading ")
+        && let Some((url, size)) = split_download_size(url)
+    {
+        on_progress(SyncProgress::Phase(crate::SyncPhase::Downloading));
+        on_progress(SyncProgress::Download {
+            dependency: url.to_string(),
+            bytes_downloaded: 0,
+            bytes_total: Some(size),
+        });
+        return;
     }
 
     // "Downloaded https://repo/... (some mib)" — a transfer completed.
-    if let Some(rest) = trimmed.strip_prefix("Downloaded ") {
-        if let Some((url, size)) = split_download_size(rest) {
-            on_progress(SyncProgress::Download {
-                dependency: url.to_string(),
-                bytes_downloaded: size,
-                bytes_total: Some(size),
-            });
-            return;
-        }
+    if let Some(rest) = trimmed.strip_prefix("Downloaded ")
+        && let Some((url, size)) = split_download_size(rest)
+    {
+        on_progress(SyncProgress::Download {
+            dependency: url.to_string(),
+            bytes_downloaded: size,
+            bytes_total: Some(size),
+        });
+        return;
     }
 
     // "> Task :app:compileJava" — a task started running.
