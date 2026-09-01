@@ -206,6 +206,18 @@ impl InferCtx<'_> {
             let Some(formal) = formals.get(i).copied() else {
                 break;
             };
+            // §15.12.2.4: in a variable-arity invocation the *trailing* actual
+            // is packed against the element type of the varargs array, so a
+            // lambda or method reference at that position must be a functional
+            // interface of the *element* type — `registerListener(EventListener,
+            // Predicate<IEvent>...)` with a `Predicate<IEvent>` method
+            // reference checks the SAM against `Predicate<IEvent>`, not
+            // against the `Predicate<IEvent>[]` array the formal names.
+            let formal = if varargs && i + 1 == formals.len() {
+                formal.element(self.db).copied().unwrap_or(formal)
+            } else {
+                formal
+            };
             for kind in &info.leaves {
                 let ArgKind::Lambda { id, arity } = kind else {
                     continue;

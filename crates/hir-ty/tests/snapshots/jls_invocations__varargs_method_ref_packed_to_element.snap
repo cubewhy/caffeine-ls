@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_invocations.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+import java.util.function.Predicate;
+
+class C {
+    interface EventListener {
+    }
+
+    interface IEvent {
+    }
+
+    static class EventBus {
+        static final EventBus INSTANCE = new EventBus();
+
+        @SafeVarargs
+        public final void registerListener(EventListener eventListener, Predicate<IEvent> ... filters) {
+        }
+    }
+
+    static class Tracker implements EventListener {
+        boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private static boolean lambda$0(IEvent event) {
+        return true;
+    }
+
+    static void registerEventListeners() {
+        EventBus.INSTANCE.registerListener(new Tracker(), C::lambda$0);
+        EventBus.INSTANCE.registerListener(new Tracker(), new Predicate[0]);
+    }
+}

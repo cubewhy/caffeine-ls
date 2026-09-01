@@ -189,3 +189,54 @@ class Body {
 // `take(pick("nope"))` arities also match, but its only argument is the poly
 // `pick(...)` call — no concrete argument is at fault, so `take` stays on its
 // name rather than underlining the whole nested call.
+
+// §15.12.2.4/[§15.13.2]: a method reference supplied to a variable-arity
+// parameter is packed against the *element* type of the varargs array —
+// `registerListener(EventListener, Predicate<IEvent>...)` with
+// `Vape::lambda$0` (a `boolean(IEvent)` method reference) resolves against
+// the `Predicate<IEvent>` element, not the array type.
+
+snapshot!(
+    varargs_method_ref_packed_to_element,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/C.java",
+        "\
+package com.example;
+
+import java.util.function.Predicate;
+
+class C {
+    interface EventListener {
+    }
+
+    interface IEvent {
+    }
+
+    static class EventBus {
+        static final EventBus INSTANCE = new EventBus();
+
+        @SafeVarargs
+        public final void registerListener(EventListener eventListener, Predicate<IEvent> ... filters) {
+        }
+    }
+
+    static class Tracker implements EventListener {
+        boolean isEnabled() {
+            return true;
+        }
+    }
+
+    private static boolean lambda$0(IEvent event) {
+        return true;
+    }
+
+    static void registerEventListeners() {
+        EventBus.INSTANCE.registerListener(new Tracker(), C::lambda$0);
+        EventBus.INSTANCE.registerListener(new Tracker(), new Predicate[0]);
+    }
+}
+",
+    )])
+);
+// Green: the method reference `C::lambda$0` is a `Predicate<IEvent>` and the
+// zero-length array is the empty varargs argument — both resolve.
