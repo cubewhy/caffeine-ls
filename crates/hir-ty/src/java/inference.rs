@@ -866,9 +866,17 @@ impl Inference {
         }
         // The incorporated equalities can reference each other and the
         // resolved variables; substitute the values to a fixpoint so the
-        // instantiation is fully resolved.
+        // instantiation is fully resolved. The loop is bounded: a cyclic
+        // equality that no substitution can settle (α maps to a type that
+        // still references α) would otherwise grow the values without bound.
         let keys: Vec<u64> = subst.keys().copied().collect();
-        loop {
+        // A dependency chain of length n unwinds within n passes (each pass
+        // substitutes one level of every value), so 2n rounds bound any
+        // acyclic table; a true cycle cannot converge, and 2n rounds let it
+        // grow at most 2^(2n) deep before the substitution's own depth guard
+        // degrades it to `error`.
+        let rounds = keys.len().saturating_mul(2).max(1);
+        for _ in 0..rounds {
             let mut changed = false;
             for key in &keys {
                 if let Some(value) = subst.get(key).copied() {

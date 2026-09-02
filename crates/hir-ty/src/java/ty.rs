@@ -25,6 +25,17 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use crate::java::db::TyDatabase;
 
+/// The maximum rewrite depth of [`rewrite_with`] before a recursive
+/// cycle is declared and the remainder of the type degrades to
+/// [`TyKind::Error`].
+///
+/// The memo-reserve breaks genuine cycles, so this is a backstop, not the
+/// primary termination mechanism: `active` only grows along an *acyclic*
+/// descent, so the guard can only trip on a legitimate type nested deeper
+/// than any real Java signature. The iterative stack handles the depths
+/// real inputs reach; a million levels is well beyond any source type.
+const MAX_REWRITE_DEPTH: usize = 1_000_000;
+
 // The JVM primitive naming, boxing and numeric-promotion tables live on the
 // JVM substrate; re-export them here so the Java type layer keeps addressing
 // them through `crate::java::ty` (and code using `crate::ty::boxed_type`
@@ -459,29 +470,12 @@ impl Ty {
     /// the classfile signature of `ArrayList<E>` declares `extends AbstractList<E>`,
     /// and substituting `E → String` gives `AbstractList<String>`.
     pub fn substitute(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
-        match self.kind(db) {
-            TyKind::Void | TyKind::Null | TyKind::Primitive(_) | TyKind::Error => *self,
-            TyKind::TypeVar { name, .. } => binding.get(name).copied().unwrap_or(*self),
-            TyKind::Reference { name, args } => {
-                let args: Vec<Ty> = args.iter().map(|arg| arg.substitute(db, binding)).collect();
-                Ty::reference(db, name.clone(), args)
+        rewrite_with(db, *self, |_db, ty| match ty.kind(db) {
+            TyKind::TypeVar { name, .. } => {
+                RewriteVerdict::Done(binding.get(name).copied().unwrap_or(ty))
             }
-            TyKind::Array(inner) => Ty::array(db, inner.substitute(db, binding)),
-            TyKind::Wildcard(bound) => Ty::wildcard(
-                db,
-                bound.as_deref().map(|b| {
-                    Box::new(WildcardBound {
-                        kind: b.kind,
-                        ty: b.ty.substitute(db, binding),
-                    })
-                }),
-            ),
-            TyKind::Intersection(members) => Ty::intersection(
-                db,
-                members.iter().map(|m| m.substitute(db, binding)).collect(),
-            ),
-            TyKind::InferenceVar(_) => *self,
-        }
+            _ => RewriteVerdict::Recur,
+        })
     }
 
     /// Replaces every type variable named in `binding` with its type argument,
@@ -500,48 +494,31 @@ impl Ty {
     /// the two names cannot recurse (the class's parameters are distinct), so
     /// substituting them is a shallow name replacement.
     pub fn substitute_incl_bounds(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
-        match self.kind(db) {
-            TyKind::TypeVar {
-                name,
-                bounds,
-                lower,
-            } => {
-                if let Some(ty) = binding.get(name) {
-                    ty.substitute(db, binding)
-                } else {
-                    let bounds = bounds
+        rewrite_with(db, *self, |db, ty| match ty.kind(db) {
+            // A variable bound by `binding` is replaced by its argument; the
+            // argument's own bounds are plain-`substitute`d (a `class
+            // Box<K,T>`'s parameters are distinct, so no recursion can close
+            // through the two names) and the result is used as-is.
+            TyKind::TypeVar { name, .. } => match binding.get(name) {
+                Some(argument) => RewriteVerdict::Done(argument.substitute(db, binding)),
+                // An unbound variable keeps its identity but its bounds
+                // reference the substituted parameters ([JLS §4.4]
+                // `T extends Box<K,T>`): rebuilding them in the same pass
+                // yields `V extends Box<K,V>` where plain [`substitute`]
+                // would leave the recursive `T` behind.
+                None => {
+                    let bounds = ty
+                        .bounds(db)
                         .iter()
                         .map(|b| b.substitute(db, binding))
                         .collect::<Vec<_>>();
-                    Ty::type_var(db, name.clone(), bounds).with_lower(db, *lower)
+                    let rebuilt =
+                        Ty::type_var(db, name.clone(), bounds).with_lower(db, ty.lower(db));
+                    RewriteVerdict::Done(rebuilt)
                 }
-            }
-            TyKind::Reference { name, args } => {
-                let args: Vec<Ty> = args
-                    .iter()
-                    .map(|arg| arg.substitute_incl_bounds(db, binding))
-                    .collect();
-                Ty::reference(db, name.clone(), args)
-            }
-            TyKind::Array(inner) => Ty::array(db, inner.substitute_incl_bounds(db, binding)),
-            TyKind::Wildcard(bound) => Ty::wildcard(
-                db,
-                bound.as_deref().map(|b| {
-                    Box::new(WildcardBound {
-                        kind: b.kind,
-                        ty: b.ty.substitute_incl_bounds(db, binding),
-                    })
-                }),
-            ),
-            TyKind::Intersection(members) => Ty::intersection(
-                db,
-                members
-                    .iter()
-                    .map(|m| m.substitute_incl_bounds(db, binding))
-                    .collect(),
-            ),
-            _ => *self,
-        }
+            },
+            _ => RewriteVerdict::Recur,
+        })
     }
 
     /// Replaces every inference variable ([`TyKind::InferenceVar`]) whose id is
@@ -550,34 +527,10 @@ impl Ty {
     /// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4))
     /// to the formal and return types of a generic method.
     pub fn substitute_infer(&self, db: &dyn TyDatabase, subst: &FxHashMap<u64, Ty>) -> Ty {
-        match self.kind(db) {
-            TyKind::InferenceVar(id) => subst.get(id).copied().unwrap_or(*self),
-            TyKind::Reference { name, args } => Ty::reference(
-                db,
-                name.clone(),
-                args.iter()
-                    .map(|arg| arg.substitute_infer(db, subst))
-                    .collect(),
-            ),
-            TyKind::Array(inner) => Ty::array(db, inner.substitute_infer(db, subst)),
-            TyKind::Wildcard(bound) => Ty::wildcard(
-                db,
-                bound.as_deref().map(|b| {
-                    Box::new(WildcardBound {
-                        kind: b.kind,
-                        ty: b.ty.substitute_infer(db, subst),
-                    })
-                }),
-            ),
-            TyKind::Intersection(members) => Ty::intersection(
-                db,
-                members
-                    .iter()
-                    .map(|m| m.substitute_infer(db, subst))
-                    .collect(),
-            ),
-            _ => *self,
-        }
+        rewrite_with(db, *self, |_db, ty| match ty.kind(db) {
+            TyKind::InferenceVar(id) => RewriteVerdict::Done(subst.get(id).copied().unwrap_or(ty)),
+            _ => RewriteVerdict::Recur,
+        })
     }
 
     /// Replaces every inference variable ([`TyKind::InferenceVar`]) with
@@ -585,28 +538,12 @@ impl Ty {
     /// inference table. Used by the estimate pass of bound set resolution
     /// ([JLS §18.4]) to break cyclic dependencies between variables.
     pub fn erase_infer_vars(&self, db: &dyn TyDatabase) -> Ty {
-        match self.kind(db) {
-            TyKind::InferenceVar(_) => Ty::reference(db, "java.lang.Object", Vec::new()),
-            TyKind::Reference { name, args } => Ty::reference(
-                db,
-                name.clone(),
-                args.iter().map(|arg| arg.erase_infer_vars(db)).collect(),
-            ),
-            TyKind::Array(inner) => Ty::array(db, inner.erase_infer_vars(db)),
-            TyKind::Wildcard(bound) => Ty::wildcard(
-                db,
-                bound.as_deref().map(|b| {
-                    Box::new(WildcardBound {
-                        kind: b.kind,
-                        ty: b.ty.erase_infer_vars(db),
-                    })
-                }),
-            ),
-            TyKind::Intersection(members) => {
-                Ty::intersection(db, members.iter().map(|m| m.erase_infer_vars(db)).collect())
+        rewrite_with(db, *self, |db, ty| match ty.kind(db) {
+            TyKind::InferenceVar(_) => {
+                RewriteVerdict::Done(Ty::reference(db, "java.lang.Object", Vec::new()))
             }
-            _ => *self,
-        }
+            _ => RewriteVerdict::Recur,
+        })
     }
 
     /// The erasure of this type ([JLS §4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6)):
@@ -650,7 +587,147 @@ impl Ty {
     }
 }
 
-/// A displayable view of a [`Ty`], produced by [`Ty::display`].
+/// The outcome of one node's rewrite policy consultation.
+enum RewriteVerdict {
+    /// The node is rewritten in place; the result is final and its children
+    /// are not traversed.
+    Done(Ty),
+    /// The node's children must be rewritten and the node reconstructed.
+    Recur,
+}
+
+/// A frame of the explicit rewrite stack: either a node whose children are
+/// yet to be rewritten ([`Frame::Visit`]) or a node whose children have all
+/// been rewritten and whose reconstruction is due ([`Frame::Build`]).
+enum Frame {
+    Visit(Ty),
+    Build(Ty),
+}
+
+/// An iterative, bottom-up type rewrite.
+///
+/// The recursive [`Ty`] walks (`substitute`, `substitute_incl_bounds`,
+/// `substitute_infer`, `erase_infer_vars`) each descended the interned type
+/// DAG on the native stack — one frame per edge. The interner makes the DAG
+/// *recursive* by construction ([JLS §4.4] `T extends Box<K,T>`), and the
+/// 16 MiB worker stacks of `caffeine-ls` mask the overflow but do not fix it:
+/// a substitution that maps a variable into a type re-referencing it grows a
+/// chain no fixed stack size contains.
+///
+/// This is the same traversal, but the *explicit* stack replaces the native
+/// one and a memo makes each node visited at most once:
+///
+/// * **bottom-up** — a node's rewritten children are built first
+///   ([`Frame::Build`] runs after the last child finishes), so reconstruction
+///   mirrors the original one-pass semantics exactly;
+/// * **memoized** — a shared sub-DAG is rebuilt once and the handle reused,
+///   so a genuinely deep-but-finite type terminates where the native
+///   recursion would overflow;
+/// * **bounded** — a chain that never settles (a substitution re-referencing
+///   itself) trips the [`MAX_REWRITE_DEPTH`] guard and degrades the node to
+///   [`TyKind::Error`] rather than overflowing.
+///
+/// `rewrite_with` drives the walk and asks the caller's `leaf` policy what to
+/// do with each node: [`RewriteVerdict::Done`] short-circuits the structural
+/// rebuild (a replaced inference variable or type-variable name, whose value
+/// is used as-is — the recursion never descends into a substituted value,
+/// exactly as the original code did not), [`RewriteVerdict::Recur`] defers to
+/// it. The structural kinds — `Reference { args }`, `Array`, `Wildcard`,
+/// `Intersection` — always recurse.
+fn rewrite_with(
+    db: &dyn TyDatabase,
+    root: Ty,
+    mut leaf: impl FnMut(&dyn TyDatabase, Ty) -> RewriteVerdict,
+) -> Ty {
+    let mut memo: FxHashMap<TyData, Ty> = FxHashMap::default();
+    let mut stack: Vec<Frame> = vec![Frame::Visit(root)];
+    // The number of nodes on the current rewrite path. Bounded by the depth
+    // guard so a self-referential substitution cannot overflow the stack.
+    let mut active: usize = 0;
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(ty) => {
+                // Already rewritten (or reserved while its children are being
+                // visited): reuse the memoized handle.
+                if memo.contains_key(&ty.id) {
+                    continue;
+                }
+                if active >= MAX_REWRITE_DEPTH {
+                    memo.insert(ty.id, Ty::error(db));
+                    continue;
+                }
+                active += 1;
+                match leaf(db, ty) {
+                    RewriteVerdict::Done(done) => {
+                        active -= 1;
+                        memo.insert(ty.id, done);
+                    }
+                    RewriteVerdict::Recur => {
+                        // Reserve the memo slot so a descendant that reaches
+                        // this node again (a structural cycle) terminates by
+                        // reusing the reservation; it is overwritten when the
+                        // children finish.
+                        memo.insert(ty.id, ty);
+                        stack.push(Frame::Build(ty));
+                        // Children are pushed below the build frame so they
+                        // pop — and finish — first.
+                        match ty.kind(db) {
+                            TyKind::Reference { args, .. } => {
+                                for arg in args.iter().rev() {
+                                    stack.push(Frame::Visit(*arg));
+                                }
+                            }
+                            TyKind::Array(inner) => stack.push(Frame::Visit(**inner)),
+                            TyKind::Wildcard(bound) => {
+                                if let Some(bound) = bound.as_deref() {
+                                    stack.push(Frame::Visit(bound.ty));
+                                }
+                            }
+                            TyKind::Intersection(members) => {
+                                for member in members.iter().rev() {
+                                    stack.push(Frame::Visit(*member));
+                                }
+                            }
+                            // Type variables, inference variables and
+                            // primitives carry no *rewritable* children: the
+                            // leaf decides them (`Done`), or they rebuild to
+                            // themselves below.
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Frame::Build(ty) => {
+                let rebuilt = match ty.kind(db) {
+                    TyKind::Reference { name, args } => Ty::reference(
+                        db,
+                        name.clone(),
+                        args.iter().map(|arg| memo[&arg.id]).collect(),
+                    ),
+                    TyKind::Array(inner) => Ty::array(db, memo[&inner.id]),
+                    TyKind::Wildcard(bound) => Ty::wildcard(
+                        db,
+                        bound.as_deref().map(|b| {
+                            Box::new(WildcardBound {
+                                kind: b.kind,
+                                ty: memo[&b.ty.id],
+                            })
+                        }),
+                    ),
+                    TyKind::Intersection(members) => {
+                        Ty::intersection(db, members.iter().map(|m| memo[&m.id]).collect())
+                    }
+                    // A leaf that chose `Recur` without children (a type
+                    // variable or bare wildcard) rebuilds to its own handle.
+                    _ => ty,
+                };
+                active -= 1;
+                memo.insert(ty.id, rebuilt);
+            }
+        }
+    }
+    memo[&root.id]
+}
 pub struct TyDisplay<'a> {
     ty: &'a Ty,
     db: &'a dyn TyDatabase,
