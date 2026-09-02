@@ -783,6 +783,15 @@ impl InferCtx<'_> {
                 // exactly like exceptions from the block itself.
                 let thrown_before: FxHashSet<ExprId> =
                     self.thrown.iter().map(|(_, expr)| *expr).collect();
+                // §14.20.3: every resource is closed at the end of the try —
+                // an implicit invocation of its `close()` method whose checked
+                // exceptions are thrown by the statement exactly like the
+                // block's. They are collected here (the resource's declared
+                // type, after `var` inference) so the catch-reachability check
+                // below can see them: `catch (IOException)` around
+                // `try (InputStream s = ...)` is legal because the implicit
+                // close can throw it, even when the block body throws nothing.
+                let mut resource_tys: Vec<Ty> = Vec::new();
                 for resource in resources {
                     // §14.20.3: each declaration resource is a local variable
                     // declaration; a `var` resource infers its type from its
@@ -795,6 +804,7 @@ impl InferCtx<'_> {
                         let ty = self.infer_expr(initializer);
                         let local = self.tree.local(resource.local).clone();
                         self.bind_local(resource.local, local.name, ty);
+                        resource_tys.push(ty);
                     } else {
                         self.declare_local(resource.local);
                         if let Some(initializer) = resource.initializer {
@@ -802,6 +812,9 @@ impl InferCtx<'_> {
                             // target is the resource's declared type.
                             let target = self.locals.get(&resource.local).copied();
                             let _ = self.with_target(target, |this| this.infer_expr(initializer));
+                        }
+                        if let Some(ty) = self.locals.get(&resource.local).copied() {
+                            resource_tys.push(ty);
                         }
                     }
                     // §14.20.3: a resource's type must be a subtype of
@@ -843,6 +856,39 @@ impl InferCtx<'_> {
                 let before = self.flow.clone();
                 let before_exited = self.exited;
                 self.infer_stmt(*body);
+                // §14.20.3: the implicit `close()` of each resource is part of
+                // the try statement — it runs when the block completes and its
+                // checked exceptions are thrown by the statement ([§11.2.3]),
+                // even when the block itself throws nothing. Pushing them to
+                // the pending liability (attributed to the resource initializer
+                // expression, which is not part of this try's `thrown_before`)
+                // makes both this statement's catch-reachability check and an
+                // *enclosing* try/catch see them: `catch (IOException)` around
+                // `try (InputStream s = ...)` is legal because the implicit
+                // close can throw it.
+                let mut close_thrown: Vec<(Ty, ExprId)> = Vec::new();
+                for (resource_ty, resource) in resource_tys.iter().zip(resources) {
+                    let members = crate::java::method::member_set(
+                        self.db,
+                        &self.scope,
+                        resource_ty,
+                        "close",
+                        &self.access,
+                    );
+                    for close in members {
+                        if close.params.is_empty() {
+                            for thrown in &close.throws {
+                                if self.is_checked(thrown)
+                                    && let Some(expr) = resource.initializer
+                                {
+                                    close_thrown.push((thrown.clone(), expr));
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                self.thrown.extend(close_thrown.iter().copied());
                 // The end-of-body state is one path; each catch clause adds
                 // another, starting from the pre-try state.
                 // Each path is its end state plus whether the path reaches

@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/Closer.java:
+package com.example;
+
+import java.io.IOException;
+
+interface Resource extends java.lang.AutoCloseable {
+    @Override
+    void close() throws IOException;
+}
+
+class Closer {
+    static Resource open() { return null; }
+
+    static void read() {
+        try (Resource c = open()) {
+            if (c != null) {
+            }
+        } catch (IOException e) {
+        }
+    }
+}
+
+method open(): com.example.Resource
+  locals: 
+  exprs: e0: null
+method read(): void
+  locals: l0: java.io.IOException | l1: com.example.Resource
+  exprs: e1: com.example.Resource | e2: null | e3: boolean | e4: boolean | e5: com.example.Resource

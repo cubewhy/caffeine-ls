@@ -370,3 +370,41 @@ class CatchUnrelated {
 ",
     )])
 );
+
+// -- green: the implicit close() of a resource makes its catch reachable ------
+// ([§14.20.3], [§11.2.3]): a try-with-resources statement implicitly invokes
+// each resource's `close()` when the block completes, and the checked
+// exceptions of that close are thrown by the statement. A `catch (IOException)`
+// around `try (Closeable c = ...)` is therefore reachable even when the block
+// body itself throws nothing — before the resource-close liability was
+// modelled, the clause was misreported as never thrown. (Closeable.close
+// declares IOException in the JDK.)
+
+snapshot!(
+    resource_close_catch_reachable,
+    check_body_types(&[(
+        "/src/com/example/Closer.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+interface Resource extends java.lang.AutoCloseable {
+    @Override
+    void close() throws IOException;
+}
+
+class Closer {
+    static Resource open() { return null; }
+
+    static void read() {
+        try (Resource c = open()) {
+            if (c != null) {
+            }
+        } catch (IOException e) {
+        }
+    }
+}
+",
+    )])
+);
