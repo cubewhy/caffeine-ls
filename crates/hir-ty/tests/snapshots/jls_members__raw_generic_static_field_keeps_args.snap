@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Codecs.java:
+package com.example;
+
+class NBT {}
+
+class NBTString extends NBT {
+    String getValue() { return null; }
+}
+
+class NBTType<T extends NBT> {
+    static final NBTType<NBTString> STRING = new NBTType<>();
+    NBTType() {}
+}
+
+class Codecs {
+    static <T extends NBT> T requireType(NBT nbt, NBTType<T> required) {
+        return null;
+    }
+
+    String read(NBT tag) {
+        return requireType(tag, NBTType.STRING).getValue();
+    }
+}
+
+method getValue(): java.lang.String
+  locals: 
+  exprs: e0: null
+field STRING
+  locals: 
+  exprs: e1: com.example.NBTType<com.example.NBTString>
+method NBTType(): <init>
+  locals: 
+  exprs: 
+method requireType(com.example.NBT, com.example.NBTType<T>): T
+  locals: l0: com.example.NBT | l1: com.example.NBTType<T>
+  exprs: e2: null
+method read(com.example.NBT): java.lang.String
+  locals: l2: com.example.NBT
+  exprs: e3: com.example.NBT | e5: com.example.NBTType<com.example.NBTString> | e6: com.example.NBTString | e7: java.lang.String

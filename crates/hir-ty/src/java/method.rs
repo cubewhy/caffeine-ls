@@ -2158,17 +2158,24 @@ fn library_class_fields(
         if interner.resolve(&field.name) != name {
             continue;
         }
-        // JLS 4.8: the fields of a raw type have erased types.
+        let is_static = JvmAccessFlags::from_bits_retain(field.flags).is_static();
+        // JLS 4.8: the *instance* fields of a raw type have erased types. A
+        // static field does not depend on the receiver's type arguments, so
+        // its declared type stays intact.
         let ty = {
             let ty = ty_from_library(db, &field.field_type).substitute(db, &binding);
-            if is_raw { ty.erasure(db) } else { ty }
+            if is_raw && !is_static {
+                ty.erasure(db)
+            } else {
+                ty
+            }
         };
         out.push(FieldData {
             name: name.to_owned(),
             owner: fqn.clone(),
             owner_file: None,
             ty,
-            is_static: JvmAccessFlags::from_bits_retain(field.flags).is_static(),
+            is_static,
             access: Access::from_flags(field.flags),
             is_final: JvmAccessFlags::from_bits_retain(field.flags).is_final(),
             declaring_package: declaring_package.clone(),
@@ -2229,11 +2236,6 @@ fn source_class_fields(
                     continue;
                 }
                 let key = ItemKey::new(db, source.file, item);
-                // JLS 4.8: the fields of a raw type have erased types.
-                let ty = {
-                    let ty = item_ty_query(db, key).substitute_incl_bounds(db, &binding);
-                    if is_raw { ty.erasure(db) } else { ty }
-                };
                 // §9.3/[§9.6]: every field of an interface or annotation type
                 // is implicitly `public static final`, whether or not the
                 // source spells the modifiers out. A static context may read
@@ -2245,6 +2247,21 @@ fn source_class_fields(
                     (true, true)
                 } else {
                     (field.modifiers.is_static(), field.modifiers.is_final())
+                };
+                // JLS 4.8: the *instance* fields of a raw type have erased
+                // types. A static field does not depend on the receiver's type
+                // arguments at all, so its declared type stays intact — the
+                // companion of the raw-source-method rule in
+                // [`source_class_methods`]. Erasing `NBTType.STRING` to raw
+                // `NBTType` would discard the `NBTType<NBTString>` argument
+                // javac reads from the constant's declaration.
+                let ty = {
+                    let ty = item_ty_query(db, key).substitute_incl_bounds(db, &binding);
+                    if is_raw && !is_static {
+                        ty.erasure(db)
+                    } else {
+                        ty
+                    }
                 };
                 out.push(FieldData {
                     name: name.to_owned(),

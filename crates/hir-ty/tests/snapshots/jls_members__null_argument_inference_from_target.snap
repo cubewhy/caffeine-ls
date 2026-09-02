@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_members.rs
+expression: out
+---
+FILE /src/com/example/Factory.java:
+package com.example;
+
+class Vector3f {}
+
+class EntityDataType<Z> {}
+
+interface Reader<Z> {}
+
+class Factory {
+    static <Z> EntityDataType<Z> makeC(Reader<Z> reader) {
+        return null;
+    }
+
+    EntityDataType<Vector3f> use() {
+        return makeC(null);
+    }
+}
+
+method makeC(com.example.Reader<Z>): com.example.EntityDataType<Z>
+  locals: l0: com.example.Reader<Z>
+  exprs: e0: null
+method use(): com.example.EntityDataType<com.example.Vector3f>
+  locals: 
+  exprs: e1: null | e2: com.example.EntityDataType<com.example.Vector3f>

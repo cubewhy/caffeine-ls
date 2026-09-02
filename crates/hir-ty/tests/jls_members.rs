@@ -739,3 +739,76 @@ class Use {
 // constants are guaranteed complete in a classfile, so unlike other library
 // static members the report is a genuine error rather than a partial-record
 // artifact. The valid `Syntax.xml` / `Syntax.html` constant reads stay silent.
+
+// -- green: static fields of a raw generic type keep their declared type -------
+// ([JLS §4.8]): only the *instance* members of a raw type have erased
+// signatures. A static constant's type does not depend on the receiver's type
+// arguments, so `NBTType.STRING` (declared `static final NBTType<NBTString>`
+// on the generic `NBTType<T>`) is read as `NBTType<NBTString>`, letting a
+// generic `<T extends NBT> T read(NBTType<T>)` infer `T := NBTString` from it.
+// Erasing the constant to raw `NBTType` used to drop the argument and report
+// the receiver method call (`read(...).getValue()`) as unresolvable.
+
+snapshot!(
+    raw_generic_static_field_keeps_args,
+    check_body_types(&[(
+        "/src/com/example/Codecs.java",
+        "\
+package com.example;
+
+class NBT {}
+
+class NBTString extends NBT {
+    String getValue() { return null; }
+}
+
+class NBTType<T extends NBT> {
+    static final NBTType<NBTString> STRING = new NBTType<>();
+    NBTType() {}
+}
+
+class Codecs {
+    static <T extends NBT> T requireType(NBT nbt, NBTType<T> required) {
+        return null;
+    }
+
+    String read(NBT tag) {
+        return requireType(tag, NBTType.STRING).getValue();
+    }
+}
+",
+    ),])
+);
+
+// -- green: a null argument leaves the type parameter to the target ------------
+// ([JLS §18.2.1], [§4.10.2]): `⟨null → Reader<α⟩` is a tautology — the null
+// type is a subtype of every reference type — so the parameter contributes no
+// bound and the variable is inferred from the invocation's target
+// (`EntityDataType<Vector3f>` pins `Z := Vector3f`). Treating the constraint
+// as false used to reject the otherwise-applicable call.
+
+snapshot!(
+    null_argument_inference_from_target,
+    check_body_types(&[(
+        "/src/com/example/Factory.java",
+        "\
+package com.example;
+
+class Vector3f {}
+
+class EntityDataType<Z> {}
+
+interface Reader<Z> {}
+
+class Factory {
+    static <Z> EntityDataType<Z> makeC(Reader<Z> reader) {
+        return null;
+    }
+
+    EntityDataType<Vector3f> use() {
+        return makeC(null);
+    }
+}
+",
+    )])
+);
