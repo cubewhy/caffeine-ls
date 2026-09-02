@@ -1,0 +1,173 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void append(final @NotNull String @NotNull... components) {}
+    void first(@Nullable String @Nullable... args) {}
+    void plain(String... names) {}
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "append"
+L_PAREN "("
+FINAL_KW "final"
+WHITESPACE " "
+AT "@"
+IDENTIFIER "NotNull"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+AT "@"
+IDENTIFIER "NotNull"
+ELLIPSIS "..."
+WHITESPACE " "
+IDENTIFIER "components"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "first"
+L_PAREN "("
+AT "@"
+IDENTIFIER "Nullable"
+WHITESPACE " "
+IDENTIFIER "String"
+WHITESPACE " "
+AT "@"
+IDENTIFIER "Nullable"
+ELLIPSIS "..."
+WHITESPACE " "
+IDENTIFIER "args"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "plain"
+L_PAREN "("
+IDENTIFIER "String"
+ELLIPSIS "..."
+WHITESPACE " "
+IDENTIFIER "names"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..169
+  CLASS_DECL@0..168
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    WHITESPACE@10..11 " "
+    CLASS_BODY@11..168
+      L_BRACE@11..12 "{"
+      WHITESPACE@12..17 "\n    "
+      METHOD_DECL@17..77
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..28 "append"
+        FORMAL_PARAMETERS@28..74
+          L_PAREN@28..29 "("
+          SPREAD_PARAMETER@29..73
+            MODIFIER_LIST@29..43
+              FINAL_KW@29..34 "final"
+              WHITESPACE@34..35 " "
+              MARKER_ANNOTATION@35..43
+                AT@35..36 "@"
+                QUALIFIED_NAME@36..43
+                  IDENTIFIER@36..43 "NotNull"
+            WHITESPACE@43..44 " "
+            TYPE@44..50
+              QUALIFIED_NAME@44..50
+                IDENTIFIER@44..50 "String"
+            WHITESPACE@50..51 " "
+            MODIFIER_LIST@51..59
+              MARKER_ANNOTATION@51..59
+                AT@51..52 "@"
+                QUALIFIED_NAME@52..59
+                  IDENTIFIER@52..59 "NotNull"
+            ELLIPSIS@59..62 "..."
+            WHITESPACE@62..63 " "
+            IDENTIFIER@63..73 "components"
+          R_PAREN@73..74 ")"
+        WHITESPACE@74..75 " "
+        BLOCK@75..77
+          L_BRACE@75..76 "{"
+          R_BRACE@76..77 "}"
+      WHITESPACE@77..82 "\n    "
+      METHOD_DECL@82..131
+        VOID_KW@82..86 "void"
+        WHITESPACE@86..87 " "
+        IDENTIFIER@87..92 "first"
+        FORMAL_PARAMETERS@92..128
+          L_PAREN@92..93 "("
+          SPREAD_PARAMETER@93..127
+            MODIFIER_LIST@93..102
+              MARKER_ANNOTATION@93..102
+                AT@93..94 "@"
+                QUALIFIED_NAME@94..102
+                  IDENTIFIER@94..102 "Nullable"
+            WHITESPACE@102..103 " "
+            TYPE@103..109
+              QUALIFIED_NAME@103..109
+                IDENTIFIER@103..109 "String"
+            WHITESPACE@109..110 " "
+            MODIFIER_LIST@110..119
+              MARKER_ANNOTATION@110..119
+                AT@110..111 "@"
+                QUALIFIED_NAME@111..119
+                  IDENTIFIER@111..119 "Nullable"
+            ELLIPSIS@119..122 "..."
+            WHITESPACE@122..123 " "
+            IDENTIFIER@123..127 "args"
+          R_PAREN@127..128 ")"
+        WHITESPACE@128..129 " "
+        BLOCK@129..131
+          L_BRACE@129..130 "{"
+          R_BRACE@130..131 "}"
+      WHITESPACE@131..136 "\n    "
+      METHOD_DECL@136..166
+        VOID_KW@136..140 "void"
+        WHITESPACE@140..141 " "
+        IDENTIFIER@141..146 "plain"
+        FORMAL_PARAMETERS@146..163
+          L_PAREN@146..147 "("
+          SPREAD_PARAMETER@147..162
+            TYPE@147..153
+              QUALIFIED_NAME@147..153
+                IDENTIFIER@147..153 "String"
+            ELLIPSIS@153..156 "..."
+            WHITESPACE@156..157 " "
+            IDENTIFIER@157..162 "names"
+          R_PAREN@162..163 ")"
+        WHITESPACE@163..164 " "
+        BLOCK@164..166
+          L_BRACE@164..165 "{"
+          R_BRACE@165..166 "}"
+      WHITESPACE@166..167 "\n"
+      R_BRACE@167..168 "}"
+  WHITESPACE@168..169 "\n"

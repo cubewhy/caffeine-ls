@@ -94,6 +94,22 @@ fn parameter(p: &mut Parser) {
 
     modifiers(p);
 
+    // Type:
+    //   UnannType VariableArityModifier? ... Identifier   (varargs)
+    //   UnannType Identifier                              (normal)
+    // §8.4.1: `UnannType` subsumes array dimensions but *not* the `...`; the
+    // trailing segment of a varargs parameter is `Type ` VariableArityModifier
+    // `...`, where the `VariableArityModifier` is an annotation (`@A`) that may
+    // precede the `...`. The ELLIPSIS must be handled here rather than inside
+    // `type_`: `T @A... name` keeps its post-type annotations (`@A`) on the
+    // varargs segment ([JLS §9.7.4], [§8.4.1]), and a type's DIMENSIONS parser
+    // must not try to consume the `[` of a following `@A []`.
+    let mut is_spread = false;
+    if p.at(ELLIPSIS) {
+        p.bump();
+        is_spread = true;
+    }
+
     // type
     if type_(p).is_err() {
         recover_parameter(p);
@@ -101,10 +117,16 @@ fn parameter(p: &mut Parser) {
         return;
     }
 
-    // ...
-    let mut is_spread = false;
-    if p.eat(ELLIPSIS) {
-        is_spread = true;
+    // §8.4.1: `T... name` — a varargs parameter may write its annotations
+    // after the type, immediately before the `...` (`String @NotNull ...
+    // name`, [§9.7.4]); only the array-typed component remains to be
+    // wrapped into an array by the lowering ([JLS §8.4.1]: `T...` is
+    // `T[]`).
+    if !is_spread {
+        type_annotations_opt(p);
+        if p.eat(ELLIPSIS) {
+            is_spread = true;
+        }
     }
 
     // parameter name

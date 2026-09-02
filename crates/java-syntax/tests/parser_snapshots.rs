@@ -1064,3 +1064,21 @@ parser_snapshot!(
         }
     "#}
 );
+
+// [JLS §8.4.1]/[§9.7.4]: a varargs parameter may carry its annotations
+// after the element type, immediately before the `...`
+// (`String @NotNull ... args`). The annotation belongs to the varargs
+// segment, not to a following array dimension or formal parameter, so the
+// parameter must not be reported missing. Both the annotated trailing form
+// and the plain `T...` (with optional leading `final`/annotation) parse as a
+// SPREAD_PARAMETER.
+parser_snapshot!(
+    parse_annotated_varargs_parameter,
+    indoc! {r#"
+        class Test {
+            void append(final @NotNull String @NotNull... components) {}
+            void first(@Nullable String @Nullable... args) {}
+            void plain(String... names) {}
+        }
+    "#}
+);
