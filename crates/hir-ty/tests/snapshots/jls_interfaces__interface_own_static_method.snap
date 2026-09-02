@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/Factory.java:
+package com.example;
+
+interface Factory {
+    static Factory empty() { return null; }
+
+    static Factory make() {
+        return empty();
+    }
+
+    default Factory reset() {
+        return empty();
+    }
+
+    void instanceOnly();
+}
+
+method empty(): com.example.Factory
+  locals: 
+  exprs: e0: null
+method make(): com.example.Factory
+  locals: 
+  exprs: e1: com.example.Factory
+method reset(): com.example.Factory
+  locals: 
+  exprs: e2: com.example.Factory

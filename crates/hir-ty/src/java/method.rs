@@ -70,6 +70,16 @@ pub enum InvocationMode {
     Super,
     /// `InterfaceName.super.m(...)`: only instance members are candidates.
     Interface,
+    /// An unqualified `m(...)` whose receiver is the implicit `this`
+    /// ([JLS §15.12.1] MethodName form): the class-or-interface members are
+    /// candidates as in a virtual invocation, but a *static* member is also
+    /// reachable when it is declared in the class/interface the receiver names
+    /// ([§15.12.3]): javac resolves `s()` inside the interface that declares
+    /// `static void s()`, yet rejects `expr.s()` where `expr`'s type merely
+    /// implements the interface — the static-interface-member exclusion of the
+    /// virtual-invocation form applies only when the method is reached through
+    /// an expression.
+    MethodName,
     /// `expression.m(...)`: all members except static methods declared in an
     /// interface are candidates.
     Virtual,
@@ -441,6 +451,22 @@ fn member_set_impl(
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
+    // §15.12.3 (MethodName form): a static method declared in an interface is
+    // a candidate only when the receiver is the *declaring interface itself* —
+    // the form searches the type that `T.this` denotes, and static interface
+    // methods are never inherited ([§9.2], [§9.4.1]: an interface inherits no
+    // static methods and a class does not implement them either). javac accepts
+    // `s()` inside the interface declaring `static void s()`, and through an
+    // *enclosing* interface searched as the receiver, but rejects it in a class
+    // or subinterface whose supertype merely declares it.
+    let method_name_receiver_fqn = (ctx.mode == InvocationMode::MethodName)
+        .then(|| {
+            let TyKind::Reference { name, .. } = receiver.kind(db) else {
+                return String::new();
+            };
+            name.as_str().to_owned()
+        })
+        .unwrap_or_default();
     // §4.4: a type variable's *effective* upper bound is its declared bounds,
     // or `java.lang.Object` when it declares none — the member set of the
     // receiver is the member set of that bound.
@@ -463,6 +489,10 @@ fn member_set_impl(
                 .filter(|method| {
                     mode_allows(method, ctx)
                         && (!strict_access || is_accessible(db, scope, method, &receiver, ctx))
+                        && !(ctx.mode == InvocationMode::MethodName
+                            && method.is_static
+                            && method.declaring_interface
+                            && method.owner != method_name_receiver_fqn)
                 }),
         );
         for parent in supertypes_query(db, scope_id, ty.id) {
@@ -1287,6 +1317,12 @@ fn mode_allows(method: &MethodData, ctx: &InvocationContext) -> bool {
         InvocationMode::TypeQualified => true,
         // Super and interface invocations select only instance members.
         InvocationMode::Super | InvocationMode::Interface => !method.is_static,
+        // §15.12.3 MethodName form: the member set is the virtual one plus the
+        // static interface methods the searched type itself declares. The
+        // static-interface-owner rule (declared-in-receiver-only, never
+        // inherited) is applied by [`member_set_impl`], which knows the
+        // receiver; no blanket static filter applies here.
+        InvocationMode::MethodName => true,
         // A virtual invocation must not select a static method declared in an
         // interface (§15.12.3); a static method of a class may be selected.
         InvocationMode::Virtual => !(method.is_static && method.declaring_interface),
@@ -2198,14 +2234,26 @@ fn source_class_fields(
                     let ty = item_ty_query(db, key).substitute_incl_bounds(db, &binding);
                     if is_raw { ty.erasure(db) } else { ty }
                 };
+                // §9.3/[§9.6]: every field of an interface or annotation type
+                // is implicitly `public static final`, whether or not the
+                // source spells the modifiers out. A static context may read
+                // such a field by simple name ([§8.1.3]) and a qualified
+                // access (`I.F`) resolves it as static; treating it as an
+                // instance field would report a false
+                // non-static-cannot-be-referenced.
+                let (is_static, is_final) = if declaring_interface {
+                    (true, true)
+                } else {
+                    (field.modifiers.is_static(), field.modifiers.is_final())
+                };
                 out.push(FieldData {
                     name: name.to_owned(),
                     owner: fqn.clone(),
                     owner_file: Some(source.file),
                     ty,
-                    is_static: field.modifiers.is_static(),
+                    is_static,
                     access: interface_access_of(declaring_interface, &field.modifiers),
-                    is_final: field.modifiers.is_final(),
+                    is_final,
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),
                 });

@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/I.java:
+package com.example;
+
+interface I {
+    static void s() {}
+}
+
+FILE /src/com/example/Uses.java:
+package com.example;
+
+interface K extends I {
+    static void bad() { s(); }
+}
+
+class D implements I {
+    static void alsoBad() { s(); }
+    void alsoBad2() { s(); }
+}
+
+method s(): void
+  locals: 
+  exprs: 
+method bad(): void
+  locals: 
+  exprs: e0: <error>
+  diags: e0@3:24: no-such-method: Cannot resolve method 's()'
+method alsoBad(): void
+  locals: 
+  exprs: e1: <error>
+  diags: e1@7:28: no-such-method: Cannot resolve method 's()'
+method alsoBad2(): void
+  locals: 
+  exprs: e2: <error>
+  diags: e2@8:22: no-such-method: Cannot resolve method 's()'

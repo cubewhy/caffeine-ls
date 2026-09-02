@@ -429,7 +429,13 @@ impl InferCtx<'_> {
                 }
                 (
                     self.unqualified_method_receiver(name.as_str()),
-                    InvocationMode::Virtual,
+                    // §15.12.1/§15.12.3: the unqualified form searches the type
+                    // of `T.this` — a *declaring-interface* static method is in
+                    // scope there, which the virtual-invocation filter would
+                    // wrongly exclude (javac rejects `expr.s()` for a static
+                    // interface `s()`, but accepts the bare `s()` inside the
+                    // interface that declares it).
+                    InvocationMode::MethodName,
                     true,
                 )
             }

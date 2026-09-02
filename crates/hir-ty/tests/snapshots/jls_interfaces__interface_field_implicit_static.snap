@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/Ctx.java:
+package com.example;
+
+interface Ctx {
+    Codec CODEC = (new Codec() {
+        public Object decode() { return null; }
+    }).codec();
+
+    static Object use() {
+        return CODEC;
+    }
+
+    static Object useQualified() {
+        return Ctx.CODEC;
+    }
+
+    interface Codec {
+        default Codec codec() { return this; }
+    }
+}
+
+field CODEC
+  locals: 
+  exprs: e0: com.example.Ctx.Codec | e1: com.example.Ctx.Codec | e2: com.example.Ctx.Codec
+method use(): java.lang.Object
+  locals: 
+  exprs: e3: com.example.Ctx.Codec
+method useQualified(): java.lang.Object
+  locals: 
+  exprs: e5: com.example.Ctx.Codec
+method codec(): com.example.Ctx.Codec
+  locals: 
+  exprs: e6: com.example.Ctx.Codec

@@ -153,3 +153,105 @@ class Repro {
 ",
     )])
 );
+
+// -- green/red: interface fields are implicitly public static final ------------
+// ([§9.3]): a static method of the interface reads its constant by simple name
+// and through a qualified access, exactly like a class's static field; the
+// static-context check must not mistake the constant for an instance field
+// (javac's `non-static … cannot be referenced from a static context`).
+// A *value* receiver of the interface may not reach the static constant.
+
+snapshot!(
+    interface_field_implicit_static,
+    check_body_types(&[(
+        "/src/com/example/Ctx.java",
+        "\
+package com.example;
+
+interface Ctx {
+    Codec CODEC = (new Codec() {
+        public Object decode() { return null; }
+    }).codec();
+
+    static Object use() {
+        return CODEC;
+    }
+
+    static Object useQualified() {
+        return Ctx.CODEC;
+    }
+
+    interface Codec {
+        default Codec codec() { return this; }
+    }
+}
+",
+    )])
+);
+
+// -- green: interface static method invoked from inside the interface ---------
+// ([§9.4.3]): a static method of an interface is in scope inside the interface
+// body by its MethodName form — javac resolves `text()` inside the interface
+// that declares it, from both static and default methods, and rejects the same
+// MethodName from a static context when it names an *instance* method.
+
+snapshot!(
+    interface_own_static_method,
+    check_body_types(&[(
+        "/src/com/example/Factory.java",
+        "\
+package com.example;
+
+interface Factory {
+    static Factory empty() { return null; }
+
+    static Factory make() {
+        return empty();
+    }
+
+    default Factory reset() {
+        return empty();
+    }
+
+    void instanceOnly();
+}
+",
+    )])
+);
+
+// -- red: a static interface method is not inherited ---------------------------
+// ([§9.2]/[§9.4.1]): an interface inherits no static methods, and a class does
+// not implement them either. Referencing a super-interface's static method by
+// simple name from a subinterface or implementing class is a `cannot find
+// symbol`, while the same call inside the declaring interface itself resolves.
+
+snapshot!(
+    interface_static_not_inherited,
+    check_body_types(&[
+        (
+            "/src/com/example/I.java",
+            "\
+package com.example;
+
+interface I {
+    static void s() {}
+}
+",
+        ),
+        (
+            "/src/com/example/Uses.java",
+            "\
+package com.example;
+
+interface K extends I {
+    static void bad() { s(); }
+}
+
+class D implements I {
+    static void alsoBad() { s(); }
+    void alsoBad2() { s(); }
+}
+",
+        ),
+    ])
+);
