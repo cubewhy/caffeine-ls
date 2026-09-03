@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/jls_control_flow.rs
+expression: out
+---
+FILE /src/com/example/NoRet.java:
+package com.example;
+
+class NoRet {
+    int whileTrue(boolean a) {
+        while (true) {
+            if (a) {
+                return 1;
+            }
+            throw new RuntimeException();
+        }
+    }
+
+    int forEver(boolean a) {
+        for (;;) {
+            if (a) {
+                return 2;
+            }
+        }
+    }
+
+    int doWhileTrue(boolean a) {
+        do {
+            if (a) {
+                return 3;
+            }
+        } while (true);
+    }
+}
+
+method whileTrue(boolean): int
+  locals: l0: boolean
+  exprs: e0: boolean | e1: boolean | e2: boolean | e3: boolean | e4: int | e5: java.lang.RuntimeException
+method forEver(boolean): int
+  locals: l1: boolean
+  exprs: e6: boolean | e7: boolean | e8: int
+method doWhileTrue(boolean): int
+  locals: l2: boolean
+  exprs: e9: boolean | e10: boolean | e11: int | e12: boolean | e13: boolean

@@ -347,12 +347,13 @@ impl InferCtx<'_> {
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
                 let frame = self.loop_breaks.pop().expect("frame pushed above");
+                let joined = frame.joined();
                 self.flow = if const_bool == Some(true) {
                     // Only the break paths survive: a constant-true loop never
                     // reaches the join through its condition. When no break was
                     // recorded the loop cannot complete normally, so the
                     // pre-loop state stands (the code after is unreachable).
-                    frame.joined().unwrap_or(before)
+                    joined.clone().unwrap_or(before)
                 } else {
                     // §16.2.10: a non-constant loop exits *through its
                     // condition being false* — the after-loop flow is the
@@ -363,7 +364,16 @@ impl InferCtx<'_> {
                     // the body never runs (JLS Example 16-1).
                     cond_false_flow
                 };
-                self.exited = false;
+                // §14.21/[§16.2.10]: a `while` completes normally only when it
+                // can complete through a false condition or a `break`. A loop
+                // whose condition is the constant `true` and whose body records
+                // no break can *never* complete normally ([§14.21]: "A while
+                // statement can complete normally iff ... its condition can
+                // evaluate to false" or a reachable break exits it) — the
+                // following statement is unreachable and an enclosing non-void
+                // method whose only exits are inside the loop cannot fall off
+                // the end.
+                self.exited = const_bool == Some(true) && joined.is_none();
             }
             StmtData::DoWhile { body, cond } => {
                 // §16.1.11: a do-loop's body runs at least once, so its
@@ -387,10 +397,14 @@ impl InferCtx<'_> {
                 self.check_condition(*cond);
                 self.loop_depth -= 1;
                 let frame = self.loop_breaks.pop().expect("frame pushed above");
+                let joined = frame.joined();
                 if const_bool == Some(true) {
-                    self.flow = frame.joined().unwrap_or(before);
+                    self.flow = joined.clone().unwrap_or(before);
                 }
-                self.exited = false;
+                // §14.21/[§16.2.11]: a do-loop whose condition is the
+                // constant `true` completes normally only through a `break`;
+                // with none recorded it never completes normally.
+                self.exited = const_bool == Some(true) && joined.is_none();
             }
             StmtData::For {
                 init,
@@ -437,15 +451,20 @@ impl InferCtx<'_> {
                 self.infer_stmt(*body);
                 self.loop_depth -= 1;
                 let frame = self.loop_breaks.pop().expect("frame pushed above");
+                let joined = frame.joined();
                 self.flow = if const_bool == Some(true) {
-                    frame.joined().unwrap_or(before)
+                    joined.clone().unwrap_or(before)
                 } else {
                     // §16.2.12: a non-constant loop exits through its
                     // condition being false — the condition's false flow
                     // carries assignments made while evaluating it.
                     cond_false_flow
                 };
-                self.exited = false;
+                // §14.21/[§16.2.12]: a condition-less `for (;;)` or a
+                // constant-true `for` completes normally only through a
+                // `break` — with none recorded, it never completes normally
+                // and the following code is unreachable.
+                self.exited = const_bool == Some(true) && joined.is_none();
                 self.scopes.pop();
             }
             StmtData::ForEach {

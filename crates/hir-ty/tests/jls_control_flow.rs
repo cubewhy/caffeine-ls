@@ -189,6 +189,52 @@ class NoRet {
 // §8.4.7: a method with a non-`void` return type must not be able to
 // complete normally — reported against the method's closing brace.
 
+// -- green: a constant-true loop never completes normally ([§14.21]) -------------
+// A `while (true)` (or condition-less `for (;;)`, or `do ... while (true)`)
+// can complete only through a `break`. When its body contains no `break`, the
+// loop never completes normally, so a non-void method whose every exit is a
+// `return`/`throw` inside the loop cannot fall off the end — no
+// missing-return-statement.
+
+snapshot!(
+    constant_true_loop_never_completes,
+    check_body_types(&[(
+        "/src/com/example/NoRet.java",
+        "\
+package com.example;
+
+class NoRet {
+    int whileTrue(boolean a) {
+        while (true) {
+            if (a) {
+                return 1;
+            }
+            throw new RuntimeException();
+        }
+    }
+
+    int forEver(boolean a) {
+        for (;;) {
+            if (a) {
+                return 2;
+            }
+        }
+    }
+
+    int doWhileTrue(boolean a) {
+        do {
+            if (a) {
+                return 3;
+            }
+        } while (true);
+    }
+}
+",
+    )])
+);
+// §14.21: each loop completes normally only if its condition can be false or
+// a `break` exits it; a constant-true condition with no break never does.
+
 // -- green: statements after lambda-valued expressions are reachable -------------
 // §14.22: a `return` inside a lambda body returns from the *lambda*
 // ([§15.27.2]); it must not mark the enclosing method's following statements
