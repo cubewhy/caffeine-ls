@@ -615,9 +615,16 @@ fn abstract_methods_impl(
 ) -> Vec<MethodData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let ty = capture_conversion(db, scope, *ty);
+    // §9.8/[§9.4]: the abstract members of a functional interface are the
+    // *inherited* abstract methods not implemented by a `default` (or other
+    // concrete) declaration anywhere closer to `ty`. Both kinds are gathered
+    // across the supertype closure — an abstract in a distant superinterface
+    // is discharged by a default declared in `ty` or an intermediate
+    // interface — and a signature is abstract exactly when the gathered set
+    // holds no concrete implementation of it.
     let mut stack = vec![ty];
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
-    let mut out = Vec::new();
+    let mut declarations: Vec<MethodData> = Vec::new();
     while let Some(t) = stack.pop() {
         if !seen.insert(t.id) {
             continue;
@@ -639,15 +646,17 @@ fn abstract_methods_impl(
                 };
                 let interner = &db.hir_state().interner;
                 for method in &stub.methods {
-                    if !JvmAccessFlags::from_bits_retain(method.flags).is_abstract() {
+                    let flags = JvmAccessFlags::from_bits_retain(method.flags);
+                    if !flags.is_abstract() {
                         continue;
                     }
                     let name = interner.resolve(&method.name);
-                    out.extend(
-                        library_class_methods(db, class.clone(), args.clone(), name)
-                            .into_iter()
-                            .filter(|m| m.abstract_),
-                    );
+                    declarations.extend(library_class_methods(
+                        db,
+                        class.clone(),
+                        args.clone(),
+                        name,
+                    ));
                 }
             }
             hir::Resolved::Source(source) => {
@@ -659,18 +668,8 @@ fn abstract_methods_impl(
                     let Some(ItemData::Method(method)) = item_data(&tree, item) else {
                         continue;
                     };
-                    // §9.4: an interface method is implicitly `abstract`
-                    // unless it is `static` or declares a body (`default` or
-                    // `private`) — the modifier keyword itself is optional.
-                    if method.modifiers.is_static() || method.body().is_some() {
-                        continue;
-                    }
                     let name = method.name.as_str().to_owned();
-                    out.extend(
-                        source_class_methods(db, source, args.clone(), &name)
-                            .into_iter()
-                            .filter(|m| m.abstract_),
-                    );
+                    declarations.extend(source_class_methods(db, source, args.clone(), &name));
                 }
             }
         }
@@ -678,19 +677,35 @@ fn abstract_methods_impl(
             stack.push(parent);
         }
     }
+    // A default (concrete, non-static) method's signature discharges every
+    // abstract of the same signature gathered from *other* interfaces; the
+    // default itself is not an abstract member ([JLS §9.8], [§9.4.1.2]).
+    let has_default = |method: &MethodData| {
+        declarations.iter().any(|candidate| {
+            !candidate.abstract_
+                && !candidate.is_static
+                && candidate.name == method.name
+                && candidate.params == method.params
+                && candidate.varargs == method.varargs
+                && candidate.type_params.len() == method.type_params.len()
+        })
+    };
     // §9.4.1.2/[§9.9]: abstract methods that override-equivalent one another
     // (same signature, possibly redeclared down a superinterface chain —
     // `Closeable.close` redeclaring `AutoCloseable.close`) are ONE abstract
     // method. Keep the first (most-derived) declaration of each signature.
-    let mut deduped: Vec<MethodData> = Vec::with_capacity(out.len());
-    for method in out {
+    let mut deduped: Vec<MethodData> = Vec::with_capacity(declarations.len());
+    for method in &declarations {
+        if !method.abstract_ || has_default(method) {
+            continue;
+        }
         if !deduped.iter().any(|seen| {
             seen.name == method.name
                 && seen.params == method.params
                 && seen.varargs == method.varargs
                 && seen.type_params.len() == method.type_params.len()
         }) {
-            deduped.push(method);
+            deduped.push(method.clone());
         }
     }
     deduped

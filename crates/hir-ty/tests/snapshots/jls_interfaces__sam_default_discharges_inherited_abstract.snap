@@ -1,0 +1,36 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/FI.java:
+package com.example;
+
+class FI {
+    interface Env<T> {}
+    interface NbtCodec<A> {}
+
+    interface Base<T, A> {
+        T apply(T value, A arg);
+        NbtCodec<A> codec(Env<T> attribute);
+    }
+
+    interface FloatModifier<A> extends Base<Float, A> {}
+
+    interface Simple extends FloatModifier<Float> {
+        default NbtCodec<Float> codec(Env<Float> attribute) {
+            return null;
+        }
+    }
+
+    static void m() {
+        Simple s1 = (a, b) -> a - b;
+        FloatModifier<Float> m1 = (Simple) Float::sum;
+    }
+}
+
+method codec(com.example.FI.Env<java.lang.Float>): com.example.FI.NbtCodec<java.lang.Float>
+  locals: l0: com.example.FI.Env<java.lang.Float>
+  exprs: e0: null
+method m(): void
+  locals: l1: com.example.FI.Simple | l2: com.example.FI.FloatModifier<java.lang.Float>
+  exprs: e1: java.lang.Float | e2: java.lang.Float | e3: float | e4: com.example.FI.Simple | e6: com.example.FI.Simple | e7: com.example.FI.Simple

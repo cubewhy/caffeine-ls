@@ -154,6 +154,90 @@ class Repro {
     )])
 );
 
+// -- §9.8/[§9.4.1.2]: a default method discharges an inherited abstract ---------
+// A functional interface may inherit an abstract method and *implement it with
+// a default* declared in the interface itself or an intermediate interface:
+// the remaining abstract methods then number exactly one. Here `Simple`
+// overrides the inherited abstract `codec(Env)` with a default, leaving only
+// `apply` — the SAM the lambda and the `(Simple)` cast of a method reference
+// target ([§15.13.2], [§15.16]) conform to.
+
+snapshot!(
+    sam_default_discharges_inherited_abstract,
+    check_body_types(&[(
+        "/src/com/example/FI.java",
+        "\
+package com.example;
+
+class FI {
+    interface Env<T> {}
+    interface NbtCodec<A> {}
+
+    interface Base<T, A> {
+        T apply(T value, A arg);
+        NbtCodec<A> codec(Env<T> attribute);
+    }
+
+    interface FloatModifier<A> extends Base<Float, A> {}
+
+    interface Simple extends FloatModifier<Float> {
+        default NbtCodec<Float> codec(Env<Float> attribute) {
+            return null;
+        }
+    }
+
+    static void m() {
+        Simple s1 = (a, b) -> a - b;
+        FloatModifier<Float> m1 = (Simple) Float::sum;
+    }
+}
+",
+    )])
+);
+
+// -- §15.16/[§15.13.2]: a cast of a method reference to a functional interface -
+// The cast target is a nested functional subinterface whose *own* supertype
+// declares the abstract SAM and whose inherited secondary abstract is
+// discharged by its own default — `(ArgbModifier) Color::blendWith` where
+// `ArgbModifier extends ColorModifier<AlphaColor>` and implements the
+// inherited `codec(...)` with a default.
+
+snapshot!(
+    cast_method_ref_to_nested_functional_subinterface,
+    check_body_types(&[(
+        "/src/com/example/Mod.java",
+        "\
+package com.example;
+
+class Mod {
+    interface Env<T> {}
+    interface NbtCodec<A> {}
+
+    interface Base<T, A> {
+        T apply(T value, A arg);
+        NbtCodec<A> codec(Env<T> attribute);
+    }
+
+    interface ColorModifier<A> extends Base<Color, A> {}
+
+    interface ArgbModifier extends ColorModifier<AlphaColor> {
+        default NbtCodec<AlphaColor> codec(Env<Color> attribute) {
+            return null;
+        }
+    }
+
+    interface Color {
+        AlphaColor blendWith(AlphaColor other);
+    }
+
+    interface AlphaColor extends Color {}
+
+    ColorModifier<AlphaColor> ALPHA_BLEND = (ArgbModifier) Color::blendWith;
+}
+",
+    )])
+);
+
 // -- green/red: interface fields are implicitly public static final ------------
 // ([§9.3]): a static method of the interface reads its constant by simple name
 // and through a qualified access, exactly like a class's static field; the

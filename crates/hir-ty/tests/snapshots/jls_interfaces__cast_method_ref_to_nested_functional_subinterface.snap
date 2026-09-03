@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/Mod.java:
+package com.example;
+
+class Mod {
+    interface Env<T> {}
+    interface NbtCodec<A> {}
+
+    interface Base<T, A> {
+        T apply(T value, A arg);
+        NbtCodec<A> codec(Env<T> attribute);
+    }
+
+    interface ColorModifier<A> extends Base<Color, A> {}
+
+    interface ArgbModifier extends ColorModifier<AlphaColor> {
+        default NbtCodec<AlphaColor> codec(Env<Color> attribute) {
+            return null;
+        }
+    }
+
+    interface Color {
+        AlphaColor blendWith(AlphaColor other);
+    }
+
+    interface AlphaColor extends Color {}
+
+    ColorModifier<AlphaColor> ALPHA_BLEND = (ArgbModifier) Color::blendWith;
+}
+
+method codec(com.example.Mod.Env<com.example.Mod.Color>): com.example.Mod.NbtCodec<com.example.Mod.AlphaColor>
+  locals: l0: com.example.Mod.Env<com.example.Mod.Color>
+  exprs: e0: null
+field ALPHA_BLEND
+  locals: 
+  exprs: e2: com.example.Mod.ArgbModifier | e3: com.example.Mod.ArgbModifier
