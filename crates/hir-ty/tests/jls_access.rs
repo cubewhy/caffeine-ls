@@ -203,6 +203,50 @@ class Use {
 // boundary — the anonymous class is a subclass of `TypeToken` (§6.6.2 with
 // §15.9.5).
 
+// -- green: a nested class of a subclass may access protected members ---------
+// (§6.6.2): the access may appear in the body of a *nested* class of a
+// subclass. `B.Inner2` inside `B extends holder.A` calls the inherited
+// protected `value` through a receiver of the enclosing subclass's type —
+// `B.this.value(...)` — which javac permits even though `Inner2` is not
+// itself a subclass of `A`.
+
+snapshot!(
+    nested_class_of_subclass_protected_access,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/holder/A.java",
+            "\
+package holder;
+
+public abstract class A<T> {
+    protected T value(String key) {
+        return null;
+    }
+}
+",
+        ),
+        (
+            "/src/app/B.java",
+            "\
+package app;
+
+import holder.A;
+
+public class B extends A<String> {
+    class Inner2 {
+        String get() {
+            return B.this.value(\"y\");
+        }
+    }
+}
+",
+        ),
+    ])
+);
+// Green: `B.this.value` resolves the protected `A.value` across the package
+// boundary — the access site's enclosing chain contains `B`, a subclass of
+// `A`, and the receiver is of the subclass's own type (§6.6.2).
+
 // -- red: package-private member across packages -----------------------------
 
 snapshot!(

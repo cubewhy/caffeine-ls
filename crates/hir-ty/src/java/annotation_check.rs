@@ -299,11 +299,23 @@ fn check_target(
 
 /// Whether a declaration carries a type that an annotation written before it
 /// may attach to as a type annotation ([§9.7.4]): the field's type, the
-/// method's return type. (A record *component* has its own type, checked
-/// separately; a class/enum/interface/annotation/record/module/constructor has
-/// no type.)
+/// method's return type. A *type* declaration — a class, interface, enum,
+/// record or annotation type — also names a type: a `TYPE_USE`-only
+/// annotation written before it (`@Unmodifiable class C`) annotates the
+/// declared type itself and is legal (§9.7.4: the declaration of a class or
+/// interface is a type context). (A record *component* has its own type,
+/// checked separately; a module or constructor has no type.)
 fn has_annotatable_type(data: &ItemData) -> bool {
-    matches!(data, ItemData::Field(_) | ItemData::Method(_))
+    matches!(
+        data,
+        ItemData::Field(_)
+            | ItemData::Method(_)
+            | ItemData::Class(_)
+            | ItemData::Interface(_)
+            | ItemData::Enum(_)
+            | ItemData::Record(_)
+            | ItemData::Annotation(_)
+    )
 }
 
 /// Checks the type-use annotations of one spanned type

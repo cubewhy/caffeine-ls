@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_annotation_targets.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE)
+@interface TU {}
+
+@TU
+class Anns {
+    @TU
+    interface I {}
+}

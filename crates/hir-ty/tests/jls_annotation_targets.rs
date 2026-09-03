@@ -201,6 +201,32 @@ class Anns {
 // *declaration's* element type — `@F` (targeted to `FIELD`) is applicable to
 // the type of a field declaration, even though it is not a `TYPE_USE`.
 
+snapshot!(
+    type_use_on_type_declaration,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE)
+@interface TU {}
+
+@TU
+class Anns {
+    @TU
+    interface I {}
+}
+",
+    )])
+);
+// §9.7.4: a `TYPE_USE`-only annotation is legal on a *type declaration* — the
+// declaration of a class or interface is a type context, so `@Unmodifiable
+// class C` (an annotation type targeted solely to `TYPE_USE`) annotates the
+// declared type and must not be rejected as "not applicable to TYPE".
+
 // -- green: empty @Target and unresolvable annotation stay permissive ---------
 
 snapshot!(

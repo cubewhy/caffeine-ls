@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/holder/A.java:
+package holder;
+
+public abstract class A<T> {
+    protected T value(String key) {
+        return null;
+    }
+}
+
+FILE /src/app/B.java:
+package app;
+
+import holder.A;
+
+public class B extends A<String> {
+    class Inner2 {
+        String get() {
+            return B.this.value("y");
+        }
+    }
+}

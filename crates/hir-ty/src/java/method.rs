@@ -1456,24 +1456,56 @@ fn member_accessible(
                     return true;
                 }
             }
-            match &ctx.enclosing_class {
+            let subclass = match &ctx.enclosing_class {
                 Some(enclosing) => {
-                    let enclosing = Ty::reference(db, enclosing.as_str(), Vec::new());
+                    // §6.6.2: the access may appear in the body of a *nested*
+                    // class of a subclass — `B.Inner2` inside `B extends A`
+                    // accessing A's protected members — where the *innermost*
+                    // enclosing class `app.B.Inner2` is not itself a subclass
+                    // but its enclosing `app.B` is. Walk the enclosing chain
+                    // outward (trimming `.Nested` segments, which source FQNs
+                    // nest with dots after the package) and find the subclass
+                    // `S` whose body contains the access.
                     let declaring = Ty::reference(db, owner, Vec::new());
-                    if !is_subtype(db, scope, &enclosing, &declaring) {
-                        return false;
+                    let package_prefix = match &ctx.package {
+                        Some(package) if !package.is_empty() => format!("{package}."),
+                        _ => String::new(),
+                    };
+                    let mut enclosing_candidate = enclosing.clone();
+                    let mut subclass: Option<String> = None;
+                    loop {
+                        let candidate = Ty::reference(db, enclosing_candidate.as_str(), Vec::new());
+                        if is_subtype(db, scope, &candidate, &declaring) {
+                            subclass = Some(enclosing_candidate.clone());
+                            break;
+                        }
+                        // Trim one trailing `.Nested` segment; stop once the
+                        // remaining prefix is the package itself or shorter.
+                        let Some((prefix, _)) = enclosing_candidate.rsplit_once('.') else {
+                            break;
+                        };
+                        if !prefix.starts_with(&package_prefix) {
+                            break;
+                        }
+                        enclosing_candidate = prefix.to_owned();
                     }
-                    // §6.6.2: a protected instance member accessed outside the
-                    // declaring package by a receiver expression requires the
-                    // type of that expression to be a subtype of the enclosing
-                    // class. A `super` invocation accesses the member through
-                    // the `super` keyword, not an expression, so the rule does
-                    // not apply ([§15.12.1]).
-                    if static_member || ctx.mode == InvocationMode::Super {
-                        true
-                    } else {
-                        is_subtype(db, scope, receiver, &enclosing)
-                    }
+                    subclass
+                }
+                None => None,
+            };
+            match subclass {
+                // §6.6.2: a protected instance member accessed outside the
+                // declaring package by a receiver expression requires the type
+                // of that expression to be a subtype of the subclass `S` whose
+                // body the access is in — a `B.this.value(...)` inside
+                // `B.Inner2` accesses through a receiver of type `B` (= S). A
+                // `super` invocation accesses the member through the `super`
+                // keyword, not an expression, so the rule does not apply
+                // ([§15.12.1]).
+                Some(subclass) if static_member || ctx.mode == InvocationMode::Super => true,
+                Some(subclass) => {
+                    let subclass = Ty::reference(db, subclass.as_str(), Vec::new());
+                    is_subtype(db, scope, receiver, &subclass)
                 }
                 None => false,
             }
