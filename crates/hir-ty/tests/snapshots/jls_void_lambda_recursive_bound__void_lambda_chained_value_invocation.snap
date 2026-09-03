@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_void_lambda_recursive_bound.rs
+expression: out
+---
+FILE /src/com/example/Consume2.java:
+package com.example;
+
+import java.util.function.Consumer;
+
+class Consume2 {
+    interface Opt<V> {}
+    interface State {
+        <V> State value(Opt<V> o, V v);
+        State build();
+    }
+
+    interface Ver {
+        Ver version(int i, Consumer<State> c);
+        State build();
+    }
+
+    static Opt<Boolean> B() {
+        return null;
+    }
+
+    static Opt<Integer> I() {
+        return null;
+    }
+
+    static State m(Ver v) {
+        return v.version(0, s -> s.value(B(), true).value(I(), 42))
+            .version(1, s -> s.value(B(), false))
+            .build();
+    }
+}
+
+method B(): com.example.Consume2.Opt<java.lang.Boolean>
+  locals: 
+  exprs: e0: null
+method I(): com.example.Consume2.Opt<java.lang.Integer>
+  locals: 
+  exprs: e1: null
+method m(com.example.Consume2.Ver): com.example.Consume2.State
+  locals: l0: com.example.Consume2.Ver
+  exprs: e2: int | e3: com.example.Consume2.Opt<java.lang.Boolean> | e4: boolean | e5: com.example.Consume2.State | e6: com.example.Consume2.State | e7: java.util.function.Consumer<com.example.Consume2.State> | e8: int | e9: com.example.Consume2.Opt<java.lang.Integer> | e10: int | e11: com.example.Consume2.Opt<java.lang.Boolean> | e12: boolean | e13: com.example.Consume2.State | e14: com.example.Consume2.State | e15: com.example.Consume2.State | e16: java.util.function.Consumer<com.example.Consume2.State> | e17: com.example.Consume2.Ver | e18: com.example.Consume2.Ver | e19: com.example.Consume2.Ver | e20: com.example.Consume2.State

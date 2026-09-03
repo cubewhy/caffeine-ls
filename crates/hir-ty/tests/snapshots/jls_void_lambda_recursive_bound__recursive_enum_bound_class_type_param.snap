@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_void_lambda_recursive_bound.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box {
+    interface Box2<E extends Enum<E>> {}
+
+    interface Svc {
+        <E extends Enum<E>> Box2<E> enumBox(String n, Class<E> c, E def);
+    }
+
+    <K extends Enum<K>> Box2<K> m(Svc svc, String n, Class<K> c, K def) {
+        return svc.enumBox(n, c, def);
+    }
+}
+
+method m(com.example.Box.Svc, java.lang.String, java.lang.Class<K>, K): com.example.Box.Box2<K>
+  locals: l0: com.example.Box.Svc | l1: java.lang.String | l2: java.lang.Class<K> | l3: K
+  exprs: e0: java.lang.String | e1: java.lang.Class<K> | e2: K | e3: com.example.Box.Svc | e4: com.example.Box.Box2<K>

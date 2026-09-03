@@ -89,15 +89,30 @@ impl InferCtx<'_> {
         // depth so the write check rejects them.
         self.lambda_depth += 1;
         let thrown_before: FxHashSet<ExprId> = self.thrown.iter().map(|(_, e)| *e).collect();
+        // §15.27.3: a *void*-compatible target (`Runnable`, `Consumer`, …)
+        // gives an expression body no target — a statement expression may
+        // produce a value that is simply discarded, and constraining it
+        // against `void` would wrongly reject every value-returning generic
+        // invocation in the body (`Consumer<State>` with
+        // `s -> s.value(B(), true)` where `value` returns `State`). This
+        // mirrors the speculative probe's `ret_is_void` handling in
+        // [`super::overload::InferCtx::infer_lambda_body_result`]; the two
+        // must agree or the final re-inference diverges from the probe.
         match body {
             // §15.27.2: an expression lambda's body is a poly expression
             // whose target is the SAM's return type — decaptured ([§5.1.10])
             // like [`Self::infer_lambda_body_result`]'s target, so a nested
             // generic invocation constrains the wildcard bound instead of
-            // dead-ending on the capture variable.
-            LambdaBody::Expr(expr) => {
+            // dead-ending on the capture variable. When the SAM is
+            // void-compatible the body is *not* a poly expression: it is a
+            // statement expression whose value is discarded, so it infers
+            // standalone ([§15.2], [§15.27.3]).
+            LambdaBody::Expr(expr) if !sam.ret.is_void_like(self.db) => {
                 let _ =
                     self.with_target(Some(self.decapture(&sam.ret)), |this| this.infer_expr(expr));
+            }
+            LambdaBody::Expr(expr) => {
+                let _ = self.with_target(None, |this| this.infer_expr(expr));
             }
             LambdaBody::Block(stmt) => self.infer_stmt(stmt),
         }

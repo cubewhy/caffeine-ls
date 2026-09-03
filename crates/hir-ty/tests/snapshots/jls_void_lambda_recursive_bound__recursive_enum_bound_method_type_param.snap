@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_void_lambda_recursive_bound.rs
+expression: out
+---
+FILE /src/com/example/Pick.java:
+package com.example;
+
+class Pick {
+    interface Svc {
+        <E extends Enum<E>> E pick(Class<E> c, E def);
+    }
+
+    <K extends Enum<K>> K m(Svc svc, Class<K> c, K def) {
+        return svc.pick(c, def);
+    }
+}
+
+method m(com.example.Pick.Svc, java.lang.Class<K>, K): K
+  locals: l0: com.example.Pick.Svc | l1: java.lang.Class<K> | l2: K
+  exprs: e0: java.lang.Class<K> | e1: K | e2: com.example.Pick.Svc | e3: K

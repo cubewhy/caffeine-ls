@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_void_lambda_recursive_bound.rs
+expression: out
+---
+FILE /src/com/example/Consume.java:
+package com.example;
+
+import java.util.function.Consumer;
+
+class Consume {
+    interface Opt<V> {}
+    interface State {
+        <V> State value(Opt<V> o, V v);
+    }
+
+    static Opt<Boolean> B() {
+        return null;
+    }
+
+    static Consumer<State> use() {
+        return s -> s.value(B(), true);
+    }
+}
+
+method B(): com.example.Consume.Opt<java.lang.Boolean>
+  locals: 
+  exprs: e0: null
+method use(): java.util.function.Consumer<com.example.Consume.State>
+  locals: 
+  exprs: e1: com.example.Consume.Opt<java.lang.Boolean> | e2: boolean | e3: com.example.Consume.State | e4: com.example.Consume.State | e5: java.util.function.Consumer<com.example.Consume.State>

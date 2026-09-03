@@ -722,17 +722,46 @@ impl Inference {
                 // below rewrites α away and resolution/validation checks
                 // `S <: U` directly.
                 let b = &self.bounds[&id];
+                // §18.3.1 complementary pairs with an instantiation: `α = S`
+                // paired with a *dependency* `α <: T` (where T mentions another
+                // inference variable) implies `⟨S <: T⟩`, and paired with a
+                // lower-bound dependency `T <: α` implies `⟨T <: S⟩`. Without
+                // this propagation a method type parameter bound that
+                // references another type parameter
+                // (`<T, Z extends T> EntityDataType<Z> make(...)`) loses the
+                // dependency when the referenced parameter is instantiated from
+                // the return type: `Z := Vector3f` from the target would remove
+                // `Z`'s `Z <: T` dependency without giving `T` the `Vector3f`
+                // lower bound, and `T` would degrade to `Object`, making the
+                // `Writer<T>` lambda parameter useless. A *proper* upper bound
+                // `U` needs no constraint push here: the equality substitution
+                // below rewrites α away and resolution/validation checks
+                // `S <: U` directly.
+                //
+                // The bound is substituted for α *before* the dependency is
+                // queued: a declared bound that references its own type
+                // parameter (`<E extends Enum<E>>` lowers to `α <: Enum<α>`)
+                // mentions the very variable being eliminated, and a queued
+                // `⟨S <: Enum<α⟩` would later reduce against a variable
+                // already removed from the table — rejecting an otherwise
+                // valid invocation (`<E extends Enum<E>> E pick(Class<E>, E)`
+                // called with a `Class<K>`/`K` pair whose `K` has the matching
+                // recursive enum bound). After substitution the bound is
+                // `Enum<K>` — a proper type, consistent by `K`'s own declared
+                // bound — so no dependency remains to propagate.
+                let subst: FxHashMap<u64, Ty> = FxHashMap::from_iter([(id, eq)]);
                 for u in &b.upper {
+                    let u = u.substitute_infer(db, &subst);
                     if u.contains_infer_var(db) {
-                        self.worklist.push_back(Constraint::Sub(eq, *u));
+                        self.worklist.push_back(Constraint::Sub(eq, u));
                     }
                 }
                 for l in &b.lower {
+                    let l = l.substitute_infer(db, &subst);
                     if l.contains_infer_var(db) {
-                        self.worklist.push_back(Constraint::Sub(*l, eq));
+                        self.worklist.push_back(Constraint::Sub(l, eq));
                     }
                 }
-                let subst: FxHashMap<u64, Ty> = FxHashMap::from_iter([(id, eq)]);
                 for bounds in self.bounds.values_mut() {
                     bounds.upper = bounds
                         .upper
