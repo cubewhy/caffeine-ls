@@ -1,0 +1,46 @@
+---
+source: crates/hir-ty/tests/jls_varargs_specific.rs
+expression: out
+---
+FILE /src/com/example/Style.java:
+package com.example;
+
+class Style {
+    interface StyleBuilderApplicable {}
+    interface TextColor extends StyleBuilderApplicable {}
+    interface TextDecoration extends StyleBuilderApplicable {}
+
+    enum NamedTextColor implements TextColor {
+        GRAY
+    }
+
+    enum Decoration implements TextDecoration {
+        ITALIC
+    }
+
+    static class Builder {
+        static Builder style(TextColor color, Decoration... decorations) {
+            return null;
+        }
+
+        static Builder style(StyleBuilderApplicable... applicables) {
+            return null;
+        }
+    }
+
+    static void use() {
+        Builder one = Builder.style(NamedTextColor.GRAY);
+        Builder two = Builder.style(NamedTextColor.GRAY, Decoration.ITALIC);
+        Builder three = Builder.style(NamedTextColor.GRAY, NamedTextColor.GRAY);
+    }
+}
+
+method style(com.example.Style.TextColor, com.example.Style.Decoration): com.example.Style.Builder
+  locals: l0: com.example.Style.TextColor | l1: com.example.Style.Decoration[]
+  exprs: e0: null
+method style(com.example.Style.StyleBuilderApplicable): com.example.Style.Builder
+  locals: l2: com.example.Style.StyleBuilderApplicable[]
+  exprs: e1: null
+method use(): void
+  locals: l3: com.example.Style.Builder | l4: com.example.Style.Builder | l5: com.example.Style.Builder
+  exprs: e3: com.example.Style.NamedTextColor | e5: com.example.Style.Builder | e7: com.example.Style.NamedTextColor | e9: com.example.Style.Decoration | e11: com.example.Style.Builder | e13: com.example.Style.NamedTextColor | e15: com.example.Style.NamedTextColor | e17: com.example.Style.Builder

@@ -1827,6 +1827,65 @@ pub(crate) fn more_specific(
     m1: &MethodData,
     m2: &MethodData,
 ) -> bool {
+    // §15.12.2.5 (variable arity): when *both* candidates are applicable by
+    // variable arity invocation, the more specific one is decided on their
+    // fixed parameter prefixes and varargs element types, aligned at the
+    // invocation's argument count. The declared parameter lists may have
+    // different lengths — `style(TextColor, Decoration...)` vs
+    // `style(StyleBuilderApplicable...)` — so each is normalized to the
+    // longer length by repeating its varargs *element* type (the fixed
+    // prefix first, then elements), and the position-wise subtype test runs
+    // on the aligned lists. `m1` more specific than `m2` iff each of `m1`'s
+    // normalized formals is a subtype of the corresponding `m2` formal:
+    // `style(TextColor, Decoration...)` beats `style(SBApplicable...)`
+    // because `TextColor <: SBApplicable` and `Decoration <: SBApplicable`.
+    // Without the alignment both directions report false (different declared
+    // lengths) and the invocation is ambiguous.
+    if m1.varargs && m2.varargs {
+        let norm = |m: &MethodData| -> Vec<Ty> {
+            let split = m.params.len().saturating_sub(1);
+            let fixed = &m.params[..split];
+            let element = m
+                .params
+                .last()
+                .and_then(|last| last.element(db))
+                .copied()
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
+            let len = m1.params.len().max(m2.params.len());
+            let mut out = fixed.to_vec();
+            while out.len() < len {
+                out.push(element);
+            }
+            out
+        };
+        let p1 = norm(m1);
+        let p2 = norm(m2);
+        let mut inference = Inference::new();
+        let (m2_formals, _, _) = inference.register_method(db, m2);
+        if m2_formals.len() != m2.params.len() {
+            return false;
+        }
+        // Map `m2`'s normalized formals: its own params (with the varargs
+        // array) normalized the same way after registering its type params.
+        let m2_norm = {
+            let split = m2.params.len().saturating_sub(1);
+            let mut out = m2_formals[..split].to_vec();
+            let element = m2_formals
+                .last()
+                .and_then(|last| last.element(db))
+                .copied()
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
+            let len = m1.params.len().max(m2.params.len());
+            while out.len() < len {
+                out.push(element);
+            }
+            out
+        };
+        for (a, b) in p1.iter().zip(&m2_norm) {
+            inference.add_constraint(Constraint::Sub(*a, *b));
+        }
+        return inference.check_consistent(db, scope, InvocationPhase::Loose);
+    }
     if m1.params.len() != m2.params.len() {
         return false;
     }

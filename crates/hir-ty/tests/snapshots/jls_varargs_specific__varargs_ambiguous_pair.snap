@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_varargs_specific.rs
+expression: out
+---
+FILE /src/com/example/Style.java:
+package com.example;
+
+class Style {
+    interface A {}
+    interface B {}
+
+    static void m(A... a) {}
+    static void m(B... b) {}
+
+    static void use(A a, B b) {
+        m(a, b);
+    }
+}
+
+method use(com.example.Style.A, com.example.Style.B): void
+  @10:8..10:9 'm': wrong-argument-count: Method 'm()' cannot be applied to given types
+    -> @10:8..10:9 'm': required: A[]
+    -> @10:8..10:9 'm': found: A, B
+    -> @10:8..10:9 'm': reason: actual and formal argument lists differ in length
