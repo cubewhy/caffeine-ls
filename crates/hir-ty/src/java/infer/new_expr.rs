@@ -27,7 +27,33 @@ impl InferCtx<'_> {
         args: &[ExprId],
         target: Option<Ty>,
         anonymous_body: bool,
+        receiver_ty: Option<Ty>,
     ) -> Ty {
+        // §15.9: the created class of a *qualified* class instance creation
+        // (`primary.new Inner(...)`) is the member class `Inner` of the
+        // receiver's compile-time type. Its type reference is a bare name in
+        // the syntax ([JLS §15.9.1]) that the lexical scope never declares,
+        // so it is rewritten to the receiver-qualified FQN before resolution
+        // — `a.new B()` with `a: A` resolves `A.B`.
+        let ty = match &receiver_ty {
+            Some(receiver_ty) => {
+                match crate::java::resolve::qualify_member_type_of(
+                    self.db,
+                    &self.scope,
+                    receiver_ty,
+                    &ty.ty,
+                ) {
+                    // The receiver's member class exists on the classpath:
+                    // resolve against it. Fall back to the lexical name when
+                    // it does not (the receiver may be a type parameter whose
+                    // member is reached another way, or the member class is
+                    // genuinely missing and the lexical name reports it).
+                    Some(qualified) => SpannedTypeRef::new(qualified, ty.refs),
+                    None => ty,
+                }
+            }
+            None => ty,
+        };
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
         // §15.9/[§4.5.1]: a wildcard type argument names no concrete type, so
         // `new ArrayList<?>()` creates nothing — and a type argument not within

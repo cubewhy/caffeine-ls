@@ -213,6 +213,42 @@ pub fn resolve_type_ref(
     resolve_type_ref_impl(db, scope, resolver, tyref, &mut Vec::new())
 }
 
+/// Resolves the *member type* of a qualified class instance creation
+/// (`primary.new Inner<...>(args)`) against the receiver expression's
+/// compile-time type ([JLS §15.9], [§8.1.3]): the created class is the
+/// member class `Inner` of the receiver's type — `a.new B()` where `a: A`
+/// creates `A.B` — not a type named `Inner` in the lexical scope. The name is
+/// therefore resolved *by the receiver type's canonical FQN*, never through
+/// the file's imports or package.
+///
+/// Returns the inner type reference with its reference name rewritten to the
+/// receiver-qualified FQN (`A.B`), ready for [`resolve_type_ref`]; `None`
+/// when the receiver is not a class-like type or the written inner type is
+/// not a bare reference, so the caller falls back to the lexical resolution.
+pub fn qualify_member_type_of(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    receiver_ty: &Ty,
+    tyref: &TypeRef<Name>,
+) -> Option<TypeRef<Name>> {
+    let TypeRef::Reference { name, generic_args } = tyref else {
+        return None;
+    };
+    // A member class of a parameterized type is looked up through the
+    // *erasure*; the enclosing type arguments bind the member's own
+    // (implicit) enclosing-instance type variables, which no separate
+    // written argument here targets ([JLS §8.1.3], §15.9.3).
+    let (receiver_name, _) = receiver_ty.erasure(db).as_reference(db)?;
+    let member_fqn = join(receiver_name, name.as_str());
+    if hir::fqn_resolve(db, scope, member_fqn.as_str()).is_none() {
+        return None;
+    }
+    Some(TypeRef::Reference {
+        name: member_fqn,
+        generic_args: generic_args.clone(),
+    })
+}
+
 /// The recursion-guarded form of [`resolve_type_ref`]. `resolving` is the
 /// stack of type parameters currently having their bounds resolved; a
 /// re-entrant reference to one of them ([JLS §4.4] recursion such as

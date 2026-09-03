@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_qualified_new.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+class Q {
+    static class Outer {
+        class Inner {
+            Inner(int i) {}
+        }
+    }
+
+    static Outer newOuter() {
+        return null;
+    }
+
+    static Object make() {
+        return newOuter().new Inner(1);
+    }
+}

@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_modifier_pairs.rs
+expression: out
+---
+FILE /src/com/example/Mods.java:
+package com.example;
+
+class Mods {
+    abstract final class Bad1 {}
+    final abstract class Bad2 {}
+}
+
+@3:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'final'
+@4:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'final'

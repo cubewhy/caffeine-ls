@@ -2610,7 +2610,19 @@ fn walk_decl_modifiers(
             && let Some(modifier_list) = child.children().find(|c| c.kind() == J::MODIFIER_LIST)
         {
             let names = modifier_keywords(&modifier_list);
-            for (first, second) in conflicting_modifiers(&names) {
+            // §8.4.3: which modifiers `abstract` contradicts depends on the
+            // *kind* of declaration. On a method (or annotation element) an
+            // abstract method cannot be `static`, `private`, `native`,
+            // `synchronized`, `strictfp` or `default`; on a *class* those
+            // combinations are ordinary — a nested `abstract static class`,
+            // `private abstract class` or `abstract strictfp class` is legal
+            // ([§8.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1)),
+            // so only `abstract` + `final` is rejected there.
+            let is_method = matches!(
+                child.kind(),
+                J::METHOD_DECL | J::ANNOTATION_TYPE_ELEMENT_DECL
+            );
+            for (first, second) in conflicting_modifiers(&names, is_method) {
                 out.push(DeclDiagnostic::IllegalModifierCombination {
                     first,
                     second,
@@ -2677,8 +2689,15 @@ fn modifier_keywords(node: &rowan::SyntaxNode<syntax::java::Lang>) -> Vec<&'stat
 }
 
 /// The illegal modifier pairs declared by `names`, each once, in the canonical
-/// javac order (e.g. `abstract, final` for `final abstract`).
-fn conflicting_modifiers(names: &[&'static str]) -> Vec<(&'static str, &'static str)> {
+/// javac order (e.g. `abstract, final` for `final abstract`). `is_method`
+/// selects whether the declaration is a method-like construct whose `abstract`
+/// forbids the implementation keywords ([§8.4.3]) — a *class* may legally
+/// combine `abstract` with `static`/`private`/`native`/`synchronized`/
+/// `strictfp` ([§8.1.1]).
+fn conflicting_modifiers(
+    names: &[&'static str],
+    is_method: bool,
+) -> Vec<(&'static str, &'static str)> {
     fn push_unique(
         pairs: &mut Vec<(&'static str, &'static str)>,
         first: &'static str,
@@ -2710,20 +2729,26 @@ fn conflicting_modifiers(names: &[&'static str]) -> Vec<(&'static str, &'static 
     let has = |name: &'static str| names.contains(&name);
     // §8.4.3: `abstract` excludes the modifiers that turn it into a
     // contradiction — a concrete body, a static receiver, a private
-    // inheritance, or an implementation keyword.
+    // inheritance, or an implementation keyword. On a class-like declaration
+    // these do not contradict: a nested class may be `abstract static`,
+    // `private abstract`, `abstract strictfp`, and so on ([§8.1.1]).
     if has("abstract") {
-        for other in [
-            "final",
-            "static",
-            "private",
-            "default",
-            "native",
-            "synchronized",
-            "strictfp",
-        ] {
-            if has(other) {
-                push_unique(&mut pairs, "abstract", other);
+        if is_method {
+            for other in [
+                "static",
+                "private",
+                "default",
+                "native",
+                "synchronized",
+                "strictfp",
+            ] {
+                if has(other) {
+                    push_unique(&mut pairs, "abstract", other);
+                }
             }
+        }
+        if has("final") {
+            push_unique(&mut pairs, "abstract", "final");
         }
     }
     // §8.1.1: a sealed class must not be final ([§8.1.1.2]).

@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_qualified_new.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+class Q {
+    static class A {
+        class B {}
+    }
+
+    static A a;
+
+    static Object make() {
+        return a.new B();
+    }
+}

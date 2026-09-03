@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_qualified_new.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+class Q {
+    static class A {
+        class B {}
+    }
+
+    static A a;
+
+    static Q.A.B make() {
+        return a.new B();
+    }
+}
+
+method make(): com.example.Q.A.B
+  locals: 
+  exprs: e0: com.example.Q.A | e1: com.example.Q.A.B

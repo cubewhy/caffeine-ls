@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_modifier_pairs.rs
+expression: out
+---
+FILE /src/com/example/Mods.java:
+package com.example;
+
+class Mods {
+    public abstract static class A1 {}
+    private abstract class A2 {}
+    protected abstract static class A3 {}
+    abstract static class A4 {}
+    static abstract class A5 {}
+    abstract strictfp class A6 {}
+}

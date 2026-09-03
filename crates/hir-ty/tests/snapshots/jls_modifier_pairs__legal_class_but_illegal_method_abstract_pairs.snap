@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_modifier_pairs.rs
+expression: out
+---
+FILE /src/com/example/Mods.java:
+package com.example;
+
+abstract class Mods {
+    abstract static class Nested {}
+
+    abstract static void bad();
+    abstract private void bad2();
+    static abstract void bad3();
+    abstract native void bad4();
+}
+
+@5:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'static'
+@6:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'private'
+@7:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'static'
+@8:4: illegal-combination-of-modifiers: Illegal combination of modifiers: 'abstract' and 'native'

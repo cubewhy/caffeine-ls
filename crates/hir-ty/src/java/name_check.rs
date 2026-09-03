@@ -638,10 +638,24 @@ fn walk_switch(
 fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
     use ExprData::*;
     match bodies.expr(id) {
-        New { ty, args, .. } => {
-            out.push((DiagLocation::Expr(id), ty.clone()));
+        New {
+            ty, args, receiver, ..
+        } => {
+            // §15.9: a *qualified* class instance creation `primary.new
+            // Inner(args)` names the member class of the receiver expression's
+            // compile-time type, not a type in the lexical scope — the bare
+            // `Inner` is unresolvable on its own (and may even be lexically
+            // shadowed by an unrelated name), so its type reference is *not*
+            // checked against the file's imports/scope here. Resolution runs
+            // at inference time against the receiver's inferred type.
+            if receiver.is_none() {
+                out.push((DiagLocation::Expr(id), ty.clone()));
+            }
             for &arg in args {
                 walk_expr(bodies, arg, out);
+            }
+            if let Some(receiver) = receiver {
+                walk_expr(bodies, *receiver, out);
             }
         }
         NewArray {

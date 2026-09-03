@@ -141,13 +141,32 @@ impl InferCtx<'_> {
                 receiver,
                 ..
             } => {
-                // §15.9: the enclosing instance of a qualified creation
-                // (`primary.new Inner(...)`) is inferred standalone; it has
-                // no effect on the created type's own inference here.
-                if let Some(receiver) = receiver {
-                    let _ = self.with_target(None, |this| this.infer_expr(receiver));
-                }
-                self.new_expr(id, ty, diamond, &args, self.target, !members.is_empty())
+                // §15.9: a *qualified* class instance creation
+                // (`primary.new Inner(...)`) is an instance creation of the
+                // member class `Inner` of the receiver expression's
+                // compile-time type ([§15.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9),
+                // [§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
+                // The receiver is inferred standalone — it is the enclosing
+                // instance and has no effect on the created type's own
+                // target-driven inference. Its *type* is what the member
+                // class resolves against: `a.new B()` creates the `B` nested
+                // in the type of `a`, which the lexical scope never names.
+                let receiver_ty = match receiver {
+                    Some(receiver) => {
+                        let ty = self.with_target(None, |this| this.infer_expr(receiver));
+                        Some(ty)
+                    }
+                    None => None,
+                };
+                self.new_expr(
+                    id,
+                    ty,
+                    diamond,
+                    &args,
+                    self.target,
+                    !members.is_empty(),
+                    receiver_ty,
+                )
             }
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
