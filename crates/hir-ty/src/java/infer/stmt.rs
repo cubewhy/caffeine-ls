@@ -532,9 +532,30 @@ impl InferCtx<'_> {
                 // normal-completing arm paths, not an abrupt exit. The frame
                 // collects those flows so the arm's "exit" does not drop them.
                 self.loop_breaks.push(BreakFrame::new(None));
+                // §14.11.3: a `case ...:` *block statement group* falls
+                // through to the following group when it completes normally,
+                // so its end flow becomes the *entry* flow of the next group
+                // (chained with the direct label-match entry `before`). Only
+                // the last group, a `case ... ->` rule, or a `break`/`yield`
+                // actually completes the switch.
+                let mut fall_through: Option<Flow> = None;
                 let mut paths: Vec<(Flow, bool)> = Vec::new();
-                for arm in arms {
-                    self.flow = before.clone();
+                let arm_count = arms.len();
+                for (index, arm) in arms.iter().enumerate() {
+                    // §16: a group's statements can be entered either directly
+                    // — its own label matches the selector, from the
+                    // pre-switch state — or, for a colon group, by falling
+                    // through from the previous group. Both are possible at
+                    // runtime, so a local is definitely assigned in the body
+                    // only when it is on *both* entry paths ([§16.1]).
+                    self.flow = match &fall_through {
+                        Some(fall) => {
+                            let mut joined = before.clone();
+                            joined.join_definite(fall);
+                            joined
+                        }
+                        None => before.clone(),
+                    };
                     self.exited = before_exited;
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
@@ -562,16 +583,32 @@ impl InferCtx<'_> {
                     }
                     let end_state = std::mem::replace(&mut self.flow, before.clone());
                     let exits = std::mem::replace(&mut self.exited, before_exited);
-                    paths.push((end_state, exits));
                     self.scopes.pop();
+                    if exits {
+                        fall_through = None;
+                        continue;
+                    }
+                    // The arm completes normally. A non-rule group that is not
+                    // the last falls through into the next group instead of
+                    // completing the switch; everything else — the final
+                    // group, and every arrow rule, whose consequent is the
+                    // whole arm — is a normal-completing path of the switch
+                    // itself ([§14.11.3]).
+                    if !arm.rule && index + 1 < arm_count {
+                        fall_through = Some(end_state);
+                    } else {
+                        paths.push((end_state, exits));
+                        fall_through = None;
+                    }
                 }
                 // The switch's break flows are normal-completing paths.
                 let break_frame = self.loop_breaks.pop().expect("frame pushed above");
                 let breaks = break_frame.joined();
                 // The join of §16.1.9: only normal-completing arms reach the
-                // statement after the switch — arms that fall through, plus
-                // the break paths ([§16.2.9]); when none does, the switch
-                // completes abruptly and the following code is unreachable.
+                // statement after the switch — the arms that fell off the end
+                // (last group / rules) plus the break paths ([§16.2.9]); when
+                // none does, the switch completes abruptly and the following
+                // code is unreachable.
                 let mut live_joined: Option<Flow> = None;
                 for (path, exited) in &paths {
                     if *exited {
@@ -603,7 +640,7 @@ impl InferCtx<'_> {
                 } else if any_normal {
                     false
                 } else {
-                    paths.iter().all(|(_, exited)| *exited)
+                    paths.is_empty() && fall_through.is_none() && arm_count > 0
                 };
                 self.scopes.pop();
                 self.case_values.pop();

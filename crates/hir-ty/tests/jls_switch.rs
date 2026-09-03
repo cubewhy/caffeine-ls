@@ -471,3 +471,66 @@ class Sw {
 ",
     )])
 );
+
+// -- green: a colon group falls through to the next group ([§14.11.3]) ---------
+// A `case ...:` group whose statements complete normally falls through into
+// the *following* group — only the last group, a `case ... ->` rule, or a
+// `break` completes the switch. Here `case 1` returns only when the
+// condition holds and otherwise falls into `case 2`, whose `return` makes the
+// whole switch abrupt: no `missing-return-statement` fires.
+
+snapshot!(
+    colon_group_fallthrough_next_group,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                if (i > 0) {
+                    return 10;
+                }
+            case 2:
+                return 20;
+            default:
+                throw new RuntimeException();
+        }
+    }
+}
+",
+    )])
+);
+
+// -- green: conditional fall-through then group-tail return --------------------
+// The fall-through may chain across several colon groups, and the final
+// group's normal completion is the switch's only normal-completing path.
+
+snapshot!(
+    chained_colon_group_fallthrough,
+    check_body_types(&[(
+        "/src/com/example/Sw.java",
+        "\
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                if (i < 0) {
+                    return 1;
+                }
+            case 2:
+                if (i == 0) {
+                    return 2;
+                }
+            default:
+                return 3;
+        }
+    }
+}
+",
+    )])
+);

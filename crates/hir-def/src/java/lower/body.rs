@@ -757,7 +757,11 @@ fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ve
                 body.push(alloc_stmt(ctx, StmtData::Expr(e)));
             }
         }
-        arms.push(SwitchArm { labels, body });
+        arms.push(SwitchArm {
+            labels,
+            body,
+            rule: group.kind() == SWITCH_RULE,
+        });
     }
     arms
 }

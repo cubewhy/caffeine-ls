@@ -360,6 +360,14 @@ pub struct Resource {
 pub struct SwitchArm {
     pub labels: Vec<SwitchLabel>,
     pub body: Vec<StmtId>,
+    /// Whether this arm is a `case ... ->` rule
+    /// ([JLS §14.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.1),
+    /// [§14.11.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.11.3)):
+    /// a rule's consequent is the whole arm and never falls through to the
+    /// next group. A `case ...:` *block statement group* on the other hand
+    /// falls through to the following group when it completes normally
+    /// ([§14.11.3]).
+    pub rule: bool,
 }
 
 /// One `case` label of a switch

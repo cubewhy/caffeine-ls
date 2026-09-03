@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_switch.rs
+expression: out
+---
+FILE /src/com/example/Sw.java:
+package com.example;
+
+class Sw {
+    int m(int i) {
+        switch (i) {
+            case 1:
+                if (i > 0) {
+                    return 10;
+                }
+            case 2:
+                return 20;
+            default:
+                throw new RuntimeException();
+        }
+    }
+}
+
+method m(int): int
+  locals: l0: int
+  exprs: e0: int | e1: int | e2: int | e3: int | e4: boolean | e5: boolean | e6: int | e7: int | e8: int | e9: <error> | e10: java.lang.RuntimeException
