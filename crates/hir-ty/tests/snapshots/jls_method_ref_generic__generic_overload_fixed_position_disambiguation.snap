@@ -1,0 +1,51 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Codecs.java:
+package com.example;
+
+class Codecs {
+    interface MappedEntity {}
+    static class ItemType implements MappedEntity {}
+    static class ClientVersion {}
+    static class NBT {}
+
+    static class MappedEntitySet<Z extends MappedEntity> {
+        static <A extends MappedEntity> NBT encode(MappedEntitySet<A> value, ClientVersion version) {
+            return null;
+        }
+
+        static <A extends MappedEntity> NBT encode(PacketWrapper writer, MappedEntitySet<A> value) {
+            return null;
+        }
+    }
+
+    interface NbtEncoder<T> {
+        NBT encode(PacketWrapper writer, T value);
+    }
+
+    static class NBTCompound {
+        <T> void set(String key, T value, NbtEncoder<T> encoder, PacketWrapper writer) {
+        }
+    }
+
+    static class PacketWrapper {}
+
+    static void store(NBTCompound nbt, MappedEntitySet<ItemType> supported) {
+        nbt.set("supported_items", supported, MappedEntitySet::encode, new PacketWrapper());
+    }
+}
+
+method encode(com.example.Codecs.MappedEntitySet<A>, com.example.Codecs.ClientVersion): com.example.Codecs.NBT
+  locals: l0: com.example.Codecs.MappedEntitySet<A> | l1: com.example.Codecs.ClientVersion
+  exprs: e0: null
+method encode(com.example.Codecs.PacketWrapper, com.example.Codecs.MappedEntitySet<A>): com.example.Codecs.NBT
+  locals: l2: com.example.Codecs.PacketWrapper | l3: com.example.Codecs.MappedEntitySet<A>
+  exprs: e1: null
+method set(java.lang.String, T, com.example.Codecs.NbtEncoder<T>, com.example.Codecs.PacketWrapper): void
+  locals: l4: java.lang.String | l5: T | l6: com.example.Codecs.NbtEncoder<T> | l7: com.example.Codecs.PacketWrapper
+  exprs: 
+method store(com.example.Codecs.NBTCompound, com.example.Codecs.MappedEntitySet<com.example.Codecs.ItemType>): void
+  locals: l8: com.example.Codecs.NBTCompound | l9: com.example.Codecs.MappedEntitySet<com.example.Codecs.ItemType>
+  exprs: e2: java.lang.String | e3: com.example.Codecs.MappedEntitySet<com.example.Codecs.ItemType> | e5: com.example.Codecs.NbtEncoder<com.example.Codecs.MappedEntitySet<com.example.Codecs.ItemType>> | e6: com.example.Codecs.PacketWrapper | e7: com.example.Codecs.NBTCompound | e8: void

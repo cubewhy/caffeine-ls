@@ -86,3 +86,61 @@ class Body {
 // `Optional<Optional<String>>` — the enclosing method's `Optional<String>`
 // return cannot accept it, so the invocation is reported against the
 // expected type ([§18.5.2.4], [§14.17]).
+
+// -- green: generic overloads are disambiguated by their fixed positions --------
+// `MappedEntitySet` overloads `encode(MappedEntitySet<Z>, ClientVersion)` and
+// `encode(PacketWrapper, MappedEntitySet<Z>)` — both generic, both two
+// parameters. As a method reference targeting `NbtEncoder<T>` (SAM
+// `NBT encode(PacketWrapper, T)`) only the second is potentially applicable:
+// the first's leading `MappedEntitySet<Z>` can never accept the SAM's leading
+// `PacketWrapper` under any instantiation of `Z`. The reference selection must
+// reject it through the *erasure* of the type-variable-carrying parameter,
+// or `set` is reported ambiguous.
+
+snapshot!(
+    generic_overload_fixed_position_disambiguation,
+    check_body_types(&[(
+        "/src/com/example/Codecs.java",
+        "\
+package com.example;
+
+class Codecs {
+    interface MappedEntity {}
+    static class ItemType implements MappedEntity {}
+    static class ClientVersion {}
+    static class NBT {}
+
+    static class MappedEntitySet<Z extends MappedEntity> {
+        static <A extends MappedEntity> NBT encode(MappedEntitySet<A> value, ClientVersion version) {
+            return null;
+        }
+
+        static <A extends MappedEntity> NBT encode(PacketWrapper writer, MappedEntitySet<A> value) {
+            return null;
+        }
+    }
+
+    interface NbtEncoder<T> {
+        NBT encode(PacketWrapper writer, T value);
+    }
+
+    static class NBTCompound {
+        <T> void set(String key, T value, NbtEncoder<T> encoder, PacketWrapper writer) {
+        }
+    }
+
+    static class PacketWrapper {}
+
+    static void store(NBTCompound nbt, MappedEntitySet<ItemType> supported) {
+        nbt.set(\"supported_items\", supported, MappedEntitySet::encode, new PacketWrapper());
+    }
+}
+",
+    )])
+);
+// §15.13.1 inexact references: both overloads match the SAM's arity (two
+// value parameters), but only `encode(PacketWrapper, MappedEntitySet<A>)` is
+// congruent with `NbtEncoder<MappedEntitySet<ItemType>>` — the competing
+// overload's first parameter erases to `MappedEntitySet`, which no
+// `PacketWrapper` actual is assignable to. Selecting by the fixed (type-var
+// independent) positions resolves the reference and keeps `set` applicable.

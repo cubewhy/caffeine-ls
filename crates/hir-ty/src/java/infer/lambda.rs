@@ -463,22 +463,88 @@ impl InferCtx<'_> {
                 (params.as_slice(), None)
             };
             // §15.13.1: a *generic* referenced method is only *potentially*
-            // applicable — the compile-time declaration of an inexact
-            // reference — when the arity matches. Its own type parameters are
-            // not yet instantiated, so its parameter types cannot be checked
-            // for compatibility against the SAM's: `Optional::of` is
-            // `<T> Optional<T> of(T)`, and against a
-            // `Function<? super String, ? extends U>` target the parameter `T`
-            // must stay open until the joint inference of the enclosing
-            // invocation instantiates it (a plain assignability test of
-            // `String → T` would wrongly reject the reference, making
-            // `Optional<Optional<String>> o = opt.map(Optional::of)` report
-            // `map` inapplicable). The referenced method's type parameters
-            // become fresh variables of the enclosing table when the
-            // reference's constraints are contributed ([§18.5.2.2],
-            // [`super::overload::InferCtx::contribute_leaf`]).
+            // applicable when the arity matches and the SAM parameters do not
+            // *provably* mismatch the parameters that do not depend on the
+            // method's own type variables. Its type parameters are not yet
+            // instantiated — `Optional::of` is `<T> Optional<T> of(T)`, and
+            // against a `Function<? super String, ? extends U>` target the
+            // parameter `T` must stay open until the enclosing invocation's
+            // joint inference instantiates it — but a parameter position that
+            // is independent of them is decisive: when `MappedEntitySet`
+            // overloads `encode(MappedEntitySet<Z>, ClientVersion)` and
+            // `encode(PacketWrapper, MappedEntitySet<Z>)` both take two
+            // parameters, only the second is congruent with the
+            // `NbtEncoder<T>` SAM `encode(PacketWrapper, T)` (the first's
+            // leading `MappedEntitySet<Z>` cannot accept the SAM's leading
+            // `PacketWrapper` under any instantiation). Probing those fixed
+            // positions keeps the reference from reporting an ambiguity javac
+            // resolves to the applicable overload ([§15.13.1] inexact
+            // references).
             if !method.type_params.is_empty() {
-                applicable.push(method.clone());
+                let mut ok = true;
+                for (i, method_param) in fixed.iter().enumerate() {
+                    if method_param.contains_infer_var(self.db) {
+                        continue;
+                    }
+                    // The parameter depends on the method's own type
+                    // variables ([§15.13.1] potential applicability): it is
+                    // decisive only through its *erasure* shape. `Optional::of`'s
+                    // bare `T` (erasure `Object`) accepts any SAM parameter,
+                    // while `MappedEntitySet::encode(MappedEntitySet<Z>,
+                    // ClientVersion)` can never accept a SAM whose leading
+                    // parameter is `PacketWrapper` — whatever `Z`
+                    // instantiates to, the leading formal is a
+                    // `MappedEntitySet`. An unresolved SAM parameter (an
+                    // inference variable of the enclosing invocation) stays
+                    // undecided.
+                    let sam_param = sam_params.get(i + offset).copied();
+                    let decided = sam_param.and_then(|sp| {
+                        if sp.contains_infer_var(self.db)
+                            || sp.contains_type_var_named_capture(self.db)
+                        {
+                            None
+                        } else if method_param.contains_type_var(self.db) {
+                            Some(self.method_ref_param_compatible(
+                                Some(&sp),
+                                &method_param.erasure(self.db),
+                            ))
+                        } else {
+                            Some(self.method_ref_param_compatible(Some(&sp), method_param))
+                        }
+                    });
+                    if decided == Some(false) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok && let Some((element, tail_count)) = &tail {
+                    if !element.contains_infer_var(self.db) {
+                        for k in 0..*tail_count {
+                            let sam_param = sam_params.get(fixed.len() + k + offset).copied();
+                            let decided = sam_param.and_then(|sp| {
+                                if sp.contains_infer_var(self.db)
+                                    || sp.contains_type_var_named_capture(self.db)
+                                {
+                                    None
+                                } else if element.contains_type_var(self.db) {
+                                    Some(self.method_ref_param_compatible(
+                                        Some(&sp),
+                                        &element.erasure(self.db),
+                                    ))
+                                } else {
+                                    Some(self.method_ref_param_compatible(Some(&sp), element))
+                                }
+                            });
+                            if decided == Some(false) {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if ok {
+                    applicable.push(method.clone());
+                }
                 continue;
             }
             let mut ok = true;
