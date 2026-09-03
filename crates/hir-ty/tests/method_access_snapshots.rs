@@ -23,6 +23,7 @@ fn ctx(mode: InvocationMode, enclosing_class: &str, package: &str) -> Invocation
         mode,
         enclosing_class: Some(enclosing_class.to_owned()),
         package: Some(package.to_owned()),
+        subclass_of: None,
     }
 }
 

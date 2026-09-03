@@ -2404,6 +2404,7 @@ fn final_field_diagnostics(
                     receiver: _,
                     diamond: _,
                     members: _,
+                    anonymous: _,
                     ty: _,
                 }
                 | ExprData::CtorCall {

@@ -154,6 +154,55 @@ class Sub extends Base {
 // Green: a subclass in a different package may access its superclass's
 // `protected` members through a receiver of its own subtype (§6.6.2).
 
+// -- green: an anonymous subclass may invoke a protected constructor ---------
+// (§6.6.2 with §15.9.5): `new TypeToken<T>() {}` creates an *anonymous
+// subclass* of TypeToken, whose body is responsible for the implementation
+// of an object of the subclass — so the protected no-arg constructor is
+// accessible even from another package (the Gson supertype-token idiom).
+
+snapshot!(
+    anonymous_subclass_protected_constructor,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/holder/TypeToken.java",
+            "\
+package holder;
+
+public class TypeToken<T> {
+    protected TypeToken() {
+    }
+
+    protected int prot;
+}
+",
+        ),
+        (
+            "/src/consumer/Use.java",
+            "\
+package consumer;
+
+import holder.TypeToken;
+import java.util.List;
+
+class Use {
+    Object a = new TypeToken<List<String>>() {
+    };
+    Object b = new TypeToken<List<String>>() {
+        int read() {
+            return prot;
+        }
+    };
+}
+",
+        ),
+    ])
+);
+// Green: both the implicit invocation of the protected `TypeToken()`
+// constructor for the anonymous subclass, and the access of the inherited
+// protected `prot` field from the anonymous body, resolve across the package
+// boundary — the anonymous class is a subclass of `TypeToken` (§6.6.2 with
+// §15.9.5).
+
 // -- red: package-private member across packages -----------------------------
 
 snapshot!(

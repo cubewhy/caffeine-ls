@@ -730,6 +730,7 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             args,
             diamond,
             members,
+            anonymous,
             receiver,
         } => {
             out.push_str(&format!(
@@ -742,15 +743,19 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
-            if !members.is_empty() {
-                out.push_str(&format!(
-                    " {{ {} }}",
-                    members
-                        .iter()
-                        .map(|m| format!("{}({})", m.name.as_str(), m.params))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
+            if *anonymous {
+                out.push_str(" {");
+                if !members.is_empty() {
+                    out.push_str(&format!(
+                        " {} ",
+                        members
+                            .iter()
+                            .map(|m| format!("{}({})", m.name.as_str(), m.params))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                out.push('}');
             }
         }
         ExprData::CtorCall { args, target } => out.push_str(&format!(

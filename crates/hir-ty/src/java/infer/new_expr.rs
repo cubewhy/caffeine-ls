@@ -128,6 +128,16 @@ impl InferCtx<'_> {
             return class_ty;
         };
         let access = self.access.clone();
+        // §15.9.5/[§6.6.2]: an anonymous class body (`new C(...) { ... }`) is
+        // a subclass of `C`, so its constructor invocation may reach C's
+        // *protected* constructors from any package — `new TypeToken<T>() {}`
+        // invoking the protected `TypeToken()` no-arg constructor from another
+        // package. The access context is widened to the anonymous subclass.
+        let access = if anonymous_body {
+            access.with_anonymous_superclass(name.clone())
+        } else {
+            access
+        };
         if let Some((method, deferred)) = self.resolve_call(
             &class_ty,
             &Name::new(&constructor_name),

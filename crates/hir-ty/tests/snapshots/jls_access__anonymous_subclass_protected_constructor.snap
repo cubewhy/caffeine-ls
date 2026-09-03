@@ -1,0 +1,29 @@
+---
+source: crates/hir-ty/tests/jls_access.rs
+expression: out
+---
+FILE /src/holder/TypeToken.java:
+package holder;
+
+public class TypeToken<T> {
+    protected TypeToken() {
+    }
+
+    protected int prot;
+}
+
+FILE /src/consumer/Use.java:
+package consumer;
+
+import holder.TypeToken;
+import java.util.List;
+
+class Use {
+    Object a = new TypeToken<List<String>>() {
+    };
+    Object b = new TypeToken<List<String>>() {
+        int read() {
+            return prot;
+        }
+    };
+}

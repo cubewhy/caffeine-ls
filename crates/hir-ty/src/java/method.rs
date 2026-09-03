@@ -105,6 +105,16 @@ pub struct InvocationContext {
     /// The package of the compilation unit in which the invocation appears,
     /// for package and `protected` access control; the unnamed package is `""`.
     pub package: Option<String>,
+    /// The class of which the access site is a (possibly anonymous) *subclass*,
+    /// for the second half of [§6.6.2]: a protected member declared by that
+    /// class is accessible from outside its package to code that is responsible
+    /// for the implementation of an object of the subclass. An anonymous class
+    /// creation `new C(args) { ... }` is exactly such a subclass — the
+    /// anonymous body may invoke C's protected constructor and protected
+    /// members even from another package (the Gson `new TypeToken<T>() {}`
+    /// idiom) — even though no source item exists for the anonymous class to
+    /// name as the enclosing class.
+    pub subclass_of: Option<String>,
 }
 
 impl InvocationContext {
@@ -123,6 +133,7 @@ impl InvocationContext {
             // The unnamed package: package and `protected` members of named
             // packages are not accessible (§6.6.1).
             package: Some(String::new()),
+            subclass_of: None,
         }
     }
 
@@ -138,6 +149,10 @@ impl InvocationContext {
                 .package(db)
                 .as_ref()
                 .map(|name| name.as_str().to_owned()),
+            subclass_of: key
+                .subclass_of(db)
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
         }
     }
 
@@ -149,6 +164,21 @@ impl InvocationContext {
             mode,
             enclosing_class: self.enclosing_class.clone(),
             package: self.package.clone(),
+            subclass_of: self.subclass_of.clone(),
+        }
+    }
+
+    /// The invocation context of the same access site, additionally *within an
+    /// anonymous class body whose direct superclass (or implemented interface)
+    /// is `superclass`* ([JLS §15.9.5], [§6.6.2]): the anonymous body is a
+    /// subclass of `superclass`, so protected members the *superclass itself*
+    /// declares are accessible to it from any package.
+    pub fn with_anonymous_superclass(&self, superclass: Name) -> InvocationContext {
+        InvocationContext {
+            mode: self.mode,
+            enclosing_class: self.enclosing_class.clone(),
+            package: self.package.clone(),
+            subclass_of: Some(superclass.as_str().to_owned()),
         }
     }
 }
@@ -1407,6 +1437,24 @@ fn member_accessible(
                 && invocation == declaring
             {
                 return true;
+            }
+            // §6.6.2: code that is "responsible for the implementation of an
+            // object of the subclass" — an *anonymous class body* whose direct
+            // superclass is the declaring class — may access the protected
+            // members the superclass itself declares, from any package (the
+            // Gson `new TypeToken<T>() {}` idiom: an anonymous subclass of the
+            // generic `TypeToken` invokes its protected no-arg constructor).
+            if let Some(subclass_of) = &ctx.subclass_of {
+                let subclass_of = Ty::reference(db, subclass_of.as_str(), Vec::new());
+                let declaring = Ty::reference(db, owner, Vec::new());
+                // The anonymous class subclasses the *created* type exactly;
+                // members it inherits from a *grand*-supertype of that type are
+                // reachable only when the created type itself is a subclass,
+                // which this membership already entails via the transitive
+                // subtype check below.
+                if is_subtype(db, scope, &subclass_of, &declaring) {
+                    return true;
+                }
             }
             match &ctx.enclosing_class {
                 Some(enclosing) => {

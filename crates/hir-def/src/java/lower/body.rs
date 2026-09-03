@@ -1503,10 +1503,12 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             .find(|c| is_expr_kind(c.kind()))
             .map(|c| expr(ctx, owner, &c));
         // §15.9.5: an anonymous class body's member methods are carried by
-        // name and arity so the body is not dropped.
-        let members = node
-            .children()
-            .find(|c| c.kind() == CLASS_BODY)
+        // name and arity so the body is not dropped. The *presence* of a body
+        // (even an empty `{}`) is carried too: the anonymous class is a
+        // subclass of the created type ([§6.6.2]).
+        let body = node.children().find(|c| c.kind() == CLASS_BODY);
+        let anonymous = body.is_some();
+        let members = body
             .map(|body| anonymous_members(&body))
             .unwrap_or_default();
         return ExprData::New {
@@ -1514,6 +1516,7 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
             args,
             diamond,
             members,
+            anonymous,
             receiver,
         };
     }

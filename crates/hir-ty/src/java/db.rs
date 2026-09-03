@@ -96,6 +96,7 @@ pub struct ContextKey {
     pub mode: InvocationMode,
     pub enclosing_class: Option<Name>,
     pub package: Option<Name>,
+    pub subclass_of: Option<Name>,
 }
 
 impl ContextKey {
@@ -106,6 +107,7 @@ impl ContextKey {
             ctx.mode,
             ctx.enclosing_class.as_deref().map(Name::new),
             ctx.package.as_deref().map(Name::new),
+            ctx.subclass_of.as_deref().map(Name::new),
         )
     }
 }
@@ -365,5 +367,5 @@ pub(crate) fn access_context_key_query<'db>(
             .clone()
             .unwrap_or_else(|| Name::new("")),
     );
-    ContextKey::new(db, InvocationMode::Virtual, enclosing_class, package)
+    ContextKey::new(db, InvocationMode::Virtual, enclosing_class, package, None)
 }

@@ -455,6 +455,13 @@ pub enum ExprData {
         /// each member's name and parameter count, so the body is not
         /// dropped. Empty for a plain instance creation.
         members: Vec<AnonymousMethod>,
+        /// Whether the creation carries an anonymous class body at all
+        /// ([§15.9.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9.5)):
+        /// `new C(args) { ... }` — even an empty `{}`. The anonymous class is
+        /// a subclass of `C`, which widens the access of the constructor
+        /// invocation ([§6.6.2]), so this must not be inferred from
+        /// [`Self::New::members`] being non-empty.
+        anonymous: bool,
         /// §15.9: the enclosing instance of a *qualified* class instance
         /// creation — `primary.new Inner(args)`. `None` for the unqualified
         /// form.

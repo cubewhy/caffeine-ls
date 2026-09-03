@@ -146,7 +146,7 @@ impl InferCtx<'_> {
                 ty,
                 args,
                 diamond,
-                members,
+                anonymous,
                 receiver,
                 ..
             } => {
@@ -167,15 +167,7 @@ impl InferCtx<'_> {
                     }
                     None => None,
                 };
-                self.new_expr(
-                    id,
-                    ty,
-                    diamond,
-                    &args,
-                    self.target,
-                    !members.is_empty(),
-                    receiver_ty,
-                )
+                self.new_expr(id, ty, diamond, &args, self.target, anonymous, receiver_ty)
             }
             // §15.10: `new T[n][m]` has type `T[n][m]` (an array nested as
             // deep as there are dimensions); an array creation initializer
