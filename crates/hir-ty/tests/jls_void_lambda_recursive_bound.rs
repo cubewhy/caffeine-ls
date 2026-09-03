@@ -94,6 +94,48 @@ class Consume2 {
 // lambda body: each generic link infers standalone and resolves.
 
 snapshot!(
+    void_lambda_block_body_value_invocation,
+    check_body_types(&[(
+        "/src/com/example/Consume3.java",
+        "\
+package com.example;
+
+import java.util.function.Consumer;
+
+class Consume3 {
+    interface Opt<V> {}
+    interface State {
+        <V> State value(Opt<V> o, V v);
+        State build();
+    }
+
+    interface Builder {
+        Builder editOptions(Consumer<State> c);
+    }
+
+    static Opt<Boolean> BOOL() {
+        return null;
+    }
+
+    static Builder m(Builder b) {
+        return b.editOptions(builder -> {
+            builder.value(BOOL(), true);
+            if (true) {
+                builder.value(BOOL(), false);
+            }
+        });
+    }
+}
+",
+    )])
+);
+// §15.27.2: a *block* lambda's statements infer standalone. The enclosing
+// context's target (`Builder`, the type the lambda is an argument of) must
+// not leak into the body, or the statement-expression
+// `builder.value(BOOL(), true)` — whose `State` result is discarded — would
+// be constrained against the outer `Builder` target and rejected.
+
+snapshot!(
     recursive_enum_bound_method_type_param,
     check_body_types(&[(
         "/src/com/example/Pick.java",

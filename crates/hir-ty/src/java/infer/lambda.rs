@@ -114,7 +114,18 @@ impl InferCtx<'_> {
             LambdaBody::Expr(expr) => {
                 let _ = self.with_target(None, |this| this.infer_expr(expr));
             }
-            LambdaBody::Block(stmt) => self.infer_stmt(stmt),
+            // §15.27.2: a block lambda's statements are inferred *standalone*
+            // — the enclosing context's target type (the type of the variable
+            // the lambda is being assigned to, or of the parameter it is the
+            // argument of) is not a target for the statements inside the
+            // body. Without the reset a value-returning generic invocation
+            // used as a statement expression inside the body
+            // (`builder.value(BOOL, true);` where `value` returns `State`)
+            // would be constrained against the outer `Consumer<State>` target
+            // and rejected.
+            LambdaBody::Block(stmt) => {
+                let _ = self.with_target(None, |this| this.infer_stmt(stmt));
+            }
         }
         self.lambda_depth -= 1;
         self.settle_lambda_thrown(&sam.throws, &thrown_before);

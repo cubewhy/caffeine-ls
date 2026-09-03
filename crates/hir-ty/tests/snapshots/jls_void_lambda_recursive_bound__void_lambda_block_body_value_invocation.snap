@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/jls_void_lambda_recursive_bound.rs
+expression: out
+---
+FILE /src/com/example/Consume3.java:
+package com.example;
+
+import java.util.function.Consumer;
+
+class Consume3 {
+    interface Opt<V> {}
+    interface State {
+        <V> State value(Opt<V> o, V v);
+        State build();
+    }
+
+    interface Builder {
+        Builder editOptions(Consumer<State> c);
+    }
+
+    static Opt<Boolean> BOOL() {
+        return null;
+    }
+
+    static Builder m(Builder b) {
+        return b.editOptions(builder -> {
+            builder.value(BOOL(), true);
+            if (true) {
+                builder.value(BOOL(), false);
+            }
+        });
+    }
+}
+
+method BOOL(): com.example.Consume3.Opt<java.lang.Boolean>
+  locals: 
+  exprs: e0: null
+method m(com.example.Consume3.Builder): com.example.Consume3.Builder
+  locals: l0: com.example.Consume3.Builder
+  exprs: e1: com.example.Consume3.Opt<java.lang.Boolean> | e2: boolean | e3: com.example.Consume3.State | e4: com.example.Consume3.State | e5: boolean | e6: boolean | e7: com.example.Consume3.Opt<java.lang.Boolean> | e8: boolean | e9: com.example.Consume3.State | e10: com.example.Consume3.State | e11: java.util.function.Consumer<com.example.Consume3.State> | e12: com.example.Consume3.Builder | e13: com.example.Consume3.Builder
