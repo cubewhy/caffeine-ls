@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/jls_exceptions.rs
+expression: out
+---
+FILE /src/com/example/CatchAll.java:
+package com.example;
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+
+class CatchAll {
+    static void write(Object o, DataOutputStream s) {
+    }
+
+    static void copy() {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try {
+            DataOutputStream out = new DataOutputStream(bytes);
+            try {
+                write(o, out);
+            } catch (Throwable t1) {
+                try {
+                    out.close();
+                } catch (Throwable t2) {
+                    t1.addSuppressed(t2);
+                }
+                throw t1;
+            }
+        } catch (Throwable t) {
+            throw t;
+        }
+    }
+
+    static Object o;
+}
+
+method write(java.lang.Object, java.io.DataOutputStream): void
+  locals: l0: java.lang.Object | l1: java.io.DataOutputStream
+  exprs: 
+method copy(): void
+  locals: l2: java.io.ByteArrayOutputStream | l3: java.io.DataOutputStream | l4: java.lang.Throwable | l5: java.lang.Throwable | l6: java.lang.Throwable
+  exprs: e0: java.io.ByteArrayOutputStream | e1: java.io.ByteArrayOutputStream | e2: java.io.DataOutputStream | e3: java.lang.Object | e4: java.io.DataOutputStream | e5: void | e6: java.io.DataOutputStream | e7: <error> | e8: java.lang.Throwable | e9: java.lang.Throwable | e10: <error> | e11: java.lang.Throwable | e12: java.lang.Throwable
+  diags: e7@17:24: no-such-method: Cannot resolve method 'close()' | e10@19:23: no-such-method: Cannot resolve method 'addSuppressed()' | l3@12:12: cannot-resolve-type: Cannot resolve symbol 'DataOutputStream' | e2@12:39: cannot-resolve-type: Cannot resolve symbol 'DataOutputStream'

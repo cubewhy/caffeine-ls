@@ -1113,9 +1113,14 @@ impl InferCtx<'_> {
                         })
                         .map(|(ty, _)| ty.clone())
                         .collect();
-                    if !precise.is_empty() {
-                        self.rethrow_sets.insert(clause.param, precise);
-                    }
+                    // The empty set is recorded too ([§11.2.2]): a `throw` of
+                    // a catch-all parameter (`catch (Throwable t)` around a
+                    // block that throws only unchecked exceptions) then adds
+                    // no liability, instead of falling back to the parameter's
+                    // declared `Throwable` type and reporting an unhandled
+                    // checked exception. The declared type is only the
+                    // parameter's *erasure* of what the block can throw.
+                    self.rethrow_sets.insert(clause.param, precise);
                     self.declare_local(clause.param);
                     self.infer_stmt(clause.body);
                     // The clause's end state joins the other paths.

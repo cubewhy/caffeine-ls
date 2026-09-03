@@ -408,3 +408,54 @@ class Closer {
 ",
     )])
 );
+
+// -- green: a catch-all with an *empty* precise set adds no liability ----------
+// ([§11.2.2]): a `catch (Throwable t)` around a block that throws only
+// unchecked exceptions has an empty precise rethrow set. Rethrowing `t` must
+// add nothing — javac accepts `throw t` even from a method with no `throws`
+// clause — instead of falling back to the parameter's declared `Throwable` and
+// reporting an unhandled checked exception.
+
+snapshot!(
+    catch_all_empty_precise_rethrow,
+    check_body_types(&[(
+        "/src/com/example/CatchAll.java",
+        "\
+package com.example;
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+
+class CatchAll {
+    static void write(Object o, DataOutputStream s) {
+    }
+
+    static void copy() {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try {
+            DataOutputStream out = new DataOutputStream(bytes);
+            try {
+                write(o, out);
+            } catch (Throwable t1) {
+                try {
+                    out.close();
+                } catch (Throwable t2) {
+                    t1.addSuppressed(t2);
+                }
+                throw t1;
+            }
+        } catch (Throwable t) {
+            throw t;
+        }
+    }
+
+    static Object o;
+}
+",
+    )])
+);
+// The inner try throws nothing checked (`write` declares no throws); the outer
+// try's only checked liability would come from `out.close()`/`bytes` close,
+// none of which the block reaches as a checked exception. Each `catch
+// (Throwable)` therefore has an empty precise set and the rethrows add no
+// liability to the `copy()` body.
