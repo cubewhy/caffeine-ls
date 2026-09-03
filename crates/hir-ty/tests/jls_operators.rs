@@ -294,6 +294,31 @@ class Body {
 // a meaningless lub — `pick` returns `byte[]`.
 
 snapshot!(
+    ternary_null_and_type_variable,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+class Body {
+    static class Node<K, V> {
+        V value;
+    }
+
+    V get(Node<K, V> node) {
+        return node != null ? node.value : null;
+    }
+}
+",
+    )])
+);
+// §15.25/[§4.10.2]: the null type is a subtype of every reference type, so a
+// conditional whose other arm is a *type variable* keeps that type variable —
+// `node != null ? node.value : null` is `V`, not the erasure `Object` a
+// least-upper-bound over `V`'s declared bound would produce. A `V`-returning
+// method must not degrade to `Object`.
+
+snapshot!(
     conditional_null_primitives_box,
     check_body_diagnostic_spans(&[(
         "/src/com/example/Body.java",

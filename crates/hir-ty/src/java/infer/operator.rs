@@ -109,11 +109,25 @@ impl InferCtx<'_> {
         // meaningless lub. A *primitive* arm against `null` is boxed
         // ([§5.1.7]): `cond ? null : 5` has type `Integer` and
         // `cond ? true : null` has type `Boolean` (javac assigns them to the
-        // boxed types), not the lub of the primitive and `null`.
-        if then_ty.is_null(self.db) && (els_ty.is_reference(self.db) || els_ty.is_array(self.db)) {
+        // boxed types), not the lub of the primitive and `null`. A type
+        // variable, capture or intersection arm is a reference too — the
+        // null type is a subtype of every reference type ([§4.10.2]), so
+        // `cond ? node.value : null` with `node.value: V` keeps the type
+        // `V`, whose lower bound the enclosing assignment or return checks
+        // against (`V`-returning methods must not degrade to `Object`).
+        let reference_like = |ty: Ty| {
+            matches!(
+                ty.kind(self.db),
+                TyKind::Reference { .. }
+                    | TyKind::Array(_)
+                    | TyKind::TypeVar { .. }
+                    | TyKind::Intersection(_)
+            )
+        };
+        if then_ty.is_null(self.db) && reference_like(els_ty) {
             return els_ty;
         }
-        if els_ty.is_null(self.db) && (then_ty.is_reference(self.db) || then_ty.is_array(self.db)) {
+        if els_ty.is_null(self.db) && reference_like(then_ty) {
             return then_ty;
         }
         if then_ty.is_null(self.db) && els_ty.is_primitive(self.db) {

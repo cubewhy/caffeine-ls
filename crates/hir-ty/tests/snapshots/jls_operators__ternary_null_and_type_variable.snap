@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_operators.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    static class Node<K, V> {
+        V value;
+    }
+
+    V get(Node<K, V> node) {
+        return node != null ? node.value : null;
+    }
+}
+
+method get(com.example.Body.Node<com.example.K, com.example.V>): com.example.V
+  locals: l0: com.example.Body.Node<com.example.K, com.example.V>
+  exprs: e0: com.example.Body.Node<com.example.K, com.example.V> | e1: null | e2: boolean | e3: com.example.Body.Node<com.example.K, com.example.V> | e4: com.example.V | e5: null | e6: com.example.V
