@@ -868,6 +868,20 @@ fn library_class_methods(
         if !name.is_empty() && interner.resolve(&method.name) != name {
             continue;
         }
+        // [JVMS §4.6]: a method flagged `ACC_BRIDGE` or `ACC_SYNTHETIC` is
+        // invisible to source-code member resolution. javac hides every
+        // synthetic member of a classfile from name lookup — the covariant
+        // bridge `Player[] getOnlinePlayers()` javac emits next to the real
+        // `Collection<? extends Player> getOnlinePlayers()` ([§8.4.8.3]) is
+        // ACC_BRIDGE|ACC_SYNTHETIC, so an invocation of `getOnlinePlayers()`
+        // must resolve the real declaration and *not* report an ambiguity or
+        // prefer the array overload. Only classfile members carry these flags
+        // (source lowering never synthesizes a bridge), so filtering here
+        // cannot hide a user declaration.
+        let flags = JvmAccessFlags::from_bits_retain(method.flags);
+        if flags.contains(JvmAccessFlags::BRIDGE) || flags.contains(JvmAccessFlags::SYNTHETIC) {
+            continue;
+        }
         let type_params = method
             .type_params
             .iter()
@@ -885,7 +899,7 @@ fn library_class_methods(
         // JLS 4.8: the *instance* members of a raw type have erased
         // signatures. A static member does not depend on the receiver's
         // type arguments at all, so its own generics stay intact.
-        let is_static_member = JvmAccessFlags::from_bits_retain(method.flags).is_static();
+        let is_static_member = flags.is_static();
         let erase = |ty: Ty| {
             if is_raw && !is_static_member {
                 ty.erasure(db)

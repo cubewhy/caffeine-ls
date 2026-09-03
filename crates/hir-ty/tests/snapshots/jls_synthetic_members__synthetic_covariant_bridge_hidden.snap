@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_synthetic_members.rs
+expression: out
+---
+FILE /src/bukkit/Use.java:
+package bukkit;
+
+class Use {
+    int len() {
+        return Server.lookup().length();
+    }
+}
+
+method len(): int
+  locals: 
+  exprs: e1: java.lang.String | e2: int

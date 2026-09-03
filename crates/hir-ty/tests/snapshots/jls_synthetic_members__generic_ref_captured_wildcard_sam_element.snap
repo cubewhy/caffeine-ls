@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_synthetic_members.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+import java.util.List;
+
+class Box {
+    abstract static class CE<T extends CE<?>> {}
+
+    interface BC<A, B> {
+        void accept(A a, B b);
+    }
+
+    static <T extends CE<?>> void wf(Box p, CE<T> e) {}
+
+    static <K> void writeList(List<K> l, BC<Box, K> w) {}
+
+    static void use(List<CE<?>> effects, Box p) {
+        writeList(effects, Box::wf);
+    }
+}
+
+method wf(com.example.Box, com.example.Box.CE<T>): void
+  locals: l0: com.example.Box | l1: com.example.Box.CE<T>
+  exprs: 
+method writeList(java.util.List<K>, com.example.Box.BC<com.example.Box, K>): void
+  locals: l2: java.util.List<K> | l3: com.example.Box.BC<com.example.Box, K>
+  exprs: 
+method use(java.util.List<com.example.Box.CE<?>>, com.example.Box): void
+  locals: l4: java.util.List<com.example.Box.CE<?>> | l5: com.example.Box
+  exprs: e0: java.util.List<com.example.Box.CE<?>> | e2: com.example.Box.BC<com.example.Box, com.example.Box.CE<?>> | e3: void

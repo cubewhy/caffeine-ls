@@ -753,6 +753,25 @@ impl Inference {
                 for u in &b.upper {
                     let u = u.substitute_infer(db, &subst);
                     if u.contains_infer_var(db) {
+                        // §5.1.10/§18.2.3: the equality instantiation `S` is a
+                        // value type; when it is wildcard-parameterized
+                        // (`CE<?>` — the element type of a `List<CE<?>>`
+                        // actual), the constraint ⟨S <: U⟩ is reduced against
+                        // its *capture*, not the bare wildcard: a generic
+                        // referenced method `<T extends CE<?>> void wf(..., CE<T>)`
+                        // whose type variable `α` is bounded above by the SAM's
+                        // `CE<?>` element must instantiate `α` to the capture
+                        // (`CE<CAP#n>`), which javac infers. Without it the
+                        // wildcard degrades to its `Object` lower bound and the
+                        // reference is reported inapplicable.
+                        let eq = match eq.kind(db) {
+                            TyKind::Reference { args, .. }
+                                if args.iter().any(|arg| arg.is_wildcard(db)) =>
+                            {
+                                crate::java::ty::capture_conversion(db, scope, eq)
+                            }
+                            _ => eq,
+                        };
                         self.worklist.push_back(Constraint::Sub(eq, u));
                     }
                 }
