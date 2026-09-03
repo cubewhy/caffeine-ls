@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Optional;
+
+class Body {
+    Optional<Optional<String>> nested() {
+        Optional<String> id = Optional.of("x");
+        return id.map(Optional::of);
+    }
+
+    Optional<Optional<String>> direct() {
+        Optional<String> id = Optional.of("x");
+        Optional<Optional<String>> r = id.map(Optional::of);
+        return r;
+    }
+
+    static class RLoc {
+        RLoc(String s) {}
+    }
+
+    Optional<RLoc> chained(Optional<String> id) {
+        return id.map(Optional::of)
+            .orElseGet(() -> Optional.of("item"))
+            .map(RLoc::new);
+    }
+}
+
+method nested(): java.util.Optional<java.util.Optional<java.lang.String>>
+  locals: l0: java.util.Optional<java.lang.String>
+  exprs: e0: java.lang.String | e2: java.util.Optional<java.lang.String> | e4: java.util.function.Function<? super java.lang.String, ? extends java.util.Optional<java.lang.String>> | e5: java.util.Optional<java.lang.String> | e6: java.util.Optional<java.util.Optional<java.lang.String>>
+method direct(): java.util.Optional<java.util.Optional<java.lang.String>>
+  locals: l1: java.util.Optional<java.lang.String> | l2: java.util.Optional<java.util.Optional<java.lang.String>>
+  exprs: e7: java.lang.String | e9: java.util.Optional<java.lang.String> | e11: java.util.function.Function<? super java.lang.String, ? extends java.util.Optional<java.lang.String>> | e12: java.util.Optional<java.lang.String> | e13: java.util.Optional<java.util.Optional<java.lang.String>> | e14: java.util.Optional<java.util.Optional<java.lang.String>>
+method RLoc(java.lang.String): <init>
+  locals: l3: java.lang.String
+  exprs: 
+method chained(java.util.Optional<java.lang.String>): java.util.Optional<com.example.Body.RLoc>
+  locals: l4: java.util.Optional<java.lang.String>
+  exprs: e16: <error> | e20: <error> | e22: java.util.function.Function<? super java.lang.String, ? extends java.util.Optional<java.lang.String>> | e23: java.util.Optional<java.lang.String> | e24: java.util.Optional<java.util.Optional<java.lang.String>> | e25: <error> | e26: <error>
+  diags: e25@22:13: no-such-method: Cannot resolve method 'orElseGet()'

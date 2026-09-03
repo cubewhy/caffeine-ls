@@ -1204,13 +1204,20 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 ("get", "()Ljava/lang/Object;"),
                 ("map", "(Ljava/util/function/Function;)Ljava/util/Optional;"),
                 ("orElse", "(Ljava/lang/Object;)Ljava/lang/Object;"),
+                // The generic static factory `Optional.of` a method reference
+                // resolves against: `<T> Optional<T> of(T)` ([JLS §15.13.1]
+                // inexact reference to a generic method, whose type parameter
+                // is only potentially applicable until the enclosing
+                // invocation's joint inference instantiates it).
+                ("of", "(Ljava/lang/Object;)Ljava/util/Optional;"),
             ],
             &[
                 "()TT;",
                 "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Optional<TU;>;",
                 "(TT;)TT;",
+                "<T:Ljava/lang/Object;>(TT;)Ljava/util/Optional<TT;>;",
             ],
-            &[0x0001, 0x0001, 0x0001],
+            &[0x0001, 0x0001, 0x0001, 0x0009], // of is ACC_PUBLIC | ACC_STATIC
             Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
         ),
         // Constructors the explicit-`super(args)` tests resolve against

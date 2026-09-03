@@ -462,6 +462,25 @@ impl InferCtx<'_> {
                 }
                 (params.as_slice(), None)
             };
+            // §15.13.1: a *generic* referenced method is only *potentially*
+            // applicable — the compile-time declaration of an inexact
+            // reference — when the arity matches. Its own type parameters are
+            // not yet instantiated, so its parameter types cannot be checked
+            // for compatibility against the SAM's: `Optional::of` is
+            // `<T> Optional<T> of(T)`, and against a
+            // `Function<? super String, ? extends U>` target the parameter `T`
+            // must stay open until the joint inference of the enclosing
+            // invocation instantiates it (a plain assignability test of
+            // `String → T` would wrongly reject the reference, making
+            // `Optional<Optional<String>> o = opt.map(Optional::of)` report
+            // `map` inapplicable). The referenced method's type parameters
+            // become fresh variables of the enclosing table when the
+            // reference's constraints are contributed ([§18.5.2.2],
+            // [`super::overload::InferCtx::contribute_leaf`]).
+            if !method.type_params.is_empty() {
+                applicable.push(method.clone());
+                continue;
+            }
             let mut ok = true;
             for (i, method_param) in fixed.iter().enumerate() {
                 if !self.method_ref_param_compatible(sam_params.get(i + offset), method_param) {

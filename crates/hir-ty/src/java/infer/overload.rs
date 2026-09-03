@@ -564,7 +564,72 @@ impl InferCtx<'_> {
                             self.pick_method_ref(&members, &sam.params, kind)
                                 .map(|method| (method, kind))
                         });
-                    if let Some((ref_method, kind)) = ref_method {
+                    // §15.13.1/§18.5.2.2: the referenced method's own type
+                    // parameters are *not* instantiated by the selection —
+                    // an inexact reference to a generic method is only
+                    // *potentially* applicable ([§15.13.1]). Its type
+                    // parameters become fresh inference variables of the
+                    // enclosing invocation's table ([§18.5.2.2]), exactly as
+                    // [`Inference::register_method`] does for a direct
+                    // invocation: `opt.map(Optional::of)` against a
+                    // `Function<? super String, ? extends U>` formal then
+                    // constrains `Optional<α> <: Optional<U>` from the
+                    // referenced return and `⟨String → α⟩` from the
+                    // parameter, solving both `α := String` and the
+                    // enclosing `U`. Without the substitution the declared
+                    // `Optional<T>` (rigid `T`) dead-ends the return
+                    // constraint and `map` is reported inapplicable.
+                    let subst: FxHashMap<Name, Ty> = ref_method
+                        .as_ref()
+                        .map(|(ref_method, _)| {
+                            ref_method
+                                .type_params
+                                .iter()
+                                .map(|tp| (tp.name.clone(), inference.fresh_var(self.db)))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // §8.4.4: the bounds of the referenced method's type
+                    // parameters — substituted with the fresh variables —
+                    // constrain the new variables from above.
+                    if let Some((ref_method, _)) = &ref_method {
+                        for tp in &ref_method.type_params {
+                            let var = subst[&tp.name];
+                            let bounds: Vec<Ty> = tp
+                                .bounds
+                                .iter()
+                                .map(|b| b.substitute(self.db, &subst))
+                                .collect();
+                            if bounds.is_empty() {
+                                inference.add_upper(
+                                    self.db,
+                                    var,
+                                    Ty::reference(self.db, "java.lang.Object", Vec::new()),
+                                );
+                            } else {
+                                for bound in bounds {
+                                    inference.add_upper(self.db, var, bound);
+                                }
+                            }
+                        }
+                    }
+                    if let Some((ref_method, kind)) = &ref_method {
+                        // §15.13.3/§18.5.2.2: the *parameters* of a method
+                        // reference constrain the target functional interface's
+                        // type variables too — `comparingInt(Friend::order)`
+                        // against `ToIntFunction<? super T>` fixes `T` from the
+                        // referenced method's parameter `Friend`, exactly as a
+                        // lambda with a declared parameter type does (§18.5.2.1).
+                        // Without it, `T` resolves to `Object` and a chained
+                        // `thenComparing(...)` receiver degrades to
+                        // `Comparator<Object>`, making every `Comparator<Friend>`
+                        // overload inapplicable. A generic referenced method's
+                        // parameters are substituted with the fresh variables.
+                        let ref_params: Vec<Ty> = ref_method
+                            .params
+                            .iter()
+                            .map(|p| p.substitute(self.db, &subst))
+                            .collect();
                         let base = match kind {
                             MethodRefKind::Static | MethodRefKind::Bound => 0,
                             // §15.13.3: the unbound instance receiver is the
@@ -572,8 +637,7 @@ impl InferCtx<'_> {
                             // parameters start one slot in.
                             MethodRefKind::Unbound => 1,
                         };
-                        for (i, (ref_param, sam_param)) in ref_method
-                            .params
+                        for (i, (ref_param, sam_param)) in ref_params
                             .iter()
                             .zip(&sam.params[base.min(sam.params.len())..])
                             .enumerate()
@@ -598,7 +662,7 @@ impl InferCtx<'_> {
                         // against `Function<? super T, ? extends U>` is a
                         // `Function<Friend, …>`, so `⟨T → Friend⟩` bounds the
                         // inference variable from above by the receiver type.
-                        if kind == MethodRefKind::Unbound
+                        if *kind == MethodRefKind::Unbound
                             && let Some((receiver_ty, _, _)) =
                                 self.method_ref_target(qualifier, type_name.as_ref())
                             && !receiver_ty.contains_infer_var(self.db)
@@ -612,8 +676,23 @@ impl InferCtx<'_> {
                             }
                         }
                     }
-                    let ref_ret =
-                        self.method_ref_return(qualifier, type_name.as_ref(), &name, &sam.params);
+                    // §15.13.3/§18.5.2.2: the *return* of the referenced
+                    // method constrains the target functional interface's
+                    // return. For a generic referenced method the declared
+                    // return still carries its own type parameters, which the
+                    // fresh-variable substitution (`subst`) must replace
+                    // before the return participates in the enclosing table —
+                    // `opt.map(Optional::of)` contributes
+                    // `Optional<α> <: Optional<U>` (α := the fresh variable for
+                    // `Optional.of`'s `T`), without which `U` never resolves.
+                    let ref_ret = if subst.is_empty() {
+                        self.method_ref_return(qualifier, type_name.as_ref(), &name, &sam.params)
+                    } else {
+                        ref_method
+                            .as_ref()
+                            .map(|(method, _)| method.ret.substitute(self.db, &subst))
+                            .unwrap_or_else(|| self.error())
+                    };
                     // §15.13.2: a *void-compatible* reference constrains
                     // nothing — any result the referenced method produces is
                     // discarded (`attributeNode::getDepth` is compatible with
