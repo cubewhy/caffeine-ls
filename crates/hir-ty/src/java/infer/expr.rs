@@ -8,6 +8,7 @@ use hir_expand::{
     name::Name,
 };
 use rustc_hash::FxHashMap;
+use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeRef};
 
 use crate::java::{
@@ -20,6 +21,7 @@ use crate::java::{
 use super::{FinalFieldWrite, Flow, InferCtx, poly::*};
 
 impl InferCtx<'_> {
+    #[stacksafe]
     pub(super) fn infer_expr(&mut self, id: ExprId) -> Ty {
         let expr = self.tree.expr(id).clone();
         let ty = match expr {

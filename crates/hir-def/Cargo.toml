@@ -16,6 +16,7 @@ rust-asm.workspace = true
 rustc-hash.workspace = true
 salsa.workspace = true
 smol_str.workspace = true
+stacksafe.workspace = true
 syntax.workspace = true
 triomphe.workspace = true
 vfs.workspace = true

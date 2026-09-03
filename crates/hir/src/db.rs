@@ -386,33 +386,74 @@ pub enum ResolutionScope {
     JdkBuiltins,
 }
 
+/// The interned key of one `fqn_resolve` within a source set's classpath
+/// scope. Memoizing the whole resolution — the source probe plus the ordered
+/// classpath walk — collapses the repeated per-type-reference lookups of every
+/// body in a revision to one salsa memo per (source set, fqn): a workspace
+/// pull re-derives the same canonical types from hundreds of files, and
+/// without this each `body_types`/`item_ty` invocation re-walked the package
+/// buckets and the whole classpath (re-interning the FQN candidate and
+/// re-probing every library along the way).
+#[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
+pub struct FqnResolveKey {
+    /// The resolving source set.
+    pub source_set: SourceSetId,
+    /// The fully qualified name being resolved.
+    pub fqn: Name,
+}
+
+/// The memoized source-set form of [`fqn_resolve`]: `fqn` resolved within
+/// `key`'s source set, honoring classpath order ([JLS §7.2.1]). The body is
+/// the exact [`fqn_resolve`] `SourceSet` path; keying it on the interned
+/// (source set, fqn) and on the [`ProjectGraph`] lets salsa backdate it across
+/// the millions of same-FQN resolutions of a pull. A source-file edit
+/// invalidates only the fqns whose package buckets actually moved (the body
+/// reads the tracked per-package symbol queries), so a change to an unrelated
+/// file keeps every resolution memoized.
+#[salsa::tracked(returns(clone))]
+pub(crate) fn fqn_resolve_query(
+    db: &dyn HirDatabase,
+    graph: ProjectGraph,
+    key: FqnResolveKey,
+) -> Option<Resolved> {
+    let source_set = key.source_set(db);
+    let fqn = key.fqn(db);
+
+    if let Some(resolved) = source_resolve(db, source_set, fqn.as_str()) {
+        return Some(resolved);
+    }
+    let entries = graph.source_sets(db).get(source_set)?;
+    for entry in &entries.entries {
+        match entry {
+            ClasspathEntry::SourceSet(internal) => {
+                if let Some(resolved) = source_resolve(db, internal, fqn.as_str()) {
+                    return Some(resolved);
+                }
+            }
+            ClasspathEntry::Library(library) => {
+                if let Some(resolved) =
+                    resolve_in_libraries(db, std::slice::from_ref(library), fqn.as_str())
+                {
+                    return Some(Resolved::Library(resolved));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Resolves a fully qualified class name within a scope, honoring classpath
 /// order: a source set's own classes, then its classpath entries (internal
 /// source sets, then libraries), each entry in order.
 pub fn fqn_resolve(db: &dyn HirDatabase, scope: &ResolutionScope, fqn: &str) -> Option<Resolved> {
     match scope {
         ResolutionScope::SourceSet(source_set) => {
-            if let Some(resolved) = source_resolve(db, source_set, fqn) {
-                return Some(resolved);
-            }
-            let entries = classpath(db, source_set.clone());
-            for entry in &entries.entries {
-                match entry {
-                    ClasspathEntry::SourceSet(internal) => {
-                        if let Some(resolved) = source_resolve(db, internal, fqn) {
-                            return Some(resolved);
-                        }
-                    }
-                    ClasspathEntry::Library(library) => {
-                        if let Some(resolved) =
-                            resolve_in_libraries(db, std::slice::from_ref(library), fqn)
-                        {
-                            return Some(Resolved::Library(resolved));
-                        }
-                    }
-                }
-            }
-            None
+            let graph = ProjectGraph::try_get(db)?;
+            fqn_resolve_query(
+                db,
+                graph,
+                FqnResolveKey::new(db, source_set.clone(), Name::new(fqn)),
+            )
         }
         ResolutionScope::Classpath(libraries) => {
             resolve_in_libraries(db, libraries, fqn).map(Resolved::Library)

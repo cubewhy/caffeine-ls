@@ -21,6 +21,7 @@ use std::fmt;
 
 use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
+use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use crate::java::db::TyDatabase;
@@ -317,6 +318,7 @@ impl Ty {
     }
 
     /// Whether any nested type argument is an inference variable.
+    #[stacksafe]
     pub fn contains_infer_var(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {
             TyKind::InferenceVar(_) => true,
@@ -332,6 +334,7 @@ impl Ty {
 
     /// Whether any nested component is a capture variable (a `CAP#n` type
     /// variable produced by [§5.1.10] capture conversion).
+    #[stacksafe]
     pub fn contains_type_var_named_capture(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {
             TyKind::TypeVar { name, .. } => name.as_str().starts_with("CAP#"),
@@ -350,6 +353,7 @@ impl Ty {
     }
 
     /// Whether any nested component is a type variable.
+    #[stacksafe]
     pub fn contains_type_var(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {
             TyKind::TypeVar { .. } => true,
@@ -378,6 +382,7 @@ impl Ty {
     /// identical pair and it fails. Per [§4.10.2] same erasure — and because
     /// both handles are the *same* declared type variable — the pair is
     /// identical regardless of how the recursive bound got truncated.
+    #[stacksafe]
     pub fn same_shape(&self, db: &dyn TyDatabase, other: &Ty) -> bool {
         match (self.kind(db), other.kind(db)) {
             (TyKind::Reference { name: a, args: aa }, TyKind::Reference { name: b, args: bb }) => {
@@ -433,6 +438,7 @@ impl Ty {
     /// arguments, array elements, type-variable bounds, wildcard bounds and
     /// intersection members. Used by the cross-file dependency index
     /// ([`crate::java::dep_index`]) to recover the source files a [`Ty`] refers to.
+    #[stacksafe]
     pub fn for_each_reference(&self, db: &dyn TyDatabase, f: &mut impl FnMut(&Name)) {
         match self.kind(db) {
             TyKind::Reference { name, args } => {

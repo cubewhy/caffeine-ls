@@ -7,6 +7,7 @@ use hir_expand::{
     span::SpannedTypeRef,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use stacksafe::stacksafe;
 
 use crate::java::{
     diagnostics::{DiagLocation, TypeError},
@@ -39,6 +40,7 @@ impl InferCtx<'_> {
         }
     }
 
+    #[stacksafe]
     pub(super) fn infer_stmt(&mut self, id: StmtId) {
         let stmt = self.tree.stmt(id).clone();
         self.infer_stmt_data(id, &stmt);

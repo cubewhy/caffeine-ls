@@ -14,6 +14,7 @@ use std::str::Chars;
 
 use java_syntax::{Lang, SyntaxKind as J};
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
+use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
@@ -207,6 +208,7 @@ fn block_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stm
     alloc_stmt(ctx, StmtData::Block(inner))
 }
 
+#[stacksafe]
 fn stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtId {
     let data = stmt_data(ctx, owner, node);
     alloc_stmt_with_range(ctx, data, node.text_range())
@@ -818,6 +820,7 @@ fn alloc_expr(ctx: &mut LowerCtx, data: ExprData, range: TextRange) -> ExprId {
     ExprId(ctx.bodies.exprs.alloc(data))
 }
 
+#[stacksafe]
 fn expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
     let data = expr_data(ctx, owner, node);
     let id = alloc_expr(ctx, data, node.text_range());

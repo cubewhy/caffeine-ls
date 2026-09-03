@@ -20,6 +20,7 @@
 //! classpath, and the first one that exists wins.
 
 use rustc_hash::FxHashMap;
+use stacksafe::stacksafe;
 use vfs::FileId;
 
 use hir_def::java::item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam};
@@ -217,6 +218,7 @@ pub fn resolve_type_ref(
 /// re-entrant reference to one of them ([JLS §4.4] recursion such as
 /// `T extends Comparable<T>`) yields the type variable without bounds so
 /// interning terminates.
+#[stacksafe]
 fn resolve_type_ref_impl(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
