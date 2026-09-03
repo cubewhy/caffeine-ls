@@ -106,3 +106,39 @@ abstract class Value<K, T extends Value<K, T>> {
 ",
     )])
 );
+
+// -- green: chaining on a self-returning type-variable receiver ----------------
+// `interface Box<T extends Box<T>> { T self(); }` with a receiver `input: T`
+// (`T extends Box<T>`, a method type parameter): `input.self()` returns the
+// receiver's own type variable, so each further `.self()` in the same
+// expression resolves against `T`'s bound `Box<T>`. The chained form used to
+// degrade the intermediate result to a recursion-guarded bound-less `T` whose
+// member set is empty, reporting `no-such-method` on the second call.
+
+snapshot!(
+    self_returning_type_var_chain,
+    check_body_types(&[(
+        "/src/com/example/G.java",
+        "\
+package com.example;
+
+class G {
+    interface Box<T extends Box<T>> {
+        T self();
+
+        T reset();
+
+        int size();
+    }
+
+    static <T extends Box<T>> T rebuild(T input) {
+        return input.self().reset().self();
+    }
+
+    static <T extends Box<T>> int depth(T input) {
+        return input.self().self().size();
+    }
+}
+",
+    )])
+);

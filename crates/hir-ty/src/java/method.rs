@@ -553,6 +553,27 @@ fn member_set_impl(
             }
         }
     }
+    // §8.4.8/§4.4: a member whose result type is a *type variable of the
+    // declaring class* resolved on a type-variable receiver keeps the
+    // receiver's own type variable, not the recursion-guarded bare handle that
+    // named it. `interface G<T extends G<T>> { T noarg(); }` with a receiver
+    // `v: T` (`T extends G<T>`, the method's own type parameter) looks its
+    // members up through the bound `G<T>`, whose type argument is the *inner*
+    // recursion-guarded `T` (no further bounds, [§4.4] interning). Instantiating
+    // `noarg`'s return with that argument yields a bound-less `T` whose member
+    // set is empty — the next chained call (`v.noarg().noarg()`) reports
+    // `no-such-method`. The declared bound means the receiver's variable
+    // itself, so re-point the result at it: the receiver `T` carries the full
+    // `G<T>` bound and the chain stays member-resolution-capable.
+    if let TyKind::TypeVar { name, .. } = receiver.kind(db) {
+        let receiver_name = name.as_str();
+        for method in &mut out {
+            if matches!(method.ret.kind(db), TyKind::TypeVar { name, .. } if name.as_str() == receiver_name)
+            {
+                method.ret = receiver;
+            }
+        }
+    }
     // §10.7: every array type has a public `clone` method with no parameters
     // and no checked exceptions, whose return type is the array type itself.
     // It overrides `Object.clone` (which is `protected`) as public, so it is

@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_self_generic.rs
+expression: out
+---
+FILE /src/com/example/G.java:
+package com.example;
+
+class G {
+    interface Box<T extends Box<T>> {
+        T self();
+
+        T reset();
+
+        int size();
+    }
+
+    static <T extends Box<T>> T rebuild(T input) {
+        return input.self().reset().self();
+    }
+
+    static <T extends Box<T>> int depth(T input) {
+        return input.self().self().size();
+    }
+}
+
+method rebuild(T): T
+  locals: l0: T
+  exprs: e0: T | e1: T | e2: T | e3: T
+method depth(T): int
+  locals: l1: T
+  exprs: e4: T | e5: T | e6: T | e7: int
