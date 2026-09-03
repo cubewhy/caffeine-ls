@@ -271,7 +271,11 @@ impl InferCtx<'_> {
     ) -> Ty {
         let (receiver_ty, mode, method_name_form) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
-        let arg_kinds = self.arg_kinds(args);
+        // §5.1.10/§15.12.2: a method invocation's concrete actual arguments
+        // are capture-converted before entering the constraint table — a
+        // `Box<?>` actual against a `Box<T>` formal constrains `T` by the
+        // wildcard's capture, not by the bare wildcard.
+        let arg_kinds = self.arg_kinds_capturing(args);
         // §15.12.1: no member of the name on the receiver is a compile-time
         // error; members of the name that are all inapplicable (§15.12.2) is a
         // wrong-argument-count error.

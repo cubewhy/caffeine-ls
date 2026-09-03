@@ -27,10 +27,41 @@ use super::{
 impl InferCtx<'_> {
     /// argument, inferred standalone.
     pub(super) fn arg_kinds(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
-        args.iter().map(|arg| self.arg_info(*arg)).collect()
+        args.iter().map(|arg| self.arg_info(*arg, false)).collect()
     }
 
-    pub(super) fn arg_info(&mut self, arg: ExprId) -> ArgInfo {
+    /// [`Self::arg_kinds`] with the *capturing* actual-type semantics of a
+    /// method invocation ([§5.1.10]): every concrete argument whose standalone
+    /// type is a wildcard-parameterized reference is capture-converted before
+    /// it enters the inference table, mirroring javac typing a value expression
+    /// by the capture of its wildcard at each use. Class instance creation
+    /// ([§15.9.2.2] diamond inference) uses the non-capturing form, as javac's
+    /// `instantiateClass` keeps the written argument types.
+    pub(super) fn arg_kinds_capturing(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
+        args.iter().map(|arg| self.arg_info(*arg, true)).collect()
+    }
+
+    /// The standalone type a concrete (non-poly) invocation argument contributes
+    /// to a candidate's constraint table. The argument expression is inferred
+    /// in isolation — the enclosing invocation's own target type must not reach
+    /// it ([§18.5.2.2], see [`Self::arg_info`]) — and its result is then
+    /// *capture-converted* ([§5.1.10]) when it is a wildcard-parameterized
+    /// reference type. javac types a value expression whose static type is
+    /// `Box<?>` by the capture of that wildcard at every use, so relating a
+    /// `Box<?>` actual to a generic `Box<T>` formal must constrain `T` by the
+    /// capture's upper bound (`T := CAP#n` with `CAP#n <: PD`), not dead-end on
+    /// the bare wildcard: `<T extends PD> T get(Box<T>)` invoked with a
+    /// `Box<?>` argument is legal ([JLS §5.1.10], [§15.12.2], [§18.2.3]).
+    pub(super) fn concrete_arg_ty(&mut self, arg: ExprId) -> Ty {
+        let ty = self.with_target(None, |this| this.infer_expr(arg));
+        if ty.contains_wildcard(self.db) {
+            crate::java::ty::capture_conversion(self.db, &self.scope, ty)
+        } else {
+            ty
+        }
+    }
+
+    pub(super) fn arg_info(&mut self, arg: ExprId, capture: bool) -> ArgInfo {
         let leaves = poly_leaves(&self.tree, arg);
         if leaves.is_empty() {
             // §18.5.2.2: a concrete argument is not a poly expression — its
@@ -43,9 +74,11 @@ impl InferCtx<'_> {
             ArgInfo {
                 id: arg,
                 poly: false,
-                leaves: vec![ArgKind::Concrete(
-                    self.with_target(None, |this| this.infer_expr(arg)),
-                )],
+                leaves: vec![ArgKind::Concrete(if capture {
+                    self.concrete_arg_ty(arg)
+                } else {
+                    self.with_target(None, |this| this.infer_expr(arg))
+                })],
             }
         } else {
             ArgInfo {
@@ -1032,7 +1065,9 @@ impl InferCtx<'_> {
         let (receiver_ty, mode, _) = self.receiver_info(receiver, &name);
         let access = self.access.with_mode(mode);
         let members = member_set(self.db, &self.scope, &receiver_ty, name.as_str(), &access);
-        let arg_kinds = self.arg_kinds(&args);
+        // §5.1.10/§18.5.2.4: a nested invocation's *own* concrete arguments
+        // are capture-converted actuals, exactly like a top-level invocation's.
+        let arg_kinds = self.arg_kinds_capturing(&args);
         let explicit = if type_args.is_empty() {
             None
         } else {

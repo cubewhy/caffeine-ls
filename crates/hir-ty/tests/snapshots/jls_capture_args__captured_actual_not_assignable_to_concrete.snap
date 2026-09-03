@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_capture_args.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box {
+    static class PD {}
+    static class Particle<T extends PD> {}
+
+    static void take(Particle<PD> p) {}
+
+    static void use(Particle<?> any) {
+        take(any);
+    }
+}
+
+method take(com.example.Box.Particle<com.example.Box.PD>): void
+  locals: l0: com.example.Box.Particle<com.example.Box.PD>
+  exprs: 
+method use(com.example.Box.Particle<?>): void
+  locals: l1: com.example.Box.Particle<?>
+  exprs: e0: com.example.Box.Particle<?> | e1: <error>
+  diags: e1@9:8: wrong-argument-count: Method 'take()' cannot be applied to given types

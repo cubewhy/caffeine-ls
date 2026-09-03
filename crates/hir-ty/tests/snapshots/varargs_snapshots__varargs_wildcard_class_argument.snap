@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/varargs_snapshots.rs
-assertion_line: 18
 expression: out
 ---
 FILE /src/com/example/Factory.java:
@@ -30,10 +29,10 @@ method make(java.lang.Class<T>, java.lang.Object): T
   exprs: e0: null
 method zeroTail(java.lang.Class<?>): void
   locals: l2: java.lang.Class<?> | l3: java.lang.Object
-  exprs: e1: java.lang.Class<?> | e3: java.lang.Object
+  exprs: e1: java.lang.Class<?> | e3: CAP#0
 method mixedTail(java.lang.Class<?>): void
   locals: l4: java.lang.Class<?> | l5: java.lang.Object | l6: java.lang.Object
-  exprs: e4: java.lang.Class<?> | e5: null | e6: boolean | e7: null | e9: java.lang.Object | e10: java.lang.Class<?> | e11: java.lang.String | e12: int | e13: int | e14: int | e15: int | e17: java.lang.Object
+  exprs: e4: java.lang.Class<?> | e5: null | e6: boolean | e7: null | e9: CAP#1 | e10: java.lang.Class<?> | e11: java.lang.String | e12: int | e13: int | e14: int | e15: int | e17: CAP#2
 method boundedWild(java.lang.Class<? extends java.lang.Number>): void
   locals: l7: java.lang.Class<? extends java.lang.Number> | l8: java.lang.Number
-  exprs: e18: java.lang.Class<? extends java.lang.Number> | e20: java.lang.Number | e21: java.lang.Number
+  exprs: e18: java.lang.Class<? extends java.lang.Number> | e20: CAP#3 | e21: java.lang.Number

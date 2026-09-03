@@ -352,6 +352,22 @@ impl Ty {
         }
     }
 
+    /// Whether any nested type argument is a wildcard
+    /// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)).
+    /// A wildcard-parameterized reference is a candidate for capture conversion
+    /// ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.10))
+    /// when a value of it participates in invocation inference.
+    #[stacksafe]
+    pub fn contains_wildcard(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::Wildcard(_) => true,
+            TyKind::Reference { args, .. } => args.iter().any(|arg| arg.contains_wildcard(db)),
+            TyKind::Array(inner) => inner.contains_wildcard(db),
+            TyKind::Intersection(members) => members.iter().any(|m| m.contains_wildcard(db)),
+            _ => false,
+        }
+    }
+
     /// Whether any nested component is a type variable.
     #[stacksafe]
     pub fn contains_type_var(&self, db: &dyn TyDatabase) -> bool {
@@ -999,21 +1015,12 @@ fn type_param_upper_bounds(
     placeholders: &[Option<Ty>],
 ) -> Vec<Ty> {
     let object = Ty::reference(db, "java.lang.Object", Vec::new());
-    let Some(resolved) = hir::fqn_resolve(db, scope, fqn) else {
+    let params = crate::java::resolve::declared_type_param_bounds(db, scope, &Name::new(fqn));
+    if params.is_empty() && hir::fqn_resolve(db, scope, fqn).is_some() {
+        // A class with no recoverable type parameters (unresolvable name or a
+        // source declaration whose tree the helper cannot see) has none.
         return Vec::new();
-    };
-    let interner = &db.hir_state().interner;
-    let params: Vec<(Name, Vec<syntax::stub::TypeRef<hir::Symbol>>)> = match resolved {
-        hir::Resolved::Library(_) => match hir::class_generic_info(db, &resolved) {
-            Some(info) => info
-                .type_params
-                .iter()
-                .map(|tp| (Name::new(interner.resolve(&tp.name)), tp.bounds.clone()))
-                .collect(),
-            None => return Vec::new(),
-        },
-        hir::Resolved::Source(_) => return Vec::new(),
-    };
+    }
     let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
     for (i, (name, _)) in params.iter().enumerate() {
         let arg = match (args.get(i), placeholders.get(i)) {
@@ -1028,7 +1035,8 @@ fn type_param_upper_bounds(
         .map(|(_, bounds)| {
             let bound = bounds
                 .first()
-                .map(|tr| crate::java::resolve::ty_from_library(db, tr).substitute(db, &binding))
+                .copied()
+                .map(|bound| bound.substitute(db, &binding))
                 .filter(|b| !b.is_object(db))
                 .unwrap_or(object);
             bound

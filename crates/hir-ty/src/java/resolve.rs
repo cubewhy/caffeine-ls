@@ -942,6 +942,68 @@ pub fn type_argument_bound_violation(
     None
 }
 
+/// The declared type parameters of the class named by `fqn` as
+/// `(name, [bound Ty])`, in declaration order — the source-side companion of
+/// [`crate::java::ty::type_param_upper_bounds`], resolving each bound against
+/// the declaring class's own scope so `?` capture conversion ([§5.1.10]) can
+/// recover the true upper bound of a source class's type parameter
+/// (`class Box<T extends PD>` captured from `Box<?>` gives `CAP extends PD`,
+/// not `CAP extends Object`). Library classes resolve through the classfile
+/// `Signature` attribute ([JVMS §4.7.9.1]); source classes through the item
+/// tree.
+pub fn declared_type_param_bounds(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &Name,
+) -> Vec<(Name, Vec<Ty>)> {
+    let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
+        return Vec::new();
+    };
+    match &resolved {
+        hir::Resolved::Library(_) => {
+            let Some(info) = hir::class_generic_info(db, &resolved) else {
+                return Vec::new();
+            };
+            let interner = &db.hir_state().interner;
+            info.type_params
+                .iter()
+                .map(|tp| {
+                    (
+                        Name::new(interner.resolve(&tp.name)),
+                        tp.bounds.iter().map(|b| ty_from_library(db, b)).collect(),
+                    )
+                })
+                .collect()
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let params = match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
+                ItemData::Record(d) => Some(&d.type_params),
+                _ => None,
+            };
+            let Some(params) = params else {
+                return Vec::new();
+            };
+            let file_scope = scope_for_file(db, source.file);
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
+            let resolver = Resolver::new(&tree, type_params, source.item);
+            params
+                .iter()
+                .map(|tp| {
+                    (
+                        tp.name.clone(),
+                        tp.bounds
+                            .iter()
+                            .map(|b| resolve_type_ref(db, &file_scope, &resolver, b))
+                            .collect(),
+                    )
+                })
+                .collect()
+        }
+    }
+}
+
 /// The declared type of an item: the type of a field, the return type of a
 /// method, or the type of a class/interface/enum/record/annotation
 /// declaration. Memoized per (file, item) by the tracked query in [`crate::java::db`].

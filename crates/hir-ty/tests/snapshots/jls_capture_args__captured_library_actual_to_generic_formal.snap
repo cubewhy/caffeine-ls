@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_capture_args.rs
+expression: out
+---
+FILE /src/com/example/Opt.java:
+package com.example;
+
+import java.util.Optional;
+
+class Opt {
+    static <T> T unwrap(Optional<T> o) {
+        return o.get();
+    }
+
+    Object read(Optional<?> any) {
+        return unwrap(any);
+    }
+}
+
+method unwrap(java.util.Optional<T>): T
+  locals: l0: java.util.Optional<T>
+  exprs: e0: java.util.Optional<T> | e1: T
+method read(java.util.Optional<?>): java.lang.Object
+  locals: l1: java.util.Optional<?>
+  exprs: e2: java.util.Optional<?> | e3: CAP#0

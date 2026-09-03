@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_capture_args.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box {
+    static class PD {}
+    static class Particle<T extends PD> {
+        Particle() {}
+    }
+
+    static <T extends PD> T get(Particle<T> p) {
+        return null;
+    }
+
+    static <T extends PD> void accept(Particle<T> p) {}
+
+    static void use(Particle<?> any) {
+        PD value = get(any);
+        accept(any);
+    }
+}
+
+method Particle(): <init>
+  locals: 
+  exprs: 
+method get(com.example.Box.Particle<T>): T
+  locals: l0: com.example.Box.Particle<T>
+  exprs: e0: null
+method accept(com.example.Box.Particle<T>): void
+  locals: l1: com.example.Box.Particle<T>
+  exprs: 
+method use(com.example.Box.Particle<?>): void
+  locals: l2: com.example.Box.Particle<?> | l3: com.example.Box.PD
+  exprs: e1: com.example.Box.Particle<?> | e2: CAP#0 | e3: com.example.Box.Particle<?> | e4: void
