@@ -15,7 +15,7 @@ use crate::java::{
     diagnostics::{DiagLocation, NonStaticThisKind, TypeError},
     method::{FieldData, InvocationMode, pick_field},
     resolve::resolve_type_ref,
-    ty::{Ty, TyKind},
+    ty::{Ty, TyKind, boxed_type},
 };
 
 use super::{FinalFieldWrite, Flow, InferCtx, poly::*};
@@ -80,9 +80,18 @@ impl InferCtx<'_> {
                 }
                 self.error()
             }
-            // §15.8.2: `T.class` has type `Class<T>`.
+            // §15.8.2: `T.class` has type `Class<T>`. For a primitive type the
+            // class literal denotes the *boxed* class — `int.class` is
+            // `Class<Integer>`, `long.class` `Class<Long>`, `void.class`
+            // `Class<Void>` ([§15.8.2]: "the type of `p.class`, where p is the
+            // name of a primitive type, is `Class<B>` where B is the type of an
+            // expression of type p after boxing conversion").
             ExprData::ClassLit(tyref) => {
                 let inner = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
+                let inner = match inner.kind(self.db) {
+                    TyKind::Primitive(p) => Ty::reference(self.db, boxed_type(*p), Vec::new()),
+                    _ => inner,
+                };
                 Ty::reference(self.db, "java.lang.Class", vec![inner])
             }
             ExprData::Var(name) => self.var(id, name),

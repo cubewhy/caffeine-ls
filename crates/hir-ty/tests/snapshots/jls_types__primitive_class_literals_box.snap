@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_types.rs
+expression: out
+---
+FILE /src/com/example/Lits.java:
+package com.example;
+
+class Lits {
+    interface TA<T> {}
+
+    interface TAF {}
+
+    static <TT> TAF newFactory(Class<TT> unboxed, Class<TT> boxed, TA<? super TT> adapter) {
+        return null;
+    }
+
+    static TA<Long> longAdapter() {
+        return null;
+    }
+
+    static void m() {
+        Class<Integer> i = int.class;
+        Class<Long> l = long.class;
+        TAF a = newFactory(long.class, Long.class, longAdapter());
+        TAF b = newFactory(int.class, Integer.class, null);
+    }
+}
+
+method newFactory(java.lang.Class<TT>, java.lang.Class<TT>, com.example.Lits.TA<? super TT>): com.example.Lits.TAF
+  locals: l0: java.lang.Class<TT> | l1: java.lang.Class<TT> | l2: com.example.Lits.TA<? super TT>
+  exprs: e0: null
+method longAdapter(): com.example.Lits.TA<java.lang.Long>
+  locals: 
+  exprs: e1: null
+method m(): void
+  locals: l3: java.lang.Class<java.lang.Integer> | l4: java.lang.Class<java.lang.Long> | l5: com.example.Lits.TAF | l6: com.example.Lits.TAF
+  exprs: e2: java.lang.Class<java.lang.Integer> | e3: java.lang.Class<java.lang.Long> | e4: java.lang.Class<java.lang.Long> | e5: java.lang.Class<java.lang.Long> | e6: com.example.Lits.TA<java.lang.Long> | e7: com.example.Lits.TAF | e8: java.lang.Class<java.lang.Integer> | e9: java.lang.Class<java.lang.Integer> | e10: null | e11: com.example.Lits.TAF

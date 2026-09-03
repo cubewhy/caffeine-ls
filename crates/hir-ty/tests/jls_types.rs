@@ -35,6 +35,43 @@ class Body {
     )])
 );
 
+// -- green: a primitive class literal boxes to Class<Box> ([§15.8.2]) --------
+// `int.class` is `Class<Integer>`, `long.class` is `Class<Long>` and
+// `void.class` is `Class<Void>` ([JLS §15.8.2]). The boxed literal then unifies
+// with a `Class<TT>` generic formal across several arguments — `newFactory(
+// long.class, Long.class, adapter)` infers `TT := Long`.
+
+snapshot!(
+    primitive_class_literals_box,
+    check_body_types(&[(
+        "/src/com/example/Lits.java",
+        "\
+package com.example;
+
+class Lits {
+    interface TA<T> {}
+
+    interface TAF {}
+
+    static <TT> TAF newFactory(Class<TT> unboxed, Class<TT> boxed, TA<? super TT> adapter) {
+        return null;
+    }
+
+    static TA<Long> longAdapter() {
+        return null;
+    }
+
+    static void m() {
+        Class<Integer> i = int.class;
+        Class<Long> l = long.class;
+        TAF a = newFactory(long.class, Long.class, longAdapter());
+        TAF b = newFactory(int.class, Integer.class, null);
+    }
+}
+",
+    )])
+);
+
 // -- green: char promotes to int in arithmetic --------------------------------
 
 snapshot!(
