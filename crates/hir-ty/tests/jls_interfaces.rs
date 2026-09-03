@@ -137,6 +137,43 @@ class Impl implements Greets {
 // interface functional with exactly one SAM — a try-with-resources lambda
 // target types against it.
 
+// -- §15.11.2: qualified-super keeps the inherited type arguments ---------------
+// `ComponentDecoder.super.m(...)` inside a generic `ComponentSerializer<I,O,R>
+// extends ComponentDecoder<R,O>` must resolve the default method on
+// `ComponentDecoder<R,O>`, not on a raw `ComponentDecoder` whose `O` erases to
+// its `Component` bound — otherwise a `return ... deserializeOr(...)` typed as
+// that raw method's result is 'found Component, required O'.
+
+snapshot!(
+    qualified_super_keeps_type_arguments,
+    check_body_types(&[(
+        "/src/com/example/Super.java",
+        "\
+package com.example;
+
+interface Super {
+    interface Comp {}
+    interface Decoder<S, O extends Comp> {
+        O deserialize(S v);
+
+        default O deserializeOrNull(S v) {
+            return deserialize(v);
+        }
+    }
+
+    interface Ser<I extends Comp, O extends Comp, R> extends Decoder<R, O> {
+        default O keep(R v) {
+            return Decoder.super.deserializeOrNull(v);
+        }
+    }
+}
+",
+    )])
+);
+// Green: the qualified `Decoder.super` receiver carries `Decoder<R, O>` as
+// inherited by `Ser`, so `deserializeOrNull` returns `O` and the default body
+// needs no cast.
+
 snapshot!(
     sam_override_equivalence_closeable,
     check_body_types(&[(

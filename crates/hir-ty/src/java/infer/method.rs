@@ -5,8 +5,10 @@
 use hir_expand::{
     body::{ExprData, ExprId},
     name::Name,
+    span::SpannedTypeRef,
 };
 use rowan::TextRange;
+use rustc_hash::FxHashSet;
 use syntax::stub::PrimitiveType;
 
 use crate::java::{
@@ -14,7 +16,7 @@ use crate::java::{
     method::{InvocationMode, member_set},
     resolve::resolve_type_ref,
     subtyping::supertypes_impl,
-    ty::Ty,
+    ty::{Ty, TyKind},
 };
 
 use super::{
@@ -401,7 +403,12 @@ impl InferCtx<'_> {
                                     keyword: NonStaticThisKind::Super,
                                 });
                             }
-                            resolve_type_ref(self.db, &self.scope, &self.resolver, &qualifier)
+                            // §15.11.2: the receiver of `I.super.m(...)` is the
+                            // interface `I` *as inherited* — parameterized by
+                            // the enclosing class's own type arguments, not a
+                            // raw `I` (whose members would erase to their
+                            // bounds).
+                            self.qualified_super_ty(&qualifier)
                         },
                         InvocationMode::Interface,
                         false,
@@ -481,5 +488,47 @@ impl InferCtx<'_> {
             .first()
             .copied()
             .unwrap_or_else(|| self.error())
+    }
+
+    /// The receiver type of a *qualified super* invocation `I.super.m(...)`
+    /// ([JLS §15.11.2], [§15.12.1]): the interface `I` as parameterized by the
+    /// enclosing class's inheritance — `ComponentSerializer<I,O,R>` invoked as
+    /// `ComponentDecoder.super.deserializeOr(...)` must resolve the default on
+    /// `ComponentDecoder<R,O>`, not on a raw `ComponentDecoder` whose `O`
+    /// erases to its bound. Walks the enclosing type's supertypes for the one
+    /// whose erasure matches the written qualifier and keeps its type
+    /// arguments; falls back to the raw qualifier type.
+    pub(super) fn qualified_super_ty(&self, qualifier: &SpannedTypeRef) -> Ty {
+        let raw = resolve_type_ref(self.db, &self.scope, &self.resolver, qualifier);
+        let Some((raw_name, _)) = raw.erasure(self.db).as_reference(self.db) else {
+            return raw;
+        };
+        let mut levels: Vec<Ty> = Vec::new();
+        if let Some(class) = &self.enclosing_class {
+            levels.push(class.clone());
+        }
+        levels.extend(self.enclosing_chain.iter().cloned());
+        for class in &levels {
+            let mut stack = vec![*class];
+            let mut seen = FxHashSet::default();
+            while let Some(current) = stack.pop() {
+                if !seen.insert(current.id) {
+                    continue;
+                }
+                for parent in supertypes_impl(self.db, &self.scope, &current) {
+                    if parent.is_error(self.db) {
+                        continue;
+                    }
+                    let TyKind::Reference { name, .. } = parent.kind(self.db) else {
+                        continue;
+                    };
+                    if name == raw_name {
+                        return parent;
+                    }
+                    stack.push(parent);
+                }
+            }
+        }
+        raw
     }
 }

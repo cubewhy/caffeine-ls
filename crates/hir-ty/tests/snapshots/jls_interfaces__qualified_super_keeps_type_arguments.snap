@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_interfaces.rs
+expression: out
+---
+FILE /src/com/example/Super.java:
+package com.example;
+
+interface Super {
+    interface Comp {}
+    interface Decoder<S, O extends Comp> {
+        O deserialize(S v);
+
+        default O deserializeOrNull(S v) {
+            return deserialize(v);
+        }
+    }
+
+    interface Ser<I extends Comp, O extends Comp, R> extends Decoder<R, O> {
+        default O keep(R v) {
+            return Decoder.super.deserializeOrNull(v);
+        }
+    }
+}
+
+method deserializeOrNull(S): O
+  locals: l0: S
+  exprs: e0: S | e1: O
+method keep(R): O
+  locals: l1: R
+  exprs: e2: R | e4: O
