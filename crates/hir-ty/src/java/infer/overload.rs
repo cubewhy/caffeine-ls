@@ -1021,8 +1021,14 @@ impl InferCtx<'_> {
                 // Object` for `map(v -> { return v == x; })`) and every
                 // downstream conversion against the instantiated `Optional`
                 // would fail.
+                // JLS §15.27.2: a block lambda's statements are standalone —
+                // the enclosing target never reaches them (see
+                // [`super::lambda::InferCtx::lambda_type`]). Leaking the
+                // SAM return as target makes a generic statement-expression
+                // (`log(s)`, `builder.value(...)`) constrain against it
+                // (`Sub(S, void)` for a `Runnable`) and reject the candidate.
                 self.lambda_returns.push(Vec::new());
-                self.with_target(Some(body_target), |this| this.infer_stmt(stmt));
+                self.with_target(None, |this| this.infer_stmt(stmt));
                 let returns = self.lambda_returns.pop().unwrap_or_default();
                 match returns.as_slice() {
                     [] => None,

@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_inference_gaps.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    <T> T make() {
+        return null;
+    }
+
+    void test() {
+        long x = make();
+    }
+}
+
+method make(): T
+  locals: 
+  exprs: e0: null
+method test(): void
+  locals: l0: long
+  exprs: e1: java.lang.Long

@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_inference_gaps.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    interface Reader<R> {
+        R apply(Body b);
+    }
+
+    interface Writer<T> {
+        void accept(Body b, T v);
+    }
+
+    static class Data<X> {}
+
+    static <T, Z extends T> Data<Z> define(String s, Reader<Z> r, Writer<T> w) {
+        return null;
+    }
+
+    byte readByte() {
+        return 0;
+    }
+
+    void writeByte(int b) {}
+
+    void test() {
+        Data<Byte> d = define("byte", Body::readByte, Body::writeByte);
+    }
+}
+
+method define(java.lang.String, com.example.Body.Reader<Z>, com.example.Body.Writer<T>): com.example.Body.Data<Z>
+  locals: l0: java.lang.String | l1: com.example.Body.Reader<Z> | l2: com.example.Body.Writer<T>
+  exprs: e0: null
+method readByte(): byte
+  locals: 
+  exprs: e1: int
+method writeByte(int): void
+  locals: l3: int
+  exprs: 
+method test(): void
+  locals: l4: com.example.Body.Data<java.lang.Byte>
+  exprs: e2: java.lang.String | e4: com.example.Body.Reader<java.lang.Byte> | e6: com.example.Body.Writer<java.lang.Byte> | e7: com.example.Body.Data<java.lang.Byte>

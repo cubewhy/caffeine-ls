@@ -831,6 +831,34 @@ impl Inference {
                 let upper = b.upper.clone();
                 for l in &lower {
                     for u in &upper {
+                        // JLS §18.3.1: every lower bound `S` and upper bound
+                        // `T` of one variable imply `⟨S <: T⟩`. When both are
+                        // proper it is a validation (`S` must convert to `T`);
+                        // when one side is a lone inference variable and the
+                        // other is proper, it propagates the dependency
+                        // (`<T, Z extends T>` with `Z` lower `Byte` and upper
+                        // `T` gives `Byte <: T`, so `T` picks up the lower
+                        // bound). Complex bounds mentioning variables inside
+                        // (e.g. `List<T>`) stay skipped — re-pushing them
+                        // re-adds the same derived bound forever and the loop
+                        // never ends. Duplicates already in the set are
+                        // skipped for the same reason.
+                        if l.contains_infer_var(db) || u.contains_infer_var(db) {
+                            let simple = match (l.as_infer_var(db), u.as_infer_var(db)) {
+                                (None, Some(uid)) if !l.contains_infer_var(db) => {
+                                    !self.bounds.get(&uid).is_some_and(|b| b.lower.contains(l))
+                                }
+                                (Some(lid), None) if !u.contains_infer_var(db) => {
+                                    !self.bounds.get(&lid).is_some_and(|b| b.upper.contains(u))
+                                }
+                                _ => false,
+                            };
+                            if simple {
+                                self.worklist.push_back(Constraint::Sub(*l, *u));
+                                changed = true;
+                            }
+                            continue;
+                        }
                         // §18.3.1 bound validation: a proper lower bound `S`
                         // and a proper upper bound `T` must satisfy `S <: T`.
                         // Like `pick_instantiation`, this is *assignment*
@@ -840,9 +868,6 @@ impl Inference {
                         // (`CompletableFuture<?>`) by unchecked conversion
                         // ([§5.1.9]), exactly as in javac's bound check. Two
                         // primitives relate only by identity here ([§4.10.1]).
-                        if l.contains_infer_var(db) || u.contains_infer_var(db) {
-                            continue;
-                        }
                         let ok = if matches!(l.kind(db), TyKind::Primitive(_))
                             && matches!(u.kind(db), TyKind::Primitive(_))
                         {
@@ -1045,6 +1070,23 @@ pub fn least_upper_bound(db: &dyn TyDatabase, scope: &hir::ResolutionScope, type
     // own upper-bound check (`Enum<?> <: Z`).
     if types.iter().all(|t| *t == types[0]) {
         return types[0];
+    }
+    // JLS §4.10.4/§15.27.3: the null type is a subtype of every reference
+    // type, so `lub(T, null)` is `T` — a block lambda returning `Method` on
+    // one path and `null` on another (`return null` in a `catch`) has result
+    // `Method`, not `Object`. Filter nulls (all-null degrades to null).
+    if types.iter().any(|t| t.is_null(db)) {
+        let non_null: Vec<Ty> = types.iter().copied().filter(|t| !t.is_null(db)).collect();
+        if non_null.is_empty() {
+            return types[0];
+        }
+        if non_null.len() == 1 {
+            return non_null[0];
+        }
+        if non_null.iter().all(|t| *t == non_null[0]) {
+            return non_null[0];
+        }
+        return least_upper_bound(db, scope, &non_null);
     }
     // §4.10.4 step 1: box primitive bounds.
     let types: Vec<Ty> = if types
@@ -1409,17 +1451,30 @@ fn pick_instantiation(
         // `⟨T → Function<String,Integer>⟩` with `T <: Object` must instantiate
         // to `Function<String,Integer>`, not `Object`. Supertype bounds are
         // dropped before the lub, matching javac's least-upper-bound.
-        let bounds: Vec<Ty> = upper
+        // JLS §18.1.1/§4.4 with §5.1.7: an upper bound that is a primitive
+        // (`⟨U → long〉` from a `long` assignment target) boxes for the
+        // comparison — `Long <: Object`, so `Object` drops and `U := Long`,
+        // not `Object`. Without boxing a primitive upper never drops its
+        // `Object` sibling and every primitive-targeted generic resolves to
+        // `Object`.
+        let boxed_upper: Vec<Ty> = upper
+            .iter()
+            .map(|u| match u.kind(db) {
+                TyKind::Primitive(p) => Ty::reference(db, boxed_type(*p), Vec::new()),
+                _ => *u,
+            })
+            .collect();
+        let bounds: Vec<Ty> = boxed_upper
             .iter()
             .copied()
             .filter(|u| {
-                !upper
+                !boxed_upper
                     .iter()
                     .any(|v| *v != *u && !v.contains_infer_var(db) && is_subtype(db, scope, v, u))
             })
             .collect();
         if bounds.is_empty() {
-            return Some(least_upper_bound(db, scope, upper));
+            return Some(least_upper_bound(db, scope, &boxed_upper));
         }
         return Some(least_upper_bound(db, scope, &bounds));
     }
