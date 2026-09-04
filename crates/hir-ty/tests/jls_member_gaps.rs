@@ -8,30 +8,6 @@ mod common;
 
 use crate::common::check_body_types;
 
-// JLS §4.8: a raw receiver erases its supertypes — a raw `Container`
-// extends raw `ArrayList`, so `add(Check<?>)` targets `Object`.
-snapshot!(
-    raw_supertype_erasure,
-    check_body_types(&[(
-        "/src/com/example/Body.java",
-        "\
-package com.example;
-
-import java.util.ArrayList;
-
-class Body {
-    static class Check<T> {}
-
-    static class Container<T> extends ArrayList<Check<T>> {}
-
-    static void test(Container c, Check<?> x) {
-        c.add(x);
-    }
-}
-",
-    )])
-);
-
 // JLS §4.9: an intersection value finds members through either conjunct.
 snapshot!(
     intersection_members,

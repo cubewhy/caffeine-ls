@@ -233,16 +233,8 @@ pub(crate) fn source_supertypes(
         ItemData::Record(d) => &d.type_params,
         _ => &[],
     };
-    // JLS §4.8: a raw use of a generic class erases its supertypes — a raw
-    // `CheckContainer` extends raw `ArrayList`, not `ArrayList<Check<T>>`
-    // with an unresolved type variable (which would make `add(Check<?>)`
-    // inapplicable). Like the library raw fallback above, return the erasure.
-    let is_raw = args.is_empty() && !declared.is_empty();
     let instantiate = |tyref: &SpannedTypeRef| {
         let resolved = resolve_type_ref(db, &scope, &resolver, tyref);
-        if is_raw {
-            return resolved.erasure(db);
-        }
         if args.is_empty() {
             resolved
         } else {
