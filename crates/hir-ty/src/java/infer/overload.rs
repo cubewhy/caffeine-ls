@@ -730,9 +730,30 @@ impl InferCtx<'_> {
                     // nothing — any result the referenced method produces is
                     // discarded (`attributeNode::getDepth` is compatible with
                     // an `Executable` regardless of its return type).
+                    //
+                    // JLS §15.13.1, §18.5.2.2: an *unbound* reference whose
+                    // receiver (the SAM's first parameter) is still an
+                    // inference variable constrains nothing by its return —
+                    // the qualifier is raw (`Entry::getKey` as
+                    // `Function<T,String>` with `T` not yet `Entry<String,?>`),
+                    // so the referenced return is the erasure (`Object`), not
+                    // the parameterized result (`String`), and `⟨Object →
+                    // String⟩` would wrongly reject the candidate. The target
+                    // (`Collector<T,...>` vs `Collector<Entry<String,?>,...>`)
+                    // resolves `T` first; the final re-inference validates the
+                    // reference against the concrete receiver.
+                    let unbound_var_receiver = subst.is_empty()
+                        && ref_method
+                            .as_ref()
+                            .is_some_and(|(_, kind)| *kind == MethodRefKind::Unbound)
+                        && sam
+                            .params
+                            .first()
+                            .is_some_and(|first| first.contains_infer_var(self.db));
                     if !ref_ret.is_error(self.db)
                         && !ref_ret.is_void_like(self.db)
                         && !sam.ret.is_void_like(self.db)
+                        && !unbound_var_receiver
                     {
                         // §5.1.10: constrain the wildcard bounds the SAM's
                         // captured return stands for (see the lambda case).

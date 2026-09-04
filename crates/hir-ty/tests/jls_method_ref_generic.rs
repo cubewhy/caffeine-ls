@@ -144,3 +144,38 @@ class Codecs {
 // overload's first parameter erases to `MappedEntitySet`, which no
 // `PacketWrapper` actual is assignable to. Selecting by the fixed (type-var
 // independent) positions resolves the reference and keeps `set` applicable.
+
+// -- green: unbound references with a still-variable receiver ----------------
+// `toCompoundTag(Entry::getKey, Entry::getValue)` targets
+// `Collector<Entry<String,?>,?,Compound>` — `T := Entry<String,?>` comes from
+// the return (`Collector<T,...>` vs the target), not from the references. An
+// unbound `Entry::getKey` as `Function<T,String>` with `T` still a variable
+// must not constrain by its erasure (`Object → String`, which rejects); the
+// target resolves `T` first and the final re-inference validates the reference
+// against the concrete `Entry<String,?>` ([JLS §15.13.1], [§18.5.2.2]).
+snapshot!(
+    unbound_ref_var_receiver_defers_return,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collector;
+
+class Body {
+    interface Tag {
+    }
+
+    static Collector<Map.Entry<String, Tag>, ?, String> toTag() {
+        return toTag(Map.Entry::getKey, Map.Entry::getValue);
+    }
+
+    static <T> Collector<T, ?, String> toTag(Function<T, String> k, Function<T, Tag> v) {
+        return null;
+    }
+}
+",
+    )])
+);

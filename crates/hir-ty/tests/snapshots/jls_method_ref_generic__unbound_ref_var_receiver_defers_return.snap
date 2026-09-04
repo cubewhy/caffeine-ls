@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collector;
+
+class Body {
+    interface Tag {
+    }
+
+    static Collector<Map.Entry<String, Tag>, ?, String> toTag() {
+        return toTag(Map.Entry::getKey, Map.Entry::getValue);
+    }
+
+    static <T> Collector<T, ?, String> toTag(Function<T, String> k, Function<T, Tag> v) {
+        return null;
+    }
+}
+
+method toTag(): java.util.stream.Collector<Map.Entry<java.lang.String, com.example.Body.Tag>, ?, java.lang.String>
+  locals: 
+  exprs: e1: java.util.Map | e2: java.util.function.Function<java.lang.Object, java.lang.String> | e4: java.util.Map | e5: java.util.function.Function<java.lang.Object, com.example.Body.Tag> | e6: java.util.stream.Collector<java.lang.Object, ?, java.lang.String>
+method toTag(java.util.function.Function<T, java.lang.String>, java.util.function.Function<T, com.example.Body.Tag>): java.util.stream.Collector<T, ?, java.lang.String>
+  locals: l0: java.util.function.Function<T, java.lang.String> | l1: java.util.function.Function<T, com.example.Body.Tag>
+  exprs: e7: null
