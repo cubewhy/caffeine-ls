@@ -455,13 +455,17 @@ impl InferCtx<'_> {
 
     /// skipped ([§15.12.3]).
     pub(super) fn unqualified_method_receiver(&self, name: &str) -> Ty {
+        // JLS §15.12.1 (MethodName form): the search is for `T.this`, where a
+        // static interface method declared in the searched type itself IS a
+        // candidate (§15.12.3).
+        let probe = self.access.with_mode(InvocationMode::MethodName);
         let mut levels: Vec<Ty> = Vec::new();
         if let Some(class) = &self.enclosing_class {
             levels.push(class.clone());
         }
         levels.extend(self.enclosing_chain.iter().cloned());
         for class in &levels {
-            if !member_set(self.db, &self.scope, class, name, &self.access).is_empty() {
+            if !member_set(self.db, &self.scope, class, name, &probe).is_empty() {
                 return class.clone();
             }
         }

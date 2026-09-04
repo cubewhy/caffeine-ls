@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_frontend_gaps.rs
+expression: out
+---
+FILE /src/com/example/Outer.java:
+package com.example;
+
+class Wrapper<T> {
+    <T extends java.lang.Enum<T>> java.util.EnumSet<T> read(Class<T> c) {
+        return null;
+    }
+}
+
+class Outer extends Wrapper<Outer> {
+    enum Action {
+        A,
+        B
+    }
+
+    void test() {
+        Object o = read(Action.class);
+    }
+}
+
+method read(java.lang.Class<T>): java.util.EnumSet<T>
+  locals: l0: java.lang.Class<T>
+  exprs: e0: null
+method test(): void
+  locals: l1: java.lang.Object
+  exprs: e1: java.lang.Class<com.example.Outer.Action> | e2: java.util.EnumSet<com.example.Outer.Action>

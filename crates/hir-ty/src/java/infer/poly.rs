@@ -178,20 +178,29 @@ pub(super) fn poly_arity(tree: &BodyTree, id: ExprId) -> Option<usize> {
 }
 
 impl InferCtx<'_> {
-    /// Whether a block lambda contains a `return` statement carrying a value —
-    /// the syntactic core of value compatibility
+    /// Whether a block lambda is value-compatible — its body cannot complete
+    /// normally and every `return` carries a value
     /// ([JLS §15.27.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.3),
-    /// [§14.17](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17)):
-    /// every path must return a value or throw. A block without any valued
-    /// `return` is only void-compatible, so it cannot target a functional
-    /// interface whose function type produces a result.
+    /// [§14.17](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17),
+    /// [§14.22](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.22)):
+    /// a `throw`-only body (`var0 -> { throw ...; }`) never completes normally,
+    /// so it is value-compatible even though no `return` carries a value — and
+    /// likewise void-compatible, so it targets either function type. A block
+    /// without any valued `return` that *can* complete normally is only
+    /// void-compatible, so it cannot target a value-returning SAM.
     pub(super) fn lambda_block_has_value(&self, body: &LambdaBody) -> bool {
         let LambdaBody::Block(stmt) = *body else {
             // An expression lambda's value compatibility is decided against
             // its inferred result, not syntactically.
             return true;
         };
-        self.stmt_has_valued_return(stmt)
+        if self.stmt_has_valued_return(stmt) {
+            return true;
+        }
+        // No valued `return`: value-compatible only when the body cannot
+        // complete normally (a `throw` that is always reached) — a bare
+        // `return;` or an empty/fall-through body stays void-only.
+        !self.stmt_has_bare_return(stmt) && !self.stmt_can_complete_normally(stmt)
     }
 
     pub(super) fn stmt_has_valued_return(&self, stmt: StmtId) -> bool {
@@ -237,6 +246,102 @@ impl InferCtx<'_> {
                         .any(|catch| self.stmt_has_valued_return(catch.body))
                     || finally.is_some_and(|finally| self.stmt_has_valued_return(finally))
             }
+        }
+    }
+
+    /// Whether the statement contains a bare `return;` — which forbids value
+    /// compatibility ([JLS §15.27.3]: every `return` must carry a value).
+    pub(super) fn stmt_has_bare_return(&self, stmt: StmtId) -> bool {
+        match self.tree.stmt(stmt).clone() {
+            StmtData::Return(None) => true,
+            StmtData::Return(Some(_))
+            | StmtData::Yield(_)
+            | StmtData::Empty
+            | StmtData::Decl { .. }
+            | StmtData::Expr(_)
+            | StmtData::Break(_)
+            | StmtData::Continue(_)
+            | StmtData::Throw(_)
+            | StmtData::Assert { .. }
+            | StmtData::LocalClass { .. }
+            | StmtData::Missing => false,
+            StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
+                stmts.iter().any(|stmt| self.stmt_has_bare_return(*stmt))
+            }
+            StmtData::Labeled { stmt, .. }
+            | StmtData::While { body: stmt, .. }
+            | StmtData::DoWhile { body: stmt, .. }
+            | StmtData::ForEach { body: stmt, .. }
+            | StmtData::Synchronized { body: stmt, .. } => self.stmt_has_bare_return(stmt),
+            StmtData::If { then, els, .. } => {
+                self.stmt_has_bare_return(then)
+                    || els.is_some_and(|els| self.stmt_has_bare_return(els))
+            }
+            StmtData::For { body: stmt, .. } => self.stmt_has_bare_return(stmt),
+            StmtData::Switch { arms, .. } => arms
+                .iter()
+                .any(|arm| arm.body.iter().any(|stmt| self.stmt_has_bare_return(*stmt))),
+            StmtData::Try {
+                body,
+                catches,
+                finally,
+                ..
+            } => {
+                self.stmt_has_bare_return(body)
+                    || catches
+                        .iter()
+                        .any(|catch| self.stmt_has_bare_return(catch.body))
+                    || finally.is_some_and(|finally| self.stmt_has_bare_return(finally))
+            }
+        }
+    }
+
+    /// Whether the statement can complete normally ([JLS §14.22]). A
+    /// `throw`/`return`/`break`/`continue` cannot; an empty/decl/expr/assert
+    /// can; a block can iff every statement can (an abrupt statement makes the
+    /// rest unreachable); an `if` without `else` can (the false path skips);
+    /// an `if`-`else` can iff either branch can. Loops, switches and
+    /// try-statements are conservatively assumed abrupt (cannot) — an
+    /// over-accepting approximation: it makes more lambdas value-compatible
+    /// rather than fewer, so correct code is never newly rejected.
+    pub(super) fn stmt_can_complete_normally(&self, stmt: StmtId) -> bool {
+        match self.tree.stmt(stmt).clone() {
+            StmtData::Return(_)
+            | StmtData::Throw(_)
+            | StmtData::Break(_)
+            | StmtData::Continue(_)
+            | StmtData::Yield(_) => false,
+            StmtData::Empty
+            | StmtData::Decl { .. }
+            | StmtData::Expr(_)
+            | StmtData::Assert { .. }
+            | StmtData::LocalClass { .. }
+            | StmtData::Missing => true,
+            StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
+                if stmts.is_empty() {
+                    return true;
+                }
+                stmts
+                    .iter()
+                    .all(|stmt| self.stmt_can_complete_normally(*stmt))
+            }
+            StmtData::Labeled { stmt, .. } | StmtData::Synchronized { body: stmt, .. } => {
+                self.stmt_can_complete_normally(stmt)
+            }
+            StmtData::If { then, els, .. } => match els {
+                None => true,
+                Some(els) => {
+                    self.stmt_can_complete_normally(then) || self.stmt_can_complete_normally(els)
+                }
+            },
+            // Conservative: assume abrupt (cannot complete) so that
+            // throw-carrying bodies are accepted as value-compatible.
+            StmtData::While { .. }
+            | StmtData::DoWhile { .. }
+            | StmtData::For { .. }
+            | StmtData::ForEach { .. }
+            | StmtData::Switch { .. }
+            | StmtData::Try { .. } => false,
         }
     }
 }

@@ -1013,6 +1013,22 @@ fn source_class_methods(
         if !name.is_empty() && method.name.as_str() != name {
             continue;
         }
+        // JLS §6.4.1/§8.4.4: a method type parameter shadows a class type
+        // parameter of the same name — the class binding must not capture
+        // the method's own variable (e.g. `PacketWrapper<T>.readEnumSet`
+        // `<T extends Enum<T>>` where `Class<T>` is the method's `T`, not the
+        // class's).
+        let method_names: FxHashSet<Name> = method
+            .sig
+            .type_params
+            .iter()
+            .map(|tp| tp.name.clone())
+            .collect();
+        let filtered: FxHashMap<Name, Ty> = binding
+            .iter()
+            .filter(|(k, _)| !method_names.contains(k))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         let method_resolver = Resolver::new(&tree, type_params, item);
         let type_params = method
             .sig
@@ -1020,20 +1036,16 @@ fn source_class_methods(
             .iter()
             .map(|tp| MethodTypeParam {
                 name: tp.name.clone(),
-                // Same rule as the library side ([`library_class_methods`]):
-                // a bound referencing the declaring class's type parameters is
-                // replaced by the class's actual type arguments; one over the
-                // method's own type parameters is untouched.
                 bounds: tp
                     .bounds
                     .iter()
                     .map(|bound| resolve_type_ref(db, &scope, &method_resolver, bound))
-                    .map(|bound| bound.substitute(db, &binding))
+                    .map(|bound| bound.substitute(db, &filtered))
                     .collect(),
             })
             .collect();
         let key = ItemKey::new(db, source.file, item);
-        let instantiate = |ty: &Ty| ty.substitute(db, &binding);
+        let instantiate = |ty: &Ty| ty.substitute(db, &filtered);
         // JLS 4.8: the *instance* members of a raw type have erased
         // signatures. A static member does not depend on the receiver's
         // type arguments at all, so its own generics stay intact.

@@ -431,8 +431,9 @@ impl InferCtx<'_> {
                 // outcomes right here — the step expressions below would
                 // overwrite [`Self::bool_outcomes`].
                 let (cond_true_flow, cond_false_flow) = self.take_bool_outcomes();
+                // JLS §15.2: a `for` update expression is standalone.
                 for &step in step {
-                    let _ = self.infer_expr(step);
+                    let _ = self.with_target(None, |this| this.infer_expr(step));
                 }
                 // §16.1.14: like `while`, the body may run zero times — except
                 // a `for` whose condition is a constant `true` **or absent**,
@@ -472,7 +473,8 @@ impl InferCtx<'_> {
                 iterable,
                 body,
             } => {
-                let iterable_ty = self.infer_expr(*iterable);
+                // JLS §15.2/§14.14.2: the enhanced-for expression is standalone.
+                let iterable_ty = self.with_target(None, |this| this.infer_expr(*iterable));
                 let element = if iterable_ty.is_array(self.db) {
                     iterable_ty
                         .element(self.db)
@@ -728,7 +730,7 @@ impl InferCtx<'_> {
                 // expression ([JLS §15.2]) — it is inferred standalone — and
                 // must be assignable to `Throwable` ([§5.2]); a non-throwable
                 // operand marks the expression as an error.
-                let ty = self.infer_expr(*expr);
+                let ty = self.with_target(None, |this| this.infer_expr(*expr));
                 let throwable = Ty::reference(self.db, "java.lang.Throwable", Vec::new());
                 if !ty.is_error(self.db)
                     && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ty, &throwable)
@@ -825,7 +827,8 @@ impl InferCtx<'_> {
                 }
             }
             StmtData::Synchronized { expr, body } => {
-                let _ = self.infer_expr(*expr);
+                // JLS §15.2/§14.19: the synchronized monitor is standalone.
+                let _ = self.with_target(None, |this| this.infer_expr(*expr));
                 self.infer_stmt(*body);
             }
             StmtData::Try {
@@ -1171,7 +1174,8 @@ impl InferCtx<'_> {
                 // §14.16: the assertion condition must be a boolean.
                 self.check_condition(*cond);
                 if let Some(msg) = msg {
-                    let _ = self.infer_expr(*msg);
+                    // JLS §15.2/§14.10: the assert message is standalone.
+                    let _ = self.with_target(None, |this| this.infer_expr(*msg));
                 }
             }
             // §14.3: a local class declaration declares a type, not a value —

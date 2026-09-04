@@ -18,8 +18,10 @@ use super::InferCtx;
 impl InferCtx<'_> {
     pub(super) fn unary(&mut self, expr: ExprId, op: UnaryOp) -> Ty {
         // §15.15.1/§15.15.2: `++`/`--` mutate their operand.
+        // JLS §15.2: a unary operand is a standalone expression — the
+        // enclosing poly target must not reach it.
         self.mutating = matches!(op, UnaryOp::Inc | UnaryOp::Dec);
-        let inner = self.infer_expr(expr);
+        let inner = self.with_target(None, |this| this.infer_expr(expr));
         self.mutating = false;
         match op {
             // §15.15.6: `!` has type `boolean` and its operand must be a
@@ -251,8 +253,10 @@ impl InferCtx<'_> {
             self.bool_outcomes = Some((true_flow, false_flow));
             return self.primitive(PrimitiveType::Boolean);
         }
-        let lhs_ty = self.infer_expr(lhs);
-        let rhs_ty = self.infer_expr(rhs);
+        // JLS §15.2: the operands of a binary operator are standalone
+        // expressions — the enclosing poly target must not reach them (JLS §15.21).
+        let (lhs_ty, rhs_ty) =
+            self.with_target(None, |this| (this.infer_expr(lhs), this.infer_expr(rhs)));
         match op {
             BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem | BinaryOp::Add | BinaryOp::Sub => {
                 // §15.18.1: `+` with a `String` operand is string

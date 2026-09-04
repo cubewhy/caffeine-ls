@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_frontend_gaps.rs
+expression: out
+---
+FILE /src/com/example/Outer.java:
+package com.example;
+
+interface Outer {
+    Outer combine();
+
+    interface Inner {
+        static Inner of(String a, String b) {
+            return combine(a, b);
+        }
+
+        static Inner combine(String a, String b) {
+            return null;
+        }
+    }
+}
+
+method of(java.lang.String, java.lang.String): com.example.Outer.Inner
+  locals: l0: java.lang.String | l1: java.lang.String
+  exprs: e0: java.lang.String | e1: java.lang.String | e2: com.example.Outer.Inner
+method combine(java.lang.String, java.lang.String): com.example.Outer.Inner
+  locals: l2: java.lang.String | l3: java.lang.String
+  exprs: e3: null

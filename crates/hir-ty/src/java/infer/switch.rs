@@ -25,7 +25,8 @@ use super::InferCtx;
 impl InferCtx<'_> {
     /// reference — or be a `String` or an enum type.
     pub(super) fn infer_switch_selector(&mut self, scrutinee: ExprId) -> Ty {
-        let ty = self.infer_expr(scrutinee);
+        // JLS §15.2/§14.11: the switch selector is standalone.
+        let ty = self.with_target(None, |this| this.infer_expr(scrutinee));
         if !ty.is_error(self.db) && !self.switchable(&ty) {
             self.report(TypeError::SwitchSelectorType {
                 expr: scrutinee,
@@ -88,7 +89,8 @@ impl InferCtx<'_> {
             self.types.insert(label, selector.clone());
             return;
         }
-        let ty = self.infer_expr(label);
+        // JLS §15.2/§14.11.1: a case label is standalone.
+        let ty = self.with_target(None, |this| this.infer_expr(label));
         // The `default` label lowers as a `Missing` expression and has no
         // type; anything else must be assignable to the selector ([§14.11.1]).
         if !ty.is_error(self.db)

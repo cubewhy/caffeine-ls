@@ -1037,6 +1037,15 @@ pub fn least_upper_bound(db: &dyn TyDatabase, scope: &hir::ResolutionScope, type
     if types.len() == 1 {
         return types[0];
     }
+    // JLS §4.10.4: the lub of identical types is that type itself — in
+    // particular `lub(Z, Z)` for a type variable `Z` is `Z`, not its erased
+    // supertype. Without the dedup a method type variable bounded below twice
+    // by the same outer variable (`readEnum((Z[]) ..., (Z) ...)` inferring
+    // `W` with lower `[Z, Z]`) degrades to the bound (`Enum<?>`) and fails its
+    // own upper-bound check (`Enum<?> <: Z`).
+    if types.iter().all(|t| *t == types[0]) {
+        return types[0];
+    }
     // §4.10.4 step 1: box primitive bounds.
     let types: Vec<Ty> = if types
         .iter()

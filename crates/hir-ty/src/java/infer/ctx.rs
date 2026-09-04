@@ -135,7 +135,10 @@ impl InferCtx<'_> {
 
     /// error type and is reported.
     pub(super) fn check_condition(&mut self, cond: ExprId) {
-        let ty = self.infer_expr(cond);
+        // JLS §15.2: a condition (`if`/`while`/`do`/`for`/`assert`, `&&`/`||`
+        // operand, conditional condition) is a standalone expression — the
+        // enclosing poly target must not reach it.
+        let ty = self.with_target(None, |this| this.infer_expr(cond));
         // A condition that already failed to type (an unresolved name, a
         // failed call) has reported its own error — do not cascade.
         if ty.is_error(self.db) {

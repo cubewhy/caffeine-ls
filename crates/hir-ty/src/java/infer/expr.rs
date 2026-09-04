@@ -233,8 +233,9 @@ impl InferCtx<'_> {
             // §15.14: a postfix increment/decrement has the type of its
             // operand.
             ExprData::Postfix { expr, .. } => {
+                // JLS §15.2: a postfix operand is standalone.
                 self.mutating = true;
-                let ty = self.infer_expr(expr);
+                let ty = self.with_target(None, |this| this.infer_expr(expr));
                 self.mutating = false;
                 ty
             }
@@ -249,14 +250,15 @@ impl InferCtx<'_> {
                 // §15.26.1: the left-hand side of a *simple* assignment is
                 // written, not read — the definite-assignment check does not
                 // apply to it.
+                // JLS §15.2: the left-hand side of an assignment is standalone.
                 self.mutating = true;
                 let lhs_ty = if matches!(op, AssignOp::Assign) {
                     self.writing = true;
-                    let ty = self.infer_expr(lhs);
+                    let ty = self.with_target(None, |this| this.infer_expr(lhs));
                     self.writing = false;
                     ty
                 } else {
-                    self.infer_expr(lhs)
+                    self.with_target(None, |this| this.infer_expr(lhs))
                 };
                 self.mutating = false;
                 let rhs_ty = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
@@ -351,7 +353,8 @@ impl InferCtx<'_> {
             // ([§14.30]) additionally resolves the pattern, recording the type
             // of each variable it binds ([§14.30.1], [§14.30.2]).
             ExprData::InstanceOf { expr, pattern, ty } => {
-                let _ = self.infer_expr(expr);
+                // JLS §15.2/§15.20.2: the tested expression is standalone.
+                let _ = self.with_target(None, |this| this.infer_expr(expr));
                 if let Some(ty) = &ty {
                     self.check_instanceof_target(expr, ty);
                 }
@@ -440,13 +443,15 @@ impl InferCtx<'_> {
                         self.target.expect("target checked above")
                     }
                 } else {
+                    // JLS §15.2/§15.25: a conditional of two concrete
+                    // (non-poly) arms is itself standalone.
                     let (then_end, then_ty) = {
                         self.scopes.push(FxHashMap::default());
                         self.flow = cond_true_flow;
                         for binding in &cond_true {
                             self.scope_binding(*binding);
                         }
-                        let ty = self.infer_expr(then);
+                        let ty = self.with_target(None, |this| this.infer_expr(then));
                         let end = self.flow.clone();
                         self.scopes.pop();
                         (end, ty)
@@ -457,7 +462,7 @@ impl InferCtx<'_> {
                         for binding in &cond_false {
                             self.scope_binding(*binding);
                         }
-                        let ty = self.infer_expr(els);
+                        let ty = self.with_target(None, |this| this.infer_expr(els));
                         let end = self.flow.clone();
                         self.scopes.pop();
                         (end, ty)
@@ -645,11 +650,12 @@ impl InferCtx<'_> {
 
     /// receiver position must not be mistaken for the assigned target.
     pub(super) fn infer_read_expr(&mut self, id: ExprId) -> Ty {
+        // JLS §15.2: a receiver is a standalone expression.
         let saved_mutating = self.mutating;
         let saved_writing = self.writing;
         self.mutating = false;
         self.writing = false;
-        let ty = self.infer_expr(id);
+        let ty = self.with_target(None, |this| this.infer_expr(id));
         self.mutating = saved_mutating;
         self.writing = saved_writing;
         ty

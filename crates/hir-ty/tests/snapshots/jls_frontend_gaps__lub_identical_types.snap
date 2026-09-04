@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_frontend_gaps.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    <W> W inner(W[] a, W b) {
+        return null;
+    }
+
+    <Z> Z outer(Z[] a, Z b) {
+        return inner(a, b);
+    }
+}
+
+method inner(W[], W): W
+  locals: l0: W[] | l1: W
+  exprs: e0: null
+method outer(Z[], Z): Z
+  locals: l2: Z[] | l3: Z
+  exprs: e1: Z[] | e2: Z | e3: Z
