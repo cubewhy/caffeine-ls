@@ -137,6 +137,40 @@ class Outer extends Wrapper<Outer> {
     )])
 );
 
+// JLS §6.4.1: a static generic method in a generic interface shadows the
+// interface's type parameter — `<T extends Mapped & Copyable<T>>` in
+// `NbtEntryDecoder<T>` resolves its own `T` (with `copy`), not the
+// interface's unbounded `T`. Without the innermost-wins lookup the lambda's
+// `decode(...).copy(...)` loses `copy`.
+snapshot!(
+    interface_method_shadowing,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+interface Mapped {
+}
+
+interface Copyable<T extends Mapped> {
+    T copy(Object d);
+}
+
+interface NbtDecoder<T> {
+    T decode(Object tag, Object w);
+}
+
+interface NbtEntryDecoder<T> {
+    static <T extends Mapped & Copyable<T>> NbtEntryDecoder<T> fromDecoder(NbtDecoder<T> decoder) {
+        return (tag, wrapper, data) -> decoder.decode(tag, wrapper).copy(data);
+    }
+
+    T decode(Object tag, Object w, Object d);
+}
+",
+    )])
+);
+
 // JLS §15.27.3: a `return` inside a *nested* lambda belongs to that lambda,
 // never to the outer one — an outer void block containing an inner block
 // lambda with a valued `return` stays void-compatible and targets `Runnable`.

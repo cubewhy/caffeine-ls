@@ -269,8 +269,14 @@ fn resolve_type_ref_impl(
                 .iter()
                 .map(|arg| resolve_type_ref_impl(db, scope, resolver, arg, resolving))
                 .collect();
-            if let Some(tp) = resolver.type_params.iter().find(|tp| tp.name == *name) {
+            if let Some(tp) = resolver.type_params.iter().rfind(|tp| tp.name == *name) {
                 // A type parameter in scope wins over any type named the same.
+                // JLS §6.4.1: a method type parameter shadows a class type
+                // parameter of the same name — the innermost declaration wins,
+                // so search reverse (innermost last in `type_params_map`).
+                // Without this a `<T extends Mapped & Copyable<T>>` method in a
+                // generic `NbtEntryDecoder<T>` interface resolves its own `T`
+                // to the interface's unbounded `T`, losing `copy`.
                 let bounds = if resolving.iter().any(|n| n == name) {
                     Vec::new()
                 } else {
