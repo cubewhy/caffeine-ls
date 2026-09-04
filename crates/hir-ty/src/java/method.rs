@@ -635,19 +635,43 @@ fn member_set_impl(
     // member set — a subtype's declaration of a method with the same signature
     // shadows the supertype's — so only the most-derived declaration of each
     // signature survives. The walk is derived-first, so the first occurrence
-    // is the most-derived. Without this, `List.iterator()` (overriding
+    // is usually the most-derived. Without this, `List.iterator()` (overriding
     // `Collection.iterator()`/`Iterable.iterator()`) would surface three
     // identical candidates that the most-specific tie-break reports as
     // ambiguous.
+    //
+    // JLS §8.4.8.3: a covariant override narrows the return (`B toBuilder()`
+    // overriding `ComponentBuilder<?,?> toBuilder()`), and a diamond walk can
+    // surface the less-derived (wider-return) declaration first —
+    // `TranslatableComponent` via `ScopedComponent → Component` (wildcard)
+    // before `BuildableComponent` (`Builder`), since the stack is LIFO. Keeping
+    // the first would pin `toBuilder()` to `ComponentBuilder<?,?>` and reject
+    // the `TranslatableComponent.Builder` target. When the signatures match,
+    // keep the more-specific return (the subtype); equal returns keep the
+    // first (most-derived by walk order).
     if !dedupe {
         return out;
     }
     let mut deduped: Vec<MethodData> = Vec::with_capacity(out.len());
     for method in out {
-        if !deduped
-            .iter()
-            .any(|seen| same_overriding_signature(seen, &method))
-        {
+        let mut replaced = false;
+        for seen in deduped.iter_mut() {
+            if !same_overriding_signature(seen, &method) {
+                continue;
+            }
+            // Same signature: keep the covariant override (more-specific
+            // return). `Builder` (`TranslatableComponent.Builder`) is a
+            // subtype of `ComponentBuilder<?,?>`, so it replaces the wildcard.
+            let new_narrower =
+                crate::java::subtyping::is_subtype(db, scope, &method.ret, &seen.ret)
+                    && !crate::java::subtyping::is_subtype(db, scope, &seen.ret, &method.ret);
+            if new_narrower {
+                *seen = method.clone();
+            }
+            replaced = true;
+            break;
+        }
+        if !replaced {
             deduped.push(method);
         }
     }

@@ -812,3 +812,57 @@ class Factory {
 ",
     )])
 );
+
+// -- green: covariant `toBuilder` survives a diamond walk ([JLS §8.4.8.1]) -----
+// `TranslatableComponent` inherits `B toBuilder()` (returning `Builder`) via
+// `BuildableComponent` and `ComponentBuilder<?,?> toBuilder()` via `Component`
+// (through `ScopedComponent`). A LIFO walk surfaces the wildcard first; the
+// dedupe must keep the more-specific return (`Builder`), not the first, or
+// `TranslatableComponent.Builder b = component.toBuilder()` misreports.
+snapshot!(
+    covariant_tobuilder_diamond,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+interface Builder<C, B> {
+    C build();
+}
+
+interface ComponentBuilder<C, B> {
+    C build();
+}
+
+interface Buildable<C, B> {
+    B toBuilder();
+}
+
+interface Component {
+    ComponentBuilder<?, ?> toBuilder();
+}
+
+interface BuildableComponent<C extends BuildableComponent<C, B>, B extends ComponentBuilder<C, B>>
+    extends Buildable<C, B>, Component {
+    @Override
+    B toBuilder();
+}
+
+interface ScopedComponent<C> extends Component {
+}
+
+interface TranslatableComponent
+    extends BuildableComponent<TranslatableComponent, TranslatableComponent.Builder>,
+        ScopedComponent<TranslatableComponent> {
+    interface Builder extends ComponentBuilder<TranslatableComponent, Builder> {
+    }
+}
+
+class Body {
+    void test(TranslatableComponent component) {
+        TranslatableComponent.Builder b = component.toBuilder();
+    }
+}
+",
+    )])
+);
