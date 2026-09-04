@@ -136,3 +136,34 @@ class Outer extends Wrapper<Outer> {
 ",
     )])
 );
+
+// JLS §15.27.3: a `return` inside a *nested* lambda belongs to that lambda,
+// never to the outer one — an outer void block containing an inner block
+// lambda with a valued `return` stays void-compatible and targets `Runnable`.
+// Without the isolation the inner `return s;` leaks into the outer probe frame,
+// the outer appears value-compatible and constrains `⟨String → void⟩`,
+// rejecting the `Runnable` candidate.
+snapshot!(
+    nested_block_lambda_returns_isolated,
+    check_body_types(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Body {
+    void run(Runnable r) {
+    }
+
+    void test() {
+        run(() -> {
+            Function<String, String> f = s -> {
+                return s;
+            };
+        });
+    }
+}
+",
+    )])
+);

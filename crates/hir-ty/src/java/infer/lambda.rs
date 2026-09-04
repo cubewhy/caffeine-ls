@@ -124,7 +124,18 @@ impl InferCtx<'_> {
             // would be constrained against the outer `Consumer<State>` target
             // and rejected.
             LambdaBody::Block(stmt) => {
+                // JLS §15.27.3: a `return` inside a *nested* lambda belongs to
+                // that lambda, never to this one — the speculative probe in
+                // [`super::overload::InferCtx::infer_lambda_body_result`]
+                // records block `return`s on `lambda_returns` to compute the
+                // body's value-compatibility, and without isolation a nested
+                // block lambda's valued `return` leaks into the outer frame.
+                // The outer void block then appears value-compatible and
+                // constrains `⟨String → void⟩`, rejecting the `Runnable`
+                // candidate (`run(() -> { Function f = s -> { return s; }; })`).
+                self.lambda_returns.push(Vec::new());
                 let _ = self.with_target(None, |this| this.infer_stmt(stmt));
+                self.lambda_returns.pop();
             }
         }
         self.lambda_depth -= 1;

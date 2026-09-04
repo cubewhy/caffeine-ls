@@ -541,6 +541,27 @@ fn member_set_impl(
             stack.push(parent);
         }
     }
+    // JLS §4.8: a *raw* receiver (a generic class used without type arguments,
+    // e.g. `CheckContainer` or `ListBinaryTag.Builder`) erases the signatures
+    // of its *instance* members — including members inherited through a
+    // parameterized supertype (`ArrayList<Check<T>>`, `ListTagSetter<...>`).
+    // The per-class `is_raw` erasure in `source_class_methods` /
+    // `library_class_methods` only erases members *declared* in the raw class
+    // itself; an inherited `add(Check<T>)` keeps its type variable and rejects
+    // the `Check<?>` actual. Erasing here gives the raw `add(Object)` javac
+    // resolves. Static members keep their generics (they do not depend on the
+    // receiver). Declaration enumerations (`name == ""`, the `all_methods`
+    // walks of `decl_check`) keep the parameterized supertypes — override
+    // checks compare through them — so only specific lookups erase.
+    if !name.is_empty() && is_raw_receiver(db, scope, &receiver) {
+        for method in &mut out {
+            if !method.is_static {
+                method.params = method.params.iter().map(|p| p.erasure(db)).collect();
+                method.ret = method.ret.erasure(db);
+                method.throws = method.throws.iter().map(|t| t.erasure(db)).collect();
+            }
+        }
+    }
     // §8.4.8: a member whose result type is the class's own *SELF* type
     // parameter — a parameter whose declared bound renames the class itself,
     // the assertj idiom `SELF extends AbstractStringAssert<SELF>` resolved on a
@@ -631,6 +652,42 @@ fn member_set_impl(
         }
     }
     deduped
+}
+
+/// Whether `receiver` is a *raw* use of a generic class ([JLS §4.8]): a
+/// reference type with no type arguments whose class declares type parameters
+/// (`CheckContainer` with `CheckContainer<T>`, `ListBinaryTag.Builder` with
+/// `Builder<T>`). A non-generic class (`String`) or a parameterized use
+/// (`List<String>`) is not raw, even with empty args in the latter's case the
+/// args are present.
+fn is_raw_receiver(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) -> bool {
+    use crate::java::ty::TyKind;
+    let crate::java::ty::TyKind::Reference { name, args } = receiver.kind(db) else {
+        return false;
+    };
+    if !args.is_empty() {
+        return false;
+    }
+    let Some(resolved) = hir::fqn_resolve(db, scope, name.as_str()) else {
+        return false;
+    };
+    match resolved {
+        hir::Resolved::Library(library) => {
+            hir::class_generic_info(db, &hir::Resolved::Library(library))
+                .is_some_and(|info| !info.type_params.is_empty())
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
+                return false;
+            };
+            match data {
+                ItemData::Class(d) | ItemData::Interface(d) => !d.type_params.is_empty(),
+                ItemData::Record(d) => !d.type_params.is_empty(),
+                _ => false,
+            }
+        }
+    }
 }
 
 /// Whether two methods declare the same overriding signature

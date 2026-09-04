@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+expression: out
+---
+FILE /src/com/example/Raw.java:
+package com.example;
+
+import java.util.ArrayList;
+
+class Raw {
+    static class Check<T> {
+    }
+
+    static class CheckContainer<T> extends ArrayList<Check<T>> {
+    }
+
+    void m(Check<?> c) {
+        CheckContainer cc = new CheckContainer();
+        cc.add(c);
+    }
+}
+
+method m(com.example.Raw.Check<?>): void
+  locals: l0: com.example.Raw.Check<?> | l1: com.example.Raw.CheckContainer
+  exprs: e0: com.example.Raw.CheckContainer | e1: com.example.Raw.Check<?> | e2: com.example.Raw.CheckContainer | e3: boolean
+  diags: l1@12:23: raw-type-use: Raw use of parameterized class 'CheckContainer'

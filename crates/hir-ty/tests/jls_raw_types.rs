@@ -143,6 +143,37 @@ class Body {
 // Green: `new Frame[7]` is a raw array; it converts unchecked to
 // `Frame<String>[]` ([§5.1.9]).
 
+// -- §4.8: a *raw* receiver erases *inherited* instance members ----------------
+// A raw `CheckContainer` extends `ArrayList<Check<T>>`; its inherited
+// `add(Check<T>)` erases to `add(Object)` and accepts the `Check<?>` actual.
+// The per-class erasure only covers declared members — without the
+// receiver-wide erasure the parameterized supertype keeps `Check<T>` and
+// rejects the call.
+snapshot!(
+    raw_inherited_members_erased,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+
+class Raw {
+    static class Check<T> {
+    }
+
+    static class CheckContainer<T> extends ArrayList<Check<T>> {
+    }
+
+    void m(Check<?> c) {
+        CheckContainer cc = new CheckContainer();
+        cc.add(c);
+    }
+}
+",
+    )])
+);
+
 // -- §5.1.9: a *multi-dimensional* array of a raw type converts unchecked to
 // an array of the parameterized element — `ArrayList[][] → List<String>[][]`
 // is legal, exactly like the 1-D `Frame[] → Frame<String>[]` case.
