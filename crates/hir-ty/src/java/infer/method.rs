@@ -372,10 +372,22 @@ impl InferCtx<'_> {
     ) -> (Ty, InvocationMode, bool) {
         match receiver {
             Some(receiver) => {
-                // `Type.method(...)` — a static invocation whose receiver
-                // expression is a pure type name ([§15.12.1]): a bare name or
-                // a qualified name such as `java.util.Collections`.
-                if let Some(ty) = self.dotted_type_name(receiver) {
+                // JLS §6.5.2: a simple name that denotes both a type (via
+                // import) and a field in scope reclassifies as an expression —
+                // `UUID.withAlternative(...)` where `UUID` is both
+                // `java.util.UUID` and the static field `NbtCodec<UUID> UUID`
+                // is the field's instance method, not the type's (which has no
+                // such member). Check the field chain before the type name.
+                if let hir_expand::body::ExprData::Var(simple) = self.tree.expr(receiver).clone()
+                    && self.lookup_local(&simple).is_none()
+                    && self.pick_field_of_chain(simple.as_str()).is_some()
+                {
+                    // Fall through to the expression path below (virtual
+                    // invocation on the field's type).
+                } else if let Some(ty) = self.dotted_type_name(receiver) {
+                    // `Type.method(...)` — a static invocation whose receiver
+                    // expression is a pure type name ([§15.12.1]): a bare name or
+                    // a qualified name such as `java.util.Collections`.
                     return (ty, InvocationMode::Static, false);
                 }
                 match self.tree.expr(receiver).clone() {

@@ -499,18 +499,30 @@ fn member_set_impl(
         .unwrap_or_default();
     // §4.4: a type variable's *effective* upper bound is its declared bounds,
     // or `java.lang.Object` when it declares none — the member set of the
-    // receiver is the member set of that bound.
+    // receiver is the member set of that bound. JLS §4.9: an intersection
+    // type's members are those of every conjunct (`T extends MappedEntity &
+    // CopyableEntity<T>` finds `copy` through the second bound, and a glb
+    // `A & B` value finds members through either side).
     let mut stack = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } if bounds.is_empty() => {
             vec![Ty::reference(db, "java.lang.Object", Vec::new())]
         }
         TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
+        TyKind::Intersection(members) => members.clone(),
         _ => vec![receiver],
     };
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
     let mut out = Vec::new();
     while let Some(ty) = stack.pop() {
         if !seen.insert(ty.id) {
+            continue;
+        }
+        // JLS §4.9: an intersection conjunct reached through a bound (a
+        // `TypeVar` bound that is itself `A & B`) contributes every member.
+        if let TyKind::Intersection(members) = ty.kind(db) {
+            for member in members.clone() {
+                stack.push(member);
+            }
             continue;
         }
         out.extend(
