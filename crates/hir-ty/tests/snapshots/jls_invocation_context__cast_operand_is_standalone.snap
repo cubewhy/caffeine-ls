@@ -2,8 +2,8 @@
 source: crates/hir-ty/tests/jls_invocation_context.rs
 expression: out
 ---
-FILE /src/gg/vape/C.java:
-package gg.vape;
+FILE /src/com/example/C.java:
+package com.example;
 
 import java.util.Arrays;
 

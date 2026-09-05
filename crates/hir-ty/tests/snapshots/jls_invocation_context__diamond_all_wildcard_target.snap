@@ -2,8 +2,8 @@
 source: crates/hir-ty/tests/jls_invocation_context.rs
 expression: out
 ---
-FILE /src/gg/vape/ValueSnapshot.java:
-package gg.vape;
+FILE /src/com/example/ValueSnapshot.java:
+package com.example;
 
 class Value<R, V> {
 }
@@ -22,6 +22,6 @@ class C {
 method ValueSnapshot(T): <init>
   locals: l0: T
   exprs: 
-method m(gg.vape.Value<?, ?>): void
-  locals: l1: gg.vape.Value<?, ?> | l2: gg.vape.ValueSnapshot<?, ?>
-  exprs: e0: gg.vape.Value<?, ?> | e1: gg.vape.ValueSnapshot<gg.vape.Value<?, ?>, java.lang.Object>
+method m(com.example.Value<?, ?>): void
+  locals: l1: com.example.Value<?, ?> | l2: com.example.ValueSnapshot<?, ?>
+  exprs: e0: com.example.Value<?, ?> | e1: com.example.ValueSnapshot<com.example.Value<?, ?>, java.lang.Object>

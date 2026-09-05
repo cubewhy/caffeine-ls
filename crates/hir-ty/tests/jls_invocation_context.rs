@@ -30,9 +30,9 @@ use crate::common::check_body_types;
 snapshot!(
     cast_operand_is_standalone,
     check_body_types(&[(
-        "/src/gg/vape/C.java",
+        "/src/com/example/C.java",
         "\
-package gg.vape;
+package com.example;
 
 import java.util.Arrays;
 
@@ -56,9 +56,9 @@ class Value<R, V> {
 snapshot!(
     captured_super_admits_lower_bound,
     check_body_types(&[(
-        "/src/gg/vape/N.java",
+        "/src/com/example/N.java",
         "\
-package gg.vape;
+package com.example;
 
 import java.util.function.Consumer;
 
@@ -79,9 +79,9 @@ class N {
 snapshot!(
     diamond_all_wildcard_target,
     check_body_types(&[(
-        "/src/gg/vape/ValueSnapshot.java",
+        "/src/com/example/ValueSnapshot.java",
         "\
-package gg.vape;
+package com.example;
 
 class Value<R, V> {
 }
@@ -108,9 +108,9 @@ class C {
 snapshot!(
     method_ref_params_constrain_target,
     check_body_types(&[(
-        "/src/gg/vape/C.java",
+        "/src/com/example/C.java",
         "\
-package gg.vape;
+package com.example;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -156,9 +156,9 @@ class C {
 snapshot!(
     unbound_ref_receiver_constrains_target,
     check_body_types(&[(
-        "/src/gg/vape/C.java",
+        "/src/com/example/C.java",
         "\
-package gg.vape;
+package com.example;
 
 import java.util.Comparator;
 

@@ -2,8 +2,8 @@
 source: crates/hir-ty/tests/jls_invocation_context.rs
 expression: out
 ---
-FILE /src/gg/vape/N.java:
-package gg.vape;
+FILE /src/com/example/N.java:
+package com.example;
 
 import java.util.function.Consumer;
 

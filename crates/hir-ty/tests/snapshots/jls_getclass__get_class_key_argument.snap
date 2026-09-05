@@ -2,14 +2,14 @@
 source: crates/hir-ty/tests/jls_getclass.rs
 expression: out
 ---
-FILE /src/gg/vape/Mod.java:
-package gg.vape;
+FILE /src/com/example/Mod.java:
+package com.example;
 
 class Mod {
 }
 
-FILE /src/gg/vape/Registry.java:
-package gg.vape;
+FILE /src/com/example/Registry.java:
+package com.example;
 
 class Registry {
     void register(Class<? extends Mod> key, Mod value) {

@@ -23,18 +23,18 @@ snapshot!(
     get_class_infers_bound,
     check_body_diagnostic_spans(&[
         (
-            "/src/gg/vape/Mod.java",
+            "/src/com/example/Mod.java",
             "\
-package gg.vape;
+package com.example;
 
 class Mod {
 }
 ",
         ),
         (
-            "/src/gg/vape/Registry.java",
+            "/src/com/example/Registry.java",
             "\
-package gg.vape;
+package com.example;
 
 class Registry {
     <T extends Mod> T getMod(Class<T> clazz) {
@@ -54,18 +54,18 @@ snapshot!(
     get_class_key_argument,
     check_body_diagnostic_spans(&[
         (
-            "/src/gg/vape/Mod.java",
+            "/src/com/example/Mod.java",
             "\
-package gg.vape;
+package com.example;
 
 class Mod {
 }
 ",
         ),
         (
-            "/src/gg/vape/Registry.java",
+            "/src/com/example/Registry.java",
             "\
-package gg.vape;
+package com.example;
 
 class Registry {
     void register(Class<? extends Mod> key, Mod value) {

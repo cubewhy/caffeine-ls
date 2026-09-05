@@ -2,8 +2,8 @@
 source: crates/hir-ty/tests/jls_invocation_context.rs
 expression: out
 ---
-FILE /src/gg/vape/C.java:
-package gg.vape;
+FILE /src/com/example/C.java:
+package com.example;
 
 import java.util.Comparator;
 
@@ -27,9 +27,9 @@ class C {
 method getDisplayName(): java.lang.String
   locals: 
   exprs: e0: null
-method getOnlineFriendName(gg.vape.OnlineFriend): java.lang.String
-  locals: l0: gg.vape.OnlineFriend
+method getOnlineFriendName(com.example.OnlineFriend): java.lang.String
+  locals: l0: com.example.OnlineFriend
   exprs: e1: java.lang.String
-method m(): java.util.Comparator<gg.vape.OnlineFriend>
+method m(): java.util.Comparator<com.example.OnlineFriend>
   locals: 
-  exprs: e3: java.util.function.Function<? super gg.vape.OnlineFriend, ? extends java.lang.String> | e5: java.util.Comparator | e7: java.util.function.Function<? super gg.vape.OnlineFriend, ? extends java.lang.String> | e9: java.util.Comparator<gg.vape.OnlineFriend> | e10: java.util.Comparator<gg.vape.OnlineFriend> | e11: java.util.Comparator<gg.vape.OnlineFriend>
+  exprs: e3: java.util.function.Function<? super com.example.OnlineFriend, ? extends java.lang.String> | e5: java.util.Comparator | e7: java.util.function.Function<? super com.example.OnlineFriend, ? extends java.lang.String> | e9: java.util.Comparator<com.example.OnlineFriend> | e10: java.util.Comparator<com.example.OnlineFriend> | e11: java.util.Comparator<com.example.OnlineFriend>
