@@ -748,24 +748,36 @@ fn unchecked_conversion(
         (TyKind::Array(_), _) | (_, TyKind::Array(_)) => return false,
         _ => {}
     }
-    let Some((src_name, _)) = src.as_reference(db) else {
+    let Some((src_name, src_args)) = src.as_reference(db) else {
         return false;
     };
     let Some((dst_name, dst_args)) = dst.as_reference(db) else {
         return false;
     };
-    // §5.1.9: the destination may be a parameterization of the raw type's own
-    // generic class — `raw List` converts to `List<String>` directly. A
-    // *parameterized* source (`DirectValueAccessor<K,T>` whose superclass is
-    // the raw `ValueAccessor`) also converts unchecked when its raw erasure is
-    // a supertype of the destination's raw erasure — the walk below starts
-    // from the source's raw form either way.
+    let raw_src = src_args.is_empty();
     if !dst_args.is_empty() && src_name == dst_name {
+        // §5.1.9: the destination may be a parameterization of the source's
+        // own generic class — `raw List` converts to `List<String>` directly.
+        // (A *parameterized* source of the same class also passes here —
+        // `G<A> → G<B>` — including capture-vs-concrete and unbound-var
+        // pairs; javac decides those contexts individually, and the checked
+        // subtyping has already failed, so the callers' lenient paths are
+        // what keep the established `G<Object>` vs `G<Entry>` method-ref
+        // probes legal.)
         return true;
     }
-    let raw_src = Ty::reference(db, src_name.clone(), Vec::new());
+    // §5.1.9: the walk reaches the destination's erasure through the
+    // supertype chain. For a raw source every supertype is erased, so the
+    // first occurrence converts; a parameterized source (whose declared
+    // supertype is raw — `DirectAccessor<K,T> extends ValueAccessor` converts
+    // to `ValueAccessor<String>` with a warning) must find a *raw*
+    // occurrence, and a parameterized occurrence with the target erasure
+    // (invariance §4.10.2 makes the arguments incompatible — `ArrayList<Number>`
+    // against `List<String>` reaches the parameterized `List<Number>`, exactly
+    // the `List<String> l = new ArrayList<Number>()` error) is not an
+    // unchecked conversion.
     let scope = ScopeId::new(db, ScopeKind::from_scope(scope));
-    let mut stack = vec![raw_src];
+    let mut stack = vec![*src];
     let mut visited = FxHashSet::default();
     while let Some(current) = stack.pop() {
         for parent in supertypes_query(db, scope, current.id) {
@@ -773,9 +785,27 @@ fn unchecked_conversion(
                 continue;
             }
             match parent.as_reference(db) {
-                // The erased supertype matches the destination's erasure:
-                // every instantiation of it is reachable from the raw source.
-                Some((parent_name, _)) if parent_name == dst_name => return true,
+                // The erased supertype matches the destination's erasure.
+                Some((parent_name, parent_args)) if parent_name == dst_name => {
+                    if raw_src || parent_args.is_empty() {
+                        return true;
+                    }
+                    // A same-type write (`ArrayList<X>` to `List<X>` with the
+                    // source class's own type variables — the
+                    // `ArrayList<ValueChangeValidator<T,K>>` to
+                    // `List<ValueChangeValidator<T,K>>` field initializer) is
+                    // a *checked* subtype that the memoized supertype walk
+                    // loses across interned handles; its arguments are
+                    // structurally identical, so accept exactly that pair
+                    // (`same_shape`). A parameterized occurrence with
+                    // different arguments — invariance §4.10.2, the
+                    // `ArrayList<Number>` to `List<String>` error — is not an
+                    // unchecked conversion.
+                    if parent.same_shape(db, dst) {
+                        return true;
+                    }
+                    return false;
+                }
                 Some(_) => stack.push(parent),
                 None => {}
             }
@@ -787,10 +817,13 @@ fn unchecked_conversion(
 /// Whether `arg` is convertible to `param` by a strict invocation conversion
 /// ([JLS §5.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.3)):
 /// identity, widening primitive
-/// ([§5.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2))
-/// or widening reference
-/// ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)).
-/// Unlike assignment conversion there is no boxing or unboxing.
+/// ([§5.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.2)),
+/// widening reference
+/// ([§5.1.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.5)),
+/// or unchecked
+/// ([§5.1.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.9)).
+/// Unlike assignment conversion there is no boxing or unboxing ([§5.3]);
+/// boxing/unboxing are only admitted in the loose phase ([§5.2]).
 pub(crate) fn strict_conversion(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -802,7 +835,23 @@ pub(crate) fn strict_conversion(
     }
     match (arg.kind(db), param.kind(db)) {
         (TyKind::Primitive(src), TyKind::Primitive(dst)) => widening_primitive(*src, *dst),
-        _ => is_subtype(db, scope, arg, param),
+        _ => {
+            is_subtype(db, scope, arg, param)
+                // §5.1.9 with §5.3: the unchecked conversion (*raw* or
+                // raw-array argument to a parameterized formal, or an array
+                // of a raw element) is a strict invocation conversion too —
+                // javac's phase-1 applicability test (`isSubtypeUnchecked`)
+                // resolves `m(rawList)` to `m(List<String>)` in phase 1.
+                || unchecked_conversion(db, scope, arg, param)
+                // A type variable whose *bound* is a raw type converts to a
+                // parameterization of that class by unchecked conversion
+                // ([§5.1.9] with §4.10.2), mirroring `is_assignable`.
+                || (!param.is_type_var(db)
+                    && arg
+                        .bounds(db)
+                        .iter()
+                        .any(|bound| unchecked_conversion(db, scope, bound, param)))
+        }
     }
 }
 

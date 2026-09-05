@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_strict_unchecked.rs
+expression: out
+---
+FILE /src/com/example/RawOverload.java:
+package com.example;
+
+import java.util.List;
+import java.util.ArrayList;
+
+class RawOverload {
+    static void m(List<String> l) {
+    }
+
+    static void m(ArrayList<Number> a) {
+    }
+
+    static void use(ArrayList raw) {
+        m(raw);
+    }
+}
+
+method use(java.util.ArrayList): void
+  @13:8..13:9 'm': wrong-argument-count: Method 'm()' cannot be applied to given types
+    -> @13:8..13:9 'm': required: List<String>
+    -> @13:8..13:9 'm': found: ArrayList
+    -> @13:8..13:9 'm': reason: actual and formal argument lists differ in length

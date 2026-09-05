@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_varargs_lambda.rs
+expression: out
+---
+FILE /src/com/example/Varargs.java:
+package com.example;
+
+import java.util.function.Function;
+import java.util.function.BiFunction;
+
+class Varargs {
+    static String m(Function<String, String>... fs) {
+        return null;
+    }
+
+    static String m(BiFunction<String, String, String>... bs) {
+        return null;
+    }
+
+    static void use() {
+        String s = m((x, y) -> x + y);
+    }
+}
+
+method m(java.util.function.Function<java.lang.String, java.lang.String>): java.lang.String
+  locals: l0: java.util.function.Function<java.lang.String, java.lang.String>[]
+  exprs: e0: null
+method m(java.util.function.BiFunction<java.lang.String, java.lang.String, java.lang.String>): java.lang.String
+  locals: l1: java.util.function.BiFunction<java.lang.String, java.lang.String, java.lang.String>[]
+  exprs: e1: null
+method use(): void
+  locals: l2: java.lang.String
+  exprs: e2: java.lang.String | e3: java.lang.String | e4: java.lang.String | e6: java.lang.String

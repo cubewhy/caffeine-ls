@@ -1791,12 +1791,43 @@ fn instantiate(
     // method ([§15.27.3]). A candidate whose functional interface does not
     // fit a lambda argument is not applicable; a method reference contributes
     // no arity check here (it is resolved against the SAM after selection).
-    for (formal, arg) in formals.iter().zip(args) {
-        if let PolyArg::Poly(_, Some(arity)) = arg
-            && let Some(sam) = single_abstract_method(db, scope, formal)
-            && sam.params.len() != *arity
-        {
-            return None;
+    //
+    // For a variable-arity invocation ([§15.12.2.4]) the trailing actuals are
+    // compatible with the *i*-th variable arity parameter type — the element
+    // `Fn` for `i ≥ n` ([§8.4.1]) — so a trailing lambda's arity must match
+    // the element's SAM ([§15.27.3]): the varargs array formal `Fn[]` is not
+    // a functional interface, and a mismatch makes the candidate not
+    // applicable ([§15.12.2.2]).
+    let varargs_element = if varargs {
+        formals.last().and_then(|f| f.element(db))
+    } else {
+        None
+    };
+    for (i, arg) in args.iter().enumerate() {
+        if let PolyArg::Poly(_, Some(arity)) = arg {
+            // Beyond the fixed prefix every trailing actual is packed into
+            // the varargs array and is checked against the element type; an
+            // element whose SAM is not (yet) resolvable — an inference
+            // variable awaiting instantiation — skips the check rather than
+            // falsely rejecting. (Phase 3 passes `varargs` for every member;
+            // a non-varargs candidate with no formals hits `!method.varargs`
+            // below, so the empty case must not panic here.)
+            let target = if varargs && i >= formals.len().saturating_sub(1) {
+                match varargs_element {
+                    Some(element) => element,
+                    None => continue,
+                }
+            } else {
+                let Some(formal) = formals.get(i) else {
+                    continue;
+                };
+                formal
+            };
+            if let Some(sam) = single_abstract_method(db, scope, target)
+                && sam.params.len() != *arity
+            {
+                return None;
+            }
         }
     }
 

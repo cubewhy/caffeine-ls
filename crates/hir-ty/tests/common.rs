@@ -814,6 +814,15 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("accept", "(Ljava/lang/Object;)V")],
             &["(TT;)V"],
         ),
+        functional_interface(
+            "java/util/function/BiFunction",
+            "<T:Ljava/lang/Object;U:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+            &[(
+                "apply",
+                "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+            )],
+            &["(TT;TU;)TR;"],
+        ),
         // Real `java.util.Comparator` shape: the `compare` SAM is abstract
         // ([JLS §9.4]), the `comparing` factory is static ([§9.4.4]) and the
         // `thenComparing` methods are default ([§9.4.3]). The mixed access

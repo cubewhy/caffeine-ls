@@ -131,11 +131,14 @@ impl Inference {
                     return true;
                 }
                 if sa.is_empty() {
-                    // §4.8/§5.1.9/§15.12.2.3: a *raw* source is compatible
-                    // with any parameterization of its own class by
-                    // unchecked conversion — admitted in the loose phase
-                    // (`stream.flatMap(List::stream)`), rejected in strict.
-                    return phase == InvocationPhase::Loose;
+                    // §4.8/§5.1.9/§5.3: a *raw* source is compatible with
+                    // any parameterization of its own class by unchecked
+                    // conversion — admitted in *both* invocation phases.
+                    // javac's phase-1 applicability test (`isSubtypeUnchecked`,
+                    // §15.12.2.2) accepts `m(rawList)` for `m(List<String>)`;
+                    // `stream.flatMap(List::stream)` relies on the same
+                    // conversion.
+                    return true;
                 }
                 if sa.len() != ta.len() {
                     return false;

@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_strict_unchecked.rs
+expression: out
+---
+FILE /src/com/example/RawOverload.java:
+package com.example;
+
+class Box<T> {
+}
+
+class RawOverload {
+    static String m(Box<String>[] xs) {
+        return null;
+    }
+
+    static Object m(Object[] xs) {
+        return null;
+    }
+
+    static void use() {
+        Object o = m(new Box[0]);
+    }
+}
+
+method m(com.example.Box<java.lang.String>[]): java.lang.String
+  locals: l0: com.example.Box<java.lang.String>[]
+  exprs: e0: null
+method m(java.lang.Object[]): java.lang.Object
+  locals: l1: java.lang.Object[]
+  exprs: e1: null
+method use(): void
+  locals: l2: java.lang.Object
+  exprs: e2: int | e3: com.example.Box[] | e4: java.lang.String

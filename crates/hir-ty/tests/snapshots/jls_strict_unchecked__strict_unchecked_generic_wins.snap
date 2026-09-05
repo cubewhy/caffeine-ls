@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_strict_unchecked.rs
+expression: out
+---
+FILE /src/com/example/RawOverload.java:
+package com.example;
+
+import java.util.List;
+
+class RawOverload {
+    static <T> List<T> m(List<T> l) {
+        return null;
+    }
+
+    static Object m(Object o) {
+        return null;
+    }
+
+    static void use(List raw) {
+        Object o = m(raw);
+    }
+}
+
+method m(java.util.List<T>): java.util.List<T>
+  locals: l0: java.util.List<T>
+  exprs: e0: null
+method m(java.lang.Object): java.lang.Object
+  locals: l1: java.lang.Object
+  exprs: e1: null
+method use(java.util.List): void
+  locals: l2: java.util.List | l3: java.lang.Object
+  exprs: e2: java.util.List | e3: java.util.List<java.lang.Object>

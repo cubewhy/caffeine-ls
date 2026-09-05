@@ -42,8 +42,10 @@ pub use self::lub::least_upper_bound;
 
 /// The invocation conversion of a phase: strict invocation
 /// ([§15.12.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.2))
-/// admits only identity, widening primitive ([§5.1.2]) and widening reference
-/// ([§5.1.5]) conversions; loose invocation
+/// admits identity, widening primitive ([§5.1.2]), widening reference
+/// ([§5.1.5]) and unchecked ([§5.1.9]) conversions
+/// ([§5.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.3));
+/// loose invocation
 /// ([§15.12.2.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.3))
 /// also admits boxing ([§5.1.7]) and unboxing ([§5.1.8]), i.e. assignment
 /// conversion ([§5.2]).

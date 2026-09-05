@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_varargs_lambda.rs
+expression: out
+---
+FILE /src/com/example/Varargs.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Varargs {
+    static void m(Function<String, String>... fs) {
+    }
+
+    static void use() {
+        m((x, y) -> x + y);
+    }
+}
+
+method use(): void
+  @9:8..9:9 'm': wrong-argument-count: Method 'm()' cannot be applied to given types
+    -> @9:8..9:9 'm': required: Function<String, String>[]
+    -> @9:8..9:9 'm': found: <poly>
+    -> @9:8..9:9 'm': reason: actual and formal argument lists differ in length
