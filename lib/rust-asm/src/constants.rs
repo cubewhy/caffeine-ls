@@ -213,21 +213,6 @@ impl JvmAccessFlags {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::JvmAccessFlags;
-
-    #[test]
-    fn predicates() {
-        let flags = JvmAccessFlags::PUBLIC | JvmAccessFlags::STATIC | JvmAccessFlags::FINAL;
-        assert!(flags.is_public());
-        assert!(flags.is_static());
-        assert!(flags.is_final());
-        assert!(!flags.is_abstract());
-        assert!(!flags.is_private());
-    }
-}
-
 //method handle info
 pub const REF_GET_FIELD: u8 = 1;
 pub const REF_GET_STATIC: u8 = 2;
@@ -266,3 +251,18 @@ pub const TA_TYPE_PATH_ARRAY: u8 = 0;
 pub const TA_TYPE_PATH_INNER_TYPE: u8 = 1;
 pub const TA_TYPE_PATH_WILDCARD: u8 = 2;
 pub const TA_TYPE_PATH_TYPE_ARGUMENT: u8 = 3;
+
+#[cfg(test)]
+mod tests {
+    use super::JvmAccessFlags;
+
+    #[test]
+    fn predicates() {
+        let flags = JvmAccessFlags::PUBLIC | JvmAccessFlags::STATIC | JvmAccessFlags::FINAL;
+        assert!(flags.is_public());
+        assert!(flags.is_static());
+        assert!(flags.is_final());
+        assert!(!flags.is_abstract());
+        assert!(!flags.is_private());
+    }
+}

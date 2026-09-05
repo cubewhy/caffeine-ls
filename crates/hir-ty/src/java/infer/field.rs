@@ -115,11 +115,11 @@ impl InferCtx<'_> {
                     return;
                 }
                 // §8.10.1: a record's components become blank final fields.
-                hir_def::java::item_tree::ItemData::Record(r) => {
-                    if r.components.iter().any(|c| c.name.as_str() == name) {
-                        *found = true;
-                        return;
-                    }
+                hir_def::java::item_tree::ItemData::Record(r)
+                    if r.components.iter().any(|c| c.name.as_str() == name) =>
+                {
+                    *found = true;
+                    return;
                 }
                 _ => {}
             }

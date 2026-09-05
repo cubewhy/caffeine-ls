@@ -534,7 +534,7 @@ impl InferCtx<'_> {
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                let _ = self.infer_switch_label(*e, &selector);
+                                self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);

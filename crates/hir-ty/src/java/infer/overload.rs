@@ -172,7 +172,6 @@ impl InferCtx<'_> {
             }
         }
         if applicable.is_empty() {
-            if members.iter().any(|m| m.name == "allOf") {}
             return None;
         }
         // The most specific applicable candidate ([§15.12.2.5]); identical
@@ -309,10 +308,10 @@ impl InferCtx<'_> {
                     }
                     return None;
                 };
-                if let Some(arity) = arity {
-                    if sam.params.len() != *arity {
-                        return None;
-                    }
+                if let Some(arity) = arity
+                    && sam.params.len() != *arity
+                {
+                    return None;
                 }
                 // §15.13.2: a method reference has no syntactic parameter
                 // list to arity-check, so its congruence with the SAM — the
@@ -487,7 +486,6 @@ impl InferCtx<'_> {
             let resolved = match inference.solve_after(self.db, &self.scope, phase) {
                 Some(r) => r,
                 None => {
-                    if method.name == "unmodifiableMap" {}
                     return None;
                 }
             };
@@ -687,7 +685,7 @@ impl InferCtx<'_> {
                             // the referenced parameter bounds the inference
                             // variable from above: `⟨T → Friend⟩`.
                             let target = self.decapture(sam_param);
-                            inference.add_constraint(Constraint::Sub(target, ref_param.clone()));
+                            inference.add_constraint(Constraint::Sub(target, *ref_param));
                         }
                         // §15.13.3: an *unbound* instance reference takes the
                         // SAM's first parameter as the receiver — the
@@ -852,7 +850,7 @@ impl InferCtx<'_> {
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return true;
         };
-        let type_params = self.class_type_param_bounds(&name);
+        let type_params = self.class_type_param_bounds(name);
         if type_params.is_empty() {
             return true;
         }

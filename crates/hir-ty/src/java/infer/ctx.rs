@@ -272,12 +272,12 @@ impl InferCtx<'_> {
         if sub || sup {
             return true;
         }
-        match (
-            crate::java::subtyping::class_like_and_final(self.db, &self.scope, &from),
-            crate::java::subtyping::class_like_and_final(self.db, &self.scope, &to),
-        ) {
-            (Some((true, _)), Some((true, _))) => false,
-            _ => true,
-        }
+        !matches!(
+            (
+                crate::java::subtyping::class_like_and_final(self.db, &self.scope, &from),
+                crate::java::subtyping::class_like_and_final(self.db, &self.scope, &to),
+            ),
+            (Some((true, _)), Some((true, _)))
+        )
     }
 }

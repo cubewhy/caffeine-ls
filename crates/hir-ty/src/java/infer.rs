@@ -152,7 +152,7 @@ pub(crate) fn body_types_impl(
         tree: bodies.clone(),
         resolver,
         access,
-        enclosing_class: enclosing_class.clone(),
+        enclosing_class,
         enclosing_chain: {
             // The chain of enclosing class-like declarations of `item`,
             // innermost first, as raw types ([§6.3], [§8.1.3]).

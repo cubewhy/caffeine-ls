@@ -86,7 +86,7 @@ impl InferCtx<'_> {
                 crate::java::subtyping::enum_constants(self.db, &self.scope, selector)
             && constants.iter().any(|constant| constant == &name)
         {
-            self.types.insert(label, selector.clone());
+            self.types.insert(label, *selector);
             return;
         }
         // JLS §15.2/§14.11.1: a case label is standalone.
@@ -101,7 +101,7 @@ impl InferCtx<'_> {
             // *constant* also narrows to a `byte`, `short` or `char`
             // selector when its value is representable there ([§5.1.3]) —
             // `case 16` of a `byte` selector is legal.
-            && !self.constant_narrowable(label, ty.clone(), selector.clone())
+            && !self.constant_narrowable(label, ty, *selector)
         {
             self.report(TypeError::IncompatibleTypes {
                 expr: label,

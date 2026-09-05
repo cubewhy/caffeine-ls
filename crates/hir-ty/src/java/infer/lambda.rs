@@ -39,10 +39,7 @@ impl InferCtx<'_> {
         // interface — one with exactly one abstract method.
         let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
             if !target.is_error(self.db) {
-                self.report(TypeError::NotAFunctionalInterface {
-                    expr,
-                    target: target,
-                });
+                self.report(TypeError::NotAFunctionalInterface { expr, target });
             }
             return self.error();
         };
@@ -134,7 +131,7 @@ impl InferCtx<'_> {
                 // constrains `⟨String → void⟩`, rejecting the `Runnable`
                 // candidate (`run(() -> { Function f = s -> { return s; }; })`).
                 self.lambda_returns.push(Vec::new());
-                let _ = self.with_target(None, |this| this.infer_stmt(stmt));
+                self.with_target(None, |this| this.infer_stmt(stmt));
                 self.lambda_returns.pop();
             }
         }
@@ -193,10 +190,7 @@ impl InferCtx<'_> {
         // interface too.
         let Some(sam) = single_abstract_method(self.db, &self.scope, &target) else {
             if !target.is_error(self.db) {
-                self.report(TypeError::NotAFunctionalInterface {
-                    expr,
-                    target: target,
-                });
+                self.report(TypeError::NotAFunctionalInterface { expr, target });
             }
             return self.error();
         };
@@ -528,28 +522,29 @@ impl InferCtx<'_> {
                         break;
                     }
                 }
-                if ok && let Some((element, tail_count)) = &tail {
-                    if !element.contains_infer_var(self.db) {
-                        for k in 0..*tail_count {
-                            let sam_param = sam_params.get(fixed.len() + k + offset).copied();
-                            let decided = sam_param.and_then(|sp| {
-                                if sp.contains_infer_var(self.db)
-                                    || sp.contains_type_var_named_capture(self.db)
-                                {
-                                    None
-                                } else if element.contains_type_var(self.db) {
-                                    Some(self.method_ref_param_compatible(
-                                        Some(&sp),
-                                        &element.erasure(self.db),
-                                    ))
-                                } else {
-                                    Some(self.method_ref_param_compatible(Some(&sp), element))
-                                }
-                            });
-                            if decided == Some(false) {
-                                ok = false;
-                                break;
+                if ok
+                    && let Some((element, tail_count)) = &tail
+                    && !element.contains_infer_var(self.db)
+                {
+                    for k in 0..*tail_count {
+                        let sam_param = sam_params.get(fixed.len() + k + offset).copied();
+                        let decided = sam_param.and_then(|sp| {
+                            if sp.contains_infer_var(self.db)
+                                || sp.contains_type_var_named_capture(self.db)
+                            {
+                                None
+                            } else if element.contains_type_var(self.db) {
+                                Some(self.method_ref_param_compatible(
+                                    Some(&sp),
+                                    &element.erasure(self.db),
+                                ))
+                            } else {
+                                Some(self.method_ref_param_compatible(Some(&sp), element))
                             }
+                        });
+                        if decided == Some(false) {
+                            ok = false;
+                            break;
                         }
                     }
                 }

@@ -301,6 +301,7 @@ pub trait SourceDatabase: salsa::Database {
 
     fn nonce_and_revision(&self) -> (Nonce, salsa::Revision);
 
+    #[allow(clippy::result_unit_err)]
     fn line_column(&self, file: FileId, offset: TextSize) -> Result<(u32, u32), ()>;
 }
 

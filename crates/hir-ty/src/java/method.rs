@@ -497,6 +497,7 @@ fn member_set_impl(
             name.as_str().to_owned()
         })
         .unwrap_or_default();
+
     // §4.4: a type variable's *effective* upper bound is its declared bounds,
     // or `java.lang.Object` when it declares none — the member set of the
     // receiver is the member set of that bound. JLS §4.9: an intersection
@@ -685,7 +686,6 @@ fn member_set_impl(
 /// (`List<String>`) is not raw, even with empty args in the latter's case the
 /// args are present.
 fn is_raw_receiver(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) -> bool {
-    use crate::java::ty::TyKind;
     let crate::java::ty::TyKind::Reference { name, args } = receiver.kind(db) else {
         return false;
     };
@@ -1642,7 +1642,7 @@ fn member_accessible(
                 // `super` invocation accesses the member through the `super`
                 // keyword, not an expression, so the rule does not apply
                 // ([§15.12.1]).
-                Some(subclass) if static_member || ctx.mode == InvocationMode::Super => true,
+                Some(_subclass) if static_member || ctx.mode == InvocationMode::Super => true,
                 Some(subclass) => {
                     let subclass = Ty::reference(db, subclass.as_str(), Vec::new());
                     is_subtype(db, scope, receiver, &subclass)
@@ -1964,7 +1964,6 @@ pub(crate) fn more_specific(
             out
         };
         let p1 = norm(m1);
-        let p2 = norm(m2);
         let mut inference = Inference::new();
         let (m2_formals, _, _) = inference.register_method(db, m2);
         if m2_formals.len() != m2.params.len() {

@@ -28,19 +28,14 @@ use bitflags::bitflags;
 use crate::jvm::access::JvmAccessFlags;
 
 /// The accessibility modifiers of a declaration ([JLS §6.6.1]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum JavaVisibility {
     Public,
     Protected,
     /// The unnamed accessibility: no access modifier at all.
+    #[default]
     Package,
     Private,
-}
-
-impl Default for JavaVisibility {
-    fn default() -> Self {
-        JavaVisibility::Package
-    }
 }
 
 impl JavaVisibility {

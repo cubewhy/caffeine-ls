@@ -366,10 +366,10 @@ impl Resolved {
     /// package / unresolved source).
     pub fn fqn(&self, db: &dyn JvmDatabase) -> hir_def::jvm::fqn::FqName {
         match self {
-            Resolved::Library(class) => hir_def::jvm::fqn::FqName::from_str(
-                db.hir_state().interner.resolve(&class.entry.fqn),
-            ),
-            Resolved::Source(_) => hir_def::jvm::fqn::FqName::from_str(""),
+            Resolved::Library(class) => {
+                hir_def::jvm::fqn::FqName::from(db.hir_state().interner.resolve(&class.entry.fqn))
+            }
+            Resolved::Source(_) => hir_def::jvm::fqn::FqName::from(""),
         }
     }
 }

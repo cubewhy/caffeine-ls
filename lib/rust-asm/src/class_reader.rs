@@ -2158,10 +2158,6 @@ fn parse_code_instructions(code: &[u8]) -> Result<Vec<Insn>, ClassReadError> {
     Ok(insns)
 }
 
-pub(crate) fn parse_code_instructions_public(code: &[u8]) -> Result<Vec<Insn>, ClassReadError> {
-    parse_code_instructions(code)
-}
-
 #[derive(Debug, Clone)]
 struct ParsedInstruction {
     offset: u16,

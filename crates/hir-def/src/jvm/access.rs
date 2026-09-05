@@ -22,19 +22,13 @@ pub use rust_asm::constants::JvmAccessFlags;
 /// package-private default.
 ///
 /// [JLS §6.6.1]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum JvmVisibility {
     Public,
     Protected,
+    #[default]
     Package,
     Private,
-}
-
-impl Default for JvmVisibility {
-    fn default() -> Self {
-        // The unnamed accessibility: no access modifier at all ([JLS §6.6.1]).
-        JvmVisibility::Package
-    }
 }
 
 impl JvmVisibility {

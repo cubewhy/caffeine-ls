@@ -240,9 +240,7 @@ pub fn qualify_member_type_of(
     // written argument here targets ([JLS §8.1.3], §15.9.3).
     let (receiver_name, _) = receiver_ty.erasure(db).as_reference(db)?;
     let member_fqn = join(receiver_name, name.as_str());
-    if hir::fqn_resolve(db, scope, member_fqn.as_str()).is_none() {
-        return None;
-    }
+    hir::fqn_resolve(db, scope, member_fqn.as_str())?;
     Some(TypeRef::Reference {
         name: member_fqn,
         generic_args: generic_args.clone(),

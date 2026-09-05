@@ -831,7 +831,7 @@ fn expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprId {
     // Narrow the name range to the member/method identifier for a field
     // access, invocation or method reference, so diagnostics underline the
     // symbol rather than the whole receiver chain.
-    let name_range = expr_name_range(&ctx.bodies.exprs.get(id.0), node);
+    let name_range = expr_name_range(ctx.bodies.exprs.get(id.0), node);
     ctx.bodies.expr_name_ranges[id.0.0 as usize] = name_range;
     id
 }
@@ -1231,12 +1231,8 @@ fn decode_line(out: &mut String, line: &str) {
             out.push(c);
             continue;
         }
-        match chars.next() {
-            Some(escaped) => push_escape(out, escaped, &mut chars),
-            // A `\` at end of line: inside a text block this is the line
-            // continuation `\<line-terminator>` ([§3.10.6]), which produces
-            // nothing — the joining logic drops the terminator itself.
-            None => {}
+        if let Some(escaped) = chars.next() {
+            push_escape(out, escaped, &mut chars)
         }
     }
 }
@@ -1782,10 +1778,10 @@ fn name_identifier_range(node: &SyntaxNode<Lang>) -> Option<TextRange> {
     for element in node.children_with_tokens() {
         match element {
             NodeOrToken::Node(child) => {
-                if child.kind() != J::ARGUMENT_LIST {
-                    if let Some(r) = name_identifier_range(&child) {
-                        last = Some(r);
-                    }
+                if child.kind() != J::ARGUMENT_LIST
+                    && let Some(r) = name_identifier_range(&child)
+                {
+                    last = Some(r);
                 }
             }
             NodeOrToken::Token(token) => {

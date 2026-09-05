@@ -273,11 +273,10 @@ impl Ty {
     /// [`TyKind::Void`] or the `void` primitive (the declared return type of
     /// a `void` method lowers to the primitive).
     pub fn is_void_like(&self, db: &dyn TyDatabase) -> bool {
-        match self.kind(db) {
-            TyKind::Void => true,
-            TyKind::Primitive(PrimitiveType::Void) => true,
-            _ => false,
-        }
+        matches!(
+            self.kind(db),
+            TyKind::Void | TyKind::Primitive(PrimitiveType::Void)
+        )
     }
 
     pub fn is_null(&self, db: &dyn TyDatabase) -> bool {
@@ -951,7 +950,7 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                     }
                 })
                 .collect();
-            let declared = type_param_upper_bounds(db, scope, name.as_str(), &args, &placeholders);
+            let declared = type_param_upper_bounds(db, scope, name.as_str(), args, &placeholders);
             Ty::reference(
                 db,
                 name.clone(),
@@ -959,10 +958,10 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                     .enumerate()
                     .map(|(i, arg)| match arg.kind(db) {
                         TyKind::Wildcard(Some(bound)) => match bound.kind {
-                            BoundKind::Upper => fresh(bound.ty.clone()),
+                            BoundKind::Upper => fresh(bound.ty),
                             // `? super T`: a capture variable with the `Object`
                             // upper bound and the `T` lower bound (§5.1.10).
-                            BoundKind::Lower => Ty::captured_var(db, bound.ty.clone()),
+                            BoundKind::Lower => Ty::captured_var(db, bound.ty),
                         },
                         TyKind::Wildcard(None) => {
                             let bound = declared.get(i).copied().unwrap_or_else(|| {
@@ -986,10 +985,10 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
         }
         TyKind::Array(inner) => Ty::array(db, **inner),
         TyKind::Wildcard(Some(bound)) => match bound.kind {
-            BoundKind::Upper => fresh(bound.ty.clone()),
+            BoundKind::Upper => fresh(bound.ty),
             // `? super T`: a capture variable with the `Object` upper bound
             // and the `T` lower bound (§5.1.10).
-            BoundKind::Lower => Ty::captured_var(db, bound.ty.clone()),
+            BoundKind::Lower => Ty::captured_var(db, bound.ty),
         },
         TyKind::Wildcard(None) => fresh(Ty::reference(db, "java.lang.Object", Vec::new())),
         // Intersection and type-variable receivers are not parameterized by
@@ -1033,13 +1032,12 @@ fn type_param_upper_bounds(
     params
         .iter()
         .map(|(_, bounds)| {
-            let bound = bounds
+            bounds
                 .first()
                 .copied()
                 .map(|bound| bound.substitute(db, &binding))
                 .filter(|b| !b.is_object(db))
-                .unwrap_or(object);
-            bound
+                .unwrap_or(object)
         })
         .collect()
 }

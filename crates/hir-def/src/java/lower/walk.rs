@@ -1305,11 +1305,9 @@ fn dimension_count(node: &SyntaxNode<Lang>) -> usize {
         };
         match token.kind() {
             J::L_BRACKET => open += 1,
-            J::R_BRACKET => {
-                if open > 0 {
-                    open -= 1;
-                    dims += 1;
-                }
+            J::R_BRACKET if open > 0 => {
+                open -= 1;
+                dims += 1;
             }
             _ => {}
         }

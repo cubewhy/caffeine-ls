@@ -19,11 +19,6 @@ impl FqName {
         FqName(name)
     }
 
-    /// Builds a fully qualified name from a dotted text form.
-    pub fn from_str(text: &str) -> Self {
-        FqName(Name::new(text))
-    }
-
     /// The underlying name.
     pub fn as_name(&self) -> &Name {
         &self.0
@@ -56,7 +51,7 @@ impl FqName {
         text.push_str(self.0.as_str());
         text.push('.');
         text.push_str(segment);
-        FqName::from_str(&text)
+        FqName::from(text.as_str())
     }
 }
 
@@ -74,7 +69,7 @@ impl From<Name> for FqName {
 
 impl From<&str> for FqName {
     fn from(text: &str) -> Self {
-        FqName::from_str(text)
+        FqName(Name::new(text))
     }
 }
 
@@ -84,14 +79,14 @@ mod tests {
 
     #[test]
     fn segments() {
-        let fqn = FqName::from_str("com.example.Outer.Inner");
+        let fqn = FqName::from("com.example.Outer.Inner");
         assert_eq!(fqn.simple_name(), "Inner");
         assert_eq!(fqn.package(), Some("com.example.Outer"));
         assert_eq!(
             fqn.join("member").as_str(),
             "com.example.Outer.Inner.member"
         );
-        assert_eq!(FqName::from_str("A").package(), None);
-        assert_eq!(FqName::from_str("A").simple_name(), "A");
+        assert_eq!(FqName::from("A").package(), None);
+        assert_eq!(FqName::from("A").simple_name(), "A");
     }
 }

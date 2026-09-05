@@ -584,7 +584,7 @@ impl InferCtx<'_> {
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
-                                let _ = self.infer_switch_label(*e, &selector);
+                                self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
                                 let _ = self.pattern_type(*p);
@@ -656,9 +656,7 @@ impl InferCtx<'_> {
                 // `default` it completes normally exactly when some arm does.
                 // A switch *expression* ([§15.28]) is exhaustive by
                 // construction, so its completion is exactly the arm join.
-                self.exited = if !has_default {
-                    false
-                } else if any_normal {
+                self.exited = if !has_default || any_normal {
                     false
                 } else {
                     paths.is_empty() && fall_through.is_none() && arm_count > 0
@@ -942,7 +940,7 @@ impl InferCtx<'_> {
                                 if self.is_checked(thrown)
                                     && let Some(expr) = resource.initializer
                                 {
-                                    close_thrown.push((thrown.clone(), expr));
+                                    close_thrown.push((*thrown, expr));
                                 }
                             }
                             break;
@@ -969,7 +967,7 @@ impl InferCtx<'_> {
                     .thrown
                     .iter()
                     .filter(|(_, expr)| !thrown_before.contains(expr))
-                    .map(|(ty, _)| ty.clone())
+                    .map(|(ty, _)| *ty)
                     .collect();
                 let mut catch_tys: Vec<Ty> = Vec::new();
                 for clause in catches {
@@ -1114,7 +1112,7 @@ impl InferCtx<'_> {
                                     )
                                 })
                         })
-                        .map(|(ty, _)| ty.clone())
+                        .map(|(ty, _)| *ty)
                         .collect();
                     // The empty set is recorded too ([§11.2.2]): a `throw` of
                     // a catch-all parameter (`catch (Throwable t)` around a

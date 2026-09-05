@@ -37,12 +37,6 @@ pub(crate) fn semis(p: &mut Parser) {
     }
 }
 
-/// Whether the current token can start a `simpleIdentifier`:
-/// any IDENTIFIER token (soft keywords are lexed as IDENTIFIER).
-pub(crate) fn at_simple_identifier(p: &Parser) -> bool {
-    p.at(IDENTIFIER)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{Event, Parser, lex};

@@ -62,10 +62,9 @@ pub(super) fn pick_instantiation(
                     TyKind::Reference { .. } | TyKind::Intersection(_)
                 )
             })
+            && let TyKind::Primitive(p) = inst.kind(db)
         {
-            if let TyKind::Primitive(p) = inst.kind(db) {
-                inst = Ty::reference(db, boxed_type(*p), Vec::new());
-            }
+            inst = Ty::reference(db, boxed_type(*p), Vec::new());
         }
         for u in upper {
             if !compatible(&inst, u) {

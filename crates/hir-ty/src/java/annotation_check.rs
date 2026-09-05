@@ -151,7 +151,7 @@ pub(crate) fn annotation_diagnostics(
     }
 
     for &top in &tree.top {
-        walk(db, tree, &bodies, &scope, &type_params, top, &mut out);
+        walk(db, tree, &bodies, &scope, type_params, top, &mut out);
     }
     out
 }
@@ -809,8 +809,8 @@ fn check_value_assignable(
                 }
             }
             _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                found: Ty::array(db, element_ty.clone()),
-                expected: element_ty.clone(),
+                found: Ty::array(db, *element_ty),
+                expected: *element_ty,
                 range: Some(range),
             }),
         },
@@ -855,7 +855,7 @@ fn check_single_value_assignable(
             if !is_assignable(db, scope, &value_ty, target) {
                 out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
                     found: value_ty,
-                    expected: target.clone(),
+                    expected: *target,
                     range: Some(range),
                 });
             }
@@ -879,7 +879,7 @@ fn check_single_value_assignable(
                 if !is_assignable(db, scope, &enum_ty, target) {
                     out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
                         found: enum_ty,
-                        expected: target.clone(),
+                        expected: *target,
                         range: Some(range),
                     });
                 }
@@ -907,7 +907,7 @@ fn check_single_value_assignable(
             if !is_assignable(db, scope, &class, target) {
                 out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
                     found: class,
-                    expected: target.clone(),
+                    expected: *target,
                     range: Some(range),
                 });
             }
@@ -915,14 +915,14 @@ fn check_single_value_assignable(
         // A nested annotation values the annotation type it names
         // ([§9.7.1]); its own argument list is checked recursively.
         V::Annotation(inner) => {
-            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name) {
-                if !is_assignable(db, scope, &inner_ty, target) {
-                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                        found: inner_ty,
-                        expected: target.clone(),
-                        range: Some(range),
-                    });
-                }
+            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name)
+                && !is_assignable(db, scope, &inner_ty, target)
+            {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: inner_ty,
+                    expected: *target,
+                    range: Some(range),
+                });
             }
             check_annotation_elements(db, resolver, scope, inner, out);
         }
@@ -1060,7 +1060,7 @@ fn annotation_type_elements(
             // ([§6.5.5.1]).
             let file_scope = crate::java::resolve::scope_for_file(db, source.file);
             let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = Resolver::new(&source_tree, &type_params, source.item);
+            let resolver = Resolver::new(&source_tree, type_params, source.item);
             let mut out = Vec::new();
             for &child in source_tree.data(source.item).body() {
                 if let ItemData::Method(method) = source_tree.data(child)
@@ -1138,7 +1138,7 @@ fn resolve_annotation_type(
                     let file_scope = crate::java::resolve::scope_for_file(db, source.file);
                     let type_params =
                         crate::java::db::type_params_map_query(db, db.file_text(source.file));
-                    let resolver = Resolver::new(&source_tree, &type_params, source.item);
+                    let resolver = Resolver::new(&source_tree, type_params, source.item);
                     annotation
                         .annotations
                         .iter()

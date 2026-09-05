@@ -45,7 +45,7 @@ impl InferCtx<'_> {
         target: hir_expand::body::CtorCallTarget,
     ) -> Ty {
         let receiver_ty = match target {
-            hir_expand::body::CtorCallTarget::This => self.enclosing_class.clone(),
+            hir_expand::body::CtorCallTarget::This => self.enclosing_class,
             // `super(args)`: the candidates are the constructors of the
             // direct superclass ([§8.8.7.1]), not of the enclosing class.
             hir_expand::body::CtorCallTarget::Super => Some(self.super_ty()),
@@ -85,7 +85,7 @@ impl InferCtx<'_> {
                 // to the enclosing liability.
                 for thrown in &method.throws {
                     if self.is_checked(thrown) {
-                        self.thrown.push((thrown.clone(), expr));
+                        self.thrown.push((*thrown, expr));
                     }
                 }
                 // §8.8.7.1/[§16]: a `this(...)` delegation runs the target
@@ -160,10 +160,7 @@ impl InferCtx<'_> {
             .iter()
             .min_by_key(|m| m.params.len().abs_diff(found))
             .cloned();
-        let required = best
-            .as_ref()
-            .map(|m| m.params.iter().copied().collect::<Vec<_>>())
-            .unwrap_or_default();
+        let required = best.as_ref().map(|m| m.params.to_vec()).unwrap_or_default();
         // The actual argument types: a concrete argument carries its own
         // type; a poly argument (or an error/void one) has no standalone type
         // and renders as `<poly>`.
@@ -319,7 +316,7 @@ impl InferCtx<'_> {
                 // exceptions adds them to the enclosing liability.
                 for thrown in &method.throws {
                     if self.is_checked(thrown) {
-                        self.thrown.push((thrown.clone(), expr));
+                        self.thrown.push((*thrown, expr));
                     }
                 }
                 method.ret
@@ -473,12 +470,12 @@ impl InferCtx<'_> {
         let probe = self.access.with_mode(InvocationMode::MethodName);
         let mut levels: Vec<Ty> = Vec::new();
         if let Some(class) = &self.enclosing_class {
-            levels.push(class.clone());
+            levels.push(*class);
         }
         levels.extend(self.enclosing_chain.iter().cloned());
         for class in &levels {
             if !member_set(self.db, &self.scope, class, name, &probe).is_empty() {
-                return class.clone();
+                return *class;
             }
         }
         self.enclosing_class.unwrap_or_else(|| self.error())
@@ -525,7 +522,7 @@ impl InferCtx<'_> {
         };
         let mut levels: Vec<Ty> = Vec::new();
         if let Some(class) = &self.enclosing_class {
-            levels.push(class.clone());
+            levels.push(*class);
         }
         levels.extend(self.enclosing_chain.iter().cloned());
         for class in &levels {

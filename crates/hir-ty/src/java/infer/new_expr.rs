@@ -19,6 +19,7 @@ use super::{InferCtx, poly::ArgInfo};
 
 impl InferCtx<'_> {
     /// class, library constructors are `<init>`.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new_expr(
         &mut self,
         expr: ExprId,
@@ -152,7 +153,7 @@ impl InferCtx<'_> {
             // enclosing liability exactly like a method invocation's.
             for thrown in &method.throws {
                 if self.is_checked(thrown) {
-                    self.thrown.push((thrown.clone(), expr));
+                    self.thrown.push((*thrown, expr));
                 }
             }
         } else {
@@ -423,7 +424,7 @@ impl InferCtx<'_> {
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return class_ty;
         };
-        let type_params = self.class_type_param_bounds(&name);
+        let type_params = self.class_type_param_bounds(name);
         if type_params.is_empty() {
             return class_ty;
         }
