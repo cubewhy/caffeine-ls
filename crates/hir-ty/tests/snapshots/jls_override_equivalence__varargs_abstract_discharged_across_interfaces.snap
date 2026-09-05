@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_override_equivalence.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+interface A {
+    void m(String... a);
+}
+
+interface B {
+    void m(String[] a);
+}
+
+class C implements A, B {
+    public void m(String[] a) {}
+}

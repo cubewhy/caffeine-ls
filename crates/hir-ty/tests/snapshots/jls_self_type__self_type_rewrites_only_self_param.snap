@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_self_type.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    Chain<? extends CharSequence, ? extends Chain<?, ?>> c;
+
+    CharSequence useElement() {
+        CharSequence x = c.element();
+        return x;
+    }
+
+    Chain<?, ?> useSelf() {
+        Chain<?, ?> y = c.self();
+        return y;
+    }
+}
+
+method useElement(): java.lang.CharSequence
+  locals: l0: java.lang.CharSequence
+  exprs: e0: com.example.Chain<? extends java.lang.CharSequence, ? extends com.example.Chain<?, ?>> | e1: CAP#0 | e2: java.lang.CharSequence
+method useSelf(): com.example.Chain<?, ?>
+  locals: l1: com.example.Chain<?, ?>
+  exprs: e3: com.example.Chain<? extends java.lang.CharSequence, ? extends com.example.Chain<?, ?>> | e4: com.example.Chain<CAP#1, CAP#2> | e5: com.example.Chain<?, ?>

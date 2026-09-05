@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_invocation_target.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+
+class Box {
+    static <T> List<T> box() {
+        return null;
+    }
+
+    static void bad() {
+        int i = box();
+    }
+}
+
+method bad(): void
+  @11:16..11:21 'box()': incompatible-types: Incompatible types. Found: 'List<Object>', required: 'int'
+    -> @11:16..11:21 'box()': required: int
+    -> @11:16..11:21 'box()': found: List<Object>

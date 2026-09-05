@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_field_ambiguity.rs
+expression: out
+---
+FILE /src/com/example/C.java:
+package com.example;
+
+interface A {
+    int X = 1;
+}
+
+interface B {
+    int X = 2;
+}
+
+class C implements A, B {}
+
+class Body {
+    int read(C c) {
+        return c.X;
+    }
+}
+
+method read(com.example.C): int
+  @14:15..14:18 'c.X': ambiguous-name: Reference to 'X' is ambiguous

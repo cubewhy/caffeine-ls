@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_invocation_target.rs
+expression: out
+---
+FILE /src/com/example/Box.java:
+package com.example;
+
+class Box {
+    static <T> T empty() {
+        return null;
+    }
+
+    static String s() {
+        String s = empty();
+        return s;
+    }
+}
+
+method empty(): T
+  locals: 
+  exprs: e0: null
+method s(): java.lang.String
+  locals: l0: java.lang.String
+  exprs: e1: java.lang.String | e2: java.lang.String

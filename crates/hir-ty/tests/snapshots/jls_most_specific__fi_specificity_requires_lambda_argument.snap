@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_most_specific.rs
+expression: out
+---
+FILE /src/com/example/F.java:
+package com.example;
+
+class F {
+    interface S {
+        String get();
+    }
+
+    interface T {
+        Object get();
+    }
+
+    static class Both implements S, T {
+        public String get() {
+            return "";
+        }
+    }
+
+    static void f(S s) {}
+    static void f(T t) {}
+
+    static void concrete(Both b) {
+        f(b);
+    }
+
+    static void lambda() {
+        f(() -> "");
+    }
+}
+
+method concrete(com.example.F.Both): void
+  @21:8..21:9 'f': wrong-argument-count: Method 'f()' cannot be applied to given types
+    -> @21:8..21:9 'f': required: S
+    -> @21:8..21:9 'f': found: Both
+    -> @21:8..21:9 'f': reason: actual and formal argument lists differ in length

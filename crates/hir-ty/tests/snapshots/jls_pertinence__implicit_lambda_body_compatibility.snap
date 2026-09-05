@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_pertinence.rs
+expression: out
+---
+FILE /src/com/example/F.java:
+package com.example;
+
+class F {
+    interface S {
+        String get();
+    }
+
+    interface I {
+        Integer get();
+    }
+
+    static void m(S s) {}
+    static void m(I i) {}
+
+    static void call() {
+        m(() -> "");
+        m(() -> 1);
+    }
+}
+
+method m(com.example.F.S): void
+  locals: l0: com.example.F.S
+  exprs: 
+method m(com.example.F.I): void
+  locals: l1: com.example.F.I
+  exprs: 
+method call(): void
+  locals: 
+  exprs: e0: java.lang.String | e1: com.example.F.S | e2: void | e3: int | e4: com.example.F.I | e5: void

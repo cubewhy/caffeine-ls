@@ -15,9 +15,84 @@ use crate::java::{
     ty::{Ty, TyData, TyKind},
 };
 
-use super::{InferCtx, poly::ArgInfo};
+use super::{
+    InferCtx,
+    poly::{ArgInfo, ArgKind},
+};
 
 impl InferCtx<'_> {
+    /// The enclosing-instance type to pass as the implicit first argument to
+    /// the constructor of the *inner* class `class_ty` ([§8.8.9], [§8.1.3]):
+    /// `Some(outer)` only when the class is a source inner class whose *only*
+    /// constructor is the implicit default (it declares no constructor of its
+    /// own — a declared constructor's source signature excludes the enclosing
+    /// instance) AND the calling context supplies an instance of the outer:
+    /// the `instance_ty` (the receiver of a qualified `outer.new Inner()`),
+    /// or the enclosing `this` when the creation appears in an instance
+    /// context inside the outer itself. `None` when no enclosing instance is
+    /// available — javac then reports the implicit one-parameter constructor
+    /// as inapplicable to the written (empty) argument list.
+    pub(super) fn inner_implicit_ctor_enclosing(
+        &self,
+        class_ty: Ty,
+        instance_ty: Option<Ty>,
+    ) -> Option<Ty> {
+        let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
+            return None;
+        };
+        let hir::Resolved::Source(source) = hir::fqn_resolve(self.db, &self.scope, name.as_str())?
+        else {
+            return None;
+        };
+        let outer =
+            crate::java::resolve::source_inner_enclosing(self.db, source.file, source.item)?;
+        // The class must declare no constructor of its own.
+        let tree = hir::file_item_tree(self.db, source.file);
+        let declares_ctor =
+            crate::java::resolve::item_data(&tree, source.item).is_some_and(|data| {
+                data.body().iter().any(|item| {
+                    crate::java::resolve::item_data(&tree, *item).is_some_and(|child| {
+                        matches!(
+                            child,
+                            hir_def::java::item_tree::ItemData::Method(m) if m.is_constructor()
+                        )
+                    })
+                })
+            });
+        if declares_ctor {
+            return None;
+        }
+        // A qualified creation: the receiver expression's type must be the
+        // outer. An unqualified creation inside the outer: an instance
+        // context supplies `this`. In both cases the value has the outer's
+        // type — the type of the instance to prepend.
+        let outer_fqn = |ty: &Ty| {
+            ty.as_reference(self.db)
+                .map(|(fqn, _)| fqn.as_str().to_owned())
+        };
+        match instance_ty {
+            Some(instance) => {
+                if outer_fqn(&instance) == outer_fqn(&outer) {
+                    Some(instance)
+                } else {
+                    None
+                }
+            }
+            None => {
+                if !self.static_context
+                    && self
+                        .enclosing_class
+                        .as_ref()
+                        .is_some_and(|enc| outer_fqn(enc) == outer_fqn(&outer))
+                {
+                    Some(outer)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// class, library constructors are `<init>`.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new_expr(
@@ -89,6 +164,25 @@ impl InferCtx<'_> {
             _ => name.simple_name().to_owned(),
         };
         let arg_kinds = self.arg_kinds(args);
+        // §8.8.9/[§8.1.3]: an instance creation of an *inner* class whose
+        // only constructor is the implicit default (no declared constructor)
+        // takes the enclosing instance as its first argument. The instance is
+        // the enclosing `this` when the creation sits inside the outer (an
+        // instance context), or the receiver expression of a qualified
+        // creation whose type is the outer.
+        let enclosing_arg = self.inner_implicit_ctor_enclosing(class_ty, receiver_ty);
+        let arg_kinds = if let Some(outer) = enclosing_arg {
+            let mut prepended = Vec::with_capacity(arg_kinds.len() + 1);
+            prepended.push(ArgInfo {
+                id: args.first().copied().unwrap_or(expr),
+                poly: false,
+                leaves: vec![ArgKind::Concrete(outer)],
+            });
+            prepended.extend(arg_kinds);
+            prepended
+        } else {
+            arg_kinds
+        };
         // §15.9.2: `new Foo<>()` — the created class's type arguments are
         // inferred from the target type ([§15.9.2.2]); when the target fixes
         // none, they are inferred from the constructor's formal parameters —
@@ -451,8 +545,16 @@ impl InferCtx<'_> {
             let mut ok = true;
             for (info, formal) in arg_kinds.iter().zip(&formals) {
                 for leaf in &info.leaves {
-                    if !self.contribute_leaf(&mut inference, leaf, *formal, InvocationPhase::Loose)
-                    {
+                    // §15.9.2.2: the constructor-argument probe is itself an
+                    // applicability pass — only pertinent poly arguments
+                    // contribute ([§18.5.1]).
+                    if !self.contribute_leaf(
+                        &mut inference,
+                        leaf,
+                        *formal,
+                        InvocationPhase::Loose,
+                        true,
+                    ) {
                         ok = false;
                         break;
                     }

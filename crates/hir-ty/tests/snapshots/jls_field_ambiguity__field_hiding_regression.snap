@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_field_ambiguity.rs
+expression: out
+---
+FILE /src/com/example/D.java:
+package com.example;
+
+class D {
+    int x;
+}
+
+class E extends D {
+    int x;
+}
+
+class Body {
+    int read(E e) {
+        return e.x;
+    }
+}
+
+method read(com.example.E): int
+  locals: l0: com.example.E
+  exprs: e0: com.example.E | e1: int

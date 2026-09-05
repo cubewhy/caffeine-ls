@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_static_interface_members.rs
+expression: out
+---
+FILE /src/com/example/I.java:
+package com.example;
+
+import java.util.function.Supplier;
+
+interface I {
+    static String s() {
+        return "";
+    }
+}
+
+interface J extends I {}
+
+class C implements I {}
+
+class Body {
+    String own(I i) {
+        return I.s();
+    }
+
+    Supplier<String> ref() {
+        return I::s;
+    }
+
+    String subinterface(J j) {
+        return J.s();
+    }
+
+    Supplier<String> subinterfaceRef() {
+        return J::s;
+    }
+
+    String implementing(C c) {
+        return C.s();
+    }
+}
+
+method subinterface(com.example.J): java.lang.String
+  @24:17..24:18 's': no-such-method: Cannot resolve method 's()'
+method implementing(com.example.C): java.lang.String
+  @32:17..32:18 's': no-such-method: Cannot resolve method 's()'

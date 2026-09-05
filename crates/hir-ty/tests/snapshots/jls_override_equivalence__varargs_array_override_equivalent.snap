@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_override_equivalence.rs
+expression: out
+---
+FILE /src/com/example/Base.java:
+package com.example;
+
+class Base {
+    void m(String[] a) {}
+}
+
+class Sub extends Base {
+    @Override
+    void m(String... a) {}
+}

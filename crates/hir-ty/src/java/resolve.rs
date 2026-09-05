@@ -160,6 +160,65 @@ pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name
     out
 }
 
+/// The immediately enclosing *instance* type of the member class `item`
+/// ([JLS §8.8.9], [§8.1.3]): `Some(outer)` — the class-like that directly
+/// contains `item` — when `item` is a *non-static member class* of that
+/// enclosing type, whose implicit default constructor therefore takes a
+/// formal parameter of the enclosing instance type. The default constructor
+/// of a true *inner* class (a nested class that is not static and not a
+/// member of an interface — interface members are implicitly static,
+/// [§9.1.3]) carries the enclosing instance; a top-level class, a static
+/// member class, and an interface/annotation member have no enclosing
+/// instance and yield `None`. `None` also when `item` is not a member class
+/// of any class-like (a local or top-level item, or an interface member).
+///
+/// Only *direct* containment counts: `class Outer { class Inner {} }` makes
+/// `Inner`'s enclosing instance `Outer`, while `class Outer { static class
+/// Mid { class Inner {} } }` makes it `Mid` — the immediately enclosing
+/// class-like, not a transitive grandparent.
+pub(crate) fn source_inner_enclosing(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: ItemId,
+) -> Option<Ty> {
+    let tree = hir::file_item_tree(db, file);
+    // Parent links, one tree walk.
+    fn walk(tree: &ItemTree, id: ItemId, parents: &mut FxHashMap<ItemId, ItemId>) {
+        for &child in tree.data(id).body() {
+            parents.insert(child, id);
+            walk(tree, child, parents);
+        }
+    }
+    let mut parents = FxHashMap::default();
+    for &top in &tree.top {
+        walk(&tree, top, &mut parents);
+    }
+    let parent = parents.get(&item).copied()?;
+    // §8.1.3: the enclosing instance type is the immediately enclosing
+    // *class-like* — a `Class`, `Enum` or `Record` (interface and annotation
+    // members are implicitly static, [§9.1.3], so they never carry an
+    // enclosing instance; a member class of an interface is `static`).
+    let outer_fqn: Name = match tree.data(parent) {
+        ItemData::Class(_) | ItemData::Enum(_) | ItemData::Record(_) => {
+            // `enclosing_type_chain(item)` accumulates the ancestors
+            // outermost-first (`[Q, Q.A]` for a member of `Q.A`), so the
+            // immediately enclosing class-like is its last element.
+            let chain = enclosing_type_chain(&tree, item);
+            chain.into_iter().next_back()?
+        }
+        _ => return None,
+    };
+    // §8.1.3: the member class itself must not be `static`; a static member
+    // class has no enclosing instance.
+    let non_static = match tree.data(item) {
+        ItemData::Class(d) => !d.modifiers.is_static(),
+        ItemData::Enum(d) => !d.modifiers.is_static(),
+        ItemData::Record(d) => !d.modifiers.is_static(),
+        _ => return None,
+    };
+    non_static.then(|| Ty::reference(db, outer_fqn.as_str(), Vec::new()))
+}
+
 /// The type parameters in scope at every item of `tree` ([JLS §6.3]):
 /// those of every enclosing type declaration plus, for methods, the method's
 /// own parameters, with their declared bounds

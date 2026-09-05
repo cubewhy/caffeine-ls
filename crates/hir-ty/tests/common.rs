@@ -1764,7 +1764,7 @@ pub fn check_source_methods(
             .iter()
             .map(|arg| match arg {
                 hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
-                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                hir_ty::PolyArg::Poly(_, _, _) => "<poly>".to_owned(),
             })
             .collect();
         let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &context, None);
@@ -2371,7 +2371,7 @@ pub fn check_methods(samples: &[(&str, TyBuilder, &str, &[TyBuilder])]) -> Strin
                 .iter()
                 .map(|arg| match arg {
                     hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
-                    hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                    hir_ty::PolyArg::Poly(_, _, _) => "<poly>".to_owned(),
                 })
                 .collect();
             let picked = hir_ty::pick_method(
@@ -2428,7 +2428,7 @@ pub fn check_source_methods_ctx(
             .iter()
             .map(|arg| match arg {
                 hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
-                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                hir_ty::PolyArg::Poly(_, _, _) => "<poly>".to_owned(),
             })
             .collect();
         let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &context, None);
@@ -2483,7 +2483,7 @@ pub fn check_methods_lib_ctx(
                 .iter()
                 .map(|arg| match arg {
                     hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
-                    hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                    hir_ty::PolyArg::Poly(_, _, _) => "<poly>".to_owned(),
                 })
                 .collect();
             let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, ctx, None);
@@ -2534,7 +2534,7 @@ pub fn check_source_methods_site(
             .iter()
             .map(|arg| match arg {
                 hir_ty::PolyArg::Concrete(ty) => ty.display(&db).to_string(),
-                hir_ty::PolyArg::Poly(_, _) => "<poly>".to_owned(),
+                hir_ty::PolyArg::Poly(_, _, _) => "<poly>".to_owned(),
             })
             .collect();
         let picked = hir_ty::pick_method(&db, &scope, &receiver, name, &args, &ctx, None);

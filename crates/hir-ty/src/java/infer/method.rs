@@ -77,7 +77,55 @@ impl InferCtx<'_> {
             hir_expand::body::CtorCallTarget::This => InvocationMode::Virtual,
         };
         let access = self.access.with_mode(mode);
-        let arg_kinds = self.arg_kinds(args);
+        let mut arg_kinds = self.arg_kinds(args);
+        // §8.8.7.1/[§8.8.9]: a `super(...)` delegation to an *inner*
+        // superclass whose only constructor is the implicit default passes the
+        // enclosing instance implicitly — `class Outer { class Base {} class
+        // Sub extends Base { Sub() { super(); } } }` compiles because javac
+        // supplies the `Outer` instance to `Base`'s implicit one-parameter
+        // constructor. The instance exists when the *current* class is itself
+        // lexically inside that outer (both `Sub` and `Base` are members of
+        // `Outer`), so the outer instance is available as the shared
+        // enclosing `this`.
+        if let hir_expand::body::CtorCallTarget::Super = target {
+            let outer_of_super = match receiver_ty.as_reference(self.db) {
+                Some((fqn, _)) => match hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) {
+                    Some(hir::Resolved::Source(source)) => {
+                        crate::java::resolve::source_inner_enclosing(
+                            self.db,
+                            source.file,
+                            source.item,
+                        )
+                    }
+                    _ => None,
+                },
+                None => None,
+            };
+            let inside_outer = outer_of_super.as_ref().is_some_and(|outer| {
+                std::iter::once(&self.enclosing_class)
+                    .flatten()
+                    .chain(self.enclosing_chain.iter())
+                    .any(|enc| {
+                        enc.as_reference(self.db).is_some_and(|(enc_fqn, _)| {
+                            outer
+                                .as_reference(self.db)
+                                .is_some_and(|(ofqn, _)| enc_fqn.as_str() == ofqn.as_str())
+                        })
+                    })
+            });
+            if let Some(outer) = outer_of_super
+                && inside_outer
+            {
+                let mut prepended = Vec::with_capacity(arg_kinds.len() + 1);
+                prepended.push(ArgInfo {
+                    id: expr,
+                    poly: false,
+                    leaves: vec![ArgKind::Concrete(outer)],
+                });
+                prepended.extend(arg_kinds);
+                arg_kinds = prepended;
+            }
+        }
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
             Some((method, deferred)) => {
                 self.reinfer_deferred(&method, &deferred);
@@ -377,7 +425,7 @@ impl InferCtx<'_> {
                 // such member). Check the field chain before the type name.
                 if let hir_expand::body::ExprData::Var(simple) = self.tree.expr(receiver).clone()
                     && self.lookup_local(&simple).is_none()
-                    && self.pick_field_of_chain(simple.as_str()).is_some()
+                    && self.pick_field_of_chain_exists(simple.as_str())
                 {
                     // Fall through to the expression path below (virtual
                     // invocation on the field's type).

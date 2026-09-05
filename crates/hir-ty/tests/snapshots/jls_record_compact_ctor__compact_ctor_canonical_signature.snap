@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_record_compact_ctor.rs
+expression: out
+---
+FILE /src/com/example/R.java:
+package com.example;
+
+record R(int x) {
+    R {
+    }
+}
+
+class Body {
+    void f() {
+        R a = new R(1);
+        int x = a.x();
+        R bad = new R();
+    }
+}
+
+method f(): void
+  @11:16..11:23 'new R()': wrong-argument-count: Constructor 'R()' cannot be applied to given types
+    -> @11:16..11:23 'new R()': required: int
+    -> @11:16..11:23 'new R()': found: 
+    -> @11:16..11:23 'new R()': reason: actual and formal argument lists differ in length

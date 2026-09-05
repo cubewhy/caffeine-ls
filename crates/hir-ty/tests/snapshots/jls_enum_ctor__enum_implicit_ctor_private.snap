@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_enum_ctor.rs
+expression: out
+---
+FILE /src/com/example/E.java:
+package com.example;
+
+enum E {
+    A
+}
+
+class Body {
+    E[] all() {
+        return E.values();
+    }
+
+    E byName() {
+        return E.valueOf("A");
+    }
+}
+
+method all(): com.example.E[]
+  locals: 
+  exprs: e1: com.example.E[]
+method byName(): com.example.E
+  locals: 
+  exprs: e2: java.lang.String | e4: com.example.E

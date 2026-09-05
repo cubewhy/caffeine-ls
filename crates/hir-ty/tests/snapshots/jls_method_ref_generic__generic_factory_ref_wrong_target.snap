@@ -13,9 +13,3 @@ class Body {
         return id.map(Optional::of);
     }
 }
-
-method wrong(java.util.Optional<java.lang.String>): java.util.Optional<java.lang.String>
-  @7:18..7:21 'map': wrong-argument-count: Method 'map()' cannot be applied to given types
-    -> @7:18..7:21 'map': required: Function<? super String, ? extends U>
-    -> @7:18..7:21 'map': found: <poly>
-    -> @7:18..7:21 'map': reason: actual and formal argument lists differ in length

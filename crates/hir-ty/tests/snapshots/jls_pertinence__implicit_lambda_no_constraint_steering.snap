@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_pertinence.rs
+expression: out
+---
+FILE /src/com/example/F.java:
+package com.example;
+
+class F {
+    interface S {
+        String get();
+    }
+
+    interface T {
+        CharSequence get();
+    }
+
+    static void m(S s) {}
+    static void m(T t) {}
+
+    static String call() {
+        String r = null;
+        return r;
+    }
+}

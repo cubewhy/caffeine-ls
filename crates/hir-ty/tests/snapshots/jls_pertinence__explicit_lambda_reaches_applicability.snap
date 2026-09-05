@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_pertinence.rs
+expression: out
+---
+FILE /src/com/example/F.java:
+package com.example;
+
+import java.util.function.Function;
+
+class F {
+    static <T> T use(Function<T, T> f) {
+        return null;
+    }
+
+    static String call() {
+        String s = use((String x) -> x);
+        return s;
+    }
+}
+
+method use(java.util.function.Function<T, T>): T
+  locals: l0: java.util.function.Function<T, T>
+  exprs: e0: null
+method call(): java.lang.String
+  locals: l1: java.lang.String
+  exprs: e1: java.lang.String | e2: java.util.function.Function<java.lang.String, java.lang.String> | e3: java.lang.String | e4: java.lang.String

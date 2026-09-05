@@ -21,7 +21,10 @@ use crate::java::{
 
 use super::{
     InferCtx,
-    poly::{ApplicableCandidate, ArgInfo, ArgKind, MethodRefKind, poly_arity, poly_leaves},
+    poly::{
+        ApplicableCandidate, ArgInfo, ArgKind, LambdaLikeKind, MethodRefKind, poly_arity,
+        poly_leaves,
+    },
 };
 
 impl InferCtx<'_> {
@@ -87,10 +90,54 @@ impl InferCtx<'_> {
                 leaves: leaves
                     .iter()
                     .map(|leaf| match self.tree.expr(*leaf).clone() {
-                        ExprData::Lambda { .. } | ExprData::MethodRef { .. } => ArgKind::Lambda {
-                            id: *leaf,
-                            arity: poly_arity(&self.tree, *leaf),
-                        },
+                        ExprData::Lambda { params, .. } => {
+                            // §15.12.2.2: an *implicitly* typed lambda (no
+                            // declared parameter types) is not pertinent; an
+                            // *explicitly* typed one is.
+                            let explicit = params
+                                .iter()
+                                .all(|(_, declared, _)| declared.is_some())
+                                && !params.is_empty();
+                            ArgKind::Lambda {
+                                id: *leaf,
+                                arity: poly_arity(&self.tree, *leaf),
+                                kind: if explicit {
+                                    LambdaLikeKind::Explicit
+                                } else {
+                                    LambdaLikeKind::Implicit
+                                },
+                            }
+                        }
+                        ExprData::MethodRef {
+                            qualifier,
+                            type_name,
+                            name: _,
+                        } => {
+                            // §15.13.1/[§15.12.2.2]: an *exact* method
+                            // reference is one whose target function type is
+                            // statically known — a type-qualified `Type::m`,
+                            // a dotted-type-name or type-name qualifier
+                            // expression, or a `super`-qualified form; every
+                            // *bound* reference `expr::m` is inexact (the
+                            // qualifier is a value whose type may be more
+                            // specific than the target's formal parameter
+                            // type). Only exact references are pertinent.
+                            let exact = type_name.is_some()
+                                || qualifier.is_some_and(|q| {
+                                    self.dotted_type_name(q).is_some()
+                                        || matches!(self.tree.expr(q).clone(), ExprData::Super { .. })
+                                        || matches!(self.tree.expr(q).clone(), ExprData::Var(n) if self.type_name_ty(&n).is_some())
+                                });
+                            ArgKind::Lambda {
+                                id: *leaf,
+                                arity: poly_arity(&self.tree, *leaf),
+                                kind: if exact {
+                                    LambdaLikeKind::ExactRef
+                                } else {
+                                    LambdaLikeKind::InexactRef
+                                },
+                            }
+                        }
                         ExprData::MethodCall { .. } => ArgKind::Invocation { id: *leaf },
                         ExprData::New { diamond: true, .. } => ArgKind::DiamondNew { id: *leaf },
                         _ => unreachable!(
@@ -154,6 +201,13 @@ impl InferCtx<'_> {
             let mut deferred = Vec::new();
             // The probe is speculative: diagnostics inside the argument
             // expressions are discarded, matching javac's overload resolution.
+            //
+            // §15.12.2.2/§18.5.1: the applicability probe is target-free —
+            // the expected type plays no part in deciding which method is
+            // applicable or which applicable method is most specific
+            // ([§15.12.2.5]) — and admits only the *pertinent* arguments'
+            // constraints (an implicit lambda / inexact reference body
+            // contributes nothing, [§18.5.1]).
             if let Some(invocation) = self.with_probing(|this| {
                 this.try_candidate(
                     &mut inference,
@@ -162,9 +216,10 @@ impl InferCtx<'_> {
                     arg_kinds,
                     phase,
                     varargs,
-                    target,
+                    None,
                     explicit_type_args.as_deref(),
                     &mut deferred,
+                    true,
                     true,
                 )
             }) {
@@ -177,18 +232,75 @@ impl InferCtx<'_> {
         // The most specific applicable candidate ([§15.12.2.5]); identical
         // signatures seen through overriding paths collapse to their
         // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
+        // Each actual's *form* — concrete vs lambda/method-reference — feeds
+        // the per-position §15.12.2.5 functional-interface rule.
+        let forms: Vec<crate::java::method::ArgForm> = arg_kinds
+            .iter()
+            .map(|info| {
+                if info
+                    .leaves
+                    .iter()
+                    .any(|leaf| matches!(leaf, ArgKind::Lambda { .. }))
+                {
+                    crate::java::method::ArgForm::LambdaOrRef
+                } else {
+                    crate::java::method::ArgForm::Concrete
+                }
+            })
+            .collect();
         let pairs: Vec<(MethodData, MethodData)> = applicable
             .iter()
             .map(|(candidate, invocation, _)| (candidate.clone(), invocation.clone()))
             .collect();
-        let chosen = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)?;
+        let chosen =
+            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, Some(&forms))?;
         let index = applicable
             .iter()
             .position(|(_, invocation, _)| *invocation == chosen)?;
-        let (_, invocation, deferred) = applicable.remove(index);
-        Some((invocation, deferred))
+        let (decl, probe_invocation, probe_deferred) = applicable.remove(index);
+        // §18.5.2.2/[§18.5.2.4]: re-run the *chosen* method's invocation-type
+        // inference as the full pass — the target constraint ⟨R → T⟩ joins the
+        // set and every poly argument (pertinent or not) contributes its
+        // body-searched constraints ([§18.5.2.2]). When the target turns out
+        // incompatible (`try_candidate`'s post-solve assignability re-check
+        // rejects), the call is still resolved: javac reports the mismatch as
+        // an incompatible-types problem of the caller, never re-opens overload
+        // resolution — so the target-free probe invocation is returned.
+        let mut inference = Inference::new();
+        let mut deferred = Vec::new();
+        let re_run = self.with_probing(|this| {
+            this.try_candidate(
+                &mut inference,
+                &decl,
+                receiver_ty,
+                arg_kinds,
+                phase,
+                varargs,
+                target,
+                explicit_type_args.as_deref(),
+                &mut deferred,
+                true,
+                false,
+            )
+        });
+        match re_run {
+            // The full target pass succeeded: its invocation and deferred
+            // poly-argument list are the resolution.
+            Some(invocation) => Some((invocation, deferred)),
+            // The target is incompatible with the chosen method; the call is
+            // still resolved — the target-free probe invocation stands.
+            None => Some((probe_invocation, probe_deferred)),
+        }
     }
-    /// resolved formals are collected in `deferred`.
+    /// resolved formals are collected in `deferred`. `pertinent` selects the
+    /// *applicability* pass ([JLS §18.5.1]): `true` admits only the pertinent
+    /// poly arguments' constraints — an implicitly typed lambda or an inexact
+    /// method reference contributes nothing but its expected arity — while
+    /// `false` is the full invocation-type inference of the *chosen* method
+    /// ([JLS §18.5.2.2]), where every poly argument contributes its
+    /// body-searched constraints. The applicability probes run `pertinent =
+    /// true` and target-free; the winner's re-run runs `pertinent = false`
+    /// with the real target ([§18.5.2.4]).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn try_candidate(
         &mut self,
@@ -202,6 +314,7 @@ impl InferCtx<'_> {
         explicit_type_args: Option<&[Ty]>,
         deferred: &mut Vec<(ExprId, usize)>,
         resolve: bool,
+        pertinent: bool,
     ) -> Option<MethodData> {
         // §15.12.2.2: explicit type arguments (`obj.<String>m(...)`) bind the
         // method's type parameters directly — the formals, return type and
@@ -284,7 +397,7 @@ impl InferCtx<'_> {
                 formal
             };
             for kind in &info.leaves {
-                let ArgKind::Lambda { id, arity } = kind else {
+                let ArgKind::Lambda { id, arity, .. } = kind else {
                     continue;
                 };
                 // §15.12.2.2/§15.12.2.3/§15.13.2: a lambda or method reference
@@ -369,7 +482,7 @@ impl InferCtx<'_> {
                     deferred.push((info.id, i));
                 }
                 for kind in &info.leaves {
-                    if !self.contribute_leaf(inference, kind, formal, phase) {
+                    if !self.contribute_leaf(inference, kind, formal, phase, pertinent) {
                         return None;
                     }
                 }
@@ -385,7 +498,7 @@ impl InferCtx<'_> {
             if rest.len() == 1 {
                 match rest[0] {
                     ArgKind::Concrete(ty) if ty.is_array(self.db) => {
-                        if !self.contribute_leaf(inference, rest[0], last[0], phase) {
+                        if !self.contribute_leaf(inference, rest[0], last[0], phase, pertinent) {
                             return None;
                         }
                     }
@@ -399,9 +512,10 @@ impl InferCtx<'_> {
                     // resolve there when it is not array-typed) and packed
                     // against the element otherwise.
                     ArgKind::Invocation { .. } | ArgKind::DiamondNew { .. } => {
-                        if !self.contribute_leaf(inference, rest[0], last[0], phase) {
+                        if !self.contribute_leaf(inference, rest[0], last[0], phase, pertinent) {
                             let element = last[0].element(self.db).copied()?;
-                            if !self.contribute_leaf(inference, rest[0], element, phase) {
+                            if !self.contribute_leaf(inference, rest[0], element, phase, pertinent)
+                            {
                                 return None;
                             }
                         }
@@ -409,7 +523,7 @@ impl InferCtx<'_> {
                     _ => {
                         let element = last[0].element(self.db).copied()?;
                         for kind in rest {
-                            if !self.contribute_leaf(inference, kind, element, phase) {
+                            if !self.contribute_leaf(inference, kind, element, phase, pertinent) {
                                 return None;
                             }
                         }
@@ -418,7 +532,7 @@ impl InferCtx<'_> {
             } else {
                 let element = last[0].element(self.db).copied()?;
                 for kind in rest {
-                    if !self.contribute_leaf(inference, kind, element, phase) {
+                    if !self.contribute_leaf(inference, kind, element, phase, pertinent) {
                         return None;
                     }
                 }
@@ -433,7 +547,7 @@ impl InferCtx<'_> {
                     deferred.push((info.id, i));
                 }
                 for kind in &info.leaves {
-                    if !self.contribute_leaf(inference, kind, formal, phase) {
+                    if !self.contribute_leaf(inference, kind, formal, phase, pertinent) {
                         return None;
                     }
                 }
@@ -546,12 +660,19 @@ impl InferCtx<'_> {
     }
 
     /// `false` when the nested invocation has no applicable method.
+    /// `pertinent` selects the applicability pass ([JLS §18.5.1]): when
+    /// `true`, a *non-pertinent* poly argument ([§15.12.2.2]) — an implicitly
+    /// typed lambda or an inexact method reference — contributes nothing but
+    /// its expected arity, which [`Self::try_candidate`] already gated; when
+    /// `false` (the chosen method's invocation-type inference, [§18.5.2.2])
+    /// every poly argument contributes its body-searched constraints.
     pub(super) fn contribute_leaf(
         &mut self,
         inference: &mut Inference,
         kind: &ArgKind,
         formal: Ty,
         phase: InvocationPhase,
+        pertinent: bool,
     ) -> bool {
         match kind {
             ArgKind::Concrete(ty) => {
@@ -565,8 +686,8 @@ impl InferCtx<'_> {
                 inference.add_constraint(Constraint::Sub(ty, formal));
                 true
             }
-            ArgKind::Lambda { id, .. } => {
-                // §15.13.3/§18.5.2.2: a method reference constrains the
+            ArgKind::Lambda { id, kind: like, .. } => {
+                // §15.12.2.2/[§18.5.1]: a method reference constrains the
                 // target functional interface's return type by the referenced
                 // method's return — `stream.map(this::f)` infers its element
                 // type from `f`'s return, exactly like a lambda body would.
@@ -576,6 +697,16 @@ impl InferCtx<'_> {
                     name,
                 } = self.tree.expr(*id).clone()
                 {
+                    // §15.12.2.2/[§18.5.1]: an *inexact* method reference
+                    // ([§15.13.1] — a bound `expr::m`) is not pertinent: it
+                    // contributes nothing to the applicability inference but
+                    // the expected arity, which the congruence gate of
+                    // [`Self::try_candidate`] already enforced. Only the
+                    // full pass of the chosen method ([§18.5.2.2]) searches
+                    // the referenced method's parameters and return.
+                    if pertinent && *like == LambdaLikeKind::InexactRef {
+                        return true;
+                    }
                     let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
                         return true;
                     };
@@ -781,6 +912,50 @@ impl InferCtx<'_> {
                     else {
                         return true;
                     };
+                    // §15.12.2.2/[§18.5.1]: an *implicitly typed* lambda is
+                    // not pertinent — during applicability its body must not
+                    // steer inference (no ⟨e → F⟩ constraint). It still must
+                    // be *compatible* with the target's function type: javac
+                    // rejects an overload whose SAM return cannot hold the
+                    // body's value — `m(() -> "")` over `m(S{String get()})`
+                    // / `m(I{Integer get()})` resolves to `m(S)`, because the
+                    // `""` body is not compatible with `Integer` (it is a
+                    // *compatibility* check, not a constraint contribution).
+                    // The chosen method's full pass (`pertinent == false`,
+                    // [§18.5.2.2]) then searches the body like an explicit
+                    // lambda's.
+                    if pertinent && *like == LambdaLikeKind::Implicit {
+                        if body_ty.is_error(self.db) {
+                            return true;
+                        }
+                        // §15.27.3: the expression/block body must convert to
+                        // the SAM's return in the loose sense — a void-return
+                        // SAM accepts any body; a value-returning SAM needs
+                        // the body result assignable to it.
+                        if sam.ret.is_void_like(self.db) {
+                            return true;
+                        }
+                        let body_target = self.decapture(&sam.ret);
+                        // A target still carrying an unresolved inference
+                        // variable or capture (a generic candidate probed
+                        // with its type parameters uninstantiated) cannot
+                        // disprove compatibility — the candidate stays
+                        // applicable and the winner pass's constraint
+                        // contribution resolves it (`<T> T
+                        // unchecked(CheckedSupplier<T>)` probed with `T := α`
+                        // must not be rejected for a `float` body).
+                        if body_target.contains_infer_var(self.db)
+                            || body_target.contains_type_var_named_capture(self.db)
+                        {
+                            return true;
+                        }
+                        return crate::java::subtyping::is_assignable(
+                            self.db,
+                            &self.scope,
+                            &body_ty,
+                            &body_target,
+                        );
+                    }
                     // An error-typed body (a speculative probe whose
                     // parameters are still uninstantiated inference variables)
                     // constrains nothing — it must not reject the candidate.
@@ -830,7 +1005,7 @@ impl InferCtx<'_> {
             // `ArrayList<α> <: List<T>`, so the target `List<String>` reaches
             // the element type.
             ArgKind::DiamondNew { id } => {
-                self.contribute_diamond_new(inference, *id, formal, phase)
+                self.contribute_diamond_new(inference, *id, formal, phase, pertinent)
             }
         }
     }
@@ -842,6 +1017,7 @@ impl InferCtx<'_> {
         id: ExprId,
         formal: Ty,
         phase: InvocationPhase,
+        pertinent: bool,
     ) -> bool {
         let ExprData::New { ty, args, .. } = self.tree.expr(id).clone() else {
             return true;
@@ -900,7 +1076,7 @@ impl InferCtx<'_> {
             let mut ok = true;
             for (info, formal) in arg_kinds.iter().zip(&formals) {
                 for leaf in &info.leaves {
-                    if !self.contribute_leaf(inference, leaf, *formal, phase) {
+                    if !self.contribute_leaf(inference, leaf, *formal, phase, pertinent) {
                         ok = false;
                         break;
                     }
@@ -1150,6 +1326,14 @@ impl InferCtx<'_> {
             let mut deferred = Vec::new();
             // Speculative probe: no diagnostics from the argument expressions
             // (see [`Self::with_probing`]).
+            //
+            // §15.12.2.2/[§18.5.2.4]: a nested invocation's applicability is
+            // also target-free — the enclosing formal is an *assignment*
+            // context that enters only after the applicable candidates have
+            // been found ([§18.5.1], [§18.5.2.4]) — and admits only the
+            // pertinent poly arguments' constraints. The probe is run against
+            // `None`, not the formal; the winner's re-lift below reinstates
+            // the formal for the joint inference ([§18.5.2.1]).
             if self
                 .with_probing(|this| {
                     this.try_candidate(
@@ -1159,10 +1343,11 @@ impl InferCtx<'_> {
                         arg_kinds,
                         phase,
                         varargs,
-                        Some(*formal),
+                        None,
                         explicit_type_args.as_deref(),
                         &mut deferred,
                         false,
+                        true,
                     )
                 })
                 .is_some()
@@ -1180,19 +1365,43 @@ impl InferCtx<'_> {
         // The most specific applicable member ([§15.12.2.5]); identical
         // signatures seen through overriding paths collapse to their
         // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
+        let forms: Vec<crate::java::method::ArgForm> = arg_kinds
+            .iter()
+            .map(|info| {
+                if info
+                    .leaves
+                    .iter()
+                    .any(|leaf| matches!(leaf, ArgKind::Lambda { .. }))
+                {
+                    crate::java::method::ArgForm::LambdaOrRef
+                } else {
+                    crate::java::method::ArgForm::Concrete
+                }
+            })
+            .collect();
         let pairs: Vec<(MethodData, MethodData)> =
             applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        let Some(winner) = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
+        let Some(winner) =
+            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, Some(&forms))
         else {
-            inference.restore(base);
+            inference.restore(base.clone());
             return false;
         };
-        inference.restore(base);
+        inference.restore(base.clone());
         // §18.5.2.1: lift the winner's constraints from the base snapshot —
         // the losing candidates are discarded with it, and only the winner's
-        // argument/target constraints join the enclosing bound set (B3).
+        // argument/target constraints join the enclosing bound set. This
+        // re-lift IS the joint-inference step of [§18.5.2.4]: the enclosing
+        // formal re-enters as the target and every poly argument (pertinent
+        // or not) contributes its body-searched constraints ([§18.5.2.2]).
+        // A re-lift that fails consistency means the winner's invocation
+        // type — generic inference against the formal, or a non-generic
+        // method's fixed return — is not compatible with the enclosing
+        // formal, so the nested invocation is not applicable to this outer
+        // candidate at all: restore the base snapshot (nothing of the failed
+        // lift may poison the shared table) and report inapplicability.
         let mut deferred = Vec::new();
-        let _ = self.with_probing(|this| {
+        let lifted = self.with_probing(|this| {
             this.try_candidate(
                 inference,
                 &winner,
@@ -1204,8 +1413,13 @@ impl InferCtx<'_> {
                 explicit_type_args.as_deref(),
                 &mut deferred,
                 false,
+                false,
             )
         });
+        if lifted.is_none() {
+            inference.restore(base);
+            return false;
+        }
         true
     }
 

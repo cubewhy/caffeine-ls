@@ -78,6 +78,10 @@ pub enum TypeError {
         name: Name,
         range: Option<TextRange>,
     },
+    /// §15.11.1/[§8.3]: a field name is visible through two or more unrelated
+    /// declarations — the classic `class C implements A, B` where `A` and `B`
+    /// each declare `int X`. The reference is ambiguous.
+    AmbiguousField { location: DiagLocation, name: Name },
     /// §7.4.3/[§7.7.2]: a class exists on the classpath, but its package is
     /// not visible from the resolving source set's module.
     ModuleNotAccessible {
@@ -373,6 +377,7 @@ impl TypeError {
             TypeError::CannotResolveName { .. } => DiagnosticCode::Java(CannotResolveName),
             TypeError::CannotResolveType { .. } => DiagnosticCode::Java(CannotResolveType),
             TypeError::AmbiguousName { .. } => DiagnosticCode::Java(AmbiguousName),
+            TypeError::AmbiguousField { .. } => DiagnosticCode::Java(AmbiguousName),
             TypeError::ModuleNotAccessible { .. } => DiagnosticCode::Java(ModuleNotAccessible),
             TypeError::NoSuchField { .. } => DiagnosticCode::Java(NoSuchField),
             TypeError::NoSuchMethod { .. } => DiagnosticCode::Java(NoSuchMethod),
@@ -528,6 +533,7 @@ impl TypeError {
             IllegalGenericInstanceOf { expr, .. } => DiagLocation::Expr(*expr),
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
+            | AmbiguousField { location, .. }
             | ModuleNotAccessible { location, .. }
             | TypeArgumentOutOfBounds { location, .. } => location.clone(),
             AlreadyCaught { local, .. } => DiagLocation::Local(*local),
@@ -638,6 +644,9 @@ impl TypeError {
                 format!("Cannot resolve symbol '{}'", name.as_str())
             }
             AmbiguousName { name, .. } => {
+                format!("Reference to '{}' is ambiguous", name.as_str())
+            }
+            AmbiguousField { name, .. } => {
                 format!("Reference to '{}' is ambiguous", name.as_str())
             }
             ModuleNotAccessible { name, .. } => {

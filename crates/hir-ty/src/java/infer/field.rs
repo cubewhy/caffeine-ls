@@ -8,15 +8,25 @@ use hir_expand::{
 };
 
 use crate::java::{
-    diagnostics::{IllegalAccessKind, TypeError},
+    diagnostics::{DiagLocation, IllegalAccessKind, TypeError},
     method::{
-        FieldData, InvocationContext, member_set_ignoring_access, pick_field,
-        pick_field_ignoring_access,
+        FieldData, FieldLookup, InvocationContext, member_set_ignoring_access,
+        pick_field_ignoring_access, pick_field_lookup,
     },
     ty::Ty,
 };
 
 use super::{FinalFieldWrite, InferCtx, InitCtx, poly::access_keyword};
+
+/// The result of the enclosing-chain simple-name field lookup
+/// ([§6.5.5.1], [§8.3]): a `Found` field of the implicit receiver, a
+/// `Missing` name (no enclosing class declares it), or an `Ambiguous` name
+/// (already reported) that the caller must not re-report as unresolved.
+pub(super) enum ChainField {
+    Found(FieldData),
+    Ambiguous,
+    Missing,
+}
 
 impl InferCtx<'_> {
     /// contributes nothing).
@@ -35,17 +45,45 @@ impl InferCtx<'_> {
         }
     }
 
-    /// innermost first ([§6.5.5.1], [§8.3]).
-    pub(super) fn pick_field_of_chain(&mut self, name: &str) -> Option<FieldData> {
+    /// innermost first ([§6.5.5.1], [§8.3]). An *ambiguous* simple-name field
+    /// (two unrelated declarations of the name across the enclosing chain —
+    /// `class C implements A, B` with `int X` in both) is reported against
+    /// `expr` and yields [`ChainField::Ambiguous`], so the caller does not
+    /// fall through to a cannot-resolve-symbol error.
+    pub(super) fn pick_field_of_chain(&mut self, name: &str, expr: ExprId) -> ChainField {
         for class in std::iter::once(&self.enclosing_class)
             .flatten()
             .chain(self.enclosing_chain.iter())
         {
-            if let Some(field) = pick_field(self.db, &self.scope, class, name, &self.access) {
-                return Some(field);
+            match pick_field_lookup(self.db, &self.scope, class, name, &self.access) {
+                FieldLookup::Found(field) => return ChainField::Found(field),
+                FieldLookup::Ambiguous => {
+                    self.report(TypeError::AmbiguousField {
+                        location: DiagLocation::Expr(expr),
+                        name: Name::new(name),
+                    });
+                    return ChainField::Ambiguous;
+                }
+                FieldLookup::Missing => continue,
             }
         }
-        None
+        ChainField::Missing
+    }
+
+    /// Whether a simple name denotes *some* field of the implicit receiver
+    /// chain ([§6.5.2] reclassification) — a diagnostic-free probe (an
+    /// ambiguous name is still a field of the chain, so it counts).
+    pub(super) fn pick_field_of_chain_exists(&self, name: &str) -> bool {
+        for class in std::iter::once(&self.enclosing_class)
+            .flatten()
+            .chain(self.enclosing_chain.iter())
+        {
+            match pick_field_lookup(self.db, &self.scope, class, name, &self.access) {
+                FieldLookup::Found(_) | FieldLookup::Ambiguous => return true,
+                FieldLookup::Missing => continue,
+            }
+        }
+        false
     }
 
     /// and [`Self::field_access`].
@@ -81,8 +119,10 @@ impl InferCtx<'_> {
             }
             _ => return,
         };
-        let Some(field) = self.pick_field_of_chain(name.as_str()) else {
-            return;
+        let field = match self.pick_field_of_chain(name.as_str(), lhs) {
+            ChainField::Found(field) => field,
+            // An ambiguous or missing name is no field write to track.
+            ChainField::Ambiguous | ChainField::Missing => return,
         };
         // §8.3.1.2/[§16]: only *blank* finals are one-shot — a final with an
         // initializer can never be assigned, and is reported elsewhere; it is

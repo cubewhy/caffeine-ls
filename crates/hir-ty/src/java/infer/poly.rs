@@ -60,6 +60,34 @@ pub(super) enum MethodRefKind {
     Bound,
 }
 
+/// The *pertinence* form of a lambda or method-reference argument
+/// ([JLS §15.12.2.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.2)):
+/// whether the argument's body contributes ⟨e → F⟩ to the applicability
+/// inference of [§18.5.1]. An implicitly typed lambda and an inexact method
+/// reference are NOT pertinent — their bodies constrain nothing during
+/// applicability (only the expected arity checks run), while an explicitly
+/// typed lambda and an exact method reference contribute their
+/// parameter/return constraints. In the invocation-type inference of the
+/// *chosen* method ([§18.5.2.2]) every poly argument contributes, pertinent
+/// or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LambdaLikeKind {
+    /// An implicitly typed lambda (`e -> e`, `() -> f()`): non-pertinent.
+    Implicit,
+    /// An explicitly typed lambda (`(String s) -> s`): pertinent.
+    Explicit,
+    /// An inexact method reference ([§15.13.1]): a bound `expr::m` — the
+    /// qualifier is a value whose type may be more specific than the
+    /// reference's target function type, so the reference is not statically
+    /// exact — or a type-qualified name whose target is not statically known:
+    /// non-pertinent.
+    InexactRef,
+    /// An exact method reference ([§15.13.1]): a type-qualified
+    /// (`Type::m`) reference whose target function type is statically known:
+    /// pertinent.
+    ExactRef,
+}
+
 /// The kinds of the actual arguments of a method invocation for the joint
 /// inference of §18.5.2.4: a concrete argument has a standalone type; a poly
 /// argument is a lambda or method reference deferred to its target formal
@@ -76,8 +104,14 @@ pub(super) enum ArgKind {
     /// is run against the target formal's single abstract method. A method
     /// reference is not arity-checkable without resolving the referenced
     /// method, so its arity is `None`. The lambda's body additionally
-    /// constrains the SAM return type's instantiation ([JLS §18.5.2.2]).
-    Lambda { id: ExprId, arity: Option<usize> },
+    /// constrains the SAM return type's instantiation ([JLS §18.5.2.2]);
+    /// `kind` records the *pertinence* form ([§15.12.2.2]) that decides
+    /// whether that body contributes during applicability probing.
+    Lambda {
+        id: ExprId,
+        arity: Option<usize>,
+        kind: LambdaLikeKind,
+    },
     /// A nested method invocation, resolved against the target formal by
     /// contributing its constraints to the enclosing invocation's table.
     Invocation { id: ExprId },

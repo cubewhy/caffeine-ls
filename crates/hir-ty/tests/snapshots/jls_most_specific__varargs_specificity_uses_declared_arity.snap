@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_most_specific.rs
+expression: out
+---
+FILE /src/com/example/V.java:
+package com.example;
+
+class V {
+    static String m(String x, Integer... rest) {
+        return null;
+    }
+
+    static String m(CharSequence... cs) {
+        return null;
+    }
+
+    static String one() {
+        return m("a");
+    }
+
+    static String two() {
+        return m("a", 1);
+    }
+}
+
+method one(): java.lang.String
+  @12:17..12:20 '"a"': wrong-argument-count: Method 'm()' cannot be applied to given types
+    -> @12:17..12:20 '"a"': required: CharSequence[]
+    -> @12:17..12:20 '"a"': found: String
+    -> @12:17..12:20 '"a"': reason: 'String' cannot be converted to 'CharSequence[]'
