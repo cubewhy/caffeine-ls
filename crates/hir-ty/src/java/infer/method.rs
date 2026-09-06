@@ -378,6 +378,25 @@ impl InferCtx<'_> {
             // their diagnostics.
             None => {
                 reinfer_poly_standalone(self, &arg_kinds);
+                // §15.27.3/[§18.5.2.2]: a receiver still carrying an
+                // *unresolved inference variable* — a lambda parameter typed
+                // by the enclosing invocation's type parameter
+                // (`Function<Z, T>.apply(..., e -> { e.isOverride() ... })`
+                // with `Z` the method's variable: the `EnvironmentAttributeMap`
+                // `Either` codec chain) — cannot resolve any member yet. The
+                // call is *deferred*, not an error: it reports nothing and
+                // yields the error type so its result contributes no
+                // constraint ([§18.5.2.2] makes the variables mentioned by
+                // the function type's parameter types *input variables* of
+                // the lambda's constraints). The chosen method's
+                // post-resolution re-inference ([§18.5.2.4]) types the
+                // parameter by the instantiated formal and resolves the
+                // member access there — `e.isOverride()` against the
+                // substituted `Entry<T, ?>` (§5.1.10 capture applies to the
+                // wildcard-parameterized receiver before lookup).
+                if receiver_ty.contains_infer_var(self.db) {
+                    return self.error();
+                }
                 // §15.12.1: no method of the name on the receiver. A receiver
                 // that itself failed to type (an unassigned local, a failed
                 // call) has reported its own error — do not cascade.

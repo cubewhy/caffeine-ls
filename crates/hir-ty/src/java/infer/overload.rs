@@ -912,6 +912,19 @@ impl InferCtx<'_> {
                     else {
                         return true;
                     };
+                    let fu: Vec<Ty> = match formal.kind(self.db) {
+                        TyKind::Reference { args, .. } => args.clone(),
+                        _ => Vec::new(),
+                    };
+                    if fu
+                        .iter()
+                        .any(|a| format!("{:?}", a.kind(self.db)).contains("Either"))
+                    {
+                        eprintln!(
+                            "[DBG-F] pertinent={} formal={:?} body_ty={:?}",
+                            pertinent, formal, body_ty
+                        );
+                    }
                     // §15.12.2.2/[§18.5.1]: an *implicitly typed* lambda is
                     // not pertinent — during applicability its body must not
                     // steer inference (no ⟨e → F⟩ constraint). It still must

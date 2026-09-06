@@ -1090,6 +1090,19 @@ impl InferCtx<'_> {
                 }
             }
             None => {
+                // §15.27.3/[§18.5.2.2]: a receiver still carrying an
+                // *unresolved inference variable* — a lambda parameter typed
+                // by the enclosing invocation's type parameter (`e.argument`
+                // with `e : Z` in the `EnvironmentAttributeMap` `Either`
+                // codec chain) — cannot resolve any field yet. The access is
+                // deferred, not an error: it reports nothing and yields the
+                // error type, and the chosen method's post-resolution
+                // re-inference ([§18.5.2.4]) resolves it against the
+                // instantiated parameter type (with §5.1.10 capture of a
+                // wildcard-parameterized receiver before the field lookup).
+                if receiver.contains_infer_var(self.db) {
+                    return self.error();
+                }
                 // §6.6: a field of the name exists but is not accessible from
                 // the enclosing class — report the access violation rather
                 // than a missing member (§15.11).

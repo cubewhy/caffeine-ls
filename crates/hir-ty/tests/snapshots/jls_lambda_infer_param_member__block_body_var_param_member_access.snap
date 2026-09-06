@@ -1,0 +1,48 @@
+---
+source: crates/hir-ty/tests/jls_lambda_infer_param_member.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Body {
+    static class Entry<T, A> {
+        A argument;
+        boolean isOverride() { return false; }
+    }
+    static class Codec<T> {
+        <Z> Codec<Z> apply(Function<T, Z> forward, Function<Z, T> back) {
+            return null;
+        }
+    }
+    static <X> Function<X, X> identity() {
+        return null;
+    }
+    static <T> Codec<Entry<T, ?>> make() {
+        return ((Codec<Entry<T, ?>>) null).apply(
+            identity(),
+            e -> {
+                if (e.isOverride()) {
+                    Object arg = e.argument;
+                    return arg == null ? e : e;
+                }
+                return e;
+            }
+        );
+    }
+}
+
+method isOverride(): boolean
+  locals: 
+  exprs: e0: boolean
+method apply(java.util.function.Function<T, Z>, java.util.function.Function<Z, T>): com.example.Body.Codec<Z>
+  locals: l0: java.util.function.Function<T, Z> | l1: java.util.function.Function<Z, T>
+  exprs: e1: null
+method identity(): java.util.function.Function<X, X>
+  locals: 
+  exprs: e2: null
+method make(): com.example.Body.Codec<com.example.Body.Entry<T, ?>>
+  locals: l2: java.lang.Object
+  exprs: e3: java.util.function.Function<com.example.Body.Entry<T, ?>, com.example.Body.Entry<T, ?>> | e4: com.example.Body.Entry<T, ?> | e5: boolean | e6: boolean | e7: com.example.Body.Entry<T, ?> | e8: CAP#0 | e9: java.lang.Object | e10: null | e11: boolean | e12: com.example.Body.Entry<T, ?> | e13: com.example.Body.Entry<T, ?> | e14: com.example.Body.Entry<T, ?> | e15: com.example.Body.Entry<T, ?> | e16: java.util.function.Function<com.example.Body.Entry<T, ?>, com.example.Body.Entry<T, ?>> | e17: null | e18: com.example.Body.Codec<com.example.Body.Entry<T, ?>> | e19: com.example.Body.Codec<com.example.Body.Entry<T, ?>> | e20: com.example.Body.Codec<com.example.Body.Entry<T, ?>>
