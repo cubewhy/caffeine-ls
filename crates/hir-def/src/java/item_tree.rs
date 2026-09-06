@@ -887,6 +887,18 @@ pub struct TypeParam {
     pub annotations: Vec<ItemAnnotationRef>,
 }
 
+impl TypeParam {
+    /// The declaring-scope marker of this type parameter ([JLS §6.4.1],
+    /// [§8.4.4]): a class/interface/enum/record type parameter (`"c"`) or a
+    /// method/constructor type parameter (`"m"`). A method parameter shadows
+    /// a same-named class parameter and the two are *distinct* type
+    /// variables, so the resolution of a name to a variable must know which
+    /// scope the innermost declaration belongs to.
+    pub fn scope_kind(&self, method: bool) -> &'static str {
+        if method { "m" } else { "c" }
+    }
+}
+
 /// A record component declaration `T name`
 /// ([JLS §8.10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.1)),
 /// with the source-spanned component type and the annotations on the

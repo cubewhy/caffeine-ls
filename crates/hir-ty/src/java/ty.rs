@@ -90,6 +90,18 @@ pub enum TyKind {
         name: Name,
         bounds: Vec<Ty>,
         lower: Option<Ty>,
+        /// The syntactic scope that declares this type variable
+        /// ([JLS §6.4.1], [§8.4.4]): `"c"` for a class/interface/enum/record
+        /// type parameter, `"m"` for a method (or constructor) type
+        /// parameter, `"g"` for a generic method *reference* (the `type_name`
+        /// declaration captured during method-reference resolution) and
+        /// `"x"` for a capture variable ([§5.1.10]). A method type parameter
+        /// shadows a class type parameter of the same name, and the two are
+        /// *distinct types* — javac renders `T#1`/`T#2` — so interning a
+        /// `TyKind::TypeVar` by `(name, scope)` keeps the shadowing pair
+        /// apart and lets a name-keyed substitution distinguish which `T` it
+        /// may replace.
+        scope: &'static str,
     },
     /// An array type ([JLS §10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.1)).
     Array(Box<Ty>),
@@ -159,6 +171,8 @@ impl Ty {
         )
     }
 
+    /// A *class-scoped* type variable ([JLS §4.4]): a type parameter of the
+    /// enclosing class/interface/enum/record declaration.
     pub fn type_var(db: &dyn TyDatabase, name: impl Into<Name>, bounds: Vec<Ty>) -> Self {
         Self::new(
             db,
@@ -166,6 +180,46 @@ impl Ty {
                 name: name.into(),
                 bounds,
                 lower: None,
+                scope: "c",
+            },
+        )
+    }
+
+    /// A *method-scoped* type variable ([JLS §8.4.4]): a type parameter of a
+    /// method or constructor declaration, which shadows a class type
+    /// parameter of the same name ([JLS §6.4.1]) and is a *distinct* type
+    /// (javac's `T#1`/`T#2`).
+    pub(crate) fn method_type_var(
+        db: &dyn TyDatabase,
+        name: impl Into<Name>,
+        bounds: Vec<Ty>,
+    ) -> Self {
+        Self::new(
+            db,
+            TyKind::TypeVar {
+                name: name.into(),
+                bounds,
+                lower: None,
+                scope: "m",
+            },
+        )
+    }
+
+    /// A *generic-reference* type variable: the type parameters of a generic
+    /// method named by a method reference ([JLS §15.13.1]), which stay
+    /// distinct from the class's own and from the referencing declaration's.
+    pub(crate) fn ref_type_var(
+        db: &dyn TyDatabase,
+        name: impl Into<Name>,
+        bounds: Vec<Ty>,
+    ) -> Self {
+        Self::new(
+            db,
+            TyKind::TypeVar {
+                name: name.into(),
+                bounds,
+                lower: None,
+                scope: "g",
             },
         )
     }
@@ -194,12 +248,18 @@ impl Ty {
     /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)).
     pub(crate) fn with_lower(self, db: &dyn TyDatabase, lower: Option<Ty>) -> Ty {
         match self.kind(db) {
-            TyKind::TypeVar { name, bounds, .. } => Ty::new(
+            TyKind::TypeVar {
+                name,
+                bounds,
+                scope,
+                ..
+            } => Ty::new(
                 db,
                 TyKind::TypeVar {
                     name: name.clone(),
                     bounds: bounds.clone(),
                     lower,
+                    scope,
                 },
             ),
             _ => self,
@@ -220,6 +280,7 @@ impl Ty {
                 name: Name::new(&name),
                 bounds: vec![Ty::reference(db, "java.lang.Object", Vec::new())],
                 lower: Some(lower),
+                scope: "x",
             },
         )
     }
@@ -411,7 +472,23 @@ impl Ty {
                 (Some(a), Some(b)) => a.kind == b.kind && a.ty.same_shape(db, &b.ty),
                 _ => false,
             },
-            (TyKind::TypeVar { name: a, .. }, TyKind::TypeVar { name: b, .. }) => a == b,
+            (
+                TyKind::TypeVar {
+                    name: a, scope: sa, ..
+                },
+                TyKind::TypeVar {
+                    name: b, scope: sb, ..
+                },
+            ) => {
+                // §4.4/§6.4.1: a type variable is identified by its
+                // declaring scope as well as its name — a method type
+                // parameter shadows and *differs* from the same-named class
+                // parameter, so a `T`-for-`T` pair across scopes is not the
+                // same shape. Same-scope same-name pairs (the self-
+                // referential bound of §4.4 truncated at different depths)
+                // stay identical.
+                a == b && sa == sb
+            }
             (TyKind::Intersection(a), TyKind::Intersection(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same_shape(db, y))
             }

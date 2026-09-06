@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_shadowed_type_params.rs
+expression: out
+---
+FILE /src/com/example/Shadow.java:
+package com.example;
+
+class Shadow<T extends Number> {
+    T f;
+
+    Shadow(T f) {
+        this.f = f;
+    }
+
+    <T extends String> void m() {
+        T local = this.f;
+    }
+}
+
+method Shadow(T): <init>
+  locals: l0: T
+  exprs: e0: com.example.Shadow<T> | e1: T | e2: T | e3: T
+method m(): void
+  locals: l1: T
+  exprs: e4: com.example.Shadow<T> | e5: T
