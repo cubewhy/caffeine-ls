@@ -24,10 +24,12 @@ pub mod kotlin;
 pub use db::{DefDatabase, file_body_tree, file_item_tree};
 
 /// Lowers `text` for `language` into the file's item tree plus body IR
-/// ([`crate::java::item_tree::LoweredFile`]).
+/// ([`crate::java::item_tree::LoweredFile`]), anchoring every declaration to
+/// its syntax node through `map`.
 pub fn lower_source(
     language: base_db::LanguageKind,
     text: &str,
+    map: &hir_expand::ast_id_map::AstIdMap,
 ) -> crate::java::item_tree::LoweredFile {
-    crate::java::lower::lower_source(language, text)
+    crate::java::lower::lower_source(language, text, map)
 }

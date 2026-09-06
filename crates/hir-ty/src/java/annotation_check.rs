@@ -33,11 +33,13 @@
 //! ([`hir::ClassRecord`]), so a `@Target(ElementType.X)` from a dependency jar
 //! is honored the same way.
 
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, TypeParam};
+use hir_def::java::item_tree::{
+    ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef, TypeParam,
+};
 use hir_expand::{
     body::{BodyTree, ExprId, Literal, PatternId, StmtId},
     name::Name,
-    span::{AnnotationArg, AnnotationRef, AnnotationValue, SpannedTypeRef},
+    span::{AnnotationValue, SpannedTypeRef},
 };
 use rust_asm::constants::ACC_ENUM;
 use rustc_hash::FxHashMap;
@@ -46,9 +48,11 @@ use vfs::FileId;
 
 use crate::java::db::TyDatabase;
 use crate::java::decl_check::DeclDiagnostic;
+use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, ty_from_library};
 use crate::java::subtyping::is_assignable;
 use crate::java::ty::{Ty, TyKind};
+use hir_def::java::ranges;
 
 /// The element types an annotation may be applied to on a *declaration*
 /// ([JLS §9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1)
@@ -83,6 +87,9 @@ pub(crate) fn annotation_diagnostics(
     tree: &ItemTree,
 ) -> Vec<DeclDiagnostic> {
     let scope = crate::java::resolve::scope_for_file(db, file);
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
     let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let bodies = hir::file_body_tree(db, file);
     let mut out = Vec::new();
@@ -92,6 +99,8 @@ pub(crate) fn annotation_diagnostics(
         tree: &ItemTree,
         bodies: &BodyTree,
         scope: &hir::ResolutionScope,
+        map: &hir_expand::ast_id_map::AstIdMap,
+        source: &syntax::SourceFile,
         type_params: &FxHashMap<ItemId, Vec<TypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
@@ -103,7 +112,7 @@ pub(crate) fn annotation_diagnostics(
         let resolver = Resolver::new(tree, type_params, id);
         // §9.6.4.1: the declaration annotations of the item itself.
         for annotation in declaration_annotations(data) {
-            check_declaration_annotation(db, &resolver, scope, data, annotation, out);
+            check_declaration_annotation(db, &resolver, scope, data, annotation, map, source, out);
         }
         // §9.6.4.1/[§9.7.4]: the annotations of a record's *components* have
         // element type `RECORD_COMPONENT` (Table 9.7-1); like a field, a
@@ -118,6 +127,8 @@ pub(crate) fn annotation_diagnostics(
                         &["RECORD_COMPONENT"],
                         true,
                         annotation,
+                        map,
+                        source,
                         out,
                     );
                 }
@@ -126,8 +137,17 @@ pub(crate) fn annotation_diagnostics(
         // §9.6.4.1/[§9.7.4]: the type-use annotations on the item's type
         // references (field types, method signatures, record component types,
         // superclass/interfaces, type-parameter bounds).
-        for spanned in declaration_type_refs(data) {
-            check_type_use(db, &resolver, scope, element_type_of(data), spanned, out);
+        for tyref in declaration_type_refs(data) {
+            check_type_use_item(
+                db,
+                &resolver,
+                scope,
+                element_type_of(data),
+                tyref,
+                map,
+                source,
+                out,
+            );
         }
         // The body-position type-use annotations: casts, `new`, `instanceof`,
         // class literals, method-reference type names, lambda parameter types
@@ -146,18 +166,38 @@ pub(crate) fn annotation_diagnostics(
             );
         }
         for &child in data.body() {
-            walk(db, tree, bodies, scope, type_params, child, out);
+            walk(
+                db,
+                tree,
+                bodies,
+                scope,
+                map,
+                source,
+                type_params,
+                child,
+                out,
+            );
         }
     }
 
     for &top in &tree.top {
-        walk(db, tree, &bodies, &scope, type_params, top, &mut out);
+        walk(
+            db,
+            tree,
+            &bodies,
+            &scope,
+            map,
+            &source,
+            type_params,
+            top,
+            &mut out,
+        );
     }
     out
 }
 
 /// The declaration annotations of an item, in source order.
-fn declaration_annotations(data: &ItemData) -> Vec<&AnnotationRef> {
+fn declaration_annotations(data: &ItemData) -> Vec<&ItemAnnotationRef> {
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => d.annotations.iter().collect(),
         ItemData::Enum(d) => d.annotations.iter().collect(),
@@ -172,7 +212,7 @@ fn declaration_annotations(data: &ItemData) -> Vec<&AnnotationRef> {
 
 /// The type references of an item's *declaration* ([JLS §9.7.4]): the types
 /// that carry type-use annotations.
-fn declaration_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
+fn declaration_type_refs(data: &ItemData) -> Vec<&ItemTypeRef> {
     let mut out = Vec::new();
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => {
@@ -230,7 +270,9 @@ fn check_declaration_annotation(
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
     data: &ItemData,
-    annotation: &AnnotationRef,
+    annotation: &ItemAnnotationRef,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     let Some(element_type) = element_type_of(data) else {
@@ -251,6 +293,8 @@ fn check_declaration_annotation(
         element_types,
         has_annotatable_type,
         annotation,
+        map,
+        source,
         out,
     );
 }
@@ -266,13 +310,15 @@ fn check_target(
     scope: &hir::ResolutionScope,
     element_types: &[&'static str],
     has_annotatable_type: bool,
-    annotation: &AnnotationRef,
+    annotation: &ItemAnnotationRef,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     // §9.7.1: the element-value arguments are checked against the annotation
     // type's elements regardless of whether the target check passes.
-    check_annotation_elements(db, resolver, scope, annotation, out);
-    let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name.name) else {
+    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
+    let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name) else {
         // An unresolvable annotation type (or one without `@Target`) has no
         // target to enforce: empty `@Target` is applicable to every
         // declaration ([§9.6.4.1]).
@@ -291,9 +337,9 @@ fn check_target(
         return;
     }
     out.push(DeclDiagnostic::AnnotationNotApplicable {
-        name: annotation.name.name.clone(),
+        name: annotation.name.clone(),
         element_type: element_types[0],
-        range: annotation.name.range,
+        range: ranges::annotation_name_range(map, source, annotation),
     });
 }
 
@@ -318,8 +364,35 @@ fn has_annotatable_type(data: &ItemData) -> bool {
     )
 }
 
-/// Checks the type-use annotations of one spanned type
-/// ([JLS §9.7.4], [§9.6.4.1]).
+/// Checks the type-use annotations of one *item* type reference
+/// ([JLS §9.7.4], [§9.6.4.1]) — the declaration-side, range-free form.
+fn check_type_use_item(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    element_type: Option<&'static str>,
+    tyref: &ItemTypeRef,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    for annotation in &tyref.type_use_annotations {
+        check_type_use_annotation(
+            db,
+            resolver,
+            scope,
+            element_type,
+            annotation,
+            map,
+            source,
+            out,
+        );
+    }
+}
+
+/// Checks the type-use annotations of one spanned type — the *body* path
+/// (casts, `new`, `instanceof`, class literals, local variable types), whose
+/// spans still carry their ranges ([JLS §9.7.4], [§9.6.4.1]).
 fn check_type_use(
     db: &dyn TyDatabase,
     resolver: &Resolver,
@@ -329,24 +402,53 @@ fn check_type_use(
     out: &mut Vec<DeclDiagnostic>,
 ) {
     for annotation in &spanned.type_use_annotations {
-        check_type_use_annotation(db, resolver, scope, element_type, annotation, out);
+        check_type_use_annotation_ranged(db, resolver, scope, element_type, annotation, out);
     }
 }
 
-/// The shared type-use applicability check: the annotation's target must
-/// contain `TYPE_USE` or the element type of the enclosing declaration
-/// ([§9.6.4.1]).
+/// The shared type-use applicability check over an *item* annotation: the
+/// annotation's target must contain `TYPE_USE` or the element type of the
+/// enclosing declaration ([§9.6.4.1]).
 fn check_type_use_annotation(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
     element_type: Option<&'static str>,
-    annotation: &AnnotationRef,
+    annotation: &ItemAnnotationRef,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
-    check_annotation_elements(db, resolver, scope, annotation, out);
+    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
+    let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name) else {
+        return;
+    };
+    let applicable = targets_contain(&targets, "TYPE_USE")
+        || element_type.is_some_and(|et| targets_contain(&targets, et));
+    if !applicable {
+        out.push(DeclDiagnostic::AnnotationNotApplicable {
+            name: annotation.name.clone(),
+            element_type: "TYPE_USE",
+            range: ranges::annotation_name_range(map, source, annotation),
+        });
+    }
+}
+
+/// The shared type-use applicability check over a *span* (`&AnnotationRef`,
+/// the body path — its ranges are still carried).
+fn check_type_use_annotation_ranged(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    element_type: Option<&'static str>,
+    annotation: &hir_expand::span::AnnotationRef,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    // §9.7.1: the element-value arguments are checked regardless of whether
+    // the target check passes.
+    check_annotation_elements_ranged(db, resolver, scope, annotation, out);
     let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name.name) else {
         return;
     };
@@ -358,6 +460,44 @@ fn check_type_use_annotation(
             element_type: "TYPE_USE",
             range: annotation.name.range,
         });
+    }
+}
+
+/// The §9.7.1 element-value argument check over a *span* (the body path). The
+/// item path runs [`check_annotation_elements`].
+fn check_annotation_elements_ranged(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    annotation: &hir_expand::span::AnnotationRef,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    if annotation.args.is_empty() {
+        return;
+    }
+    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name.name)
+    else {
+        return;
+    };
+    for (idx, arg) in annotation.args.iter().enumerate() {
+        if annotation.args[..idx]
+            .iter()
+            .any(|prev| prev.name == arg.name)
+        {
+            out.push(DeclDiagnostic::DuplicateAnnotationMemberValue {
+                name: arg.name.clone(),
+                range: Some(arg.range),
+            });
+            continue;
+        }
+        let Some(element) = elements.iter().find(|element| element.name == arg.name) else {
+            out.push(DeclDiagnostic::UnknownAnnotationMember {
+                name: arg.name.clone(),
+                range: Some(arg.range),
+            });
+            continue;
+        };
+        check_value_assignable_ranged(db, resolver, scope, &arg.value, &element.ty, arg.range, out);
     }
 }
 
@@ -750,17 +890,23 @@ fn check_annotation_elements(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    annotation: &AnnotationRef,
+    annotation: &ItemAnnotationRef,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     if annotation.args.is_empty() {
         return;
     }
-    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name.name)
-    else {
+    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name) else {
         return;
     };
     for (idx, arg) in annotation.args.iter().enumerate() {
+        // The value's source range (where the mismatch is reported) is
+        // re-derived from the annotation's syntax node; a value that cannot
+        // be resolved falls back to the annotation's name range.
+        let range = ranges::annotation_arg_value_range(map, source, annotation, idx)
+            .or_else(|| ranges::annotation_name_range(map, source, annotation));
         // §9.7.1: no element may be given a value twice — the later pair is
         // the error.
         if annotation.args[..idx]
@@ -769,7 +915,7 @@ fn check_annotation_elements(
         {
             out.push(DeclDiagnostic::DuplicateAnnotationMemberValue {
                 name: arg.name.clone(),
-                range: Some(arg.range),
+                range,
             });
             continue;
         }
@@ -778,11 +924,21 @@ fn check_annotation_elements(
             // declare.
             out.push(DeclDiagnostic::UnknownAnnotationMember {
                 name: arg.name.clone(),
-                range: Some(arg.range),
+                range,
             });
             continue;
         };
-        check_value_assignable(db, resolver, scope, &arg.value, &element.ty, arg.range, out);
+        check_value_assignable(
+            db,
+            resolver,
+            scope,
+            &arg.value,
+            &element.ty,
+            range.unwrap_or_default(),
+            map,
+            source,
+            out,
+        );
     }
 }
 
@@ -793,19 +949,23 @@ fn check_value_assignable(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    value: &AnnotationValue,
+    value: &ItemAnnotationValue,
     element_ty: &Ty,
     range: rowan::TextRange,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     match value {
         // An array initializer ([§10.6]) is checked element-wise against the
         // component type; an initializer where the element is not an array is
         // a compile-time error ([§9.7.1]).
-        AnnotationValue::Array(values) => match element_ty.kind(db) {
+        ItemAnnotationValue::Array(values) => match element_ty.kind(db) {
             TyKind::Array(component) => {
                 for v in values {
-                    check_value_assignable(db, resolver, scope, v, component, range, out);
+                    check_value_assignable(
+                        db, resolver, scope, v, component, range, map, source, out,
+                    );
                 }
             }
             _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
@@ -822,7 +982,9 @@ fn check_value_assignable(
                 TyKind::Array(component) => component,
                 _ => element_ty,
             };
-            check_single_value_assignable(db, resolver, scope, value, target, range, out);
+            check_single_value_assignable(
+                db, resolver, scope, value, target, range, map, source, out,
+            );
         }
     }
 }
@@ -834,12 +996,14 @@ fn check_single_value_assignable(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    value: &AnnotationValue,
+    value: &ItemAnnotationValue,
     target: &Ty,
     range: rowan::TextRange,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    use hir_expand::span::AnnotationValue as V;
+    use hir_def::java::item_tree::ItemAnnotationValue as V;
     match value {
         // A literal carries its primitive or `String` type ([§15.28]).
         V::Literal(lit) => {
@@ -915,7 +1079,7 @@ fn check_single_value_assignable(
         // A nested annotation values the annotation type it names
         // ([§9.7.1]); its own argument list is checked recursively.
         V::Annotation(inner) => {
-            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name)
+            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name)
                 && !is_assignable(db, scope, &inner_ty, target)
             {
                 out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
@@ -924,7 +1088,7 @@ fn check_single_value_assignable(
                     range: Some(range),
                 });
             }
-            check_annotation_elements(db, resolver, scope, inner, out);
+            check_annotation_elements(db, resolver, scope, inner, map, source, out);
         }
         // A non-constant element value (a unary/binary/conditional
         // expression) carries no standalone type; javac rejects it (an
@@ -934,6 +1098,130 @@ fn check_single_value_assignable(
         V::Unresolved { .. } => {}
         // Unreachable: [`check_value_assignable`] routes array values before
         // delegating a single value here.
+        V::Array(_) => {}
+    }
+}
+
+/// The `check_value_assignable` twin over a *span* (`&AnnotationValue`, the
+/// body path — a classfile or body-side annotation whose value carries its
+/// range).
+fn check_value_assignable_ranged(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    value: &AnnotationValue,
+    element_ty: &Ty,
+    range: rowan::TextRange,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    match value {
+        AnnotationValue::Array(values) => match element_ty.kind(db) {
+            TyKind::Array(component) => {
+                for v in values {
+                    check_value_assignable_ranged(db, resolver, scope, v, component, range, out);
+                }
+            }
+            _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: Ty::array(db, *element_ty),
+                expected: *element_ty,
+                range: Some(range),
+            }),
+        },
+        _ => {
+            let target = match element_ty.kind(db) {
+                TyKind::Array(component) => component,
+                _ => element_ty,
+            };
+            check_single_value_assignable_ranged(db, resolver, scope, value, target, range, out);
+        }
+    }
+}
+
+/// The `check_single_value_assignable` twin over a *span* (see
+/// [`check_value_assignable_ranged`]).
+fn check_single_value_assignable_ranged(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    value: &AnnotationValue,
+    target: &Ty,
+    range: rowan::TextRange,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    use hir_expand::span::AnnotationValue as V;
+    match value {
+        V::Literal(lit) => {
+            let value_ty = literal_ty(db, lit);
+            if let (Literal::Int(v), TyKind::Primitive(p)) = (lit, target.kind(db))
+                && narrows_to(*v, *p).is_some_and(|fits| fits)
+            {
+                return;
+            }
+            if !is_assignable(db, scope, &value_ty, target) {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: value_ty,
+                    expected: *target,
+                    range: Some(range),
+                });
+            }
+        }
+        V::EnumConstant { qualifier, member } => {
+            if let Some(qualifier) = qualifier {
+                let Some(enum_ty) = resolve_name_ty(db, scope, resolver, qualifier) else {
+                    return;
+                };
+                if let Some(constants) = enum_constants(db, scope, &enum_ty)
+                    && !constants.iter().any(|c| c == member.as_str())
+                {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
+                }
+                if !is_assignable(db, scope, &enum_ty, target) {
+                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                        found: enum_ty,
+                        expected: *target,
+                        range: Some(range),
+                    });
+                }
+            } else if let Some(constants) = enum_constants(db, scope, target) {
+                if !constants.iter().any(|c| c == member.as_str()) {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
+                }
+            } else {
+                out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                    member: member.clone(),
+                    range: Some(range),
+                });
+            }
+        }
+        V::ClassLit(_) => {
+            let class = Ty::reference(db, "java.lang.Class", Vec::new());
+            if !is_assignable(db, scope, &class, target) {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: class,
+                    expected: *target,
+                    range: Some(range),
+                });
+            }
+        }
+        V::Annotation(inner) => {
+            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name)
+                && !is_assignable(db, scope, &inner_ty, target)
+            {
+                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                    found: inner_ty,
+                    expected: *target,
+                    range: Some(range),
+                });
+            }
+            check_annotation_elements_ranged(db, resolver, scope, inner, out);
+        }
+        V::Unresolved { .. } => {}
         V::Array(_) => {}
     }
 }
@@ -1165,9 +1453,9 @@ fn is_target_annotation(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     resolver: &Resolver,
-    annotation: &AnnotationRef,
+    annotation: &ItemAnnotationRef,
 ) -> bool {
-    candidate_fqns(resolver, &annotation.name.name)
+    candidate_fqns(resolver, &annotation.name)
         .into_iter()
         .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())
         .is_some_and(|candidate| candidate.as_str() == "java.lang.annotation.Target")
@@ -1175,7 +1463,7 @@ fn is_target_annotation(
 
 /// The `ElementType` constant names of a `@Target` argument list: the enum
 /// constants of the `value` element ([§9.7.1]), single or in an array.
-fn target_value_names(args: &[AnnotationArg]) -> Vec<String> {
+fn target_value_names(args: &[hir_def::java::item_tree::ItemAnnotationArg]) -> Vec<String> {
     let mut out = Vec::new();
     for arg in args {
         if arg.name.as_str() == "value" {
@@ -1185,14 +1473,14 @@ fn target_value_names(args: &[AnnotationArg]) -> Vec<String> {
     out
 }
 
-fn collect_enum_names(value: &AnnotationValue, out: &mut Vec<String>) {
+fn collect_enum_names(value: &ItemAnnotationValue, out: &mut Vec<String>) {
     match value {
-        AnnotationValue::Array(values) => {
+        ItemAnnotationValue::Array(values) => {
             for value in values {
                 collect_enum_names(value, out);
             }
         }
-        AnnotationValue::EnumConstant { member, .. } => out.push(member.as_str().to_owned()),
+        ItemAnnotationValue::EnumConstant { member, .. } => out.push(member.as_str().to_owned()),
         _ => {}
     }
 }

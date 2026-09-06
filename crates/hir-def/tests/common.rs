@@ -7,6 +7,8 @@ pub fn check_lower(src: &str) -> String {
 
 pub fn check_lower_language(language: LanguageKind, src: &str) -> String {
     let parse = syntax::SourceFile::parse(language, src);
+    let source = parse.syntax_node(language);
+    let map = hir_expand::ast_id_map::AstIdMap::from_source_file(&source);
     let errors: Vec<String> = parse
         .errors()
         .iter()
@@ -18,8 +20,8 @@ pub fn check_lower_language(language: LanguageKind, src: &str) -> String {
         errors.join("\n")
     };
 
-    let lowered = hir_def::lower_source(language, src);
-    let rendered = hir_def::java::pretty::pretty_print(&lowered.items);
+    let lowered = hir_def::lower_source(language, src, &map);
+    let rendered = hir_def::java::pretty::pretty_print(&lowered.items, &map, &source);
 
     format!(
         "\
@@ -36,6 +38,8 @@ ITEM_TREE:
 /// (`ITEM_TREE` + `BODIES`).
 pub fn check_lower_bodies(src: &str) -> String {
     let parse = syntax::SourceFile::parse(LanguageKind::Java, src);
+    let source = parse.syntax_node(LanguageKind::Java);
+    let map = hir_expand::ast_id_map::AstIdMap::from_source_file(&source);
     let errors: Vec<String> = parse
         .errors()
         .iter()
@@ -47,8 +51,8 @@ pub fn check_lower_bodies(src: &str) -> String {
         errors.join("\n")
     };
 
-    let lowered = hir_def::lower_source(LanguageKind::Java, src);
-    let rendered = hir_def::java::pretty::pretty_print(&lowered.items);
+    let lowered = hir_def::lower_source(LanguageKind::Java, src, &map);
+    let rendered = hir_def::java::pretty::pretty_print(&lowered.items, &map, &source);
     let bodies = hir_def::java::pretty::pretty_body(&lowered.items, &lowered.bodies);
 
     format!(

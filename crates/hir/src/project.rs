@@ -504,7 +504,7 @@ mod tests {
         change.apply(&mut db);
 
         let tree = file_item_tree(&db, file_id);
-        let rendered = hir_def::java::pretty::pretty_print(&tree);
+        let rendered = pretty(&db, file_id);
         assert!(rendered.contains("class A [public]"), "{rendered}");
         assert!(rendered.contains("field x: int"), "{rendered}");
         assert!(rendered.contains("package com.example"), "{rendered}");
@@ -518,7 +518,7 @@ mod tests {
         edit.apply(&mut db);
 
         let tree = file_item_tree(&db, file_id);
-        let rendered = hir_def::java::pretty::pretty_print(&tree);
+        let rendered = pretty(&db, file_id);
         assert!(rendered.contains("class B"), "{rendered}");
         assert!(!rendered.contains("field x: int"), "{rendered}");
 
@@ -529,5 +529,17 @@ mod tests {
         change.change_file(other_id, Some("class Z {}\n".to_owned()));
         change.apply(&mut db);
         let _ = file_item_tree(&db, other_id);
+    }
+
+    /// Renders the file's item tree like the lower snapshots, resolving the
+    /// declaration ranges from the file's parse.
+    fn pretty(db: &TestDatabase, file_id: FileId) -> String {
+        let tree = file_item_tree(db, file_id);
+        let language = tree.language;
+        assert_ne!(language, base_db::LanguageKind::Unknown);
+        let parse = base_db::parse(db, file_id, language);
+        let source = parse.syntax_node(language);
+        let map = hir_expand::ast_id_map::AstIdMap::from_source_file(&source);
+        hir_def::java::pretty::pretty_print(&tree, &map, &source)
     }
 }

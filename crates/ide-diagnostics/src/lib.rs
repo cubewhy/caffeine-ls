@@ -180,7 +180,17 @@ pub(crate) fn collect_declaration_diagnostics(
                 .iter()
                 .copied()
                 .find_map(|top| find_method(&tree, top, method_name));
-            item.map(|item| tree.data(item).range())
+            item.and_then(|item| {
+                // The item tree carries no offsets; resolve the declaration
+                // range from the file's parse.
+                let language = tree.language;
+                if language == base_db::LanguageKind::Unknown {
+                    return None;
+                }
+                let source = base_db::parse(db, file_id, language).syntax_node(language);
+                let map = hir::hir_def::db::ast_id_map(db, file_id, language);
+                hir::hir_def::java::ranges::item_range(map, &source, &tree, item)
+            })
         }) else {
             continue;
         };

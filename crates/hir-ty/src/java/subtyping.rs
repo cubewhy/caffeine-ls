@@ -32,9 +32,9 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::{PrimitiveType, TypeRef};
 
-use hir_def::java::item_tree::{ItemData, TypeParam};
+use hir_def::java::item_tree::{ItemData, ItemTypeRef, TypeParam};
 use hir_def::jvm::access::JvmAccessFlags;
-use hir_expand::{name::Name, span::SpannedTypeRef};
+use hir_expand::name::Name;
 
 use crate::{
     java::db::{ScopeId, ScopeKind, TyDatabase},
@@ -196,12 +196,12 @@ pub(crate) fn source_supertypes(
     let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
     let implicit = |fqn: &str| {
-        SpannedTypeRef::synthetic(TypeRef::Reference {
+        ItemTypeRef::synthetic(TypeRef::Reference {
             name: Name::new(fqn),
             generic_args: Vec::new(),
         })
     };
-    let (super_class, interfaces): (Option<SpannedTypeRef>, Vec<SpannedTypeRef>) = match data {
+    let (super_class, interfaces): (Option<ItemTypeRef>, Vec<ItemTypeRef>) = match data {
         // A class (other than `java.lang.Object`) has exactly one direct
         // superclass; the implicit one is `java.lang.Object` (§8.1.4).
         ItemData::Class(d) => (
@@ -233,7 +233,7 @@ pub(crate) fn source_supertypes(
         ItemData::Record(d) => &d.type_params,
         _ => &[],
     };
-    let instantiate = |tyref: &SpannedTypeRef| {
+    let instantiate = |tyref: &ItemTypeRef| {
         let resolved = resolve_type_ref(db, &scope, &resolver, tyref);
         if args.is_empty() {
             resolved
@@ -258,11 +258,11 @@ pub(crate) fn source_supertypes(
 /// `java.lang.Enum<E>`, where `E` is the enum's own type. The enum type is
 /// never generic ([§8.9]), so the self type argument is the enum's fully
 /// qualified name with no type arguments of its own.
-fn enum_superclass(db: &dyn TyDatabase, source: hir::SourceClass) -> SpannedTypeRef {
+fn enum_superclass(db: &dyn TyDatabase, source: hir::SourceClass) -> ItemTypeRef {
     let fqn = hir::source_class_fqn(db, source.file, source.item)
         .map(|name| name.as_str().to_owned())
         .unwrap_or_default();
-    SpannedTypeRef::synthetic(TypeRef::Reference {
+    ItemTypeRef::synthetic(TypeRef::Reference {
         name: Name::new("java.lang.Enum"),
         generic_args: vec![TypeRef::Reference {
             name: Name::new(&fqn),

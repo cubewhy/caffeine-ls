@@ -12,7 +12,7 @@
 //! declaring method rather than an expression: they are collected per file by
 //! [`class_diagnostics`] and carry the offending method's name.
 
-use hir_def::java::item_tree::{ItemData, ItemId};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, ItemTypeRef};
 use hir_expand::body::BodyTree;
 use hir_expand::name::Name;
 use rustc_hash::FxHashSet;
@@ -21,10 +21,39 @@ use vfs::FileId;
 
 use crate::java::db::TyDatabase;
 use crate::java::method::{self, Access, InvocationContext, InvocationMode, MethodData};
+use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
 use crate::java::ty::{Ty, TyKind};
 use base_db::LanguageKind;
+use hir_def::java::ranges;
+
+/// The source range of an item's declared name, resolved on demand from the
+/// file's parse (mirror of the old `ItemData::name_range`).
+fn item_name_range(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    id: ItemId,
+) -> Option<rowan::TextRange> {
+    let (map, source) = range_ctx(db, file, tree.language)?;
+    hir_def::java::ranges::item_name_range(map, &source, tree, id)
+}
+
+/// The source range of the first reference name of a declaration type
+/// reference (mirror of the old `SpannedTypeRef::first_ref`).
+fn first_type_ref_range(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    tyref: &ItemTypeRef,
+) -> Option<rowan::TextRange> {
+    let (map, source) = range_ctx(db, file, tree.language)?;
+    hir_def::java::ranges::type_ref_occurrences(map, &source, tyref)
+        .into_iter()
+        .next()
+        .and_then(|(_, range)| range)
+}
 
 /// A declaration-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -922,9 +951,11 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
     for req in &data.requires {
         let symbol = interner.get_or_intern(req.name.as_str());
         if ctx.graph.module(symbol).is_none() {
+            let range = range_ctx(db, file, tree.language)
+                .and_then(|(map, source)| ranges::requires_name_range(map, &source, req));
             out.push(DeclDiagnostic::ModuleNotFound {
                 module: req.name.clone(),
-                range: Some(req.range),
+                range,
             });
         }
     }
@@ -935,9 +966,12 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
     if let Some(source_set) = hir::source_set_for_file(db, file) {
         for export in data.exports.iter().chain(data.opens.iter()) {
             if hir::source_set_package_files(db, source_set.clone(), &export.package).is_empty() {
+                let range = range_ctx(db, file, tree.language).and_then(|(map, source)| {
+                    ranges::module_exports_package_range(map, &source, export)
+                });
                 out.push(DeclDiagnostic::PackageEmptyOrNotFound {
                     package: export.package.clone(),
-                    range: Some(export.package_range),
+                    range,
                 });
             }
         }
@@ -955,7 +989,7 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
                 && !implementation_ty.is_error(db)
                 && !crate::java::subtyping::is_subtype(db, &scope, &implementation_ty, &service)
             {
-                let range = implementation.first_ref().and_then(|r| r.range);
+                let range = first_type_ref_range(db, file, &tree, implementation);
                 out.push(DeclDiagnostic::ServiceImplementationNotSubtype {
                     service,
                     implementation: implementation_ty,
@@ -989,7 +1023,7 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // §7.4.1: a compilation unit declares at most one package (see
     // [`crate::java::name_check::duplicate_package_diagnostics`]).
     out.extend(crate::java::name_check::duplicate_package_diagnostics(
-        &tree,
+        db, file, &tree,
     ));
 
     // §7.6: at most one public top-level type per file, named after the file.
@@ -1154,7 +1188,7 @@ fn check_class(
                 .unwrap_or_else(|| class.name.clone());
             out.push(DeclDiagnostic::CannotInheritFromFinalClass {
                 super_owner: fqn,
-                range: super_ref.first_ref().and_then(|r| r.range),
+                range: first_type_ref_range(db, file, tree, super_ref),
             });
         }
     }
@@ -1165,7 +1199,7 @@ fn check_class(
     if in_own_supertype_cycle(db, scope, fqn) {
         out.push(DeclDiagnostic::CyclicInheritance {
             class: class_like_simple_name(tree.data(item)),
-            range: Some(tree.data(item).name_range()),
+            range: item_name_range(db, file, tree, item),
         });
     }
 
@@ -1191,7 +1225,7 @@ fn check_class(
             out.push(DeclDiagnostic::NoDefaultConstructor {
                 class: class.name.clone(),
                 super_owner,
-                range: Some(class.name_range),
+                range: item_name_range(db, file, tree, item),
             });
         }
     }
@@ -1243,7 +1277,7 @@ fn check_class(
                         class: class_like_simple_name(tree.data(item)),
                         method: Name::new(&abstract_method.name),
                         owner: Name::new(&abstract_method.owner),
-                        range: Some(tree.data(item).name_range()),
+                        range: item_name_range(db, file, tree, item),
                     });
                 }
             }
@@ -1264,7 +1298,7 @@ fn check_class(
         if member_names.iter().any(|seen| seen == &field.name) {
             out.push(DeclDiagnostic::DuplicateDeclaration {
                 name: field.name.clone(),
-                range: Some(field.name_range),
+                range: item_name_range(db, file, tree, child),
             });
         } else {
             member_names.push(field.name.clone());
@@ -1311,9 +1345,9 @@ fn check_class(
     for &child in tree.data(item).body() {
         if let ItemData::Method(m) = tree.data(child)
             && !m.is_constructor()
-            && m.annotations.iter().any(|annotation| {
-                is_override_annotation(db, scope, &resolver, &annotation.name.name)
-            })
+            && m.annotations
+                .iter()
+                .any(|annotation| is_override_annotation(db, scope, &resolver, &annotation.name))
         {
             // §8.4.2: the annotated declaration must be matched to its own
             // [`MethodData`] by *signature*, not just name and arity — a class
@@ -1351,7 +1385,7 @@ fn check_class(
             if method.is_static || !overrides {
                 out.push(DeclDiagnostic::MethodDoesNotOverride {
                     method: Name::new(&method.name),
-                    range: Some(m.name_range),
+                    range: item_name_range(db, file, tree, child),
                 });
             }
         }
@@ -1398,7 +1432,7 @@ fn check_class(
         if crate::java::subtyping::is_subtype(db, scope, &super_ty, &throwable) {
             out.push(DeclDiagnostic::GenericCannotExtendThrowable {
                 class: class.name.clone(),
-                range: Some(class.name_range),
+                range: item_name_range(db, file, tree, item),
             });
         }
     }
@@ -1408,7 +1442,7 @@ fn check_class(
     // it is named in its `permits` clause (or, without one, is its
     // same-module direct subclass), and a permitted direct subclass must
     // itself be `final`, `sealed` or `non-sealed` so the hierarchy closes.
-    sealed_subclass_diagnostics(db, tree, scope, &resolver, item, fqn, &mut out);
+    sealed_subclass_diagnostics(db, file, tree, scope, &resolver, item, fqn, &mut out);
 
     // §8.1.1.2: a `sealed` type must have at least one direct subclass.
     if class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_sealed())
@@ -1416,7 +1450,7 @@ fn check_class(
         && !file_has_direct_subclass(db, file, tree, scope, fqn)
     {
         out.push(DeclDiagnostic::SealedClassMustHaveSubclasses {
-            range: Some(tree.data(item).name_range()),
+            range: item_name_range(db, file, tree, item),
         });
     }
 
@@ -1434,7 +1468,7 @@ fn check_class(
                 if method.modifiers.is_protected() {
                     out.push(DeclDiagnostic::ModifierNotAllowedHere {
                         modifier: "protected",
-                        range: Some(method.name_range),
+                        range: item_name_range(db, file, tree, child),
                     });
                 }
             }
@@ -1460,7 +1494,7 @@ fn check_class(
             {
                 out.push(DeclDiagnostic::MissingMethodBodyOrDeclareAbstract {
                     method: method.name.clone(),
-                    range: Some(method.name_range),
+                    range: item_name_range(db, file, tree, child),
                 });
             }
         }
@@ -1491,7 +1525,7 @@ fn check_class(
             out.push(DeclDiagnostic::ConstructorNameMismatch {
                 name: method.name.clone(),
                 class: class_simple.clone(),
-                range: Some(method.name_range),
+                range: item_name_range(db, file, tree, child),
             });
         }
     }
@@ -1707,11 +1741,16 @@ fn enum_constant_body_implements(
         return false;
     };
     let text = db.file_text(file).text(db);
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return false;
+    };
     for &constant in &data.body {
         let hir_def::java::item_tree::ItemData::EnumConstant(constant) = tree.data(constant) else {
             continue;
         };
-        let Some(class_body) = constant.class_body else {
+        // The class body range is re-derived from the constant's syntax node.
+        let Some(class_body) = ranges::enum_constant_class_body_range(map, &source, constant)
+        else {
             continue;
         };
         // Re-parse the constant's class body as an anonymous class of the
@@ -1949,6 +1988,7 @@ fn sealed_permits(
 /// ([`DeclDiagnostic::SealedSealedOrFinalExpected`]).
 fn sealed_subclass_diagnostics(
     db: &dyn TyDatabase,
+    file: FileId,
     tree: &hir_def::java::item_tree::ItemTree,
     scope: &hir::ResolutionScope,
     resolver: &crate::java::resolve::Resolver,
@@ -1967,7 +2007,7 @@ fn sealed_subclass_diagnostics(
         final_ || sealed || non_sealed || matches!(data, ItemData::Enum(_) | ItemData::Record(_));
     // The direct supertypes of the declaration: a class's superclass and the
     // implemented interfaces; an interface's extended interfaces.
-    let super_refs: Vec<&hir_expand::span::SpannedTypeRef> = match data {
+    let super_refs: Vec<&hir_def::java::item_tree::ItemTypeRef> = match data {
         ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
         ItemData::Interface(d) => d.interfaces.iter().collect(),
         ItemData::Record(d) => d.interfaces.iter().collect(),
@@ -1986,7 +2026,7 @@ fn sealed_subclass_diagnostics(
             // must be `final`, `sealed` or `non-sealed`.
             if !closed {
                 out.push(DeclDiagnostic::SealedSealedOrFinalExpected {
-                    range: Some(data.name_range()),
+                    range: item_name_range(db, file, tree, item),
                 });
             }
         } else {
@@ -1994,7 +2034,7 @@ fn sealed_subclass_diagnostics(
             // its `permits` clause is an error.
             out.push(DeclDiagnostic::CantInheritFromSealed {
                 super_owner: name.clone(),
-                range: Some(data.name_range()),
+                range: item_name_range(db, file, tree, item),
             });
         }
     }
@@ -2036,7 +2076,7 @@ fn file_has_direct_subclass(
     ) -> bool {
         let data = tree.data(id);
         let resolver = crate::java::resolve::Resolver::new(tree, type_params, id);
-        let super_refs: Vec<&hir_expand::span::SpannedTypeRef> = match data {
+        let super_refs: Vec<&ItemTypeRef> = match data {
             ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
             ItemData::Interface(d) => d.interfaces.iter().collect(),
             ItemData::Record(d) => d.interfaces.iter().collect(),
@@ -2130,7 +2170,7 @@ fn public_type_diagnostics(
         if simple.as_str() != stem {
             out.push(DeclDiagnostic::ClassPublicShouldBeInFile {
                 name: simple,
-                name_range: Some(data.name_range()),
+                name_range: item_name_range(db, file, tree, top),
             });
         }
     }
@@ -2208,7 +2248,7 @@ fn duplicate_class_diagnostics(
         }
         out.push(DeclDiagnostic::DuplicateClass {
             fqn: fqn.as_str().to_owned(),
-            name_range: Some(data.name_range()),
+            name_range: item_name_range(db, file, tree, top),
         });
     }
     out
@@ -2238,8 +2278,9 @@ fn final_field_diagnostics(
         .body
         .iter()
         .filter_map(|child| match tree.data(*child) {
-            I::Field(f) if f.modifiers.is_final() && f.initializer.is_none() => {
-                Some((f.name.clone(), f.modifiers.is_static(), f.name_range))
+            I::Field(f) if f.modifiers.is_final() && !f.has_initializer => {
+                let name_range = item_name_range(db, file, tree, *child).unwrap_or_default();
+                Some((f.name.clone(), f.modifiers.is_static(), name_range))
             }
             _ => None,
         })

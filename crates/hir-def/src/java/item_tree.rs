@@ -9,6 +9,15 @@
 //! body content out of the memoized item tree lets salsa backdate the
 //! signature-level queries across edits that only touch a method body.
 //!
+//! The item tree carries **no source offsets**: every lowered declaration
+//! anchors itself to its syntax node with a
+//! [`FileAstId`](hir_expand::ast_id_map::FileAstId), and the source ranges of
+//! items, names, type references and annotations are resolved on demand from
+//! the current syntax tree ([`crate::java::ranges`]). The pointer-based ids
+//! are a function of the file's *declaration skeleton* only — body content is
+//! pruned from the id map — so a body-only edit leaves the tree's value
+//! unchanged and salsa backdates every consumer.
+//!
 //! This is the *Java* declaration layer: the item kinds mirror the Java
 //! grammar (classes, interfaces, enums, records, annotation types, modules,
 //! methods, fields), and every declaration's source modifiers are carried as
@@ -21,16 +30,41 @@ use triomphe::Arc;
 
 use hir_expand::{
     arena::Arena,
+    ast_id_map::{AstIdMap, FileAstId, node_ptr},
     body::{BodyId, BodyTree, ExprId},
     name::Name,
-    span::{AnnotationRef, SpannedTypeRef},
+    span::{AnnotationRef, AnnotationValue, SpannedTypeRef},
 };
-use rowan::TextRange;
+use rowan::SyntaxNode;
+use syntax::java::{Lang, SyntaxKind as J};
+use syntax::stub::TypeRef;
 
 use crate::java::modifiers::JavaModifiers;
 
 pub use base_db::LanguageKind;
 pub use hir_expand::ids::ItemId;
+
+/// The syntax-node markers of the [`FileAstId`]s stored in the item tree.
+/// Zero-sized; they type the id's role without constraining its language.
+pub struct ClassDeclNode;
+pub struct InterfaceDeclNode;
+pub struct EnumDeclNode;
+pub struct RecordDeclNode;
+pub struct AnnotationTypeDeclNode;
+pub struct ModuleDeclNode;
+pub struct MethodDeclNode;
+pub struct FieldDeclNode;
+pub struct DeclaratorNode;
+pub struct EnumConstantNode;
+pub struct StaticInitNode;
+pub struct InstanceInitNode;
+pub struct PackageDeclNode;
+pub struct ImportDeclNode;
+pub struct ComponentNode;
+pub struct RequiresDirectiveNode;
+pub struct ExportsDirectiveNode;
+pub struct TypeNode;
+pub struct AnnotationNode;
 
 /// An import of a compilation unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +72,8 @@ pub struct ImportItem {
     pub name: Name,
     pub is_static: bool,
     pub is_asterisk: bool,
-    pub range: TextRange,
+    /// The `IMPORT_DECL` syntax node of the import.
+    pub path: FileAstId<ImportDeclNode>,
 }
 
 /// The per-file result of lowering.
@@ -46,15 +81,13 @@ pub struct ImportItem {
 pub struct ItemTree {
     pub language: LanguageKind,
     pub package: Option<Name>,
-    /// The source range of the package declaration's name, when the file
-    /// declares a package; used by the IDE to surface a package symbol above
-    /// the file's top-level types.
-    pub package_range: Option<TextRange>,
-    /// The source range of every package declaration's name, in source order
-    /// ([JLS §7.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.1):
+    /// The `PACKAGE_DECL` syntax node of every package declaration, in source
+    /// order ([JLS §7.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.1):
     /// a compilation unit declares at most one package). More than one entry
-    /// is the duplicate-package error the declaration diagnostics report.
-    pub package_decl_ranges: Vec<TextRange>,
+    /// is the duplicate-package error the declaration diagnostics report; the
+    /// first entry names the package symbol the IDE surfaces above the file's
+    /// top-level types.
+    pub package_decls: Vec<FileAstId<PackageDeclNode>>,
     pub imports: Vec<ImportItem>,
     pub top: Vec<ItemId>,
     pub items: Arena<ItemData>,
@@ -65,8 +98,7 @@ impl Default for ItemTree {
         Self {
             language: LanguageKind::Unknown,
             package: None,
-            package_range: None,
-            package_decl_ranges: Vec::new(),
+            package_decls: Vec::new(),
             imports: Vec::new(),
             top: Vec::new(),
             items: Arena::default(),
@@ -123,8 +155,9 @@ impl ItemTree {
 
 /// The full per-file lowering: the declaration [`ItemTree`] plus the body IR
 /// ([`hir_expand::body::BodyTree`]), lowered together in one pass so the body
-/// ids stored in the item data line up with the body arenas. Computed by a
-/// single salsa query (`hir_def::db::lower_source_query`) and read through its
+/// ids stored in the item data line up with the body arenas. Computed by two
+/// salsa queries (`hir_def::db::item_tree_query` /
+/// `hir_def::db::body_tree_query`) and read through their
 /// [`file_item_tree`](crate::db::file_item_tree) /
 /// [`file_body_tree`](crate::db::file_body_tree) accessors. Because the item
 /// tree carries no body content, edits that only change a method body leave
@@ -240,22 +273,6 @@ impl ItemData {
         }
     }
 
-    /// The source range of the item.
-    pub fn range(&self) -> TextRange {
-        match self {
-            ItemData::Class(d) | ItemData::Interface(d) => d.range,
-            ItemData::Enum(d) => d.range,
-            ItemData::Record(d) => d.range,
-            ItemData::Annotation(d) => d.range,
-            ItemData::Module(d) => d.range,
-            ItemData::Method(d) => d.range,
-            ItemData::Field(d) => d.range,
-            ItemData::EnumConstant(d) => d.range,
-            ItemData::StaticInit(d) => d.range,
-            ItemData::InstanceInit(d) => d.range,
-        }
-    }
-
     /// The nested member items of a type item, if any.
     pub fn body(&self) -> &[ItemId] {
         match self {
@@ -264,24 +281,6 @@ impl ItemData {
             ItemData::Record(d) => &d.body,
             ItemData::Annotation(d) => &d.body,
             _ => &[],
-        }
-    }
-
-    /// The source range of the item's declared name (the identifier), used by
-    /// the IDE to set the LSP `selectionRange`. Initializers are nameless and
-    /// fall back to their whole range.
-    pub fn name_range(&self) -> TextRange {
-        match self {
-            ItemData::Class(d) | ItemData::Interface(d) => d.name_range,
-            ItemData::Enum(d) => d.name_range,
-            ItemData::Record(d) => d.name_range,
-            ItemData::Annotation(d) => d.name_range,
-            ItemData::Module(d) => d.name_range,
-            ItemData::Method(d) => d.name_range,
-            ItemData::Field(d) => d.name_range,
-            ItemData::EnumConstant(d) => d.name_range,
-            ItemData::StaticInit(d) => d.range,
-            ItemData::InstanceInit(d) => d.range,
         }
     }
 
@@ -303,72 +302,394 @@ impl ItemData {
     }
 }
 
+/// A declaration-side source type reference: the lowered [`TypeRef<Name>`]
+/// plus the reference names it contains (depth-first, in the same order the
+/// source-spanned form keeps) and the syntax node of the type itself, from
+/// which the per-name source ranges are re-derived on demand
+/// ([`crate::java::ranges::type_ref_occurrences`]). The item tree stores no
+/// source offsets; `node` is a [`FileAstId`] into the file's
+/// [`AstIdMap`](hir_expand::ast_id_map::AstIdMap).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemTypeRef {
+    pub ty: TypeRef<Name>,
+    /// The reference names of `ty`, depth-first, names only. The source
+    /// ranges are computed from `node` by [`crate::java::ranges`].
+    pub refs: Vec<Name>,
+    /// The type-use annotations of the type
+    /// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4),
+    /// `int @Nullable []`, `List<@NonNull T>`), in the same (flattened,
+    /// depth-first) order the ranged [`SpannedTypeRef`] keeps. The annotation
+    /// names also appear in [`ItemTypeRef::refs`], so they resolve like any
+    /// type name.
+    pub type_use_annotations: Vec<ItemAnnotationRef>,
+    /// The `TYPE` syntax node of the type (or the `QUALIFIED_NAME` node for a
+    /// module directive's service / implementation reference).
+    pub node: FileAstId<TypeNode>,
+}
+
+impl std::ops::Deref for ItemTypeRef {
+    type Target = TypeRef<Name>;
+
+    fn deref(&self) -> &TypeRef<Name> {
+        &self.ty
+    }
+}
+
+impl ItemTypeRef {
+    /// Converts a source-spanned type reference (as lowered by
+    /// [`crate::java::lower::walk`]) into its range-free item form, keeping
+    /// the reference-name order, the type-use annotations and the resolved
+    /// syntax-node id of the type.
+    pub fn from_spanned(spanned: SpannedTypeRef, node: &SyntaxNode<Lang>, map: &AstIdMap) -> Self {
+        let node_id = map
+            .ast_id(&node_ptr(node))
+            .unwrap_or_else(FileAstId::placeholder);
+        // The type-use annotations of the whole type subtree, in the same
+        // depth-first order `type_from` flattens them.
+        let annotation_ids = type_use_annotation_ids(node, map);
+        let type_annotations = spanned
+            .type_use_annotations
+            .into_iter()
+            .zip(annotation_ids)
+            .map(|(annotation, id)| {
+                ItemAnnotationRef::from_parts(annotation, id, &mut None.into_iter(), map)
+            })
+            .collect();
+        Self {
+            ty: spanned.ty,
+            refs: spanned
+                .refs
+                .into_iter()
+                .map(|reference| reference.name)
+                .collect(),
+            type_use_annotations: type_annotations,
+            node: node_id,
+        }
+    }
+
+    /// A type reference synthesized during lowering (a missing or error
+    /// type), naming no syntax node. Its occurrence list is empty, and range
+    /// resolution of its placeholder id never happens.
+    pub fn synthetic(ty: TypeRef<Name>) -> Self {
+        Self {
+            ty,
+            refs: Vec::new(),
+            type_use_annotations: Vec::new(),
+            node: FileAstId::placeholder(),
+        }
+    }
+}
+
+/// A declaration-side annotation with its element-value arguments
+/// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7),
+/// [§9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1)) —
+/// the range-free twin of [`AnnotationRef`]. The (possibly qualified)
+/// annotation name is [`ItemAnnotationRef::name`] and the annotation's syntax
+/// node is [`ItemAnnotationRef::node`], from which the name's source range is
+/// re-derived on demand.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemAnnotationRef {
+    pub name: Name,
+    /// The element-value pairs of the argument list ([§9.7.1]), in source
+    /// order. Empty for a marker annotation (`@Foo`).
+    pub args: Vec<ItemAnnotationArg>,
+    /// The `ANNOTATION`/`MARKER_ANNOTATION` syntax node of the annotation.
+    pub node: FileAstId<AnnotationNode>,
+}
+
+impl ItemAnnotationRef {
+    /// Converts a source-spanned annotation (as lowered by
+    /// [`crate::java::lower::walk`]) into its range-free item form, resolving
+    /// the syntax-node ids of the annotation and of every nested annotation
+    /// in its argument values.
+    pub fn from_spanned(spanned: AnnotationRef, node: &SyntaxNode<Lang>, map: &AstIdMap) -> Self {
+        let node_id = map
+            .ast_id(&node_ptr(node))
+            .unwrap_or_else(FileAstId::placeholder);
+        // The nested annotations (the element-value annotations of the
+        // argument list, depth-first) in the same order the ranged walk
+        // produces them.
+        let nested = annotation_node_ids(node, map);
+        Self::from_parts(spanned, node_id, &mut nested.into_iter(), map)
+    }
+
+    fn from_parts(
+        spanned: AnnotationRef,
+        node: FileAstId<AnnotationNode>,
+        nested: &mut dyn Iterator<Item = FileAstId<AnnotationNode>>,
+        map: &AstIdMap,
+    ) -> Self {
+        let args = spanned
+            .args
+            .into_iter()
+            .map(|arg| {
+                let value = match arg.value {
+                    AnnotationValue::Literal(literal) => ItemAnnotationValue::Literal(literal),
+                    AnnotationValue::EnumConstant { qualifier, member } => {
+                        ItemAnnotationValue::EnumConstant { qualifier, member }
+                    }
+                    AnnotationValue::ClassLit(ty) => ItemAnnotationValue::ClassLit(Box::new(
+                        ItemTypeRef::from_spanned_impl(ty, map),
+                    )),
+                    AnnotationValue::Annotation(inner) => {
+                        let id = nested.next().unwrap_or_else(FileAstId::placeholder);
+                        ItemAnnotationValue::Annotation(Box::new(ItemAnnotationRef::from_parts(
+                            *inner, id, nested, map,
+                        )))
+                    }
+                    AnnotationValue::Array(values) => ItemAnnotationValue::Array(
+                        values
+                            .into_iter()
+                            .map(|value| convert_annotation_value(value, nested, map))
+                            .collect(),
+                    ),
+                    AnnotationValue::Unresolved { text } => {
+                        ItemAnnotationValue::Unresolved { text }
+                    }
+                };
+                ItemAnnotationArg {
+                    name: arg.name,
+                    value,
+                }
+            })
+            .collect();
+        Self {
+            name: spanned.name.name,
+            args,
+            node,
+        }
+    }
+}
+
+/// One element-value pair `name = value` of an annotation
+/// ([JLS §9.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.1),
+/// [§9.7.1]) — the range-free twin of [`hir_expand::span::AnnotationArg`].
+/// The value's source range is re-derived on demand from the owning
+/// annotation's syntax node ([`crate::java::ranges::annotation_arg_value_range`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemAnnotationArg {
+    /// The element name of the pair; `value` for the implicit single-argument
+    /// form ([§9.7.1]).
+    pub name: Name,
+    pub value: ItemAnnotationValue,
+}
+
+/// The value of an annotation element ([JLS §9.7.1]) — the range-free twin of
+/// [`hir_expand::span::AnnotationValue`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemAnnotationValue {
+    /// A constant literal ([JLS §15.28]) — a primitive, string or text-block
+    /// literal.
+    Literal(hir_expand::body::Literal),
+    /// An enum constant ([§8.9.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9.1)):
+    /// `Type.CONSTANT` with its qualifier, or a bare `CONSTANT`, whose
+    /// declaring type is inferred from the element's type ([§9.7.1]).
+    EnumConstant {
+        qualifier: Option<Name>,
+        member: Name,
+    },
+    /// A class literal `Foo.class` ([§15.8.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.8.2)).
+    ClassLit(Box<ItemTypeRef>),
+    /// A nested annotation ([§9.7.1]).
+    Annotation(Box<ItemAnnotationRef>),
+    /// An array initializer `{ v1, v2 }` ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6)).
+    Array(Vec<ItemAnnotationValue>),
+    /// An element value that is not a constant literal — a unary or binary
+    /// expression, a conditional, a parenthesized expression. Kept as its raw
+    /// source text.
+    Unresolved { text: String },
+}
+
+fn convert_annotation_value(
+    value: AnnotationValue,
+    nested: &mut dyn Iterator<Item = FileAstId<AnnotationNode>>,
+    map: &AstIdMap,
+) -> ItemAnnotationValue {
+    match value {
+        AnnotationValue::Literal(literal) => ItemAnnotationValue::Literal(literal),
+        AnnotationValue::EnumConstant { qualifier, member } => {
+            ItemAnnotationValue::EnumConstant { qualifier, member }
+        }
+        AnnotationValue::ClassLit(ty) => {
+            ItemAnnotationValue::ClassLit(Box::new(ItemTypeRef::from_spanned_impl(ty, map)))
+        }
+        AnnotationValue::Annotation(inner) => {
+            let id = nested.next().unwrap_or_else(FileAstId::placeholder);
+            ItemAnnotationValue::Annotation(Box::new(ItemAnnotationRef::from_parts(
+                *inner, id, nested, map,
+            )))
+        }
+        AnnotationValue::Array(values) => ItemAnnotationValue::Array(
+            values
+                .into_iter()
+                .map(|value| convert_annotation_value(value, nested, map))
+                .collect(),
+        ),
+        AnnotationValue::Unresolved { text } => ItemAnnotationValue::Unresolved { text },
+    }
+}
+
+impl ItemTypeRef {
+    /// The range-free conversion of a type reference with *no* resolvable
+    /// syntax node — a class literal's type inside an annotation element
+    /// value ([§15.8.2]). Its node is a placeholder; only the `TypeRef` and
+    /// the reference-name order are ever read.
+    fn from_spanned_impl(spanned: SpannedTypeRef, map: &AstIdMap) -> Self {
+        Self {
+            ty: spanned.ty,
+            refs: spanned
+                .refs
+                .into_iter()
+                .map(|reference| reference.name)
+                .collect(),
+            type_use_annotations: spanned
+                .type_use_annotations
+                .into_iter()
+                .map(|annotation| {
+                    ItemAnnotationRef::from_parts(
+                        annotation,
+                        FileAstId::placeholder(),
+                        &mut None.into_iter(),
+                        map,
+                    )
+                })
+                .collect(),
+            node: FileAstId::placeholder(),
+        }
+    }
+}
+
+/// The `ANNOTATION`/`MARKER_ANNOTATION` descendant nodes of `node` that carry
+/// a name, depth-first — the same set and order the ranged annotation walk
+/// produces for nested annotation element values. (`rowan`'s
+/// `descendants()` includes `node` itself; the annotation node is its own
+/// outermost annotation, not one of its values.)
+fn annotation_node_ids(node: &SyntaxNode<Lang>, map: &AstIdMap) -> Vec<FileAstId<AnnotationNode>> {
+    let self_range = node.text_range();
+    node.descendants()
+        .filter(|descendant| {
+            descendant.text_range() != self_range
+                && matches!(descendant.kind(), J::ANNOTATION | J::MARKER_ANNOTATION)
+                && annotation_has_name(descendant)
+        })
+        .map(|descendant| {
+            map.ast_id(&node_ptr(&descendant))
+                .unwrap_or_else(FileAstId::placeholder)
+        })
+        .collect()
+}
+
+/// Whether the annotation node names a qualified name (an annotation without
+/// a name is skipped by lowering's `annotation_ref`, so ids must skip it too
+/// to stay aligned).
+fn annotation_has_name(node: &SyntaxNode<Lang>) -> bool {
+    node.descendants().any(|d| d.kind() == J::QUALIFIED_NAME)
+}
+
+/// The ids of every type-use annotation of `node`'s type subtree, in the
+/// depth-first order `type_from` flattens `SpannedTypeRef::type_use_annotations`:
+/// this node's own `MODIFIER_LIST`/`DIMENSIONS`/`DIMENSION` annotations, then
+/// each generic argument type's, recursively. Wildcard bounds contribute none
+/// (a wildcard's structured annotation list is empty).
+fn type_use_annotation_ids(
+    node: &SyntaxNode<Lang>,
+    map: &AstIdMap,
+) -> Vec<FileAstId<AnnotationNode>> {
+    let mut out = Vec::new();
+    for child in node.children() {
+        if !matches!(
+            child.kind(),
+            J::MODIFIER_LIST | J::DIMENSIONS | J::DIMENSION
+        ) {
+            continue;
+        }
+        for annotation in child.descendants() {
+            if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION)
+                && annotation_has_name(&annotation)
+            {
+                out.push(
+                    map.ast_id(&node_ptr(&annotation))
+                        .unwrap_or_else(FileAstId::placeholder),
+                );
+            }
+        }
+    }
+    for arguments in node
+        .children()
+        .filter(|child| child.kind() == J::TYPE_ARGUMENTS)
+    {
+        for argument in arguments
+            .children()
+            .filter(|child| child.kind() == J::TYPE_ARGUMENT)
+        {
+            if let Some(ty) = argument.children().find(|child| child.kind() == J::TYPE) {
+                out.extend(type_use_annotation_ids(&ty, map));
+            }
+        }
+    }
+    out
+}
+
 /// A class or interface declaration (they share the same layout).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClassData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
     /// The annotation references of the declaration, in source order
     /// ([JLS §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)),
     /// decoupled from the modifier flags.
-    pub annotations: Vec<AnnotationRef>,
-    pub super_class: Option<SpannedTypeRef>,
-    pub interfaces: Vec<SpannedTypeRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
+    pub super_class: Option<ItemTypeRef>,
+    pub interfaces: Vec<ItemTypeRef>,
     /// The permitted direct subclasses of a `sealed` class or interface
     /// ([§8.1.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1.2)),
     /// from its `permits` clause; empty when the declaration has none (the
     /// permitted set is then the same-module direct subclasses).
-    pub permits: Vec<SpannedTypeRef>,
+    pub permits: Vec<ItemTypeRef>,
     pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
-    pub range: TextRange,
+    /// The `CLASS_DECL`/`INTERFACE_DECL` syntax node of the declaration.
+    pub ast: FileAstId<ClassDeclNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
-    pub interfaces: Vec<SpannedTypeRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
+    pub interfaces: Vec<ItemTypeRef>,
     pub body: Vec<ItemId>,
-    pub range: TextRange,
+    /// The `ENUM_DECL` syntax node of the declaration.
+    pub ast: FileAstId<EnumDeclNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordData {
     pub name: Name,
-    pub name_range: TextRange,
-    /// The source range of the component list — the record's parameter
-    /// declaration `(int x, int y)`. The record's outline selection points
-    /// here (its "definition").
-    pub components_range: TextRange,
-    /// The source range of the record declaration *header*: from the `record`
-    /// keyword through the closing `)` of the component list (and any
-    /// `implements` clause), excluding the body `{ ... }`. This is the
-    /// declaration's "definition" — what the outline should point at.
-    pub header_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
     pub components: Vec<RecordComponent>,
-    pub interfaces: Vec<SpannedTypeRef>,
+    pub interfaces: Vec<ItemTypeRef>,
     /// The permitted direct subclasses of a `sealed` record
     /// ([§8.1.1.2]), from its `permits` clause.
-    pub permits: Vec<SpannedTypeRef>,
+    pub permits: Vec<ItemTypeRef>,
     pub type_params: Vec<TypeParam>,
     pub body: Vec<ItemId>,
-    pub range: TextRange,
+    /// The `RECORD_DECL` syntax node of the declaration. The outline's
+    /// component list and declaration-header ranges are derived from it
+    /// ([`crate::java::ranges::record_components_range`] /
+    /// [`crate::java::ranges::record_header_range`]).
+    pub ast: FileAstId<RecordDeclNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnnotationData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
     pub body: Vec<ItemId>,
-    pub range: TextRange,
+    /// The `ANNOTATION_TYPE_DECL` syntax node of the declaration.
+    pub ast: FileAstId<AnnotationTypeDeclNode>,
 }
 
 /// A method signature: type parameters, parameters, return type and thrown
@@ -377,15 +698,15 @@ pub struct AnnotationData {
 pub struct Signature {
     pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
-    pub ret: Option<SpannedTypeRef>,
-    pub throws: Vec<SpannedTypeRef>,
+    pub ret: Option<ItemTypeRef>,
+    pub throws: Vec<ItemTypeRef>,
 }
 
 /// A formal parameter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: Name,
-    pub ty: SpannedTypeRef,
+    pub ty: ItemTypeRef,
     pub varargs: bool,
 }
 
@@ -402,8 +723,9 @@ pub enum MethodExtra {
     Java(MethodExtraJava),
 }
 
-/// The Java-specific attributes of a [`MethodData`]: constructor-ness, the
-/// lowered body and the annotation element default.
+/// The Java-specific attributes of a [`MethodData`]: constructor-ness and the
+/// lowered body (the annotation element default's *range* is derived from the
+/// method's syntax node on demand; its lowered expression lives here).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MethodExtraJava {
     /// Whether the method is a constructor or compact constructor
@@ -419,9 +741,6 @@ pub struct MethodExtraJava {
     pub is_compact_constructor: bool,
     /// The lowered body of the method, if it declares one.
     pub body: Option<BodyId>,
-    /// The source range of an annotation element's default value
-    /// ([JLS §9.6.1]).
-    pub default_value: Option<TextRange>,
     /// The lowered default-value expression of an annotation element.
     pub default_expr: Option<ExprId>,
 }
@@ -430,14 +749,16 @@ pub struct MethodExtraJava {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
     pub sig: Signature,
     /// The language-specific attributes of the declaration (Java constructor
     /// / body / annotation default, Kotlin attributes later).
     pub extra: MethodExtra,
-    pub range: TextRange,
+    /// The `METHOD_DECL`/`CONSTRUCTOR_DECL`/`COMPACT_CONSTRUCTOR_DECL`/
+    /// `ANNOTATION_TYPE_ELEMENT_DECL` syntax node of the declaration (one
+    /// marker for all four kinds; the id is its position in the id map).
+    pub ast: FileAstId<MethodDeclNode>,
 }
 
 impl MethodData {
@@ -466,13 +787,6 @@ impl MethodData {
         }
     }
 
-    /// The source range of an annotation element's default value.
-    pub fn default_value(&self) -> Option<TextRange> {
-        match &self.extra {
-            MethodExtra::Java(java) => java.default_value,
-        }
-    }
-
     /// The lowered default-value expression of an annotation element.
     pub fn default_expr(&self) -> Option<ExprId> {
         match &self.extra {
@@ -484,35 +798,39 @@ impl MethodData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
-    pub ty: SpannedTypeRef,
-    pub initializer: Option<TextRange>,
+    pub annotations: Vec<ItemAnnotationRef>,
+    pub ty: ItemTypeRef,
+    /// Whether the declarator has an explicit initializer (an `=` sign).
+    /// Distinct from `initializer_expr`, which is `None` when the `=` exists
+    /// but its expression failed to lower.
+    pub has_initializer: bool,
     pub initializer_expr: Option<ExprId>,
-    pub range: TextRange,
+    /// The `VARIABLE_DECLARATOR` syntax node of the field.
+    pub ast: FileAstId<DeclaratorNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumConstantData {
     pub name: Name,
-    pub name_range: TextRange,
-    pub arguments: Option<TextRange>,
     pub argument_exprs: Vec<ExprId>,
-    pub class_body: Option<TextRange>,
-    pub range: TextRange,
+    /// The `ENUM_CONSTANT` syntax node of the constant; its argument list and
+    /// constant class body ranges are derived from it on demand.
+    pub ast: FileAstId<EnumConstantNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaticInitData {
     pub body: Option<BodyId>,
-    pub range: TextRange,
+    /// The `STATIC_INITIALIZER` syntax node of the initializer.
+    pub ast: FileAstId<StaticInitNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceInitData {
     pub body: Option<BodyId>,
-    pub range: TextRange,
+    /// The `INSTANCE_INITIALIZER` syntax node of the initializer.
+    pub ast: FileAstId<InstanceInitNode>,
 }
 
 /// A JPMS `module-info.java` declaration, lowered minimally: directives are
@@ -521,17 +839,17 @@ pub struct InstanceInitData {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleData {
     pub name: Name,
-    pub name_range: TextRange,
     pub modifiers: JavaModifiers,
-    pub annotations: Vec<AnnotationRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
     /// Whether the module was declared `open`.
     pub is_open: bool,
     pub requires: Vec<ModuleRequires>,
     pub exports: Vec<ModuleExports>,
     pub opens: Vec<ModuleExports>,
-    pub uses: Vec<SpannedTypeRef>,
+    pub uses: Vec<ItemTypeRef>,
     pub provides: Vec<ModuleProvides>,
-    pub range: TextRange,
+    /// The `MODULE_DECL` syntax node of the declaration.
+    pub ast: FileAstId<ModuleDeclNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -539,24 +857,23 @@ pub struct ModuleRequires {
     pub name: Name,
     pub transitive: bool,
     pub statik: bool,
-    /// The source range of the required module name.
-    pub range: TextRange,
+    /// The `REQUIRES_DIRECTIVE` syntax node of the directive; the required
+    /// module name's range is derived from it on demand.
+    pub ast: FileAstId<RequiresDirectiveNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleExports {
     pub package: Name,
     pub to: Vec<Name>,
-    /// The source range of the exported/opened package name.
-    pub package_range: TextRange,
-    /// The source ranges of the `to` module names, parallel to `to`.
-    pub to_ranges: Vec<TextRange>,
+    /// The `EXPORTS_DIRECTIVE`/`OPENS_DIRECTIVE` syntax node of the directive.
+    pub ast: FileAstId<ExportsDirectiveNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleProvides {
-    pub service: SpannedTypeRef,
-    pub implementations: Vec<SpannedTypeRef>,
+    pub service: ItemTypeRef,
+    pub implementations: Vec<ItemTypeRef>,
 }
 
 /// A declared type parameter of a class or method
@@ -566,8 +883,8 @@ pub struct ModuleProvides {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     pub name: Name,
-    pub bounds: Vec<SpannedTypeRef>,
-    pub annotations: Vec<AnnotationRef>,
+    pub bounds: Vec<ItemTypeRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
 }
 
 /// A record component declaration `T name`
@@ -577,16 +894,12 @@ pub struct TypeParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordComponent {
     pub name: Name,
-    /// The source range of the component's declared name (the identifier).
-    pub name_range: TextRange,
-    /// The full source range of the component declaration (`T name`, or
-    /// `T... name` for a varargs component). The record accessor's outline
-    /// selection points here.
-    pub range: TextRange,
-    pub ty: SpannedTypeRef,
-    /// The source range of the component's declared type.
-    pub ty_range: TextRange,
+    /// The `FORMAL_PARAMETER`/`SPREAD_PARAMETER` syntax node of the component
+    /// declaration; the component's full, name and type ranges are derived
+    /// from it on demand.
+    pub ast: FileAstId<ComponentNode>,
+    pub ty: ItemTypeRef,
     /// Whether the component was declared varargs (`String... names`).
     pub varargs: bool,
-    pub annotations: Vec<AnnotationRef>,
+    pub annotations: Vec<ItemAnnotationRef>,
 }

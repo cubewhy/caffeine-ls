@@ -6,6 +6,7 @@
 //! tree — lives in `hir-def`'s `java` namespace on top of these primitives.
 
 pub mod arena;
+pub mod ast_id_map;
 pub mod body;
 pub mod db;
 pub mod files;

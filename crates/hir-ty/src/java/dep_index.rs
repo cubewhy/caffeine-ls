@@ -30,7 +30,7 @@
 use rustc_hash::FxHashSet;
 use vfs::FileId;
 
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, ItemTypeRef};
 use hir_expand::{
     body::{BodyId, BodyTree, ExprData, ExprId, StmtData, StmtId},
     name::Name,
@@ -173,8 +173,8 @@ pub(crate) fn file_dependency_refs_impl(db: &dyn TyDatabase, file: FileId) -> Fx
     for (_id, data) in all_items_data(&tree) {
         // Declaration-level type references (superclass/interfaces, field
         // types, signatures, type-parameter bounds, record components).
-        for spanned in item_type_refs(data) {
-            collect_type_ref_names(spanned, &mut out);
+        for tyref in item_type_refs(data) {
+            collect_item_type_ref_names(tyref, &mut out);
         }
         match data {
             ItemData::Method(method) => {
@@ -215,6 +215,12 @@ fn collect_type_ref_names(spanned: &SpannedTypeRef, out: &mut FxHashSet<Name>) {
     for reference in &spanned.refs {
         out.insert(reference.name.clone());
     }
+}
+
+/// The reference names of a *declaration* type reference (the range-free item
+/// form keeps its names directly).
+fn collect_item_type_ref_names(tyref: &ItemTypeRef, out: &mut FxHashSet<Name>) {
+    out.extend(tyref.refs.iter().cloned());
 }
 
 /// The names of a body: the reference names of its type references plus the

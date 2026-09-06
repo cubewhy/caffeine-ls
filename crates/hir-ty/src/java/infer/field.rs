@@ -151,7 +151,7 @@ impl InferCtx<'_> {
             }
             match tree.data(id) {
                 hir_def::java::item_tree::ItemData::Field(f) if f.name.as_str() == name => {
-                    *found = f.initializer.is_none();
+                    *found = !f.has_initializer;
                     return;
                 }
                 // §8.10.1: a record's components become blank final fields.

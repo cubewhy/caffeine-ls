@@ -7,6 +7,22 @@
 //! cancellation boundary.
 
 use hir::hir_def::java::item_tree::ItemData;
+
+/// The `(map, source)` pair the on-demand range helpers resolve against, for
+/// a file whose language is known.
+fn range_ctx(
+    db: &RootDatabase,
+    file: FileId,
+    language: ide_db::base_db::LanguageKind,
+) -> Option<(hir_expand::ast_id_map::AstIdMap, syntax::SourceFile)> {
+    if language == ide_db::base_db::LanguageKind::Unknown {
+        return None;
+    }
+    let parse = ide_db::base_db::parse(db, file, language);
+    let source = parse.syntax_node(language);
+    let map = hir::hir_def::db::ast_id_map(db, file, language).clone();
+    Some((map, source))
+}
 use rowan::TextRange;
 use rustc_hash::FxHashSet;
 use triomphe::Arc;
@@ -64,6 +80,7 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
     let tree = hir::file_item_tree(db, file_id);
+    let ctx = range_ctx(db, file_id, tree.language);
     let mut out = Vec::with_capacity(symbols.len() + 1);
     if !symbols.is_empty() {
         // The package is an independent item above the file's top-level
@@ -77,14 +94,24 @@ pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbo
             .rsplit_once('.')
             .is_none_or(|(parent, _)| !names.contains(parent));
         let data = tree.data(source.item);
-        // A record's outline range points at its declaration *header* (the
-        // definition, including the component list) rather than the whole
-        // body; its selection points at the component list itself — see
-        // [`hir::hir_def::java::item_tree::RecordData`].
-        let (range, name_range) = match data {
-            ItemData::Record(record) => (record.header_range, record.components_range),
-            _ => (data.range(), data.name_range()),
+        let item = source.item;
+        // The item tree carries no offsets: the ranges are resolved from the
+        // file's parse. A record's outline range points at its declaration
+        // *header* (the definition, including the component list) rather than
+        // the whole body; its selection points at the component list itself.
+        let (range, name_range) = match (ctx.as_ref(), data) {
+            (Some((map, source)), ItemData::Record(_)) => (
+                hir::hir_def::java::ranges::record_header_range(map, source, &tree, item),
+                hir::hir_def::java::ranges::record_components_range(map, source, &tree, item),
+            ),
+            (Some((map, source)), _) => (
+                hir::hir_def::java::ranges::item_range(map, source, &tree, item),
+                hir::hir_def::java::ranges::item_name_range(map, source, &tree, item),
+            ),
+            // An unknown-language file has no parse; no ranges to point at.
+            (None, _) => (None, None),
         };
+        let (range, name_range) = (range.unwrap_or_default(), name_range.unwrap_or_default());
         let symbol = DocumentSymbol {
             name: source.name.as_str().to_owned(),
             kind: source.kind,
@@ -117,6 +144,7 @@ fn record_members(
     };
     let mut members = Vec::with_capacity(record.components.len() + 1);
     let tree = hir::file_item_tree(db, file_id);
+    let ctx = range_ctx(db, file_id, tree.language);
     let component_tys: Arc<Vec<String>> = Arc::new(
         hir_ty::record_component_types(db, file_id, symbol.item.unwrap())
             .into_iter()
@@ -142,14 +170,20 @@ fn record_members(
         } else {
             component_tys[index].clone()
         };
+        let component_range = ctx
+            .as_ref()
+            .and_then(|(map, source)| {
+                hir::hir_def::java::ranges::component_range(map, source, component)
+            })
+            .unwrap_or_default();
         members.push(DocumentSymbol {
             name: format!("{}.{simple}", symbol.name),
             kind: hir::SourceSymbolKind::Method,
             // The accessor's range and selection range both target its whole
             // component declaration (`int x`, not just the name) — the
             // "definition" of the member.
-            range: component.range,
-            name_range: component.range,
+            range: component_range,
+            name_range: component_range,
             display_name: format!("{simple}(): {ret}"),
             detail: None,
             item: None,
@@ -206,7 +240,13 @@ fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
         .as_ref()
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| "<default package>".to_owned());
-    let range = tree.package_range.unwrap_or_default();
+    let range = range_ctx(db, file_id, tree.language)
+        .and_then(|(map, source)| {
+            tree.package_decls.last().and_then(|decl| {
+                hir::hir_def::java::ranges::package_name_range(&map, &source, *decl)
+            })
+        })
+        .unwrap_or_default();
     DocumentSymbol {
         name: name.clone(),
         display_name: name,
@@ -326,21 +366,28 @@ pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol>
     // Prefix and substring lookups overlap on prefix matches.
     out.dedup();
     out.into_iter()
-        .map(|reference| {
+        .filter_map(|reference| {
             let tree = hir::file_item_tree(db, reference.file);
-            let data = tree.data(reference.symbol.item);
-            WorkspaceSymbol {
+            let item = reference.symbol.item;
+            let (range, name_range) =
+                range_ctx(db, reference.file, tree.language).and_then(|(map, source)| {
+                    Some((
+                        hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)?,
+                        hir::hir_def::java::ranges::item_name_range(&map, &source, &tree, item)?,
+                    ))
+                })?;
+            Some(WorkspaceSymbol {
                 file: reference.file,
                 symbol: DocumentSymbol {
                     name: reference.symbol.name.as_str().to_owned(),
                     kind: reference.symbol.kind,
-                    range: data.range(),
-                    name_range: data.name_range(),
+                    range,
+                    name_range,
                     display_name: workspace_display_name(db, reference.file, &reference.symbol),
                     detail: None,
                     item: Some(reference.symbol.item),
                 },
-            }
+            })
         })
         .collect()
 }

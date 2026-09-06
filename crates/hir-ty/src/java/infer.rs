@@ -69,6 +69,7 @@ use crate::{
     java::db::{TyDatabase, type_params_map_query},
     java::diagnostics::TypeError,
     java::method::{InvocationContext, access_context},
+    java::range_ctx::range_ctx,
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::Ty,
 };
@@ -141,6 +142,9 @@ pub(crate) fn body_types_impl(
     let _scope = BodyScope::new(file, item);
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
+    let item_end = range_ctx(db, file, tree.language)
+        .and_then(|(map, source)| hir_def::java::ranges::item_range(map, &source, &tree, item))
+        .map(|range| range.end());
     let scope = scope_for_file(db, file);
     let type_params = type_params_map_query(db, db.file_text(file));
     let resolver = Resolver::new(&tree, type_params, item);
@@ -282,7 +286,7 @@ pub(crate) fn body_types_impl(
                         // javac's caret sits on the method's closing
                         // brace.
                         ctx.report(TypeError::MissingReturnValue {
-                            range: Some(rowan::TextRange::empty(method.range.end())),
+                            range: item_end.map(rowan::TextRange::empty),
                         });
                     }
                 }

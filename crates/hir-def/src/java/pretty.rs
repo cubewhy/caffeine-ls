@@ -3,9 +3,11 @@
 //! CST order and every field renders through fixed helpers, the output is
 //! deterministic for a given source file.
 
+use syntax::SourceFile;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
 use hir_expand::{
+    ast_id_map::AstIdMap,
     body::{
         AssignOp, BinaryOp, BodyTree, ExprData, ExprId, LambdaBody, Literal, LocalId, PatternData,
         PatternId, PostfixOp, StmtData, StmtId, SwitchLabel, UnaryOp,
@@ -16,12 +18,21 @@ use hir_expand::{
 
 use crate::java::{
     item_tree::{
-        ItemData, ItemId, ItemTree, LanguageKind, ModuleData, RecordComponent, Signature, TypeParam,
+        ItemData, ItemId, ItemTree, ItemTypeRef, LanguageKind, ModuleData, RecordComponent,
+        Signature, TypeParam,
     },
     modifiers::JavaModifiers,
+    ranges,
 };
 
-pub fn pretty_print(tree: &ItemTree) -> String {
+/// The stable, human-readable rendering of a lowered [`ItemTree`] plus the
+/// source ranges resolved from the current syntax tree — the snapshot surface
+/// used by `hir-def`'s tests. Because items are allocated in CST order and
+/// every field renders through fixed helpers, the output is deterministic for
+/// a given source file and identical to the pre-`AstIdMap` rendering (every
+/// `@{range:?}` resolves byte-identically; an unresolvable range renders
+/// `@None`, which never happens for lowered items).
+pub fn pretty_print(tree: &ItemTree, map: &AstIdMap, source: &SourceFile) -> String {
     let mut out = String::new();
 
     out.push_str(&format!(
@@ -46,17 +57,36 @@ pub fn pretty_print(tree: &ItemTree) -> String {
         if import.is_asterisk {
             out.push_str(".*");
         }
-        out.push_str(&format!("; @{:?}\n", import.range));
+        out.push_str(&format!(
+            "; {}\n",
+            fmt_range(ranges::import_name_range(map, source, import))
+        ));
     }
 
     for id in &tree.top {
-        render_item(tree, *id, 0, &mut out);
+        render_item(tree, map, source, *id, 0, &mut out);
     }
 
     out
 }
 
-fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
+/// Renders a resolved source range as the old `@{range:?}` snapshot form; an
+/// unresolvable item prints `@None` (never happens for lowered items).
+fn fmt_range(range: Option<rowan::TextRange>) -> String {
+    match range {
+        Some(range) => format!("@{range:?}"),
+        None => "@None".to_owned(),
+    }
+}
+
+fn render_item(
+    tree: &ItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
+    id: ItemId,
+    depth: usize,
+    out: &mut String,
+) {
     let item = tree.data(id);
     let indent = "  ".repeat(depth);
 
@@ -72,8 +102,10 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 &data.interfaces,
                 &data.permits,
                 &data.type_params,
-                data.range,
                 tree,
+                map,
+                source,
+                id,
                 &data.body,
             );
         }
@@ -88,17 +120,19 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 &data.interfaces,
                 &data.permits,
                 &data.type_params,
-                data.range,
                 tree,
+                map,
+                source,
+                id,
                 &data.body,
             );
         }
         ItemData::Enum(data) => {
             out.push_str(&format!(
-                "{indent}enum {}{} @{:?}\n",
+                "{indent}enum {}{} {}\n",
                 data.name,
                 render_mods(&data.modifiers),
-                data.range,
+                fmt_range(ranges::item_range(map, source, tree, id)),
             ));
             if !data.interfaces.is_empty() {
                 out.push_str(&format!(
@@ -107,7 +141,7 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                     render_join(data.interfaces.iter().map(|ty| render_type(ty)), ", ")
                 ));
             }
-            render_children(tree, &data.body, depth + 1, out);
+            render_children(tree, map, source, &data.body, depth + 1, out);
         }
         ItemData::Record(data) => {
             out.push_str(&format!("{indent}record {}", data.name));
@@ -128,20 +162,23 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 ));
             }
             out.push_str(&render_mods(&data.modifiers));
-            out.push_str(&format!(" @{:?}\n", data.range));
-            render_children(tree, &data.body, depth + 1, out);
+            out.push_str(&format!(
+                " {}\n",
+                fmt_range(ranges::item_range(map, source, tree, id))
+            ));
+            render_children(tree, map, source, &data.body, depth + 1, out);
         }
         ItemData::Annotation(data) => {
             out.push_str(&format!(
-                "{indent}@interface {}{} @{:?}\n",
+                "{indent}@interface {}{} {}\n",
                 data.name,
                 render_mods(&data.modifiers),
-                data.range,
+                fmt_range(ranges::item_range(map, source, tree, id)),
             ));
-            render_children(tree, &data.body, depth + 1, out);
+            render_children(tree, map, source, &data.body, depth + 1, out);
         }
         ItemData::Module(data) => {
-            render_module(out, &indent, data);
+            render_module(out, &indent, tree, map, source, id, data);
         }
         ItemData::Method(data) => {
             let label = if data.is_constructor() {
@@ -150,49 +187,66 @@ fn render_item(tree: &ItemTree, id: ItemId, depth: usize, out: &mut String) {
                 "method"
             };
             out.push_str(&format!(
-                "{indent}{label} {}{}{} @{:?}\n",
+                "{indent}{label} {}{}{} {}\n",
                 render_signature(&data.sig, &data.name),
-                data.default_value()
+                ranges::method_default_value_range(map, source, data)
                     .map(|default| format!(" default @{default:?}"))
                     .unwrap_or_default(),
                 render_mods(&data.modifiers),
-                data.range,
+                fmt_range(ranges::item_range(map, source, tree, id)),
             ));
         }
         ItemData::Field(data) => {
             out.push_str(&format!(
-                "{indent}field {}: {}{}{} @{:?}\n",
+                "{indent}field {}: {}{}{} {}\n",
                 data.name,
                 render_type(&data.ty),
                 render_mods(&data.modifiers),
-                data.initializer
-                    .map(|init| format!(" initializer @{init:?}"))
-                    .unwrap_or_default(),
-                data.range,
+                if data.has_initializer {
+                    ranges::field_initializer_range(map, source, data)
+                        .map(|init| format!(" initializer @{init:?}"))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                },
+                fmt_range(ranges::item_range(map, source, tree, id)),
             ));
         }
         ItemData::EnumConstant(data) => {
             out.push_str(&format!(
-                "{indent}constant {}{} @{:?}\n",
+                "{indent}constant {}{} {}\n",
                 data.name,
-                data.arguments
+                ranges::enum_constant_arguments_range(map, source, data)
                     .map(|range| format!(" arguments @{range:?}"))
                     .unwrap_or_default(),
-                data.range,
+                fmt_range(ranges::item_range(map, source, tree, id)),
             ));
         }
-        ItemData::StaticInit(data) => {
-            out.push_str(&format!("{indent}static block @{:?}\n", data.range));
+        ItemData::StaticInit(_) => {
+            out.push_str(&format!(
+                "{indent}static block {}\n",
+                fmt_range(ranges::item_range(map, source, tree, id))
+            ));
         }
-        ItemData::InstanceInit(data) => {
-            out.push_str(&format!("{indent}instance block @{:?}\n", data.range));
+        ItemData::InstanceInit(_) => {
+            out.push_str(&format!(
+                "{indent}instance block {}\n",
+                fmt_range(ranges::item_range(map, source, tree, id))
+            ));
         }
     }
 }
 
-fn render_children(tree: &ItemTree, body: &[ItemId], depth: usize, out: &mut String) {
+fn render_children(
+    tree: &ItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
+    body: &[ItemId],
+    depth: usize,
+    out: &mut String,
+) {
     for id in body {
-        render_item(tree, *id, depth, out);
+        render_item(tree, map, source, *id, depth, out);
     }
 }
 
@@ -203,12 +257,14 @@ fn render_type_like(
     label: &str,
     name: &Name,
     modifiers: &JavaModifiers,
-    super_class: Option<&SpannedTypeRef>,
-    interfaces: &[SpannedTypeRef],
-    permits: &[SpannedTypeRef],
+    super_class: Option<&ItemTypeRef>,
+    interfaces: &[ItemTypeRef],
+    permits: &[ItemTypeRef],
     type_params: &[TypeParam],
-    range: rowan::TextRange,
     tree: &ItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
+    id: ItemId,
     body: &[ItemId],
 ) {
     out.push_str(indent);
@@ -234,17 +290,28 @@ fn render_type_like(
         ));
     }
     out.push_str(&render_mods(modifiers));
-    out.push_str(&format!(" @{range:?}\n"));
-    render_children(tree, body, indent.len() / 2 + 1, out);
+    out.push_str(&format!(
+        " {}\n",
+        fmt_range(ranges::item_range(map, source, tree, id))
+    ));
+    render_children(tree, map, source, body, indent.len() / 2 + 1, out);
 }
 
-fn render_module(out: &mut String, indent: &str, data: &ModuleData) {
+fn render_module(
+    out: &mut String,
+    indent: &str,
+    tree: &ItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
+    id: ItemId,
+    data: &ModuleData,
+) {
     out.push_str(&format!(
-        "{indent}module {}{}{} @{:?}\n",
+        "{indent}module {}{}{} {}\n",
         data.name,
         if data.is_open { " [open]" } else { "" },
         render_mods(&data.modifiers),
-        data.range,
+        fmt_range(ranges::item_range(map, source, tree, id)),
     ));
     for req in &data.requires {
         let mods = [(req.transitive, "transitive"), (req.statik, "static")]

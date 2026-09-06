@@ -10,7 +10,7 @@
 
 use base_db::salsa;
 
-pub use crate::java::db::{JavaDatabase, file_body_tree, file_item_tree};
+pub use crate::java::db::{JavaDatabase, ast_id_map, file_body_tree, file_item_tree};
 pub use crate::jvm::db::JvmDatabase;
 pub use crate::kotlin::db::KotlinDatabase;
 

@@ -21,6 +21,19 @@ use hir_expand::{
 };
 
 use crate::RootDatabase;
+use ide_db::base_db::{self, LanguageKind};
+
+/// The source range of a declaration item, resolved on demand from the file's
+/// parse (the item tree carries no offsets).
+fn item_range(db: &RootDatabase, file: FileId, tree: &ItemTree, item: ItemId) -> Option<TextRange> {
+    let language = tree.language;
+    if language == LanguageKind::Unknown {
+        return None;
+    }
+    let source = base_db::parse(db, file, language).syntax_node(language);
+    let map = hir::hir_def::db::ast_id_map(db, file, language);
+    hir::hir_def::java::ranges::item_range(map, &source, tree, item)
+}
 
 /// The declaration a reference resolves to: a file and the source range of
 /// the declaring construct.
@@ -150,7 +163,7 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
     // An expression's inferred type, from the enclosing body — walk the
     // innermost enclosing expressions first.
     for expr_id in exprs_at(&bodies, offset) {
-        for item in body_items_at(&tree, &symbols, offset) {
+        for item in body_items_at(db, file, &tree, &symbols, offset) {
             if let Some(body) = hir_ty::body_types(db, file, item)
                 && let Some(ty) = body.exprs.get(&expr_id)
             {
@@ -167,7 +180,7 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
             .local_range(LocalId(id))
             .is_some_and(|range| range.contains_inclusive(offset))
         {
-            for item in body_items_at(&tree, &symbols, offset) {
+            for item in body_items_at(db, file, &tree, &symbols, offset) {
                 if let Some(body) = hir_ty::body_types(db, file, item)
                     && let Some(ty) = body.locals.get(&LocalId(id))
                 {
@@ -185,16 +198,23 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
 
 /// The body-carrying item ids whose range contains `offset`, most-derived
 /// first — the owners whose `BodyTypes` may type the construct at the offset.
-fn body_items_at(tree: &ItemTree, symbols: &[hir::SourceSymbol], offset: TextSize) -> Vec<ItemId> {
+fn body_items_at(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    symbols: &[hir::SourceSymbol],
+    offset: TextSize,
+) -> Vec<ItemId> {
+    let range_of = |item| item_range(db, file, &tree, item);
     let mut candidates: Vec<(TextRange, ItemId)> = symbols
         .iter()
         .filter(|s| {
             matches!(
                 s.kind,
                 hir::SourceSymbolKind::Method | hir::SourceSymbolKind::Field
-            ) && tree.data(s.item).range().contains(offset)
+            ) && range_of(s.item).is_some_and(|range| range.contains(offset))
         })
-        .map(|s| (tree.data(s.item).range(), s.item))
+        .filter_map(|s| range_of(s.item).map(|range| (range, s.item)))
         .collect();
     candidates.sort_by_key(|(range, _)| range.end() - range.start());
     candidates.into_iter().map(|(_, item)| item).collect()
@@ -212,8 +232,11 @@ fn render_symbol_decl(
 ) -> Option<HoverInfo> {
     let symbol = symbols
         .iter()
-        .filter(|s| tree.data(s.item).range().contains(offset))
-        .min_by_key(|s| tree.data(s.item).range().end() - tree.data(s.item).range().start())?;
+        .filter(|s| item_range(db, file, &tree, s.item).is_some_and(|range| range.contains(offset)))
+        .min_by_key(|s| {
+            let range = item_range(db, file, &tree, s.item).unwrap_or_default();
+            range.end() - range.start()
+        })?;
     let simple = symbol.name.simple_name();
     let value = match symbol.kind {
         hir::SourceSymbolKind::Method => {
@@ -265,10 +288,12 @@ fn member_targets(
                     parameter_count(&tree, s.item).is_some_and(|count| count == arity)
                 })
         })
-        .map(|s| NavigationTarget {
-            file,
-            range: tree.data(s.item).range(),
-            name: simple.to_owned(),
+        .filter_map(|s| {
+            item_range(db, file, &tree, s.item).map(|range| NavigationTarget {
+                file,
+                range,
+                name: simple.to_owned(),
+            })
         })
         .collect()
 }
@@ -288,10 +313,12 @@ fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<Navigati
                     | hir::SourceSymbolKind::Annotation
             ) && s.name.simple_name() == simple
         })
-        .map(|s| NavigationTarget {
-            file,
-            range: tree.data(s.item).range(),
-            name: simple.clone(),
+        .filter_map(|s| {
+            item_range(db, file, &tree, s.item).map(|range| NavigationTarget {
+                file,
+                range,
+                name: simple.clone(),
+            })
         })
         .collect()
 }

@@ -1969,39 +1969,39 @@ pub fn check_annotations(files: &[(&str, &str)]) -> String {
 }
 
 fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
-    use hir_def::java::item_tree::ItemData;
-    use hir_expand::span::{AnnotationRef, AnnotationValue};
-    fn render_arg(value: &AnnotationValue) -> String {
+    use hir_def::java::item_tree::{ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemTypeRef};
+    fn render_arg(value: &ItemAnnotationValue) -> String {
         use hir_expand::body::Literal;
         match value {
-            AnnotationValue::Literal(Literal::Int(i)) => format!("{i}"),
-            AnnotationValue::Literal(Literal::Long(i)) => format!("{i}L"),
-            AnnotationValue::Literal(Literal::Char(c)) => format!("'{c}'"),
-            AnnotationValue::Literal(Literal::Float) => "f".to_owned(),
-            AnnotationValue::Literal(Literal::Double) => "d".to_owned(),
-            AnnotationValue::Literal(Literal::Boolean(b)) => format!("{b}"),
-            AnnotationValue::Literal(Literal::Str(s)) => format!("\"{s}\""),
-            AnnotationValue::EnumConstant { qualifier, member } => match qualifier {
+            ItemAnnotationValue::Literal(Literal::Int(i)) => format!("{i}"),
+            ItemAnnotationValue::Literal(Literal::Long(i)) => format!("{i}L"),
+            ItemAnnotationValue::Literal(Literal::Char(c)) => format!("'{c}'"),
+            ItemAnnotationValue::Literal(Literal::Float) => "f".to_owned(),
+            ItemAnnotationValue::Literal(Literal::Double) => "d".to_owned(),
+            ItemAnnotationValue::Literal(Literal::Boolean(b)) => format!("{b}"),
+            ItemAnnotationValue::Literal(Literal::Str(s)) => format!("\"{s}\""),
+            ItemAnnotationValue::EnumConstant { qualifier, member } => match qualifier {
                 Some(q) => format!("{}.{}", q.as_str(), member.as_str()),
                 None => member.as_str().to_owned(),
             },
-            AnnotationValue::ClassLit(ty) => {
+            ItemAnnotationValue::ClassLit(ty) => {
                 let name = ty
-                    .first_ref()
-                    .map(|r| r.name.as_str().to_owned())
+                    .refs
+                    .first()
+                    .map(|name| name.as_str().to_owned())
                     .unwrap_or_else(|| "<error>".to_owned());
                 format!("{name}.class")
             }
-            AnnotationValue::Annotation(inner) => render_annotation(inner),
-            AnnotationValue::Array(values) => format!(
+            ItemAnnotationValue::Annotation(inner) => render_annotation(inner),
+            ItemAnnotationValue::Array(values) => format!(
                 "{{{}}}",
                 values.iter().map(render_arg).collect::<Vec<_>>().join(", ")
             ),
-            AnnotationValue::Unresolved { text } => text.clone(),
+            ItemAnnotationValue::Unresolved { text } => text.clone(),
         }
     }
-    fn render_annotation(annotation: &AnnotationRef) -> String {
-        let name = annotation.name.name.as_str();
+    fn render_annotation(annotation: &ItemAnnotationRef) -> String {
+        let name = annotation.name.as_str();
         if annotation.args.is_empty() {
             format!("@{name}")
         } else {
@@ -2014,14 +2014,14 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
             format!("@{name}({args})")
         }
     }
-    fn render_annotations_vec(annotations: &[AnnotationRef]) -> String {
+    fn render_annotations_vec(annotations: &[ItemAnnotationRef]) -> String {
         annotations
             .iter()
             .map(render_annotation)
             .collect::<Vec<_>>()
             .join(" ")
     }
-    fn render_type_annotations(ty: &hir_expand::span::SpannedTypeRef) -> String {
+    fn render_type_annotations(ty: &ItemTypeRef) -> String {
         render_annotations_vec(&ty.type_use_annotations)
     }
 

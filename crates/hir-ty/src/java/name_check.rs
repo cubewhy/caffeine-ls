@@ -13,22 +13,26 @@
 //! exists (or when a file is not mapped to a source set and no JDK is
 //! registered) every name would fail and the reports would be noise.
 
-use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
+use hir_def::java::item_tree::{ItemAnnotationRef, ItemData, ItemId, ItemTree, ItemTypeRef};
 use hir_expand::{
+    ast_id_map::AstIdMap,
     body::{BodyId, BodyTree, ExprData, ExprId, LocalId, PatternId, StmtData, StmtId},
     name::Name,
-    span::{AnnotationRef, NameRef, SpannedTypeRef},
+    span::SpannedTypeRef,
 };
 use rowan::TextRange;
 use rustc_hash::FxHashMap;
+use syntax::SourceFile;
 use vfs::FileId;
 
 use crate::{
     java::db::TyDatabase,
     java::decl_check::DeclDiagnostic,
     java::diagnostics::DiagLocation,
+    java::range_ctx::range_ctx,
     java::resolve::{NameResolution, Resolver, resolve_name_checked},
 };
+use hir_def::java::ranges;
 
 /// Whether name resolution has a real classpath to answer against. Before the
 /// workspace loads (`project_graph` is `None`) or when a file outside any
@@ -64,9 +68,11 @@ pub(crate) enum TypeRefDiag {
     },
 }
 
-/// Checks the reference names of a source type reference against `scope`'s
-/// classpath, pushing the unresolved ones into `into`. Skips the whole
-/// reference when the workspace cannot answer yet ([`can_resolve`]).
+/// Checks the reference names of a source type reference (`&SpannedTypeRef`,
+/// the *body* path — locals' declared types, patterns and expression type
+/// references) against `scope`'s classpath, pushing the unresolved ones into
+/// `into`. Skips the whole reference when the workspace cannot answer yet
+/// ([`can_resolve`]).
 pub(crate) fn check_spanned(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -78,7 +84,7 @@ pub(crate) fn check_spanned(
         return;
     }
     for reference in &spanned.refs {
-        check_reference(db, scope, resolver, reference, into);
+        check_reference(db, scope, resolver, &reference.name, reference.range, into);
     }
 }
 
@@ -87,22 +93,23 @@ fn check_reference(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     resolver: &Resolver,
-    reference: &NameRef,
+    name: &Name,
+    range: Option<TextRange>,
     into: &mut Vec<TypeRefDiag>,
 ) {
-    match resolve_name_checked(db, scope, resolver, &reference.name) {
+    match resolve_name_checked(db, scope, resolver, name) {
         NameResolution::TypeVar | NameResolution::Resolved(_) => {}
         NameResolution::Ambiguous(_) => into.push(TypeRefDiag::Ambiguous {
-            name: reference.name.clone(),
-            range: reference.range,
+            name: name.clone(),
+            range,
         }),
         NameResolution::NotAccessible(_) => into.push(TypeRefDiag::ModuleNotAccessible {
-            name: reference.name.clone(),
-            range: reference.range,
+            name: name.clone(),
+            range,
         }),
         NameResolution::Unresolved => into.push(TypeRefDiag::CannotResolve {
-            name: reference.name.clone(),
-            range: reference.range,
+            name: name.clone(),
+            range,
         }),
     }
 }
@@ -111,10 +118,10 @@ fn check_reference(
 /// the class's superclass/interfaces, every field type, every method's
 /// signature types and type-parameter bounds, record components and module
 /// directives.
-pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
+pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&ItemTypeRef> {
     fn collect_params<'a>(
         params: &'a [hir_def::java::item_tree::TypeParam],
-        out: &mut Vec<&'a SpannedTypeRef>,
+        out: &mut Vec<&'a ItemTypeRef>,
     ) {
         for param in params {
             out.extend(param.bounds.iter());
@@ -168,13 +175,20 @@ pub(crate) fn item_type_refs(data: &ItemData) -> Vec<&SpannedTypeRef> {
 /// range. (javac treats a second `package` as a parse error — "class, interface,
 /// enum, or record expected" — so this carries a custom code, not a
 /// `compiler.*` twin.)
-pub(crate) fn duplicate_package_diagnostics(tree: &ItemTree) -> Vec<DeclDiagnostic> {
-    tree.package_decl_ranges
+pub(crate) fn duplicate_package_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+) -> Vec<DeclDiagnostic> {
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
+    tree.package_decls
         .iter()
         .skip(1)
-        .map(|name_range| DeclDiagnostic::DuplicatePackage {
+        .map(|decl| DeclDiagnostic::DuplicatePackage {
             package: tree.package.clone().unwrap_or_else(|| Name::new("")),
-            name_range: Some(*name_range),
+            name_range: ranges::package_name_range(map, &source, *decl),
         })
         .collect()
 }
@@ -210,13 +224,18 @@ pub(crate) fn package_path_diagnostics(
             .zip(&expected)
             .all(|(part, want)| part == want);
     if !ok {
+        let name_range = range_ctx(db, file, tree.language).and_then(|(map, source)| {
+            tree.package_decls
+                .last()
+                .and_then(|decl| ranges::package_name_range(map, &source, *decl))
+        });
         return vec![DeclDiagnostic::UnexpectedPackagePath {
             expected: package,
             // IntelliJ-style root-relative package directory (`org.example`),
             // with the full slash path as a fallback
             // ([`hir::file_package_dir`]).
             dir: hir::file_package_dir(db, file).unwrap_or_else(|| dir.join("/")),
-            name_range: tree.package_range,
+            name_range,
         }];
     }
     Vec::new()
@@ -228,13 +247,13 @@ pub(crate) fn package_path_diagnostics(
 /// type parameters of classes/interfaces/records and methods. Each resolves
 /// like a type name ([JLS §6.5.5.1]) — an annotation type *is* a reference
 /// type — so an unknown one is reported the same way.
-fn item_annotation_refs(data: &ItemData) -> Vec<&AnnotationRef> {
-    fn annotations<'a>(items: &'a [AnnotationRef], out: &mut Vec<&'a AnnotationRef>) {
+fn item_annotation_refs(data: &ItemData) -> Vec<&ItemAnnotationRef> {
+    fn annotations<'a>(items: &'a [ItemAnnotationRef], out: &mut Vec<&'a ItemAnnotationRef>) {
         out.extend(items.iter());
     }
     fn type_params<'a>(
         params: &'a [hir_def::java::item_tree::TypeParam],
-        out: &mut Vec<&'a AnnotationRef>,
+        out: &mut Vec<&'a ItemAnnotationRef>,
     ) {
         for param in params {
             out.extend(param.annotations.iter());
@@ -278,6 +297,9 @@ pub(crate) fn declaration_type_diagnostics(
     if !can_resolve(db, &scope) {
         return Vec::new();
     }
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
     let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let mut out = Vec::new();
 
@@ -285,21 +307,29 @@ pub(crate) fn declaration_type_diagnostics(
         db: &dyn TyDatabase,
         scope: &hir::ResolutionScope,
         tree: &ItemTree,
+        map: &AstIdMap,
+        source: &SourceFile,
         type_params: &FxHashMap<ItemId, Vec<hir_def::java::item_tree::TypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let resolver = Resolver::new(tree, type_params, id);
         let mut issues = Vec::new();
-        for spanned in item_type_refs(tree.data(id)) {
-            check_spanned(db, scope, &resolver, spanned, &mut issues);
+        // The reference names of every declaration type reference, with the
+        // source range of each (resolved on demand from the syntax tree);
+        // name_check's `check_spanned` covers the *body* type references.
+        for tyref in item_type_refs(tree.data(id)) {
+            for (name, range) in ranges::type_ref_occurrences(map, source, tyref) {
+                check_reference(db, scope, &resolver, &name, range, &mut issues);
+            }
         }
         // §9.7/§6.5.5.1: the declaration's annotation names resolve like any
         // type reference — an unknown `@Name` is reported the same way (*not*
         // skipped by the caller's `check_spanned`, which the annotations
-        // bypass because they are not `SpannedTypeRef`s).
-        for reference in item_annotation_refs(tree.data(id)) {
-            check_reference(db, scope, &resolver, &reference.name, &mut issues);
+        // bypass because they are not `ItemTypeRef`s).
+        for annotation in item_annotation_refs(tree.data(id)) {
+            let range = ranges::annotation_name_range(map, source, annotation);
+            check_reference(db, scope, &resolver, &annotation.name, range, &mut issues);
         }
         for issue in issues {
             match issue {
@@ -315,14 +345,23 @@ pub(crate) fn declaration_type_diagnostics(
             }
         }
         for &child in tree.data(id).body() {
-            walk(db, scope, tree, type_params, child, out);
+            walk(db, scope, tree, map, source, type_params, child, out);
         }
     }
 
     for &top in &tree.top {
-        walk(db, &scope, tree, type_params.as_ref(), top, &mut out);
+        walk(
+            db,
+            &scope,
+            tree,
+            map,
+            &source,
+            type_params.as_ref(),
+            top,
+            &mut out,
+        );
     }
-    out.extend(import_diagnostics(db, &scope, tree));
+    out.extend(import_diagnostics(db, &scope, tree, map, &source));
     out
 }
 
@@ -341,7 +380,12 @@ pub(crate) fn import_diagnostics(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     tree: &ItemTree,
+    map: &AstIdMap,
+    source: &SourceFile,
 ) -> Vec<DeclDiagnostic> {
+    let import_range = |import: &hir_def::java::item_tree::ImportItem| {
+        ranges::import_name_range(map, source, import)
+    };
     let single_imports: Vec<&hir_def::java::item_tree::ImportItem> = tree
         .imports
         .iter()
@@ -355,7 +399,7 @@ pub(crate) fn import_diagnostics(
         if hir::fqn_resolve(db, scope, import.name.as_str()).is_none() {
             out.push(DeclDiagnostic::UnresolvedImport {
                 name: import.name.clone(),
-                range: Some(import.range),
+                range: import_range(import),
             });
         }
     }
@@ -371,7 +415,7 @@ pub(crate) fn import_diagnostics(
         if !hir::package_exists(db, scope, import.name.as_str()) {
             out.push(DeclDiagnostic::UnresolvedImportPackage {
                 name: import.name.clone(),
-                range: Some(import.range),
+                range: import_range(import),
             });
         }
     }
@@ -398,12 +442,12 @@ pub(crate) fn import_diagnostics(
         if !hir::package_exists(db, scope, package) {
             out.push(DeclDiagnostic::UnresolvedImportPackage {
                 name: Name::new(package),
-                range: Some(import.range),
+                range: import_range(import),
             });
         } else if hir::fqn_resolve(db, scope, text).is_none() {
             out.push(DeclDiagnostic::UnresolvedStaticImport {
                 name: import.name.clone(),
-                range: Some(import.range),
+                range: import_range(import),
             });
         }
     }
@@ -416,11 +460,11 @@ pub(crate) fn import_diagnostics(
             if b.name.simple_name() == simple_a && b.name != a.name {
                 out.push(DeclDiagnostic::ConflictingImport {
                     name: a.name.clone(),
-                    range: Some(a.range),
+                    range: import_range(a),
                 });
                 out.push(DeclDiagnostic::ConflictingImport {
                     name: b.name.clone(),
-                    range: Some(b.range),
+                    range: import_range(b),
                 });
             }
         }
@@ -448,7 +492,7 @@ pub(crate) fn import_diagnostics(
                 if import.name.as_str() != own_fqn {
                     out.push(DeclDiagnostic::ConflictingImport {
                         name: import.name.clone(),
-                        range: Some(import.range),
+                        range: import_range(import),
                     });
                 }
             }
