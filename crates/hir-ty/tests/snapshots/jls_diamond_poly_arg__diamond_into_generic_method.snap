@@ -1,0 +1,41 @@
+---
+source: crates/hir-ty/tests/jls_diamond_poly_arg.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    static class BinaryTag {}
+    static class Impl<T extends BinaryTag> {
+        Impl(Class<T> c, byte id) {}
+    }
+    static class Numeric<T extends BinaryTag> extends Impl<T> {
+        Numeric(Class<T> c, byte id) { super(c, id); }
+    }
+    private static <T extends BinaryTag, Y extends Impl<T>> Y register(Y y) {
+        return y;
+    }
+    static <T extends BinaryTag> Impl<T> register(Class<T> c, byte id) {
+        return register(new Impl<>(c, id));
+    }
+    static <T extends BinaryTag> Impl<T> registerNumeric(Class<T> c, byte id) {
+        return register(new Numeric<>(c, id));
+    }
+}
+
+method Impl(java.lang.Class<T>, byte): <init>
+  locals: l0: java.lang.Class<T> | l1: byte
+  exprs: 
+method Numeric(java.lang.Class<T>, byte): <init>
+  locals: l2: java.lang.Class<T> | l3: byte
+  exprs: e0: java.lang.Class<T> | e1: byte | e2: void
+method register(Y): Y
+  locals: l4: Y
+  exprs: e3: Y
+method register(java.lang.Class<T>, byte): com.example.Body.Impl<T>
+  locals: l5: java.lang.Class<T> | l6: byte
+  exprs: e4: java.lang.Class<T> | e5: byte | e6: com.example.Body.Impl<T> | e7: com.example.Body.Impl<T>
+method registerNumeric(java.lang.Class<T>, byte): com.example.Body.Impl<T>
+  locals: l7: java.lang.Class<T> | l8: byte
+  exprs: e8: java.lang.Class<T> | e9: byte | e10: com.example.Body.Numeric<T> | e11: com.example.Body.Numeric<T>

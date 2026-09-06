@@ -1046,6 +1046,24 @@ impl InferCtx<'_> {
         let ExprData::New { ty, args, .. } = self.tree.expr(id).clone() else {
             return true;
         };
+        let result =
+            self.contribute_diamond_new_inner(inference, id, ty, args, formal, phase, pertinent);
+        if !result {
+            eprintln!("[DBG-D] diamond contribution FAILED formal={:?}", formal);
+        }
+        result
+    }
+
+    fn contribute_diamond_new_inner(
+        &mut self,
+        inference: &mut Inference,
+        id: ExprId,
+        ty: hir_expand::span::SpannedTypeRef,
+        args: Vec<ExprId>,
+        formal: Ty,
+        phase: InvocationPhase,
+        pertinent: bool,
+    ) -> bool {
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
             return true;

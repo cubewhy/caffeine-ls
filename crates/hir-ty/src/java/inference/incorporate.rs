@@ -1,11 +1,11 @@
 //! Bound set incorporation ([JLS §18.3.1]).
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{Constraint, Inference, InvocationPhase};
 use crate::{
     java::db::TyDatabase,
-    java::subtyping::{is_assignable, is_subtype},
+    java::subtyping::{is_assignable, is_subtype, supertypes_impl},
     java::ty::{Ty, TyKind},
 };
 
@@ -151,7 +151,7 @@ impl Inference {
             let before = self.bound_count();
             for id in ids {
                 let b = &self.bounds[&id];
-                for constraint in self.implied_bounds(db, &b.lower, &b.upper) {
+                for constraint in self.implied_bounds(db, scope, &b.lower, &b.upper) {
                     self.worklist.push_back(constraint);
                 }
             }
@@ -231,7 +231,13 @@ impl Inference {
     /// must be related — equal for invariant parameterizations ([§4.10.2]) and
     /// for array element types. Wildcard type arguments are left out: they are
     /// constrained by the wildcard rules of §18.2.3 instead.
-    fn implied_bounds(&self, db: &dyn TyDatabase, lower: &[Ty], upper: &[Ty]) -> Vec<Constraint> {
+    fn implied_bounds(
+        &self,
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        lower: &[Ty],
+        upper: &[Ty],
+    ) -> Vec<Constraint> {
         let mut out = Vec::new();
         for l in lower {
             for u in upper {
@@ -249,6 +255,60 @@ impl Inference {
                             if a != b && !a.is_wildcard(db) && !b.is_wildcard(db) {
                                 out.push(Constraint::Eq(*a, *b));
                             }
+                        }
+                    }
+                    (
+                        TyKind::Reference { name: ln, args: la },
+                        TyKind::Reference { name: un, args: ua },
+                    ) if ln != un
+                        && !la.is_empty()
+                        && !ua.is_empty()
+                        && la.len() == ua.len()
+                        && l != u =>
+                    {
+                        // §18.2.2/[§18.3.1]: a proper lower bound `S <: α`
+                        // against a proper upper bound `α <: T` with
+                        // *different* erasures still relates the type
+                        // arguments through `S`'s declared supertype chain —
+                        // `Numeric<β> <: α_Y` with `α_Y <: Impl<T>` links the
+                        // diamond's `β` to the enclosing method's `T` through
+                        // the declared `Numeric<T> extends Impl<T>`. Without
+                        // it a diamond argument of a generic method
+                        // (`register(new Numeric<>(c, id))`) never feeds the
+                        // method's own type parameters, and the constructor's
+                        // argument (`Class<T>` giving `β := T`) is the last
+                        // constraint on record — the supertype walk finds the
+                        // `Impl<β>` parameterization and
+                        // §18.2.1-invariance relates `β = T`.
+                        // The walk revisits no class name — a self-referential
+                        // (F-bounded) hierarchy (`A<α> : A2<α> : A<α2>`)
+                        // terminates on the second occurrence of `A`.
+                        let mut stack: Vec<Ty> = vec![*l];
+                        let mut visited: FxHashSet<String> = FxHashSet::default();
+                        while let Some(current) = stack.pop() {
+                            let Some((cn, ca)) = current
+                                .as_reference(db)
+                                .map(|(n, a)| (n.clone(), a.to_vec()))
+                            else {
+                                continue;
+                            };
+                            if !visited.insert(cn.as_str().to_owned()) {
+                                continue;
+                            }
+                            if cn.as_str() != un.as_str() {
+                                for parent in supertypes_impl(db, scope, &current) {
+                                    stack.push(parent);
+                                }
+                                continue;
+                            }
+                            if !ca.is_empty() && ca.len() == ua.len() {
+                                for (a, b) in ca.iter().zip(ua.iter()) {
+                                    if a != b && !a.is_wildcard(db) && !b.is_wildcard(db) {
+                                        out.push(Constraint::Eq(*a, *b));
+                                    }
+                                }
+                            }
+                            break;
                         }
                     }
                     _ => {}
