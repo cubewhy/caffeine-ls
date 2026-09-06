@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Recs.java:
+package com.example;
+
+record R1(int x) {
+    R1(int z) {
+        this.x = z;
+    }
+}
+
+record R2(int x, String s) {
+    R2(int a, String b) {
+        this.x = a;
+        this.s = b;
+    }
+}
+
+record R3(int x) {
+    R3(int x) {
+        this.x = x;
+    }
+}
+
+record R5(int x) {
+    R5(int x, int extra) {
+        this(x);
+    }
+}
+
+@3:4: record-ctor-param-name-mismatch: Invalid canonical constructor of record 'R1': parameter names differ from the record components
+@9:4: record-ctor-param-name-mismatch: Invalid canonical constructor of record 'R2': parameter names differ from the record components

@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Seasons.java:
+package com.example;
+
+enum Seasons {
+    SPRING, SUMMER;
+
+    Seasons() {}
+
+    public Seasons(int x) {}
+
+    protected Seasons(int x, int y) {}
+
+    private Seasons(int x, int y, int z) {}
+}
+
+enum Wrong {
+    BAD;
+
+    Wrong() {
+        super();
+    }
+}
+
+enum Good {
+    OK;
+
+    Good() {}
+    Good(int x) {
+        this();
+    }
+}
+
+@7:11: modifier-not-allowed-here: Modifier 'public' is not allowed here
+@9:14: modifier-not-allowed-here: Modifier 'protected' is not allowed here
+@18:8: enum-ctor-super-call: Call to 'super' is not allowed in an enum constructor

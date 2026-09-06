@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Enums.java:
+package com.example;
+
+enum E1 {
+    static int X = 1;
+    A, B;
+}
+
+enum E2 {
+    A;
+    static int X = 1;
+}
+
+enum E3 {
+    ; A, B;
+}
+
+enum E4 {
+    A, B;
+    static int X = 1;
+}
+
+@3:4: enum-member-before-constants: Enum constant expected here
+@13:9: enum-constant-not-expected: Enum constant not expected here

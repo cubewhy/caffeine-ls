@@ -910,3 +910,131 @@ class H3 {
 );
 // Red: `H2.m()` hides a real static and `H3.n()` hides nothing — both carry
 // the static-@Override wording ([§9.6.4.4]).
+
+// -- §8.9.2: enum constructor access and super() -------------------------------
+// An enum's constructors are private by nature — the constants are the only
+// instances ([§8.9.2]) — so `public`/`protected` is an error (javac: `modifier
+// public/protected not allowed here`), and an explicit `super()` is rejected
+// because `java.lang.Enum`'s constructor is not accessible to the enum (javac:
+// `call to super not allowed in enum constructor`).
+
+snapshot!(
+    enum_ctor_access_and_super,
+    check_class_diagnostics(&[(
+        "/src/com/example/Seasons.java",
+        "\
+package com.example;
+
+enum Seasons {
+    SPRING, SUMMER;
+
+    Seasons() {}
+
+    public Seasons(int x) {}
+
+    protected Seasons(int x, int y) {}
+
+    private Seasons(int x, int y, int z) {}
+}
+
+enum Wrong {
+    BAD;
+
+    Wrong() {
+        super();
+    }
+}
+
+enum Good {
+    OK;
+
+    Good() {}
+    Good(int x) {
+        this();
+    }
+}
+",
+    )])
+);
+// Red: the `public` and `protected` enum constructors of `Seasons`, and
+// `Wrong`'s explicit `super()`. Green: the private/package constructor and
+// `Good`'s `this()` delegation.
+
+// -- §8.10.4: record canonical constructor parameter names ---------------------
+// A record constructor whose parameter types mirror the components
+// ([§8.10.4]) is the canonical constructor; its parameters must be named
+// exactly as the components. A same-types different-names constructor is
+// reported (javac: `invalid canonical constructor … invalid parameter names
+// in canonical constructor`).
+
+snapshot!(
+    record_ctor_param_names,
+    check_class_diagnostics(&[(
+        "/src/com/example/Recs.java",
+        "\
+package com.example;
+
+record R1(int x) {
+    R1(int z) {
+        this.x = z;
+    }
+}
+
+record R2(int x, String s) {
+    R2(int a, String b) {
+        this.x = a;
+        this.s = b;
+    }
+}
+
+record R3(int x) {
+    R3(int x) {
+        this.x = x;
+    }
+}
+
+record R5(int x) {
+    R5(int x, int extra) {
+        this(x);
+    }
+}
+",
+    )])
+);
+// Red: `R1` and `R2`'s canonical-shaped constructors rename the components.
+// Green: `R3` names them canonically; `R5`'s second constructor is not
+// canonical (different arity) and may name its extra parameter freely.
+
+// -- §8.9.1: enum constants must come before members ---------------------------
+
+snapshot!(
+    enum_constant_ordering,
+    check_class_diagnostics(&[(
+        "/src/com/example/Enums.java",
+        "\
+package com.example;
+
+enum E1 {
+    static int X = 1;
+    A, B;
+}
+
+enum E2 {
+    A;
+    static int X = 1;
+}
+
+enum E3 {
+    ; A, B;
+}
+
+enum E4 {
+    A, B;
+    static int X = 1;
+}
+",
+    )])
+);
+// Red: `E1`'s member-before-constants (`enum constant expected here`) and
+// `E3`'s constants after the `;` (`enum constant not expected here`). Green:
+// `E2`'s and `E4`'s member-after-constants ordering ([§8.9.1]).

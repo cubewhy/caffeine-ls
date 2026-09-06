@@ -235,6 +235,21 @@ pub enum JavaDiagnosticCode {
     /// ctor-throws superclass reports an unreported checked exception — javac:
     /// `unreported exception {E} in default constructor`.
     DefaultCtorUnreportedException,
+    /// §8.9.2: an enum constructor may not invoke `super()` — javac: `call to
+    /// super not allowed in enum constructor`.
+    EnumCtorSuperCall,
+    /// §8.10.4: a record's canonical constructor's parameter names must
+    /// match the component names — javac: `invalid parameter names in
+    /// canonical constructor`.
+    RecordCtorParamNameMismatch,
+    /// §8.9.1: an enum body's members must follow all its constants — a
+    /// member before the first constant (or a constant after the separating
+    /// `;`) is an error. javac: `enum constant expected here` / `enum
+    /// constant not expected here`.
+    EnumMemberBeforeConstants,
+    /// §8.9.1: an enum constant appears after the `;` that ends the constant
+    /// section — javac: `enum constant not expected here`.
+    EnumConstantNotExpected,
     /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
     /// abstract method and does not implement it with a concrete method of the
     /// same signature. javac: `{C} is not abstract and does not override
@@ -484,6 +499,12 @@ impl JavaDiagnosticCode {
             DefaultCtorUnreportedException => {
                 Some("compiler.err.unreported.exception.default.ctor")
             }
+            EnumCtorSuperCall => Some("compiler.err.call.to.super.not.allowed.in.enum.ctor"),
+            RecordCtorParamNameMismatch => {
+                Some("compiler.err.invalid.canonical.constructor.in.record")
+            }
+            EnumMemberBeforeConstants => Some("compiler.err.enum.constant.expected"),
+            EnumConstantNotExpected => Some("compiler.err.enum.constants.not.allowed"),
             UnimplementedAbstractMethod => Some("compiler.err.does.not.override.abstract"),
             CyclicInheritance => Some("compiler.err.cyclic.inheritance"),
             IllegalAccess => Some("compiler.err.report.access"),
@@ -624,6 +645,10 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::DefaultCtorUnreportedException => {
                 "default-ctor-unreported-exception"
             }
+            JavaDiagnosticCode::EnumCtorSuperCall => "enum-ctor-super-call",
+            JavaDiagnosticCode::RecordCtorParamNameMismatch => "record-ctor-param-name-mismatch",
+            JavaDiagnosticCode::EnumMemberBeforeConstants => "enum-member-before-constants",
+            JavaDiagnosticCode::EnumConstantNotExpected => "enum-constant-not-expected",
             JavaDiagnosticCode::UnimplementedAbstractMethod => "unimplemented-abstract-method",
             JavaDiagnosticCode::CyclicInheritance => "cyclic-inheritance",
             JavaDiagnosticCode::IllegalAccess => "illegal-access",

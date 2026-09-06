@@ -310,6 +310,39 @@ pub enum DeclDiagnostic {
     /// ([§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
     /// `method` is the offending method name and `is_static` its modifier.
     CannotOverrideObjectMethod { method: Name, is_static: bool },
+    /// §8.9.2: an enum constructor's first statement may not be an explicit
+    /// `super(...)` invocation — the implicit superclass `java.lang.Enum`
+    /// has no constructor accessible to the enum (the compiler supplies the
+    /// superclass arguments itself, [§8.9.2]). javac: `call to super not
+    /// allowed in enum constructor`; the message here is javac's,
+    /// IntelliJ-style. `range` is the `super(...)` call.
+    EnumCtorSuperCall { range: Option<rowan::TextRange> },
+    /// §8.10.4: a record's *canonical* constructor — the constructor whose
+    /// parameter types mirror the record's components ([§8.10.4]) — must
+    /// declare its parameters with exactly the component *names*. A normal
+    /// constructor `R(int z)` next to `record R(int x)` is not canonical
+    /// (javac: `invalid canonical constructor in record R … invalid
+    /// parameter names in canonical constructor`). Only the *first*
+    /// constructor with the component types counts (the canonical
+    /// constructor); a later one with the same types is a duplicate. The
+    /// parameters are matched positionally to the components.
+    RecordCtorParamNameMismatch {
+        record: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.9.1: an enum body's members must follow all its constants — the
+    /// first non-constant member before a `;` ends the constant section, and
+    /// any constant after that `;` is an error ([§8.9.1]). javac:
+    /// `enum constant expected here` (the member that ended the constant
+    /// section early, or the parser recovery at its place); the message here
+    /// is javac's, IntelliJ-style. A constant after the `;` is the separate
+    /// [`EnumConstantNotExpected`](Self::EnumConstantNotExpected). `range`
+    /// is the offending member's name.
+    EnumMemberBeforeConstants { range: Option<rowan::TextRange> },
+    /// §8.9.1: an enum constant declared *after* the separating `;` of the
+    /// constant section — javac: `enum constant not expected here`, at the
+    /// constant.
+    EnumConstantNotExpected { range: Option<rowan::TextRange> },
     /// §8.4.2/[§8.4.1]: two methods declared by one class have the *same*
     /// signature (identical parameter types and name) — the later
     /// declaration is an error. javac: `method {m} is already defined in
@@ -609,6 +642,18 @@ impl DeclDiagnostic {
             DeclDiagnostic::DefaultCtorUnreportedException { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::DefaultCtorUnreportedException)
             }
+            DeclDiagnostic::EnumCtorSuperCall { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::EnumCtorSuperCall)
+            }
+            DeclDiagnostic::RecordCtorParamNameMismatch { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::RecordCtorParamNameMismatch)
+            }
+            DeclDiagnostic::EnumMemberBeforeConstants { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::EnumMemberBeforeConstants)
+            }
+            DeclDiagnostic::EnumConstantNotExpected { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::EnumConstantNotExpected)
+            }
             DeclDiagnostic::UnimplementedAbstractMethod { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnimplementedAbstractMethod)
             }
@@ -889,6 +934,21 @@ impl DeclDiagnostic {
                     super_owner.simple_name()
                 )
             }
+            DeclDiagnostic::EnumCtorSuperCall { .. } => {
+                "Call to 'super' is not allowed in an enum constructor".to_owned()
+            }
+            DeclDiagnostic::RecordCtorParamNameMismatch { record, .. } => {
+                format!(
+                    "Invalid canonical constructor of record '{}': parameter names differ from the record components",
+                    record.as_str()
+                )
+            }
+            DeclDiagnostic::EnumMemberBeforeConstants { .. } => {
+                "Enum constant expected here".to_owned()
+            }
+            DeclDiagnostic::EnumConstantNotExpected { .. } => {
+                "Enum constant not expected here".to_owned()
+            }
             DeclDiagnostic::UnimplementedAbstractMethod {
                 class,
                 method,
@@ -1004,6 +1064,10 @@ impl DeclDiagnostic {
             | DeclDiagnostic::AbstractOrNativeMethodWithBody { method, .. }
             | DeclDiagnostic::NameClashSameErasure { method, .. } => method.as_str(),
             DeclDiagnostic::DefaultCtorUnreportedException { .. }
+            | DeclDiagnostic::EnumCtorSuperCall { .. }
+            | DeclDiagnostic::RecordCtorParamNameMismatch { .. }
+            | DeclDiagnostic::EnumMemberBeforeConstants { .. }
+            | DeclDiagnostic::EnumConstantNotExpected { .. }
             | DeclDiagnostic::CannotResolveType { .. }
             | DeclDiagnostic::AmbiguousName { .. }
             | DeclDiagnostic::UnresolvedImport { .. }
@@ -1084,6 +1148,18 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::DefaultCtorUnreportedException {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::EnumCtorSuperCall {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::RecordCtorParamNameMismatch {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::EnumMemberBeforeConstants {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::EnumConstantNotExpected {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::StaticInstanceClash { .. }
@@ -1272,6 +1348,12 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // §8.1.1/[§8.4.3]: a declaration carries two or more modifiers the JLS
     // forbids from co-occurring (see [`modifier_combination_diagnostics`]).
     out.extend(modifier_combination_diagnostics(db, file, &tree));
+
+    // §8.9.1: an enum body's members must follow all its constants — the
+    // first non-constant member ends the constant section, and any constant
+    // after the separating `;` is an error. The lowered enum body drops the
+    // `;` boundary, so the ordering is read from the file's parse tree.
+    out.extend(enum_ordering_diagnostics(db, file, &tree));
 
     // §9.6.4.1/[§9.7.4]/[§9.7.1]: the `@Target` applicability and the
     // element-value arguments of every annotation, declaration and type-use
@@ -1772,7 +1854,6 @@ fn check_class(
         }
     }
 
-    // §8.4.2/[§8.4.1]: two methods — or two constructors ([§8.8], whose
     // signature is the parameter list alone) — *declared by the class
     // itself* whose erasures
     // ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
@@ -1972,6 +2053,126 @@ fn check_class(
         ItemData::Record(record) => &record.name,
         _ => return out,
     };
+    // §8.9.2: an enum constructor may not be `public` or `protected` — enum
+    // constructors are private by nature (the constants are the only
+    // instances, so no outside caller may create one), and only `private`
+    // (or nothing) may be written. javac: `modifier public not allowed
+    // here` / `modifier protected not allowed here`, at the modifier. The
+    // `enum` modifier diagnostics of [`modifier_combination_diagnostics`]
+    // only cover the pair-combination walk, so the enum-ctor access rule is
+    // checked here per constructor declaration.
+    let is_enum = matches!(tree.data(item), ItemData::Enum(_));
+    // §8.10.4: a record's *canonical* constructor is the constructor whose
+    // parameter types equal the record's component types, in order
+    // ([§8.10.4]); its parameters must be named exactly as the components
+    // (javac: `invalid canonical constructor in record R (invalid parameter
+    // names in canonical constructor)`). A record constructor with the
+    // component types but different names is reported — the first such
+    // constructor is the canonical one, and later same-typed ones duplicate
+    // it ([§8.4.2] duplicate check) or delegate.
+    let record_components: &[hir_def::java::item_tree::RecordComponent] = match tree.data(item) {
+        ItemData::Record(record) => &record.components,
+        _ => &[],
+    };
+    let mut canonical_seen = false;
+    for &child in tree.data(item).body() {
+        let ItemData::Method(method) = tree.data(child) else {
+            continue;
+        };
+        if !method.is_constructor() || method.is_compact_constructor() {
+            continue;
+        }
+        // Match the constructor's declared parameter types (lowered by the
+        // item tree) against the component types — the canonical test is
+        // *type equality in order* ([§8.10.4]). Varargs components are
+        // array-typed in the canonical signature ([§8.4.1]).
+        if method.sig.params.len() != record_components.len() {
+            continue;
+        }
+        let is_canonical_shape =
+            method
+                .sig
+                .params
+                .iter()
+                .zip(record_components)
+                .all(|(param, component)| {
+                    let declared =
+                        crate::java::resolve::resolve_type_ref(db, scope, &resolver, &param.ty);
+                    let mut component_ty =
+                        crate::java::resolve::resolve_type_ref(db, scope, &resolver, &component.ty);
+                    if component.varargs {
+                        component_ty = Ty::array(db, component_ty);
+                    }
+                    declared.is_error(db) || component_ty.is_error(db) || declared == component_ty
+                });
+        if !is_canonical_shape {
+            continue;
+        }
+        // The first constructor with the canonical shape is the canonical
+        // constructor ([§8.10.4]); it must use the component names.
+        if !canonical_seen {
+            canonical_seen = true;
+            let names_match = method
+                .sig
+                .params
+                .iter()
+                .zip(record_components)
+                .all(|(param, component)| param.name == component.name);
+            if !names_match {
+                out.push(DeclDiagnostic::RecordCtorParamNameMismatch {
+                    record: class_simple.clone(),
+                    range: item_name_range(db, file, tree, child),
+                });
+            }
+        }
+    }
+    for &child in tree.data(item).body() {
+        let ItemData::Method(method) = tree.data(child) else {
+            continue;
+        };
+        if method.is_constructor()
+            && is_enum
+            && (method.modifiers.is_public() || method.modifiers.is_protected())
+        {
+            out.push(DeclDiagnostic::ModifierNotAllowedHere {
+                modifier: if method.modifiers.is_public() {
+                    "public"
+                } else {
+                    "protected"
+                },
+                range: item_name_range(db, file, tree, child),
+            });
+        }
+        // §8.9.2: an enum constructor may not invoke `super()` — its implicit
+        // superclass `java.lang.Enum` has no constructor accessible to it
+        // (the compiler supplies the arguments itself). javac rejects the
+        // explicit `super()` with `call to super not allowed in enum
+        // constructor`, at the invocation.
+        if method.is_constructor()
+            && is_enum
+            && let Some(body_id) = method.body()
+        {
+            let bodies = hir::file_body_tree(db, file);
+            let body = bodies.body(body_id);
+            let super_call = body.stmts.iter().find_map(|&stmt| {
+                let hir_expand::body::StmtData::Expr(expr) = bodies.stmt(stmt) else {
+                    return None;
+                };
+                match bodies.expr(*expr) {
+                    hir_expand::body::ExprData::CtorCall {
+                        target: hir_expand::body::CtorCallTarget::Super,
+                        ..
+                    } => Some(*expr),
+                    _ => None,
+                }
+            });
+            if let Some(expr) = super_call {
+                out.push(DeclDiagnostic::EnumCtorSuperCall {
+                    range: bodies.expr_range(expr),
+                });
+            }
+        }
+    }
     for &child in tree.data(item).body() {
         let ItemData::Method(method) = tree.data(child) else {
             continue;
@@ -3337,6 +3538,132 @@ fn is_modifier_bearing_decl(kind: syntax::java::SyntaxKind) -> bool {
             | J::FIELD_DECL
             | J::ANNOTATION_TYPE_ELEMENT_DECL
     )
+}
+
+/// §8.9.1: an enum body must declare its constants first — the constant
+/// section runs from the `{` to the first non-constant member or the `;`,
+/// whichever comes first ([§8.9.1]). A member before the first constant is
+/// javac's `enum constant expected here`; a constant after the separating
+/// `;` is `enum constant not expected here`. The lowering drops the `;`
+/// boundary (an empty `{ ; A }` constant section and a member-first body
+/// lower alike), so the ordering is read from the file's parse tree — of the
+/// same revision the item tree was lowered from.
+fn enum_ordering_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+) -> Vec<DeclDiagnostic> {
+    use syntax::java::SourceFile as JavaSourceFile;
+    use syntax::java::SyntaxKind as J;
+    if tree.language != LanguageKind::Java {
+        return Vec::new();
+    }
+    let parse = base_db::parse(db, file, LanguageKind::Java);
+    let syntax::SourceFile::Java(JavaSourceFile { syntax_node }) =
+        parse.syntax_node(LanguageKind::Java)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk_enum_bodies(&syntax_node, &mut out);
+    out
+}
+
+/// Walks `node` for `ENUM_BODY`s and reports the §8.9.1 constant-ordering
+/// violations of each.
+fn walk_enum_bodies(node: &rowan::SyntaxNode<syntax::java::Lang>, out: &mut Vec<DeclDiagnostic>) {
+    use rowan::NodeOrToken;
+    use syntax::java::SyntaxKind as J;
+    for child in node.children() {
+        if child.kind() == J::ENUM_BODY {
+            // §8.9.1: the grammar is `{ [EnumConstantList] [,] [;] {ClassBodyDeclaration} }` —
+            // constants, an optional `;`, then ordinary members. A member
+            // before the first constant is javac's `enum constant expected
+            // here`; a constant (or constant-section recovery) after the `;`
+            // is `enum constant not expected here`. The lowered enum body
+            // drops the `;` boundary, so the ordering is read from the
+            // parse tree.
+            let mut first_semi = None;
+            let mut first_member_before_semi = None;
+            let mut first_after_semi_const = None;
+            let mut seen_semi = false;
+            for element in child.children_with_tokens() {
+                let range = element.text_range();
+                match &element {
+                    NodeOrToken::Token(token) if token.kind() == J::SEMICOLON && !seen_semi => {
+                        seen_semi = true;
+                        first_semi = Some(range);
+                    }
+                    NodeOrToken::Node(grandchild) => {
+                        let kind = grandchild.kind();
+                        if !seen_semi {
+                            // Before the `;`: only enum constants belong. A
+                            // class-body member — or the recovery `ERROR`
+                            // node the parser produced for a member the
+                            // grammar would not accept as a constant — ends
+                            // the constant section illegally.
+                            if kind == J::ENUM_CONSTANT {
+                                continue;
+                            }
+                            // A `MISSING` node is the parser's
+                            // "enum constant expected" recovery — the body
+                            // began with a member the grammar would not
+                            // accept as a constant and the parser skipped
+                            // out of the constant section. Report at the
+                            // member the recovery swallowed, when its source
+                            // is visible, else at the recovery point.
+                            if kind == J::MISSING || kind == J::ERROR {
+                                first_member_before_semi.get_or_insert(range);
+                                continue;
+                            }
+                            first_member_before_semi.get_or_insert_with(|| {
+                                first_identifier_range(grandchild).unwrap_or(range)
+                            });
+                        } else if kind == J::ENUM_CONSTANT || kind == J::ERROR {
+                            // After the `;` only ordinary members belong. A
+                            // constant, or the recovery `ERROR` node holding
+                            // the misplaced constants (`{ ; A, B; }` parses
+                            // `A` as a missing declaration), is javac's
+                            // `enum constant not expected here`.
+                            first_after_semi_const.get_or_insert_with(|| {
+                                first_identifier_range(grandchild).unwrap_or(range)
+                            });
+                        }
+                    }
+                    NodeOrToken::Token(_) => {}
+                }
+            }
+            // §8.9.1: a *member* appearing before any `;` — the constant
+            // section is over but never terminated. javac: `enum constant
+            // expected here`, at the member.
+            if let Some(range) = first_member_before_semi {
+                out.push(DeclDiagnostic::EnumMemberBeforeConstants { range: Some(range) });
+            }
+            // A `;` that ends the constant section may not be followed by
+            // constants ([§8.9.1]).
+            if seen_semi && let Some(range) = first_after_semi_const {
+                out.push(DeclDiagnostic::EnumConstantNotExpected { range: Some(range) });
+            }
+            let _ = first_semi;
+        }
+        walk_enum_bodies(&child, out);
+    }
+}
+
+/// The source range of the first `IDENTIFIER` token under `node` — a
+/// declaration's name, for anchoring an enum-ordering diagnostic.
+fn first_identifier_range(
+    node: &rowan::SyntaxNode<syntax::java::Lang>,
+) -> Option<rowan::TextRange> {
+    use syntax::java::SyntaxKind as J;
+    node.children_with_tokens()
+        .find_map(|element| match element {
+            rowan::NodeOrToken::Token(token) if token.kind() == J::IDENTIFIER => {
+                Some(token.text_range())
+            }
+            rowan::NodeOrToken::Token(_) => None,
+            rowan::NodeOrToken::Node(_) => None,
+        })
 }
 
 /// The recognized modifier keywords of a `MODIFIER_LIST` node, in source
