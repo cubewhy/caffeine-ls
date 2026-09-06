@@ -949,6 +949,30 @@ impl InferCtx<'_> {
                         {
                             return true;
                         }
+                        // §15.27.3/[§18.5.1]: an *implicitly typed* lambda's
+                        // body result is inferred against a SAM whose formal
+                        // parameter types may still be the enclosing
+                        // invocation's inference variables (a `Decoder<T>`
+                        // lambda whose parameter is `α`). Such a body type is
+                        // not yet a proper type and cannot disprove
+                        // applicability either — §15.12.2.2 regards an
+                        // implicitly typed lambda as non-pertinent, checking
+                        // only its expected arity until overload resolution
+                        // finishes — so the compatibility probe must not hand
+                        // `is_assignable` a body type carrying inference
+                        // variables (which the memoized subtyping queries
+                        // cannot answer): the candidate stays applicable and
+                        // the chosen method's §18.5.2.2 pass resolves the
+                        // body constraint. `Encoder<T>.encode(T, int)` with
+                        // `(var0, var1) -> var0` yields a body type `α`
+                        // (`var0` is the first SAM parameter); rejecting it
+                        // as incompatible with the `String` SAM return would
+                        // make `define("a", decoder, encoder)` inapplicable.
+                        if body_ty.contains_infer_var(self.db)
+                            || body_ty.contains_type_var_named_capture(self.db)
+                        {
+                            return true;
+                        }
                         return crate::java::subtyping::is_assignable(
                             self.db,
                             &self.scope,

@@ -1,0 +1,63 @@
+---
+source: crates/hir-ty/tests/jls_implicit_lambda_inference.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    interface MappedEntity {}
+    interface CopyableEntity<T extends MappedEntity> {}
+    interface DeepComparableEntity {}
+    interface IRegistry<T extends MappedEntity> {}
+    interface TypesBuilderData {}
+    static class NBT {}
+    static class ClientVersion {
+        ClientVersion toClientVersion() {
+            return null;
+        }
+    }
+
+    class PacketWrapper<K> {
+        ClientVersion getServerVersion() {
+            return null;
+        }
+    }
+
+    interface LegacyNbtEntryDecoder<T> {
+        T decode(NBT nbt, ClientVersion version, TypesBuilderData data);
+
+        default NbtEntryDecoder<T> upgrade() {
+            return (nbt, wrapper, data) ->
+                    this.decode(nbt, wrapper.getServerVersion().toClientVersion(), data);
+        }
+    }
+
+    interface NbtEntryDecoder<T> {
+        T decode(NBT tag, PacketWrapper<?> wrapper, TypesBuilderData data);
+    }
+
+    static final class RegistryEntry<T extends MappedEntity & CopyableEntity<T> & DeepComparableEntity> {
+        RegistryEntry(IRegistry<T> baseRegistry, LegacyNbtEntryDecoder<T> decoder) {
+            this(baseRegistry, decoder.upgrade());
+        }
+
+        RegistryEntry(IRegistry<T> baseRegistry, NbtEntryDecoder<T> decoder) {}
+    }
+}
+
+method toClientVersion(): com.example.Body.ClientVersion
+  locals: 
+  exprs: e0: null
+method getServerVersion(): com.example.Body.ClientVersion
+  locals: 
+  exprs: e1: null
+method upgrade(): com.example.Body.NbtEntryDecoder<T>
+  locals: 
+  exprs: e2: com.example.Body.NBT | e3: com.example.Body.PacketWrapper<?> | e4: com.example.Body.ClientVersion | e5: com.example.Body.ClientVersion | e6: com.example.Body.TypesBuilderData | e7: com.example.Body.LegacyNbtEntryDecoder<T> | e8: T | e9: com.example.Body.NbtEntryDecoder<T>
+method RegistryEntry(com.example.Body.IRegistry<T>, com.example.Body.LegacyNbtEntryDecoder<T>): <init>
+  locals: l0: com.example.Body.IRegistry<T> | l1: com.example.Body.LegacyNbtEntryDecoder<T>
+  exprs: e10: com.example.Body.IRegistry<T> | e11: com.example.Body.LegacyNbtEntryDecoder<T> | e12: com.example.Body.NbtEntryDecoder<T> | e13: void
+method RegistryEntry(com.example.Body.IRegistry<T>, com.example.Body.NbtEntryDecoder<T>): <init>
+  locals: l2: com.example.Body.IRegistry<T> | l3: com.example.Body.NbtEntryDecoder<T>
+  exprs:

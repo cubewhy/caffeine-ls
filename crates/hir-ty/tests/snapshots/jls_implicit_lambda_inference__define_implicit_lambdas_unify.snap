@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_implicit_lambda_inference.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    interface T1<T> {
+        interface Decoder<T> { T decode(String a, int b); }
+        interface Encoder<T> { String encode(T a, int b); }
+    }
+
+    static <T> T1<T> define(String name, T1.Decoder<T> d, T1.Encoder<T> e) {
+        return null;
+    }
+
+    static final T1<String> A = define("a", (var0, var1) -> var0, (var0, var1) -> var0);
+}
+
+method define(java.lang.String, com.example.Body.T1.Decoder<T>, com.example.Body.T1.Encoder<T>): com.example.Body.T1<T>
+  locals: l0: java.lang.String | l1: com.example.Body.T1.Decoder<T> | l2: com.example.Body.T1.Encoder<T>
+  exprs: e0: null
+field A
+  locals: 
+  exprs: e1: java.lang.String | e2: java.lang.String | e3: com.example.Body.T1.Decoder<java.lang.String> | e4: java.lang.String | e5: com.example.Body.T1.Encoder<java.lang.String> | e6: com.example.Body.T1<java.lang.String>
