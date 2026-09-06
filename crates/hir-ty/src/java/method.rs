@@ -951,12 +951,67 @@ pub fn single_abstract_method(
     ty: &Ty,
 ) -> Option<MethodData> {
     let mut methods = abstract_methods(db, scope, ty);
-    methods.retain(|m| !matches!(m.name.as_str(), "equals" | "hashCode" | "toString"));
+    // §9.8/[§9.4.1.2]: the abstract members of a functional interface are
+    // those *not* matching a `public` member of `java.lang.Object` — the
+    // class implementing the interface always provides those through
+    // `Object`, so they are not abstract obligations
+    // ([§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
+    // A *user-declared* abstract method with an Object signature (an
+    // interface restating `String toString()`) is equally discharged by
+    // `Object`; only an abstract whose signature differs (`void go()`) is an
+    // obligation.
+    methods.retain(|m| !object_member_signature(db, scope, m));
     if methods.len() == 1 {
-        methods.pop()
+        let method = methods.pop().expect("one");
+        // §9.8: the single abstract method of a functional interface must not
+        // be generic — a generic method's parameter types depend on its own
+        // type variables, so a lambda cannot provide an implementation for
+        // every instantiation. javac: `invalid functional descriptor for
+        // lambda expression … method (T)T in interface I is generic`.
+        if !method.type_params.is_empty() {
+            return None;
+        }
+        Some(method)
     } else {
         None
     }
+}
+
+/// §9.8/[§9.4.1.2]: whether `method`'s signature matches a `public` member
+/// of `java.lang.Object` — the interface need not (indeed cannot) require a
+/// lambda for it, because the implementing class inherits `Object`'s
+/// concrete implementation. The public Object members ([§8.4.8.1] lists the
+/// canonical set for the override rule; [§9.4.1.2] applies it to interface
+/// members) discharge abstract interface redeclarations of the same
+/// signature: the JDK `Object` classfile (or the test fixture's stub) is
+/// consulted by name + parameter-erasure. `clone()`/`finalize()` are
+/// `protected`, so an interface can never override them through `Object`
+/// (the interface is in a different package) and they do not discharge;
+/// `getClass()`, `hashCode()`, `equals(Object)`, `toString()`, `notify()`,
+/// `notifyAll()` and the `wait` overloads are `public` and do.
+fn object_member_signature(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    method: &MethodData,
+) -> bool {
+    let object = Ty::reference(db, "java.lang.Object", Vec::new());
+    // The invocation context of a library-only caller: Object's public
+    // members are all visible to it, so the enumeration is the full public
+    // Object surface.
+    let ctx = InvocationContext::external(scope);
+    member_set(db, scope, &object, &method.name, &ctx)
+        .iter()
+        .any(|object_method| {
+            if object_method.access != Access::Public {
+                return false;
+            }
+            object_method.params.len() == method.params.len()
+                && object_method
+                    .params
+                    .iter()
+                    .zip(&method.params)
+                    .all(|(a, b)| a == b || a.erasure(db) == b.erasure(db))
+        })
 }
 
 /// The methods of a single class or interface, instantiated with `ty`'s type

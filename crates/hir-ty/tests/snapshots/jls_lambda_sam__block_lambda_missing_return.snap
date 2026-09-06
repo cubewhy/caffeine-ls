@@ -1,0 +1,48 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+import java.util.function.Supplier;
+
+class L2 {
+    boolean c;
+
+    void red() {
+        Supplier<Integer> a = () -> {
+            if (this.c) {
+                return 1;
+            }
+        };
+        Supplier<Integer> d = () -> {
+            while (this.c) {
+                return 1;
+            }
+        };
+    }
+
+    void green() {
+        Supplier<Integer> b = () -> {
+            return 1;
+        };
+        Supplier<Integer> e = () -> {
+            while (true) {
+                return 1;
+            }
+        };
+    }
+}
+
+method red(): void
+  @8:30..12:9 '() -> {
+            if (this.c) {
+                return 1;
+            }
+        }': missing-return-value: Missing return statement
+  @13:30..17:9 '() -> {
+            while (this.c) {
+                return 1;
+            }
+        }': missing-return-value: Missing return statement

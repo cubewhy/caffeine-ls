@@ -149,6 +149,10 @@ pub enum JavaDiagnosticCode {
     /// §15.11.2/[§8.1.3]: `Q.super.m(...)` whose qualifier is not an
     /// enclosing superinterface — javac: `not an enclosing class: {Q}`.
     QualifiedSuperNotEnclosing,
+    /// §15.27.3/[§8.4.1]: a lambda's formal-parameter count differs from the
+    /// SAM's declared parameters — javac: `incompatible parameter types in
+    /// lambda expression`.
+    LambdaParameterCountMismatch,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -481,6 +485,7 @@ impl JavaDiagnosticCode {
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             AbstractSuperAccess => Some("compiler.err.abstract.cant.be.accessed.directly"),
             QualifiedSuperNotEnclosing => Some("compiler.err.not.encl.class"),
+            LambdaParameterCountMismatch => Some("compiler.err.incompatible.types"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -620,6 +625,7 @@ impl JavaDiagnosticCode {
             }
             JavaDiagnosticCode::AbstractSuperAccess => "abstract-super-access",
             JavaDiagnosticCode::QualifiedSuperNotEnclosing => "qualified-super-not-enclosing",
+            JavaDiagnosticCode::LambdaParameterCountMismatch => "lambda-parameter-count-mismatch",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

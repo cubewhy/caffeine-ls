@@ -120,6 +120,17 @@ pub enum TypeError {
     /// is javac's `not an enclosing class: {Q}`. `qualifier` is the written
     /// (unresolved) qualifier type.
     QualifiedSuperNotEnclosing { expr: ExprId, qualifier: Ty },
+    /// §15.27.3/[§8.4.1]: a lambda's formal-parameter count differs from the
+    /// SAM's declared parameters (a varargs SAM formal was lowered as the
+    /// array of its element, so the lambda must declare exactly the SAM's
+    /// parameter count). javac: `incompatible parameter types in lambda
+    /// expression`. `expected` is the SAM's parameter count, `found` the
+    /// lambda's.
+    LambdaParameterCountMismatch {
+        expr: ExprId,
+        expected: usize,
+        found: usize,
+    },
     /// §15.8.3/[§15.8.4]/[§8.1.3]: the `this` or `super` keyword (bare or
     /// qualified `TypeName.this`/`I.super`) is used in a static context, where
     /// no enclosing instance exists. Both keywords map to javac's
@@ -407,6 +418,9 @@ impl TypeError {
             TypeError::QualifiedSuperNotEnclosing { .. } => {
                 DiagnosticCode::Java(QualifiedSuperNotEnclosing)
             }
+            TypeError::LambdaParameterCountMismatch { .. } => {
+                DiagnosticCode::Java(LambdaParameterCountMismatch)
+            }
             TypeError::NonStaticThisFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticThisFromStaticContext)
             }
@@ -515,6 +529,7 @@ impl TypeError {
             | NonStaticMethodFromStaticContext { expr, .. }
             | AbstractSuperAccess { expr, .. }
             | QualifiedSuperNotEnclosing { expr, .. }
+            | LambdaParameterCountMismatch { expr, .. }
             | NonStaticThisFromStaticContext { expr, .. }
             | NonStaticFieldFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
@@ -621,6 +636,7 @@ impl TypeError {
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
             | TypeError::AbstractSuperAccess { expr, .. }
             | TypeError::QualifiedSuperNotEnclosing { expr, .. }
+            | TypeError::LambdaParameterCountMismatch { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
@@ -707,6 +723,13 @@ impl TypeError {
                 format!(
                     "'{}' is not an enclosing class",
                     qualifier.display_simple(db)
+                )
+            }
+            LambdaParameterCountMismatch {
+                expected, found, ..
+            } => {
+                format!(
+                    "Incompatible parameter types in lambda expression: {found} parameter(s) for {expected}"
                 )
             }
             NonStaticThisFromStaticContext { keyword, .. } => match keyword {

@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class L5 {
+    void f() {
+        Runnable r = () -> {
+            return;
+            int unreachable = 1;
+        };
+    }
+}
+
+method f(): void
+  @6:12..6:32 'int unreachable = 1;': unreachable-statement: Unreachable statement

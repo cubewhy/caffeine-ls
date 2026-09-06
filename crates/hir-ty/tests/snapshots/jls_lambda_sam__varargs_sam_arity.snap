@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+interface Var {
+    void v(String... args);
+}
+
+class L9 {
+    void f() {
+        Var x = () -> {};
+        Var x2 = a -> {};
+        Var x3 = (a, b) -> {};
+        Var x4 = (String... a) -> {};
+    }
+}
+
+method f(): void
+  @8:16..8:24 '() -> {}': lambda-parameter-count-mismatch: Incompatible parameter types in lambda expression: 0 parameter(s) for 1
+  @10:17..10:29 '(a, b) -> {}': lambda-parameter-count-mismatch: Incompatible parameter types in lambda expression: 2 parameter(s) for 1

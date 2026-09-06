@@ -43,7 +43,21 @@ impl InferCtx<'_> {
             }
             return self.error();
         };
+        // §15.27.3/[§8.4.1]: a lambda's formal-parameter count must match the
+        // SAM's declared parameters. The SAM parameters were lowered with a
+        // varargs last parameter as the *array* of its element ([§8.4.1]),
+        // and a lambda may declare at most that many formals — a lambda
+        // against `void v(String...)` declares 0 or 1 parameters (the 1 is
+        // the `String[]`), never 2; javac: `incompatible parameter types in
+        // lambda expression`. When the counts disagree the lambda cannot
+        // implement the SAM, so a diagnostic (not a silent drop) is reported
+        // and the lambda yields the error type.
         if sam.params.len() != params.len() {
+            self.report(TypeError::LambdaParameterCountMismatch {
+                expr,
+                expected: sam.params.len(),
+                found: params.len(),
+            });
             return self.error();
         }
         self.lambda_params.push(FxHashMap::default());
@@ -132,6 +146,19 @@ impl InferCtx<'_> {
                 // candidate (`run(() -> { Function f = s -> { return s; }; })`).
                 self.lambda_returns.push(Vec::new());
                 self.with_target(None, |this| this.infer_stmt(stmt));
+                // §15.27.3: a block lambda against a *value-returning* SAM
+                // must return a value on every path that completes normally —
+                // `Supplier<Integer> s = () -> { if (c) return 1; }` has a
+                // normal-completing path without a return, javac's `bad
+                // return type in lambda expression … missing return value`.
+                // `exited` (set by the final `return`/`throw`) tells whether
+                // the block can complete normally, exactly as for a method
+                // body ([§8.4.7]).
+                if !sam.ret.is_void_like(self.db) && !self.exited {
+                    self.report(TypeError::MissingReturnValue {
+                        range: self.tree.expr_range(expr),
+                    });
+                }
                 self.lambda_returns.pop();
             }
         }

@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+interface Gen {
+    <T> T id(T t);
+}
+
+class L1Test {
+    void f() {
+        Gen g = x -> x;
+    }
+}
+
+method f(): void
+  @8:16..8:22 'x -> x': not-a-functional-interface: 'Gen' is not a functional interface
