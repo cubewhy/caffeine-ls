@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/P2.java:
+package com.example;
+
+class P2A {
+    static void sm() {}
+    void im() {}
+}
+
+class P2B extends P2A {
+    static void im() {}
+    void sm() {}
+}
+
+class P2C extends P2A {
+    static void sm() {}
+    void im() {}
+}
+
+method im: static-instance-clash: Cannot declare static method 'im()': it clashes with the instance method 'im()' inherited from 'P2A'
+method sm: static-instance-clash: Cannot declare instance method 'sm()': it clashes with the static method 'sm()' inherited from 'P2A'

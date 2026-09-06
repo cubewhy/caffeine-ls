@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Bodies.java:
+package com.example;
+
+abstract class X1 {
+    abstract void m() {}
+    native void n() {}
+}
+
+interface I9 {
+    abstract void q() {}
+}
+
+class Con {
+    synchronized native void s() {}
+}
+
+abstract class OK {
+    abstract void ok();
+    native void n();
+    void concrete() {}
+}
+
+method m: abstract-or-native-method-with-body: @3:18abstract method 'm()' cannot have a body
+method n: abstract-or-native-method-with-body: @4:16native method 'n()' cannot have a body
+method q: abstract-or-native-method-with-body: @8:18abstract method 'q()' cannot have a body
+method s: abstract-or-native-method-with-body: @12:29native method 's()' cannot have a body

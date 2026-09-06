@@ -1,0 +1,46 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Throws.java:
+package com.example;
+
+import java.io.IOException;
+import java.io.FileNotFoundException;
+
+class Base {
+    void none() {}
+    void narrow() throws IOException {}
+}
+
+class Sub extends Base {
+    @Override void none() throws IOException {}
+    @Override void narrow() throws Exception {}
+}
+
+interface I1 {
+    void m() throws IOException;
+}
+
+class C1 implements I1 {
+    public void m() throws Exception {}
+}
+
+class C2 implements I1 {
+    public void m() throws FileNotFoundException {}
+}
+
+class C3 implements I1 {
+    public void m() {}
+}
+
+class Un {
+    void u() {}
+}
+
+class Un2 extends Un {
+    @Override void u() throws RuntimeException {}
+}
+
+method none: incompatible-throws: Overridden method 'none()' in 'Base' does not throw 'IOException'
+method narrow: incompatible-throws: Overridden method 'narrow()' in 'Base' does not throw 'Exception'

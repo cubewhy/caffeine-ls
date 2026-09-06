@@ -581,3 +581,332 @@ class C implements Comparator<String> {
     )])
 );
 // Red: `compare(String, String)` is not implemented anywhere in the hierarchy.
+
+// -- §8.4.8.1/[§8.4.8.2]: a static/instance signature clash --------------------
+// A redeclaration whose staticness differs from the inherited method's can
+// neither override (instance-over-instance, [§8.4.8.1]) nor hide
+// (static-over-static, [§8.4.8.2]) — a static where an instance override
+// would be is javac's `overriding method is static`, an instance where a
+// static hide would be is `overridden method is static`.
+
+snapshot!(
+    static_instance_clash,
+    check_class_diagnostics(&[(
+        "/src/com/example/P2.java",
+        "\
+package com.example;
+
+class P2A {
+    static void sm() {}
+    void im() {}
+}
+
+class P2B extends P2A {
+    static void im() {}
+    void sm() {}
+}
+
+class P2C extends P2A {
+    static void sm() {}
+    void im() {}
+}
+",
+    )])
+);
+
+// -- §8.4.8.3: throws clauses may only narrow on override ----------------------
+// An overriding or implementing method may not declare a checked exception
+// that the overridden method does not throw ([§8.4.8.3]); unchecked additions
+// are always legal ([§11.1.1]), and narrowing the checked set is the point of
+// the rule. The mixed-staticness redeclaration is reported as the
+// [static-instance clash] instead of a throws comparison (neither overrides
+// nor hides).
+
+snapshot!(
+    override_throws_narrowing_only,
+    check_class_diagnostics(&[(
+        "/src/com/example/Throws.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+import java.io.FileNotFoundException;
+
+class Base {
+    void none() {}
+    void narrow() throws IOException {}
+}
+
+class Sub extends Base {
+    @Override void none() throws IOException {}
+    @Override void narrow() throws Exception {}
+}
+
+interface I1 {
+    void m() throws IOException;
+}
+
+class C1 implements I1 {
+    public void m() throws Exception {}
+}
+
+class C2 implements I1 {
+    public void m() throws FileNotFoundException {}
+}
+
+class C3 implements I1 {
+    public void m() {}
+}
+
+class Un {
+    void u() {}
+}
+
+class Un2 extends Un {
+    @Override void u() throws RuntimeException {}
+}
+",
+    )])
+);
+// Red: `Sub.none()` broadens to `IOException` over nothing; `Sub.narrow()`
+// broadens `IOException` to `Exception`; `C1.m()` does the same over the
+// interface. Green: `C2` narrows to `FileNotFoundException`, `C3` drops the
+// throws, and `Un2` adds an unchecked `RuntimeException` — all legal.
+
+// -- §8.4.8.3: static hiding is held to the same throws rule -------------------
+// A static method that hides a static method ([§8.4.8.2]) is an override for
+// the throws rule ([§8.4.8.3]): javac rejects the broadened static pair too.
+
+snapshot!(
+    static_hide_throws_rule,
+    check_class_diagnostics(&[(
+        "/src/com/example/Statics.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class SH {
+    static void m() throws IOException {}
+}
+
+class SS extends SH {
+    static void m() throws Exception {}
+}
+
+class SS2 extends SH {
+    static void m() {}
+}
+",
+    )])
+);
+
+// -- §9.4.1.2: interface default/static methods over Object members ------------
+// A `default` method in an interface whose signature matches a public (or
+// protected *final*) member of `java.lang.Object` is an error — the class's
+// implementation of every Object method comes from Object itself, so an
+// interface cannot override it ([§9.4.1.2]); a `static` such method would
+// have to override, which is equally impossible (javac `overriding method is
+// static`). Abstract redeclarations only restate the inherited contract and
+// are legal.
+
+snapshot!(
+    interface_object_member_overrides,
+    check_class_diagnostics(&[(
+        "/src/com/example/Objs.java",
+        "\
+package com.example;
+
+interface P9 {
+    default String toString() { return \"\"; }
+}
+
+interface P10 {
+    static boolean equals(Object o) { return true; }
+}
+
+interface P11 {
+    default int hashCode() { return 1; }
+}
+
+interface P12 {
+    static String toString() { return \"\"; }
+}
+
+interface O1 {
+    String toString();
+}
+
+interface O2 {
+    boolean equals(Object o);
+    int hashCode();
+}
+",
+    )])
+);
+// Red: the `default`/`static` Object-member matches (P9–P12). Green: the
+// abstract redeclarations of O1/O2 — legal per [§9.4.1.2].
+
+// -- §8.4.2/[§8.4.1]: duplicate methods and the varargs erasure twin ----------
+// Two methods with identical signatures — including `<T> void m(T)` vs
+// `<U> void m(U)`, whose type parameters differ only by name — are duplicate
+// declarations (`method m is already defined`). `m(String[])` and
+// `m(String...)` share the erasure under the array lowering of `T...`
+// ([§8.4.1], [§4.6]) and cannot both be declared. Constructors duplicate on
+// their parameter lists alone ([§8.8]).
+
+snapshot!(
+    duplicate_methods_and_varargs_twin,
+    check_class_diagnostics(&[(
+        "/src/com/example/Dup.java",
+        "\
+package com.example;
+
+class P8 {
+    void m() {}
+    void m() {}
+    void m(int x) {}
+    void m(int y) {}
+    void v(String... a) {}
+    void v(String[] b) {}
+}
+
+class G1 {
+    <T> void g(T t) {}
+    <U> void g(U u) {}
+}
+
+class Ctors {
+    Ctors(int x) {}
+    Ctors(int y) {}
+}
+
+class Green {
+    void m(int x) {}
+    void m(long x) {}
+    void v(String... a) {}
+    void w(String[] b) {}
+    Green() {}
+    Green(int x) {}
+}
+",
+    )])
+);
+
+// -- §8.4.5/[§9.4: abstract/native methods cannot have bodies -----------------
+
+snapshot!(
+    abstract_native_with_body,
+    check_class_diagnostics(&[(
+        "/src/com/example/Bodies.java",
+        "\
+package com.example;
+
+abstract class X1 {
+    abstract void m() {}
+    native void n() {}
+}
+
+interface I9 {
+    abstract void q() {}
+}
+
+class Con {
+    synchronized native void s() {}
+}
+
+abstract class OK {
+    abstract void ok();
+    native void n();
+    void concrete() {}
+}
+",
+    )])
+);
+
+// -- §8.8.9/[§11.2]: the implicit default constructor throws liability --------
+// A class declaring no constructor inherits a default constructor whose body
+// is `super()`; when the direct superclass's no-argument constructor throws a
+// checked exception, that exception is unreported in the default constructor
+// (javac: `unreported exception {E} in default constructor`). The liability
+// lands on the first *concrete* class of an abstract chain ([§8.1.1.1]);
+// explicit constructors with a handled `super()` escape it.
+
+snapshot!(
+    default_ctor_throws_liability,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {}
+
+class F7 extends F5 {
+    F7() throws Exception { super(); }
+}
+
+class F8 extends F5 {
+    F8() { try { super(); } catch (IOException e) {} }
+}
+
+class RE {
+    RE() throws RuntimeException {}
+}
+
+class RE2 extends RE {}
+
+abstract class ABE {
+    ABE() throws IOException {}
+}
+
+abstract class ABE3 extends ABE {}
+
+class ABE2 extends ABE {}
+
+class NE {}
+
+class NE2 extends NE {}
+",
+    )])
+);
+// Red: `F6` (unreported `IOException` in the default constructor) and `ABE2`
+// (concrete descendant of a throwing abstract chain). Green: `F7`/`F8`
+// declare their own constructors and handle `super()`; `RE2`'s super
+// constructor throws only an unchecked `RuntimeException`; `ABE3` is abstract
+// (no instantiation required); `NE2`'s super constructor throws nothing.
+
+// -- §9.6.4.4: @Override on a static method -----------------------------------
+// A static method never overrides — it hides ([§8.4.8.2]) — so `@Override`
+// on it is always an error, with javac's dedicated wording
+// (`static methods cannot be annotated with @Override`) rather than the
+// generic does-not-override message.
+
+snapshot!(
+    override_on_static_message,
+    check_class_diagnostics(&[(
+        "/src/com/example/Hide.java",
+        "\
+package com.example;
+
+class H {
+    static void m() {}
+}
+
+class H2 extends H {
+    @Override static void m() {}
+}
+
+class H3 {
+    @Override static void n() {}
+}
+",
+    )])
+);
+// Red: `H2.m()` hides a real static and `H3.n()` hides nothing — both carry
+// the static-@Override wording ([§9.6.4.4]).

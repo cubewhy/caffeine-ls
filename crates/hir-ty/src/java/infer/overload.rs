@@ -577,10 +577,12 @@ impl InferCtx<'_> {
             name: method.name.clone(),
             owner: method.owner.clone(),
             owner_file: method.owner_file,
+            decl_item: None,
             params: formals
                 .iter()
                 .map(|p| p.substitute_infer(self.db, resolved))
                 .collect(),
+            param_names: method.param_names.clone(),
             ret: ret.substitute_infer(self.db, resolved),
             throws: throws_formals
                 .iter()

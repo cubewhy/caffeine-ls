@@ -15,8 +15,9 @@
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, ItemTypeRef};
 use hir_expand::body::BodyTree;
 use hir_expand::name::Name;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
+use triomphe::Arc;
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
@@ -78,6 +79,16 @@ pub enum DeclDiagnostic {
     /// annotated method's name range, so the diagnostic stays on the right
     /// overload when several methods share the name.
     MethodDoesNotOverride {
+        method: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.6.4.4/[§8.4.8.2]: an `@Override` annotation on a `static` method —
+    /// a static method never overrides (it hides), so the annotation is
+    /// always an error. javac keeps a dedicated message for this shape
+    /// (`static methods cannot be annotated with @Override`), distinct from
+    /// the generic does-not-override error of an instance method that
+    /// matches no supertype method.
+    MethodDoesNotOverrideStatic {
         method: Name,
         range: Option<rowan::TextRange>,
     },
@@ -259,6 +270,100 @@ pub enum DeclDiagnostic {
     /// is IntelliJ's `Overrides 'm' in 'S' with weaker access privilege`.
     /// `required` is the weaker access keyword actually granted.
     WeakerAccessPrivileges { method: Name, super_owner: Name },
+    /// §8.4.8.1/[§8.4.8.2]: a method whose signature is that of an inherited
+    /// *instance* method, declared `static` (javac `overriding method is
+    /// static`), or whose signature is that of an inherited *static* method,
+    /// declared as an instance method (javac `overridden method is static`).
+    /// A static method can never override an instance method — it can only
+    /// *hide* a static one ([§8.4.8.2]) — and an instance method can never
+    /// hide a static one, so either mixed-staticness redeclaration of an
+    /// inherited signature is an error. `super_owner` is the declaring class
+    /// of the inherited method; `overriding_is_static` says which direction
+    /// the clash runs: `true` when the *new* declaration is the static one.
+    StaticInstanceClash {
+        method: Name,
+        super_owner: Name,
+        overriding_is_static: bool,
+    },
+    /// §8.4.8.3: an override or implementation declares a `throws` clause
+    /// naming a checked exception type that is not a subtype of one the
+    /// overridden method throws — the override may only *narrow* the checked
+    /// exceptions, never broaden them ([§8.4.8.3]). Unchecked additions
+    /// (`RuntimeException`, `Error`, their subtypes) are always allowed.
+    /// `super_owner` is the declaring class of the overridden method and
+    /// `thrown` the offending added checked type, rendered simple.
+    IncompatibleThrows {
+        method: Name,
+        super_owner: Name,
+        thrown: Ty,
+    },
+    /// §9.4.1.2/[§8.4.8.2]: an interface `default` or `static` method whose
+    /// signature matches a `public` (or `protected` *final*) method of
+    /// `java.lang.Object`. `Object` methods are *not* abstract interface
+    /// members: a class's implementation always comes from `Object` itself,
+    /// so an interface cannot override them — a `default` declaration is an
+    /// error ([§9.4.1.2], javac `default method {m} in {I} overrides a
+    /// member of java.lang.Object`), and a `static` one would have to be an
+    /// override too (javac `overriding method is static`), which is likewise
+    /// impossible. Abstract redeclarations of those signatures stay legal —
+    /// they merely restate the inherited `Object` contract
+    /// ([§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
+    /// `method` is the offending method name and `is_static` its modifier.
+    CannotOverrideObjectMethod { method: Name, is_static: bool },
+    /// §8.4.2/[§8.4.1]: two methods declared by one class have the *same*
+    /// signature (identical parameter types and name) — the later
+    /// declaration is an error. javac: `method {m} is already defined in
+    /// class {C}` (constructors, whose signature is the parameter list
+    /// alone, are reported as `constructor {m} is already defined`). (With
+    /// the signature differing only in parameterized types, the erasure is
+    /// shared but the signatures differ — that is the separate
+    /// [`NameClashSameErasure`] error, [§8.4.2].)
+    DuplicateMethod {
+        method: Name,
+        is_constructor: bool,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.4.1/[§4.6]: one method's last formal parameter is a fixed array
+    /// (`m(String[])`) and another's is the variable arity of the same
+    /// component type (`m(String...)`) — the two signatures have the same
+    /// erasure ([§8.4.2]) and the JVM cannot load both. javac: `cannot
+    /// declare both {m}(String[]) and {m}(String...) in {C}`; the message
+    /// here is javac's, IntelliJ-style. `method` is the common name and
+    /// `array` the shared last-parameter array type, from which the message
+    /// renders the fixed-array spelling (as lowered) and the varargs
+    /// spelling (its element with `...`).
+    CannotDeclareBothVarargsAndArray { method: Name, array: Ty },
+    /// §8.4.5/[§9.4]: an `abstract` or `native` method carries a body — an
+    /// abstract method declares behavior for its subtypes to provide, a
+    /// native method declares a platform implementation, so neither may
+    /// define a Java body. javac: `abstract methods cannot have a body` /
+    /// `interface abstract methods cannot have a body` /
+    /// `native methods cannot have a body`; the message here is javac's,
+    /// IntelliJ-style. `method` is the method's name; `abstract_` says which
+    /// modifier is violated.
+    AbstractOrNativeMethodWithBody {
+        method: Name,
+        abstract_: bool,
+        range: Option<rowan::TextRange>,
+    },
+    /// §8.8.9/[§11.2]: a class declares no constructor and inherits its
+    /// implicit default constructor, whose body is exactly `super()` — a
+    /// direct superclass constructor that throws a checked exception makes
+    /// that implicit call an unhandled throw, and the default constructor
+    /// declares no `throws` clause, so the exception is unreported (javac:
+    /// `unreported exception {E} in default constructor`). An abstract
+    /// subclass is exempt — it need not be instantiable
+    /// ([§8.1.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.1.1)),
+    /// and javac checks the liability only at the first concrete
+    /// descendant. `class` is the reported subclass, `super_owner` the
+    /// declaring class of the throwing no-argument constructor, and `thrown`
+    /// the offending checked type.
+    DefaultCtorUnreportedException {
+        class: Name,
+        super_owner: Name,
+        thrown: Ty,
+        range: Option<rowan::TextRange>,
+    },
     /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
     /// abstract method and does not implement it with a concrete method of
     /// the same signature. javac reports `{C} is not abstract and does not
@@ -417,6 +522,9 @@ impl DeclDiagnostic {
             DeclDiagnostic::MethodDoesNotOverride { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::MethodDoesNotOverride)
             }
+            DeclDiagnostic::MethodDoesNotOverrideStatic { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::MethodDoesNotOverrideStatic)
+            }
             DeclDiagnostic::CannotResolveType { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::CannotResolveType)
             }
@@ -479,6 +587,27 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::WeakerAccessPrivileges { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::WeakerAccessPrivileges)
+            }
+            DeclDiagnostic::StaticInstanceClash { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::StaticInstanceClash)
+            }
+            DeclDiagnostic::IncompatibleThrows { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::IncompatibleThrows)
+            }
+            DeclDiagnostic::CannotOverrideObjectMethod { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CannotOverrideObjectMethod)
+            }
+            DeclDiagnostic::DuplicateMethod { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DuplicateMethod)
+            }
+            DeclDiagnostic::CannotDeclareBothVarargsAndArray { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::CannotDeclareBothVarargsAndArray)
+            }
+            DeclDiagnostic::AbstractOrNativeMethodWithBody { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AbstractOrNativeMethodWithBody)
+            }
+            DeclDiagnostic::DefaultCtorUnreportedException { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::DefaultCtorUnreportedException)
             }
             DeclDiagnostic::UnimplementedAbstractMethod { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnimplementedAbstractMethod)
@@ -562,6 +691,12 @@ impl DeclDiagnostic {
                 format!(
                     "Method '{}()' annotated @Override does not override or implement a method from a supertype",
                     name
+                )
+            }
+            DeclDiagnostic::MethodDoesNotOverrideStatic { method, .. } => {
+                format!(
+                    "Static method '{}()' cannot be annotated with @Override",
+                    method.as_str()
                 )
             }
             DeclDiagnostic::CannotResolveType { name, .. } => {
@@ -674,6 +809,86 @@ impl DeclDiagnostic {
                     super_owner.simple_name()
                 )
             }
+            DeclDiagnostic::StaticInstanceClash {
+                method,
+                super_owner,
+                overriding_is_static,
+            } => {
+                let (overridden, clashing) = if *overriding_is_static {
+                    ("instance", "static")
+                } else {
+                    ("static", "instance")
+                };
+                format!(
+                    "Cannot declare {clashing} method '{}()': it clashes with the {overridden} method '{}()' inherited from '{}'",
+                    method.as_str(),
+                    method.as_str(),
+                    super_owner.simple_name()
+                )
+            }
+            DeclDiagnostic::IncompatibleThrows {
+                method,
+                super_owner,
+                thrown,
+            } => {
+                format!(
+                    "Overridden method '{}()' in '{}' does not throw '{}'",
+                    method.as_str(),
+                    super_owner.simple_name(),
+                    thrown.display_simple(db)
+                )
+            }
+            DeclDiagnostic::CannotOverrideObjectMethod { method, is_static } => {
+                if *is_static {
+                    format!(
+                        "Static method '{}()' cannot override a member of java.lang.Object",
+                        method.as_str()
+                    )
+                } else {
+                    format!(
+                        "Default method '{}()' overrides a member of java.lang.Object",
+                        method.as_str()
+                    )
+                }
+            }
+            DeclDiagnostic::DuplicateMethod {
+                method,
+                is_constructor,
+                ..
+            } => {
+                let kind = if *is_constructor {
+                    "Constructor"
+                } else {
+                    "Method"
+                };
+                format!("{kind} '{}()' is already defined", method.as_str())
+            }
+            DeclDiagnostic::CannotDeclareBothVarargsAndArray { method, array } => {
+                let rendered = array.display_simple(db).to_string();
+                let element = rendered.strip_suffix("[]").unwrap_or(&rendered);
+                format!(
+                    "Cannot declare both '{}({rendered})' and '{}({element}...)'",
+                    method.as_str(),
+                    method.as_str()
+                )
+            }
+            DeclDiagnostic::AbstractOrNativeMethodWithBody {
+                method, abstract_, ..
+            } => {
+                let kind = if *abstract_ { "abstract" } else { "native" };
+                format!("{kind} method '{}()' cannot have a body", method.as_str())
+            }
+            DeclDiagnostic::DefaultCtorUnreportedException {
+                super_owner,
+                thrown,
+                ..
+            } => {
+                format!(
+                    "Unreported exception '{}' in the default constructor of '{}'",
+                    thrown.display_simple(db),
+                    super_owner.simple_name()
+                )
+            }
             DeclDiagnostic::UnimplementedAbstractMethod {
                 class,
                 method,
@@ -778,10 +993,18 @@ impl DeclDiagnostic {
             DeclDiagnostic::IncompatibleOverride { method, .. }
             | DeclDiagnostic::ConflictingDefaults { method }
             | DeclDiagnostic::MethodDoesNotOverride { method, .. }
+            | DeclDiagnostic::MethodDoesNotOverrideStatic { method, .. }
             | DeclDiagnostic::CannotOverrideFinalMethod { method, .. }
             | DeclDiagnostic::WeakerAccessPrivileges { method, .. }
+            | DeclDiagnostic::StaticInstanceClash { method, .. }
+            | DeclDiagnostic::IncompatibleThrows { method, .. }
+            | DeclDiagnostic::CannotOverrideObjectMethod { method, .. }
+            | DeclDiagnostic::DuplicateMethod { method, .. }
+            | DeclDiagnostic::CannotDeclareBothVarargsAndArray { method, .. }
+            | DeclDiagnostic::AbstractOrNativeMethodWithBody { method, .. }
             | DeclDiagnostic::NameClashSameErasure { method, .. } => method.as_str(),
-            DeclDiagnostic::CannotResolveType { .. }
+            DeclDiagnostic::DefaultCtorUnreportedException { .. }
+            | DeclDiagnostic::CannotResolveType { .. }
             | DeclDiagnostic::AmbiguousName { .. }
             | DeclDiagnostic::UnresolvedImport { .. }
             | DeclDiagnostic::UnresolvedImportPackage { .. }
@@ -853,7 +1076,20 @@ impl DeclDiagnostic {
             }
             | DeclDiagnostic::MethodDoesNotOverride {
                 range: name_range, ..
+            }
+            | DeclDiagnostic::DuplicateMethod {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AbstractOrNativeMethodWithBody {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::DefaultCtorUnreportedException {
+                range: name_range, ..
             } => *name_range,
+            DeclDiagnostic::StaticInstanceClash { .. }
+            | DeclDiagnostic::IncompatibleThrows { .. }
+            | DeclDiagnostic::CannotOverrideObjectMethod { .. }
+            | DeclDiagnostic::CannotDeclareBothVarargsAndArray { .. } => None,
             DeclDiagnostic::IllegalModifierCombination {
                 range: name_range, ..
             } => *name_range,
@@ -1113,6 +1349,30 @@ fn check_class(
     for method in &declared {
         for super_method in &inherited {
             if same_signature(db, method, super_method) {
+                // The class's *own* redeclaration of an inherited signature:
+                // the override/hide obligations of [§8.4.8.1]/[§8.4.8.2] —
+                // a same-signature instance/instance pair must override, a
+                // static/static pair must hide, and a *mixed* pair is an
+                // error outright ([§8.4.8.1] instance-over-static and
+                // [§8.4.8.2] static-over-instance: neither overrides nor
+                // hides).
+                let interface_default_rule =
+                    declaring_interface_item(tree, item) && !method.is_static && !method.abstract_;
+                if method.is_static != super_method.is_static {
+                    // §8.4.8.1/[§8.4.8.2]: a static declaration cannot
+                    // override an inherited instance method, and an instance
+                    // declaration cannot hide an inherited static one. (An
+                    // *interface* method is implicitly instance — `static`
+                    // only via the keyword — so a subinterface redeclaring an
+                    // inherited signature abstract is an override, never a
+                    // clash.) The clash is reported once, at the redeclaring
+                    // method, against the nearest inherited declaration.
+                    out.push(DeclDiagnostic::StaticInstanceClash {
+                        method: Name::new(&method.name),
+                        super_owner: Name::new(&super_method.owner),
+                        overriding_is_static: method.is_static,
+                    });
+                }
                 // §8.4.3.3: a final method of a superclass or superinterface
                 // can neither be overridden (instance) nor hidden (static), so
                 // a redeclaration of its signature is an error.
@@ -1120,6 +1380,30 @@ fn check_class(
                     out.push(DeclDiagnostic::CannotOverrideFinalMethod {
                         method: Name::new(&method.name),
                         super_owner: Name::new(&super_method.owner),
+                    });
+                }
+                // §9.4.1.2/[§8.4.8.2]: a `default` interface method whose
+                // signature matches a member of `java.lang.Object` — the
+                // class's implementation of every `Object` method comes from
+                // `Object` itself, so the interface cannot override it. An
+                // interface `static` method with such a signature would have
+                // to *override* (never hide, §8.4.8.2), which is equally
+                // impossible ([§9.4.1.2]); javac reports `default method {m}
+                // in {I} overrides a member of java.lang.Object` /
+                // `overriding method is static`. An *abstract* interface
+                // redeclaration is legal — it only restates the inherited
+                // contract ([§9.4.1.2]) — so `default`/`static` bodies (a
+                // body implies concrete) are the only violations.
+                if interface_default_rule
+                    && matches!(
+                        super_method.owner.as_str(),
+                        "java.lang.Object" | "java.lang.Record"
+                    )
+                    && !method.abstract_
+                {
+                    out.push(DeclDiagnostic::CannotOverrideObjectMethod {
+                        method: Name::new(&method.name),
+                        is_static: method.is_static,
                     });
                 }
                 // §8.4.8.3: the access of an overriding or hiding method must
@@ -1161,6 +1445,45 @@ fn check_class(
                             expected_owner: Name::new(&super_method.owner),
                             expected_ret: super_method.ret,
                         });
+                    }
+                }
+                // §8.4.8.3: the `throws` clause of an overriding or hiding
+                // method may not name a checked exception type that the
+                // overridden method does not throw — it may only *narrow* the
+                // thrown checked set ([§8.4.8.3]); `RuntimeException`, `Error`
+                // and their subtypes may always be added ([§11.1.1]). An
+                // unchecked addition is no liability. Same-staticness pairs
+                // only: a mixed-staticness redeclaration is the separate
+                // [`StaticInstanceClash`] error and cannot override or hide
+                // ([§8.4.8.1]/[§8.4.8.2]).
+                if method.is_static == super_method.is_static
+                    && !method.abstract_
+                    && !super_method.abstract_
+                {
+                    // javac applies the throws rule to concrete
+                    // implementations and to abstract declarations alike; an
+                    // abstract pair is a *clash* report (`m() in IB clashes
+                    // with m() in IA`). Skip the abstract/abstract pair here:
+                    // the checker's missing-body/does-not-override machinery
+                    // keeps the class honest, and an abstract redeclaration
+                    // that widens throws is javac's separate clash — the
+                    // widening is still unlawful ([§8.4.8.3]) only when the
+                    // pair is concrete. (D2c probe: javac flags
+                    // interface-abstract `IB extends IA` widening with
+                    // `clashes with`.)
+                    for thrown in &method.throws {
+                        let covered = super_method
+                            .throws
+                            .iter()
+                            .any(|declared| subtyping::is_assignable(db, scope, thrown, declared));
+                        if !covered && is_checked(db, scope, thrown) {
+                            out.push(DeclDiagnostic::IncompatibleThrows {
+                                method: Name::new(&method.name),
+                                super_owner: Name::new(&super_method.owner),
+                                thrown: *thrown,
+                            });
+                            break;
+                        }
                     }
                 }
                 break;
@@ -1206,27 +1529,74 @@ fn check_class(
     // §8.8.7: a class that declares no constructor has an implicit default
     // constructor whose body begins with `super()`; a direct superclass with
     // no *accessible* no-argument constructor makes that implicit call fail.
-    // Enums and records have their own implicit superclass (`Enum`, `Record`),
-    // so only plain class declarations are checked.
+    // §8.8.9/[§11.2]: the same implicit `super()` must *handle* the checked
+    // exceptions the superclass constructor throws — the implicit default
+    // constructor declares no `throws` clause, so an unchecked-off liability
+    // is `unreported exception {E} in default constructor`. Enums and records
+    // have their own implicit superclass (`Enum`, `Record`), so only plain
+    // class declarations are checked. An abstract subclass is exempt from
+    // both — javac reports the missing no-arg constructor and the
+    // unreported-exception liability only at the first *concrete* class in
+    // the chain ([§8.1.1.1]: an abstract class need not be instantiable), so
+    // this walks to the nearest concrete descendant.
     if let ItemData::Class(class) = tree.data(item)
         && !class
             .body
             .iter()
             .any(|child| matches!(tree.data(*child), ItemData::Method(m) if m.is_constructor()))
         && let Some(super_ref) = &class.super_class
+        && let Some(super_ty) = first_concrete_descendant_super(
+            db,
+            scope,
+            hir::file_item_tree(db, file),
+            item,
+            &resolver,
+            super_ref,
+        )
     {
-        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+        let super_owner = super_ty
+            .as_reference(db)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| class.name.clone());
+        // §8.8.7: the implicit super() of the (possibly distant) concrete
+        // descendant resolves the direct superclass's no-argument
+        // constructor.
         let no_accessible_no_arg = has_no_accessible_no_arg_ctor(db, scope, &super_ty, &ctx);
         if no_accessible_no_arg == Some(true) {
-            let super_owner = super_ty
-                .as_reference(db)
-                .map(|(name, _)| name.clone())
-                .unwrap_or_else(|| class.name.clone());
             out.push(DeclDiagnostic::NoDefaultConstructor {
                 class: class.name.clone(),
-                super_owner,
+                super_owner: super_owner.clone(),
                 range: item_name_range(db, file, tree, item),
             });
+        }
+        // §8.8.9/[§11.2]: every checked exception the reachable no-argument
+        // constructor declares is unreported in the implicit default
+        // constructor of the concrete descendant. The constructor's own
+        // throws are already instantiated with its class's type arguments
+        // ([§8.4.6]), so a subtype check against each declared exception
+        // settles coverage.
+        let super_class = super_ty
+            .as_reference(db)
+            .map(|(name, _)| name.as_str().to_owned());
+        let accessible_no_arg_thrown: Vec<Ty> = match &super_class {
+            Some(fqn) => {
+                method::member_set(db, scope, &super_ty, &fqn_ctor_name(db, scope, fqn), &ctx)
+                    .iter()
+                    .find(|ctor| ctor.params.is_empty())
+                    .map(|ctor| ctor.throws.clone())
+                    .unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
+        for thrown in accessible_no_arg_thrown {
+            if is_checked(db, scope, &thrown) {
+                out.push(DeclDiagnostic::DefaultCtorUnreportedException {
+                    class: class.name.clone(),
+                    super_owner: super_owner.clone(),
+                    thrown,
+                    range: item_name_range(db, file, tree, item),
+                });
+            }
         }
     }
 
@@ -1382,7 +1752,18 @@ fn check_class(
                 || inherited
                     .iter()
                     .any(|s| !s.is_static && same_signature(db, method, s));
-            if method.is_static || !overrides {
+            if method.is_static {
+                // §9.6.4.4: a static method never overrides — it hides
+                // ([§8.4.8.2]) — so `@Override` on one is always an error.
+                // javac's message for the static case is its own:
+                // `static methods cannot be annotated with @Override`
+                // (the generic does-not-override message is reserved for an
+                // instance method that matches no supertype method).
+                out.push(DeclDiagnostic::MethodDoesNotOverrideStatic {
+                    method: Name::new(&method.name),
+                    range: item_name_range(db, file, tree, child),
+                });
+            } else if !overrides {
                 out.push(DeclDiagnostic::MethodDoesNotOverride {
                     method: Name::new(&method.name),
                     range: item_name_range(db, file, tree, child),
@@ -1391,11 +1772,19 @@ fn check_class(
         }
     }
 
-    // §8.4.2: two methods *declared by the class itself* whose erasures
+    // §8.4.2/[§8.4.1]: two methods — or two constructors ([§8.8], whose
+    // signature is the parameter list alone) — *declared by the class
+    // itself* whose erasures
     // ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
     // are equal but whose parameterized signatures differ — the JVM cannot
-    // load them both, and neither overrides the other. Each later method is
-    // reported against each earlier clashing one.
+    // load them both, and neither overrides the other. Each later
+    // declaration is reported against each earlier clashing one. The
+    // *identical* pair (equal parameterized signatures, including two
+    // `m(String[])`s) is the §8.4.2 duplicate-declaration error (`method m
+    // is already defined` / `constructor C is already defined`), and the
+    // same erasure with one varargs and one fixed-array parameter — the same
+    // erasure ([§4.6]) under the array lowering of `T...` ([§8.4.1]) — is
+    // javac's `cannot declare both m(String[]) and m(String...)`.
     for (i, a) in declared.iter().enumerate() {
         for b in &declared[i + 1..] {
             if a.name != b.name || a.params.len() != b.params.len() {
@@ -1406,10 +1795,53 @@ fn check_class(
                 .iter()
                 .zip(&b.params)
                 .all(|(x, y)| x.erasure(db) == y.erasure(db));
+            if !same_erasure {
+                continue;
+            }
             // Identical signatures are a *duplicate declaration*, not a name
-            // clash — they collide even without generics.
-            let identical = a.params == b.params;
-            if same_erasure && !identical {
+            // clash — they collide even without generics ([§8.4.2]). Two
+            // methods whose type parameters differ only by name
+            // (`<T> void m(List<T>)`, `<U> void m(List<U>)`) collapse to
+            // identical parameter types after erasure ([§4.6]) — javac
+            // reports them as `method <T>m(List<T>) is already defined`,
+            // counting them duplicates, not name clashes. The *source-level*
+            // raw parameters (each kept as its own type variable) differ by
+            // variable identity, so the comparison runs on the erased
+            // parameters. `varargs` is not part of the signature: the pair
+            // differs only in the last parameter's varargs-ness.
+            let identical = same_declared_params(db, a, b);
+            if identical && a.varargs == b.varargs {
+                // The duplicate is *each* later method against each earlier
+                // identical one (javac reports `m() is already defined` at
+                // every redeclaration beyond the first). Both are the
+                // class's own declarations; anchor the report at `b` — the
+                // later of the pair — which is the redeclaration.
+                let range = b.decl_item.and_then(|decl| {
+                    item_name_range(db, file, tree, decl).or_else(|| {
+                        // The synthesized forms (an implicit record canonical
+                        // next to the compact constructor) have no item; fall
+                        // back to the class name.
+                        item_name_range(db, file, tree, item)
+                    })
+                });
+                out.push(DeclDiagnostic::DuplicateMethod {
+                    method: Name::new(&a.name),
+                    is_constructor: a.name == fqn.rsplit('.').next().unwrap_or(&fqn),
+                    range,
+                });
+            } else if identical {
+                // One varargs, one fixed array of the same component type —
+                // the erasure twin ([§8.4.1], [§4.6]). Both last parameters
+                // are the same array type after erasure (the varargs
+                // parameter was lowered to the array of its element); the
+                // fixed-array one is that array already. Report the shared
+                // array type, spelled with the fixed brackets in the message.
+                let array = &a.params[a.params.len() - 1];
+                out.push(DeclDiagnostic::CannotDeclareBothVarargsAndArray {
+                    method: Name::new(&a.name),
+                    array: array.clone(),
+                });
+            } else {
                 out.push(DeclDiagnostic::NameClashSameErasure {
                     method: Name::new(&a.name),
                     params: a.params.clone(),
@@ -1483,6 +1915,29 @@ fn check_class(
         let is_interface = matches!(tree.data(item), ItemData::Interface(_));
         for &child in tree.data(item).body() {
             if let ItemData::Method(method) = tree.data(child)
+                && let Some(_body) = method.body()
+                && !method.is_constructor()
+                && (method.modifiers.is_abstract() || method.modifiers.is_native())
+            {
+                // §8.4.5/[§9.4: an `abstract` or `native` method cannot
+                // carry a body — an abstract method leaves the behavior to
+                // its subtypes, a native method to a platform
+                // implementation, so neither may define a Java body. javac:
+                // `abstract methods cannot have a body` (in an interface:
+                // `interface abstract methods cannot have a body`) / `native
+                // methods cannot have a body`. Abstract methods with bodies
+                // are already `IllegalModifierCombination`-flagged only when
+                // another modifier contradicts (`abstract` + `final`/
+                // `static`/`private`/`default`/`native`/`synchronized`/
+                // `strictfp`, [§8.4.3]); a *bare* `abstract void m() {}`
+                // combines nothing and must be caught here.
+                out.push(DeclDiagnostic::AbstractOrNativeMethodWithBody {
+                    method: method.name.clone(),
+                    abstract_: method.modifiers.is_abstract(),
+                    range: item_name_range(db, file, tree, child),
+                });
+            }
+            if let ItemData::Method(method) = tree.data(child)
                 && method.body().is_none()
                 && !method.is_constructor()
                 && !method.modifiers.is_abstract()
@@ -1530,6 +1985,79 @@ fn check_class(
         }
     }
     out
+}
+
+/// §8.4.2: whether two methods declared by the same class have *identical*
+/// parameter types — the duplicate-declaration test. Parameterized types
+/// compare exactly (`m(List<String>)` vs `m(List<Integer>)` are *not*
+/// identical; they share an erasure and are the [`NameClashSameErasure`]
+/// error instead). Each method's own type parameters are anonymous — a
+/// generic method's parameterized signature is its *declaration form*
+/// (`<T> void m(List<T>)`), which does not change when the variable is
+/// renamed to `<U>` — so two methods whose type variables appear at the same
+/// positions, erasing to equal shapes, are duplicates (javac reports
+/// `method <T>m(List<T>) is already defined`). A type variable that reaches
+/// the parameter types only through *substitution* (never renamed in the
+/// declaration) is structural too. The comparison therefore strips the
+/// interned variable identities by erasure ([§4.6]) and requires the erasures
+/// to be equal *and* the parameter-type shapes (modulo each method's own
+/// variables) to coincide — the variables are compared by the shape of their
+/// bounds, not their names ([§6.4.1] scoping makes the names irrelevant).
+fn same_declared_params(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> bool {
+    if a.params.len() != b.params.len() {
+        return false;
+    }
+    // §8.4.2: the duplicate-declaration test is *identical* declared
+    // parameter types. Parameterized types compare exactly (`m(List<String>)`
+    // vs `m(List<Integer>)` are not identical — they share an erasure and are
+    // the [`NameClashSameErasure`] error instead). Each method's *own* type
+    // parameters are anonymous: a generic declaration's signature is its
+    // declaration form, so renaming the variable (`<T>` to `<U>`) does not
+    // change it — javac reports `method <T>m(T) is already defined` for the
+    // pair, and a variable whose declared bound is exactly its erasure
+    // (`<T extends Object>` ≡ `<T>`) is likewise the same signature. javac
+    // erases each method's own variables to their *bounds* and compares the
+    // resulting structural parameter lists:
+    //
+    // - `<T> m(T)` vs `<U> m(U)` → `m(Object)` both — duplicate;
+    // - `<T extends Number> m(T)` vs `<U extends Number> m(U)` →
+    //   `m(Number)` both — duplicate;
+    // - `<T extends Number> m(T)` vs `<T> m(Object)` → `m(Number)` vs
+    //   `m(Object)` — *different*, a name clash only if some erasure equals;
+    // - `<T extends Number> m(T)` vs `<T> m(T)` → `m(Number)` vs `m(Object)`
+    //   — different (GTS5/GT10 probes: no error — the erasures differ too);
+    // - `m(List<String>)` vs `m(List<Integer>)` → erasures equal but the
+    //   declared forms differ — clash.
+    //
+    // The crate keeps each method's own variables un-erased in `params` (the
+    // invocation-type inference of [§18.5.2] needs them), so the comparison
+    // erases every occurrence of a *method* type variable to its effective
+    // bound ([§4.4]) — which is what javac's signature erasure does — and
+    // leaves class arguments (`String` vs `Integer`) intact, then requires
+    // the two structural forms to coincide.
+    let mut substitute_bounds = |params: &[Ty], method: &MethodData| -> Vec<Ty> {
+        // Build the variable -> bound map (its declared first bound, or
+        // Object for an unbounded variable, [§4.4]).
+        let binding: FxHashMap<Name, Ty> = method
+            .type_params
+            .iter()
+            .map(|tp| {
+                let bound = tp
+                    .bounds
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
+                (tp.name.clone(), bound)
+            })
+            .collect();
+        params
+            .iter()
+            .map(|param| param.substitute(db, &binding))
+            .collect()
+    };
+    let a_erased = substitute_bounds(&a.params, a);
+    let b_erased = substitute_bounds(&b.params, b);
+    a_erased == b_erased
 }
 
 /// Whether two methods have the same overriding signature
@@ -1601,6 +2129,23 @@ fn weaker_access(a: Access, b: Access) -> bool {
     access_rank(a) < access_rank(b)
 }
 
+/// §11.1.1: whether `ty` is a *checked* exception type — a subtype of
+/// `Throwable` that is not a subtype of `RuntimeException` or `Error`. The
+/// §8.4.8.3 throws rule only constrains checked additions: an override may
+/// always declare `RuntimeException`/`Error` (and their subtypes) that the
+/// overridden method does not.
+fn is_checked(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) -> bool {
+    let throwable = Ty::reference(db, "java.lang.Throwable", Vec::new());
+    if !subtyping::is_assignable(db, scope, ty, &throwable) {
+        return false;
+    }
+    let unchecked = ["java.lang.RuntimeException", "java.lang.Error"];
+    !unchecked.iter().any(|name| {
+        let supertype = Ty::reference(db, *name, Vec::new());
+        subtyping::is_assignable(db, scope, ty, &supertype)
+    })
+}
+
 /// The numeric rank of an access level, `public` strongest
 /// ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
 fn access_rank(access: Access) -> u8 {
@@ -1663,6 +2208,84 @@ fn in_own_supertype_cycle(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn
         }
     }
     false
+}
+
+/// §8.8.7/[§8.1.3]: the implicit default constructor of `item` (a class
+/// declaring no constructor) is inherited by an abstract chain until the
+/// first *concrete* descendant, whose own implicit default constructor's
+/// `super()` must resolve. Returns the direct superclass of that nearest
+/// concrete descendant — the type whose accessible no-argument constructor
+/// the implicit `super()` invokes. `item` itself may be abstract (or its
+/// direct superclass abstract); the walk skips abstract classes, each
+/// declaring no constructor, until a concrete one appears — javac reports
+/// `implicit super constructor {S}() is undefined` and the
+/// unreported-exception liability at that concrete descendant, not at the
+/// abstract intermediates ([§8.1.1.1]: an abstract class need not be
+/// instantiable). A class whose own declared constructor ends the chain, or
+/// an unresolvable supertype reference, returns `None`.
+fn first_concrete_descendant_super(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    tree: Arc<ItemTree>,
+    item: hir_def::java::item_tree::ItemId,
+    resolver: &crate::java::resolve::Resolver,
+    super_ref: &ItemTypeRef,
+) -> Option<Ty> {
+    let mut current_item = item;
+    let mut current_tree: Arc<ItemTree> = tree;
+    let mut super_ty = crate::java::resolve::resolve_type_ref(db, scope, resolver, super_ref);
+    loop {
+        let has_ctor = matches!(current_tree.data(current_item), ItemData::Class(d) if
+        d.body.iter().any(|child| {
+            matches!(current_tree.data(*child), ItemData::Method(m) if m.is_constructor())
+        }));
+        if has_ctor {
+            return None;
+        }
+        let abstract_ = class_like_modifiers(current_tree.data(current_item))
+            .is_some_and(|modifiers| modifiers.is_abstract());
+        // A concrete class's implicit default constructor invokes the
+        // no-argument constructor of this direct superclass.
+        if !abstract_ {
+            return Some(super_ty);
+        }
+        // An abstract class's own implicit default constructor would invoke
+        // its superclass's — walk up, reporting nothing until a concrete
+        // descendant is reached ([§8.8.9]).
+        let Some((fqn, _)) = super_ty.as_reference(db) else {
+            return None;
+        };
+        let resolved = hir::fqn_resolve(db, scope, fqn.as_str())?;
+        let hir::Resolved::Source(next) = resolved else {
+            return None;
+        };
+        let next_tree: Arc<ItemTree> = hir::file_item_tree(db, next.file);
+        let Some(ItemData::Class(next_class)) =
+            crate::java::resolve::item_data(&next_tree, next.item)
+        else {
+            return None;
+        };
+        let super_ref = next_class.super_class.as_ref()?;
+        let next_resolver = crate::java::resolve::Resolver::new(
+            &next_tree,
+            crate::java::db::type_params_map_query(db, db.file_text(next.file)),
+            next.item,
+        );
+        super_ty = crate::java::resolve::resolve_type_ref(db, scope, &next_resolver, super_ref);
+        drop(next_resolver);
+        current_item = next.item;
+        current_tree = next_tree;
+    }
+}
+
+/// §8.8.9/[§8.1.3]: the member-set name of a class's constructor: the class's
+/// simple name for a source class, `<init>` for a library classfile
+/// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)).
+fn fqn_ctor_name(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &str) -> String {
+    match hir::fqn_resolve(db, scope, fqn) {
+        Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
+        _ => fqn.rsplit('.').next().unwrap_or(fqn).to_owned(),
+    }
 }
 
 /// §8.8.7: whether the class `super_ty` demonstrably provides *no* accessible

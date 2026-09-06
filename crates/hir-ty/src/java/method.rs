@@ -256,9 +256,19 @@ pub struct MethodData {
     /// members and record accessors of a source class). `None` for library
     /// members and the synthetic `Object.clone` of array types.
     pub owner_file: Option<FileId>,
+    /// The item id of the source declaration, when there is one — the anchor
+    /// the declaration-level checks ([§8.4.2] duplicate methods) report at.
+    pub decl_item: Option<ItemId>,
     /// The parameter types, instantiated with the declaring type's type
     /// arguments; the method's own type parameters are not yet instantiated.
     pub params: Vec<Ty>,
+    /// The formal parameter *names* of a source method ([§8.4.1]), in order.
+    /// `None` for library members (classfiles do not record them without a
+    /// `MethodParameters` attribute) and synthesized implicit members; the
+    /// record canonical-constructor parameter-name rule
+    /// ([§8.10.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10.4))
+    /// is a source-only check.
+    pub param_names: Option<Vec<String>>,
     /// The return type, in the same partially instantiated form.
     pub ret: Ty,
     /// The thrown exceptions ([JLS §8.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.6)),
@@ -681,7 +691,9 @@ fn member_set_impl(
             name: "clone".to_owned(),
             owner: "java.lang.Object".to_owned(),
             owner_file: None,
+            decl_item: None,
             params: Vec::new(),
+            param_names: None,
             // The return type is the array type itself ([§10.7]).
             ret: receiver,
             throws: Vec::new(),
@@ -1100,11 +1112,13 @@ fn library_class_methods(
             name: interner.resolve(&method.name).to_owned(),
             owner: fqn.clone(),
             owner_file: None,
+            decl_item: None,
             params: method
                 .params
                 .iter()
                 .map(|param| erase(instantiate(&param.param_type)))
                 .collect(),
+            param_names: None,
             ret: erase(instantiate(&method.return_type)),
             throws: method
                 .throws_list
@@ -1288,7 +1302,16 @@ fn source_class_methods(
             name: method.name.as_str().to_owned(),
             owner: fqn.clone(),
             owner_file: Some(source.file),
+            decl_item: Some(item),
             params,
+            param_names: Some(
+                method
+                    .sig
+                    .params
+                    .iter()
+                    .map(|param| param.name.as_str().to_owned())
+                    .collect(),
+            ),
             ret,
             throws,
             varargs,
@@ -1347,7 +1370,9 @@ fn source_class_methods(
             name: fqn.rsplit('.').next().unwrap_or(&fqn).to_owned(),
             owner: fqn.clone(),
             owner_file: Some(source.file),
+            decl_item: None,
             params,
+            param_names: None,
             ret: Ty::reference(db, Name::new(&fqn), Vec::new()),
             throws: Vec::new(),
             varargs: false,
@@ -1386,7 +1411,9 @@ fn source_class_methods(
                 name: "values".to_owned(),
                 owner: fqn.clone(),
                 owner_file: Some(source.file),
+                decl_item: None,
                 params: Vec::new(),
+                param_names: None,
                 ret: Ty::array(db, self_ty),
                 throws: Vec::new(),
                 varargs: false,
@@ -1405,7 +1432,9 @@ fn source_class_methods(
                 name: "valueOf".to_owned(),
                 owner: fqn.clone(),
                 owner_file: Some(source.file),
+                decl_item: None,
                 params: vec![Ty::reference(db, "java.lang.String", Vec::new())],
+                param_names: None,
                 ret: self_ty,
                 throws: Vec::new(),
                 varargs: false,
@@ -1450,7 +1479,9 @@ fn source_class_methods(
                 name: component_name.to_owned(),
                 owner: fqn.clone(),
                 owner_file: Some(source.file),
+                decl_item: None,
                 params: Vec::new(),
+                param_names: None,
                 ret: ty,
                 throws: Vec::new(),
                 varargs: false,
@@ -1513,7 +1544,9 @@ fn source_class_methods(
                 name: member_name.to_owned(),
                 owner: fqn.clone(),
                 owner_file: Some(source.file),
+                decl_item: None,
                 params,
+                param_names: None,
                 ret,
                 throws: Vec::new(),
                 varargs: false,
@@ -1571,7 +1604,9 @@ fn source_class_methods(
                         name: simple.to_owned(),
                         owner: fqn.clone(),
                         owner_file: Some(source.file),
+                        decl_item: None,
                         params,
+                        param_names: None,
                         // Constructors carry no return type ([§8.8]).
                         ret: Ty::error(db),
                         throws: Vec::new(),
@@ -2107,10 +2142,12 @@ fn instantiate(
         name: method.name.clone(),
         owner: method.owner.clone(),
         owner_file: method.owner_file,
+        decl_item: method.decl_item,
         params: formals
             .iter()
             .map(|p| p.substitute_infer(db, &resolved))
             .collect(),
+        param_names: method.param_names.clone(),
         ret: method
             .ret
             .substitute(db, &subst)

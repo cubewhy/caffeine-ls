@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Dup.java:
+package com.example;
+
+class P8 {
+    void m() {}
+    void m() {}
+    void m(int x) {}
+    void m(int y) {}
+    void v(String... a) {}
+    void v(String[] b) {}
+}
+
+class G1 {
+    <T> void g(T t) {}
+    <U> void g(U u) {}
+}
+
+class Ctors {
+    Ctors(int x) {}
+    Ctors(int y) {}
+}
+
+class Green {
+    void m(int x) {}
+    void m(long x) {}
+    void v(String... a) {}
+    void w(String[] b) {}
+    Green() {}
+    Green(int x) {}
+}
+
+method m: duplicate-method: @4:9Method 'm()' is already defined
+method m: duplicate-method: @6:9Method 'm()' is already defined
+method v: cannot-declare-both-varargs-and-array: Cannot declare both 'v(String[])' and 'v(String...)'
+method g: duplicate-method: @13:13Method 'g()' is already defined
+method Ctors: duplicate-method: @18:4Constructor 'Ctors()' is already defined

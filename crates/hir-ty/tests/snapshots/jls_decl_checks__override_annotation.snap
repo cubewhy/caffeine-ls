@@ -22,4 +22,4 @@ class Derived extends Base {
 }
 
 method missing: method-does-not-override: @12:9Method 'missing()' annotated @Override does not override or implement a method from a supertype
-method hide: method-does-not-override: @15:16Method 'hide()' annotated @Override does not override or implement a method from a supertype
+method hide: method-does-not-override-static: Static method 'hide()' cannot be annotated with @Override

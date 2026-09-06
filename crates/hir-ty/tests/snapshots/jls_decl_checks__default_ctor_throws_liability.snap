@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {}
+
+class F7 extends F5 {
+    F7() throws Exception { super(); }
+}
+
+class F8 extends F5 {
+    F8() { try { super(); } catch (IOException e) {} }
+}
+
+class RE {
+    RE() throws RuntimeException {}
+}
+
+class RE2 extends RE {}
+
+abstract class ABE {
+    ABE() throws IOException {}
+}
+
+abstract class ABE3 extends ABE {}
+
+class ABE2 extends ABE {}
+
+class NE {}
+
+class NE2 extends NE {}
+
+@8:6: default-ctor-unreported-exception: Unreported exception 'IOException' in the default constructor of 'F5'
+@30:6: default-ctor-unreported-exception: Unreported exception 'IOException' in the default constructor of 'ABE'

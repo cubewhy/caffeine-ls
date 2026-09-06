@@ -1,0 +1,36 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Objs.java:
+package com.example;
+
+interface P9 {
+    default String toString() { return ""; }
+}
+
+interface P10 {
+    static boolean equals(Object o) { return true; }
+}
+
+interface P11 {
+    default int hashCode() { return 1; }
+}
+
+interface P12 {
+    static String toString() { return ""; }
+}
+
+interface O1 {
+    String toString();
+}
+
+interface O2 {
+    boolean equals(Object o);
+    int hashCode();
+}
+
+method toString: cannot-override-object-method: Default method 'toString()' overrides a member of java.lang.Object
+method equals: static-instance-clash: Cannot declare static method 'equals()': it clashes with the instance method 'equals()' inherited from 'Object'
+method hashCode: cannot-override-object-method: Default method 'hashCode()' overrides a member of java.lang.Object
+method toString: static-instance-clash: Cannot declare static method 'toString()': it clashes with the instance method 'toString()' inherited from 'Object'

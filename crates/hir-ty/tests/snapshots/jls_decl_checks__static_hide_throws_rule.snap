@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Statics.java:
+package com.example;
+
+import java.io.IOException;
+
+class SH {
+    static void m() throws IOException {}
+}
+
+class SS extends SH {
+    static void m() throws Exception {}
+}
+
+class SS2 extends SH {
+    static void m() {}
+}
+
+method m: incompatible-throws: Overridden method 'm()' in 'SH' does not throw 'Exception'

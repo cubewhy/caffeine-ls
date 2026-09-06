@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Hide.java:
+package com.example;
+
+class H {
+    static void m() {}
+}
+
+class H2 extends H {
+    @Override static void m() {}
+}
+
+class H3 {
+    @Override static void n() {}
+}
+
+method m: method-does-not-override-static: Static method 'm()' cannot be annotated with @Override
+method n: method-does-not-override-static: Static method 'n()' cannot be annotated with @Override

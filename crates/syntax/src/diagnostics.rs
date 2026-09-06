@@ -121,6 +121,10 @@ pub enum JavaDiagnosticCode {
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method.
     MethodDoesNotOverride,
+    /// §9.6.4.4/[§8.4.8.2]: an `@Override` annotation on a `static` method —
+    /// static methods hide, they never override, so the annotation is always
+    /// an error. javac: `static methods cannot be annotated with @Override`.
+    MethodDoesNotOverrideStatic,
     /// §14.22: a statement is unreachable — the preceding one cannot
     /// complete normally.
     UnreachableStatement,
@@ -200,6 +204,37 @@ pub enum JavaDiagnosticCode {
     /// package-private > `private`. javac: `{m} in {D} cannot override {m} in
     /// {S}; attempting to assign weaker access privileges`.
     WeakerAccessPrivileges,
+    /// §8.4.8.1/[§8.4.8.2]: a same-signature redeclaration whose staticness
+    /// differs from the inherited method's — a static method where an
+    /// instance override would be, or an instance method where a static hide
+    /// would be. javac: `overriding method is static` /
+    /// `overridden method is static`.
+    StaticInstanceClash,
+    /// §8.4.8.3: an override or implementation declares a checked exception
+    /// in its `throws` clause that the overridden method does not throw (and
+    /// that is not a subtype of one it does). javac: `overridden method does
+    /// not throw {E}`.
+    IncompatibleThrows,
+    /// §9.4.1.2/[§8.4.8.2]: an interface `default` or `static` method matches
+    /// a member of `java.lang.Object` (which the interface cannot override).
+    /// javac: `default method {m} in {I} overrides a member of
+    /// java.lang.Object` / `overriding method is static`.
+    CannotOverrideObjectMethod,
+    /// §8.4.2: a class declares two methods with identical signatures — javac:
+    /// `method {m} is already defined in class {C}`.
+    DuplicateMethod,
+    /// §8.4.1/[§4.6]: `m(String[])` and `m(String...)` have the same erasure
+    /// and cannot both be declared — javac: `cannot declare both {m}(String[])
+    /// and {m}(String...) in {C}`.
+    CannotDeclareBothVarargsAndArray,
+    /// §8.4.5/[§9.4]: an `abstract` or `native` method has a body — javac:
+    /// `abstract methods cannot have a body` / `native methods cannot have a
+    /// body`.
+    AbstractOrNativeMethodWithBody,
+    /// §8.8.9/[§11.2]: the implicit default constructor of a subclass of a
+    /// ctor-throws superclass reports an unreported checked exception — javac:
+    /// `unreported exception {E} in default constructor`.
+    DefaultCtorUnreportedException,
     /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
     /// abstract method and does not implement it with a concrete method of the
     /// same signature. javac: `{C} is not abstract and does not override
@@ -417,6 +452,7 @@ impl JavaDiagnosticCode {
             RawTypeUse => Some("compiler.warn.raw.class.use"),
             UncheckedConversion => Some("compiler.warn.unchecked.assign"),
             MethodDoesNotOverride => Some("compiler.err.method.does.not.override.superclass"),
+            MethodDoesNotOverrideStatic => Some("compiler.err.override.static"),
             UnreachableStatement => Some("compiler.err.unreachable.stmt"),
             MissingReturnValue => Some("compiler.err.missing.ret.stmt"),
             CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
@@ -439,6 +475,15 @@ impl JavaDiagnosticCode {
             CannotInheritFromFinalClass => Some("compiler.err.cant.inherit.from.final"),
             CannotOverrideFinalMethod => Some("compiler.err.override.meth"),
             WeakerAccessPrivileges => Some("compiler.err.override.weaker.access"),
+            StaticInstanceClash => Some("compiler.err.override.static"),
+            IncompatibleThrows => Some("compiler.err.override.meth.doesnt.throw"),
+            CannotOverrideObjectMethod => Some("compiler.err.override.meth"),
+            DuplicateMethod => Some("compiler.err.already.defined"),
+            CannotDeclareBothVarargsAndArray => Some("compiler.err.already.defined"),
+            AbstractOrNativeMethodWithBody => Some("compiler.err.abstract.meth.cant.have.body"),
+            DefaultCtorUnreportedException => {
+                Some("compiler.err.unreported.exception.default.ctor")
+            }
             UnimplementedAbstractMethod => Some("compiler.err.does.not.override.abstract"),
             CyclicInheritance => Some("compiler.err.cyclic.inheritance"),
             IllegalAccess => Some("compiler.err.report.access"),
@@ -535,6 +580,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::RawTypeUse => "raw-type-use",
             JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
             JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
+            JavaDiagnosticCode::MethodDoesNotOverrideStatic => "method-does-not-override-static",
             JavaDiagnosticCode::UnreachableStatement => "unreachable-statement",
             JavaDiagnosticCode::MissingReturnValue => "missing-return-value",
             JavaDiagnosticCode::CatchNeverThrown => "catch-never-thrown",
@@ -565,6 +611,19 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::CannotInheritFromFinalClass => "cannot-inherit-from-final-class",
             JavaDiagnosticCode::CannotOverrideFinalMethod => "cannot-override-final-method",
             JavaDiagnosticCode::WeakerAccessPrivileges => "weaker-access-privileges",
+            JavaDiagnosticCode::StaticInstanceClash => "static-instance-clash",
+            JavaDiagnosticCode::IncompatibleThrows => "incompatible-throws",
+            JavaDiagnosticCode::CannotOverrideObjectMethod => "cannot-override-object-method",
+            JavaDiagnosticCode::DuplicateMethod => "duplicate-method",
+            JavaDiagnosticCode::CannotDeclareBothVarargsAndArray => {
+                "cannot-declare-both-varargs-and-array"
+            }
+            JavaDiagnosticCode::AbstractOrNativeMethodWithBody => {
+                "abstract-or-native-method-with-body"
+            }
+            JavaDiagnosticCode::DefaultCtorUnreportedException => {
+                "default-ctor-unreported-exception"
+            }
             JavaDiagnosticCode::UnimplementedAbstractMethod => "unimplemented-abstract-method",
             JavaDiagnosticCode::CyclicInheritance => "cyclic-inheritance",
             JavaDiagnosticCode::IllegalAccess => "illegal-access",
