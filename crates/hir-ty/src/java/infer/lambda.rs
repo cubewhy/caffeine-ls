@@ -681,7 +681,7 @@ impl InferCtx<'_> {
         }
         let pairs: Vec<(MethodData, MethodData)> =
             applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, None)
+        crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
             .or_else(|| applicable.into_iter().next())
     }
 

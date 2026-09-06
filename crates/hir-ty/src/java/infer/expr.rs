@@ -13,12 +13,12 @@ use syntax::stub::{PrimitiveType, TypeRef};
 
 use crate::java::{
     diagnostics::{DiagLocation, NonStaticThisKind, TypeError},
-    method::{FieldLookup, InvocationMode, pick_field, pick_field_lookup},
+    method::{FieldData, InvocationMode, pick_field},
     resolve::resolve_type_ref,
     ty::{Ty, TyKind, boxed_type},
 };
 
-use super::{FinalFieldWrite, Flow, InferCtx, field::ChainField, poly::*};
+use super::{FinalFieldWrite, Flow, InferCtx, poly::*};
 
 impl InferCtx<'_> {
     #[stacksafe]
@@ -740,76 +740,68 @@ impl InferCtx<'_> {
         if let Some(ty) = self.static_import_field(name.as_str()) {
             return ty;
         }
-        match self.pick_field_of_chain(name.as_str(), expr) {
-            ChainField::Found(field) => {
-                // §8.3.3: a simple-name read of a same-class field declared
-                // textually later, of the same static/instance kind, is an
-                // illegal forward reference. A qualified read (`this.b`) takes
-                // the field-access path and stays legal.
-                if self.forward_names.iter().any(|forward| forward == &name) {
-                    self.report(TypeError::IllegalForwardReference {
-                        expr,
-                        name: name.clone(),
-                    });
-                    return self.error();
-                }
-                // §15.11/[§8.1.3]: an *instance* field of the implicit receiver
-                // is reachable only through `this`, which a static context has
-                // none of — a simple-name read of one is a compile-time error.
-                // A static field (or a field read in an instance context) stays
-                // legal.
-                if self.static_context && !field.is_static {
-                    self.report(TypeError::NonStaticFieldFromStaticContext {
-                        expr,
-                        name: name.clone(),
-                    });
-                }
-                // §8.8.7.1: an instance field of the object under construction is
-                // not usable before the supertype constructor has run.
-                if self.before_super && !field.is_static {
-                    self.report(TypeError::CannotReferenceBeforeSuper {
-                        expr,
-                        name: name.clone(),
-                    });
-                }
-                // §8.3.1.2/[§16]: writing a `final` field through its simple name
-                // (implicit `this`) is only legal as the blank-final
-                // initialization; a write to a blank final that an earlier
-                // statement (or path) has already assigned is the
-                // already-assigned error.
-                if self.mutating && field.is_final {
-                    match self.final_field_write_verdict(&field, true) {
-                        FinalFieldWrite::Legal => {}
-                        FinalFieldWrite::AlreadyAssigned => {
-                            self.report(TypeError::VariableAlreadyAssigned {
-                                expr,
-                                name: name.clone(),
-                            });
-                        }
-                        FinalFieldWrite::CannotAssign => {
-                            self.report(TypeError::CannotAssignToFinalVariable {
-                                expr,
-                                name: name.clone(),
-                            });
-                        }
-                    }
-                }
-                field.ty
-            }
-            // An ambiguous simple-name field was reported by
-            // [`Self::pick_field_of_chain`]; do not fall through to
-            // cannot-resolve-symbol.
-            ChainField::Ambiguous => self.error(),
-            ChainField::Missing => {
-                // §6.5: a simple name that resolves to nothing is a
-                // compile-time error.
-                self.report(TypeError::CannotResolveName {
+        if let Some(field) = self.pick_field_of_chain(name.as_str()) {
+            // §8.3.3: a simple-name read of a same-class field declared
+            // textually later, of the same static/instance kind, is an
+            // illegal forward reference. A qualified read (`this.b`) takes
+            // the field-access path and stays legal.
+            if self.forward_names.iter().any(|forward| forward == &name) {
+                self.report(TypeError::IllegalForwardReference {
                     expr,
                     name: name.clone(),
                 });
-                self.error()
+                return self.error();
             }
+            // §15.11/[§8.1.3]: an *instance* field of the implicit receiver
+            // is reachable only through `this`, which a static context has
+            // none of — a simple-name read of one is a compile-time error. A
+            // static field (or a field read in an instance context) stays
+            // legal.
+            if self.static_context && !field.is_static {
+                self.report(TypeError::NonStaticFieldFromStaticContext {
+                    expr,
+                    name: name.clone(),
+                });
+            }
+            // §8.8.7.1: an instance field of the object under construction is
+            // not usable before the supertype constructor has run.
+            if self.before_super && !field.is_static {
+                self.report(TypeError::CannotReferenceBeforeSuper {
+                    expr,
+                    name: name.clone(),
+                });
+            }
+            // §8.3.1.2/[§16]: writing a `final` field through its simple name
+            // (implicit `this`) is only legal as the blank-final
+            // initialization; a write to a blank final that an earlier
+            // statement (or path) has already assigned is the
+            // already-assigned error.
+            if self.mutating && field.is_final {
+                match self.final_field_write_verdict(&field, true) {
+                    FinalFieldWrite::Legal => {}
+                    FinalFieldWrite::AlreadyAssigned => {
+                        self.report(TypeError::VariableAlreadyAssigned {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
+                    FinalFieldWrite::CannotAssign => {
+                        self.report(TypeError::CannotAssignToFinalVariable {
+                            expr,
+                            name: name.clone(),
+                        });
+                    }
+                }
+            }
+            return field.ty;
         }
+        // §6.5: a simple name that resolves to nothing is a compile-time
+        // error.
+        self.report(TypeError::CannotResolveName {
+            expr,
+            name: name.clone(),
+        });
+        self.error()
     }
 
     /// makes the simple name `FIELD` a static member access (§15.11.1).
@@ -837,22 +829,16 @@ impl InferCtx<'_> {
             if let Some(ty) = self.static_import_field(last) {
                 return ty;
             }
-            match self.pick_field_of_chain(last, expr) {
-                ChainField::Found(field) => {
-                    // §15.11/[§8.1.3]: a simple-name read of an instance field
-                    // of the implicit receiver from a static context.
-                    if self.static_context && !field.is_static {
-                        self.report(TypeError::NonStaticFieldFromStaticContext {
-                            expr,
-                            name: name.clone(),
-                        });
-                    }
-                    return field.ty;
+            if let Some(field) = self.pick_field_of_chain(last) {
+                // §15.11/[§8.1.3]: a simple-name read of an instance field of
+                // the implicit receiver from a static context.
+                if self.static_context && !field.is_static {
+                    self.report(TypeError::NonStaticFieldFromStaticContext {
+                        expr,
+                        name: name.clone(),
+                    });
                 }
-                // An ambiguous simple-name field was reported by
-                // [`Self::pick_field_of_chain`].
-                ChainField::Ambiguous => return self.error(),
-                ChainField::Missing => {}
+                return field.ty;
             }
             // §6.5: a simple name that resolves to nothing is a compile-time
             // error.
@@ -870,16 +856,8 @@ impl InferCtx<'_> {
             });
             return self.error();
         };
-        match pick_field_lookup(self.db, &self.scope, &prefix_ty, last, &self.access) {
-            FieldLookup::Found(field) => return field.ty,
-            FieldLookup::Ambiguous => {
-                self.report(TypeError::AmbiguousField {
-                    location: DiagLocation::Expr(expr),
-                    name: Name::new(last),
-                });
-                return self.error();
-            }
-            FieldLookup::Missing => {}
+        if let Some(field) = pick_field(self.db, &self.scope, &prefix_ty, last, &self.access) {
+            return field.ty;
         }
         // §15.11: a qualified name whose last component is no member of the
         // resolved prefix is a compile-time error.
@@ -987,24 +965,16 @@ impl InferCtx<'_> {
             let access = self.access.with_mode(InvocationMode::Super);
             // §15.11.1: a `super` field access selects an instance member of
             // the direct superclass; a static field via `super` is illegal.
-            let lookup = pick_field_lookup(self.db, &self.scope, &receiver, name.as_str(), &access);
-            return match lookup {
-                FieldLookup::Found(field) if field.is_static => {
+            return match pick_field(self.db, &self.scope, &receiver, name.as_str(), &access) {
+                Some(field) if field.is_static => {
                     self.report(TypeError::NoSuchField {
                         expr,
                         name: name.clone(),
                     });
                     self.error()
                 }
-                FieldLookup::Found(field) => field.ty,
-                FieldLookup::Ambiguous => {
-                    self.report(TypeError::AmbiguousField {
-                        location: DiagLocation::Expr(expr),
-                        name: name.clone(),
-                    });
-                    self.error()
-                }
-                FieldLookup::Missing => {
+                Some(field) => field.ty,
+                None => {
                     // §15.11: no field of the name on the superclass.
                     self.report(TypeError::NoSuchField {
                         expr,
@@ -1031,22 +1001,7 @@ impl InferCtx<'_> {
         if receiver.is_array(self.db) && name.as_str() == "length" {
             return self.primitive(PrimitiveType::Int);
         }
-        // §15.11.1: resolve the field with the *ambiguous* case visible — an
-        // ambiguity must report and stop, not fall through to no-such-field.
-        let lookup =
-            pick_field_lookup(self.db, &self.scope, &receiver, name.as_str(), &self.access);
-        let field = match lookup {
-            FieldLookup::Found(field) => Some(field),
-            FieldLookup::Ambiguous => {
-                self.report(TypeError::AmbiguousField {
-                    location: DiagLocation::Expr(expr),
-                    name: name.clone(),
-                });
-                return self.error();
-            }
-            FieldLookup::Missing => None,
-        };
-        match field {
+        match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => {
                 // §8.3.1.2/[§16]: writing a `final` field is legal only as the
                 // blank-final initialization through a bare `this` receiver in
@@ -1236,6 +1191,11 @@ impl InferCtx<'_> {
             }
             _ => false,
         }
+    }
+
+    pub(super) fn pick_field_of(&mut self, receiver: Option<Ty>, name: &str) -> Option<FieldData> {
+        let receiver = receiver?;
+        pick_field(self.db, &self.scope, &receiver, name, &self.access)
     }
 }
 

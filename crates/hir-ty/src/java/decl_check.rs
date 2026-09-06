@@ -1414,20 +1414,7 @@ fn check_class(
     let self_ty = Ty::reference(db, fqn, Vec::new());
     let all = method::all_methods_raw(db, scope, &self_ty, &ctx);
     let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == fqn).collect();
-    // §8.2/[§9.2]: only *inherited* members can be overridden or hidden by a
-    // subtype declaration — a `private` supertype member is not inherited,
-    // and a static interface member is inherited nowhere ([§9.2], [§8.2]).
-    // With the declaration walks now surfacing interface statics, the
-    // override/hide checks must exclude them or a same-signature class
-    // static would be misreported against an unrelated interface static.
-    let inherited: Vec<&MethodData> = all
-        .iter()
-        .filter(|m| {
-            m.owner != fqn
-                && !matches!(m.access, Access::Private)
-                && !(m.is_static && m.declaring_interface)
-        })
-        .collect();
+    let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != fqn).collect();
     for method in &declared {
         for super_method in &inherited {
             if same_signature(db, method, super_method) {
@@ -1824,12 +1811,6 @@ fn check_class(
             let is_record_accessor = record_components
                 .iter()
                 .any(|component| component.name.as_str() == method.name);
-            // §9.6.4.4: an `@Override` annotation is valid only when the
-            // declaration overrides an *instance* method declared in a
-            // supertype — a static declaration hides rather than overrides
-            // ([§8.4.8.2]). (`inherited` already excludes private supertype
-            // members and static interface methods, neither of which a
-            // subtype inherits, [§8.2]/[§9.2].)
             let overrides = is_record_accessor
                 || inherited
                     .iter()

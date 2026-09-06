@@ -16,6 +16,7 @@ class G4 {
 }
 
 method t3(): void
-  @8:19..8:24 'm3(1)': incompatible-types: Incompatible types. Found: 'Comparable<Integer>', required: 'String'
-    -> @8:19..8:24 'm3(1)': required: String
-    -> @8:19..8:24 'm3(1)': found: Comparable<Integer>
+  @8:22..8:23 '1': wrong-argument-count: Method 'm3()' cannot be applied to given types
+    -> @8:22..8:23 '1': required: T
+    -> @8:22..8:23 '1': found: int
+    -> @8:22..8:23 '1': reason: 'int' cannot be converted to 'T'

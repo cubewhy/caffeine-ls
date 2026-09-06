@@ -1418,8 +1418,7 @@ fn source_class_methods(
         });
     }
     // §8.8.9: a class with no constructor has an implicit *default*
-    // constructor — no parameters (besides, for an *inner* class, the
-    // enclosing instance, [§8.1.3]), same access as the class. Explicit
+    // constructor — no parameters, same access as the class. Explicit
     // `super(...)` delegation ([§8.8.7.1]) and instance creation expressions
     // resolve against it; without it, a subclass of a constructor-less source
     // base reports `cannot find symbol: method Base()`.
@@ -1437,20 +1436,6 @@ fn source_class_methods(
             ItemData::Enum(d) => Some(&d.modifiers),
             _ => None,
         };
-        let is_enum = matches!(class_data, ItemData::Enum(_));
-        // §8.8.9/[§8.1.3]: the implicit default constructor of an *inner*
-        // class (a non-static member class of another class-like) has a
-        // formal parameter of the immediately enclosing instance type — the
-        // instance creation `new Inner()` inside the outer's instance context
-        // passes the outer automatically. javac resolves `new Inner()` from
-        // a *static* context (no enclosing instance) against this
-        // one-parameter constructor and reports the arity mismatch, exactly
-        // like an explicit one-parameter constructor.
-        let enclosing = crate::java::resolve::source_inner_enclosing(db, source.file, source.item);
-        let mut params: Vec<Ty> = Vec::new();
-        if let Some(outer) = enclosing {
-            params.push(outer);
-        }
         let access = |public: bool| {
             if public {
                 Access::Public
@@ -1463,7 +1448,7 @@ fn source_class_methods(
             owner: fqn.clone(),
             owner_file: Some(source.file),
             decl_item: None,
-            params,
+            params: Vec::new(),
             param_names: None,
             ret: Ty::reference(db, Name::new(&fqn), Vec::new()),
             throws: Vec::new(),
@@ -1472,18 +1457,10 @@ fn source_class_methods(
             abstract_: false,
             is_final: false,
             // §8.8.9: the default constructor has the same access modifier
-            // as the class (package-private when the class has none). §8.9.2:
-            // an enum's implicit constructor — like any enum constructor
-            // declared without an access modifier — is *private*, so the
-            // default one carries no modifier and is private; only a class's
-            // implicit default mirrors the class's own access.
-            access: if is_enum {
-                Access::Private
-            } else {
-                modifiers
-                    .map(|m| access(m.is_public()))
-                    .unwrap_or(Access::Package)
-            },
+            // as the class (package-private when the class has none).
+            access: modifiers
+                .map(|m| access(m.is_public()))
+                .unwrap_or(Access::Package),
             declaring_package: declaring_package.clone(),
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface: false,
@@ -1905,6 +1882,10 @@ fn member_accessible(
     }
 }
 
+/// Whether some declared type parameter of the class `fqn` has a bound that
+/// references the class itself — the *SELF* channel of a fluent API
+/// (`SELF extends AbstractStringAssert<SELF>`), as opposed to a plain element
+/// parameter (`Enumeration<E>`).
 /// The indexes of the declared type parameters of the class `fqn` whose
 /// bounds reference the class itself — the *SELF* channel of a fluent API
 /// (`SELF extends AbstractStringAssert<SELF>`), as opposed to a plain element
@@ -1980,37 +1961,7 @@ pub enum PolyArg {
     /// A poly argument — the lambda or method reference expression. The second
     /// element is the lambda's parameter count; a method reference is not
     /// arity-checkable without resolving the referenced method, so it is `None`.
-    /// The third element records the *pertinence* form of the argument
-    /// ([JLS §15.12.2.2]): an implicitly typed lambda or an inexact method
-    /// reference is *not pertinent* — its body contributes nothing to the
-    /// applicability inference of [§18.5.1] — while an explicitly typed lambda
-    /// and an exact method reference are pertinent.
-    Poly(hir_expand::body::ExprId, Option<usize>, PolyKind),
-}
-
-/// The pertinence form of a poly argument ([§15.12.2.2], [§18.5.1],
-/// [§18.5.2.2]): whether the argument contributes ⟨e → F⟩ to the inference.
-/// An argument is *not* pertinent when it is an implicitly typed lambda
-/// ([§15.27.3]), an inexact method reference ([§15.13.1] — a bound
-/// `expr::m`, or a type-qualified name whose target is not statically known
-/// to the reference), or a generic method invocation without explicit type
-/// arguments whose type parameters the argument constrains. Only the
-/// pertinent arguments' types participate in the applicability inference; the
-/// non-pertinent ones contribute nothing but the expected arity. In the
-/// invocation-type inference of the *chosen* method ([§18.5.2.2]) every
-/// argument contributes, pertinent or not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PolyKind {
-    /// An implicitly typed lambda (`e -> e`, `() -> f()`).
-    ImplicitLambda,
-    /// An explicitly typed lambda (`(String s) -> s`).
-    ExplicitLambda,
-    /// An inexact method reference ([§15.13.1]): `expr::m` or a
-    /// type-qualified reference that is not statically exact.
-    InexactReference,
-    /// An exact method reference ([§15.13.1]): a type-qualified reference
-    /// whose target function type is statically known.
-    ExactReference,
+    Poly(hir_expand::body::ExprId, Option<usize>),
 }
 
 impl From<Ty> for PolyArg {
@@ -2027,18 +1978,9 @@ impl From<Ty> for PolyArg {
 /// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)):
 /// when present and compatible with the invocation type's return type, the
 /// constraint ⟨R → T⟩ joins the constraint set before resolution, so the
-/// inference variables are also bounded by the target type.
-///
-/// The target is incorporated **only** after the applicable method has been
-/// selected by the §15.12.2.2/3/4 phases and the §15.12.2.5 most-specific
-/// test — [`pick_method`] probes the candidates target-free and calls back
-/// with `target` set for the winner alone. A target that turns out to be
-/// incompatible with the chosen method's invocation type is an
-/// assignment-conversion problem of the caller, never a reason to reject the
-/// call during overload resolution or fall back to another overload (javac
-/// reports `incompatible types`, not `cannot apply`). `None` when `method` is
-/// not applicable in this phase. `varargs` selects the variable- arity
-/// invocation rules of [§15.12.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.4).
+/// inference variables are also bounded by the target type. `None` when
+/// `method` is not applicable in this phase. `varargs` selects the variable-
+/// arity invocation rules of [§15.12.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.4).
 fn instantiate(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -2104,7 +2046,7 @@ fn instantiate(
         None
     };
     for (i, arg) in args.iter().enumerate() {
-        if let PolyArg::Poly(_, Some(arity), _) = arg {
+        if let PolyArg::Poly(_, Some(arity)) = arg {
             // Beyond the fixed prefix every trailing actual is packed into
             // the varargs array and is checked against the element type; an
             // element whose SAM is not (yet) resolvable — an inference
@@ -2136,25 +2078,12 @@ fn instantiate(
     // bound. A poly argument (a lambda or method reference) is not boxed: its
     // type is the target functional interface, and it contributes no
     // constraint (§15.12.2.2/§15.12.2.3, §18.5.2.2).
-    //
-    // §15.12.2.2/§18.5.1: among the poly arguments only the *pertinent* ones
-    // contribute ⟨e → F⟩ to the applicability inference — an implicitly typed
-    // lambda and an inexact method reference constrain nothing but the
-    // expected arity. An explicitly typed lambda and an exact method reference
-    // *are* pertinent and would contribute ⟨S → F⟩ ([§18.5.2.2]); this
-    // near-dead path's [`PolyArg`] carries no body tree to extract the
-    // declared parameter types from, so their contribution is modeled in the
-    // live driver (`infer/overload.rs`), which re-infers every poly argument
-    // against the resolved formal after selection. No constraint is emitted
-    // here either way: the poly actual's type is the target functional
-    // interface, which the invocation-type inference leaves to the
-    // post-resolution re-inference ([§18.5.2.4]).
     let args: Vec<Option<Ty>> = match phase {
         InvocationPhase::Strict => args
             .iter()
             .map(|arg| match arg {
                 PolyArg::Concrete(ty) => Some(*ty),
-                PolyArg::Poly(_, _, _) => None,
+                PolyArg::Poly(_, _) => None,
             })
             .collect(),
         InvocationPhase::Loose => args
@@ -2164,7 +2093,7 @@ fn instantiate(
                     TyKind::Primitive(p) => Ty::reference(db, boxed_type(*p), Vec::new()),
                     _ => *ty,
                 }),
-                PolyArg::Poly(_, _, _) => None,
+                PolyArg::Poly(_, _) => None,
             })
             .collect(),
     };
@@ -2257,141 +2186,83 @@ fn instantiate(
     })
 }
 
-/// The form of an invocation's actual argument for the most-specific test
-/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
-/// a lambda or method reference argument (`LambdaOrRef`) may make a
-/// functional-interface pair `S`/`T` more specific by the §15.12.2.5 return
-/// rules even when the two are not subtypes; a concrete argument position
-/// (`Concrete`) is decided purely by subtyping.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArgForm {
-    /// The argument is a standalone (non-poly) expression.
-    Concrete,
-    /// The argument is a lambda or method reference ([§15.27.3], [§15.13.2]).
-    LambdaOrRef,
-}
-
 /// Whether `m1` is more specific than `m2`
-/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)).
-/// `args` carries the form of each actual argument of the invocation under
-/// resolution: when an argument is a lambda or method reference, the §15.12.2.5
-/// functional-interface rule may make the pair more specific at that position
-/// even when the formals are not subtypes; `args == None` (a resolution
-/// without a concrete invocation, e.g. [`crate::java::infer::lambda::pick_method_ref`])
-/// treats every position as `Concrete` and uses the maximum declared length
-/// for the variable-arity normalization.
-///
-/// The rules, in order:
-/// 1. a non-variable-arity method beats a variable-arity one;
-/// 2. a variable-arity method is more specific only when both are variable
-///    arity and each of `m1`'s *i*-th variable-arity types (the fixed prefix,
-///    then the element type beyond it) is more specific than `m2`'s at every
-///    `i` up to the invocation's argument count `k` — and, when `m2` declares
-///    `k + 1` parameters, `m1`'s `(k+1)`-th variable-arity type is a *subtype*
-///    of `m2`'s ([§15.12.2.5] variable arity);
-/// 3. `m1` is more specific than a *generic* `m2` under some instantiation of
-///    `m2`'s type parameters ([§18.5.4]) — approximated by instantiating them
-///    to their declared bounds;
-/// 4. `m2` non-generic: per-position, `S` more specific than `T` for argument
-///    `e` when `S <: T`, or when `e` is a lambda/method reference and the two
-///    are functional interfaces with matching SAM parameter lists and the
-///    §15.12.2.5 return conditions hold.
+/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
+/// a non-variable-arity method beats a variable arity one, and otherwise every
+/// formal parameter of `m1` is more specific than the corresponding formal of
+/// `m2`. Only *m2's* genericity gates the comparison: when `m2` is generic,
+/// `m1` is more specific under some instantiation of *m2*'s type parameters
+/// ([§18.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.4))
+/// — approximated here by instantiating them to their declared bounds, so
+/// `<T> that(T[])` loses to nothing merely for being generic and beats
+/// `that(Object)` for an array argument (`T[] <: Object`) exactly as javac
+/// resolves Truth's builder. For two generic methods the
+/// type-parameter-relative signatures are compared: `m2`'s type parameters are
+/// substituted by `m1`'s (by position), and `m1`'s declared bounds must be at
+/// least as restrictive as `m2`'s, so `<T extends String>` is more specific
+/// than `<T>`.
 pub(crate) fn more_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     m1: &MethodData,
     m2: &MethodData,
-    args: Option<&[ArgForm]>,
 ) -> bool {
-    // Rule 1 + §15.12.2.5 (variable arity): when *both* candidates are
-    // applicable by variable arity invocation, the more specific one is
-    // decided on their fixed parameter prefixes and varargs element types,
-    // aligned at the invocation's argument count `k`. The declared parameter
-    // lists may have different lengths — `style(TextColor, Decoration...)`
-    // vs `style(StyleBuilderApplicable...)` — so each is normalized by its
-    // own variable-arity type per position: the fixed prefix, then the
-    // varargs *element* type. `m1` more specific than `m2` iff each of `m1`'s
-    // normalized formals is more specific than the corresponding `m2` formal
-    // ([§15.12.2.5]: `style(TextColor, Decoration...)` beats
-    // `style(SBApplicable...)` because `TextColor <: SBApplicable` and
-    // `Decoration <: SBApplicable`). A declared `k+1`-parameter method whose
-    // `(k+1)`-th formal is the varargs array has one more *position* than the
-    // invocation supplies; the rule then additionally requires `m1`'s
-    // `(k+1)`-th variable-arity type to be a subtype of `m2`'s
-    // ([§15.12.2.5]). `args == None` normalizes to the maximum declared
-    // length, preserving the pre-invocation behavior.
+    // §15.12.2.5 (variable arity): when *both* candidates are applicable by
+    // variable arity invocation, the more specific one is decided on their
+    // fixed parameter prefixes and varargs element types, aligned at the
+    // invocation's argument count. The declared parameter lists may have
+    // different lengths — `style(TextColor, Decoration...)` vs
+    // `style(StyleBuilderApplicable...)` — so each is normalized to the
+    // longer length by repeating its varargs *element* type (the fixed
+    // prefix first, then elements), and the position-wise subtype test runs
+    // on the aligned lists. `m1` more specific than `m2` iff each of `m1`'s
+    // normalized formals is a subtype of the corresponding `m2` formal:
+    // `style(TextColor, Decoration...)` beats `style(SBApplicable...)`
+    // because `TextColor <: SBApplicable` and `Decoration <: SBApplicable`.
+    // Without the alignment both directions report false (different declared
+    // lengths) and the invocation is ambiguous.
     if m1.varargs && m2.varargs {
-        // §15.12.2.5 (variable arity), as javac implements it: when *both*
-        // candidates are applicable by variable arity invocation, the more
-        // specific one is decided on their fixed parameter prefixes and
-        // varargs element types, aligned at the *greater declared parameter
-        // count* — the first `max(n1, n2)` variable-arity types of each
-        // method, the fixed prefix first and the varargs *element* type
-        // beyond it. javac compares every position up to the longer
-        // declaration: `m(String, Integer...)` is NOT more specific than
-        // `m(CharSequence...)` for `m("a")` — the alignment reaches
-        // `Integer` vs `CharSequence` at the second position and fails, so
-        // the invocation is ambiguous — while `style(TextColor,
-        // Decoration...)` beats `style(StyleBuilderApplicable...)` because
-        // `TextColor <: SBApplicable` and `Decoration <: SBApplicable`
-        // ([JLS §15.12.2.5] literal k is the invocation's argument count,
-        // which would decide `m("a")` the other way; javac's longer-length
-        // alignment is what the compiler actually does).
-        let k = m1.params.len().max(m2.params.len());
-        let var_arity_type = |m: &MethodData, i: usize| -> Ty {
-            // The i-th variable-arity type ([§8.4.1], [§15.12.2.4]): the
-            // fixed prefix up to the penultimate formal, then — for the
-            // positions at and beyond the trailing varargs array — the
-            // *element* type of that array, never the array itself
-            // (`Decoration...` is the element `Decoration` beyond position 0
-            // of `style(TextColor, Decoration...)`). A malformed varargs
-            // method (empty params, or a trailing non-array formal) falls
-            // back to `Object`.
+        let norm = |m: &MethodData| -> Vec<Ty> {
             let split = m.params.len().saturating_sub(1);
-            match m.params.get(i) {
-                Some(ty) if i < split => *ty,
-                _ => m
-                    .params
-                    .last()
-                    .and_then(|last| last.element(db))
-                    .copied()
-                    .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new())),
+            let fixed = &m.params[..split];
+            let element = m
+                .params
+                .last()
+                .and_then(|last| last.element(db))
+                .copied()
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
+            let len = m1.params.len().max(m2.params.len());
+            let mut out = fixed.to_vec();
+            while out.len() < len {
+                out.push(element);
             }
+            out
         };
-        // `m2`'s formals after registering its type parameters (the generic
-        // varargs case, [§18.5.4]).
+        let p1 = norm(m1);
         let mut inference = Inference::new();
         let (m2_formals, _, _) = inference.register_method(db, m2);
         if m2_formals.len() != m2.params.len() {
             return false;
         }
-        let m2_var_arity_type = |i: usize| -> Ty {
-            let split = m2_formals.len().saturating_sub(1);
-            match m2_formals.get(i) {
-                Some(ty) if i < split => *ty,
-                _ => m2_formals
-                    .last()
-                    .and_then(|last| last.element(db))
-                    .copied()
-                    .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new())),
+        // Map `m2`'s normalized formals: its own params (with the varargs
+        // array) normalized the same way after registering its type params.
+        let m2_norm = {
+            let split = m2.params.len().saturating_sub(1);
+            let mut out = m2_formals[..split].to_vec();
+            let element = m2_formals
+                .last()
+                .and_then(|last| last.element(db))
+                .copied()
+                .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
+            let len = m1.params.len().max(m2.params.len());
+            while out.len() < len {
+                out.push(element);
             }
+            out
         };
-        for i in 0..k {
-            let s = var_arity_type(m1, i);
-            let t = m2_var_arity_type(i);
-            // Each of `m1`'s aligned variable-arity types must be more
-            // specific than `m2`'s — the invariant/equality semantics of a
-            // `⟨S → T⟩` constraint, which compares same-class type arguments
-            // by equality (a `List<String>` never beats a `List<Integer>`),
-            // different erasures by subtyping, and primitive pairs by
-            // widening.
-            inference.add_constraint(Constraint::Sub(s, t));
+        for (a, b) in p1.iter().zip(&m2_norm) {
+            inference.add_constraint(Constraint::Sub(*a, *b));
         }
-        // When the declarations differ in length the loop already aligns the
-        // shorter method's trailing element against the longer method's
-        // array position (the [§15.12.2.5] `(k+1)`-th-parameter rule falls
-        // out of the element alignment), so only the constraint consistency
-        // remains.
         return inference.check_consistent(db, scope, InvocationPhase::Loose);
     }
     if m1.params.len() != m2.params.len() {
@@ -2400,89 +2271,60 @@ pub(crate) fn more_specific(
     if m1.varargs != m2.varargs {
         return !m1.varargs;
     }
-    // Rule 3: `m2` generic (any `m1`): the §18.5.4 inference. The
-    // functional-interface rule lives in branch 4, which requires `m2`
-    // non-generic — the generic method's type parameters make the FI pair
-    // undecidable before instantiation.
-    if !m2.type_params.is_empty() {
-        // §15.12.2.5 as javac implements it: `m1` is more specific than `m2`
-        // iff `m2` is *applicable* to `m1`'s formal parameter types treated
-        // as the invocation arguments (`signatureMoreSpecific`) — `m2`'s
-        // type parameters are instantiated from `m1`'s parameter types, not
-        // from their declared bounds. This resolves both the mixed-genericity
-        // cases javac handles:
-        //   `increment(Map<String,Integer>, String)` (non-generic) beats
-        //     `<T> increment(Map<T,Integer>, T)` — the generic one
-        //     instantiates `T := String` from the non-generic's parameters;
-        //   `<T> Subject that(T[])` beats `that(Object)` for an array
-        //     argument — the generic method's parameters are `T[]`, and
-        //     `that(Object)` is applicable to them, while the reverse is not
-        //     (`Object` is not an array). The constraint set is exactly an
-        //     invocation type inference table ([JLS §18.5.2]); consistency
-        //     means `m2` accepts `m1`'s parameters, i.e. `m1`'s signature is
-        //     a subsignature of `m2`'s instantiated one.
-        let mut inference = Inference::new();
-        let (m2_formals, _, _) = inference.register_method(db, m2);
-        if m2_formals.len() != m1.params.len() {
-            return false;
-        }
-        for (param, formal) in m1.params.iter().zip(&m2_formals) {
-            inference.add_constraint(Constraint::Sub(*param, *formal));
-        }
-        return inference.check_consistent(db, scope, InvocationPhase::Loose);
+    // §15.12.2.5 (functional interface specificity): when the invocation's
+    // argument is a lambda, a functional interface type `S` is more specific
+    // than a functional interface type `T` when — beyond matching formal
+    // parameter lists — `T`'s function type has a `void` return and `S`'s does
+    // not, or `S`'s return type is a subtype of `T`'s (the `RS`/`RT`
+    // conditions of §15.12.2.5). This is what resolves the
+    // `CheckedSupplier<T>`/`CheckedRunnable` pair that the ordinary
+    // subsignature test cannot: `Sub(CheckedSupplier<α>, CheckedRunnable)`
+    // reduces to false (different erasures), yet a lambda whose body produces
+    // a value must select the value-returning overload regardless of the
+    // invocation's target (§15.12.2.5) — `return unchecked(() -> getFloat())`
+    // selects `<T> T unchecked(CheckedSupplier<T>)`, not the `void`
+    // `unchecked(CheckedRunnable)`. Without it the void overload wins the
+    // tie-break and the enclosing `return` misreports the selected `void`
+    // against the primitive return type.
+    if let Some(win) = functional_interface_specificity(db, scope, m1, m2) {
+        return win;
     }
-    // Rule 4: `m2` non-generic — per-position. Each of `m1`'s formals `S`
-    // must be more specific than `m2`'s `T` for the argument `e` at that
-    // position. The relation is the strict-invocation one javac's
-    // `isMoreSpecific` applies (`m2` strictly applicable to `m1`'s
-    // parameter types): parameterized pairs of the same class compare their
-    // type arguments *invariantly* (`List<String>` is not more specific
-    // than `List<Integer>`), reference pairs by subtyping, primitive pairs
-    // by widening — exactly the reduction of a `⟨S → T⟩` invocation
-    // constraint ([§18.2.1]). When `e` is a lambda or method reference and
-    // `S`/`T` are functional interfaces, the §15.12.2.5 return rules decide
-    // the position first (see [`functional_interface_specificity_at`]);
-    // `S`'s SAM return beating `T`'s (`void` vs value, or `RS <: RT`) makes
-    // the position more specific even though the two interfaces are not
-    // subtypes — `return unchecked(() -> getFloat())` selects
-    // `<T> T unchecked(CheckedSupplier<T>)` over `void
-    // unchecked(CheckedRunnable)`.
-    let forms: Vec<ArgForm> = match args {
-        Some(args) if args.len() == m1.params.len() => args.to_vec(),
-        _ => vec![ArgForm::Concrete; m1.params.len()],
-    };
+    // §15.12.2.5 as javac implements it: `m1` is more specific than `m2` iff
+    // `m2` is *applicable* to `m1`'s formal parameter types treated as the
+    // invocation arguments (`signatureMoreSpecific`) — `m2`'s type
+    // parameters are instantiated from `m1`'s parameter types, not from
+    // their declared bounds. This resolves both the mixed-genericity cases
+    // javac handles:
+    //   `increment(Map<String,Integer>, String)` (non-generic) beats
+    //     `<T> increment(Map<T,Integer>, T)` — the generic one instantiates
+    //     `T := String` from the non-generic's parameters;
+    //   `<T> Subject that(T[])` beats `that(Object)` for an array argument —
+    //     the generic method's parameters are `T[]`, and `that(Object)` is
+    //     applicable to them, while the reverse is not (`Object` is not an
+    //     array). The constraint set is exactly an invocation type inference
+    //     table ([JLS §18.5.2]); consistency means `m2` accepts `m1`'s
+    //     parameters, i.e. `m1`'s signature is a subsignature of `m2`'s
+    //     instantiated one.
     let mut inference = Inference::new();
-    for ((s, t), form) in m1.params.iter().zip(&m2.params).zip(&forms) {
-        if matches!(form, ArgForm::LambdaOrRef)
-            && let Some(win) = functional_interface_specificity_at(db, scope, s, t)
-        {
-            if !win {
-                // The functional-interface rule decides the position against
-                // `m1` — `m1` is not more specific here, whatever subtyping
-                // would say.
-                return false;
-            }
-            // The rule decides the position for `m1`; no subtype constraint
-            // is needed (`CheckedSupplier` is unrelated to `CheckedRunnable`
-            // yet the value-returning overload wins for a value-producing
-            // lambda).
-            continue;
-        }
-        inference.add_constraint(Constraint::Sub(*s, *t));
+    let (m2_formals, _, _) = inference.register_method(db, m2);
+    if m2_formals.len() != m1.params.len() {
+        return false;
+    }
+    for (param, formal) in m1.params.iter().zip(&m2_formals) {
+        inference.add_constraint(Constraint::Sub(*param, *formal));
     }
     inference.check_consistent(db, scope, InvocationPhase::Loose)
 }
 
-/// The functional-interface half of the most-specific test at one argument
-/// position ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
-/// whether the functional interface type `S` (m1's formal) is more specific
-/// than the functional interface type `T` (m2's formal) because their
-/// function types differ only in their return type — `T` returning `void`
-/// while `S` returns a value, or `S`'s return being a subtype of `T`'s. The
-/// rule applies only when the invocation's argument at this position is a
-/// lambda or method reference ([§15.12.2.5]); `Some(true)`/`Some(false)`
-/// when the rule decides the pair, `None` when the formals are not a
-/// comparable functional-interface pair (the subtype test must decide).
+/// The functional-interface half of the most-specific test
+/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
+/// whether `m1` is more specific than `m2` because their corresponding
+/// parameters are *functional interface* types `S` (m1's) and `T` (m2's)
+/// whose function types differ only in their return type — `T` returning
+/// `void` while `S` returns a value, or `S`'s return being a subtype of
+/// `T`'s. `Some(true)`/`Some(false)` when the rule decides the pair, `None`
+/// when the parameters are not a comparable functional-interface pair (the
+/// ordinary subsignature test must decide).
 ///
 /// This is the rule javac applies to a lambda argument that is *value
 /// compatible* with both overloads: `use(() -> now())` over
@@ -2491,26 +2333,45 @@ pub(crate) fn more_specific(
 /// interfaces need not be subtypes of each other (indeed `CheckedSupplier`
 /// and `CheckedRunnable` are unrelated), so the generic subsignature test
 /// above cannot compare them.
-fn functional_interface_specificity_at(
+fn functional_interface_specificity(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
-    s: &Ty,
-    t: &Ty,
+    m1: &MethodData,
+    m2: &MethodData,
 ) -> Option<bool> {
-    // The rule applies to a *lambda argument*: both formals must be
-    // functional interfaces with matching SAM parameter lists.
-    let (Some(ssam), Some(tsam)) = (
-        single_abstract_method(db, scope, s),
-        single_abstract_method(db, scope, t),
-    ) else {
-        return None;
-    };
-    if ssam.params != tsam.params {
+    if m1.params.len() != m2.params.len() {
         return None;
     }
-    // The adapt-and-capture nuance of §15.12.2.5 (S's wildcards captured)
-    // is approximated by the SAM returns as extracted.
-    let (s_ret, t_ret) = (ssam.ret, tsam.ret);
+    let mut s_ret: Option<Ty> = None;
+    let mut t_ret: Option<Ty> = None;
+    for (s, t) in m1.params.iter().zip(&m2.params) {
+        // The rule applies to a *lambda argument*: both formals must be
+        // functional interfaces with matching SAM parameter lists.
+        let (Some(ssam), Some(tsam)) = (
+            single_abstract_method(db, scope, s),
+            single_abstract_method(db, scope, t),
+        ) else {
+            return None;
+        };
+        if ssam.params != tsam.params {
+            return None;
+        }
+        // The adapt-and-capture nuance of §15.12.2.5 (S's wildcards captured)
+        // is approximated by the SAM returns as extracted.
+        match (&s_ret, &t_ret) {
+            (None, None) => {
+                s_ret = Some(ssam.ret);
+                t_ret = Some(tsam.ret);
+            }
+            (Some(a), Some(b)) => {
+                if a != &ssam.ret || b != &tsam.ret {
+                    return None;
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    let (s_ret, t_ret) = (s_ret?, t_ret?);
     // `RT is void` (m2's SAM returns void) makes `S` more specific than `T`
     // for a lambda that is value-compatible with both — the value-returning
     // overload beats the void one. Otherwise `RS <: RT` (m1's return a subtype
@@ -2538,24 +2399,16 @@ fn functional_interface_specificity_at(
 /// ([JLS §15.12.2.5], [§4.10.1]): reference types by subtyping, primitive
 /// types by the primitive supertype order (double ≻ float ≻ long ≻ int ≻
 /// {char, short, byte}).
-/// The most specific of the applicable candidates
-/// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)),
-/// each a `(declaration, invocation)` pair. `args` carries the form of each
-/// actual argument of the invocation, forwarded to the per-position
-/// most-specific test ([`more_specific`]); `None` when no invocation supplies
-/// the argument forms (a method-reference resolution), which treats every
-/// position as concrete. Returns the *invocation* half of the chosen pair.
 pub(crate) fn choose_most_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     candidates: &[(MethodData, MethodData)],
-    args: Option<&[ArgForm]>,
 ) -> Option<MethodData> {
     let mut winners: Vec<usize> = Vec::new();
     for (i, (candidate, _)) in candidates.iter().enumerate() {
-        let wins = candidates.iter().all(|(other, _)| {
-            other == candidate || more_specific(db, scope, candidate, other, args)
-        });
+        let wins = candidates
+            .iter()
+            .all(|(other, _)| other == candidate || more_specific(db, scope, candidate, other));
         if wins {
             winners.push(i);
         }
@@ -2565,15 +2418,16 @@ pub(crate) fn choose_most_specific(
     // declared signatures are identical are one method seen through
     // overriding paths (covariant returns defeat exact-signature dedup).
     // Collapse them first, then prefer the most-derived declaring type;
-    // genuinely unrelated declarations stay ambiguous. The signature/override
-    // equivalence never includes variable-arity-ness ([§8.4.2], [§8.4.8.1]) —
-    // a `void m(String...)` and a `void m(String[])` are the same method — so
-    // it is not part of the collapse either.
+    // genuinely unrelated declarations stay ambiguous.
     let mut unique: Vec<usize> = Vec::new();
     'outer: for &i in &winners {
         for &u in &unique {
             let (a, b) = (&candidates[u].0, &candidates[i].0);
-            if a.params == b.params && a.ret == b.ret && a.is_static == b.is_static {
+            if a.params == b.params
+                && a.ret == b.ret
+                && a.is_static == b.is_static
+                && a.varargs == b.varargs
+            {
                 continue 'outer;
             }
         }
@@ -2609,20 +2463,11 @@ pub(crate) fn choose_most_specific(
 /// ambiguous. The candidate set is restricted by the invocation mode and
 /// access of `ctx` ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1),
 /// [§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
-///
-/// The *applicability* phases and the *most-specific* test run without the
-/// expected type: per [§15.12.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.2)
-/// and [§15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)
-/// the target type plays no part in deciding which method is applicable or
-/// which applicable method is most specific — javac never rejects an
-/// overload for an incompatible target while a weaker one remains applicable,
-/// and reports a target mismatch on the *chosen* method as an incompatible
-/// types error instead. Only once the winner is selected is the invocation
-/// type re-inferred with the target constraint ([JLS §18.5.2.4]) — the
-/// returned [`MethodData`] is that refined invocation type; when the target
-/// turns out to be incompatible, the already-resolved target-free invocation
-/// is returned (the call is resolved; the mismatch is the caller's
-/// incompatible-types problem).
+/// The returned [`MethodData`] is the inferred invocation type
+/// ([JLS §18.5.2]), refined by `target` — the expected type of the
+/// invocation in its context
+/// ([JLS §18.5.2.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.2.4)) —
+/// when the call is a poly expression.
 pub fn pick_method(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -2635,8 +2480,7 @@ pub fn pick_method(
     let members = member_set(db, scope, receiver, name, ctx);
 
     // Phase 1: strict invocation (§15.12.2.2) — no boxing or unboxing, fixed
-    // arity. The probes are target-free: applicability never consults the
-    // expected type (§15.12.2.2, §18.5.1).
+    // arity.
     let strict: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
@@ -2647,104 +2491,56 @@ pub fn pick_method(
                 args,
                 InvocationPhase::Strict,
                 false,
-                None,
+                target,
             )
             .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !strict.is_empty() {
-        return finish_pick(
-            db,
-            scope,
-            &strict,
-            args,
-            InvocationPhase::Strict,
-            false,
-            target,
-        );
+        return choose_most_specific(db, scope, &strict);
     }
 
     // Phase 2: loose invocation (§15.12.2.3) — boxing and unboxing allowed.
     let loose: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
-            instantiate(db, scope, method, args, InvocationPhase::Loose, false, None)
-                .map(|invocation| (method.clone(), invocation))
+            instantiate(
+                db,
+                scope,
+                method,
+                args,
+                InvocationPhase::Loose,
+                false,
+                target,
+            )
+            .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !loose.is_empty() {
-        return finish_pick(
-            db,
-            scope,
-            &loose,
-            args,
-            InvocationPhase::Loose,
-            false,
-            target,
-        );
+        return choose_most_specific(db, scope, &loose);
     }
 
     // Phase 3: variable arity (§15.12.2.4).
     let varargs: Vec<(MethodData, MethodData)> = members
         .iter()
         .filter_map(|method| {
-            instantiate(db, scope, method, args, InvocationPhase::Loose, true, None)
-                .map(|invocation| (method.clone(), invocation))
+            instantiate(
+                db,
+                scope,
+                method,
+                args,
+                InvocationPhase::Loose,
+                true,
+                target,
+            )
+            .map(|invocation| (method.clone(), invocation))
         })
         .collect();
     if !varargs.is_empty() {
-        return finish_pick(
-            db,
-            scope,
-            &varargs,
-            args,
-            InvocationPhase::Loose,
-            true,
-            target,
-        );
+        return choose_most_specific(db, scope, &varargs);
     }
 
     None
-}
-
-/// The tail of [`pick_method`] shared by the three applicability phases:
-/// select the most specific applicable candidate (§15.12.2.5) among
-/// `candidates` (each the `(declaration, target-free invocation)` pair of an
-/// applicable member), then re-run the winner's invocation-type inference
-/// with the expected type ([§18.5.2.4]) — the target is incorporated only at
-/// the resolution of the chosen method, never during applicability or
-/// most-specific selection. When the target-instantiation succeeds it is
-/// returned (the refined invocation type); when the target is incompatible
-/// the target-free invocation already in hand is returned instead — the call
-/// is resolved, and javac reports the mismatch as an incompatible-types
-/// problem of the caller rather than re-opening overload resolution.
-fn finish_pick(
-    db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope,
-    candidates: &[(MethodData, MethodData)],
-    args: &[PolyArg],
-    phase: InvocationPhase,
-    varargs: bool,
-    target: Option<Ty>,
-) -> Option<MethodData> {
-    let forms: Vec<ArgForm> = args
-        .iter()
-        .map(|arg| match arg {
-            PolyArg::Concrete(_) => ArgForm::Concrete,
-            PolyArg::Poly(_, _, _) => ArgForm::LambdaOrRef,
-        })
-        .collect();
-    let winning = choose_most_specific(db, scope, candidates, Some(&forms))?;
-    let (winner_decl, _) = candidates
-        .iter()
-        .find(|(_, invocation)| *invocation == winning)?;
-    if target.is_some()
-        && let Some(instantiated) =
-            instantiate(db, scope, winner_decl, args, phase, varargs, target)
-    {
-        return Some(instantiated);
-    }
-    Some(winning)
 }
 
 /// A field resolved through the member set of a field access
@@ -2784,21 +2580,6 @@ pub struct FieldData {
     pub declaring_top_level: Option<String>,
 }
 
-/// The result of a field lookup ([JLS §15.11.1], [§8.3]): the field named
-/// `name` visible on the receiver, whether that name is *ambiguous* (two or
-/// more unrelated declarations — the classic `class C implements A, B` where
-/// `A` and `B` each declare `int X`) or *missing*.
-#[derive(Debug, Clone)]
-pub enum FieldLookup {
-    /// Exactly one non-hidden declaration of the name is visible.
-    Found(FieldData),
-    /// Two or more accessible declarations of the name are visible and none
-    /// hides the others — the reference is ambiguous ([§15.11.1], [§8.3]).
-    Ambiguous,
-    /// No accessible field of the name is visible.
-    Missing,
-}
-
 /// Resolves a field access `receiver.name`
 /// ([JLS §15.11.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.1)):
 /// the field named `name` of the receiver type, or of the closest of its
@@ -2810,12 +2591,7 @@ pub enum FieldLookup {
 /// accessible at the access site ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6))
 /// are returned. For a type variable receiver the declared bounds
 /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
-/// are searched instead. A declaration `f` hides `g` when the declaring
-/// class/interface of `f` is a subtype of `g`'s ([§8.3]: "a hidden field
-/// declaration... is not inherited"); the *maximal* (non-hidden) declarations
-/// are the visible ones — most-derived class fields still hide their
-/// superclass/interface namesakes. More than one maximal declaration makes
-/// the name ambiguous ([§15.11.1]); none is `Missing`.
+/// are searched instead. `None` when no field is found.
 pub fn pick_field(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -2823,31 +2599,15 @@ pub fn pick_field(
     name: &str,
     ctx: &InvocationContext,
 ) -> Option<FieldData> {
-    match pick_field_impl(db, scope, receiver, name, ctx, true) {
-        FieldLookup::Found(field) => Some(field),
-        FieldLookup::Ambiguous | FieldLookup::Missing => None,
-    }
-}
-
-/// The raw result of the accessible field lookup ([§15.11.1]): the caller
-/// distinguishes the *ambiguous* name from a plain miss.
-pub(crate) fn pick_field_lookup(
-    db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope,
-    receiver: &Ty,
-    name: &str,
-    ctx: &InvocationContext,
-) -> FieldLookup {
     pick_field_impl(db, scope, receiver, name, ctx, true)
 }
 
-/// The field named `name` on the receiver *regardless of access control*
-/// ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
+/// The most-derived field named `name` on the receiver *regardless of access
+/// control* ([§6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)):
 /// the access-probe companion of [`pick_field`]. When the accessible
-/// [`pick_field`] misses but this finds one, a field of the name exists yet
-/// is not accessible from the access site — the §6.6 error reported by the
-/// body inference layer as `IllegalAccess`. An ambiguous name is not an
-/// access problem, so `Ambiguous` reports nothing here.
+/// [`pick_field`] misses but this hits, a field of the name exists yet is not
+/// accessible from the access site — the §6.6 error reported by the body
+/// inference layer as `IllegalAccess`.
 pub fn pick_field_ignoring_access(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -2855,16 +2615,12 @@ pub fn pick_field_ignoring_access(
     name: &str,
     ctx: &InvocationContext,
 ) -> Option<FieldData> {
-    match pick_field_impl(db, scope, receiver, name, ctx, false) {
-        FieldLookup::Found(field) => Some(field),
-        FieldLookup::Ambiguous | FieldLookup::Missing => None,
-    }
+    pick_field_impl(db, scope, receiver, name, ctx, false)
 }
 
 /// The non-memoized form of [`pick_field`] and
-/// [`pick_field_ignoring_access`]: every accessible declaration of `name` on
-/// the receiver (filtered by accessibility only when `strict_access` is
-/// set), reduced to the *maximal* declarations by the hiding rule of [§8.3].
+/// [`pick_field_ignoring_access`]: the most-derived declaration of `name` on
+/// the receiver, filtered by accessibility only when `strict_access` is set.
 fn pick_field_impl(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -2872,7 +2628,7 @@ fn pick_field_impl(
     name: &str,
     ctx: &InvocationContext,
     strict_access: bool,
-) -> FieldLookup {
+) -> Option<FieldData> {
     let scope_id = ScopeId::new(db, ScopeKind::from_scope(scope));
     let receiver = capture_conversion(db, scope, *receiver);
     // §4.4: an unbounded type variable's effective upper bound is
@@ -2885,19 +2641,13 @@ fn pick_field_impl(
         _ => vec![receiver],
     };
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
-    // §15.11.1: collect every accessible declaration of the name across the
-    // closure — a field lookup is NOT a most-derived-first short-circuit:
-    // two *unrelated* supertypes (`A`, `B`) may each declare the name, and
-    // neither hides the other. Dedup by declaring owner (the same class can
-    // be reached through several supertype paths).
-    let mut candidates: Vec<FieldData> = Vec::new();
     while let Some(ty) = stack.pop() {
         if !seen.insert(ty.id) {
             continue;
         }
         for field in class_fields(db, &scope_id, &ty, name) {
-            if strict_access
-                && !member_accessible(
+            if !strict_access
+                || member_accessible(
                     db,
                     scope,
                     field.access,
@@ -2909,50 +2659,14 @@ fn pick_field_impl(
                     ctx,
                 )
             {
-                continue;
-            }
-            if !candidates
-                .iter()
-                .any(|existing| existing.owner == field.owner)
-            {
-                candidates.push(field);
+                return Some(field);
             }
         }
         for parent in supertypes_query(db, scope_id, ty.id) {
             stack.push(parent);
         }
     }
-    if candidates.is_empty() {
-        return FieldLookup::Missing;
-    }
-    // §8.3: a declaration `f` hides `g` when the class/interface declaring
-    // `f` is a subtype of the class/interface declaring `g` — the most-derived
-    // class field hides its superclass/interface namesakes. Retain the
-    // *maximal* declarations (those hidden by none of the others); the
-    // maximal set is never empty.
-    let maximal: Vec<FieldData> = candidates
-        .iter()
-        .filter(|candidate| {
-            !candidates.iter().any(|other| {
-                other.owner != candidate.owner
-                    && is_subtype(
-                        db,
-                        scope,
-                        &Ty::reference(db, other.owner.as_str(), Vec::new()),
-                        &Ty::reference(db, candidate.owner.as_str(), Vec::new()),
-                    )
-            })
-        })
-        .cloned()
-        .collect();
-    match maximal.len() {
-        0 => FieldLookup::Missing,
-        1 => FieldLookup::Found(maximal.into_iter().next().expect("len 1")),
-        // §15.11.1/[§8.3]: two or more unrelated declarations are visible —
-        // `class C implements A, B` with `int X` in both `A` and `B` — and
-        // the reference to `X` is ambiguous.
-        _ => FieldLookup::Ambiguous,
-    }
+    None
 }
 
 /// The fields of a single class or interface, instantiated with `ty`'s type
