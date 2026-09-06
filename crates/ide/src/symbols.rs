@@ -69,11 +69,15 @@ pub struct DocumentSymbol {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSymbolSummary {
     pub file: FileId,
-    /// Simple name (last `.`-segment of the canonical name; `$` kept).
+    /// Client-facing name: the simple name for type rows (`Foo`), and
+    /// `{EnclosingType}.{simple}` for member rows (`Foo.bar`) — the dotted
+    /// member form keeps `Class.member` queries matching the row's label in
+    /// clients that filter server results client-side (VS Code).
     pub name: String,
     pub kind: hir::SourceSymbolKind,
-    /// The enclosing type's FQN (`name` minus its last segment); `None` for
-    /// top-level declarations.
+    /// Client-facing container: the package for top-level types and members
+    /// (`com.example`); the enclosing type's FQN for nested types. `None` in
+    /// the unnamed package.
     pub container_name: Option<String>,
     pub item: ItemId,
 }
@@ -355,10 +359,14 @@ fn render_params(
     params.join(", ")
 }
 
-/// Symbols whose simple name matches `query` (case-insensitive substring,
-/// prefix-preferred) restricted to `files` when given, else every registered
-/// source set; sorted by (canonical name, file, item) and deduplicated, with
-/// an empty query returning everything (within scope).
+/// Symbols whose simple name starts with `query`, or whose canonical name
+/// (`pkg.Enclosing.simple`, JLS §6.7) contains it — case-insensitive;
+/// prefix-preferred (simple-name prefix matches are included alongside FQN
+/// substring matches). Dotted queries work: `Class.member` and FQNs like
+/// `com.example.Foo` match the canonical name. Restricted to `files` when
+/// given, else every registered source set; sorted by (canonical name, file,
+/// item) and deduplicated, with an empty query returning everything (within
+/// scope).
 pub fn workspace_symbol_summaries(
     db: &RootDatabase,
     query: &str,
@@ -374,20 +382,20 @@ pub fn workspace_symbol_summaries(
                     refs.extend(index.iter().cloned());
                 } else {
                     refs.extend(index.lookup_simple(query));
-                    refs.extend(index.lookup_substring(query));
+                    refs.extend(index.lookup_fqn_substring(query));
                 }
             }
         }
         Some(files) => {
             // Opened-files path (empty query by contract): per-file item trees
-            // only, no source-set index scan. Prefix ∪ substring matching on
-            // the simple name collapses to `contains`, mirroring the index
-            // lookups.
+            // only, no source-set index scan. `contains` on the canonical
+            // name, mirroring the index lookups (simple-name prefix ∪ FQN
+            // substring).
             let query = query.to_lowercase();
             for &file in files {
                 for symbol in hir::file_symbols(db, file).iter() {
                     if query.trim().is_empty()
-                        || symbol.name.simple_name().to_lowercase().contains(&query)
+                        || symbol.name.as_str().to_lowercase().contains(&query)
                     {
                         refs.push(hir::SourceSymbolRef {
                             file,
@@ -409,14 +417,36 @@ pub fn workspace_symbol_summaries(
     refs.into_iter()
         .map(|reference| {
             let fqn = reference.symbol.name.as_str().to_owned();
+            let (name, container_name) = match reference.symbol.kind {
+                // Members render as `{EnclosingType}.{simple}` (`Foo.bar`)
+                // with the container reduced to the package, so dotted and
+                // fully-qualified queries survive the client's local filter,
+                // which fuzzy-matches the row's `name` and drops rows it
+                // does not match.
+                hir::SourceSymbolKind::Method
+                | hir::SourceSymbolKind::Field
+                | hir::SourceSymbolKind::EnumConstant => {
+                    let (parent, simple) = fqn.rsplit_once('.').unwrap_or(("", fqn.as_str()));
+                    let (container, enclosing) = parent
+                        .rsplit_once('.')
+                        .map_or((None, parent), |(pkg, ty)| (Some(pkg), ty));
+                    (
+                        format!("{}.{}", enclosing, simple),
+                        container.map(str::to_owned),
+                    )
+                }
+                _ => (
+                    fqn.rsplit_once('.')
+                        .map(|(_, simple)| simple.to_owned())
+                        .unwrap_or_else(|| fqn.clone()),
+                    fqn.rsplit_once('.').map(|(parent, _)| parent.to_owned()),
+                ),
+            };
             WorkspaceSymbolSummary {
                 file: reference.file,
-                name: fqn
-                    .rsplit_once('.')
-                    .map(|(_, simple)| simple.to_owned())
-                    .unwrap_or_else(|| fqn.clone()),
+                name,
                 kind: reference.symbol.kind,
-                container_name: fqn.rsplit_once('.').map(|(parent, _)| parent.to_owned()),
+                container_name,
                 item: reference.symbol.item,
             }
         })

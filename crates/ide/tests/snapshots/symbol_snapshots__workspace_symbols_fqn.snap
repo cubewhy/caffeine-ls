@@ -1,8 +1,6 @@
 ---
 source: crates/ide/tests/symbol_snapshots.rs
-expression: render_workspace_symbols(&all)
+expression: render_workspace_symbols(&fqn)
 ---
 class      Bar @file2
-class      Foo @file1
 class      Other @file3
-method     Foo.many @file1

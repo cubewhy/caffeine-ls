@@ -331,6 +331,22 @@ fn workspace_symbols_snapshot() {
         "workspace_symbols_opened_scope",
         render_workspace_symbols(&opened)
     );
+
+    // `Class.member` matches the member's canonical name.
+    let qualified = analysis.workspace_symbols("Foo.many", None).unwrap();
+    assert_snapshot!(
+        "workspace_symbols_qualified",
+        render_workspace_symbols(&qualified)
+    );
+
+    // An FQN fragment matches the package-qualified types (and their members).
+    let fqn = analysis.workspace_symbols("com.example.api", None).unwrap();
+    assert_snapshot!("workspace_symbols_fqn", render_workspace_symbols(&fqn));
+
+    // A bare term matches anywhere in the canonical name (`many`, via
+    // `com.example.Foo.many`).
+    let any = analysis.workspace_symbols("ny", None).unwrap();
+    assert_snapshot!("workspace_symbols_any", render_workspace_symbols(&any));
 }
 
 #[test]

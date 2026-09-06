@@ -23,9 +23,9 @@ expression: normalized
       "file_id": 0,
       "item": 1
     },
-    "name": "bar",
+    "name": "Foo.bar",
     "kind": 6,
-    "containerName": "com.example.Foo"
+    "containerName": "com.example"
   },
   {
     "location": {
@@ -35,8 +35,8 @@ expression: normalized
       "file_id": 0,
       "item": 0
     },
-    "name": "x",
+    "name": "Foo.x",
     "kind": 8,
-    "containerName": "com.example.Foo"
+    "containerName": "com.example"
   }
 ]

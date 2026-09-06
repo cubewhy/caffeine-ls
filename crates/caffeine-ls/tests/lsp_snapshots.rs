@@ -628,17 +628,17 @@ public interface Bar {
     // The new snapshot must show only Foo's symbols (no Bar.java rows).
     insta::assert_json_snapshot!("workspace_symbols", normalized);
 
-    // Resolve round-trip: the `bar` row carries data; resolve adds the real
-    // location and preserves everything else.
+    // Resolve round-trip: the `Foo.bar` row carries data; resolve adds the
+    // real location and preserves everything else.
     let bar_row = response
         .as_array()
         .unwrap()
         .iter()
-        .find(|symbol| symbol["name"] == "bar")
+        .find(|symbol| symbol["name"] == "Foo.bar")
         .unwrap()
         .clone();
     let resolved = lsp.request("workspaceSymbol/resolve", bar_row.clone());
-    assert_eq!(resolved["name"], "bar");
+    assert_eq!(resolved["name"], "Foo.bar");
     assert_eq!(resolved["data"], bar_row["data"]);
     assert_eq!(resolved["location"]["uri"], bar_row["location"]["uri"]);
     assert_eq!(resolved["location"]["range"]["start"]["line"], 4);
@@ -654,6 +654,35 @@ public interface Bar {
             .unwrap()
             .iter()
             .filter(|symbol| symbol["name"] == "Bar")
+            .count(),
+        1
+    );
+
+    // Dotted query: `Class.member` resolves via the canonical name, and the
+    // row's `name` carries the enclosing type (`Foo.bar`) with the container
+    // reduced to the package, so the client's local filter keeps it.
+    let dotted = lsp.request("workspace/symbol", json!({ "query": "Foo.bar" }));
+    assert_eq!(
+        dotted
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["name"] == "Foo.bar")
+            .count(),
+        1
+    );
+    assert_eq!(
+        dotted.as_array().unwrap()[0]["containerName"],
+        "com.example"
+    );
+
+    // FQN query: partial package-qualified name still finds the type.
+    let fqn = lsp.request("workspace/symbol", json!({ "query": "org.other" }));
+    assert_eq!(
+        fqn.as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["name"] == "Bar")
             .count(),
         1
     );

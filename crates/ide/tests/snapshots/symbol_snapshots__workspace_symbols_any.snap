@@ -1,6 +1,5 @@
 ---
 source: crates/ide/tests/symbol_snapshots.rs
-expression: render_workspace_symbols(&foo)
+expression: render_workspace_symbols(&any)
 ---
-class      Foo @file1
 method     Foo.many @file1

@@ -175,12 +175,17 @@ impl Analysis {
         self.with_db(|db| symbols::document_symbols(db, file_id))
     }
 
-    /// Symbols whose simple name matches `query` (case-insensitive) across
-    /// every registered source set — or, when `files` is given, only within
-    /// `files` — sorted by (canonical name, file, item). Rows are cheap
-    /// summaries (no ranges, no signatures); resolve the range for a single
-    /// row on demand via [`Analysis::source_symbol_range`]. An empty query
-    /// returns everything in scope.
+    /// Symbols whose simple name starts with `query`, or whose canonical name
+    /// (`pkg.Enclosing.simple`) contains it — case-insensitive — across every
+    /// registered source set, or only within `files` when given; sorted by
+    /// (canonical name, file, item). Dotted queries (`Class.member`,
+    /// `com.example.Foo`) match the canonical name. Member rows carry
+    /// `{EnclosingType}.{simple}` names (`Foo.bar`) with the package as
+    /// `container_name`, so dotted queries also match the row a client
+    /// filters locally. Rows are cheap summaries (no ranges, no signatures);
+    /// resolve the range for a single row on demand via
+    /// [`Analysis::source_symbol_range`]. An empty query returns everything
+    /// in scope.
     pub fn workspace_symbols(
         &self,
         query: &str,

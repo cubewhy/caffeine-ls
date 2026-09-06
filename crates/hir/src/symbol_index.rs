@@ -210,14 +210,25 @@ impl SourceSymbolIndex {
         out
     }
 
-    /// Symbols whose simple name contains `query` as a case-insensitive
-    /// substring, sorted by (name, file, item) for determinism.
-    pub fn lookup_substring(&self, query: &str) -> Vec<SourceSymbolRef> {
-        let query = query.to_lowercase();
+    /// Symbols whose canonical name contains `query` as a case-insensitive
+    /// substring, sorted by (name, file, item) for determinism. The canonical
+    /// name is `pkg.Enclosing.simple` ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
+    /// so dotted queries match: `Class.member` hits `…Class.member`, an FQN
+    /// hits the type (and, naturally, its members), and a bare term hits
+    /// simple names as the suffix case. ASCII case-folding compares byte
+    /// windows with `eq_ignore_ascii_case` — no per-key allocation; unlike
+    /// the Unicode `to_lowercase` in `lookup_simple`/`build`, non-ASCII
+    /// identifiers are matched case-sensitively (accepted: Java identifiers
+    /// are ASCII in practice). An empty query returns every symbol, mirroring
+    /// `lookup_simple`.
+    pub fn lookup_fqn_substring(&self, query: &str) -> Vec<SourceSymbolRef> {
+        if query.is_empty() {
+            return self.iter().cloned().collect();
+        }
         let mut out: Vec<SourceSymbolRef> = self
-            .by_simple
+            .by_fqn
             .iter()
-            .filter(|(simple, _)| simple.contains(&query))
+            .filter(|(name, _)| contains_ignore_ascii_case(name.as_str(), query))
             .flat_map(|(_, refs)| refs.iter().cloned())
             .collect();
         out.sort_by_key(|reference| {
@@ -235,6 +246,14 @@ impl SourceSymbolIndex {
     pub fn iter(&self) -> impl Iterator<Item = &SourceSymbolRef> {
         self.by_fqn.values().flatten()
     }
+}
+
+/// Does `needle` occur as a byte window of `haystack`, ASCII
+/// case-insensitively? No per-key allocation; `needle.len() > 0` required
+/// (mirrors `str::contains`, which always matches an empty needle).
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let (h, n) = (haystack.as_bytes(), needle.as_bytes());
+    !n.is_empty() && n.len() <= h.len() && h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
 #[cfg(test)]
@@ -279,9 +298,14 @@ mod tests {
         let foos = index.lookup_simple("FOO");
         assert_eq!(foos.len(), 1);
 
-        // Substring search hits members too.
-        let bar = index.lookup_substring("bar");
-        assert_eq!(bar.len(), 2);
+        // Canonical-name substring search hits members too, and handles
+        // dotted queries and FQNs the simple-name index cannot.
+        let bar = index.lookup_fqn_substring("bar");
+        assert_eq!(bar.len(), 2); // Foo.bar member + Bar class
+        assert_eq!(index.lookup_fqn_substring("Foo.bar").len(), 1);
+        assert_eq!(index.lookup_fqn_substring("FOO.BAR").len(), 1);
+        assert_eq!(index.lookup_fqn_substring("com.ex").len(), 3);
+        assert_eq!(index.lookup_fqn_substring("").len(), 3);
     }
 
     #[test]
