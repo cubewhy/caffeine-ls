@@ -381,14 +381,14 @@ impl InferCtx<'_> {
             // of each variable it binds ([§14.30.1], [§14.30.2]).
             ExprData::InstanceOf { expr, pattern, ty } => {
                 // JLS §15.2/§15.20.2: the tested expression is standalone.
-                let _ = self.with_target(None, |this| this.infer_expr(expr));
+                let operand_ty = self.with_target(None, |this| this.infer_expr(expr));
                 if let Some(ty) = &ty {
-                    self.check_instanceof_target(expr, ty);
+                    self.check_instanceof_target(operand_ty, expr, ty);
                 }
                 if let Some(pattern) = pattern {
                     let _ = self.pattern_type(pattern);
                     if let Some(spanned) = self.pattern_type_ref(pattern) {
-                        self.check_instanceof_target(expr, &spanned);
+                        self.check_instanceof_target(operand_ty, expr, &spanned);
                     }
                 }
                 self.primitive(PrimitiveType::Boolean)
@@ -536,6 +536,7 @@ impl InferCtx<'_> {
                 let selector = self.infer_switch_selector(scrutinee);
                 self.switch_targets.push(self.target);
                 self.case_values.push(FxHashMap::default());
+                self.switch_patterns.push(Vec::new());
                 // §15.28: a switch expression is an expression form — an arm
                 // that completes abruptly (`throw`) is one alternative result
                 // of *this* expression and must not leak the statement-level
@@ -564,7 +565,8 @@ impl InferCtx<'_> {
                                 self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
-                                let _ = self.pattern_type(*p);
+                                let pattern_ty = self.pattern_type(*p);
+                                self.check_pattern_dominated(&pattern_ty, *p);
                                 for binding in self.pattern_bindings_of(*p) {
                                     self.scope_binding(binding);
                                 }
@@ -631,6 +633,7 @@ impl InferCtx<'_> {
                     self.flow.union_touched(&joined);
                 }
                 self.case_values.pop();
+                self.switch_patterns.pop();
                 self.switch_targets.pop();
                 // §14.11.1/§15.28: a switch *expression* must be exhaustive —
                 // every selector value has a matching arm or there is a

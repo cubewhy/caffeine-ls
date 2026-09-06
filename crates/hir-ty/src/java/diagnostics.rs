@@ -405,6 +405,11 @@ pub enum TypeError {
         expected: usize,
         found: usize,
     },
+    /// §14.11.1: a `case` label pattern whose type is dominated by an
+    /// earlier label's pattern — every value it could match is already
+    /// matched, so it can never be reached. javac: `this case label is
+    /// dominated by a preceding case label`.
+    PatternDominated { pattern: PatternId },
 }
 
 impl TypeError {
@@ -514,6 +519,7 @@ impl TypeError {
             TypeError::IncorrectNumberOfPatternComponents { .. } => {
                 DiagnosticCode::Java(IncorrectNumberOfPatternComponents)
             }
+            TypeError::PatternDominated { .. } => DiagnosticCode::Java(PatternDominated),
         }
     }
 
@@ -570,6 +576,7 @@ impl TypeError {
             | UndefinedLabel { stmt, .. }
             | NotALoopLabel { stmt, .. } => DiagLocation::Stmt(*stmt),
             IncorrectNumberOfPatternComponents { pattern, .. } => DiagLocation::Pattern(*pattern),
+            PatternDominated { pattern } => DiagLocation::Pattern(*pattern),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
             CannotCatchTypeVariable { local } => DiagLocation::Local(*local),
@@ -968,6 +975,9 @@ impl TypeError {
             IncorrectNumberOfPatternComponents {
                 expected, found, ..
             } => format!("Incorrect number of nested patterns: expected {expected}, found {found}"),
+            PatternDominated { .. } => {
+                "This case label is dominated by a preceding case label".to_owned()
+            }
         }
     }
 

@@ -86,7 +86,23 @@ impl InferCtx<'_> {
                 crate::java::subtyping::enum_constants(self.db, &self.scope, selector)
             && constants.iter().any(|constant| constant == &name)
         {
+            // §14.11.1: a `case` label naming an enum constant may not
+            // repeat within one switch — `case A` twice is javac's
+            // `duplicate case label`, keyed by the constant's simple name.
             self.types.insert(label, *selector);
+            let cases = self
+                .case_values
+                .last_mut()
+                .expect("switch case stack non-empty");
+            if cases
+                .insert(format!("enum:{}", name.as_str()), ())
+                .is_some()
+            {
+                self.report(TypeError::DuplicateCaseLabel {
+                    expr: label,
+                    value: name.as_str().to_owned(),
+                });
+            }
             return;
         }
         // JLS §15.2/§14.11.1: a case label is standalone.
@@ -197,13 +213,70 @@ impl InferCtx<'_> {
         }
     }
 
-    /// parameterized type with a non-wildcard argument cannot be tested.
-    pub(super) fn check_instanceof_target(&mut self, expr: ExprId, spanned: &SpannedTypeRef) {
+    /// §15.20.2/[§5.5]: an `instanceof` whose reference type is
+    /// *provably* incompatible with the operand's type, and a target that is
+    /// not reifiable ([§4.7] — a parameterized type with a non-wildcard
+    /// argument cannot be tested).
+    pub(super) fn check_instanceof_target(
+        &mut self,
+        operand_ty: Ty,
+        expr: ExprId,
+        spanned: &SpannedTypeRef,
+    ) {
         self.check_type_argument_bounds(DiagLocation::Expr(expr), spanned);
         let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, spanned);
         if !ty.is_error(self.db) && !self.is_reifiable(&ty) {
             self.report(TypeError::IllegalGenericInstanceOf { expr, ty });
         }
+        // §15.20.2/[§5.5]: an `instanceof` whose reference type is
+        // *provably* incompatible with the operand's type — a cast between
+        // the two is not a casting conversion ([§5.5]) — is an error even
+        // without patterns: `Integer i; i instanceof String` is javac's
+        // `incompatible types: Integer cannot be converted to String`. A
+        // non-final class operand can always be a subclass instance, so only
+        // provable incompatibility (both classes final and unrelated, or
+        // primitive/array mismatches) is rejected. A *type variable* target
+        // is never provably incompatible (its runtime class is unknown), and
+        // an already-reported non-reifiable target keeps only its own error.
+        let proper_reference = matches!(ty.kind(self.db), TyKind::Reference { .. });
+        if proper_reference
+            && !operand_ty.is_error(self.db)
+            && !ty.is_error(self.db)
+            && !self.castable(operand_ty, ty)
+        {
+            self.report(TypeError::IncompatibleTypes {
+                expr,
+                found: operand_ty,
+                expected: ty,
+            });
+        }
+    }
+
+    /// §14.11.1: registers the type pattern `pattern_ty` as a `case` label of
+    /// the current switch and reports it as *dominated* when an earlier label
+    /// already matches every value it could match — an earlier `case Number`
+    /// makes a later `case Integer` unreachable (javac: `this case label is
+    /// dominated by a preceding case label`). Dominance holds when the new
+    /// pattern's type is a *subtype* of an earlier type pattern's type (or of
+    /// the erasure of an earlier record pattern's head type); a `default`
+    /// dominates everything that follows it and is handled by the caller
+    /// (arms after a default are separate §14.22 unreachable-statement
+    /// territory). Returns whether the pattern was recorded.
+    pub(super) fn check_pattern_dominated(&mut self, pattern_ty: &Ty, pattern: PatternId) -> bool {
+        let stack = self.switch_patterns.last_mut();
+        let Some(prior) = stack else {
+            return false;
+        };
+        for earlier in prior.iter() {
+            if crate::java::subtyping::is_subtype(self.db, &self.scope, pattern_ty, earlier) {
+                self.report(TypeError::PatternDominated { pattern });
+                return false;
+            }
+        }
+        if !pattern_ty.is_error(self.db) {
+            prior.push(*pattern_ty);
+        }
+        true
     }
 
     /// type of a `TYPE_PATTERN`/`RECORD_PATTERN`, `None` for a `MatchAll`.

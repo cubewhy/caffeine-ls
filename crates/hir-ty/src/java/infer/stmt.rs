@@ -500,6 +500,34 @@ impl InferCtx<'_> {
                     }
                 };
                 self.scopes.push(FxHashMap::default());
+                // §14.14.2: the declared type of the loop variable must be
+                // assignable from the element type — `for (Integer x :
+                // new ArrayList<String>())` is javac's `incompatible types:
+                // String cannot be converted to Integer`. The variable is
+                // declared in the loop's own scope, so its declared type is
+                // the local declaration, checked before the body.
+                let declared = self
+                    .tree
+                    .local(*var)
+                    .ty
+                    .as_ref()
+                    .map(|tyref| resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref.ty))
+                    .unwrap_or_else(|| element);
+                if !element.is_error(self.db)
+                    && !declared.is_error(self.db)
+                    && !crate::java::subtyping::is_assignable(
+                        self.db,
+                        &self.scope,
+                        &element,
+                        &declared,
+                    )
+                {
+                    self.report(TypeError::IncompatibleTypes {
+                        expr: *iterable,
+                        found: element,
+                        expected: declared,
+                    });
+                }
                 self.declare_local_ty(*var, element);
                 // §16.1.11: like `while`, the body may run zero times. A
                 // labeled `break label` still needs the frame to record on
@@ -519,6 +547,7 @@ impl InferCtx<'_> {
             StmtData::Switch { scrutinee, arms } => {
                 let selector = self.infer_switch_selector(*scrutinee);
                 self.case_values.push(FxHashMap::default());
+                self.switch_patterns.push(Vec::new());
                 self.scopes.push(FxHashMap::default());
                 self.switch_depth += 1;
                 // §14.22: every arm is an alternative flow path starting from
@@ -587,7 +616,8 @@ impl InferCtx<'_> {
                                 self.infer_switch_label(*e, &selector);
                             }
                             SwitchLabel::Pattern(p) => {
-                                let _ = self.pattern_type(*p);
+                                let pattern_ty = self.pattern_type(*p);
+                                self.check_pattern_dominated(&pattern_ty, *p);
                                 for binding in self.pattern_bindings_of(*p) {
                                     self.scope_binding(binding);
                                 }
@@ -663,6 +693,7 @@ impl InferCtx<'_> {
                 };
                 self.scopes.pop();
                 self.case_values.pop();
+                self.switch_patterns.pop();
                 self.switch_depth -= 1;
             }
             StmtData::Return(Some(expr)) | StmtData::Yield(expr) => {

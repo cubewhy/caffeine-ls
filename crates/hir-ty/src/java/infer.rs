@@ -189,6 +189,7 @@ pub(crate) fn body_types_impl(
         switch_targets: Vec::new(),
         const_locals: FxHashMap::default(),
         case_values: Vec::new(),
+        switch_patterns: Vec::new(),
         loop_depth: 0,
         switch_depth: 0,
         labels: Vec::new(),
@@ -565,6 +566,11 @@ struct InferCtx<'a> {
     const_locals: FxHashMap<LocalId, Const>,
     /// reported as duplicate.
     case_values: Vec<FxHashMap<String, ()>>,
+    /// The reference types of the type patterns (and record patterns, by
+    /// their head type) already seen as `case` labels of the current switch,
+    /// outermost switch first ([§14.11.1] dominance: a later pattern whose
+    /// type is a subtype of an earlier pattern's is dominated and an error).
+    switch_patterns: Vec<Vec<Ty>>,
     /// loop or a `switch` ([§14.15]).
     loop_depth: usize,
     /// unlabeled `break` may target the nearest enclosing switch.

@@ -1,0 +1,30 @@
+---
+source: crates/hir-ty/tests/jls_switch_patterns.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+enum E2 { A, B }
+
+class F2 {
+    int f(E2 e) {
+        return switch (e) {
+            case A -> 1;
+            case A -> 2;
+            case B -> 3;
+            default -> 4;
+        };
+    }
+
+    int g(int x) {
+        return switch (x) {
+            case 1 -> 1;
+            case 2 -> 2;
+            default -> 3;
+        };
+    }
+}
+
+method f(com.example.E2): int
+  @8:17..8:18 'A': duplicate-case-label: Duplicate case label

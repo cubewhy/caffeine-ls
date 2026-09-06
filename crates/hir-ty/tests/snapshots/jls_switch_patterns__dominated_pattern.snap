@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_switch_patterns.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class F3 {
+    int f(Object o) {
+        return switch (o) {
+            case Number n -> 1;
+            case Integer i -> 2;
+            default -> 3;
+        };
+    }
+}
+
+method f(java.lang.Object): int
+  @6:17..6:26 'Integer i': pattern-dominated: This case label is dominated by a preceding case label

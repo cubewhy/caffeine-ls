@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_switch_patterns.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class F8b {
+    Integer field = new Integer(1);
+
+    void f(Object o) {
+        Integer i = field;
+        boolean a = i instanceof String;
+        boolean b = o instanceof Integer;
+        boolean c = "s" instanceof Integer;
+    }
+}
+
+method f(java.lang.Object): void
+  @7:20..7:21 'i': incompatible-types: Incompatible types. Found: 'Integer', required: 'String'
+    -> @7:20..7:21 'i': required: String
+    -> @7:20..7:21 'i': found: Integer
+  @9:20..9:23 '"s"': incompatible-types: Incompatible types. Found: 'String', required: 'Integer'
+    -> @9:20..9:23 '"s"': required: Integer
+    -> @9:20..9:23 '"s"': found: String

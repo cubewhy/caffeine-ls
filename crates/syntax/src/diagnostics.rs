@@ -157,6 +157,9 @@ pub enum JavaDiagnosticCode {
     /// type (or a value body targets a void-compatible SAM) — javac: `bad
     /// return type in lambda expression`.
     LambdaBadReturn,
+    /// §14.11.1: a `case` label pattern is dominated by an earlier label —
+    /// javac: `this case label is dominated by a preceding case label`.
+    PatternDominated,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -491,6 +494,7 @@ impl JavaDiagnosticCode {
             QualifiedSuperNotEnclosing => Some("compiler.err.not.encl.class"),
             LambdaParameterCountMismatch => Some("compiler.err.incompatible.types"),
             LambdaBadReturn => Some("compiler.err.prob.found.req"),
+            PatternDominated => Some("compiler.err.improper.used.var"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -632,6 +636,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::QualifiedSuperNotEnclosing => "qualified-super-not-enclosing",
             JavaDiagnosticCode::LambdaParameterCountMismatch => "lambda-parameter-count-mismatch",
             JavaDiagnosticCode::LambdaBadReturn => "lambda-bad-return",
+            JavaDiagnosticCode::PatternDominated => "pattern-dominated",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

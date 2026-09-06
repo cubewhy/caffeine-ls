@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_switch_patterns.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+import java.util.ArrayList;
+
+class F4 {
+    void red() {
+        for (Integer x : new ArrayList<String>()) {
+        }
+    }
+
+    void green() {
+        for (String s : new ArrayList<String>()) {
+        }
+    }
+}
+
+method red(): void
+  @6:25..6:48 'new ArrayList<String>()': incompatible-types: Incompatible types. Found: 'String', required: 'Integer'
+    -> @6:25..6:48 'new ArrayList<String>()': required: Integer
+    -> @6:25..6:48 'new ArrayList<String>()': found: String
