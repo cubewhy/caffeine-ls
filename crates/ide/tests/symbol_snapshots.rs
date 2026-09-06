@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use hir::{Classpath, ClasspathEntry, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost, DocumentSymbol, WorkspaceSymbol};
+use ide::{Analysis, AnalysisHost, DocumentSymbol, WorkspaceSymbolSummary};
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
 use insta::assert_snapshot;
 use triomphe::Arc;
@@ -91,14 +91,14 @@ fn render_document_symbols(symbols: &[DocumentSymbol]) -> String {
         .join("\n")
 }
 
-fn render_workspace_symbols(symbols: &[WorkspaceSymbol]) -> String {
+fn render_workspace_symbols(symbols: &[WorkspaceSymbolSummary]) -> String {
     let mut lines = symbols
         .iter()
         .map(|symbol| {
             format!(
                 "{:<10} {} @file{}",
-                symbol.symbol.kind.label(),
-                symbol.symbol.display_name,
+                symbol.kind.label(),
+                symbol.name,
                 symbol.file.index()
             )
         })
@@ -308,19 +308,29 @@ fn workspace_symbols_snapshot() {
     let analysis = fixture.analysis();
 
     // Case-insensitive prefix search on the simple name.
-    let foo = analysis.workspace_symbols("foo").unwrap();
+    let foo = analysis.workspace_symbols("foo", None).unwrap();
     assert_snapshot!("workspace_symbols_prefix", render_workspace_symbols(&foo));
 
     // Substring search finds `Bar` and `Other`.
-    let bar = analysis.workspace_symbols("ar").unwrap();
+    let bar = analysis.workspace_symbols("ar", None).unwrap();
     assert_snapshot!(
         "workspace_symbols_substring",
         render_workspace_symbols(&bar)
     );
 
     // An empty query returns every registered symbol.
-    let all = analysis.workspace_symbols("").unwrap();
+    let all = analysis.workspace_symbols("", None).unwrap();
     assert_snapshot!("workspace_symbols_all", render_workspace_symbols(&all));
+
+    // The opened-files scope (the empty-query request path): only the given
+    // file's symbols.
+    let opened = analysis
+        .workspace_symbols("", Some(&[FileId::from_raw(2)]))
+        .unwrap();
+    assert_snapshot!(
+        "workspace_symbols_opened_scope",
+        render_workspace_symbols(&opened)
+    );
 }
 
 #[test]

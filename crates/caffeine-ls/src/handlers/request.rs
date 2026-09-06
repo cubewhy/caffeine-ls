@@ -110,16 +110,61 @@ pub fn on_workspace_symbol(
 ) -> anyhow::Result<Option<WorkspaceSymbolResponse>> {
     tracing::info!(query = ?params.query, "request workspace symbols");
 
-    let workspace_symbols = state.analysis.workspace_symbols(&params.query)?;
+    // An empty query would otherwise enumerate the whole workspace index just
+    // to fill a picker row list; serve only the files the client has open.
+    let scope: Option<Vec<FileId>> = if params.query.trim().is_empty() {
+        Some(state.opened_file_ids())
+    } else {
+        None
+    };
+    let workspace_symbols = state
+        .analysis
+        .workspace_symbols(&params.query, scope.as_deref())?;
+
     let mut out = Vec::with_capacity(workspace_symbols.len());
     for symbol in workspace_symbols {
+        // Deliberately cheap: name, kind, container only — no line index, no
+        // range math. The client asks for the location via
+        // `workspaceSymbol/resolve` on the one row it navigates to.
         let uri = state.file_id_to_url(symbol.file)?;
-        let line_index = state.file_line_index(symbol.file)?;
-        let location = symbols::location(&line_index, uri, &symbol);
-        out.push(symbols::workspace_symbol(location, &symbol));
+        out.push(symbols::workspace_symbol(uri, &symbol));
     }
-
     Ok(Some(out.into()))
+}
+
+/// `workspaceSymbol/resolve`: the client navigation re-ask. Computes the one
+/// thing the picker row omitted — the declaration range — for the single
+/// `(file, item)` in the row's `data`.
+pub fn on_workspace_symbol_resolve(
+    state: GlobalStateSnapshot,
+    params: WorkspaceSymbol,
+) -> anyhow::Result<WorkspaceSymbol> {
+    tracing::info!("request workspace symbol resolve");
+
+    let data: symbols::WorkspaceSymbolData = params
+        .data
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("workspace symbol resolve missing data"))
+        .and_then(|data| serde_json::from_value(data).map_err(Into::into))?;
+
+    let Some(range) = state
+        .analysis
+        .source_symbol_range(FileId::from_raw(data.file_id), data.item)?
+    else {
+        // The file was rewritten or deleted since the row was served; hand
+        // the symbol back unchanged rather than fail navigation.
+        return Ok(params);
+    };
+    let file_id = FileId::from_raw(data.file_id);
+    let uri = state.file_id_to_url(file_id)?;
+    let line_index = state.file_line_index(file_id)?;
+    Ok(symbols::resolve_workspace_symbol(
+        params,
+        Location {
+            uri,
+            range: to_proto::range(&line_index, range),
+        },
+    ))
 }
 
 /// The declaration(s) a reference at a position resolves to, as LSP

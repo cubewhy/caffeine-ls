@@ -492,6 +492,16 @@ impl GlobalStateSnapshot {
         let path = self.vfs_read().file_path(file_id).clone();
         self.mem_docs.get(&path).map(|doc| doc.version)
     }
+
+    /// FileIds of the documents the client has open (`didOpen`), dropping files
+    /// excluded from the vfs. Order is unspecified; callers sort.
+    pub(crate) fn opened_file_ids(&self) -> Vec<FileId> {
+        let vfs = self.vfs_read();
+        self.mem_docs
+            .paths()
+            .filter_map(|path| vfs_path_to_file_id(&vfs, path).ok().flatten())
+            .collect()
+    }
 }
 
 /// Returns `None` if the file was excluded.

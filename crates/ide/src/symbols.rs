@@ -30,6 +30,9 @@ use vfs::FileId;
 
 use crate::RootDatabase;
 
+use hir_expand::arena::ArenaId;
+type ItemId = hir::hir_def::java::item_tree::ItemId;
+
 /// A source symbol as seen by the IDE.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
@@ -58,11 +61,21 @@ pub struct DocumentSymbol {
     pub item: Option<hir::hir_def::java::item_tree::ItemId>,
 }
 
-/// A document symbol plus the file it lives in.
+/// A workspace symbol picker row: the three fields a client renders before
+/// navigation plus the `(file, item)` identity carried in the row's `data`.
+/// Deliberately range- and signature-free: `workspace/symbol` stays O(index);
+/// the LSP layer resolves the location for the one row the client navigates
+/// to via `workspaceSymbol/resolve`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkspaceSymbol {
+pub struct WorkspaceSymbolSummary {
     pub file: FileId,
-    pub symbol: DocumentSymbol,
+    /// Simple name (last `.`-segment of the canonical name; `$` kept).
+    pub name: String,
+    pub kind: hir::SourceSymbolKind,
+    /// The enclosing type's FQN (`name` minus its last segment); `None` for
+    /// top-level declarations.
+    pub container_name: Option<String>,
+    pub item: ItemId,
 }
 
 /// The declared symbols of a file, in declaration order, prefixed by a
@@ -343,68 +356,90 @@ fn render_params(
 }
 
 /// Symbols whose simple name matches `query` (case-insensitive substring,
-/// prefix-preferred) across every registered source set, sorted by
-/// (name, file, item) for determinism. An empty query returns everything.
-pub fn workspace_symbols(db: &RootDatabase, query: &str) -> Vec<WorkspaceSymbol> {
-    let mut out = Vec::new();
-    for source_set in registered_source_sets(db) {
-        let index = hir::source_set_symbols(db, source_set);
-        if query.trim().is_empty() {
-            out.extend(index.iter().cloned());
-        } else {
-            out.extend(index.lookup_simple(query));
-            out.extend(index.lookup_substring(query));
+/// prefix-preferred) restricted to `files` when given, else every registered
+/// source set; sorted by (canonical name, file, item) and deduplicated, with
+/// an empty query returning everything (within scope).
+pub fn workspace_symbol_summaries(
+    db: &RootDatabase,
+    query: &str,
+    files: Option<&[FileId]>,
+) -> Vec<WorkspaceSymbolSummary> {
+    let mut refs: Vec<hir::SourceSymbolRef> = Vec::new();
+    match files {
+        None => {
+            // Index path — exactly the current collection logic, no filtering.
+            for source_set in registered_source_sets(db) {
+                let index = hir::source_set_symbols(db, source_set);
+                if query.trim().is_empty() {
+                    refs.extend(index.iter().cloned());
+                } else {
+                    refs.extend(index.lookup_simple(query));
+                    refs.extend(index.lookup_substring(query));
+                }
+            }
+        }
+        Some(files) => {
+            // Opened-files path (empty query by contract): per-file item trees
+            // only, no source-set index scan. Prefix ∪ substring matching on
+            // the simple name collapses to `contains`, mirroring the index
+            // lookups.
+            let query = query.to_lowercase();
+            for &file in files {
+                for symbol in hir::file_symbols(db, file).iter() {
+                    if query.trim().is_empty()
+                        || symbol.name.simple_name().to_lowercase().contains(&query)
+                    {
+                        refs.push(hir::SourceSymbolRef {
+                            file,
+                            symbol: symbol.clone(),
+                        });
+                    }
+                }
+            }
         }
     }
-    out.sort_by_key(|reference| {
+    refs.sort_by_key(|reference| {
         (
             reference.symbol.name.as_str().to_owned(),
             reference.file,
             reference.symbol.item,
         )
     });
-    // Prefix and substring lookups overlap on prefix matches.
-    out.dedup();
-    out.into_iter()
-        .filter_map(|reference| {
-            let tree = hir::file_item_tree(db, reference.file);
-            let item = reference.symbol.item;
-            let (range, name_range) =
-                range_ctx(db, reference.file, tree.language).and_then(|(map, source)| {
-                    Some((
-                        hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)?,
-                        hir::hir_def::java::ranges::item_name_range(&map, &source, &tree, item)?,
-                    ))
-                })?;
-            Some(WorkspaceSymbol {
+    refs.dedup();
+    refs.into_iter()
+        .map(|reference| {
+            let fqn = reference.symbol.name.as_str().to_owned();
+            WorkspaceSymbolSummary {
                 file: reference.file,
-                symbol: DocumentSymbol {
-                    name: reference.symbol.name.as_str().to_owned(),
-                    kind: reference.symbol.kind,
-                    range,
-                    name_range,
-                    display_name: workspace_display_name(db, reference.file, &reference.symbol),
-                    detail: None,
-                    item: Some(reference.symbol.item),
-                },
-            })
+                name: fqn
+                    .rsplit_once('.')
+                    .map(|(_, simple)| simple.to_owned())
+                    .unwrap_or_else(|| fqn.clone()),
+                kind: reference.symbol.kind,
+                container_name: fqn.rsplit_once('.').map(|(parent, _)| parent.to_owned()),
+                item: reference.symbol.item,
+            }
         })
         .collect()
 }
 
-/// The client-facing name of a workspace symbol: the simple name, with a
-/// method's parameter list rendered inline — `name(params)` (no return type —
-/// the workspace row's `container_name` already qualifies it).
-fn workspace_display_name(
-    db: &RootDatabase,
-    file_id: FileId,
-    symbol: &hir::SourceSymbol,
-) -> String {
-    let simple = symbol.name.simple_name();
-    match symbol.kind {
-        hir::SourceSymbolKind::Method => method_signature(db, file_id, symbol.item, simple, false),
-        _ => simple.to_owned(),
+/// The declaration range of one lowered item, on demand — the
+/// `workspaceSymbol/resolve` half of the flow. Returns `None` for a stale
+/// `(file, item)` (file rewritten or deleted since the row was served).
+pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Option<TextRange> {
+    let item = hir::hir_def::java::item_tree::ItemId(ArenaId(item));
+    // The id indexes into this revision's item tree; re-validate before
+    // touching the arena — `Arena::get` panics out of bounds and a rewritten
+    // file's tree can shrink.
+    if !hir::file_symbols(db, file_id)
+        .iter()
+        .any(|symbol| symbol.item == item)
+    {
+        return None;
     }
+    let tree = hir::file_item_tree(db, file_id);
+    let (map, source) = range_ctx(db, file_id, tree.language)?;
+    hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
 }
 
 /// The registered source sets of the project graph, in unspecified order.

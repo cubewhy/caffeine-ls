@@ -33,7 +33,13 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
             .into(),
         ),
         document_symbol_provider: Some(true.into()),
-        workspace_symbol_provider: Some(true.into()),
+        workspace_symbol_provider: Some(
+            WorkspaceSymbolOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }
+            .into(),
+        ),
         definition_provider: Some(true.into()),
         hover_provider: Some(true.into()),
         ..Default::default()

@@ -605,6 +605,8 @@ public interface Bar {
 }
 "#,
     );
+    // Only Foo is opened: the empty query must limit to opened files.
+    lsp.open_document("/src/com/example/Foo.java");
 
     // `workspace/symbol` needs the workspace to be loaded, so retry until the
     // plain source root graph has been applied.
@@ -622,8 +624,47 @@ public interface Bar {
 
     // The file URIs embed the temp workspace path, which varies between runs.
     let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
-    let normalized = normalize_uris(response, &workspace_root);
+    let normalized = normalize_uris(response.clone(), &workspace_root);
+    // The new snapshot must show only Foo's symbols (no Bar.java rows).
     insta::assert_json_snapshot!("workspace_symbols", normalized);
+
+    // Resolve round-trip: the `bar` row carries data; resolve adds the real
+    // location and preserves everything else.
+    let bar_row = response
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|symbol| symbol["name"] == "bar")
+        .unwrap()
+        .clone();
+    let resolved = lsp.request("workspaceSymbol/resolve", bar_row.clone());
+    assert_eq!(resolved["name"], "bar");
+    assert_eq!(resolved["data"], bar_row["data"]);
+    assert_eq!(resolved["location"]["uri"], bar_row["location"]["uri"]);
+    assert_eq!(resolved["location"]["range"]["start"]["line"], 4);
+    assert_eq!(resolved["location"]["range"]["start"]["character"], 4);
+    assert_eq!(resolved["location"]["range"]["end"]["character"], 32);
+
+    // Non-empty queries still search the whole workspace: Bar.java is NOT
+    // open, but a typed query finds it.
+    let typed = lsp.request("workspace/symbol", json!({ "query": "Bar" }));
+    assert_eq!(
+        typed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|symbol| symbol["name"] == "Bar")
+            .count(),
+        1
+    );
+
+    // Resolve without data is a request error (surfaces as null in this
+    // harness).
+    let broken = lsp.request(
+        "workspaceSymbol/resolve",
+        json!({ "name": "Foo", "kind": 5, "location": { "uri": "file:///x" } }),
+    );
+    assert!(broken.is_null());
 
     lsp.shutdown();
 }

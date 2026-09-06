@@ -19,6 +19,11 @@ impl MemDocs {
         self.mem_docs.contains_key(path)
     }
 
+    /// The vfs paths of the documents the client has open, in hash-map order.
+    pub(crate) fn paths(&self) -> impl Iterator<Item = &VfsPath> {
+        self.mem_docs.keys()
+    }
+
     pub(crate) fn insert(&mut self, path: VfsPath, data: DocumentData) -> Result<(), ()> {
         self.added_or_removed = true;
         match Arc::make_mut(&mut self.mem_docs).insert(path, Arc::new(data)) {

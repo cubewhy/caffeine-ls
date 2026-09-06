@@ -5,17 +5,11 @@ expression: normalized
 [
   {
     "location": {
-      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
-      "range": {
-        "start": {
-          "line": 2,
-          "character": 0
-        },
-        "end": {
-          "line": 5,
-          "character": 1
-        }
-      }
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java"
+    },
+    "data": {
+      "file_id": 0,
+      "item": 2
     },
     "name": "Foo",
     "kind": 5,
@@ -23,74 +17,26 @@ expression: normalized
   },
   {
     "location": {
-      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
-      "range": {
-        "start": {
-          "line": 4,
-          "character": 4
-        },
-        "end": {
-          "line": 4,
-          "character": 32
-        }
-      }
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java"
     },
-    "name": "bar(int...)",
+    "data": {
+      "file_id": 0,
+      "item": 1
+    },
+    "name": "bar",
     "kind": 6,
     "containerName": "com.example.Foo"
   },
   {
     "location": {
-      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java",
-      "range": {
-        "start": {
-          "line": 3,
-          "character": 15
-        },
-        "end": {
-          "line": 3,
-          "character": 16
-        }
-      }
+      "uri": "file://<WORKSPACE_ROOT>/src/com/example/Foo.java"
+    },
+    "data": {
+      "file_id": 0,
+      "item": 0
     },
     "name": "x",
     "kind": 8,
     "containerName": "com.example.Foo"
-  },
-  {
-    "location": {
-      "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
-      "range": {
-        "start": {
-          "line": 2,
-          "character": 0
-        },
-        "end": {
-          "line": 4,
-          "character": 1
-        }
-      }
-    },
-    "name": "Bar",
-    "kind": 11,
-    "containerName": "org.other"
-  },
-  {
-    "location": {
-      "uri": "file://<WORKSPACE_ROOT>/src/org/other/Bar.java",
-      "range": {
-        "start": {
-          "line": 3,
-          "character": 4
-        },
-        "end": {
-          "line": 3,
-          "character": 15
-        }
-      }
-    },
-    "name": "baz()",
-    "kind": 6,
-    "containerName": "org.other.Bar"
   }
 ]

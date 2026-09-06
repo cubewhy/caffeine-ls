@@ -23,7 +23,7 @@ pub mod symbols;
 pub mod workspace;
 
 pub use nav::{HoverInfo, NavigationTarget};
-pub use symbols::{DocumentSymbol, WorkspaceSymbol};
+pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
 
 pub type Cancellable<T> = Result<T, Cancelled>;
@@ -176,9 +176,28 @@ impl Analysis {
     }
 
     /// Symbols whose simple name matches `query` (case-insensitive) across
-    /// every registered source set, sorted by (name, file, item).
-    pub fn workspace_symbols(&self, query: &str) -> Cancellable<Vec<WorkspaceSymbol>> {
-        self.with_db(|db| symbols::workspace_symbols(db, query))
+    /// every registered source set — or, when `files` is given, only within
+    /// `files` — sorted by (canonical name, file, item). Rows are cheap
+    /// summaries (no ranges, no signatures); resolve the range for a single
+    /// row on demand via [`Analysis::source_symbol_range`]. An empty query
+    /// returns everything in scope.
+    pub fn workspace_symbols(
+        &self,
+        query: &str,
+        files: Option<&[FileId]>,
+    ) -> Cancellable<Vec<WorkspaceSymbolSummary>> {
+        self.with_db(|db| symbols::workspace_symbol_summaries(db, query, files))
+    }
+
+    /// The declaration range of one lowered item, for `workspaceSymbol/resolve`.
+    /// `item` is the raw `ItemId` arena index. `None` when the `(file, item)`
+    /// no longer exists.
+    pub fn source_symbol_range(
+        &self,
+        file_id: FileId,
+        item: u32,
+    ) -> Cancellable<Option<rowan::TextRange>> {
+        self.with_db(|db| symbols::source_symbol_range(db, file_id, item))
     }
 
     /// The declared type of an item — a field's type, a method's return type,

@@ -8,12 +8,15 @@
 //! already-indexed name prefix — nesting is a pure name join, no extra
 //! traversal.
 
-use ide::{DocumentSymbol as IdeDocumentSymbol, WorkspaceSymbol as IdeWorkspaceSymbol};
+use ide::{
+    DocumentSymbol as IdeDocumentSymbol, WorkspaceSymbolSummary as IdeWorkspaceSymbolSummary,
+};
 use lsp_types::{
-    DocumentSymbol as LspDocumentSymbol, Location, SymbolKind, WorkspaceSymbol,
+    DocumentSymbol as LspDocumentSymbol, Location, LocationUriOnly, SymbolKind, WorkspaceSymbol,
     WorkspaceSymbolLocation,
 };
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
 use crate::line_index::LineIndex;
 
@@ -130,36 +133,48 @@ pub(crate) fn nest_document_symbols(
         .collect()
 }
 
-/// Converts one HIR workspace symbol into the LSP wire shape, with the
-/// enclosing type as the container name.
-pub(crate) fn workspace_symbol(location: Location, symbol: &IdeWorkspaceSymbol) -> WorkspaceSymbol {
+/// The server→client handle of a workspace symbol row: `(file, item)`,
+/// encoded in the row's `data` field so `workspaceSymbol/resolve` can find
+/// the declaration without any client-side state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WorkspaceSymbolData {
+    pub(crate) file_id: u32,
+    pub(crate) item: u32,
+}
+
+/// A workspace symbol picker row: name, kind and container only, with the
+/// `(file, item)` handle in `data` and a uri-only location (no range — that
+/// costs a parse+line-index per file and is deferred to
+/// `workspaceSymbol/resolve`).
+pub(crate) fn workspace_symbol(
+    uri: lsp_types::Uri,
+    symbol: &IdeWorkspaceSymbolSummary,
+) -> WorkspaceSymbol {
     WorkspaceSymbol {
-        location: WorkspaceSymbolLocation::Location(location),
-        data: None,
+        location: WorkspaceSymbolLocation::LocationUriOnly(LocationUriOnly { uri }),
+        data: Some(
+            serde_json::to_value(WorkspaceSymbolData {
+                file_id: symbol.file.index(),
+                item: symbol.item.0.0,
+            })
+            .unwrap(), // a struct of two u32s cannot fail to serialize
+        ),
         base_symbol_information: lsp_types::BaseSymbolInformation {
-            name: symbol.symbol.display_name.clone(),
-            kind: symbol_kind(symbol.symbol.kind),
+            name: symbol.name.clone(),
+            kind: symbol_kind(symbol.kind),
             tags: None,
-            // The enclosing type FQN (name minus the last segment), for the
-            // client's UI qualifier.
-            container_name: symbol
-                .symbol
-                .name
-                .rsplit_once('.')
-                .map(|(parent, _)| parent.to_owned()),
+            container_name: symbol.container_name.clone(),
         },
     }
 }
 
-/// The full `Location` of a workspace symbol: its file's URI and the
-/// declaration range.
-pub(crate) fn location(
-    line_index: &LineIndex,
-    uri: lsp_types::Uri,
-    symbol: &IdeWorkspaceSymbol,
-) -> Location {
-    Location {
-        uri,
-        range: to_proto::range(line_index, symbol.symbol.range),
-    }
+/// `workspaceSymbol/resolve`: fills the real `Location` into the picker row
+/// the client echoed back; everything else (name/kind/container/data) stays
+/// as the client sent it.
+pub(crate) fn resolve_workspace_symbol(
+    mut symbol: WorkspaceSymbol,
+    location: Location,
+) -> WorkspaceSymbol {
+    symbol.location = WorkspaceSymbolLocation::Location(location);
+    symbol
 }
