@@ -262,6 +262,33 @@ impl InferCtx<'_> {
                 };
                 self.mutating = false;
                 let rhs_ty = self.with_target(Some(lhs_ty), |this| this.infer_expr(rhs));
+                // §15.26.2: a compound assignment `E1 op= E2` is equivalent
+                // to `E1 = (T) (E1 op E2)` where `T` is the type of `E1` and
+                // `E1 op E2` must itself be a legal binary expression
+                // ([§15.17]/[§15.18]/[§15.19]/[§15.22]) — an `Object += 1`
+                // is `Object + int`, which has no legal operator, so the
+                // compound assignment is an error (javac: `bad operand types
+                // for binary operator '+'`). The binary-op legality is
+                // checked here without reporting twice: the ordinary binary
+                // inference of [`InferCtx::binary`] reports on real binary
+                // expressions, and the compound path validates the same
+                // rules against the already-inferred operand types. The
+                // result of the (legal) binary expression is cast back to
+                // `T` — javac accepts `short s; s += 1` (binary result
+                // `int`, narrowing cast) — so no assignability check on the
+                // binary result is needed beyond legality.
+                if !matches!(op, AssignOp::Assign)
+                    && !lhs_ty.is_error(self.db)
+                    && !rhs_ty.is_error(self.db)
+                    && !self.compound_assign_legal(op, lhs_ty, rhs_ty)
+                {
+                    self.report(TypeError::IncompatibleOperand {
+                        expr: lhs,
+                        op: assign_op_symbol(op),
+                        found: lhs_ty,
+                        other: Some(rhs_ty),
+                    });
+                }
                 // §16: a simple assignment definitely assigns its left-hand
                 // local; a compound assignment or increment reads it first,
                 // so it does not discharge a blank local. Writing a local
@@ -1161,5 +1188,69 @@ impl InferCtx<'_> {
         };
         syntax::stub::ClassKind::from_flags(class.flags, class.is_record)
             == syntax::stub::ClassKind::Enum
+    }
+
+    /// §15.26.2: whether the binary expression `lhs op rhs` the compound
+    /// assignment `lhs op= rhs` desugars to is itself well-typed
+    /// ([§15.17]/[§15.18]/[§15.19]/[§15.22]) — the legality test, without the
+    /// binary inference's own diagnostics. `+` is legal for two numeric
+    /// operands (after unboxing, [§5.1.8]) and whenever either operand is a
+    /// `String` (concatenation, [§15.18.1]); the other arithmetic operators
+    /// need two numeric operands; the shifts need a numeric left operand and
+    /// a numeric right operand ([§15.19]); the bitwise operators need two
+    /// numeric or two `boolean` operands ([§15.22]). The desugar then casts
+    /// the binary result back to the left-hand type, so no further
+    /// assignability check applies.
+    pub(super) fn compound_assign_legal(&self, op: AssignOp, lhs: Ty, rhs: Ty) -> bool {
+        use crate::java::infer::operator::binary_op_symbol;
+        use hir_expand::body::BinaryOp;
+        let binary_op = match op {
+            AssignOp::Assign => return true,
+            AssignOp::Mul => BinaryOp::Mul,
+            AssignOp::Div => BinaryOp::Div,
+            AssignOp::Rem => BinaryOp::Rem,
+            AssignOp::Add => BinaryOp::Add,
+            AssignOp::Sub => BinaryOp::Sub,
+            AssignOp::Shl => BinaryOp::Shl,
+            AssignOp::Shr => BinaryOp::Shr,
+            AssignOp::UShr => BinaryOp::UShr,
+            AssignOp::BitAnd => BinaryOp::BitAnd,
+            AssignOp::BitXor => BinaryOp::BitXor,
+            AssignOp::BitOr => BinaryOp::BitOr,
+        };
+        let _ = binary_op_symbol(binary_op);
+        match binary_op {
+            BinaryOp::Add if self.is_string(lhs) || self.is_string(rhs) => true,
+            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
+                self.is_numeric_operand(lhs) && self.is_numeric_operand(rhs)
+            }
+            BinaryOp::Shl | BinaryOp::Shr | BinaryOp::UShr => {
+                self.is_numeric_operand(lhs) && self.is_numeric_operand(rhs)
+            }
+            BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
+                let (a_bool, b_bool) = (self.is_boolean(lhs), self.is_boolean(rhs));
+                (a_bool && b_bool) || (self.is_numeric_operand(lhs) && self.is_numeric_operand(rhs))
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The source symbol of an assignment operator ([§15.26]), for
+/// [`TypeError::IncompatibleOperand`].
+pub(super) fn assign_op_symbol(op: AssignOp) -> &'static str {
+    match op {
+        AssignOp::Assign => "=",
+        AssignOp::Mul => "*=",
+        AssignOp::Div => "/=",
+        AssignOp::Rem => "%=",
+        AssignOp::Add => "+=",
+        AssignOp::Sub => "-=",
+        AssignOp::Shl => "<<=",
+        AssignOp::Shr => ">>=",
+        AssignOp::UShr => ">>>=",
+        AssignOp::BitAnd => "&=",
+        AssignOp::BitXor => "^=",
+        AssignOp::BitOr => "|=",
     }
 }

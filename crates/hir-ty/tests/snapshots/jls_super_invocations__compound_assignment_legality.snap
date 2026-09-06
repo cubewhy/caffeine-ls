@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/Comp.java:
+package com.example;
+
+class Comp {
+    void t(Object o) {
+        o += 1;
+    }
+    void u(int[] a) {
+        a[0] += 1;
+    }
+    void v(String s) {
+        s += "x";
+    }
+    void w(boolean b) {
+        b |= true;
+        b &= false;
+    }
+    void x(long l) {
+        l >>= 2;
+    }
+}
+
+method t(java.lang.Object): void
+  @4:8..4:9 'o': incompatible-operand: Operator '+=' cannot be applied to 'Object' and 'int'

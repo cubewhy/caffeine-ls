@@ -142,6 +142,13 @@ pub enum JavaDiagnosticCode {
     /// §15.12.3: an unqualified invocation of an instance method from a static
     /// context ([§8.1.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3)).
     NonStaticMethodFromStaticContext,
+    /// §15.12.3/[§15.8.4]/[§15.11.2]: `super.m(...)`/`I.super.m(...)` on an
+    /// abstract supertype member — javac: `abstract method {m} in {A} cannot
+    /// be accessed directly`.
+    AbstractSuperAccess,
+    /// §15.11.2/[§8.1.3]: `Q.super.m(...)` whose qualifier is not an
+    /// enclosing superinterface — javac: `not an enclosing class: {Q}`.
+    QualifiedSuperNotEnclosing,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -472,6 +479,8 @@ impl JavaDiagnosticCode {
             MissingReturnValue => Some("compiler.err.missing.ret.stmt"),
             CatchNeverThrown => Some("compiler.err.except.never.thrown.in.try"),
             NonStaticMethodFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
+            AbstractSuperAccess => Some("compiler.err.abstract.cant.be.accessed.directly"),
+            QualifiedSuperNotEnclosing => Some("compiler.err.not.encl.class"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -609,6 +618,8 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::NonStaticMethodFromStaticContext => {
                 "non-static-method-from-static-context"
             }
+            JavaDiagnosticCode::AbstractSuperAccess => "abstract-super-access",
+            JavaDiagnosticCode::QualifiedSuperNotEnclosing => "qualified-super-not-enclosing",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

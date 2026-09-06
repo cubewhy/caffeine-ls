@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+interface NotImpl {}
+
+class BadQual {
+    void f() {
+        NotImpl.super.toString();
+    }
+}
+
+interface IA {
+    default void m() {}
+}
+
+interface IB extends IA {
+    default void use() {
+        IA.super.m();
+    }
+}
+
+class Impl implements IB {
+    void g() {
+        IA.super.m();
+        IB.super.use();
+    }
+}
+
+method f(): void
+  @6:8..6:21 'NotImpl.super': qualified-super-not-enclosing: 'NotImpl' is not an enclosing class

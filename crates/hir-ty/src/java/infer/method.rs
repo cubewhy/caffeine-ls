@@ -334,6 +334,24 @@ impl InferCtx<'_> {
             explicit_type_args,
         ) {
             Some((method, deferred)) => {
+                // §15.12.3/[§15.8.4]: `super.m(...)` invokes the method *as
+                // declared in the supertype* — the receiver's own override
+                // never applies. An abstract supertype member therefore has
+                // no implementation to call, so the invocation is an error
+                // whatever the enclosing class implements: javac `abstract
+                // method m() in Abs cannot be accessed directly`. The
+                // interface-qualified `I.super.m(...)` form ([§15.11.2]) is
+                // the same (it exists to reach an interface *default*; an
+                // abstract interface member has no body to reach).
+                if mode == InvocationMode::Super || mode == InvocationMode::Interface {
+                    if method.abstract_ {
+                        self.report(TypeError::AbstractSuperAccess {
+                            expr,
+                            method: name.clone(),
+                            owner: Name::new(&method.owner),
+                        });
+                    }
+                }
                 // §18.5.2.2/§18.5.2.4: the resolved formal parameters are the
                 // target types of the poly arguments — the lambda, method
                 // reference or nested invocation is re-inferred against the
@@ -483,6 +501,27 @@ impl InferCtx<'_> {
                                     keyword: NonStaticThisKind::Super,
                                 });
                             }
+                            let raw = resolve_type_ref(
+                                self.db,
+                                &self.scope,
+                                &self.resolver,
+                                &qualifier.ty,
+                            );
+                            // §15.11.2/[§8.1.3]: the qualifier of `I.super.m`
+                            // must be a *direct superinterface* of the
+                            // enclosing class (or an interface it inherits) —
+                            // `J.super` for a `J` the class neither implements
+                            // nor (transitively) extends as an interface is
+                            // javac's `not an enclosing class: J`. Reporting
+                            // here (rather than silently resolving the raw
+                            // qualifier's members) matches javac, which
+                            // rejects the form outright.
+                            if !self.qualifier_is_superinterface(&raw) {
+                                self.report(TypeError::QualifiedSuperNotEnclosing {
+                                    expr: receiver,
+                                    qualifier: raw,
+                                });
+                            }
                             // §15.11.2: the receiver of `I.super.m(...)` is the
                             // interface `I` *as inherited* — parameterized by
                             // the enclosing class's own type arguments, not a
@@ -614,5 +653,46 @@ impl InferCtx<'_> {
             }
         }
         raw
+    }
+
+    /// §15.11.2/[§8.1.3]: whether the type named by a qualified-super
+    /// qualifier (`I.super`) is a superinterface of one of the enclosing
+    /// classes — an interface the enclosing class implements directly or
+    /// inherits from its supertypes. A qualifier naming a class that is not
+    /// such an interface is javac's `not an enclosing class` error (the
+    /// class's own `super.m()` covers the class-supertype case, and a class
+    /// *cannot* be named here: §15.11.2's qualifier must be an interface or
+    /// a type variable whose bound is an interface).
+    fn qualifier_is_superinterface(&self, raw: &Ty) -> bool {
+        let Some((raw_name, _)) = raw.erasure(self.db).as_reference(self.db) else {
+            return false;
+        };
+        let mut levels: Vec<Ty> = Vec::new();
+        if let Some(class) = &self.enclosing_class {
+            levels.push(*class);
+        }
+        levels.extend(self.enclosing_chain.iter().cloned());
+        for class in &levels {
+            let mut stack = vec![*class];
+            let mut seen = FxHashSet::default();
+            while let Some(current) = stack.pop() {
+                if !seen.insert(current.id) {
+                    continue;
+                }
+                for parent in supertypes_impl(self.db, &self.scope, &current) {
+                    if parent.is_error(self.db) {
+                        continue;
+                    }
+                    let TyKind::Reference { name, .. } = parent.kind(self.db) else {
+                        continue;
+                    };
+                    if name == raw_name {
+                        return true;
+                    }
+                    stack.push(parent);
+                }
+            }
+        }
+        false
     }
 }

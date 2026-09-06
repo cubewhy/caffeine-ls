@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+abstract class Abs {
+    abstract void m();
+}
+
+class Sub extends Abs {
+    void m() {}
+    void f() {
+        super.m();
+    }
+}
+
+interface IF {
+    void go();
+}
+
+class C implements IF {
+    public void go() {}
+    void f() {
+        IF.super.go();
+    }
+}
+
+method f(): void
+  @9:14..9:15 'm': abstract-super-access: Abstract method 'm()' in 'Abs' cannot be accessed directly
+method f(): void
+  @20:17..20:19 'go': abstract-super-access: Abstract method 'go()' in 'IF' cannot be accessed directly

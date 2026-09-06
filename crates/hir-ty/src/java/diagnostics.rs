@@ -97,11 +97,29 @@ pub enum TypeError {
     /// §15.9/[§8.8.7.1]: a class instance creation, `this(...)` or `super(...)`
     /// invocation for which the class declares no constructor of the name.
     NoSuchConstructor { expr: ExprId, name: Name },
-    /// §15.12.3/[§8.1.3]: the form is a simple name (`MethodName`) and the
+    /// §15.12.3/[§8.4.8.1]: the form is a simple name (`MethodName`) and the
     /// chosen compile-time declaration is an instance method, but the
     /// invocation occurs in a static context — a static method body, a static
     /// field initializer or a static initializer, where `this` is unavailable.
     NonStaticMethodFromStaticContext { expr: ExprId, name: Name },
+    /// §15.12.3/[§15.8.4]/[§15.11.2]: `super.m(...)` (or `I.super.m(...)`)
+    /// selects the member *as declared in the supertype* — the enclosing
+    /// class's own override never applies — and an abstract supertype member
+    /// has no implementation to invoke, so the access is an error regardless
+    /// of what the subclass implements. javac: `abstract method {m} in {A}
+    /// cannot be accessed directly`. `owner` is the supertype declaring the
+    /// abstract method.
+    AbstractSuperAccess {
+        expr: ExprId,
+        method: Name,
+        owner: Name,
+    },
+    /// §15.11.2/[§8.1.3]: the qualifier of a qualified-super invocation
+    /// (`Q.super.m(...)`) must be a superinterface of an enclosing class —
+    /// an interface the class implements or inherits. Naming any other type
+    /// is javac's `not an enclosing class: {Q}`. `qualifier` is the written
+    /// (unresolved) qualifier type.
+    QualifiedSuperNotEnclosing { expr: ExprId, qualifier: Ty },
     /// §15.8.3/[§15.8.4]/[§8.1.3]: the `this` or `super` keyword (bare or
     /// qualified `TypeName.this`/`I.super`) is used in a static context, where
     /// no enclosing instance exists. Both keywords map to javac's
@@ -385,6 +403,10 @@ impl TypeError {
             TypeError::NonStaticMethodFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticMethodFromStaticContext)
             }
+            TypeError::AbstractSuperAccess { .. } => DiagnosticCode::Java(AbstractSuperAccess),
+            TypeError::QualifiedSuperNotEnclosing { .. } => {
+                DiagnosticCode::Java(QualifiedSuperNotEnclosing)
+            }
             TypeError::NonStaticThisFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticThisFromStaticContext)
             }
@@ -491,6 +513,8 @@ impl TypeError {
             | NoSuchMethod { expr, .. }
             | NoSuchConstructor { expr, .. }
             | NonStaticMethodFromStaticContext { expr, .. }
+            | AbstractSuperAccess { expr, .. }
+            | QualifiedSuperNotEnclosing { expr, .. }
             | NonStaticThisFromStaticContext { expr, .. }
             | NonStaticFieldFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
@@ -595,6 +619,8 @@ impl TypeError {
             | TypeError::CannotAssignToFinalVariable { expr, .. }
             | TypeError::VariableMustBeEffectivelyFinal { expr, .. }
             | TypeError::NonStaticMethodFromStaticContext { expr, .. }
+            | TypeError::AbstractSuperAccess { expr, .. }
+            | TypeError::QualifiedSuperNotEnclosing { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
@@ -668,6 +694,19 @@ impl TypeError {
                 format!(
                     "Non-static method '{}()' cannot be referenced from a static context",
                     name.as_str()
+                )
+            }
+            AbstractSuperAccess { method, owner, .. } => {
+                format!(
+                    "Abstract method '{}()' in '{}' cannot be accessed directly",
+                    method.as_str(),
+                    owner.simple_name()
+                )
+            }
+            QualifiedSuperNotEnclosing { qualifier, .. } => {
+                format!(
+                    "'{}' is not an enclosing class",
+                    qualifier.display_simple(db)
                 )
             }
             NonStaticThisFromStaticContext { keyword, .. } => match keyword {

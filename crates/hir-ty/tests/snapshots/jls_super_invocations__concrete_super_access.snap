@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class Good {
+    void concrete() {}
+}
+
+class GoodSub extends Good {
+    void f() {
+        super.concrete();
+    }
+}
+
+interface IF2 {
+    default void fine() {}
+}
+
+class C2 implements IF2 {
+    void g() {
+        IF2.super.fine();
+    }
+}
