@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "lib/*", "xtask/"]
+default-members = ["crates/caffeine-ls"]
 
 [workspace.dependencies]
 base-db = { path = "./crates/base-db/" }
