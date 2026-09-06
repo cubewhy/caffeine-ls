@@ -163,6 +163,17 @@ impl InferCtx<'_> {
             Some(hir::Resolved::Library(_)) => "<init>".to_owned(),
             _ => name.simple_name().to_owned(),
         };
+        // §15.9/[§15.12.2.2]: a class instance creation resolves its
+        // constructor like a method invocation — and its *argument
+        // expressions* follow the same poly rules ([JLS §15.2],
+        // [§18.5.2.4]): a nested method invocation is attributed standalone
+        // first ([§15.12.2.6]), becoming a concrete argument of its own
+        // inferred type when its formals fully determine one, and only a
+        // call its own arguments left unconstrained stays poly, shared with
+        // the constructor resolution's inference table. The non-capturing
+        // form matches the diamond path below (javac's `instantiateClass`
+        // keeps the written argument types; the *method-invocation*
+        // capturing form is only for the `⟨e → F⟩` reduction of [§18.5.2.2]).
         let arg_kinds = self.arg_kinds(args);
         // §8.8.9/[§8.1.3]: an instance creation of an *inner* class whose
         // only constructor is the implicit default (no declared constructor)

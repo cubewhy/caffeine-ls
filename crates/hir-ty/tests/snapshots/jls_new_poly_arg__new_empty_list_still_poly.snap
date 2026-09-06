@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_new_poly_arg.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    static class Host {
+        Host(List<String> xs) {}
+    }
+
+    static <E> List<E> empty() {
+        return null;
+    }
+
+    static void use() {
+        new Host(empty());
+    }
+}
+
+method Host(java.util.List<java.lang.String>): <init>
+  locals: l0: java.util.List<java.lang.String>
+  exprs: 
+method empty(): java.util.List<E>
+  locals: 
+  exprs: e0: null
+method use(): void
+  locals: 
+  exprs: e1: java.util.List<java.lang.String> | e2: com.example.Body.Host

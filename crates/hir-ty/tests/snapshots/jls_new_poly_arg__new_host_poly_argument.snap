@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_new_poly_arg.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    static class Box<T> {
+        Box(T t) {}
+    }
+
+    static class Host<T> {
+        Host(Box<T> b) {}
+    }
+
+    static <T> T pick(T x) {
+        return null;
+    }
+
+    static void use() {
+        new Host<String>(new Box<String>(pick("x")));
+    }
+}
+
+method Box(T): <init>
+  locals: l0: T
+  exprs: 
+method Host(com.example.Body.Box<T>): <init>
+  locals: l1: com.example.Body.Box<T>
+  exprs: 
+method pick(T): T
+  locals: l2: T
+  exprs: e0: null
+method use(): void
+  locals: 
+  exprs: e1: java.lang.String | e2: java.lang.String | e3: com.example.Body.Box<java.lang.String> | e4: com.example.Body.Host<java.lang.String>
