@@ -10,7 +10,7 @@ use syntax::stub::TypeRef;
 use crate::java::{
     diagnostics::{DiagLocation, TypeError},
     inference::{Inference, InvocationPhase},
-    method::member_set,
+    method::{MethodData, member_set},
     resolve::resolve_type_ref,
     ty::{Ty, TyData, TyKind},
 };
@@ -208,11 +208,26 @@ impl InferCtx<'_> {
                     if !args.is_empty() && args.iter().all(|arg| arg.is_wildcard(self.db))
             );
             if raw || all_wildcards {
-                self.diamond_instantiation_from_ctor_args(
+                // §15.9.2.2: when the constructor arguments decide the
+                // diamond's type variables, that constructor *is* the chosen
+                // declaration — its resolved poly arguments and checked
+                // exceptions are recorded here, and the caller must not
+                // re-resolve the constructor against the now-instantiated
+                // class: javac never re-checks, and a rigid re-check of a
+                // wildcard argument against the captured type variable
+                // (`NBTType<?>` to `NBTType<CAP#>`) has no lawful reduction
+                // (r4).
+                match self.diamond_instantiation_from_ctor_args(
                     from_target,
                     &arg_kinds,
                     &constructor_name,
-                )
+                    expr,
+                ) {
+                    Some(instantiated) => {
+                        return instantiated;
+                    }
+                    None => from_target,
+                }
             } else {
                 from_target
             }
@@ -514,13 +529,14 @@ impl InferCtx<'_> {
         class_ty: Ty,
         arg_kinds: &[ArgInfo],
         ctor_name: &str,
-    ) -> Ty {
+        expr: ExprId,
+    ) -> Option<Ty> {
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
-            return class_ty;
+            return None;
         };
         let type_params = self.class_type_param_bounds(name);
         if type_params.is_empty() {
-            return class_ty;
+            return None;
         }
         let bare: Vec<Ty> = type_params
             .iter()
@@ -582,10 +598,46 @@ impl InferCtx<'_> {
                         .iter()
                         .map(|t| t.substitute(self.db, &binding))
                         .collect();
-                    return Ty::reference(self.db, name.clone(), args);
+                    let instantiated = Ty::reference(self.db, name.clone(), args);
+                    // §15.9.2.2/[§18.5.2.4]: this constructor is the chosen
+                    // declaration — record its poly arguments against the
+                    // resolved formals and its checked exceptions exactly as
+                    // a top-level invocation would, so the caller does not
+                    // re-resolve the constructor against the now-instantiated
+                    // class (javac never re-checks: the diamond's type came
+                    // from this very inference, and a rigid re-check of
+                    // `NBTType<?>` against the captured `NBTType<CAP#>` has
+                    // no lawful reduction).
+                    let resolved_params: Vec<Ty> = formals
+                        .iter()
+                        .map(|p| p.substitute_infer(self.db, &resolved))
+                        .collect();
+                    let resolved_thrown: Vec<Ty> = member
+                        .throws
+                        .iter()
+                        .map(|t| t.substitute_infer(self.db, &resolved))
+                        .collect();
+                    let deferred: Vec<(ExprId, usize)> = arg_kinds
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, info)| info.poly)
+                        .map(|(i, info)| (info.id, i))
+                        .collect();
+                    let resolved_method = MethodData {
+                        params: resolved_params,
+                        throws: resolved_thrown,
+                        ..member.clone()
+                    };
+                    self.reinfer_deferred(&resolved_method, &deferred);
+                    for thrown in &resolved_method.throws {
+                        if self.is_checked(thrown) {
+                            self.thrown.push((*thrown, expr));
+                        }
+                    }
+                    return Some(instantiated);
                 }
             }
         }
-        class_ty
+        None
     }
 }

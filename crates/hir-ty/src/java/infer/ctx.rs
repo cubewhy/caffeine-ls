@@ -277,7 +277,15 @@ impl InferCtx<'_> {
                 crate::java::subtyping::class_like_and_final(self.db, &self.scope, &from),
                 crate::java::subtyping::class_like_and_final(self.db, &self.scope, &to),
             ),
-            (Some((true, _)), Some((true, _)))
+            // §5.5.1: a cast between two unrelated classes is rejected only
+            // when they are *provably distinct* — both final. A cast between
+            // non-final classes (even with type arguments that make the
+            // parameterized forms unrelated by invariance —
+            // `(TypeAdapter<Object>) getAdapter(value.getClass())` casting
+            // `TypeAdapter<CAP#>` where `CAP# <: Object`) compiles; the
+            // runtime check may fail. Rejecting any unrelated class-class
+            // pair would reject every such unchecked cast.
+            (Some((true, true)), Some((true, true)))
         )
     }
 }

@@ -481,6 +481,19 @@ pub fn class(
     class_sig(fqn, super_class, interfaces, None)
 }
 
+/// Like [`class`], but the class is declared `final` (ACC_FINAL) — the
+/// wrapper classes of §4.2.1 are final in the real JDK.
+pub fn class_final(
+    fqn: &'static str,
+    super_class: Option<&'static str>,
+    interfaces: &'static [&'static str],
+) -> ClassSpec<'static> {
+    ClassSpec {
+        access: 0x0031, // ACC_PUBLIC | ACC_FINAL | ACC_SUPER
+        ..class_sig(fqn, super_class, interfaces, None)
+    }
+}
+
 /// Like [`class`], but carrying a class-level `Signature` attribute so the
 /// supertypes are parameterized.
 pub fn class_sig(
@@ -776,14 +789,15 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: None,
         },
         class("java/lang/Number", Some("java/lang/Object"), &[]),
-        class("java/lang/Integer", Some("java/lang/Number"), &[]),
-        class("java/lang/Long", Some("java/lang/Number"), &[]),
-        class("java/lang/Short", Some("java/lang/Number"), &[]),
-        class("java/lang/Byte", Some("java/lang/Number"), &[]),
-        class("java/lang/Float", Some("java/lang/Number"), &[]),
-        class("java/lang/Double", Some("java/lang/Number"), &[]),
-        class("java/lang/Character", Some("java/lang/Object"), &[]),
-        class("java/lang/Boolean", Some("java/lang/Object"), &[]),
+        // §4.2.1: every wrapper class is declared final in the real JDK.
+        class_final("java/lang/Integer", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Long", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Short", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Byte", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Float", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Double", Some("java/lang/Number"), &[]),
+        class_final("java/lang/Character", Some("java/lang/Object"), &[]),
+        class_final("java/lang/Boolean", Some("java/lang/Object"), &[]),
         functional_interface(
             "java/lang/Runnable",
             "Ljava/lang/Object;",

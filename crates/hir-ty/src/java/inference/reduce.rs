@@ -159,6 +159,28 @@ impl Inference {
                     // variable picks up the capture's bound rather than the
                     // bare wildcard itself (`Class<? extends Number>` infers
                     // `Number`, `Class<?>` infers its capture's bound).
+                    if sa.iter().any(|a| a.is_wildcard(db)) {
+                        // §5.1.10/[§18.2.3]: a wildcarded source stands for
+                        // its capture conversion — the fresh variables take
+                        // the *type parameters'* declared bounds (`?` in
+                        // `NBTType<?>` captures to `CAP <: NBT`), not the
+                        // bare wildcard's degenerate minimum (`Object`).
+                        // Reducing `⟨NBTType<CAP> → NBTType<α⟩` by equality
+                        // binds the diamond's `α := CAP`, which satisfies the
+                        // constructor's `NBTType<T>` formal and resolves
+                        // within the created class's bounds
+                        // (`new NBTList<>(NBTType.common(), n)` for
+                        // `NBTList<T extends NBT>`, r4). The bare-wildcard
+                        // fallback would hand `⟨? → α⟩` to the minimum-bound
+                        // arm and give `α` an `Object` lower bound
+                        // incompatible with `T extends NBT`, rejecting the
+                        // constructor.
+                        let captured = crate::java::ty::capture_conversion(db, scope, *s);
+                        if captured != *s {
+                            worklist.push_back(Constraint::Sub(captured, *t));
+                            return true;
+                        }
+                    }
                     for (s_arg, t_arg) in sa.iter().zip(ta.iter()) {
                         if s_arg.is_wildcard(db) {
                             worklist.push_back(Constraint::Sub(*s_arg, *t_arg));

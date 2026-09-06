@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_diamond_wildcard_arg.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    static class NBT {}
+    static class NBTType<T extends NBT> {
+        static NBTType<?> common() { return null; }
+    }
+    static class NBTList<T extends NBT> {
+        NBTList(NBTType<T> t, int size) {}
+    }
+    static void f(List<? extends NBT> tags) {
+        NBTList<?> list = new NBTList<>(NBTType.common(), tags.size());
+    }
+}
+
+method common(): com.example.Body.NBTType<?>
+  locals: 
+  exprs: e0: null
+method NBTList(com.example.Body.NBTType<T>, int): <init>
+  locals: l0: com.example.Body.NBTType<T> | l1: int
+  exprs: 
+method f(java.util.List<? extends com.example.Body.NBT>): void
+  locals: l2: java.util.List<? extends com.example.Body.NBT> | l3: com.example.Body.NBTList<?>
+  exprs: e2: com.example.Body.NBTType<?> | e3: java.util.List<? extends com.example.Body.NBT> | e4: int | e5: com.example.Body.NBTList<CAP#0>
