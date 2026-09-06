@@ -43,20 +43,6 @@ impl InferCtx<'_> {
             }
             return self.error();
         };
-        if self.probing == false {
-            eprintln!(
-                "[DBG-LT] target={:?} param0={:?}",
-                target,
-                sam.params.first()
-            );
-            if sam
-                .params
-                .first()
-                .is_some_and(|p| p.contains_infer_var(self.db))
-            {
-                eprintln!("[DBG-LT]   ** param contains INFER VAR **");
-            }
-        }
         if sam.params.len() != params.len() {
             return self.error();
         }
