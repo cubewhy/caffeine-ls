@@ -410,6 +410,12 @@ pub enum TypeError {
     /// matched, so it can never be reached. javac: `this case label is
     /// dominated by a preceding case label`.
     PatternDominated { pattern: PatternId },
+    /// §15.9.2/[§15.9.2.1]: a class-instance creation uses the diamond
+    /// operator on a class that declares no type parameters (`new Plain<>()`)
+    /// — the diamond exists to *infer* type arguments, so there is nothing to
+    /// infer. javac: `cannot infer type arguments for {C} … cannot use '<>'
+    /// with non-generic class {C}`.
+    CannotUseDiamondWithNonGeneric { expr: ExprId, class: Ty },
 }
 
 impl TypeError {
@@ -520,6 +526,9 @@ impl TypeError {
                 DiagnosticCode::Java(IncorrectNumberOfPatternComponents)
             }
             TypeError::PatternDominated { .. } => DiagnosticCode::Java(PatternDominated),
+            TypeError::CannotUseDiamondWithNonGeneric { .. } => {
+                DiagnosticCode::Java(CannotUseDiamondWithNonGeneric)
+            }
         }
     }
 
@@ -577,6 +586,8 @@ impl TypeError {
             | NotALoopLabel { stmt, .. } => DiagLocation::Stmt(*stmt),
             IncorrectNumberOfPatternComponents { pattern, .. } => DiagLocation::Pattern(*pattern),
             PatternDominated { pattern } => DiagLocation::Pattern(*pattern),
+            CannotUseDiamondWithNonGeneric { expr, .. } => DiagLocation::Expr(*expr),
+            CannotUseDiamondWithNonGeneric { expr, .. } => DiagLocation::Expr(*expr),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
             CannotCatchTypeVariable { local } => DiagLocation::Local(*local),
@@ -661,6 +672,7 @@ impl TypeError {
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
+            | TypeError::CannotUseDiamondWithNonGeneric { expr, .. }
             | TypeError::GenericArrayCreation { expr, .. }
             | TypeError::CannotInstantiateTypeVar { expr, .. }
             | TypeError::CannotInstantiateWildcard { expr, .. }
@@ -977,6 +989,12 @@ impl TypeError {
             } => format!("Incorrect number of nested patterns: expected {expected}, found {found}"),
             PatternDominated { .. } => {
                 "This case label is dominated by a preceding case label".to_owned()
+            }
+            CannotUseDiamondWithNonGeneric { class, .. } => {
+                format!(
+                    "Cannot use '<>' with non-generic class '{}'",
+                    class.display_simple(db)
+                )
             }
         }
     }

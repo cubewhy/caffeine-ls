@@ -160,6 +160,9 @@ pub enum JavaDiagnosticCode {
     /// §14.11.1: a `case` label pattern is dominated by an earlier label —
     /// javac: `this case label is dominated by a preceding case label`.
     PatternDominated,
+    /// §15.9.2/[§15.9.2.1]: the diamond operator on a class with no type
+    /// parameters — javac: `cannot use '<>' with non-generic class {C}`.
+    CannotUseDiamondWithNonGeneric,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -495,6 +498,7 @@ impl JavaDiagnosticCode {
             LambdaParameterCountMismatch => Some("compiler.err.incompatible.types"),
             LambdaBadReturn => Some("compiler.err.prob.found.req"),
             PatternDominated => Some("compiler.err.improper.used.var"),
+            CannotUseDiamondWithNonGeneric => Some("compiler.err.cant.infer.diamond.types"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -637,6 +641,9 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::LambdaParameterCountMismatch => "lambda-parameter-count-mismatch",
             JavaDiagnosticCode::LambdaBadReturn => "lambda-bad-return",
             JavaDiagnosticCode::PatternDominated => "pattern-dominated",
+            JavaDiagnosticCode::CannotUseDiamondWithNonGeneric => {
+                "cannot-use-diamond-with-non-generic"
+            }
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

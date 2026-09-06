@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_cyclic_inference.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class G4 {
+    static <T, U extends Comparable<T>> U m3(T t) {
+        return null;
+    }
+
+    void t3() {
+        String s = m3(1);
+    }
+}
+
+method t3(): void
+  @8:19..8:24 'm3(1)': incompatible-types: Incompatible types. Found: 'Comparable<Integer>', required: 'String'
+    -> @8:19..8:24 'm3(1)': required: String
+    -> @8:19..8:24 'm3(1)': found: Comparable<Integer>

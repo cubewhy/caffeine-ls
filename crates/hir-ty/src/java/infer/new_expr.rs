@@ -200,6 +200,23 @@ impl InferCtx<'_> {
         // `new Analyzer<>(new BasicInterpreter())` infers
         // `Analyzer<BasicValue>` even without a target.
         let class_ty = if diamond {
+            // §15.9.2/[§15.9.2.1]: the diamond is legal only when the created
+            // class *declares* type parameters — a non-generic class (or a
+            // non-generic member class of a parameterized outer:
+            // `Outer<String>.Inner` has no parameters of its own) cannot use
+            // `<>`. javac: `cannot infer type arguments for {C} … cannot use
+            // '<>' with non-generic class {C}`.
+            let declares_type_params =
+                crate::java::method::class_declares_type_params(self.db, &self.scope, &class_ty)
+                    .unwrap_or(true);
+            if !declares_type_params && !class_ty.is_error(self.db) {
+                self.types.insert(expr, self.error());
+                self.report(TypeError::CannotUseDiamondWithNonGeneric {
+                    expr,
+                    class: class_ty,
+                });
+                return self.error();
+            }
             let from_target = self.diamond_instantiation(class_ty, target);
             // §15.9.2.2: a diamond's type arguments are fixed by the target
             // only when the target names them concretely. A target that

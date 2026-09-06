@@ -109,6 +109,30 @@ impl Lub<'_> {
 
     /// The §4.10.4 computation on the (cycle-guarded) argument set.
     fn set_impl(&mut self, types: &[Ty]) -> Ty {
+        // §4.10.4: the lub of *reference* array types is the array of the
+        // element lub — `lub(String[], Integer[])` is `INT#1[]` where the
+        // element lub is the intersection of the elements' common supertypes,
+        // NOT `Cloneable & Serializable`. A reference array is covariant
+        // ([§4.10.3]), so the element lub's array is a supertype of both
+        // inputs and every array context (`Object[] v = c ? new String[]{...}
+        // : new Integer[1]`) keeps working. Primitive arrays (`int[]`,
+        // `long[]`) are *not* covariant — their elements' lub would be a boxed
+        // intersection that no array of can hold, so javac's lub of two
+        // primitive arrays is the class-level intersection and the special
+        // case does not apply.
+        let all_ref_arrays = types.iter().all(|t| {
+            matches!(t.kind(self.db), TyKind::Array(inner) if !matches!(inner.kind(self.db), TyKind::Primitive(_)))
+        });
+        if all_ref_arrays && types.len() > 1 {
+            let elements: Vec<Ty> = types
+                .iter()
+                .map(|t| t.element(self.db).copied().expect("array element"))
+                .collect();
+            if elements.iter().all(|e| !e.is_error(self.db)) {
+                let element_lub = self.set(&elements);
+                return Ty::array(self.db, element_lub);
+            }
+        }
         let st: Vec<FxHashSet<TyData>> = types.iter().map(|t| self.st(*t)).collect();
         // EST(Ui) = { |W| : W in ST(Ui) }, and EC is their intersection.
         let est: Vec<FxHashSet<TyData>> = st

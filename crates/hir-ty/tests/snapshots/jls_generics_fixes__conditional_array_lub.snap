@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_generics_fixes.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class Arr {
+    boolean c;
+
+    void ok() {
+        Object[] v = this.c ? new String[] { "a" } : new Integer[1];
+    }
+
+    void red() {
+        Integer[] w = this.c ? new String[] { "a" } : new Integer[1];
+    }
+}
+
+method ok(): void
+  locals: l0: java.lang.Object[]
+  exprs: e0: com.example.Arr | e1: boolean | e2: java.lang.String | e3: java.lang.String[] | e4: int | e5: java.lang.Integer[] | e6: java.lang.Object[]
+method red(): void
+  locals: l1: java.lang.Integer[]
+  exprs: e7: com.example.Arr | e8: boolean | e9: java.lang.String | e10: java.lang.String[] | e11: int | e12: java.lang.Integer[] | e13: java.lang.Object[]
+  diags: e13@10:22: incompatible-types: Incompatible types. Found: 'Object[]', required: 'Integer[]'

@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_generics_fixes.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+class Plain {
+    void f() {
+        Plain p = new Plain<>();
+    }
+
+    static class Outer<T> {
+        class Inner {
+        }
+
+        void g() {
+            Outer<String>.Inner x = new Outer<String>().new Inner<>();
+        }
+    }
+}
+
+method f(): void
+  @4:18..4:31 'new Plain<>()': cannot-use-diamond-with-non-generic: Cannot use '<>' with non-generic class 'Plain'

@@ -199,6 +199,43 @@ pub fn access_context(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Invoca
     InvocationContext::from_key(db, key)
 }
 
+/// §15.9.2.1: whether the class named by `ty` (a resolved reference) declares
+/// its own type parameters. `Some(true)`/`Some(false)` when the class
+/// resolves; `None` when it does not (the caller then stays silent — the
+/// missing type reports itself). A nested class's own parameters are counted
+/// (`Outer<String>.Inner` declares none), and a non-generic class of a
+/// parameterized outer is not generic either.
+pub fn class_declares_type_params(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<bool> {
+    let (fqn, _) = ty.as_reference(db)?;
+    match hir::fqn_resolve(db, scope, fqn.as_str()) {
+        Some(hir::Resolved::Library(class)) => {
+            hir::class_generic_info(db, &hir::Resolved::Library(class))
+                .map(|info| !info.type_params.is_empty())
+        }
+        Some(hir::Resolved::Source(source)) => {
+            let tree = hir::file_item_tree(db, source.file);
+            match crate::java::resolve::item_data(&tree, source.item) {
+                Some(hir_def::java::item_tree::ItemData::Class(d)) => {
+                    Some(!d.type_params.is_empty())
+                }
+                Some(hir_def::java::item_tree::ItemData::Interface(d)) => {
+                    Some(!d.type_params.is_empty())
+                }
+                Some(hir_def::java::item_tree::ItemData::Record(d)) => {
+                    Some(!d.type_params.is_empty())
+                }
+                Some(hir_def::java::item_tree::ItemData::Enum(_)) => Some(false),
+                _ => None,
+            }
+        }
+        None => None,
+    }
+}
+
 /// The access of a member ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)),
 /// derived from the classfile access flags (ACC_PUBLIC, ACC_PRIVATE,
 /// ACC_PROTECTED, [JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1))
