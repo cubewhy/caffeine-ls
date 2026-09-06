@@ -121,9 +121,62 @@ impl InferCtx<'_> {
             LambdaBody::Expr(expr) if !sam.ret.is_void_like(self.db) => {
                 let _ =
                     self.with_target(Some(self.decapture(&sam.ret)), |this| this.infer_expr(expr));
+                // §15.27.3: the expression body's value must be assignable to
+                // the SAM's return type — `Supplier<Integer> s = () ->
+                // "str"` is javac's `bad return type in lambda expression …
+                // String cannot be converted to Integer`. The body inferred
+                // under the return target, so its own conversion was never
+                // checked; validate it here, reporting at the body.
+                let body_ty = self
+                    .types
+                    .get(&expr)
+                    .copied()
+                    .unwrap_or_else(|| self.error());
+                if !body_ty.is_error(self.db)
+                    && !sam.ret.is_error(self.db)
+                    && !crate::java::subtyping::is_assignable(
+                        self.db,
+                        &self.scope,
+                        &body_ty,
+                        &self.decapture(&sam.ret),
+                    )
+                {
+                    self.report(TypeError::LambdaBadReturn {
+                        expr,
+                        found: body_ty,
+                        expected: self.decapture(&sam.ret),
+                    });
+                }
             }
             LambdaBody::Expr(expr) => {
                 let _ = self.with_target(None, |this| this.infer_expr(expr));
+                // §15.27.3: a *void*-compatible SAM whose expression body
+                // produces a value is legal only when the body is a statement
+                // expression whose value is discarded — `Runnable r = () ->
+                // "str"` (a bare value) is javac's `bad return type in lambda
+                // expression … unexpected return value`. `Integer`-typed body
+                // against `void` (the void-arm) is an error unless the
+                // expression is a statement expression.
+                let body_ty = self
+                    .types
+                    .get(&expr)
+                    .copied()
+                    .unwrap_or_else(|| self.error());
+                if !body_ty.is_error(self.db)
+                    && !crate::java::subtyping::is_assignable(
+                        self.db,
+                        &self.scope,
+                        &body_ty,
+                        &Ty::void(self.db),
+                    )
+                    && !is_statement_expression(&self.tree, expr)
+                {
+                    self.report(TypeError::LambdaBadReturn {
+                        expr,
+                        found: body_ty,
+                        expected: Ty::reference(self.db, "java.lang.Void", Vec::new()),
+                    });
+                }
             }
             // §15.27.2: a block lambda's statements are inferred *standalone*
             // — the enclosing context's target type (the type of the variable
@@ -221,6 +274,27 @@ impl InferCtx<'_> {
             }
             return self.error();
         };
+        // §15.13.2: the referenced method's result must convert to the SAM's
+        // return type — `Supplier<Integer> s = L4::wrong` where `wrong`
+        // returns `String` is javac's `bad return type in method reference`.
+        // The reference's own result comes from the resolved candidate
+        // ([§15.13.3]); validate it when it resolves (a constructor
+        // reference's result is the class itself and always converts to a
+        // matching SAM).
+        let ret = self.method_ref_return(qualifier, type_name, name, &sam.params);
+        let decaptured = self.decapture(&sam.ret);
+        if !ret.is_error(self.db)
+            && !sam.ret.is_error(self.db)
+            && !ret.is_void_like(self.db)
+            && !decaptured.is_void_like(self.db)
+            && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ret, &decaptured)
+        {
+            self.report(TypeError::LambdaBadReturn {
+                expr,
+                found: ret,
+                expected: decaptured,
+            });
+        }
         self.resolve_method_ref(qualifier, type_name, name, &sam.params);
         target
     }
@@ -643,5 +717,23 @@ impl InferCtx<'_> {
         // with — so a reference to a name that resolves only to inapplicable
         // overloads does not silently type against the first declaration.
         let _ = self.method_ref_candidate(qualifier, type_name, name, sam_params);
+    }
+}
+
+/// §14.8: whether `expr` may stand alone as an expression statement — a
+/// method invocation, a class instance creation, an assignment (of any
+/// operator), a pre/post increment or decrement. Only those forms may appear
+/// as the body of a *void*-compatible lambda and discard their value
+/// ([§15.27.3]); any other valued expression (`()-> "str"` for a `Runnable`)
+/// is javac's `bad return type … unexpected return value`.
+fn is_statement_expression(tree: &hir_expand::body::BodyTree, expr: ExprId) -> bool {
+    match tree.expr(expr) {
+        ExprData::MethodCall { .. } | ExprData::New { .. } | ExprData::Assign { .. } => true,
+        ExprData::Postfix { .. } => true,
+        ExprData::Unary { op, .. } => {
+            use hir_expand::body::UnaryOp;
+            matches!(op, UnaryOp::Inc | UnaryOp::Dec)
+        }
+        _ => false,
     }
 }

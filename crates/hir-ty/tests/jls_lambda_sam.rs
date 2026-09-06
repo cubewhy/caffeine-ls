@@ -141,3 +141,43 @@ class L5 {
 );
 // Red: the statement after the `return` inside the lambda block is
 // unreachable ([§14.22] applies to the lambda body like any block).
+
+// -- red: expression-body and method-reference return conversions ---------------
+// An expression lambda's value must convert to the SAM's return type, and so
+// must a method reference's result ([§15.27.3], [§15.13.2]) — javac's `bad
+// return type in lambda expression` / `bad return type in method reference`.
+
+snapshot!(
+    lambda_and_ref_bad_return,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/P.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+class L3 {
+    void f() {
+        Supplier<Integer> s = () -> \"str\";
+        Function<String, Integer> g = x -> x;
+        Supplier<Integer> ok = () -> 1;
+        Function<String, Integer> ok2 = x -> x.length();
+    }
+}
+
+class L4 {
+    static String wrong() { return \"\"; }
+    static Integer right() { return 1; }
+
+    void f() {
+        Supplier<Integer> a = L4::wrong;
+        Supplier<Integer> b = L4::right;
+    }
+}
+",
+    )])
+);
+// Red: the `String` expression bodies against `Supplier<Integer>`/`Integer`
+// SAMs, and `L4::wrong` (returns `String`) against `Supplier<Integer>`.
+// Green: the `int`-valued bodies and `L4::right`.

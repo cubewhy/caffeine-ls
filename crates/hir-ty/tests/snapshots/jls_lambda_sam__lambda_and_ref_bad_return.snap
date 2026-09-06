@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_lambda_sam.rs
+expression: out
+---
+FILE /src/com/example/P.java:
+package com.example;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+class L3 {
+    void f() {
+        Supplier<Integer> s = () -> "str";
+        Function<String, Integer> g = x -> x;
+        Supplier<Integer> ok = () -> 1;
+        Function<String, Integer> ok2 = x -> x.length();
+    }
+}
+
+class L4 {
+    static String wrong() { return ""; }
+    static Integer right() { return 1; }
+
+    void f() {
+        Supplier<Integer> a = L4::wrong;
+        Supplier<Integer> b = L4::right;
+    }
+}
+
+method f(): void
+  @7:36..7:41 '"str"': lambda-bad-return: Bad return type in lambda expression: 'String' cannot be converted to 'Integer'
+  @8:43..8:44 'x': lambda-bad-return: Bad return type in lambda expression: 'String' cannot be converted to 'Integer'
+method f(): void
+  @19:34..19:39 'wrong': lambda-bad-return: Bad return type in lambda expression: 'String' cannot be converted to 'Integer'

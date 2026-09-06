@@ -153,6 +153,10 @@ pub enum JavaDiagnosticCode {
     /// SAM's declared parameters — javac: `incompatible parameter types in
     /// lambda expression`.
     LambdaParameterCountMismatch,
+    /// §15.27.3: a lambda body's value does not convert to the SAM's return
+    /// type (or a value body targets a void-compatible SAM) — javac: `bad
+    /// return type in lambda expression`.
+    LambdaBadReturn,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -486,6 +490,7 @@ impl JavaDiagnosticCode {
             AbstractSuperAccess => Some("compiler.err.abstract.cant.be.accessed.directly"),
             QualifiedSuperNotEnclosing => Some("compiler.err.not.encl.class"),
             LambdaParameterCountMismatch => Some("compiler.err.incompatible.types"),
+            LambdaBadReturn => Some("compiler.err.prob.found.req"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -626,6 +631,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::AbstractSuperAccess => "abstract-super-access",
             JavaDiagnosticCode::QualifiedSuperNotEnclosing => "qualified-super-not-enclosing",
             JavaDiagnosticCode::LambdaParameterCountMismatch => "lambda-parameter-count-mismatch",
+            JavaDiagnosticCode::LambdaBadReturn => "lambda-bad-return",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

@@ -131,6 +131,17 @@ pub enum TypeError {
         expected: usize,
         found: usize,
     },
+    /// §15.27.3: a lambda body whose value (an expression body, or a block
+    /// body's valued `return`s) does not convert to the SAM's return type —
+    /// javac: `bad return type in lambda expression`. An expression body
+    /// against a *void*-compatible SAM that is not a statement expression is
+    /// the same error's `unexpected return value` form. `found`/`expected`
+    /// are the body's and the SAM return's types.
+    LambdaBadReturn {
+        expr: ExprId,
+        found: Ty,
+        expected: Ty,
+    },
     /// §15.8.3/[§15.8.4]/[§8.1.3]: the `this` or `super` keyword (bare or
     /// qualified `TypeName.this`/`I.super`) is used in a static context, where
     /// no enclosing instance exists. Both keywords map to javac's
@@ -421,6 +432,7 @@ impl TypeError {
             TypeError::LambdaParameterCountMismatch { .. } => {
                 DiagnosticCode::Java(LambdaParameterCountMismatch)
             }
+            TypeError::LambdaBadReturn { .. } => DiagnosticCode::Java(LambdaBadReturn),
             TypeError::NonStaticThisFromStaticContext { .. } => {
                 DiagnosticCode::Java(NonStaticThisFromStaticContext)
             }
@@ -530,6 +542,7 @@ impl TypeError {
             | AbstractSuperAccess { expr, .. }
             | QualifiedSuperNotEnclosing { expr, .. }
             | LambdaParameterCountMismatch { expr, .. }
+            | LambdaBadReturn { expr, .. }
             | NonStaticThisFromStaticContext { expr, .. }
             | NonStaticFieldFromStaticContext { expr, .. }
             | WrongArity { expr, .. }
@@ -637,6 +650,7 @@ impl TypeError {
             | TypeError::AbstractSuperAccess { expr, .. }
             | TypeError::QualifiedSuperNotEnclosing { expr, .. }
             | TypeError::LambdaParameterCountMismatch { expr, .. }
+            | TypeError::LambdaBadReturn { expr, .. }
             | TypeError::NonStaticThisFromStaticContext { expr, .. }
             | TypeError::NonStaticFieldFromStaticContext { expr, .. }
             | TypeError::NonIterableForEach { expr, .. }
@@ -730,6 +744,15 @@ impl TypeError {
             } => {
                 format!(
                     "Incompatible parameter types in lambda expression: {found} parameter(s) for {expected}"
+                )
+            }
+            LambdaBadReturn {
+                found, expected, ..
+            } => {
+                format!(
+                    "Bad return type in lambda expression: '{}' cannot be converted to '{}'",
+                    found.display_simple(db),
+                    expected.display_simple(db)
                 )
             }
             NonStaticThisFromStaticContext { keyword, .. } => match keyword {
