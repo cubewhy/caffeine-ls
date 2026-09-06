@@ -412,19 +412,25 @@ pub(crate) fn is_subtype_query(
             name.as_str(),
             "java.lang.Object" | "java.lang.Cloneable" | "java.io.Serializable"
         ),
-        // §4.10.2 with §5.1.10: a type variable with a lower bound `L` ranges
-        // over `L <: X`, so `S <: CAP` is provable from `S <: L`. A *type
-        // variable* source is subsumed here too — `consumer.accept(value)`
-        // with `consumer: Consumer<? super T>` and `value: T` captures the
-        // wildcard to `CAP` with lower bound `T`, and `T <: CAP` holds by the
-        // lower bound. (The arm must precede the type-variable-vs-type-variable
-        // match below, or the lower bound is never consulted.)
+        // §4.10.2 with §5.1.10: a type variable with a *lower* bound `L` is a
+        // subtype of every type `X` with `L <: X` — the capture of `? super
+        // T` ranges over `{ X : T <: X }`, so a read typed `CAP` converts to
+        // `Object` (and to every supertype of `L` above it) but never to a
+        // type below `L`. The rule belongs in `type_var_subtype` (where the
+        // target's *upper* bounds and the source's own bounds are walked);
+        // reaching it from this arm for a non-variable target only when the
+        // target is above the lower bound keeps the memoized query acyclic —
+        // the capture variable's bound chain (`CAP :> L` plus `CAP <: Object`)
+        // is what the JLS §4.10.2 subtyping of a capture variable states. (A
+        // *write* of an `L`-typed value into a `? super L` receiver is the
+        // source-side judgment `L <: CAP`, decided by the same walk when the
+        // capture variable is the *target*.)
         (
             _,
             TyKind::TypeVar {
                 lower: Some(lower), ..
             },
-        ) => is_subtype_query(db, scope, sub.id, lower.id),
+        ) => is_subtype_query(db, scope, lower.id, sub.id),
         (TyKind::TypeVar { .. }, TyKind::Reference { .. })
         | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
@@ -461,12 +467,34 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
     if sup.is_object(db) {
         return true;
     }
+    // §4.10.2 with §5.1.10: when the *target* is a capture variable with a
+    // lower bound `L` (`? super L`), a source `S <: CAP` holds exactly when
+    // `L <: S` — CAP ranges over the supertypes of `L`, so the source must be
+    // above `L` (`Object <: CAP` never holds for a lower-bounded CAP).
+    if let TyKind::TypeVar {
+        lower: Some(lower), ..
+    } = sup.kind(db)
+    {
+        return is_subtype_query(db, scope, lower.id, sub.id);
+    }
     let mut visited = FxHashSet::default();
     let mut stack = vec![sub];
     while let Some(current) = stack.pop() {
         let TyKind::TypeVar { name, bounds, .. } = current.kind(db) else {
             continue;
         };
+        // §4.10.2 with §5.1.10: a *source* capture variable `CAP` with lower
+        // bound `L` is a subtype of every `X` with `L <: X` — the value it
+        // holds is at least `L`, so a read typed by the `? super L` capture
+        // converts upward. (A write of `S` into the `? super L` receiver is
+        // `S <: CAP`, decided by the target-lower arm above.)
+        if let TyKind::TypeVar {
+            lower: Some(lower), ..
+        } = current.kind(db)
+            && is_subtype_query(db, scope, lower.id, sup.id)
+        {
+            return true;
+        }
         if !visited.insert(name) {
             continue;
         }

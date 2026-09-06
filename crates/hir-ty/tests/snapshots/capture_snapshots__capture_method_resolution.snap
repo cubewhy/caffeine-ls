@@ -4,5 +4,5 @@ expression: out
 ---
 receiver: java.util.List<? super java.lang.Integer>
 add(java.lang.Integer) -> java.util.List add(CAP#0 [upper: java.lang.Object] [lower: java.lang.Integer])
-add(java.lang.Number) -> <none>
+add(java.lang.Number) -> java.util.List add(CAP#0 [upper: java.lang.Object] [lower: java.lang.Integer])
 add(java.lang.String) -> <none>

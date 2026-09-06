@@ -158,7 +158,10 @@ snapshot! {
 
 // Method resolution over a `List<? super Integer>` receiver: the captured
 // `add(CAP)` accepts an `Integer` (via the capture variable's lower bound,
-// §5.1.10) but not a `String` or a `Number`.
+// §5.1.10) but not a `String` — and not a `Number` either: the value `CAP`
+// ranges over the *supertypes* of `Integer`, and a write of a type below the
+// lower bound's own supertype is rejected (javac 25: `Number cannot be
+// converted to CAP#1` for `l.add(n)` with `n: Number`).
 fn check_capture_method() -> String {
     let fixture = jdk_fixture();
     let mut db = TestDatabase::new();
