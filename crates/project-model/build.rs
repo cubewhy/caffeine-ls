@@ -3,20 +3,23 @@ use std::{env, fs, path::Path, process::Command};
 fn main() {
     let sidecar_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/maven/sidecar");
 
-    // Rebuild only when the sidecar sources change. The Gradle build outputs
-    // (`build/`, `.gradle/`) are intentionally not tracked, otherwise every
-    // `cargo build` would re-run the build script.
-    for path in [
-        "src/main/java",
-        "src/main/resources",
+    let java_dir = sidecar_dir.join("src");
+    if java_dir.exists() {
+        println!("cargo:rerun-if-changed={}", java_dir.display());
+    }
+
+    for file in [
         "build.gradle",
+        "build.gradle.kts",
         "settings.gradle",
-        "gradle/wrapper",
+        "settings.gradle.kts",
+        "gradle/wrapper/gradle-wrapper.properties",
+        "gradle/wrapper/gradle-wrapper.jar",
     ] {
-        println!(
-            "cargo:rerun-if-changed={}",
-            sidecar_dir.join(path).display()
-        );
+        let path = sidecar_dir.join(file);
+        if path.exists() {
+            println!("cargo:rerun-if-changed={}", path.display());
+        }
     }
 
     let jar_name = "caffeine-ls-maven-sidecar.jar";
