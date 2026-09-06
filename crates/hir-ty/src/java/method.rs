@@ -489,6 +489,7 @@ pub(crate) fn member_set_query(
 /// return-re-pointing do not apply; the access filter (the declaring class's
 /// own context) and the raw-receiver guard (`name == ""` keeps declaration
 /// walks un-erased) still do.
+#[allow(clippy::too_many_arguments)]
 fn member_set_impl(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -644,7 +645,7 @@ fn member_set_impl(
             // is identity of interning). Re-point only those; an ordinary
             // captured return of a non-self parameter is a different
             // `CAP#`/concrete handle and stays.
-            if self_args.iter().any(|arg| *arg == method.ret) {
+            if self_args.contains(&method.ret) {
                 method.ret = receiver;
             }
         }
@@ -1231,19 +1232,16 @@ fn source_class_methods(
         // constructor, the later `declares_canonical` check sees the compact
         // form and suppresses the duplicate implicit canonical, and the
         // `declares_ctor` check counts it (no default constructor either).
-        let (varargs, mut params): (bool, Vec<Ty>) = if is_compact_ctor {
+        let (varargs, params): (bool, Vec<Ty>) = if is_compact_ctor {
             let mut canonical: Vec<Ty> = Vec::new();
-            match class_data {
-                ItemData::Record(record) => {
-                    for component in &record.components {
-                        let mut ty = resolve_type_ref(db, &scope, &method_resolver, &component.ty);
-                        if component.varargs {
-                            ty = Ty::array(db, ty);
-                        }
-                        canonical.push(erase(instantiate(&ty)));
+            if let ItemData::Record(record) = class_data {
+                for component in &record.components {
+                    let mut ty = resolve_type_ref(db, &scope, &method_resolver, &component.ty);
+                    if component.varargs {
+                        ty = Ty::array(db, ty);
                     }
+                    canonical.push(erase(instantiate(&ty)));
                 }
-                _ => {}
             }
             let last_varargs = match class_data {
                 ItemData::Record(record) => record.components.last().is_some_and(|c| c.varargs),
@@ -2607,21 +2605,15 @@ fn finish_pick(
             PolyArg::Poly(_, _, _) => ArgForm::LambdaOrRef,
         })
         .collect();
-    let Some(winning) = choose_most_specific(db, scope, candidates, Some(&forms)) else {
-        return None;
-    };
-    let Some((winner_decl, _)) = candidates
+    let winning = choose_most_specific(db, scope, candidates, Some(&forms))?;
+    let (winner_decl, _) = candidates
         .iter()
-        .find(|(_, invocation)| *invocation == winning)
-    else {
-        return None;
-    };
-    if target.is_some() {
-        if let Some(instantiated) =
+        .find(|(_, invocation)| *invocation == winning)?;
+    if target.is_some()
+        && let Some(instantiated) =
             instantiate(db, scope, winner_decl, args, phase, varargs, target)
-        {
-            return Some(instantiated);
-        }
+    {
+        return Some(instantiated);
     }
     Some(winning)
 }
