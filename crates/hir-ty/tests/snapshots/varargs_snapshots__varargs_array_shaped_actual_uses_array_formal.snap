@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/varargs_snapshots.rs
+expression: out
+---
+FILE /src/com/example/V2.java:
+package com.example;
+
+class V2 {
+    static void pack(String... parts) {}
+
+    void use() {
+        pack(new String[0]);
+        pack();
+        pack("a", "b");
+    }
+}

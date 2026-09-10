@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/varargs_snapshots.rs
+expression: out
+---
+FILE /src/com/example/V.java:
+package com.example;
+
+class V {
+    static void pack(String... parts) {}
+
+    void use(double d) {
+        pack("a", d);
+    }
+}
+
+method use(double): void
+  @6:18..6:19 'd': wrong-argument-count: Method 'pack()' cannot be applied to given types
+    -> @6:18..6:19 'd': required: String, String
+    -> @6:18..6:19 'd': found: String, double
+    -> @6:18..6:19 'd': reason: 'double' cannot be converted to 'String'

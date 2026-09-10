@@ -16,7 +16,7 @@ class G4 {
 }
 
 method t3(): void
-  @8:22..8:23 '1': wrong-argument-count: Method 'm3()' cannot be applied to given types
-    -> @8:22..8:23 '1': required: T
-    -> @8:22..8:23 '1': found: int
-    -> @8:22..8:23 '1': reason: 'int' cannot be converted to 'T'
+  @8:19..8:21 'm3': wrong-argument-count: Method 'm3()' cannot be applied to given types
+    -> @8:19..8:21 'm3': required: T
+    -> @8:19..8:21 'm3': found: int
+    -> @8:19..8:21 'm3': reason: type variable 'T' has incompatible bounds

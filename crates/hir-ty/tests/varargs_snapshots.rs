@@ -6,7 +6,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_body_types;
+use crate::common::{check_body_diagnostic_spans, check_body_types};
 
 // -- §18.2.1: a *wildcard* source argument is not an instantiation -------------
 // `<T> T make(Class<T> c, Object... args)` called with a `Class<?>` bounds the
@@ -87,3 +87,53 @@ class Use {
 );
 // The nested `Seq.of(cn, cn + "X")` resolves to `Seq<String>`; the outer
 // `flatMap`'s element type is inferred from its body through the wildcard.
+
+// -- §15.12.2.4: a failure report names the packed element type ----------------
+// `m(String...)` invoked with a trailing argument of the wrong type reports the
+// *element* type the invocation applied (`int` for the trailing actual), not
+// the declared array formal `String[]` — the invocation never had a `String[]`
+// formal in that position, since the actuals pack into the array. javac:
+// `argument mismatch; double cannot be converted to String`.
+
+snapshot!(
+    varargs_mismatch_reports_element_type,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/V.java",
+        "\
+package com.example;
+
+class V {
+    static void pack(String... parts) {}
+
+    void use(double d) {
+        pack(\"a\", d);
+    }
+}
+",
+    )])
+);
+
+// -- §15.12.2.4: a lone array-shaped actual uses the array formal --------------
+// A single trailing actual whose type is the array type is passed as the array
+// itself, so `pack(new String[0])` is a legal variable-arity invocation and
+// must not be reported as a mismatch against the *element* type.
+
+snapshot!(
+    varargs_array_shaped_actual_uses_array_formal,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/V2.java",
+        "\
+package com.example;
+
+class V2 {
+    static void pack(String... parts) {}
+
+    void use() {
+        pack(new String[0]);
+        pack();
+        pack(\"a\", \"b\");
+    }
+}
+",
+    )])
+);

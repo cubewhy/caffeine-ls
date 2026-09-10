@@ -13,7 +13,7 @@ use syntax::stub::PrimitiveType;
 
 use crate::java::{
     diagnostics::{NonStaticThisKind, TypeError},
-    method::{InvocationMode, member_set},
+    method::{InvocationMode, MethodData, member_set},
     resolve::resolve_type_ref,
     subtyping::supertypes_impl,
     ty::{Ty, TyKind},
@@ -160,7 +160,25 @@ impl InferCtx<'_> {
             .iter()
             .min_by_key(|m| m.params.len().abs_diff(found))
             .cloned();
-        let required = best.as_ref().map(|m| m.params.to_vec()).unwrap_or_default();
+        // [§15.12.2.4]/[§18.4]: a variable-arity invocation maps the trailing
+        // actuals onto the *element* type of the last formal (or uses a lone
+        // array-typed actual as the array itself), and a generic member's
+        // declared formals — which still carry the member's own type
+        // parameters — are not the invocation type. Report against the packed,
+        // instantiated formals, or the message names a type the invocation
+        // never had (`required: 'V[]'` for a `V…` formal whose element is a
+        // lambda's parameter).
+        let required: Vec<Ty> = best
+            .as_ref()
+            .map(|m| {
+                let formals = reported_formals(self.db, m);
+                if m.varargs {
+                    pack_varargs(self.db, &formals, found)
+                } else {
+                    formals
+                }
+            })
+            .unwrap_or_default();
         // The actual argument types: a concrete argument carries its own
         // type; a poly argument (or an error/void one) has no standalone type
         // and renders as `<poly>`.
@@ -185,19 +203,59 @@ impl InferCtx<'_> {
         // argument that does not convert (loosely) to its formal ([§5.3]) is
         // a mismatch; the first renders the `reason:` line, each also surfaces
         // at its own range as `related_information`.
+        //
+        // The comparison is against the packed, instantiated formals, and an
+        // argument is only blamed when *every* candidate as close as `best`
+        // rejects it: a tied set is one the invocation never chose between, so
+        // attributing the mismatch to whichever candidate happened to come
+        // first would name a formal the call was never resolved against
+        // (`m(A...)`/`m(B...)` against `(A, B)`: each rejects a different
+        // argument, and neither was selected).
+        let min_distance = members
+            .iter()
+            .map(|m| m.params.len().abs_diff(found))
+            .min()
+            .unwrap_or(0);
+        let closest: Vec<&crate::java::method::MethodData> = members
+            .iter()
+            .filter(|m| m.params.len().abs_diff(found) == min_distance)
+            .collect();
+        let ambiguous = closest.len() > 1;
         let mut bad_args = Vec::new();
-        if let Some(best) = best.as_ref()
-            && best.params.len() == found
-        {
-            for (idx, (info, formal)) in arg_kinds.iter().zip(&best.params).enumerate() {
-                if info.poly {
-                    continue;
-                }
-                if let [ArgKind::Concrete(ty)] = info.leaves.as_slice()
-                    && !crate::java::subtyping::is_assignable(self.db, &self.scope, ty, formal)
+        'arg: for (idx, info) in arg_kinds.iter().enumerate() {
+            if info.poly {
+                continue;
+            }
+            let [ArgKind::Concrete(ty)] = info.leaves.as_slice() else {
+                continue;
+            };
+            let mut blamed: Option<Ty> = None;
+            for member in &closest {
+                let formals = reported_formals(self.db, member);
+                let packed = if member.varargs {
+                    pack_varargs(self.db, &formals, found)
+                } else {
+                    formals
+                };
+                let Some(formal) = packed.get(idx) else {
+                    continue 'arg;
+                };
+                // [§18.4]/[§18.5.2.2]: a formal that still carries the member's
+                // own type parameters is not the invocation type — the
+                // argument was checked against the instantiated formal during
+                // resolution, so comparing here again would report a mismatch
+                // the invocation does not have.
+                if formal.contains_declared_type_var(self.db) || formal.contains_infer_var(self.db)
                 {
-                    bad_args.push((idx, *ty, *formal));
+                    continue 'arg;
                 }
+                if crate::java::subtyping::is_assignable(self.db, &self.scope, ty, formal) {
+                    continue 'arg;
+                }
+                blamed.get_or_insert(*formal);
+            }
+            if let Some(formal) = blamed {
+                bad_args.push((idx, *ty, formal));
             }
         }
         // §15.12.2: when the invocation supplies *more* arguments than the
@@ -206,16 +264,6 @@ impl InferCtx<'_> {
         // the whole argument list. No argument is specifically at fault when
         // the closest candidate is not unique (the arity is ambiguous) or the
         // call is too short; the diagnostic then stays on the member name.
-        let min_distance = members
-            .iter()
-            .map(|m| m.params.len().abs_diff(found))
-            .min()
-            .unwrap_or(0);
-        let ambiguous = members
-            .iter()
-            .filter(|m| m.params.len().abs_diff(found) == min_distance)
-            .count()
-            > 1;
         let surplus: Vec<usize> = match &best {
             Some(best) if !ambiguous && best.params.len() < found => {
                 (best.params.len()..found).collect()
@@ -242,6 +290,7 @@ impl InferCtx<'_> {
             owner,
             found,
             expected,
+            varargs: best.as_ref().is_some_and(|m| m.varargs),
             required,
             found_tys,
             arg_ranges,
@@ -647,4 +696,60 @@ impl InferCtx<'_> {
         }
         false
     }
+}
+
+/// The declared formals of `method` with its own type parameters instantiated
+/// as fresh inference variables ([JLS §18.5.2.2]): the *invocation* type a
+/// diagnostic should name, since the declared formals still mention the
+/// member's type parameters.
+///
+/// Only used for rendering: the variables carry their declared bounds so a
+/// bound-shaped formal still renders meaningfully (`V` rather than `Object`).
+fn reported_formals(db: &dyn crate::java::db::TyDatabase, method: &MethodData) -> Vec<Ty> {
+    if method.type_params.is_empty() {
+        return method.params.clone();
+    }
+    let subst: rustc_hash::FxHashMap<Name, Ty> = method
+        .type_params
+        .iter()
+        .map(|tp| {
+            (
+                tp.name.clone(),
+                Ty::type_var(db, tp.name.clone(), tp.bounds.clone()),
+            )
+        })
+        .collect();
+    method
+        .params
+        .iter()
+        .map(|p| p.substitute(db, &subst))
+        .collect()
+}
+
+/// The parameter types a variable-arity invocation of `formals` actually
+/// applies to `found` actual arguments ([JLS §15.12.2.4]): the fixed prefix,
+/// then the last formal's element type repeated for every trailing actual —
+/// or the array formal itself when a lone trailing actual is array-shaped.
+fn pack_varargs(db: &dyn crate::java::db::TyDatabase, formals: &[Ty], found: usize) -> Vec<Ty> {
+    let Some((last, fixed)) = formals.split_last() else {
+        return Vec::new();
+    };
+    if found < fixed.len() {
+        return formals.to_vec();
+    }
+    let Some(element) = last.element(db).copied() else {
+        return formals.to_vec();
+    };
+    let trailing = found - fixed.len();
+    if trailing == 1 && last.is_array(db) {
+        // A lone trailing actual of the array type is the array itself
+        // (§15.12.2.4); the caller substitutes the element type when the
+        // actual turns out not to be array-shaped.
+        let mut out = fixed.to_vec();
+        out.push(*last);
+        return out;
+    }
+    let mut out = fixed.to_vec();
+    out.extend(std::iter::repeat_n(element, trailing));
+    out
 }

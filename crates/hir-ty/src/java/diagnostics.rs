@@ -184,6 +184,10 @@ pub enum TypeError {
         owner: Option<Name>,
         found: usize,
         expected: usize,
+        /// Whether the closest candidate is declared variable arity
+        /// ([§15.12.2.4]) — `required` then ends at the packed *element* type,
+        /// so a longer argument list still aligns.
+        varargs: bool,
         required: Vec<Ty>,
         found_tys: Vec<Option<Ty>>,
         arg_ranges: Vec<TextRange>,
@@ -1003,6 +1007,7 @@ impl TypeError {
         match self {
             WrongArity {
                 required,
+                varargs,
                 found_tys,
                 arg_ranges,
                 bad_args,
@@ -1041,11 +1046,18 @@ impl TypeError {
                     ),
                     primary,
                 ));
-                // §15.12.2: the reason line. When the arities differ it is the
-                // argument-list-length text; when they match, a single
+                // §15.12.2: the reason line, emitted only when it states
+                // something the primary message does not. A single
                 // `cannot be converted` entry for the *first* incompatible
                 // argument at its own range — every further incompatible
                 // argument is reported as its own diagnostic, not buried here.
+                // Otherwise the reason is the argument-list length, when the
+                // arities cannot be aligned at all ([§15.12.2.1]), or the
+                // failing bound set of the candidate's own type parameters
+                // ([§18.4] — javac's "inference variable T has incompatible
+                // bounds"). When neither applies the invocation failed on
+                // applicability of an argument whose standalone type the
+                // message already covers, so no reason line is added.
                 if let Some((idx, found, expected)) = bad_args.first() {
                     out.push((
                         format!(
@@ -1055,9 +1067,17 @@ impl TypeError {
                         ),
                         arg_ranges.get(*idx).copied().unwrap_or(primary),
                     ));
-                } else {
+                } else if !arities_align(db, required, found_tys.len(), *varargs) {
                     out.push((
                         "reason: actual and formal argument lists differ in length".to_owned(),
+                        primary,
+                    ));
+                } else if let Some(name) = required
+                    .iter()
+                    .find_map(|ty| declared_type_var_name(db, *ty))
+                {
+                    out.push((
+                        format!("reason: type variable '{name}' has incompatible bounds"),
                         primary,
                     ));
                 }
@@ -1120,4 +1140,41 @@ pub enum IllegalAccessKind {
 /// The simple-name rendering of a [`Ty`] for a diagnostic message.
 fn render_simple(db: &dyn TyDatabase, ty: Ty) -> String {
     ty.display_simple(db).to_string()
+}
+
+/// Whether `found` actual arguments can be aligned with the packed `required`
+/// formals ([JLS §15.12.2.1]): a fixed-arity list matches only its own length,
+/// and a list whose last formal is a varargs *element* type accepts any count
+/// at or above the fixed prefix.
+fn arities_align(db: &dyn TyDatabase, required: &[Ty], found: usize, varargs: bool) -> bool {
+    if required.len() == found {
+        return true;
+    }
+    // `required` ends at the packed element type of a variable-arity formal
+    // (§15.12.2.4), which accepts any number of trailing actuals — except when
+    // the packing left the array formal itself in place: a lone array-shaped
+    // actual matched the array type exactly.
+    varargs && required.len() <= found && required.last().is_some_and(|ty| !ty.is_array(db))
+}
+
+/// The name of the first *declared* type variable mentioned by `ty`
+/// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
+/// used to name the variable whose bound set failed to resolve ([§18.4]).
+fn declared_type_var_name(db: &dyn TyDatabase, ty: Ty) -> Option<String> {
+    match ty.kind(db) {
+        crate::java::ty::TyKind::TypeVar { name, .. } if !name.as_str().starts_with("CAP#") => {
+            Some(name.as_str().to_owned())
+        }
+        crate::java::ty::TyKind::Reference { args, .. } => {
+            args.iter().find_map(|arg| declared_type_var_name(db, *arg))
+        }
+        crate::java::ty::TyKind::Array(inner) => declared_type_var_name(db, **inner),
+        crate::java::ty::TyKind::Wildcard(bound) => bound
+            .as_deref()
+            .and_then(|b| declared_type_var_name(db, b.ty)),
+        crate::java::ty::TyKind::Intersection(members) => {
+            members.iter().find_map(|m| declared_type_var_name(db, *m))
+        }
+        _ => None,
+    }
 }
