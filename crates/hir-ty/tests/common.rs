@@ -1146,10 +1146,15 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[
                 ("iterator", "()Ljava/util/Iterator;"),
                 ("stream", "()Ljava/util/stream/Stream;"),
+                // The real `Collection<E>` declares `add(E)` itself (as does
+                // `List<E>`); without it the stub cannot exercise a write into
+                // a `Collection<? super L>` receiver.
+                ("add", "(Ljava/lang/Object;)Z"),
             ],
             &[
                 "()Ljava/util/Iterator<TE;>;",
                 "()Ljava/util/stream/Stream<TE;>;",
+                "(TE;)Z",
             ],
         ),
         // Explicit spec so the varargs factory carries ACC_STATIC

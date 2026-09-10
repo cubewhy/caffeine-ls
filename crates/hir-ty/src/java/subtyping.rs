@@ -421,16 +421,24 @@ pub(crate) fn is_subtype_query(
         // reaching it from this arm for a non-variable target only when the
         // target is above the lower bound keeps the memoized query acyclic —
         // the capture variable's bound chain (`CAP :> L` plus `CAP <: Object`)
-        // is what the JLS §4.10.2 subtyping of a capture variable states. (A
-        // *write* of an `L`-typed value into a `? super L` receiver is the
-        // source-side judgment `L <: CAP`, decided by the same walk when the
-        // capture variable is the *target*.)
+        // is what the JLS §4.10.2 subtyping of a capture variable states.
+        //
+        // [§4.10.2]/[§5.1.10] *write* direction: `S <: CAP` for a capture
+        // `CAP` of `? super L` holds exactly when `S <: L` — §4.10.2 makes a
+        // type variable a direct supertype of its lower bound (`L <: CAP`),
+        // so every `S` below `L` is below `CAP` by transitivity, while
+        // `Object <: CAP` can only hold when `Object <: L`. So the source
+        // argument is checked against the wildcard's *lower bound*, not the
+        // other way around: `Sub <: CAP(? super Base)` holds for `Sub extends
+        // Base` (javac accepts `list.add(sub)`), and `Number <: CAP(? super
+        // Integer)` does not (javac rejects `list.add(number)` with "Number
+        // cannot be converted to CAP#1 ... super: Integer").
         (
             _,
             TyKind::TypeVar {
                 lower: Some(lower), ..
             },
-        ) => is_subtype_query(db, scope, lower.id, sub.id),
+        ) => is_subtype_query(db, scope, sub.id, lower.id),
         (TyKind::TypeVar { .. }, TyKind::Reference { .. })
         | (TyKind::TypeVar { .. }, TyKind::TypeVar { .. }) => type_var_subtype(db, scope, sub, sup),
         (TyKind::Reference { .. }, TyKind::Reference { .. }) => {
@@ -469,13 +477,16 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
     }
     // §4.10.2 with §5.1.10: when the *target* is a capture variable with a
     // lower bound `L` (`? super L`), a source `S <: CAP` holds exactly when
-    // `L <: S` — CAP ranges over the supertypes of `L`, so the source must be
-    // above `L` (`Object <: CAP` never holds for a lower-bounded CAP).
+    // `S <: L` — a type variable is a direct supertype of its lower bound, so
+    // `L <: CAP` and subtyping transitivity carry every `S` below `L` below
+    // `CAP`. `Object <: CAP` holds only when `Object <: L`, which is why a
+    // bounded type variable (`W extends Base` into `? super Base`) is
+    // accepted — `S <: L` is subtyping, not identity.
     if let TyKind::TypeVar {
         lower: Some(lower), ..
     } = sup.kind(db)
     {
-        return is_subtype_query(db, scope, lower.id, sub.id);
+        return is_subtype_query(db, scope, sub.id, lower.id);
     }
     let mut visited = FxHashSet::default();
     let mut stack = vec![sub];

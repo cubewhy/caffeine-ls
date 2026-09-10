@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_capture_args.rs
+expression: out
+---
+FILE /src/com/example/Sup.java:
+package com.example;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.function.Consumer;
+
+class Base {}
+
+class Sub extends Base {}
+
+class Sup {
+    void consumer(Sub s, Consumer<? super Base> c) {
+        c.accept(s);
+    }
+
+    <W extends Base> void bounded(W w, Consumer<? super Base> c) {
+        c.accept(w);
+    }
+
+    void lists(Sub s, List<? super Base> l) {
+        l.add(s);
+    }
+
+    <W extends Base> void collections(W w, Collection<? super Base> c) {
+        c.add(w);
+    }
+}
+
+method consumer(com.example.Sub, java.util.function.Consumer<? super com.example.Base>): void
+  locals: l0: com.example.Sub | l1: java.util.function.Consumer<? super com.example.Base>
+  exprs: e0: com.example.Sub | e1: java.util.function.Consumer<? super com.example.Base> | e2: void
+method bounded(W, java.util.function.Consumer<? super com.example.Base>): void
+  locals: l2: W | l3: java.util.function.Consumer<? super com.example.Base>
+  exprs: e3: W | e4: java.util.function.Consumer<? super com.example.Base> | e5: void
+method lists(com.example.Sub, java.util.List<? super com.example.Base>): void
+  locals: l4: com.example.Sub | l5: java.util.List<? super com.example.Base>
+  exprs: e6: com.example.Sub | e7: java.util.List<? super com.example.Base> | e8: boolean
+method collections(W, java.util.Collection<? super com.example.Base>): void
+  locals: l6: W | l7: java.util.Collection<? super com.example.Base>
+  exprs: e9: W | e10: java.util.Collection<? super com.example.Base> | e11: boolean
