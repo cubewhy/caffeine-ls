@@ -136,6 +136,16 @@ impl Inference {
                         .map(|t| t.substitute_infer(db, &subst));
                 }
                 self.applied.insert(id, eq);
+                // §18.4.1: keep the bounds the instantiated variable must
+                // satisfy — the entry is removed below, and a later constraint
+                // would re-create it without them (see
+                // [`Inference::validate_applied`]).
+                let upper: Vec<Ty> = self.bounds[&id]
+                    .upper
+                    .iter()
+                    .map(|t| t.substitute_infer(db, &subst))
+                    .collect();
+                self.applied_upper.insert(id, upper);
                 self.bounds.remove(&id);
                 changed = true;
             }
@@ -258,14 +268,9 @@ impl Inference {
                         }
                     }
                     (
-                        TyKind::Reference { name: ln, args: la },
+                        TyKind::Reference { name: ln, .. },
                         TyKind::Reference { name: un, args: ua },
-                    ) if ln != un
-                        && !la.is_empty()
-                        && !ua.is_empty()
-                        && la.len() == ua.len()
-                        && l != u =>
-                    {
+                    ) if ln != un && !ua.is_empty() && l != u => {
                         // §18.2.2/[§18.3.1]: a proper lower bound `S <: α`
                         // against a proper upper bound `α <: T` with
                         // *different* erasures still relates the type
@@ -280,6 +285,16 @@ impl Inference {
                         // constraint on record — the supertype walk finds the
                         // `Impl<β>` parameterization and
                         // §18.2.1-invariance relates `β = T`.
+                        //
+                        // The lower bound need not itself be parameterized: a
+                        // non-generic class whose *supertype* is the upper
+                        // still carries the relation — `⟨Builder <: ?B⟩` with
+                        // `⟨?B <: AbstractBuilder<?R>⟩` walks `Builder`'s
+                        // declared `AbstractBuilder<Config>` and relates
+                        // `Config = ?R` — so only the upper bound's arity gates
+                        // the walk, and the length comparison happens per
+                        // supertype visited below.
+                        //
                         // The walk revisits no class name — a self-referential
                         // (F-bounded) hierarchy (`A<α> : A2<α> : A<α2>`)
                         // terminates on the second occurrence of `A`.

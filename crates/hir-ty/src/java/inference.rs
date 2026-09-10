@@ -86,6 +86,12 @@ pub(crate) struct Inference {
     /// `resolve` can no longer see it; the applied substitution is recorded
     /// here and merged into the resolved instantiation.
     applied: FxHashMap<u64, Ty>,
+    /// The upper bounds a variable carried when its equality was applied
+    /// ([§18.4.1] bound validation). The variable's entry is removed from
+    /// `bounds` with the substitution, so the bounds it must satisfy are kept
+    /// alongside it — a constraint that arrives *after* the equality would
+    /// otherwise re-create the entry and hide the pair.
+    applied_upper: FxHashMap<u64, Vec<Ty>>,
     /// Constraints added but not yet reduced ([JLS §18.2]).
     worklist: VecDeque<Constraint>,
 }
@@ -96,6 +102,7 @@ impl Inference {
             bounds: FxHashMap::default(),
             throws: FxHashSet::default(),
             applied: FxHashMap::default(),
+            applied_upper: FxHashMap::default(),
             worklist: VecDeque::new(),
         }
     }
@@ -213,6 +220,47 @@ impl Inference {
         }
         if !self.incorporate(db, scope, phase) {
             return false;
+        }
+        self.validate_applied(db, scope)
+    }
+
+    /// §18.4.1 bound validation of the instantiated variables: every equality
+    /// `α = S` collapses `α` to `S`, so `S` must satisfy the bounds `α`
+    /// carried — `S <: U` for every upper bound `U` ([§18.4.1] "the bound set
+    /// must be satisfiable"). Resolution validates this when it picks the
+    /// instantiation, but the constraint that *creates* the conflict can
+    /// arrive after the equality was applied and the variable removed from
+    /// the table, so a probe that never resolves
+    /// (`resolve == false`, the nested-invocation target round of
+    /// [§18.5.2.4]) would otherwise accept it:
+    /// `⟨Builder <: α_B⟩`, `⟨α_B <: AbstractBuilder<α_R>⟩` instantiate
+    /// `α_R = Config`, and the enclosing formal then bounds `α_R` by
+    /// `Consumer<Config.Builder>` — an unsatisfiable pair the probe must
+    /// reject.
+    ///
+    /// A bound or value that still mentions a variable — an inference
+    /// variable (validated once it instantiates) or a *declared* type
+    /// variable whose own bounds belong to its declaration ([§4.4]) — is not
+    /// decidable here and is left to resolution.
+    fn validate_applied(&self, db: &dyn TyDatabase, scope: &hir::ResolutionScope) -> bool {
+        for (id, eq) in &self.applied {
+            if eq.contains_infer_var(db) || eq.contains_declared_type_var(db) {
+                continue;
+            }
+            let recorded = self.applied_upper.get(id).map(Vec::as_slice).unwrap_or(&[]);
+            let later = self
+                .bounds
+                .get(id)
+                .map(|b| b.upper.as_slice())
+                .unwrap_or(&[]);
+            for upper in recorded.iter().chain(later) {
+                if upper.contains_infer_var(db) || upper.contains_declared_type_var(db) {
+                    continue;
+                }
+                if !instantiation::bounds_compatible(db, scope, eq, upper) {
+                    return false;
+                }
+            }
         }
         true
     }

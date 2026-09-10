@@ -964,3 +964,91 @@ class Body {
 // variable), in expression positions as static receivers (`Foo.Kind.A`), and
 // as `instanceof` pattern types — without leaking "cannot find symbol">
 // errors for the package segments.
+
+// -- §18.5.1/§18.5.2/§15.12.2.2: a target type must not rank a nested call's --
+// overloads. The enclosing formal is not an argument of the nested invocation,
+// so it may not choose between the nested method's overloads: for
+// `sink.style(fromJson("x", STYLE))` the nested `fromJson(String, Class<T>)`
+// is the most specific one available from its *own* argument, and the outer
+// `style(Style)` is then applicable. Probing the nested candidates against
+// `style`'s other formal (`Consumer<Object>`) re-chose the `Type` overload and
+// left both `style` declarations looking applicable-but-ambiguous. javac
+// accepts every call below.
+
+snapshot!(
+    nested_invocation_target_does_not_rank_overloads,
+    check_body_types(&[(
+        "/src/com/example/S.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Consumer;
+
+interface Style {}
+
+interface Sink {
+    Sink style(Style s);
+    Sink style(Consumer<Object> c);
+    Sink append(Style s);
+    Sink append(Object o);
+}
+
+class S {
+    static <T> T fromJson(String s, Class<T> c) {
+        return null;
+    }
+
+    static final Class<Style> STYLE = Style.class;
+
+    void rankedWithoutTarget(Sink sink) {
+        sink.style(fromJson(\"x\", STYLE)).append(null);
+    }
+
+    void reallyConsumer(Sink sink, Consumer<Object> c) {
+        sink.style(c);
+    }
+
+    static <T> T sink2(List<T> l) {
+        return null;
+    }
+
+    void nestedStillInfers(List<String> source) {
+        List<String> copy = new ArrayList<>(source);
+        sink2(copy);
+    }
+}
+",
+    )])
+);
+
+// -- §18.5.2.4: a nested call whose type argument is solvable only from the --
+// enclosing formal keeps working: with no target the nested `emptyList()` has
+// the standalone `List<Object>` and no candidate of `pick` accepts it, so the
+// target round of the lift is what resolves the invocation.
+
+snapshot!(
+    nested_invocation_target_still_infers,
+    check_body_types(&[(
+        "/src/com/example/T.java",
+        "\
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class T {
+    void take(List<String> xs) {}
+
+    <X> X id(X x) {
+        return x;
+    }
+
+    void call() {
+        take(id(Collections.emptyList()));
+    }
+}
+",
+    )])
+);

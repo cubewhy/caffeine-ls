@@ -412,6 +412,28 @@ impl Ty {
         }
     }
 
+    /// Whether the type mentions a *declared* type variable
+    /// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
+    /// — a type parameter that is not a capture of a wildcard. Such a value is
+    /// known only to lie within the variable's declared bounds, which the
+    /// declaration that introduced the parameter carries.
+    pub fn contains_declared_type_var(&self, db: &dyn TyDatabase) -> bool {
+        match self.kind(db) {
+            TyKind::TypeVar { name, .. } => !name.as_str().starts_with("CAP#"),
+            TyKind::Reference { args, .. } => {
+                args.iter().any(|arg| arg.contains_declared_type_var(db))
+            }
+            TyKind::Array(inner) => inner.contains_declared_type_var(db),
+            TyKind::Wildcard(bound) => bound
+                .as_deref()
+                .is_some_and(|b| b.ty.contains_declared_type_var(db)),
+            TyKind::Intersection(members) => {
+                members.iter().any(|m| m.contains_declared_type_var(db))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether any nested type argument is a wildcard
     /// ([JLS §4.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5.1)).
     /// A wildcard-parameterized reference is a candidate for capture conversion

@@ -433,6 +433,18 @@ impl InferCtx<'_> {
             }
             hir::Resolved::Source(source) => {
                 let tree = hir::file_item_tree(self.db, source.file);
+                // §6.5.5/§6.3: a bound is resolved in the scope of the class
+                // that *declares* the type parameter, not in the use site's:
+                // a simple name in `class MappedEntitySet<T extends
+                // MappedEntity>` denotes the declaring file's import/package
+                // meaning, so resolving it with the use site's resolver picks
+                // up an unrelated `<use site package>.MappedEntity` — a type
+                // that need not exist, against which every constraint on `T`
+                // then fails.
+                let scope = crate::java::resolve::scope_for_file(self.db, source.file);
+                let type_params =
+                    crate::java::db::type_params_map_query(self.db, self.db.file_text(source.file));
+                let resolver = crate::java::resolve::Resolver::new(&tree, type_params, source.item);
                 let declared = match crate::java::resolve::item_data(&tree, source.item) {
                     Some(hir_def::java::item_tree::ItemData::Class(d)) => Some(&d.type_params),
                     Some(hir_def::java::item_tree::ItemData::Interface(d)) => Some(&d.type_params),
@@ -447,7 +459,7 @@ impl InferCtx<'_> {
                             bounds: tp
                                 .bounds
                                 .iter()
-                                .map(|b| resolve_type_ref(self.db, &self.scope, &self.resolver, b))
+                                .map(|b| resolve_type_ref(self.db, &scope, &resolver, b))
                                 .collect(),
                         })
                         .collect(),

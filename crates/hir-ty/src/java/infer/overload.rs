@@ -1201,30 +1201,56 @@ impl InferCtx<'_> {
         explicit_type_args: Option<Vec<Ty>>,
     ) -> bool {
         let base = inference.snapshot();
+        // §18.5.1/§18.5.2/§15.12.2.2: the first inference round for a nested
+        // invocation uses only its own argument expressions — an argument is
+        // pertinent to applicability through its *standalone* type, so the
+        // enclosing formal must not influence *which applicable method* the
+        // nested invocation resolves to. Ranking the nested overloads against
+        // the enclosing target instead makes the target choose between them:
+        // for `sink.style(fromJson("x", STYLE))` with
+        // `style(Style)`/`style(Consumer<Object>)` and a `fromJson(String,
+        // Class<T>)`/`fromJson(String, Type)` pair, the `Type` overload is
+        // re-chosen to fit the `Consumer<Object>` formal, both `style`
+        // overloads look applicable and the most-specific tie-break finds
+        // neither direction — the javac-legal call is reported inapplicable.
+        //
+        // So the candidates are ranked with **no target** first, and only if
+        // that round finds nothing applicable (a nested invocation whose type
+        // variables are solvable *only* from the target) is the round retried
+        // with the formal, matching javac's deferred attribution of a poly
+        // argument. The winning member is then re-probed *with* the formal in
+        // the lift below: that is the §18.5.2.4 target round, and its
+        // constraints — including `⟨R → formal⟩` — are the ones that join the
+        // enclosing bound set.
         let mut applicable: Vec<MethodData> = Vec::new();
-        for member in members {
-            inference.restore(base.clone());
-            let mut deferred = Vec::new();
-            // Speculative probe: no diagnostics from the argument expressions
-            // (see [`Self::with_probing`]).
-            if self
-                .with_probing(|this| {
-                    this.try_candidate(
-                        inference,
-                        member,
-                        receiver_ty,
-                        arg_kinds,
-                        phase,
-                        varargs,
-                        Some(*formal),
-                        explicit_type_args.as_deref(),
-                        &mut deferred,
-                        false,
-                    )
-                })
-                .is_some()
-            {
-                applicable.push(member.clone());
+        for probe_target in [None, Some(*formal)] {
+            for member in members {
+                inference.restore(base.clone());
+                let mut deferred = Vec::new();
+                // Speculative probe: no diagnostics from the argument
+                // expressions (see [`Self::with_probing`]).
+                if self
+                    .with_probing(|this| {
+                        this.try_candidate(
+                            inference,
+                            member,
+                            receiver_ty,
+                            arg_kinds,
+                            phase,
+                            varargs,
+                            probe_target,
+                            explicit_type_args.as_deref(),
+                            &mut deferred,
+                            false,
+                        )
+                    })
+                    .is_some()
+                {
+                    applicable.push(member.clone());
+                }
+            }
+            if !applicable.is_empty() {
+                break;
             }
         }
         // The probes are speculative: a failed consistency check leaves its
@@ -1245,26 +1271,34 @@ impl InferCtx<'_> {
             inference.restore(base);
             return false;
         };
-        inference.restore(base);
-        // §18.5.2.1: lift the winner's constraints from the base snapshot —
-        // the losing candidates are discarded with it, and only the winner's
-        // argument/target constraints join the enclosing bound set (B3).
+        inference.restore(base.clone());
+        // §18.5.2.1/§18.5.2.4: lift the winner's constraints from the base
+        // snapshot — the losing candidates are discarded with it, and only the
+        // winner's argument/target constraints join the enclosing bound set.
+        // The lift is the target round, so its outcome decides the enclosing
+        // candidate: a nested result that cannot convert to the formal
+        // (§5.2/§18.5.2.4) makes the enclosing invocation inapplicable.
         let mut deferred = Vec::new();
-        let _ = self.with_probing(|this| {
-            this.try_candidate(
-                inference,
-                &winner,
-                receiver_ty,
-                arg_kinds,
-                phase,
-                varargs,
-                Some(*formal),
-                explicit_type_args.as_deref(),
-                &mut deferred,
-                false,
-            )
-        });
-        true
+        let lifted = self
+            .with_probing(|this| {
+                this.try_candidate(
+                    inference,
+                    &winner,
+                    receiver_ty,
+                    arg_kinds,
+                    phase,
+                    varargs,
+                    Some(*formal),
+                    explicit_type_args.as_deref(),
+                    &mut deferred,
+                    false,
+                )
+            })
+            .is_some();
+        if !lifted {
+            inference.restore(base);
+        }
+        lifted
     }
 
     /// its expression tree records the target-dependent types.

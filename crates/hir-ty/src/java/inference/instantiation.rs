@@ -22,24 +22,7 @@ pub(super) fn pick_instantiation(
     equality: Option<Ty>,
     throws: bool,
 ) -> Option<Ty> {
-    // Bound validation uses *assignment* compatibility ([§5.2]), not strict
-    // subtyping: a raw lower bound (`ArrayDeque` from `ArrayDeque::new`) is
-    // compatible with a parameterized upper (`Collection<String>`) by
-    // unchecked conversion ([§5.1.9]), exactly as in javac's bound check.
-    let compatible = |inst: &Ty, upper: &Ty| {
-        // Two primitive types relate only by identity here ([§4.10.1]): the
-        // widening order (`int` → `long`) is a *conversion*, not subtyping,
-        // so `⟨int ≤ α ≤ long⟩` is contradictory even though `int` widens.
-        if matches!(inst.kind(db), TyKind::Primitive(_))
-            && matches!(upper.kind(db), TyKind::Primitive(_))
-        {
-            return inst == upper;
-        }
-        is_subtype(db, scope, inst, upper)
-            // A raw lower bound converts to a parameterized upper by
-            // unchecked conversion ([§5.1.9], §18.4 bound validation).
-            || crate::java::subtyping::is_assignable(db, scope, inst, upper)
-    };
+    let compatible = |inst: &Ty, upper: &Ty| bounds_compatible(db, scope, inst, upper);
     if let Some(eq) = equality {
         for u in upper {
             if !eq.contains_infer_var(db) && !u.contains_infer_var(db) && !compatible(&eq, u) {
@@ -113,6 +96,30 @@ pub(super) fn pick_instantiation(
         return Some(least_upper_bound(db, scope, &bounds));
     }
     Some(Ty::reference(db, "java.lang.Object", Vec::new()))
+}
+
+/// Whether the instantiation `inst` satisfies the bound `upper`
+/// ([JLS §18.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.4.1)
+/// bound validation). Uses *assignment* compatibility ([§5.2]) rather than
+/// strict subtyping: a raw lower bound (`ArrayDeque` from `ArrayDeque::new`)
+/// is compatible with a parameterized upper (`Collection<String>`) by
+/// unchecked conversion ([§5.1.9]), exactly as in javac's bound check.
+pub(super) fn bounds_compatible(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    inst: &Ty,
+    upper: &Ty,
+) -> bool {
+    // Two primitive types relate only by identity here ([§4.10.1]): the
+    // widening order (`int` → `long`) is a *conversion*, not subtyping, so
+    // `⟨int ≤ α ≤ long⟩` is contradictory even though `int` widens.
+    if matches!(inst.kind(db), TyKind::Primitive(_))
+        && matches!(upper.kind(db), TyKind::Primitive(_))
+    {
+        return inst == upper;
+    }
+    is_subtype(db, scope, inst, upper)
+        || crate::java::subtyping::is_assignable(db, scope, inst, upper)
 }
 
 /// Whether `ty` is a supertype of `java.lang.RuntimeException`

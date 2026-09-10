@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/T.java:
+package com.example;
+
+import java.util.Collections;
+import java.util.List;
+
+class T {
+    void take(List<String> xs) {}
+
+    <X> X id(X x) {
+        return x;
+    }
+
+    void call() {
+        take(id(Collections.emptyList()));
+    }
+}
+
+method take(java.util.List<java.lang.String>): void
+  locals: l0: java.util.List<java.lang.String>
+  exprs: 
+method id(X): X
+  locals: l1: X
+  exprs: e0: X
+method call(): void
+  locals: 
+  exprs: e2: java.util.List<java.lang.String> | e3: java.util.List<java.lang.String> | e4: void
