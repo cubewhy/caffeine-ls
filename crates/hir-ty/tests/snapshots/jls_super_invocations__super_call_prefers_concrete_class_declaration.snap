@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/D9.java:
+package com.example;
+
+interface I9 {
+    void m();
+}
+
+class Base9 implements I9 {
+    public void m() {}
+}
+
+class Mid9 extends Base9 implements I9 {}
+
+class D9 extends Mid9 {
+    void f() {
+        super.m();
+    }
+}

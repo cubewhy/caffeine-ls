@@ -770,20 +770,34 @@ fn member_set_impl(
     // member set — a subtype's declaration of a method with the same signature
     // shadows the supertype's — so only the most-derived declaration of each
     // signature survives. The walk is derived-first, so the first occurrence
-    // is usually the most-derived. Without this, `List.iterator()` (overriding
-    // `Collection.iterator()`/`Iterable.iterator()`) would surface three
-    // identical candidates that the most-specific tie-break reports as
+    // *tends* to be the most-derived — but the walk is a LIFO stack whose
+    // parents are pushed superclass-first, so at a class/interface join the
+    // interface's declaration pops first. Without this, `List.iterator()`
+    // (overriding `Collection.iterator()`/`Iterable.iterator()`) would surface
+    // three identical candidates that the most-specific tie-break reports as
     // ambiguous.
     //
-    // JLS §8.4.8.3: a covariant override narrows the return (`B toBuilder()`
-    // overriding `ComponentBuilder<?,?> toBuilder()`), and a diamond walk can
-    // surface the less-derived (wider-return) declaration first —
-    // `TranslatableComponent` via `ScopedComponent → Component` (wildcard)
-    // before `BuildableComponent` (`Builder`), since the stack is LIFO. Keeping
-    // the first would pin `toBuilder()` to `ComponentBuilder<?,?>` and reject
-    // the `TranslatableComponent.Builder` target. When the signatures match,
-    // keep the more-specific return (the subtype); equal returns keep the
-    // first (most-derived by walk order).
+    // [§8.4.8.1]/[§15.12.3.1]: the declaration that survives is the *most
+    // specific* one — the declaration whose declaring type is a subtype of the
+    // other's, which for a class declaration and an inherited abstract
+    // interface declaration is the class's ([§8.4.8.1] "the method declared in
+    // the class"), and when the owners are unrelated, the *class* declaration
+    // (a superinterface's abstract member never displaces a superclass's). The
+    // comparison is on the declaring types, not on walk order: with
+    // `interface I { void m(); } class B implements I { public void m() {} }
+    // class M extends B implements I {}` the LIFO walk yields `I.m()` first,
+    // and keeping it made `super.m()` from a subclass a §15.12.3
+    // `AbstractSuperAccess` error even though the selected member is `B.m()`.
+    //
+    // Return covariance ([§8.4.8.3]) is the *last* tie-break, for owners that
+    // neither relate by subtyping nor differ in class-vs-interface: a covariant
+    // override narrows the return (`B toBuilder()` overriding
+    // `ComponentBuilder<?,?> toBuilder()`), and a diamond walk can surface the
+    // wider-return declaration first (`TranslatableComponent` via
+    // `ScopedComponent → Component` (wildcard) before `BuildableComponent`
+    // (`Builder`)). Keeping the wider return would pin `toBuilder()` to
+    // `ComponentBuilder<?,?>` and reject the `TranslatableComponent.Builder`
+    // target. Equal returns keep the first (walk order).
     if !dedupe {
         return out;
     }
@@ -794,13 +808,27 @@ fn member_set_impl(
             if !same_overriding_signature(seen, &method) {
                 continue;
             }
-            // Same signature: keep the covariant override (more-specific
-            // return). `Builder` (`TranslatableComponent.Builder`) is a
-            // subtype of `ComponentBuilder<?,?>`, so it replaces the wildcard.
-            let new_narrower =
+            let owner = |m: &MethodData| Ty::reference(db, m.owner.as_str(), Vec::new());
+            let (new_owner, seen_owner) = (owner(&method), owner(seen));
+            let new_derives =
+                crate::java::subtyping::is_subtype(db, scope, &new_owner, &seen_owner);
+            let seen_derives =
+                crate::java::subtyping::is_subtype(db, scope, &seen_owner, &new_owner);
+            let new_wins = if new_derives != seen_derives {
+                new_derives
+            } else if seen.declaring_interface != method.declaring_interface {
+                // Unrelated owners of different kinds at this join: the class
+                // declaration is the inherited member ([§8.4.8.1]); only a
+                // class's superinterfaces are searched for a member the class
+                // chain does not provide.
+                !method.declaring_interface
+            } else {
+                // Same declaring kind and unrelated owners (or the same
+                // owner): fall back to return covariance, then walk order.
                 crate::java::subtyping::is_subtype(db, scope, &method.ret, &seen.ret)
-                    && !crate::java::subtyping::is_subtype(db, scope, &seen.ret, &method.ret);
-            if new_narrower {
+                    && !crate::java::subtyping::is_subtype(db, scope, &seen.ret, &method.ret)
+            };
+            if new_wins {
                 *seen = method.clone();
             }
             replaced = true;

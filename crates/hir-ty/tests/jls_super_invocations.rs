@@ -85,6 +85,70 @@ class C2 implements IF2 {
 // Green: `super.concrete()` resolves the concrete superclass method, and
 // `IF2.super.fine()` reaches the inherited interface default ([§15.11.2]).
 
+// -- green: super.m selects the most specific member of the superclass chain --
+// [§15.12.3.1]: `super.m` is resolved against the *superclass* type, and
+// [§15.12.2.5] then selects the most specific applicable member there. A
+// concrete class declaration override-equivalent to an inherited abstract
+// interface declaration is the more specific one ([§8.4.8.1]), so the access
+// is not a §15.12.3 abstract-member access even though the implementing
+// interface is reached through the same walk. javac accepts every class below.
+// (`javac -d /tmp/fx D9.java` — exit 0.)
+
+snapshot!(
+    super_call_prefers_concrete_class_declaration,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/D9.java",
+        "\
+package com.example;
+
+interface I9 {
+    void m();
+}
+
+class Base9 implements I9 {
+    public void m() {}
+}
+
+class Mid9 extends Base9 implements I9 {}
+
+class D9 extends Mid9 {
+    void f() {
+        super.m();
+    }
+}
+",
+    )])
+);
+
+// -- green: a qualified super on an inherited interface default still resolves -
+// `J.super.d()` selects `J`'s own declaration; the superinterface's
+// same-signature default is not the selected member ([§15.12.3.1]).
+// (`javac -d /tmp/fx K.java` — exit 0.)
+
+snapshot!(
+    qualified_super_interface_default,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/K.java",
+        "\
+package com.example;
+
+interface I {
+    default void d() {}
+}
+
+interface J extends I {
+    default void d() {}
+}
+
+class K implements J {
+    void f() {
+        J.super.d();
+    }
+}
+",
+    )])
+);
+
 // -- red: a qualified-super qualifier that is no enclosing superinterface ------
 
 snapshot!(

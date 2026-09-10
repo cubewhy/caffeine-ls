@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_super_invocations.rs
+expression: out
+---
+FILE /src/com/example/K.java:
+package com.example;
+
+interface I {
+    default void d() {}
+}
+
+interface J extends I {
+    default void d() {}
+}
+
+class K implements J {
+    void f() {
+        J.super.d();
+    }
+}
