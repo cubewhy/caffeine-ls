@@ -899,10 +899,19 @@ fn abstract_methods_impl(
     // is discharged by a default declared in `ty` or an intermediate
     // interface — and a signature is abstract exactly when the gathered set
     // holds no concrete implementation of it.
-    let mut stack = vec![ty];
+    // JLS §4.8 ([§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)):
+    // a raw receiver's superinterface types are the *erasures* of the declared
+    // ones, and an inherited member's type is its type in the erased supertype
+    // that names it. The walk therefore carries the monotone erasure context
+    // as in `member_set_impl`: the SAM of a raw functional interface is the
+    // erased descriptor (§4.6), so a raw `Sub<T> extends F<T>` finds the
+    // `F`-inherited `void accept(T)` as `void accept(Bound)` — the erasure of
+    // the type variable's first bound. This descriptor is what
+    // [§9.8]/[§15.27.3] match the lambda parameters against.
+    let mut stack: Vec<(Ty, bool)> = vec![(ty, false)];
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
     let mut declarations: Vec<MethodData> = Vec::new();
-    while let Some(t) = stack.pop() {
+    while let Some((t, erased)) = stack.pop() {
         if !seen.insert(t.id) {
             continue;
         }
@@ -951,7 +960,8 @@ fn abstract_methods_impl(
             }
         }
         for parent in supertypes_query(db, scope_id, t.id) {
-            stack.push(parent);
+            let raws = erased || is_raw_use(db, scope, &t);
+            stack.push((if raws { parent.erasure(db) } else { parent }, raws));
         }
     }
     // A default (concrete, non-static) method's signature discharges every
@@ -2658,15 +2668,28 @@ fn pick_field_impl(
     let receiver = capture_conversion(db, scope, *receiver);
     // §4.4: an unbounded type variable's effective upper bound is
     // `java.lang.Object`, so its fields are the fields of `Object` (none).
-    let mut stack = match receiver.kind(db) {
+    //
+    // JLS §4.8 ([§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)):
+    // "... the superclass types (respectively, superinterface types) of a raw
+    // type are the erasures of the superclass types (superinterface types) of
+    // the named class or interface", and "the type of an inherited instance
+    // method or non-static field of a raw type C, where the member was
+    // declared in a class or interface D, is the type of the member in the
+    // supertype of C that names D." As in `member_set_impl`, the walk carries a
+    // monotone erasure context per stack entry: a raw receiver erases the
+    // supertype edges, so a field *declared* in a generic ancestor erases to
+    // its §4.6 erasure (`Gen<T>` with `List<String> items` reached raw gives
+    // `List`), while a field declared in a non-generic class keeps its
+    // declared type even when reached through generic ancestors.
+    let mut stack: Vec<(Ty, bool)> = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } if bounds.is_empty() => {
-            vec![Ty::reference(db, "java.lang.Object", Vec::new())]
+            vec![(Ty::reference(db, "java.lang.Object", Vec::new()), false)]
         }
-        TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
-        _ => vec![receiver],
+        TyKind::TypeVar { bounds, .. } => bounds.iter().map(|bound| (*bound, false)).collect(),
+        _ => vec![(receiver, false)],
     };
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
-    while let Some(ty) = stack.pop() {
+    while let Some((ty, erased)) = stack.pop() {
         if !seen.insert(ty.id) {
             continue;
         }
@@ -2687,8 +2710,9 @@ fn pick_field_impl(
                 return Some(field);
             }
         }
+        let raws = erased || is_raw_use(db, scope, &ty);
         for parent in supertypes_query(db, scope_id, ty.id) {
-            stack.push(parent);
+            stack.push((if raws { parent.erasure(db) } else { parent }, raws));
         }
     }
     None

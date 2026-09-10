@@ -371,3 +371,94 @@ class Body {
 ",
     )])
 );
+
+// -- JLS §4.8, inherited-member sentence for a non-static field: the raw
+// `Sub<T>` receiver inherits `items` from the non-generic `Base`, so the field
+// keeps its declared `List<String>` and the loop is assignable. javac: green.
+snapshot!(
+    raw_receiver_non_generic_super_field_keeps_type,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Base {
+    List<String> items;
+}
+
+class Sub<T> extends Base {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8, supertype sentence for a non-static field: the field is
+// declared in the generic `Gen`, so the raw `Sub<T>` receiver names the
+// erased `Gen` and `items` becomes the raw `List`. javac: error.
+snapshot!(
+    raw_receiver_generic_super_field_erased,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Gen<T> {
+    List<String> items;
+}
+
+class Sub<T> extends Gen<T> {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8 + §4.6 + §9.8: the single abstract method of the raw functional
+// interface `Sub` is the erased `F` descriptor. `T`'s first bound is
+// `List<String>`, so `void accept(T)` erases to `void accept(List)` — the raw
+// `List`, not `Object`. The lambda parameter `p` is therefore a raw `List`
+// and `p.get(0)` returns `Object`, which cannot initialize `String`. javac:
+// `incompatible types: Object cannot be converted to String`.
+snapshot!(
+    raw_functional_interface_sam_erased,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+interface F<T extends List<String>> {
+    void accept(T t);
+}
+
+interface Sub<T extends List<String>> extends F<T> {
+}
+
+class Body {
+    void m(Sub s) {
+        Sub f = (p) -> {
+            String a = p.get(0);
+        };
+    }
+}
+",
+    )])
+);

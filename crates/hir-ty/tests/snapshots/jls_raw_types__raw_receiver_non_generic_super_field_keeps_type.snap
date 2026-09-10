@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+expression: out
+---
+FILE /src/com/example/Raw.java:
+package com.example;
+
+import java.util.List;
+
+class Base {
+    List<String> items;
+}
+
+class Sub<T> extends Base {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items) {
+        }
+    }
+}
+
+method m(com.example.Sub): void
+  locals: l0: com.example.Sub | l1: java.lang.String
+  exprs: e0: com.example.Sub | e1: java.util.List<java.lang.String>
