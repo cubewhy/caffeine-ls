@@ -344,3 +344,51 @@ class Audiences {
 ",
     )])
 );
+
+// -- §18.2.1: `⟨T = T⟩` is a tautology however the handles intern -------------
+// A class type parameter reached through its own declared bound resolves at a
+// different depth in a nested invocation's own bound than in the enclosing
+// constructor's formals (§4.4's recursion guard truncates a self-referential
+// bound at different points per resolver context), so the two handles name the
+// same `T` without being the same interned value. Equality of the two must hold
+// — it is the same declared variable on both sides — or the enclosing
+// constructor is rejected. javac accepts the declaration.
+
+snapshot!(
+    same_type_variable_across_resolver_depths_is_equal,
+    check_body_types(&[(
+        "/src/com/example/Entry.java",
+        "\
+package com.example;
+
+interface MappedEntity {}
+
+interface CopyableEntity<T> {
+    T copy(Object data);
+}
+
+interface DeepComparableEntity {}
+
+interface IRegistry<T> {}
+
+interface NbtDecoder<T> {
+    T decode(Object tag, Object wrapper);
+}
+
+interface NbtEntryDecoder<T> extends NbtDecoder<T> {
+    static <U extends MappedEntity & CopyableEntity<U>> NbtEntryDecoder<U> fromDecoder(
+            NbtDecoder<U> decoder) {
+        return null;
+    }
+}
+
+class Entry<T extends MappedEntity & CopyableEntity<T> & DeepComparableEntity> {
+    Entry(IRegistry<T> baseRegistry, NbtDecoder<T> decoder) {
+        this(baseRegistry, NbtEntryDecoder.fromDecoder(decoder));
+    }
+
+    Entry(IRegistry<T> baseRegistry, NbtEntryDecoder<T> decoder) {}
+}
+",
+    )])
+);

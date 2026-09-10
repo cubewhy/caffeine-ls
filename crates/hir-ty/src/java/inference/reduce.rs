@@ -375,6 +375,20 @@ impl Inference {
         if s == t {
             return true;
         }
+        // §18.2.1: `⟨S = S⟩` is a tautology, and the identity is *name-wise*
+        // for the same reason as in [`Self::reduce_sub`]: a declared type
+        // variable reached through a bound resolved at a different depth
+        // (the [§4.4] recursion guard truncates a self-referential bound at
+        // different points per resolver context) interns as a different
+        // handle while naming the very same variable — the class's `T` whose
+        // declared bound is `CopyableEntity<T>`, met once as the constructor's
+        // formal and once as the argument of a nested invocation's own bound.
+        // Without this the pair fell through to the argument-free `_` arm and
+        // was reported as a contradiction, rejecting the enclosing
+        // constructor (`this(base, NbtEntryDecoder.fromDecoder(decoder))`).
+        if s.same_shape(db, t) {
+            return true;
+        }
         // §18.2.1: `⟨α = β⟩` equates two variables. A variable that already
         // carries an equality bound must not lose it — `⟨T = α⟩` then
         // `⟨T = String⟩` (an invariant-argument chain like

@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Entry.java:
+package com.example;
+
+interface MappedEntity {}
+
+interface CopyableEntity<T> {
+    T copy(Object data);
+}
+
+interface DeepComparableEntity {}
+
+interface IRegistry<T> {}
+
+interface NbtDecoder<T> {
+    T decode(Object tag, Object wrapper);
+}
+
+interface NbtEntryDecoder<T> extends NbtDecoder<T> {
+    static <U extends MappedEntity & CopyableEntity<U>> NbtEntryDecoder<U> fromDecoder(
+            NbtDecoder<U> decoder) {
+        return null;
+    }
+}
+
+class Entry<T extends MappedEntity & CopyableEntity<T> & DeepComparableEntity> {
+    Entry(IRegistry<T> baseRegistry, NbtDecoder<T> decoder) {
+        this(baseRegistry, NbtEntryDecoder.fromDecoder(decoder));
+    }
+
+    Entry(IRegistry<T> baseRegistry, NbtEntryDecoder<T> decoder) {}
+}
+
+method fromDecoder(com.example.NbtDecoder<U>): com.example.NbtEntryDecoder<U>
+  locals: l0: com.example.NbtDecoder<U>
+  exprs: e0: null
+method Entry(com.example.IRegistry<T>, com.example.NbtDecoder<T>): <init>
+  locals: l1: com.example.IRegistry<T> | l2: com.example.NbtDecoder<T>
+  exprs: e1: com.example.IRegistry<T> | e2: com.example.NbtDecoder<T> | e4: com.example.NbtEntryDecoder<T> | e5: void
+method Entry(com.example.IRegistry<T>, com.example.NbtEntryDecoder<T>): <init>
+  locals: l3: com.example.IRegistry<T> | l4: com.example.NbtEntryDecoder<T>
+  exprs:
