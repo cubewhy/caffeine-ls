@@ -1052,3 +1052,34 @@ class T {
 ",
     )])
 );
+
+// -- §18.3.2: a variable bound by its *own* declared bound resolves from the --
+// target. `<O extends BC<O, B>, B extends CB<O, B>> O pick(B b)` called inside
+// a method returning `O` gives the nested `α` the bounds `α <: BC<α, β>` (its
+// own declaration) and `α <: O` (the enclosing return target). The dependency
+// bound cannot instantiate `α`, so the instantiation comes from `O` alone and
+// the dropped bound is validated against it afterwards. javac accepts it.
+
+snapshot!(
+    inference_from_return_target_recursive_bounds,
+    check_body_types(&[(
+        "/src/com/example/R.java",
+        "\
+package com.example;
+
+interface CB<O extends BC<O, B>, B extends CB<O, B>> {}
+
+interface BC<O extends BC<O, B>, B extends CB<O, B>> {}
+
+class R {
+    static <O extends BC<O, B>, B extends CB<O, B>> O pick(B b) {
+        return null;
+    }
+
+    static <O extends BC<O, B>, B extends CB<O, B>> O wrap(B b) {
+        return pick(b);
+    }
+}
+",
+    )])
+);

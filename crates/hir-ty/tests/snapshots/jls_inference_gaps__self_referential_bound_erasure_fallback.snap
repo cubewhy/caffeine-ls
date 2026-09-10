@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_inference_gaps.rs
+expression: out
+---
+FILE /src/com/example/Raw.java:
+package com.example;
+
+import java.util.Collection;
+
+class Raw {
+    static <E extends Enum<E>> Raw copyOf(Collection<E> c) {
+        return null;
+    }
+
+    void copy(Collection raw) {
+        Raw a = copyOf(raw);
+    }
+}
+
+method copyOf(java.util.Collection<E>): com.example.Raw
+  locals: l0: java.util.Collection<E>
+  exprs: e0: null
+method copy(java.util.Collection): void
+  locals: l1: java.util.Collection | l2: com.example.Raw
+  exprs: e1: java.util.Collection | e2: com.example.Raw

@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/jls_inference_gaps.rs
+expression: out
+---
+FILE /src/com/example/EnumNeg.java:
+package com.example;
+
+class EnumNeg {
+    enum Color { RED }
+
+    static <E extends Enum<E>> E parse(Class<E> cls, String s) {
+        return null;
+    }
+
+    static Color ok(String s) {
+        return parse(Color.class, s);
+    }
+
+    static <E extends Enum<E>> void bad(String s) {
+        String x = parse(Color.class, s);
+    }
+}
+
+method parse(java.lang.Class<E>, java.lang.String): E
+  locals: l0: java.lang.Class<E> | l1: java.lang.String
+  exprs: e0: null
+method ok(java.lang.String): com.example.EnumNeg.Color
+  locals: l2: java.lang.String
+  exprs: e1: java.lang.Class<com.example.EnumNeg.Color> | e2: java.lang.String | e3: com.example.EnumNeg.Color
+method bad(java.lang.String): void
+  locals: l3: java.lang.String | l4: java.lang.String
+  exprs: e4: java.lang.Class<com.example.EnumNeg.Color> | e5: java.lang.String | e6: <error>
+  diags: e6@14:19: wrong-argument-count: Method 'parse()' cannot be applied to given types

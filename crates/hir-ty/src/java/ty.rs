@@ -377,6 +377,28 @@ impl Ty {
         }
     }
 
+    /// Whether `ty` mentions the inference variable `id` ([JLS §18.3.2]): a
+    /// bound whose type mentions the variable it bounds is a *dependency*
+    /// bound, which cannot instantiate that variable and is only validated
+    /// once the variable has been resolved from its other bounds.
+    #[stacksafe]
+    pub fn contains_infer_var_id(&self, db: &dyn TyDatabase, id: u64) -> bool {
+        match self.kind(db) {
+            TyKind::InferenceVar(var) => *var == id,
+            TyKind::Reference { args, .. } => {
+                args.iter().any(|arg| arg.contains_infer_var_id(db, id))
+            }
+            TyKind::Array(inner) => inner.contains_infer_var_id(db, id),
+            TyKind::Wildcard(bound) => bound
+                .as_deref()
+                .is_some_and(|b| b.ty.contains_infer_var_id(db, id)),
+            TyKind::Intersection(members) => {
+                members.iter().any(|m| m.contains_infer_var_id(db, id))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether any nested type argument is an inference variable.
     #[stacksafe]
     pub fn contains_infer_var(&self, db: &dyn TyDatabase) -> bool {

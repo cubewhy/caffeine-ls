@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/R.java:
+package com.example;
+
+interface CB<O extends BC<O, B>, B extends CB<O, B>> {}
+
+interface BC<O extends BC<O, B>, B extends CB<O, B>> {}
+
+class R {
+    static <O extends BC<O, B>, B extends CB<O, B>> O pick(B b) {
+        return null;
+    }
+
+    static <O extends BC<O, B>, B extends CB<O, B>> O wrap(B b) {
+        return pick(b);
+    }
+}
+
+method pick(B): O
+  locals: l0: B
+  exprs: e0: null
+method wrap(B): O
+  locals: l1: B
+  exprs: e1: B | e2: O

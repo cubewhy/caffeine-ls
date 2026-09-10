@@ -125,3 +125,67 @@ class Body {
 ",
     )])
 );
+
+// -- §18.4.1: a self-referential bound is validated, not ignored --------------
+// `parse`'s `E` is F-bound (`E extends Enum<E>`); the argument fixes `E = Color`
+// and the *target* then demands `String`, so `String <: Enum<Color>` fails and
+// the invocation is rejected (javac: "inference variable E has incompatible
+// bounds; equality constraints: Color; upper bounds: String, Enum<E>"). The
+// erasure fallback for a variable with only a self-referential bound must not
+// turn this into a legal call.
+
+snapshot!(
+    self_referential_bound_conflict,
+    check_body_types(&[(
+        "/src/com/example/EnumNeg.java",
+        "\
+package com.example;
+
+class EnumNeg {
+    enum Color { RED }
+
+    static <E extends Enum<E>> E parse(Class<E> cls, String s) {
+        return null;
+    }
+
+    static Color ok(String s) {
+        return parse(Color.class, s);
+    }
+
+    static <E extends Enum<E>> void bad(String s) {
+        String x = parse(Color.class, s);
+    }
+}
+",
+    )])
+);
+
+// -- §18.4.1: a variable with only a self-referential bound instantiates to --
+// that bound's erasure. `copyOf(Collection<E>)` with `E extends Enum<E>` called
+// with a raw `Collection` gives `E` no proper bound at all, so javac falls back
+// to the erasure (`Enum`) and admits the bound check by unchecked conversion
+// ([§5.1.9]) — the call compiles with its unchecked-usage note. Instantiating
+// such a variable to `Object` instead makes `Object <: Enum<E>` unsatisfiable
+// and rejects it.
+
+snapshot!(
+    self_referential_bound_erasure_fallback,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.Collection;
+
+class Raw {
+    static <E extends Enum<E>> Raw copyOf(Collection<E> c) {
+        return null;
+    }
+
+    void copy(Collection raw) {
+        Raw a = copyOf(raw);
+    }
+}
+",
+    )])
+);
