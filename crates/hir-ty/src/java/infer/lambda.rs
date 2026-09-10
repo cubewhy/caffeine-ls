@@ -12,6 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
     diagnostics::TypeError,
+    inference::{Constraint, Inference, InvocationPhase},
     method::{InvocationContext, InvocationMode, MethodData, member_set, single_abstract_method},
     resolve::resolve_type_ref,
     ty::{Ty, TyKind},
@@ -287,7 +288,14 @@ impl InferCtx<'_> {
             && !sam.ret.is_error(self.db)
             && !ret.is_void_like(self.db)
             && !decaptured.is_void_like(self.db)
-            && !crate::java::subtyping::is_assignable(self.db, &self.scope, &ret, &decaptured)
+            && !self.method_ref_result_converts(
+                qualifier,
+                type_name,
+                name,
+                &sam.params,
+                &ret,
+                &decaptured,
+            )
         {
             self.report(TypeError::LambdaBadReturn {
                 expr,
@@ -299,8 +307,43 @@ impl InferCtx<'_> {
         target
     }
 
+    /// Whether the referenced method's result converts to the SAM's return
+    /// type ([JLS §15.13.2]).
+    ///
+    /// The referenced method's own type parameters are *instantiated* as part
+    /// of that check ([§18.5.2.2]): an inexact reference to a generic method is
+    /// compatible when some instantiation's result converts to the SAM return,
+    /// so `orElseGet(MappedEntitySet::createEmpty)` for a
+    /// `Supplier<MappedEntityRefSet<MappedEntity>>` target instantiates
+    /// `Z := MappedEntity` (`MappedEntitySet<Z> <: MappedEntityRefSet<Z>`).
+    /// Comparing the *declared*, rigid return instead leaves `Z` unsolved and
+    /// the invariant-argument comparison fails, reporting a mismatch for every
+    /// generic factory reference. The variables are registered with their
+    /// declared bounds and the return constraint is reduced in a local table —
+    /// this check must not mutate the enclosing inference, which the caller
+    /// ([`Self::contribute_leaf`]) performs separately on the shared table.
+    #[allow(clippy::too_many_arguments)]
+    fn method_ref_result_converts(
+        &mut self,
+        qualifier: Option<ExprId>,
+        type_name: Option<&SpannedTypeRef>,
+        name: &Name,
+        sam_params: &[Ty],
+        ret: &Ty,
+        decaptured: &Ty,
+    ) -> bool {
+        let candidate = self.method_ref_candidate(qualifier, type_name, name, sam_params);
+        let Some(method) = candidate.filter(|method| !method.type_params.is_empty()) else {
+            return crate::java::subtyping::is_assignable(self.db, &self.scope, ret, decaptured);
+        };
+        let mut inference = Inference::new();
+        let (_, instantiated, _) = inference.register_method(self.db, &method);
+        inference.add_constraint(Constraint::Sub(instantiated, *decaptured));
+        inference.check_consistent(self.db, &self.scope, InvocationPhase::Loose)
+    }
+
     /// The reference type, member-lookup context and *form* of a method
-    /// reference ([JLS §15.13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.13.1)):
+    /// reference ([JLS §15.13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.13.1)):
     /// a *type qualifier* — a bare name, `pkg.Type` or a nested `Outer.Inner`
     /// — resolves a type and yields a type-qualified (`Type::m`) reference; an
     /// instance qualifier is inferred as an expression and yields a bound

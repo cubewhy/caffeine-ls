@@ -1,0 +1,39 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Factory.java:
+package com.example;
+
+import java.util.Optional;
+import java.util.function.Supplier;
+
+interface MappedEntity {}
+
+interface MappedEntityRefSet<T extends MappedEntity> {}
+
+class MappedEntitySet<T extends MappedEntity> implements MappedEntityRefSet<T> {
+    public static <Z extends MappedEntity> MappedEntitySet<Z> createEmpty() {
+        return null;
+    }
+}
+
+class Factory {
+    static <T> T orElseGet(Optional<T> o, Supplier<? extends T> s) {
+        return null;
+    }
+
+    static MappedEntityRefSet<MappedEntity> pick(Optional<MappedEntityRefSet<MappedEntity>> o) {
+        return orElseGet(o, MappedEntitySet::createEmpty);
+    }
+}
+
+method createEmpty(): com.example.MappedEntitySet<Z>
+  locals: 
+  exprs: e0: null
+method orElseGet(java.util.Optional<T>, java.util.function.Supplier<? extends T>): T
+  locals: l0: java.util.Optional<T> | l1: java.util.function.Supplier<? extends T>
+  exprs: e1: null
+method pick(java.util.Optional<com.example.MappedEntityRefSet<com.example.MappedEntity>>): com.example.MappedEntityRefSet<com.example.MappedEntity>
+  locals: l2: java.util.Optional<com.example.MappedEntityRefSet<com.example.MappedEntity>>
+  exprs: e2: java.util.Optional<com.example.MappedEntityRefSet<com.example.MappedEntity>> | e4: java.util.function.Supplier<? extends com.example.MappedEntityRefSet<com.example.MappedEntity>> | e5: com.example.MappedEntityRefSet<com.example.MappedEntity>

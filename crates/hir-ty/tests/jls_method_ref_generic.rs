@@ -179,3 +179,126 @@ class Body {
 ",
     )])
 );
+
+// -- §15.13.2/§18.5.2.2: a generic factory reference is checked instantiated --
+// `MappedEntitySet::createEmpty` names `<Z extends MappedEntity>
+// MappedEntitySet<Z> createEmpty()`. Compatibility with the target functional
+// interface is decided with `Z` instantiated — here `Z := MappedEntity` from
+// `MappedEntitySet<Z> <: MappedEntityRefSet<Z>` against the SAM return — so
+// both the argument position and a direct `Supplier` target are legal.
+// Comparing the declared, rigid `MappedEntitySet<Z>` leaves `Z` unsolved and
+// the invariant-argument comparison fails.
+
+snapshot!(
+    generic_factory_ref_argument_position,
+    check_body_types(&[(
+        "/src/com/example/Factory.java",
+        "\
+package com.example;
+
+import java.util.Optional;
+import java.util.function.Supplier;
+
+interface MappedEntity {}
+
+interface MappedEntityRefSet<T extends MappedEntity> {}
+
+class MappedEntitySet<T extends MappedEntity> implements MappedEntityRefSet<T> {
+    public static <Z extends MappedEntity> MappedEntitySet<Z> createEmpty() {
+        return null;
+    }
+}
+
+class Factory {
+    static <T> T orElseGet(Optional<T> o, Supplier<? extends T> s) {
+        return null;
+    }
+
+    static MappedEntityRefSet<MappedEntity> pick(Optional<MappedEntityRefSet<MappedEntity>> o) {
+        return orElseGet(o, MappedEntitySet::createEmpty);
+    }
+}
+",
+    )])
+);
+
+snapshot!(
+    generic_factory_ref_supplier_target,
+    check_body_types(&[(
+        "/src/com/example/Factory2.java",
+        "\
+package com.example;
+
+import java.util.function.Supplier;
+
+interface MappedEntity2 {}
+
+interface MappedEntityRefSet2<T extends MappedEntity2> {}
+
+class MappedEntitySet2<T extends MappedEntity2> implements MappedEntityRefSet2<T> {
+    public static <Z extends MappedEntity2> MappedEntitySet2<Z> createEmpty() {
+        return null;
+    }
+}
+
+class Factory2 {
+    static Supplier<MappedEntityRefSet2<MappedEntity2>> supply() {
+        return MappedEntitySet2::createEmpty;
+    }
+}
+",
+    )])
+);
+
+// -- §15.13.2/§18.5.2.2: the instantiation also reaches a receiver chain ------
+// `Either::unwrap` names `<L, R> L unwrap(Either<L, R>)`; against
+// `apply`'s `Function<Either<EasingType, Cubic>, U>` the reference's `L` and
+// `R` come from the receiver's type argument, so `U := EasingType` and the
+// enclosing `Codec<EasingType>` target is satisfied.
+
+snapshot!(
+    generic_method_ref_receiver_chain,
+    check_body_types(&[(
+        "/src/com/example/Easing.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Either<L, R> {
+    static <L, R> Either<L, R> createLeft(L l) {
+        return null;
+    }
+
+    static <L, R> Either<L, R> createRight(R r) {
+        return null;
+    }
+
+    static <L, R> L unwrap(Either<L, R> e) {
+        return null;
+    }
+}
+
+class Codec<T> {
+    <U> Codec<U> apply(Function<T, U> f, Function<U, T> g) {
+        return null;
+    }
+}
+
+class Cubic {}
+
+interface EasingType {}
+
+class Easing {
+    static Codec<Either<EasingType, Cubic>> source() {
+        return null;
+    }
+
+    static Codec<EasingType> make() {
+        return source()
+            .apply(Either::unwrap, e -> e instanceof Cubic ? Either.createRight((Cubic) e) : Either.createLeft(e));
+    }
+}
+",
+    )])
+);

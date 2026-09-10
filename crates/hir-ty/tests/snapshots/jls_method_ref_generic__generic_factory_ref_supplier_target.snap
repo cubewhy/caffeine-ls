@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Factory2.java:
+package com.example;
+
+import java.util.function.Supplier;
+
+interface MappedEntity2 {}
+
+interface MappedEntityRefSet2<T extends MappedEntity2> {}
+
+class MappedEntitySet2<T extends MappedEntity2> implements MappedEntityRefSet2<T> {
+    public static <Z extends MappedEntity2> MappedEntitySet2<Z> createEmpty() {
+        return null;
+    }
+}
+
+class Factory2 {
+    static Supplier<MappedEntityRefSet2<MappedEntity2>> supply() {
+        return MappedEntitySet2::createEmpty;
+    }
+}
+
+method createEmpty(): com.example.MappedEntitySet2<Z>
+  locals: 
+  exprs: e0: null
+method supply(): java.util.function.Supplier<com.example.MappedEntityRefSet2<com.example.MappedEntity2>>
+  locals: 
+  exprs: e2: java.util.function.Supplier<com.example.MappedEntityRefSet2<com.example.MappedEntity2>>

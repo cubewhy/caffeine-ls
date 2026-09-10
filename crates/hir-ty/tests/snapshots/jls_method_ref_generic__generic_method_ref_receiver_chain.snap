@@ -1,0 +1,62 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Easing.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Either<L, R> {
+    static <L, R> Either<L, R> createLeft(L l) {
+        return null;
+    }
+
+    static <L, R> Either<L, R> createRight(R r) {
+        return null;
+    }
+
+    static <L, R> L unwrap(Either<L, R> e) {
+        return null;
+    }
+}
+
+class Codec<T> {
+    <U> Codec<U> apply(Function<T, U> f, Function<U, T> g) {
+        return null;
+    }
+}
+
+class Cubic {}
+
+interface EasingType {}
+
+class Easing {
+    static Codec<Either<EasingType, Cubic>> source() {
+        return null;
+    }
+
+    static Codec<EasingType> make() {
+        return source()
+            .apply(Either::unwrap, e -> e instanceof Cubic ? Either.createRight((Cubic) e) : Either.createLeft(e));
+    }
+}
+
+method createLeft(L): com.example.Either<L, R>
+  locals: l0: L
+  exprs: e0: null
+method createRight(R): com.example.Either<L, R>
+  locals: l1: R
+  exprs: e1: null
+method unwrap(com.example.Either<L, R>): L
+  locals: l2: com.example.Either<L, R>
+  exprs: e2: null
+method apply(java.util.function.Function<T, U>, java.util.function.Function<U, T>): com.example.Codec<U>
+  locals: l3: java.util.function.Function<T, U> | l4: java.util.function.Function<U, T>
+  exprs: e3: null
+method source(): com.example.Codec<com.example.Either<com.example.EasingType, com.example.Cubic>>
+  locals: 
+  exprs: e4: null
+method make(): com.example.Codec<com.example.EasingType>
+  locals: 
+  exprs: e6: java.util.function.Function<com.example.Either<com.example.EasingType, com.example.Cubic>, com.example.EasingType> | e7: com.example.EasingType | e8: boolean | e9: com.example.EasingType | e10: com.example.Cubic | e12: com.example.Either<com.example.EasingType, com.example.Cubic> | e13: com.example.EasingType | e15: com.example.Either<com.example.EasingType, com.example.Cubic> | e16: com.example.Either<com.example.EasingType, com.example.Cubic> | e17: java.util.function.Function<com.example.EasingType, com.example.Either<com.example.EasingType, com.example.Cubic>> | e18: com.example.Codec<com.example.Either<com.example.EasingType, com.example.Cubic>> | e19: com.example.Codec<com.example.EasingType>
