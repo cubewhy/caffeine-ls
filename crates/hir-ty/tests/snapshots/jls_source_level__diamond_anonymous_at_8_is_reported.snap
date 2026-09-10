@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/DiamondAnonymous.java:
+package com.example;
+
+class A {
+    void m() {
+        Runnable r = new Runnable<>() {
+            public void run() {
+            }
+        };
+    }
+}
+
+@4:21: feature-not-supported-in-source-level: '<>' with anonymous inner classes is not supported in -source 8 (use -source 9 or higher to enable '<>' with anonymous inner classes)

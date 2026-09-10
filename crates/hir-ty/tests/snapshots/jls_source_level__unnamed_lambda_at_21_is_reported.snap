@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/UnnamedLambda.java:
+package com.example;
+
+import java.util.function.BiFunction;
+
+class A {
+    void m(BiFunction<Integer, Integer, Integer> f) {
+        f = (_, x) -> x;
+    }
+}
+
+@6:13: feature-not-supported-in-source-level: unnamed variables are not supported in -source 21 (use -source 22 or higher to enable unnamed variables)

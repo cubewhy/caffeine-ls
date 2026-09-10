@@ -8,7 +8,7 @@
 
 use triomphe::Arc;
 
-use project_model::{LibraryId, ProjectId, SourceSetKind};
+use project_model::{JavaLanguageLevel, LibraryId, ProjectId, SourceSetKind};
 use rustc_hash::FxHashMap;
 use vfs::AbsPathBuf;
 
@@ -88,6 +88,9 @@ pub struct ProjectGraphData {
     pub source_root_dirs: FxHashMap<base_db::SourceRootId, AbsPathBuf>,
     /// JDK built-in libraries (jimage / rt.jar), in registration order.
     pub jdk_libraries: Vec<LibraryId>,
+    /// source set → the Java source level its files are compiled at. Absent
+    /// entries mean "unknown": no source-level check runs for those files.
+    pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
 }
 
 #[cfg(test)]

@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/Sealed.java:
+package com.example;
+
+sealed interface Shape permits Circle {
+}
+
+final class Circle implements Shape {
+}
+
+non-sealed class Free implements Shape {
+}

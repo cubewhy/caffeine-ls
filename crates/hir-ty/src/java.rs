@@ -18,6 +18,7 @@ pub mod dep_index;
 pub mod diagnostics;
 pub mod infer;
 pub mod inference;
+pub mod level_check;
 pub mod method;
 pub mod name_check;
 pub mod range_ctx;

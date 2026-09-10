@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/SwitchExpr.java:
+package com.example;
+
+class A {
+    int m(int i) {
+        return switch (i) {
+            case 1 -> 1;
+            default -> 2;
+        };
+    }
+}
+
+@4:15: feature-not-supported-in-source-level: switch expressions are not supported in -source 13 (use -source 14 or higher to enable switch expressions)

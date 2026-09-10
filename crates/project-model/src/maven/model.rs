@@ -19,6 +19,7 @@ pub struct MavenProject {
     pub compile_classpath: Vec<MavenClasspathEntry>,
     pub test_classpath: Vec<MavenClasspathEntry>,
     pub java_language_version: Option<String>,
+    pub java_language_preview: Option<bool>,
     pub java_home: Option<String>,
 }
 

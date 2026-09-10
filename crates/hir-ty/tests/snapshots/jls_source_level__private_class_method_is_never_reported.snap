@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/PrivateClassMethod.java:
+package com.example;
+
+class A {
+    private int x() {
+        return 1;
+    }
+}

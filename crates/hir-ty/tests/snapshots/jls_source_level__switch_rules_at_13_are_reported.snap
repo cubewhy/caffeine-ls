@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/SwitchRules.java:
+package com.example;
+
+class A {
+    void m(int i) {
+        switch (i) {
+            case 1, 2 -> {}
+            default -> {}
+        }
+    }
+}
+
+@5:12: feature-not-supported-in-source-level: switch rules are not supported in -source 13 (use -source 14 or higher to enable switch rules)
+@6:12: feature-not-supported-in-source-level: switch rules are not supported in -source 13 (use -source 14 or higher to enable switch rules)

@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/SwitchRules.java:
+package com.example;
+
+class A {
+    void m(int i) {
+        switch (i) {
+            case 1, 2 -> {}
+            default -> {}
+        }
+    }
+}

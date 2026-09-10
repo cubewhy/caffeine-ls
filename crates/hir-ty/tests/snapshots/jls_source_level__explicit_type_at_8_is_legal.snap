@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/ExplicitType.java:
+package com.example;
+
+class A {
+    void m() {
+        int x = 1;
+    }
+}

@@ -156,6 +156,9 @@ pub(crate) fn collect_type_diagnostics(
 /// module-directive checks of [`hir_ty::module_diagnostics`]. Each reference
 /// carries its own source range; the hierarchy checks are keyed to the
 /// offending method's name.
+///
+/// [`hir_ty::level_diagnostics`] adds the source-level checks: every construct
+/// newer than the level the file's source set is compiled at.
 pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
     let mut sink = DiagnosticSink::new();
     collect_declaration_diagnostics(&mut sink, db, file_id);
@@ -210,6 +213,23 @@ pub(crate) fn collect_declaration_diagnostics(
     // a subtype of its service) of a `module-info.java`. Every module
     // diagnostic carries its own range.
     for diagnostic in hir_ty::module_diagnostics(db, file_id) {
+        let Some(range) = diagnostic.range() else {
+            continue;
+        };
+        sink.push(
+            file_id,
+            make_diagnostic(
+                file_id,
+                &diagnostic.message(db),
+                range,
+                Some(diagnostic.code()),
+                Severity::Error,
+            ),
+        );
+    }
+    // A construct newer than the file's project source level (e.g. a record in
+    // a `-source 11` module). Always an error: javac rejects it too.
+    for diagnostic in hir_ty::level_diagnostics(db, file_id) {
         let Some(range) = diagnostic.range() else {
             continue;
         };

@@ -296,6 +296,20 @@ pub(crate) fn module_diagnostics_query(
     crate::java::decl_check::module_diagnostics_impl(db, file_id)
 }
 
+/// The source-level diagnostics of `file`: every construct gated on a Java
+/// source level newer than the one `file`'s source set declares. Memoized per
+/// file; reading the level through [`hir::language_level_for_file`] makes the
+/// memo invalidate on a workspace reload at a different level. See
+/// [`crate::java::level_check::level_diagnostics_impl`].
+#[salsa::tracked(returns(clone))]
+pub(crate) fn level_diagnostics_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Vec<crate::java::decl_check::DeclDiagnostic> {
+    let file_id = *file.file_id(db);
+    crate::java::level_check::level_diagnostics_impl(db, file_id)
+}
+
 /// The workspace source files whose declarations `file`'s type outputs resolve
 /// against — the exact cross-file dependency set of `file`. Tracked on the
 /// interned [`FileText`], so a text edit to `file` invalidates exactly its

@@ -3,8 +3,8 @@ use crate::idea::model::{
     IdeaModulesXml,
 };
 use crate::{
-    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    WorkspaceGraph,
+    ClasspathEntry, JavaLanguageLevel, Library, ProjectData, ProjectId, SdkData, SdkId,
+    SourceSetData, SourceSetKind, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -69,7 +69,11 @@ fn extract_jars_from_idea_library(
     jar_paths
 }
 
-fn probe_project_jdk_version(workspace_root: &Path) -> String {
+/// The project-wide `languageLevel` declared in `.idea/misc.xml`, with IDEA's
+/// `JDK_`/`1.` wrappers stripped. `None` when `misc.xml` is absent, unreadable,
+/// or carries no `ProjectRootManager/@languageLevel` — in which case the
+/// project has no known source level, and gating stays off.
+fn probe_project_language_level_raw(workspace_root: &Path) -> Option<String> {
     let misc_xml_path = workspace_root.join(".idea").join("misc.xml");
     if misc_xml_path.exists()
         && let Ok(content) = fs::read_to_string(misc_xml_path)
@@ -84,11 +88,11 @@ fn probe_project_jdk_version(workspace_root: &Path) -> String {
                 if clean_ver.starts_with("1.") {
                     clean_ver = clean_ver[2..].to_string(); // "1.8" -> "8"
                 }
-                return clean_ver;
+                return Some(clean_ver);
             }
         }
     }
-    String::from("17") // Safe historical baseline fallback target configuration
+    None
 }
 
 fn load_project_level_libraries(workspace_root: &Path) -> FxHashMap<String, Vec<PathBuf>> {
@@ -185,8 +189,12 @@ pub fn build_graph_from_idea(
 
     let global_project_libraries = load_project_level_libraries(workspace_root);
 
-    // Resolve accurate version signatures dynamically using misc.xml settings
-    let project_jdk_version = probe_project_jdk_version(workspace_root);
+    // Resolve accurate version signatures dynamically using misc.xml settings.
+    // The `"17"` fallback stays cosmetic: a project with an unreadable
+    // `misc.xml` must not be gated at 17.
+    let raw_level = probe_project_language_level_raw(workspace_root);
+    let language_level = raw_level.as_deref().and_then(JavaLanguageLevel::parse);
+    let project_jdk_version = raw_level.unwrap_or_else(|| String::from("17"));
 
     for (idx, (iml_path, _)) in modules.iter().enumerate() {
         if let Some(stem) = iml_path.file_stem().and_then(|s| s.to_str()) {
@@ -354,6 +362,7 @@ pub fn build_graph_from_idea(
             name: SmolStr::from(module_name),
             root_path: abs_project_dir,
             target_sdk: Some(sdk_id),
+            language_level,
             source_sets,
         };
 

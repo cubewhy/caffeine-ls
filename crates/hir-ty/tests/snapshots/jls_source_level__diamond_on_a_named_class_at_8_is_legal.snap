@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/PlainDiamond.java:
+package com.example;
+
+class A {
+    void m() {
+        java.util.List<String> l = new java.util.ArrayList<>();
+    }
+}

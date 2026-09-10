@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/Sealed.java:
+package com.example;
+
+sealed interface Shape permits Circle {
+}
+
+final class Circle implements Shape {
+}
+
+non-sealed class Free implements Shape {
+}
+
+@2:0: feature-not-supported-in-source-level: sealed classes are not supported in -source 16 (use -source 17 or higher to enable sealed classes)
+@8:0: feature-not-supported-in-source-level: sealed classes are not supported in -source 16 (use -source 17 or higher to enable sealed classes)

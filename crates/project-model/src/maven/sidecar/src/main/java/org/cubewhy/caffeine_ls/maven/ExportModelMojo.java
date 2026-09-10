@@ -139,7 +139,10 @@ public class ExportModelMojo extends AbstractMojo {
             List<Object> testClasspathEntries = mapClasspath(
                     safeStrings(classpathElements(proj, false)), targetDirToProjectKey, jarOriginMap);
 
-            String javaLangVersion = proj.getProperties().getProperty("maven.compiler.source");
+            String javaLangVersion = proj.getProperties().getProperty("maven.compiler.release");
+            if (javaLangVersion == null) {
+                javaLangVersion = proj.getProperties().getProperty("maven.compiler.source");
+            }
             if (javaLangVersion == null) {
                 javaLangVersion = proj.getProperties().getProperty("java.version");
             }
@@ -163,6 +166,8 @@ public class ExportModelMojo extends AbstractMojo {
             modelProject.put("compile_classpath", compileClasspathEntries);
             modelProject.put("test_classpath", testClasspathEntries);
             modelProject.put("java_language_version", javaLangVersion);
+            modelProject.put("java_language_preview",
+                    Boolean.parseBoolean(proj.getProperties().getProperty("maven.compiler.enablePreview", "false")));
             modelProject.put("java_home", javaHome);
             modelProjects.add(modelProject);
         }

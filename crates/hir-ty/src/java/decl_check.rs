@@ -496,6 +496,25 @@ pub enum DeclDiagnostic {
     /// appears in the same file (cross-file hierarchies are not provably
     /// subclass-less).
     SealedClassMustHaveSubclasses { range: Option<rowan::TextRange> },
+    /// A construct whose Java *source* level is newer than the level the file's
+    /// source set is compiled at. javac reports
+    /// `compiler.err.feature.not.supported.in.source` (or
+    /// `compiler.err.preview.feature.disabled` for a preview feature used
+    /// without `--enable-preview`). The construct is still typed at the newest
+    /// level, so the IDE keeps working inside it.
+    FeatureRequiresNewerSourceLevel {
+        /// The construct's javac display name (e.g. `records`).
+        feature: &'static str,
+        /// Whether javac's message pluralizes the feature (`text blocks are ...`).
+        plural: bool,
+        /// The project's source level.
+        found: u8,
+        /// The level at which the feature is standard.
+        required: u8,
+        /// Use the preview wording instead of the source-level wording.
+        preview_disabled: bool,
+        range: Option<rowan::TextRange>,
+    },
     /// §9.4: a modifier on an interface member declaration that the JLS
     /// forbids for that member's kind — a `protected` interface method, for
     /// example ([§9.4]). javac: `modifier {m} not allowed here`; the message
@@ -687,6 +706,13 @@ impl DeclDiagnostic {
             DeclDiagnostic::SealedClassMustHaveSubclasses { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::SealedClassMustHaveSubclasses)
             }
+            DeclDiagnostic::FeatureRequiresNewerSourceLevel {
+                preview_disabled, ..
+            } => DiagnosticCode::Java(if *preview_disabled {
+                JavaDiagnosticCode::PreviewFeatureDisabled
+            } else {
+                JavaDiagnosticCode::FeatureNotSupportedInSourceLevel
+            }),
             DeclDiagnostic::ModifierNotAllowedHere { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ModifierNotAllowedHere)
             }
@@ -1020,6 +1046,29 @@ impl DeclDiagnostic {
             DeclDiagnostic::SealedClassMustHaveSubclasses { .. } => {
                 "Sealed class must have subclasses".to_owned()
             }
+            DeclDiagnostic::FeatureRequiresNewerSourceLevel {
+                feature,
+                plural,
+                found,
+                required,
+                preview_disabled,
+                ..
+            } => {
+                let (verb, are) = if *plural {
+                    ("are", "are")
+                } else {
+                    ("is", "is")
+                };
+                if *preview_disabled {
+                    format!(
+                        "{feature} {are} a preview feature and {are} disabled by default (use --enable-preview to enable {feature})"
+                    )
+                } else {
+                    format!(
+                        "{feature} {verb} not supported in source level {found} (use source level {required} or higher to enable {feature})"
+                    )
+                }
+            }
             DeclDiagnostic::ModifierNotAllowedHere { modifier, .. } => {
                 format!("Modifier '{modifier}' is not allowed here")
             }
@@ -1097,6 +1146,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::CantInheritFromSealed { .. }
             | DeclDiagnostic::SealedSealedOrFinalExpected { .. }
             | DeclDiagnostic::SealedClassMustHaveSubclasses { .. }
+            | DeclDiagnostic::FeatureRequiresNewerSourceLevel { .. }
             | DeclDiagnostic::ModifierNotAllowedHere { .. }
             | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. }
             | DeclDiagnostic::ModuleNotFound { .. }
@@ -1200,6 +1250,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::SealedClassMustHaveSubclasses {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::FeatureRequiresNewerSourceLevel {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::ModifierNotAllowedHere {

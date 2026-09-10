@@ -1,8 +1,8 @@
 use crate::gradle::model::{GradleClasspathEntry, GradleWorkspace};
 use crate::gradle::progress;
 use crate::{
-    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    SyncError, SyncProgress, WorkspaceGraph,
+    ClasspathEntry, JavaLanguageLevel, Library, ProjectData, ProjectId, SdkData, SdkId,
+    SourceSetData, SourceSetKind, SyncError, SyncProgress, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -149,6 +149,22 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
         let project_id = *path_to_project_id.get(&project.path).unwrap();
         let abs_project_dir = AbsPathBuf::assert_utf8(project.project_dir.clone());
 
+        // `--release` wins over `sourceCompatibility`: it implies the source
+        // level and is the single source of truth when present.
+        let language_level = match project.java_release {
+            Some(release) => {
+                JavaLanguageLevel::new(release, project.java_language_preview.unwrap_or(false))
+            }
+            None => project
+                .java_language_version
+                .as_deref()
+                .and_then(JavaLanguageLevel::parse)
+                .map(|level| JavaLanguageLevel {
+                    preview: project.java_language_preview.unwrap_or(false),
+                    ..level
+                }),
+        };
+
         let resolved_java_home = project
             .java_home
             .map(|path_str| AbsPathBuf::assert_utf8(PathBuf::from(path_str)));
@@ -291,6 +307,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
             name: SmolStr::from(project.name),
             root_path: abs_project_dir,
             target_sdk,
+            language_level,
             source_sets,
         };
 

@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+--- queried before the workspace loaded
+FILE /src/com/example/VarLocal.java:
+package com.example;
+
+class A {
+    void m() {
+        var x = 1;
+    }
+}
+
+--- queried after the load
+FILE /src/com/example/VarLocal.java:
+package com.example;
+
+class A {
+    void m() {
+        var x = 1;
+    }
+}
+
+@4:8: feature-not-supported-in-source-level: local variable type inference is not supported in -source 8 (use -source 10 or higher to enable local variable type inference)

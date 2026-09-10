@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/RecordPattern.java:
+package com.example;
+
+class A {
+    record Point(int x, int y) {}
+
+    void m(Object o) {
+        if (o instanceof Point(int x, int y)) {
+        }
+    }
+}

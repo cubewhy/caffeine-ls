@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/SwitchYield.java:
+package com.example;
+
+class A {
+    int m(int i) {
+        return switch (i) {
+            case 1:
+                yield 1;
+            default:
+                yield 2;
+        };
+    }
+}

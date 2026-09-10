@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/VarLambda.java:
+package com.example;
+
+import java.util.function.Function;
+
+class A {
+    void m(Function<Integer, Integer> f) {
+        f = (var x) -> x;
+    }
+}

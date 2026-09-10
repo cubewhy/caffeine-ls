@@ -1,0 +1,8 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m {
+    requires java.base;
+}

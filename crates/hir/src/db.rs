@@ -35,6 +35,7 @@ use crate::{
     stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
     symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind, SourceSymbolRef},
 };
+use project_model::JavaLanguageLevel;
 pub use project_model::LibraryId;
 
 /// Identifies a library archive (jar or JDK jimage). Hashed from the path
@@ -69,6 +70,10 @@ pub struct ProjectGraph {
     /// JDK built-in libraries (jimage / rt.jar), in registration order.
     #[returns(ref)]
     pub jdk_libraries: Vec<LibraryId>,
+    /// source set → the Java source level its files are compiled at. Absent
+    /// entries mean "unknown": no source-level check runs for those files.
+    #[returns(ref)]
+    pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
 }
 
 /// Per-library state: registration data plus the lazily built index.
@@ -157,6 +162,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         source_root_to_source_set,
         source_root_dirs,
         jdk_libraries,
+        language_levels,
     } = data;
     match ProjectGraph::try_get(db) {
         Some(graph) => {
@@ -167,6 +173,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 .to(source_root_to_source_set);
             graph.set_source_root_dirs(db).to(source_root_dirs);
             graph.set_jdk_libraries(db).to(jdk_libraries);
+            graph.set_language_levels(db).to(language_levels);
         }
         None => {
             ProjectGraph::new(
@@ -176,6 +183,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 source_root_to_source_set,
                 source_root_dirs,
                 jdk_libraries,
+                language_levels,
             );
         }
     }
@@ -203,8 +211,16 @@ pub fn jdk_builtin_libraries(db: &dyn HirDatabase) -> Vec<LibraryId> {
 
 /// The source set owning `file_id`, if the file belongs to a source root.
 pub fn source_set_for_file(db: &dyn HirDatabase, file_id: FileId) -> Option<SourceSetId> {
-    let graph = ProjectGraph::try_get(db)?;
+    // Read the file→source-root input *before* consulting the project graph.
+    // `ProjectGraph` is created lazily by the first workspace load, and
+    // `try_get` on a graph that does not exist yet records no dependency at all
+    // — so a query that bailed here first would keep its pre-load answer for
+    // the rest of the session. The file's `FileSourceRootInput` is a tracked
+    // read that the load rewrites when an already-open document moves out of
+    // the pre-workspace fallback root, which is exactly what makes the answer
+    // re-derive. This is the same device as [`base_db::file_language_kind`].
     let root_id = db.source_root_for_file(file_id)?;
+    let graph = ProjectGraph::try_get(db)?;
     graph.source_root_to_source_set(db).get(&root_id).cloned()
 }
 
@@ -219,6 +235,24 @@ pub fn classpath(db: &dyn HirDatabase, source_set: SourceSetId) -> Arc<Classpath
 /// The libraries of a source set's classpath, in classpath order.
 pub fn classpath_libraries(db: &dyn HirDatabase, source_set: SourceSetId) -> Vec<LibraryId> {
     classpath(db, source_set).libraries().collect()
+}
+
+/// The Java source level `file_id` is compiled at, when its build system
+/// exported one. Reading the [`ProjectGraph`] input makes every consumer —
+/// the level-diagnostic query in particular — re-derive when the workspace is
+/// reloaded at a different level.
+///
+/// The source set is resolved *first* so that the tracked file→source-root read
+/// inside [`source_set_for_file`] is always performed, even on the very first
+/// load. An editor pulls a document's diagnostics as soon as it opens, which is
+/// before the build system has reported anything: at that point no
+/// [`ProjectGraph`] exists yet, and since `try_get` on a graph that does not
+/// exist registers no dependency, a report memoized then would otherwise say
+/// "no level" for the rest of the session.
+pub fn language_level_for_file(db: &dyn HirDatabase, file_id: FileId) -> Option<JavaLanguageLevel> {
+    let source_set = source_set_for_file(db, file_id)?;
+    let graph = ProjectGraph::try_get(db)?;
+    graph.language_levels(db).get(&source_set).copied()
 }
 
 /// The tier-1 name index of a library: loaded from the on-disk cache or

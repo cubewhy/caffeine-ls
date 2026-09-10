@@ -746,6 +746,9 @@ impl GlobalState {
             let Some(source_set) = project.source_sets.get(&source_set_id.kind) else {
                 continue;
             };
+            if let Some(level) = project.language_level {
+                data.language_levels.insert(source_set_id.clone(), level);
+            }
             let mut entries = Vec::new();
             for entry in &source_set.compile_classpath {
                 match entry {

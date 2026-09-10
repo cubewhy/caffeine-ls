@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/module-info.java:
+module m {
+    requires java.base;
+}
+
+@0:0: feature-not-supported-in-source-level: modules are not supported in -source 8 (use -source 9 or higher to enable modules)

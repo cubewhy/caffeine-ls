@@ -158,27 +158,70 @@ gradle.projectsEvaluated {
                     }
                 } catch (Throwable ignored) {}
 
-                def javaLangVersion = null
-                try {
-                    def javaExt = project.extensions.findByName('java')
-                    if (javaExt != null && javaExt.hasProperty('sourceCompatibility')) {
-                        javaLangVersion = javaExt.sourceCompatibility.toString()
-                    }
-                    if (javaLangVersion == null) {
-                        def convention = project.convention.findPlugin(org.gradle.api.plugins.JavaPluginConvention)
-                        if (convention != null) {
-                            javaLangVersion = convention.sourceCompatibility?.toString()
-                        }
-                    }
-                    if (javaLangVersion == null && project.hasProperty('sourceCompatibility')) {
-                        javaLangVersion = project.sourceCompatibility.toString()
-                    }
-                } catch (Throwable ignored) {}
-
                 def javaHome = normalizePath(new File(System.getProperty('java.home')))
+                def javaRelease = null
+                def javaPreview = false
+                // The `java` extension's `sourceCompatibility` is only the
+                // *default* a `JavaCompile` task inherits at plugin-apply time.
+                // A task-level assignment (`compileJava { sourceCompatibility =
+                // '1.8' }`, or `tasks.withType(JavaCompile) { ... }`) overrides
+                // the task's own property without touching the extension, so the
+                // task is the authoritative source: it is what javac is given.
+                def javaLangVersionFromTask = null
                 try {
                     def compileJavaTask = project.tasks.findByName('compileJava')
                     if (compileJavaTask != null) {
+                        def release = compileJavaTask.options.release
+                        if (release != null && release.isPresent()) {
+                            // Only forward a value the model can hold: an
+                            // out-of-range release must not fail the whole
+                            // workspace import, it just disables level gating.
+                            def releaseValue = release.get()
+                            if (releaseValue instanceof Number && releaseValue >= 0 && releaseValue <= 255) {
+                                javaRelease = releaseValue
+                            }
+                        }
+
+                        // An explicit `-source`/`--release` in `compilerArgs` is
+                        // appended after the flag Gradle derives from the task
+                        // property, so it is what javac ends up honouring.
+                        def compilerArgs = compileJavaTask.options.compilerArgs
+                        for (int i = 0; i < compilerArgs.size(); i++) {
+                            def arg = compilerArgs[i].toString()
+                            def value = null
+                            if (arg == '-source' || arg == '--source' || arg == '--release') {
+                                if (i + 1 < compilerArgs.size()) {
+                                    value = compilerArgs[i + 1].toString()
+                                }
+                            } else if (arg.startsWith('--release=')) {
+                                value = arg.substring('--release='.length())
+                            } else if (arg.startsWith('-source=') || arg.startsWith('--source=')) {
+                                value = arg.substring(arg.indexOf('=') + 1)
+                            }
+                            if (value != null) {
+                                def digits = value.replaceAll(/[^0-9].*$/, '')
+                                if (digits ==~ /\d+/ && digits.toInteger() >= 0 && digits.toInteger() <= 255) {
+                                    if (arg.startsWith('--release')) {
+                                        javaRelease = digits.toInteger()
+                                    } else {
+                                        javaLangVersionFromTask = value
+                                    }
+                                }
+                            }
+                        }
+
+                        javaPreview = compilerArgs.contains('--enable-preview')
+
+                        // `sourceCompatibility` is an inherited `-source` value.
+                        // Guarded: a task type without the property (or a failed
+                        // resolution of it) must not lose the release above.
+                        try {
+                            def taskSourceCompatibility = compileJavaTask.sourceCompatibility
+                            if (taskSourceCompatibility != null && javaLangVersionFromTask == null) {
+                                javaLangVersionFromTask = taskSourceCompatibility.toString()
+                            }
+                        } catch (Throwable ignored) {}
+
                         if (compileJavaTask.respondTo('getJavaCompiler')) {
                             def compilerProvider = compileJavaTask.getJavaCompiler()
                             if (compilerProvider.isPresent()) {
@@ -188,6 +231,27 @@ gradle.projectsEvaluated {
                         else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
                             javaHome = normalizePath(compileJavaTask.options.forkOptions.javaHome)
                         }
+                    }
+                } catch (Throwable ignored) {}
+
+                // The extension chain is the fallback for projects without a
+                // resolvable `compileJava` task.
+                def javaLangVersion = javaLangVersionFromTask
+                try {
+                    if (javaLangVersion == null) {
+                        def javaExt = project.extensions.findByName('java')
+                        if (javaExt != null && javaExt.hasProperty('sourceCompatibility')) {
+                            javaLangVersion = javaExt.sourceCompatibility.toString()
+                        }
+                    }
+                    if (javaLangVersion == null) {
+                        def convention = project.convention.findPlugin(org.gradle.api.plugins.JavaPluginConvention)
+                        if (convention != null) {
+                            javaLangVersion = convention.sourceCompatibility?.toString()
+                        }
+                    }
+                    if (javaLangVersion == null && project.hasProperty('sourceCompatibility')) {
+                        javaLangVersion = project.sourceCompatibility.toString()
                     }
                 } catch (Throwable ignored) {}
 
@@ -202,6 +266,8 @@ gradle.projectsEvaluated {
                     compile_classpath: compileCp,
                     test_classpath: testCp,
                     java_language_version: javaLangVersion,
+                    java_release: javaRelease,
+                    java_language_preview: javaPreview,
                     java_home: javaHome
                 ]
 

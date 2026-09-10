@@ -1,7 +1,7 @@
 use crate::eclipse::model::{EclipseClasspath, EclipseProjectDescription};
 use crate::{
-    ClasspathEntry, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData, SourceSetKind,
-    WorkspaceGraph,
+    ClasspathEntry, JavaLanguageLevel, Library, ProjectData, ProjectId, SdkData, SdkId,
+    SourceSetData, SourceSetKind, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -29,6 +29,31 @@ pub fn import_eclipse_workspace(
     let classpath: EclipseClasspath = quick_xml::de::from_str(&classpath_xml)?;
 
     Ok((project_desc.name, classpath))
+}
+
+/// The Eclipse JDT compiler settings, which are authoritative over the JRE
+/// container listed in `.classpath`.
+fn eclipse_language_level(
+    workspace_root: &Path,
+    jre_container_version: &str,
+) -> Option<JavaLanguageLevel> {
+    let prefs = workspace_root
+        .join(".settings")
+        .join("org.eclipse.jdt.core.prefs");
+    let text = fs::read_to_string(prefs).ok().unwrap_or_default();
+    let value = |key: &str| {
+        text.lines()
+            .filter_map(|line| line.split_once('='))
+            .find(|(k, _)| k.trim() == key)
+            .map(|(_, v)| v.trim().to_owned())
+    };
+    let mut level = value("org.eclipse.jdt.core.compiler.source")
+        .as_deref()
+        .and_then(JavaLanguageLevel::parse)
+        .or_else(|| JavaLanguageLevel::parse(jre_container_version))?;
+    level.preview = value("org.eclipse.jdt.core.compiler.problem.enablePreviewFeatures").as_deref()
+        == Some("true");
+    Some(level)
 }
 
 pub fn build_graph_from_eclipse(
@@ -70,12 +95,14 @@ pub fn build_graph_from_eclipse(
     let sdk_data = SdkData {
         id: sdk_id,
         name: SmolStr::from(format!("JDK {}", java_version)),
-        version: SmolStr::from(java_version),
+        version: SmolStr::from(java_version.clone()),
         home_path: resolved_java_home,
         exploded_library_paths: Vec::new(),
     };
     graph.sdks.insert(sdk_id, Arc::new(sdk_data));
     main_compile_classpath.push(ClasspathEntry::Sdk(sdk_id));
+
+    let language_level = eclipse_language_level(workspace_root, &java_version);
 
     for entry in classpath.entries {
         match entry.kind.as_str() {
@@ -165,6 +192,7 @@ pub fn build_graph_from_eclipse(
         name: SmolStr::from(project_name),
         root_path: abs_workspace_root,
         target_sdk: Some(sdk_id),
+        language_level,
         source_sets,
     };
 

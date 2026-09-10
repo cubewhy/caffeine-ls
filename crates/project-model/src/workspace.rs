@@ -20,6 +20,61 @@ pub struct ProjectId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SdkId(pub u32);
 
+/// The Java *source* level a source set is compiled at (`-source N`), plus
+/// javac's `--enable-preview` flag. Distinct from the SDK: a project may bind
+/// JDK 21 while compiling at `-source 8`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct JavaLanguageLevel {
+    /// The feature release (`8`, `11`, `17`, `21`) — never a `1.x` spelling.
+    pub source: u8,
+    /// Whether `--enable-preview` is in effect for the source set.
+    pub preview: bool,
+}
+
+impl JavaLanguageLevel {
+    /// javac's own floor (`Source.MIN = JDK8`); levels below it are not modelled.
+    pub const MIN: u8 = 8;
+    /// The highest release this build knows about.
+    pub const MAX: u8 = 28;
+
+    /// Validates a feature release. Out-of-range input yields `None`, which
+    /// disables level gating for that source set rather than guessing.
+    pub fn new(source: u8, preview: bool) -> Option<Self> {
+        (Self::MIN..=Self::MAX)
+            .contains(&source)
+            .then_some(Self { source, preview })
+    }
+
+    /// Parses every spelling the importers export: `8`, `1.8`, `17`, `21.0.5`,
+    /// `JDK_17`, `JDK_1_8`, `JDK_14_PREVIEW`, `JavaSE-17`. Anything else (and
+    /// any release outside [`Self::MIN`]..=[`Self::MAX`]) yields `None`.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let mut rest = raw.trim();
+        rest = rest.strip_prefix("JavaSE-").unwrap_or(rest);
+        rest = rest.strip_prefix("JDK_").unwrap_or(rest);
+
+        let mut preview = false;
+        if let Some(head) = rest
+            .len()
+            .checked_sub("_PREVIEW".len())
+            .map(|n| rest.split_at(n))
+            .filter(|(_, tail)| tail.eq_ignore_ascii_case("_PREVIEW"))
+        {
+            rest = head.0;
+            preview = true;
+        }
+
+        let dotted = rest.replace('_', ".");
+        let digits: String = dotted
+            .strip_prefix("1.")
+            .unwrap_or(&dotted)
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        Self::new(digits.parse().ok()?, preview)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LibraryId(pub u64);
 
@@ -161,6 +216,12 @@ pub struct ProjectData {
     /// The target JDK bound to this specific module.
     pub target_sdk: Option<SdkId>,
 
+    /// The Java source level every source set of this project compiles at, when
+    /// the build system reported one. `None` disables source-level checks for
+    /// the project's files (the fallback for workspaces whose build system
+    /// exports nothing — a wrong level would produce false errors everywhere).
+    pub language_level: Option<JavaLanguageLevel>,
+
     /// All source sets contained within the module (typically contains at least `Main` and `Test`).
     pub source_sets: FxHashMap<SourceSetKind, SourceSetData>,
 }
@@ -218,6 +279,7 @@ impl WorkspaceGraph {
             name: SmolStr::from("workspace"),
             root_path: root.clone(),
             target_sdk: sdk,
+            language_level: None,
             source_sets: FxHashMap::from_iter([(
                 SourceSetKind::Main,
                 SourceSetData {
@@ -258,3 +320,37 @@ impl WorkspaceGraph {
 //         None
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::JavaLanguageLevel;
+
+    fn parsed(raw: &str) -> Option<(u8, bool)> {
+        JavaLanguageLevel::parse(raw).map(|level| (level.source, level.preview))
+    }
+
+    #[test]
+    fn parses_every_importer_spelling() {
+        assert_eq!(parsed("8"), Some((8, false)));
+        assert_eq!(parsed("1.8"), Some((8, false)));
+        // A `1.8u202` distribution string keeps only the leading release.
+        assert_eq!(parsed("1.8u202"), Some((8, false)));
+        assert_eq!(parsed("17"), Some((17, false)));
+        assert_eq!(parsed("21.0.5"), Some((21, false)));
+        assert_eq!(parsed("JDK_17"), Some((17, false)));
+        assert_eq!(parsed("JDK_1_8"), Some((8, false)));
+        assert_eq!(parsed("JavaSE-17"), Some((17, false)));
+        assert_eq!(parsed("  JavaSE-21.0.1  "), Some((21, false)));
+        assert_eq!(parsed("JDK_14_PREVIEW"), Some((14, true)));
+    }
+
+    #[test]
+    fn rejects_unknown_and_out_of_range_levels() {
+        assert_eq!(parsed(""), None);
+        assert_eq!(parsed("jdk"), None);
+        // Below javac's `Source.MIN`.
+        assert_eq!(parsed("1.7"), None);
+        // Above `JavaLanguageLevel::MAX`.
+        assert_eq!(parsed("29"), None);
+    }
+}

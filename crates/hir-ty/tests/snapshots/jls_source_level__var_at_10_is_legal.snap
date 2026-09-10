@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/VarLocal.java:
+package com.example;
+
+class A {
+    void m() {
+        var x = 1;
+    }
+}

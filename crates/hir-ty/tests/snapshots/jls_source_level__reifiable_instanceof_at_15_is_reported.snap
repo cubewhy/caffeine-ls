@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/ReifiableInstanceof.java:
+package com.example;
+
+class A {
+    boolean m(Object o) {
+        return o instanceof java.util.List<String>;
+    }
+}
+
+@4:15: feature-not-supported-in-source-level: reifiable types in instanceof are not supported in -source 15 (use -source 16 or higher to enable reifiable types in instanceof)

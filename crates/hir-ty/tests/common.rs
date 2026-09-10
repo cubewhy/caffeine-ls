@@ -220,11 +220,24 @@ pub fn register_jdk(db: &mut TestDatabase, fixture: &JdkFixture) {
 
 /// Registers a source set owning a single source root with `files` (path →
 /// text), the JDK fixture as a classpath library. Returns the source set id.
-/// The root becomes `SourceRootId(0)` (the first root applied).
+/// The root becomes `SourceRootId(0)` (the first root applied). The source
+/// set gets no Java source level, so no source-level check runs for it.
 pub fn register_source_set(
     db: &mut TestDatabase,
     fixture: &JdkFixture,
     files: &[(&str, &str)],
+) -> hir::SourceSetId {
+    register_source_set_at_level(db, fixture, files, None)
+}
+
+/// Like [`register_source_set`], but declares the source set's Java source
+/// level. A `None` level leaves source-level checks off, which is what every
+/// suite but the level tests relies on.
+pub fn register_source_set_at_level(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    files: &[(&str, &str)],
+    level: Option<hir::JavaLanguageLevel>,
 ) -> hir::SourceSetId {
     let mut file_set = FileSet::default();
     for (i, (path, _)) in files.iter().enumerate() {
@@ -262,6 +275,9 @@ pub fn register_source_set(
     );
     data.source_root_to_source_set
         .insert(SourceRootId(0), source_set.clone());
+    if let Some(level) = level {
+        data.language_levels.insert(source_set.clone(), level);
+    }
     hir::set_project_graph(db, data);
     source_set
 }
@@ -2362,6 +2378,99 @@ pub fn check_module_diagnostics(files: &[(&str, &str)]) -> String {
         }
     }
     lines.join("\n")
+}
+
+/// The source-level diagnostics of the source files, rendered like
+/// [`check_class_diagnostics`]: one line per construct newer than the
+/// declared source level. Files with no level registered report nothing.
+pub fn check_level_diagnostics(level: hir::JavaLanguageLevel, files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_at_level(&mut db, &fixture, files, Some(level));
+    render_level_diagnostics(&db, files)
+}
+
+/// Like [`check_level_diagnostics`], but with no source level declared for the
+/// source set: every file's report must be empty.
+pub fn check_level_diagnostics_unknown(files: &[(&str, &str)]) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_at_level(&mut db, &fixture, files, None);
+    render_level_diagnostics(&db, files)
+}
+
+fn render_level_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let line_index = line_index::LineIndex::new(text);
+        for diag in hir_ty::level_diagnostics(db, file_id) {
+            let at = diag
+                .range()
+                .map(|r| {
+                    let lc = line_index.line_col(r.start());
+                    format!("@{line}:{col}", line = lc.line, col = lc.col)
+                })
+                .unwrap_or_default();
+            lines.push(format!("{at}: {}: {}", diag.code(), diag.message(db)));
+        }
+    }
+    lines.join("\n")
+}
+
+/// The source-level report of the `RECORD_SOURCE` file after loading the
+/// workspace twice at two different levels, to prove a reload re-derives the
+/// report rather than serving the first level's memoized answer.
+pub fn check_level_diagnostics_across_reloads(
+    first: hir::JavaLanguageLevel,
+    second: hir::JavaLanguageLevel,
+    files: &[(&str, &str)],
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_at_level(&mut db, &fixture, files, Some(first));
+    let before = render_level_diagnostics(&db, files);
+    register_source_set_at_level(&mut db, &fixture, files, Some(second));
+    let after = render_level_diagnostics(&db, files);
+    format!(
+        "--- at -source {}\n{before}\n--- at -source {}\n{after}",
+        first.source, second.source
+    )
+}
+
+/// The source-level report of a file that was first queried *before* the
+/// workspace loaded, then again after. Mirrors the driver order an editor
+/// produces: a document is opened (its text exists, attributed to the
+/// pre-workspace fallback source root) and diagnostics are pulled for it before
+/// the build system reports the project; only then do the source root and the
+/// project graph arrive. The pre-load answer must not survive the load.
+pub fn check_level_diagnostics_across_first_load(
+    level: hir::JavaLanguageLevel,
+    files: &[(&str, &str)],
+) -> String {
+    let fixture = jdk_fixture();
+    let mut db = TestDatabase::new();
+
+    // Before the load: the file has text and therefore a source-root input (the
+    // fallback root), but no root has been registered and no project graph has
+    // been set.
+    let mut change = FileChange::default();
+    for (i, (_, text)) in files.iter().enumerate() {
+        change.change_file(FileId::from_raw((i + 1) as u32), Some((*text).to_owned()));
+    }
+    change.apply(&mut db);
+    let before = render_level_diagnostics(&db, files);
+
+    // The workspace load: the source root and the project graph both arrive.
+    register_source_set_at_level(&mut db, &fixture, files, Some(level));
+    let after = render_level_diagnostics(&db, files);
+
+    format!(
+        "--- queried before the workspace loaded\n{before}\n--- queried after the load\n{after}"
+    )
 }
 
 /// Renders the resolved method call for each `(label, receiver, name, args)`

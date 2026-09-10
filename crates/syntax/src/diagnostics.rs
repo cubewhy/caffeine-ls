@@ -163,6 +163,12 @@ pub enum JavaDiagnosticCode {
     /// §15.9.2/[§15.9.2.1]: the diamond operator on a class with no type
     /// parameters — javac: `cannot use '<>' with non-generic class {C}`.
     CannotUseDiamondWithNonGeneric,
+    /// A construct whose Java source level is newer than the level its source
+    /// set is compiled at. javac: `compiler.err.feature.not.supported.in.source`.
+    FeatureNotSupportedInSourceLevel,
+    /// A construct that is a preview feature of the newest release and was used
+    /// without `--enable-preview`. javac: `compiler.err.preview.feature.disabled`.
+    PreviewFeatureDisabled,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -499,6 +505,10 @@ impl JavaDiagnosticCode {
             LambdaBadReturn => Some("compiler.err.prob.found.req"),
             PatternDominated => Some("compiler.err.improper.used.var"),
             CannotUseDiamondWithNonGeneric => Some("compiler.err.cant.infer.diamond.types"),
+            FeatureNotSupportedInSourceLevel => {
+                Some("compiler.err.feature.not.supported.in.source")
+            }
+            PreviewFeatureDisabled => Some("compiler.err.preview.feature.disabled"),
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -644,6 +654,10 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::CannotUseDiamondWithNonGeneric => {
                 "cannot-use-diamond-with-non-generic"
             }
+            JavaDiagnosticCode::FeatureNotSupportedInSourceLevel => {
+                "feature-not-supported-in-source-level"
+            }
+            JavaDiagnosticCode::PreviewFeatureDisabled => "preview-feature-disabled",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

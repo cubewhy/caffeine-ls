@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/VarLambda.java:
+package com.example;
+
+import java.util.function.Function;
+
+class A {
+    void m(Function<Integer, Integer> f) {
+        f = (var x) -> x;
+    }
+}
+
+@6:13: feature-not-supported-in-source-level: var syntax in implicit lambdas are not supported in -source 10 (use -source 11 or higher to enable var syntax in implicit lambdas)

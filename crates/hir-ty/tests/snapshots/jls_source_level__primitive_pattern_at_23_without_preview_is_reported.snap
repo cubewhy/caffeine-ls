@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/PrimitivePattern.java:
+package com.example;
+
+class A {
+    int m(Object o) {
+        return switch (o) {
+            case int i -> i;
+            default -> 0;
+        };
+    }
+}
+
+@5:17: preview-feature-disabled: primitive patterns are a preview feature and are disabled by default (use --enable-preview to enable primitive patterns)

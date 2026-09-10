@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/TextBlocks.java:
+package com.example;
+
+class A {
+    String s = """
+        block
+        """;
+}

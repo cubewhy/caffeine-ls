@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/UnnamedLambda.java:
+package com.example;
+
+import java.util.function.BiFunction;
+
+class A {
+    void m(BiFunction<Integer, Integer, Integer> f) {
+        f = (_, x) -> x;
+    }
+}

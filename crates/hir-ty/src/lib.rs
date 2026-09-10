@@ -99,6 +99,7 @@ pub use java::decl_check::{DeclDiagnostic, class_diagnostics, module_diagnostics
 pub use java::diagnostics::{DiagLocation, TypeError};
 pub use java::infer::{BodyTypes, body_types};
 pub use java::inference::least_upper_bound;
+pub use java::level_check::level_diagnostics;
 pub use java::method::all_methods as all_methods_for_test;
 pub use java::method::{
     Access, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,

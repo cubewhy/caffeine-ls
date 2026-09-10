@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/TryResource.java:
+package com.example;
+
+class A {
+    void m(java.io.Reader r) throws Exception {
+        try (r) {
+        }
+    }
+}
+
+@4:13: feature-not-supported-in-source-level: variables in try-with-resources are not supported in -source 8 (use -source 9 or higher to enable variables in try-with-resources)

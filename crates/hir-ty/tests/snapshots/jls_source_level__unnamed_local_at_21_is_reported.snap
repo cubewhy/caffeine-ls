@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/Unnamed.java:
+package com.example;
+
+class A {
+    void m() {
+        int _ = 1;
+    }
+}
+
+@4:12: feature-not-supported-in-source-level: unnamed variables are not supported in -source 21 (use -source 22 or higher to enable unnamed variables)

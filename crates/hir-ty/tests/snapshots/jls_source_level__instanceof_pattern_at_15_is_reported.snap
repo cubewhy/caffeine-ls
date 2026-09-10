@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/InstanceofPattern.java:
+package com.example;
+
+class A {
+    void m(Object o) {
+        if (o instanceof String s) {
+        }
+    }
+}
+
+@4:12: feature-not-supported-in-source-level: pattern matching in instanceof is not supported in -source 15 (use -source 16 or higher to enable pattern matching in instanceof)

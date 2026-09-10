@@ -25,6 +25,8 @@ pub struct GradleProject {
     pub compile_classpath: Vec<GradleClasspathEntry>,
     pub test_classpath: Vec<GradleClasspathEntry>,
     pub java_language_version: Option<String>,
+    pub java_release: Option<u8>,
+    pub java_language_preview: Option<bool>,
     pub java_home: Option<String>,
 }
 

@@ -2,8 +2,8 @@ use crate::maven::model::{MavenClasspathEntry, MavenWorkspace};
 use crate::maven::progress;
 use crate::maven::sidecar::{self, SIDECAR_ARTIFACT, SIDECAR_GROUP, SIDECAR_VERSION};
 use crate::{
-    ClasspathEntry, CommandOutcome, Library, ProjectData, ProjectId, SdkData, SdkId, SourceSetData,
-    SourceSetKind, SyncError, SyncProgress, WorkspaceGraph,
+    ClasspathEntry, CommandOutcome, JavaLanguageLevel, Library, ProjectData, ProjectId, SdkData,
+    SdkId, SourceSetData, SourceSetKind, SyncError, SyncProgress, WorkspaceGraph,
 };
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
@@ -167,6 +167,17 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
         let project_id = *path_to_project_id.get(&project.path).unwrap();
         let abs_project_dir = AbsPathBuf::assert_utf8(project.project_dir.clone());
 
+        // The mojo already folds `release > source > java.version` into
+        // `java_language_version`.
+        let language_level = project
+            .java_language_version
+            .as_deref()
+            .and_then(JavaLanguageLevel::parse)
+            .map(|level| JavaLanguageLevel {
+                preview: project.java_language_preview.unwrap_or(false),
+                ..level
+            });
+
         let resolved_java_home = project
             .java_home
             .map(|path_str| AbsPathBuf::assert_utf8(PathBuf::from(path_str)))
@@ -303,6 +314,7 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
             name: SmolStr::from(project.name),
             root_path: abs_project_dir,
             target_sdk,
+            language_level,
             source_sets,
         };
 

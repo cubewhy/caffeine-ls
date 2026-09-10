@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/Nested.java:
+package com.example;
+
+sealed class A permits B {
+    record B(int x) implements java.io.Serializable {}
+}
+
+final class C extends A {
+}
+
+@2:0: feature-not-supported-in-source-level: sealed classes are not supported in -source 15 (use -source 17 or higher to enable sealed classes)
+@3:4: feature-not-supported-in-source-level: records are not supported in -source 15 (use -source 16 or higher to enable records)
