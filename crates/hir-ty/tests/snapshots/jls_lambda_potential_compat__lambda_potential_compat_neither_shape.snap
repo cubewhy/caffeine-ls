@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_lambda_potential_compat.rs
+expression: out
+---
+FILE /src/com/example/Gate.java:
+package com.example;
+
+class Gate {
+    interface Task {
+        void run();
+    }
+
+    interface ValueTask<T> {
+        T call() throws Exception;
+    }
+
+    static String submit(Task task) {
+        return null;
+    }
+
+    static <T> T submit(ValueTask<T> task) {
+        return null;
+    }
+
+    static void neither(boolean flag) {
+        submit(() -> {
+            if (flag) {
+                return 1;
+            }
+        });
+    }
+}
+
+method neither(boolean): void
+  @20:8..20:14 'submit': wrong-argument-count: Method 'submit()' cannot be applied to given types
+    -> @20:8..20:14 'submit': required: Task
+    -> @20:8..20:14 'submit': found: <poly>
+    -> @20:8..20:14 'submit': reason: actual and formal argument lists differ in length

@@ -198,3 +198,53 @@ class Gate {
 ",
     )])
 );
+
+// -- §15.27.2: a body that is neither void- nor value-compatible --------------
+// `{ if (flag) return 1; }` carries a valued `return` (so it is not
+// void-compatible) and *can* complete normally (so it is not value-compatible
+// either): it is not potentially compatible with the `Task` result
+// ([§15.12.2.1]) and not congruent with the `ValueTask<T>` result
+// ([§15.27.2]), so no candidate is applicable. javac reports `no suitable
+// method found for submit(...)` naming both overloads (`bad return type in
+// lambda expression: unexpected return value` against `Task`, `missing return
+// value` against `ValueTask`); the invocation is reported here as
+// `wrong-argument-count` from the same applicability outcome. Under the
+// deleted approximation the valued `return` alone made the body
+// value-compatible, so `ValueTask` stayed applicable — and because the body
+// can also complete normally, the diagnostic was `missing-return-value`.
+
+snapshot!(
+    lambda_potential_compat_neither_shape,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Gate.java",
+        "\
+package com.example;
+
+class Gate {
+    interface Task {
+        void run();
+    }
+
+    interface ValueTask<T> {
+        T call() throws Exception;
+    }
+
+    static String submit(Task task) {
+        return null;
+    }
+
+    static <T> T submit(ValueTask<T> task) {
+        return null;
+    }
+
+    static void neither(boolean flag) {
+        submit(() -> {
+            if (flag) {
+                return 1;
+            }
+        });
+    }
+}
+",
+    )])
+);
