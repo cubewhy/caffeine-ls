@@ -2188,9 +2188,18 @@ fn instantiate(
 
 /// Whether `m1` is more specific than `m2`
 /// ([JLS §15.12.2.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.2.5)):
-/// a non-variable-arity method beats a variable arity one, and otherwise every
-/// formal parameter of `m1` is more specific than the corresponding formal of
-/// `m2`. Only *m2's* genericity gates the comparison: when `m2` is generic,
+/// every formal parameter of `m1` is more specific than the corresponding
+/// formal of `m2`. A variable-arity method is treated as a fixed-arity method
+/// in the first two applicability phases ([§15.12.2]), so a
+/// declared-variable-arity candidate loses to a fixed-arity one only when its
+/// array formal is *less* specific — `m(Object)` beats `m(Object...)` for a
+/// non-array argument, decided by applicability, not here — and wins when its
+/// array formal is more specific: for an array argument `m(Object[])` beats
+/// `m(Object)`, as §15.12.2's own note records ("declaring `m(Object...)` in a
+/// class which already declares `m(Object)` causes `m(Object)` to no longer be
+/// chosen for some invocation expressions (such as `m(null)`), as `m(Object[])`
+/// is more specific"). There is no declared-flag tie-break in §15.12.2.5.
+/// Only *m2's* genericity gates the comparison: when `m2` is generic,
 /// `m1` is more specific under some instantiation of *m2*'s type parameters
 /// ([§18.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-18.html#jls-18.5.4))
 /// — approximated here by instantiating them to their declared bounds, so
@@ -2206,7 +2215,12 @@ pub(crate) fn more_specific(
     scope: &hir::ResolutionScope,
     m1: &MethodData,
     m2: &MethodData,
+    variable_arity: bool,
 ) -> bool {
+    // §15.12.2.5 bullet 3: the variable-arity alignment applies only when
+    // both candidates are applicable by *variable arity* invocation — i.e. in
+    // the variable-arity phase (§15.12.2.4) and only for candidates declared
+    // variable arity.
     // §15.12.2.5 (variable arity): when *both* candidates are applicable by
     // variable arity invocation, the more specific one is decided on their
     // fixed parameter prefixes and varargs element types, aligned at the
@@ -2221,7 +2235,7 @@ pub(crate) fn more_specific(
     // because `TextColor <: SBApplicable` and `Decoration <: SBApplicable`.
     // Without the alignment both directions report false (different declared
     // lengths) and the invocation is ambiguous.
-    if m1.varargs && m2.varargs {
+    if variable_arity && m1.varargs && m2.varargs {
         let norm = |m: &MethodData| -> Vec<Ty> {
             let split = m.params.len().saturating_sub(1);
             let fixed = &m.params[..split];
@@ -2267,9 +2281,6 @@ pub(crate) fn more_specific(
     }
     if m1.params.len() != m2.params.len() {
         return false;
-    }
-    if m1.varargs != m2.varargs {
-        return !m1.varargs;
     }
     // §15.12.2.5 (functional interface specificity): when the invocation's
     // argument is a lambda, a functional interface type `S` is more specific
@@ -2403,12 +2414,13 @@ pub(crate) fn choose_most_specific(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     candidates: &[(MethodData, MethodData)],
+    variable_arity: bool,
 ) -> Option<MethodData> {
     let mut winners: Vec<usize> = Vec::new();
     for (i, (candidate, _)) in candidates.iter().enumerate() {
-        let wins = candidates
-            .iter()
-            .all(|(other, _)| other == candidate || more_specific(db, scope, candidate, other));
+        let wins = candidates.iter().all(|(other, _)| {
+            other == candidate || more_specific(db, scope, candidate, other, variable_arity)
+        });
         if wins {
             winners.push(i);
         }
@@ -2497,7 +2509,7 @@ pub fn pick_method(
         })
         .collect();
     if !strict.is_empty() {
-        return choose_most_specific(db, scope, &strict);
+        return choose_most_specific(db, scope, &strict, false);
     }
 
     // Phase 2: loose invocation (§15.12.2.3) — boxing and unboxing allowed.
@@ -2517,7 +2529,7 @@ pub fn pick_method(
         })
         .collect();
     if !loose.is_empty() {
-        return choose_most_specific(db, scope, &loose);
+        return choose_most_specific(db, scope, &loose, false);
     }
 
     // Phase 3: variable arity (§15.12.2.4).
@@ -2537,7 +2549,7 @@ pub fn pick_method(
         })
         .collect();
     if !varargs.is_empty() {
-        return choose_most_specific(db, scope, &varargs);
+        return choose_most_specific(db, scope, &varargs, true);
     }
 
     None

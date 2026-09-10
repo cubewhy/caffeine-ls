@@ -1,0 +1,45 @@
+---
+source: crates/hir-ty/tests/jls_varargs_fixed_specific.rs
+expression: out
+---
+FILE /src/com/example/Seq.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Seq<E> {
+    static <T> Seq<T> of(T one) {
+        return null;
+    }
+
+    @SafeVarargs
+    static <T> Seq<T> of(T... many) {
+        return null;
+    }
+
+    <R> Seq<R> map(Function<? super E, ? extends R> mapper) {
+        return null;
+    }
+
+    enum Mode {
+        ALPHA,
+        BETA
+    }
+
+    static Seq<String> arrayLocal() {
+        String[] values = { "a" };
+        return Seq.of(values);
+    }
+
+    static Seq<String> newArray() {
+        return Seq.of(new String[] { "a" });
+    }
+
+    static Seq<String> enumValuesChain() {
+        return Seq.of(Mode.values()).map(Mode::name);
+    }
+
+    static Seq<Mode> singleElement() {
+        return Seq.of(Mode.ALPHA);
+    }
+}

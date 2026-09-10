@@ -195,7 +195,8 @@ impl InferCtx<'_> {
             .iter()
             .map(|(candidate, invocation, _)| (candidate.clone(), invocation.clone()))
             .collect();
-        let chosen = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)?;
+        let chosen =
+            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)?;
         let index = applicable
             .iter()
             .position(|(_, invocation, _)| *invocation == chosen)?;
@@ -1238,7 +1239,8 @@ impl InferCtx<'_> {
         // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
         let pairs: Vec<(MethodData, MethodData)> =
             applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        let Some(winner) = crate::java::method::choose_most_specific(self.db, &self.scope, &pairs)
+        let Some(winner) =
+            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)
         else {
             inference.restore(base);
             return false;

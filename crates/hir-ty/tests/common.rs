@@ -1058,7 +1058,7 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("name", "()Ljava/lang/String;"), ("ordinal", "()I")],
             &["", ""],
             &[0x0001, 0x0001], // ACC_PUBLIC (methods)
-            Some("<E:Ljava/lang/Enum<TE;>;Ljava/lang/Object;"),
+            Some("<E:Ljava/lang/Enum<TE;>;>Ljava/lang/Object;"),
         ),
         // §8.9.2: an enum's direct superclass is `java.lang.Enum<E>`; the
         // enum collections bound their type parameters by it, so the enum
