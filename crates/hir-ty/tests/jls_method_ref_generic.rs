@@ -302,3 +302,47 @@ class Easing {
 ",
     )])
 );
+
+// -- §15.13.2/§18.5.2.2: a factory reference fixes the nested type argument --
+// `readUTF("k", Function.identity())` against a `Function<String, R>` formal:
+// `identity` names `<T> Function<T,T>`, so relating the reference's whole
+// result to the formal gives `T = String` *and* `T = R`, fixing `R := String`
+// from the argument alone. Only constraining `T <: R` left `R` free for the
+// enclosing target to rebind, so both `openUrl(String)` and `openUrl(URL)`
+// looked applicable and the call was reported inapplicable; javac infers
+// `R := String` and selects `openUrl(String)`.
+
+snapshot!(
+    generic_factory_ref_fixes_nested_type_argument,
+    check_body_types(&[(
+        "/src/com/example/Open.java",
+        "\
+package com.example;
+
+import java.net.URL;
+import java.util.function.Function;
+
+class ClickEvent {
+    static ClickEvent openUrl(String url) {
+        return null;
+    }
+
+    static ClickEvent openUrl(URL url) {
+        return null;
+    }
+}
+
+class Reader {
+    public <R> R readUTF(String key, Function<String, R> function) {
+        return null;
+    }
+}
+
+class Open {
+    static ClickEvent f(Reader reader, boolean modern) {
+        return ClickEvent.openUrl(reader.readUTF(modern ? \"url\" : \"value\", Function.identity()));
+    }
+}
+",
+    )])
+);

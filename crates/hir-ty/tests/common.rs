@@ -820,12 +820,28 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &[("run", "()V")],
             &[""],
         ),
-        functional_interface(
-            "java/util/function/Function",
-            "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
-            &[("apply", "(Ljava/lang/Object;)Ljava/lang/Object;")],
-            &["(TT;)TR;"],
-        ),
+        // The real `Function` declares the `<T> Function<T,T> identity()`
+        // static factory (ACC_PUBLIC | ACC_STATIC) beside its abstract
+        // `apply`; nested-argument inference depends on it, since its own type
+        // parameter is fixed by the enclosing formal's *whole* type rather than
+        // only by its return position.
+        ClassSpec {
+            fqn: "java/util/function/Function",
+            super_class: None,
+            interfaces: &[],
+            access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+            fields: &[],
+            methods: &[
+                ("apply", "(Ljava/lang/Object;)Ljava/lang/Object;"),
+                ("identity", "()Ljava/util/function/Function;"),
+            ],
+            method_sigs: &[
+                "(TT;)TR;",
+                "<T:Ljava/lang/Object;>()Ljava/util/function/Function<TT;TT;>;",
+            ],
+            method_access: &[0x0401, 0x0009],
+            sig: Some("<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;"),
+        },
         functional_interface(
             "java/util/function/Predicate",
             "<T:Ljava/lang/Object;>Ljava/lang/Object;",

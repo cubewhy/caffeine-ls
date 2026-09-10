@@ -728,6 +728,29 @@ impl InferCtx<'_> {
                             .map(|(method, _)| method.ret.substitute(self.db, &subst))
                             .unwrap_or_else(|| self.error())
                     };
+                    // §15.13.2/§18.5.2.2: when the referenced method's result
+                    // is *itself* the target functional interface — the
+                    // generic factory idiom `static <T> Function<T,T>
+                    // identity()` — the reference's type is that result, not
+                    // the SAM's return type. Relating the two whole types
+                    // instantiates the referenced method's type parameters
+                    // from *both* the SAM's parameters and its return:
+                    // `Function<θ,θ>` against `Function<String,R>` gives
+                    // `θ = String` and `θ = R`, so `R` is fixed to `String` by
+                    // the argument itself. Constraining only `θ <: R` left `R`
+                    // free for the enclosing target round to rebind —
+                    // `openUrl(readUTF("k", Function.identity()))` then looked
+                    // applicable against both `openUrl(String)` and
+                    // `openUrl(URL)` and was reported ambiguous.
+                    if !subst.is_empty()
+                        && let TyKind::Reference { name: ret_name, .. } = ref_ret.kind(self.db)
+                        && let TyKind::Reference {
+                            name: formal_name, ..
+                        } = formal.kind(self.db)
+                        && ret_name.as_str() == formal_name.as_str()
+                    {
+                        inference.add_constraint(Constraint::Sub(ref_ret, formal));
+                    }
                     // §15.13.2: a *void-compatible* reference constrains
                     // nothing — any result the referenced method produces is
                     // discarded (`attributeNode::getDepth` is compatible with
@@ -1239,16 +1262,22 @@ impl InferCtx<'_> {
         // overloads look applicable and the most-specific tie-break finds
         // neither direction — the javac-legal call is reported inapplicable.
         //
-        // So the candidates are ranked with **no target** first, and only if
-        // that round finds nothing applicable (a nested invocation whose type
-        // variables are solvable *only* from the target) is the round retried
-        // with the formal, matching javac's deferred attribution of a poly
-        // argument. The winning member is then re-probed *with* the formal in
-        // the lift below: that is the §18.5.2.4 target round, and its
-        // constraints — including `⟨R → formal⟩` — are the ones that join the
-        // enclosing bound set.
-        let mut applicable: Vec<MethodData> = Vec::new();
+        // So the candidates are ranked with **no target** first — javac's
+        // §18.5.1 round, which is what selects among the nested overloads.
+        // The target round is still *reached*: when the un-targeted ranking is
+        // ambiguous, or when it finds nothing applicable (a nested invocation
+        // whose type variables are solvable only from the target), the probes
+        // are repeated with the formal, where the enclosing target decides
+        // between otherwise tied candidates — `take(readUTF("k",
+        // Function.identity()))` with a `String` and a `URL` `take` overload:
+        // both are applicable when the nested result is unconstrained, but the
+        // `URL` one fails once the formal participates. The winning member is
+        // then re-probed *with* the formal in the lift below: that is the
+        // §18.5.2.4 target round, and its constraints — including
+        // `⟨R → formal⟩` — are the ones that join the enclosing bound set.
+        let mut winner = None;
         for probe_target in [None, Some(*formal)] {
+            let mut applicable: Vec<MethodData> = Vec::new();
             for member in members {
                 inference.restore(base.clone());
                 let mut deferred = Vec::new();
@@ -1274,25 +1303,28 @@ impl InferCtx<'_> {
                     applicable.push(member.clone());
                 }
             }
-            if !applicable.is_empty() {
+            if applicable.is_empty() {
+                continue;
+            }
+            // The most specific applicable member ([§15.12.2.5]); identical
+            // signatures seen through overriding paths collapse to their
+            // most-derived declaration (see
+            // [`crate::java::method::choose_most_specific`]).
+            let pairs: Vec<(MethodData, MethodData)> =
+                applicable.iter().map(|m| (m.clone(), m.clone())).collect();
+            if let Some(picked) =
+                crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)
+            {
+                winner = Some(picked);
                 break;
             }
+            // Ambiguous without the target: the formal is what decides
+            // between the tied candidates, so the next round keeps it.
         }
         // The probes are speculative: a failed consistency check leaves its
         // partially reduced constraints in the shared worklist, so the base
         // snapshot is *always* reinstalled before anything is lifted.
-        if applicable.is_empty() {
-            inference.restore(base);
-            return false;
-        }
-        // The most specific applicable member ([§15.12.2.5]); identical
-        // signatures seen through overriding paths collapse to their
-        // most-derived declaration (see [`crate::java::method::choose_most_specific`]).
-        let pairs: Vec<(MethodData, MethodData)> =
-            applicable.iter().map(|m| (m.clone(), m.clone())).collect();
-        let Some(winner) =
-            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)
-        else {
+        let Some(winner) = winner else {
             inference.restore(base);
             return false;
         };

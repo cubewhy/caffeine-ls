@@ -243,7 +243,31 @@ impl Inference {
     /// variable whose own bounds belong to its declaration ([§4.4]) — is not
     /// decidable here and is left to resolution.
     fn validate_applied(&self, db: &dyn TyDatabase, scope: &hir::ResolutionScope) -> bool {
-        for (id, eq) in &self.applied {
+        // §18.3.1: the applied equalities chain (`⟨?R = ?T⟩` with
+        // `⟨?T = String⟩`), and the value an instantiated variable must satisfy
+        // is the *end* of the chain — the raw entry still holds an inference
+        // variable and would be skipped, letting a bound that contradicts the
+        // value through: with `?R = ?T = String`, `⟨?R <: URL⟩` arrived later
+        // and the nested call was accepted against a `URL` formal.
+        let mut flat: FxHashMap<u64, Ty> = self.applied.clone();
+        let keys: Vec<u64> = flat.keys().copied().collect();
+        for _ in 0..=keys.len() {
+            let mut changed = false;
+            for key in &keys {
+                let Some(value) = flat.get(key).copied() else {
+                    continue;
+                };
+                let updated = value.substitute_infer(db, &flat);
+                if flat.get(key).copied() != Some(updated) {
+                    flat.insert(*key, updated);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (id, eq) in &flat {
             if eq.contains_infer_var(db) || eq.contains_declared_type_var(db) {
                 continue;
             }

@@ -1,0 +1,44 @@
+---
+source: crates/hir-ty/tests/jls_method_ref_generic.rs
+expression: out
+---
+FILE /src/com/example/Open.java:
+package com.example;
+
+import java.net.URL;
+import java.util.function.Function;
+
+class ClickEvent {
+    static ClickEvent openUrl(String url) {
+        return null;
+    }
+
+    static ClickEvent openUrl(URL url) {
+        return null;
+    }
+}
+
+class Reader {
+    public <R> R readUTF(String key, Function<String, R> function) {
+        return null;
+    }
+}
+
+class Open {
+    static ClickEvent f(Reader reader, boolean modern) {
+        return ClickEvent.openUrl(reader.readUTF(modern ? "url" : "value", Function.identity()));
+    }
+}
+
+method openUrl(java.lang.String): com.example.ClickEvent
+  locals: l0: java.lang.String
+  exprs: e0: null
+method openUrl(java.net.URL): com.example.ClickEvent
+  locals: l1: java.net.URL
+  exprs: e1: null
+method readUTF(java.lang.String, java.util.function.Function<java.lang.String, R>): R
+  locals: l2: java.lang.String | l3: java.util.function.Function<java.lang.String, R>
+  exprs: e2: null
+method f(com.example.Reader, boolean): com.example.ClickEvent
+  locals: l4: com.example.Reader | l5: boolean
+  exprs: e3: boolean | e4: java.lang.String | e5: java.lang.String | e6: java.lang.String | e8: java.util.function.Function<java.lang.String, java.lang.String> | e9: com.example.Reader | e10: java.lang.String | e12: com.example.ClickEvent
