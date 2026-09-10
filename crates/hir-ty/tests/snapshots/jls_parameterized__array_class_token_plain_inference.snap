@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+expression: out
+---
+FILE /src/com/example/Q2.java:
+package com.example;
+
+class Q2 {
+    static <T> T[] copyPlain(Object[] original, int newLength, Class<T> newType) {
+        return null;
+    }
+
+    static <T> T[] makePlain(Class<T[]> cls) {
+        return null;
+    }
+
+    static String[][] plainArg(Object[] src, int n, Class<String[]> cls) {
+        return copyPlain(src, n, cls);
+    }
+
+    static String[] plainToken(int n) {
+        return makePlain(String[].class);
+    }
+}
+
+method copyPlain(java.lang.Object[], int, java.lang.Class<T>): T[]
+  locals: l0: java.lang.Object[] | l1: int | l2: java.lang.Class<T>
+  exprs: e0: null
+method makePlain(java.lang.Class<T[]>): T[]
+  locals: l3: java.lang.Class<T[]>
+  exprs: e1: null
+method plainArg(java.lang.Object[], int, java.lang.Class<java.lang.String[]>): java.lang.String[][]
+  locals: l4: java.lang.Object[] | l5: int | l6: java.lang.Class<java.lang.String[]>
+  exprs: e2: java.lang.Object[] | e3: int | e4: java.lang.Class<java.lang.String[]> | e5: java.lang.String[][]
+method plainToken(int): java.lang.String[]
+  locals: l7: int
+  exprs: e6: java.lang.Class<java.lang.String[]> | e7: java.lang.String[]

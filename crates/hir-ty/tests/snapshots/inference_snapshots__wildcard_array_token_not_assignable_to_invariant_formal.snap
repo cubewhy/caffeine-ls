@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/QNeg.java:
+package com.example;
+
+class QNeg {
+    static <T> T[] makePlain(Class<T[]> cls) {
+        return null;
+    }
+
+    static <T> T[] mismatch(Class<? extends T[]> cls) {
+        return makePlain(cls);
+    }
+}
+
+method makePlain(java.lang.Class<T[]>): T[]
+  locals: l0: java.lang.Class<T[]>
+  exprs: e0: null
+method mismatch(java.lang.Class<? extends T[]>): T[]
+  locals: l1: java.lang.Class<? extends T[]>
+  exprs: e1: java.lang.Class<? extends T[]> | e2: <error>
+  diags: e2@8:15: wrong-argument-count: Method 'makePlain()' cannot be applied to given types

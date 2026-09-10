@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_parameterized.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+class Q {
+    static <T> T[] copyWild(Object[] original, int newLength, Class<? extends T[]> newType) {
+        return null;
+    }
+
+    static <T> T[] makeWild(Class<? extends T[]> cls) {
+        return null;
+    }
+
+    static <T> T[] wildcardArg(Class<? extends T[]> cls, Object[] src, int n) {
+        return copyWild(src, n, cls);
+    }
+
+    static <T> T[] wildcardToken(Class<? extends T[]> cls) {
+        return makeWild(cls);
+    }
+}
+
+method copyWild(java.lang.Object[], int, java.lang.Class<? extends T[]>): T[]
+  locals: l0: java.lang.Object[] | l1: int | l2: java.lang.Class<? extends T[]>
+  exprs: e0: null
+method makeWild(java.lang.Class<? extends T[]>): T[]
+  locals: l3: java.lang.Class<? extends T[]>
+  exprs: e1: null
+method wildcardArg(java.lang.Class<? extends T[]>, java.lang.Object[], int): T[]
+  locals: l4: java.lang.Class<? extends T[]> | l5: java.lang.Object[] | l6: int
+  exprs: e2: java.lang.Object[] | e3: int | e4: java.lang.Class<? extends T[]> | e5: T[]
+method wildcardToken(java.lang.Class<? extends T[]>): T[]
+  locals: l7: java.lang.Class<? extends T[]>
+  exprs: e6: java.lang.Class<? extends T[]> | e7: T[]

@@ -232,6 +232,21 @@ impl Inference {
                 // the phase conversion when both sides are proper.
                 if !s.contains_infer_var(db) && !t.contains_infer_var(db) {
                     convertible(db, scope, &phase, s, t)
+                } else if let TyKind::TypeVar { bounds, .. } = s.kind(db) {
+                    // §18.2.1/§18.2.2: a *type variable* source whose
+                    // supertype is the target contributes the constraint on
+                    // its upper bounds — the variable's supertypes are the
+                    // only witnesses of `S <: T`, so `⟨S → T⟩` reduces to
+                    // `⟨S_upper → T⟩` for each declared bound. The capture of
+                    // `? extends T[]` as a source (`CAP#1 <: T[]`) reaching a
+                    // formal `Class<? extends α[]>` reduces `⟨CAP#1 → α[]⟩`
+                    // to `⟨T[] → α[]⟩`, constraining `α` from an argument
+                    // whose array type is reachable only through the
+                    // variable's bound.
+                    for bound in bounds {
+                        worklist.push_back(Constraint::Sub(*bound, *t));
+                    }
+                    !bounds.is_empty()
                 } else {
                     false
                 }

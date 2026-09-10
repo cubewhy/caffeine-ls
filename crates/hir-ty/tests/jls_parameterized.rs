@@ -239,3 +239,69 @@ class Body {
 // `<T> copyOf(T[],int)` needs an `int` length, and no overload takes a
 // `String` second argument, so the invocation reports `cant.apply`
 // ([§15.12.2]).
+
+// -- §18.2.2/[§18.2.3]: a wildcard nested inside an array type reduces --------
+// A formal `Class<? extends T[]>` carries the inference variable `T` inside a
+// wildcard bound that is itself an array type. The argument's static type is
+// `Class<? extends T[]>` of the *enclosing* method, capture-converted to
+// `Class<CAP>` with `CAP <: T[]`; reducing `⟨CAP → α[]⟩` through the capture's
+// upper bound constrains `α` from `T`, so `T` is solvable exactly as for the
+// plain `Class<T>`/`Class<T[]>` formals. javac accepts every method below.
+
+snapshot!(
+    array_class_token_wildcard_inference,
+    check_body_types(&[(
+        "/src/com/example/Q.java",
+        "\
+package com.example;
+
+class Q {
+    static <T> T[] copyWild(Object[] original, int newLength, Class<? extends T[]> newType) {
+        return null;
+    }
+
+    static <T> T[] makeWild(Class<? extends T[]> cls) {
+        return null;
+    }
+
+    static <T> T[] wildcardArg(Class<? extends T[]> cls, Object[] src, int n) {
+        return copyWild(src, n, cls);
+    }
+
+    static <T> T[] wildcardToken(Class<? extends T[]> cls) {
+        return makeWild(cls);
+    }
+}
+",
+    )])
+);
+
+// -- green control: the plain `Class<T>` / `Class<T[]>` formals --------------
+
+snapshot!(
+    array_class_token_plain_inference,
+    check_body_types(&[(
+        "/src/com/example/Q2.java",
+        "\
+package com.example;
+
+class Q2 {
+    static <T> T[] copyPlain(Object[] original, int newLength, Class<T> newType) {
+        return null;
+    }
+
+    static <T> T[] makePlain(Class<T[]> cls) {
+        return null;
+    }
+
+    static String[][] plainArg(Object[] src, int n, Class<String[]> cls) {
+        return copyPlain(src, n, cls);
+    }
+
+    static String[] plainToken(int n) {
+        return makePlain(String[].class);
+    }
+}
+",
+    )])
+);

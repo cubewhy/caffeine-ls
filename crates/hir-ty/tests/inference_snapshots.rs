@@ -248,3 +248,29 @@ class Repro {
 ",
     )])
 );
+
+// -- §18.2.2/[§18.2.3]: the reduction must not over-accept a wildcard array --
+// A `Class<? extends T[]>` argument against a `Class<T[]>` formal is *not*
+// convertible: the capture `CAP <: T[]` cannot become the invariant `T[]`
+// required by `Class<T[]>`, so no instantiation of the formal's `T` exists.
+// javac: `Class<CAP#1> cannot be converted to Class<T#1[]>`.
+
+snapshot!(
+    wildcard_array_token_not_assignable_to_invariant_formal,
+    check_body_types(&[(
+        "/src/com/example/QNeg.java",
+        "\
+package com.example;
+
+class QNeg {
+    static <T> T[] makePlain(Class<T[]> cls) {
+        return null;
+    }
+
+    static <T> T[] mismatch(Class<? extends T[]> cls) {
+        return makePlain(cls);
+    }
+}
+",
+    )])
+);
