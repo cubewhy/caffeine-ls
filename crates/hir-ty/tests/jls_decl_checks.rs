@@ -1038,3 +1038,88 @@ enum E4 {
 // Red: `E1`'s member-before-constants (`enum constant expected here`) and
 // `E3`'s constants after the `;` (`enum constant not expected here`). Green:
 // `E2`'s and `E4`'s member-after-constants ordering ([§8.9.1]).
+
+// -- §9.4.1/[§8.4.8.1]: a superinterface's static method is not inherited ------
+// JLS §9.4.1: "A static method in an interface ... is not inherited." The
+// declaration-level enumeration therefore must not offer a superinterface's
+// `static` member to [§8.4.8.1]'s override/clash comparison: a subinterface
+// may redeclare the same signature with any return type and any staticness,
+// and so may an implementing class. javac accepts every declaration below.
+// (`javac -d /tmp/fx D8.java` — exit 0.)
+
+snapshot!(
+    static_superinterface_member_not_inherited,
+    check_class_diagnostics(&[(
+        "/src/com/example/D8.java",
+        "\
+package com.example;
+
+interface I8 {
+    static boolean ok(char c) { return true; }
+    static void m() {}
+}
+
+interface J8 extends I8 {
+    String m();
+}
+
+class D8 implements I8 {
+    static boolean ok(char c) { return false; }
+    static void m() {}
+}
+",
+    )])
+);
+// Green: `J8.m()` overrides nothing (the superinterface's `static m()` is not
+// a member of `J8`), and `D8.m()`/`D8.ok(char)` clash with nothing.
+
+// -- §9.4.1: the same rule on a subinterface alone -----------------------------
+// A subinterface inherits no static method from its superinterfaces, so a
+// same-signature instance declaration is a fresh member, not an override.
+// (`javac -d /tmp/fx J8.java` — exit 0.)
+
+snapshot!(
+    static_superinterface_member_in_subinterface,
+    check_class_diagnostics(&[(
+        "/src/com/example/J8.java",
+        "\
+package com.example;
+
+interface I8b {
+    static boolean ok(char c) { return true; }
+    static void m() {}
+}
+
+interface J8b extends I8b {
+    String m();
+}
+",
+    )])
+);
+
+// -- §8.4.8.2: a *class* static method stays inherited ------------------------
+// Only an interface's static methods are outside the inherited member set
+// ([§8.2], [§9.4.1]); a class static method is inherited and a same-signature
+// instance declaration in a subclass clashes with it.
+// (`javac -d /tmp/fx Q.java` — "m() in Q cannot override m() in P:
+// overridden method is static", exit 1.)
+
+snapshot!(
+    static_class_method_still_inherited,
+    check_class_diagnostics(&[(
+        "/src/com/example/Q.java",
+        "\
+package com.example;
+
+class P {
+    static void m() {}
+}
+
+class Q extends P {
+    void m() {}
+}
+",
+    )])
+);
+// Red: the class-to-class static/instance clash is still the §8.4.8.1/§8.4.8.2
+// error — the membership rule is scoped to interface declarations.

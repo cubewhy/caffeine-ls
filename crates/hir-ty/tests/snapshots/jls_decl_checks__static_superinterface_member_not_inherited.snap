@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/D8.java:
+package com.example;
+
+interface I8 {
+    static boolean ok(char c) { return true; }
+    static void m() {}
+}
+
+interface J8 extends I8 {
+    String m();
+}
+
+class D8 implements I8 {
+    static boolean ok(char c) { return false; }
+    static void m() {}
+}

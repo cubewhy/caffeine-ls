@@ -439,8 +439,9 @@ pub fn member_set_ignoring_access(
 /// plus inherited members, most-derived first, with the implicit members each
 /// declaring class synthesizes ([§8.8.9], [§8.9.3], [§8.10.3/4]) — and with
 /// none of the invocation-only transforms of [`member_set_impl`] (the
-/// invocation-mode filter, the static-interface-owner rule, the SELF
-/// return-re-pointing).
+/// invocation-mode filter and the SELF return-re-pointing). The
+/// static-interface-owner rule is *membership*, not an invocation transform
+/// ([§9.2], [§9.4.1]), so it applies here as well.
 pub fn all_methods(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
@@ -532,10 +533,10 @@ pub(crate) fn member_set_query(
 /// the members are gathered per [§8.2]/[§9.2] (declared + inherited,
 /// most-derived first, implicit members synthesized per declaring class) with
 /// none of the invocation-only transforms — the invocation-mode filter
-/// ([`mode_allows`]), the static-interface-owner rule, and the SELF
-/// return-re-pointing do not apply; the access filter (the declaring class's
-/// own context) and the raw-receiver guard (`name == ""` keeps declaration
-/// walks un-erased) still do.
+/// ([`mode_allows`]) and the SELF return-re-pointing do not apply; the
+/// static-interface-owner membership rule and the access filter (the declaring
+/// class's own context) still do; the raw-receiver guard (`name == ""` keeps
+/// declaration walks un-erased) likewise.
 #[allow(clippy::too_many_arguments)]
 fn member_set_impl(
     db: &dyn TyDatabase,
@@ -638,15 +639,23 @@ fn member_set_impl(
                 .into_iter()
                 .filter(|method| {
                     // A declaration-level enumeration has no invocation mode
-                    // to honor: the static/instance filter of `mode_allows`
-                    // and the static-interface-owner rule apply only to
-                    // resolution ([§15.12.3]); the access filter stays (the
-                    // caller passes the declaring class's own context, so
-                    // private/package supertype members are excluded from
-                    // what a subtype "inherits").
+                    // to honor: the static/instance filter of `mode_allows` is
+                    // an invocation rule and applies only to resolution
+                    // ([§15.12.3]). The *static-interface-owner* rule is not —
+                    // it is membership ([§9.2] "A class inherits from its
+                    // direct superclass ... all the non-private member methods
+                    // ... other than static methods"; [§9.4.1] "A static
+                    // method in an interface ... is not inherited"), so it
+                    // applies to every enumeration, declaration-level included:
+                    // a subinterface or implementing class has no inherited
+                    // copy of a superinterface's `static` method, and
+                    // [§8.4.8.1]'s override/clash comparison must not see one.
+                    // The access filter stays (the caller passes the declaring
+                    // class's own context, so private/package supertype
+                    // members are excluded from what a subtype "inherits").
                     (declaration || mode_allows(method, ctx))
                         && (!strict_access || is_accessible(db, scope, method, &receiver, ctx))
-                        && (declaration || static_interface_owner_ok(method))
+                        && static_interface_owner_ok(method)
                 }),
         );
         let raws = !declaration && (erased || is_raw_use(db, scope, &ty));

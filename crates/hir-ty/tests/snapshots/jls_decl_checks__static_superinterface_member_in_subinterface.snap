@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/J8.java:
+package com.example;
+
+interface I8b {
+    static boolean ok(char c) { return true; }
+    static void m() {}
+}
+
+interface J8b extends I8b {
+    String m();
+}

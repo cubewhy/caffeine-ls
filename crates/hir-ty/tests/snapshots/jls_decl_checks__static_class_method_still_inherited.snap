@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Q.java:
+package com.example;
+
+class P {
+    static void m() {}
+}
+
+class Q extends P {
+    void m() {}
+}
+
+method m: static-instance-clash: Cannot declare instance method 'm()': it clashes with the static method 'm()' inherited from 'P'
