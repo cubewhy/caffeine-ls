@@ -579,17 +579,49 @@ fn member_set_impl(
     // type's members are those of every conjunct (`T extends MappedEntity &
     // CopyableEntity<T>` finds `copy` through the second bound, and a glb
     // `A & B` value finds members through either side).
-    let mut stack = match receiver.kind(db) {
+    // JLS §4.8 ([§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8))
+    // gives raw receivers two member rules that this walk implements by
+    // erasing *at the supertype edges*, not on the whole member set:
+    //
+    // * "The superclass types (respectively, superinterface types) of a raw
+    //   type are the erasures of the superclass types (superinterface types)
+    //   of the named class or interface."
+    // * "The type of an inherited instance method or non-static field of a raw
+    //   type C, where the member was declared in a class or interface D, is the
+    //   type of the member in the supertype of C that names D."
+    //
+    // So the walk carries an *erasure context* per stack entry: a raw use
+    // turns its supertype edges into erasures, and the context is monotone
+    // (once raw, always raw), which is what makes a generic ancestor erase
+    // behind a non-generic intermediate (`class Sub<T> extends Mid` with
+    // `class Mid extends Gen<String>` → the declared `Gen` is reached as the
+    // erasure `Gen`, erasing its members) while a member *declared* in a
+    // non-generic class keeps its declared type even when reached through
+    // generic ancestors (`class Sub<T> extends Mid<T>` with
+    // `class Mid<T> extends Base` → the declared `Base` keeps
+    // `List<String> items()`).
+    //
+    // Members *declared* in a raw class are erased per class by the `is_raw`
+    // binding in `source_class_methods`/`library_class_methods` ([§4.8]'s
+    // first member sentence), and static members keep their generics (they do
+    // not depend on the receiver's type arguments).
+    //
+    // Declaration enumerations (`declaration`, the `all_methods` walks of
+    // `decl_check`) keep the declared supertypes: their receiver is the class
+    // under its own declaration (`Ty::reference(fqn, Vec::new())`), and
+    // [§8.4.8.1]/[§9.4.1.2] override-equivalence compares members as declared,
+    // substituted over the class's own type parameters.
+    let mut stack: Vec<(Ty, bool)> = match receiver.kind(db) {
         TyKind::TypeVar { bounds, .. } if bounds.is_empty() => {
-            vec![Ty::reference(db, "java.lang.Object", Vec::new())]
+            vec![(Ty::reference(db, "java.lang.Object", Vec::new()), false)]
         }
-        TyKind::TypeVar { bounds, .. } => bounds.to_vec(),
-        TyKind::Intersection(members) => members.clone(),
-        _ => vec![receiver],
+        TyKind::TypeVar { bounds, .. } => bounds.iter().map(|bound| (*bound, false)).collect(),
+        TyKind::Intersection(members) => members.iter().map(|member| (*member, false)).collect(),
+        _ => vec![(receiver, false)],
     };
     let mut seen: FxHashSet<TyData> = FxHashSet::default();
     let mut out = Vec::new();
-    while let Some(ty) = stack.pop() {
+    while let Some((ty, erased)) = stack.pop() {
         if !seen.insert(ty.id) {
             continue;
         }
@@ -597,7 +629,7 @@ fn member_set_impl(
         // `TypeVar` bound that is itself `A & B`) contributes every member.
         if let TyKind::Intersection(members) = ty.kind(db) {
             for member in members.clone() {
-                stack.push(member);
+                stack.push((member, erased));
             }
             continue;
         }
@@ -617,29 +649,9 @@ fn member_set_impl(
                         && (declaration || static_interface_owner_ok(method))
                 }),
         );
+        let raws = !declaration && (erased || is_raw_use(db, scope, &ty));
         for parent in supertypes_query(db, scope_id, ty.id) {
-            stack.push(parent);
-        }
-    }
-    // JLS §4.8: a *raw* receiver (a generic class used without type arguments,
-    // e.g. `CheckContainer` or `ListBinaryTag.Builder`) erases the signatures
-    // of its *instance* members — including members inherited through a
-    // parameterized supertype (`ArrayList<Check<T>>`, `ListTagSetter<...>`).
-    // The per-class `is_raw` erasure in `source_class_methods` /
-    // `library_class_methods` only erases members *declared* in the raw class
-    // itself; an inherited `add(Check<T>)` keeps its type variable and rejects
-    // the `Check<?>` actual. Erasing here gives the raw `add(Object)` javac
-    // resolves. Static members keep their generics (they do not depend on the
-    // receiver). Declaration enumerations (`name == ""`, the `all_methods`
-    // walks of `decl_check`) keep the parameterized supertypes — override
-    // checks compare through them — so only specific lookups erase.
-    if !name.is_empty() && is_raw_receiver(db, scope, &receiver) {
-        for method in &mut out {
-            if !method.is_static {
-                method.params = method.params.iter().map(|p| p.erasure(db)).collect();
-                method.ret = method.ret.erasure(db);
-                method.throws = method.throws.iter().map(|t| t.erasure(db)).collect();
-            }
+            stack.push((if raws { parent.erasure(db) } else { parent }, raws));
         }
     }
     // §8.4.8: a member whose result type is the class's own *SELF* type
@@ -792,13 +804,14 @@ fn member_set_impl(
     deduped
 }
 
-/// Whether `receiver` is a *raw* use of a generic class ([JLS §4.8]): a
-/// reference type with no type arguments whose class declares type parameters
-/// (`CheckContainer` with `CheckContainer<T>`, `ListBinaryTag.Builder` with
-/// `Builder<T>`). A non-generic class (`String`) or a parameterized use
+/// Whether `receiver` is a *raw* use of a generic class
+/// ([JLS §4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)):
+/// a reference type with no type arguments whose class declares type
+/// parameters (`CheckContainer` with `CheckContainer<T>`, `ListBinaryTag.Builder`
+/// with `Builder<T>`). A non-generic class (`String`) or a parameterized use
 /// (`List<String>`) is not raw, even with empty args in the latter's case the
 /// args are present.
-fn is_raw_receiver(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) -> bool {
+fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) -> bool {
     let crate::java::ty::TyKind::Reference { name, args } = receiver.kind(db) else {
         return false;
     };

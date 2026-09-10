@@ -198,3 +198,176 @@ class Body {
     )])
 );
 // Green: the raw element type of every dimension converts unchecked.
+
+// -- JLS §4.8: "The type of an inherited instance method or non-static field
+// of a raw type C, where the member was declared in a class or interface D,
+// is the type of the member in the supertype of C that names D."
+//
+// The receiving supertype is the *declared one*: `Base` is non-generic, so
+// its `items()` keeps `List<String>` even though the raw `Sub<T>` receiver
+// erased the edges on the way to it. javac: green.
+snapshot!(
+    raw_receiver_non_generic_super_method_keeps_type,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Base {
+    List<String> items() { return null; }
+}
+
+class Sub<T> extends Base {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items()) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8: "The superclass types (respectively, superinterface types) of
+// a raw type are the erasures of the superclass types (superinterface types)
+// of the named class or interface."
+//
+// `Gen` is declared generic, so the raw `Sub<T>` receiver names `Gen` (the
+// erasure, not `Gen<T>`) and `items()` erases to `Object`. This pins that the
+// walk above did not lose the erasure of members inherited from a generic
+// supertype. javac: error.
+snapshot!(
+    raw_receiver_generic_super_method_erased,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Gen<T> {
+    List<String> items() { return null; }
+}
+
+class Sub<T> extends Gen<T> {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items()) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8, supertype sentence, behind a non-generic intermediate:
+// `Mid extends Gen<String>` — the raw `Sub<T>` receiver erases `Sub`'s edge
+// to `Mid`, and the erasure context stays on (erasure is monotone), so
+// `Mid`'s edge to the generic `Gen` is the erasure `Gen` too. `items()` is
+// declared in `Gen`, so it erases to `Object`. javac: error.
+snapshot!(
+    raw_receiver_generic_super_behind_non_generic_intermediate,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Gen<T> {
+    List<String> items() { return null; }
+}
+
+class Mid extends Gen<String> {
+}
+
+class Sub<T> extends Mid {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items()) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8, inherited-member sentence, generics on the path but not in the
+// declarer: `Mid<T> extends Base` and the raw `Sub<T>` receiver reaches
+// `Base` through the erased `Mid`; `Base` is non-generic, so `items()` keeps
+// its declared `List<String>` and the loop is assignable. javac: green.
+snapshot!(
+    raw_receiver_non_generic_declarer_behind_generic_intermediate,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Base {
+    List<String> items() { return null; }
+}
+
+class Mid<T> extends Base {
+}
+
+class Sub<T> extends Mid<T> {
+}
+
+class Body {
+    void m(Sub s) {
+        for (String x : s.items()) {
+        }
+    }
+}
+",
+    )])
+);
+
+// -- JLS §4.8 via §4.4: a type variable whose bound is a raw type is itself
+// raw for member lookup — the bound `RawSub` is a raw use, so the member
+// lookup through it erases the inherited `items()` from `Gen`. Both the
+// bound-receiver call and the direct raw `new RawSub()` receiver report.
+// javac: error on each line.
+snapshot!(
+    raw_type_variable_bound_method_erased,
+    check_body_types(&[(
+        "/src/com/example/Raw.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Gen<T> {
+    List<String> items() { return null; }
+}
+
+class Mid extends Gen<String> {
+}
+
+class RawSub<T> extends Mid {
+}
+
+class Body {
+    <X extends RawSub> void m(X x) {
+        for (String y : x.items()) {
+        }
+    }
+
+    void directRaw() {
+        for (String y : new RawSub().items()) {
+        }
+    }
+}
+",
+    )])
+);

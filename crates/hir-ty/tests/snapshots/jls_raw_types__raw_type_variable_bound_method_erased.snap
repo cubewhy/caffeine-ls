@@ -1,0 +1,42 @@
+---
+source: crates/hir-ty/tests/jls_raw_types.rs
+expression: out
+---
+FILE /src/com/example/Raw.java:
+package com.example;
+
+import java.util.List;
+
+class Gen<T> {
+    List<String> items() { return null; }
+}
+
+class Mid extends Gen<String> {
+}
+
+class RawSub<T> extends Mid {
+}
+
+class Body {
+    <X extends RawSub> void m(X x) {
+        for (String y : x.items()) {
+        }
+    }
+
+    void directRaw() {
+        for (String y : new RawSub().items()) {
+        }
+    }
+}
+
+method items(): java.util.List<java.lang.String>
+  locals: 
+  exprs: e0: null
+method m(X): void
+  locals: l0: X | l1: java.lang.String
+  exprs: e1: X | e2: java.util.List
+  diags: e2@16:24: incompatible-types: Incompatible types. Found: 'Object', required: 'String'
+method directRaw(): void
+  locals: l2: java.lang.String
+  exprs: e3: com.example.RawSub | e4: java.util.List
+  diags: e4@21:24: incompatible-types: Incompatible types. Found: 'Object', required: 'String'
