@@ -11,4 +11,4 @@ class A {
     }
 }
 
-@4:12: feature-not-supported-in-source-level: unnamed variables are not supported in -source 21 (use -source 22 or higher to enable unnamed variables)
+@4:12: feature-not-supported-in-source-level: unnamed variables are not supported in source level 21 (use source level 22 or higher to enable unnamed variables)

@@ -11,4 +11,4 @@ class A {
     }
 }
 
-@4:15: feature-not-supported-in-source-level: reifiable types in instanceof are not supported in -source 15 (use -source 16 or higher to enable reifiable types in instanceof)
+@4:15: feature-not-supported-in-source-level: reifiable types in instanceof are not supported in source level 15 (use source level 16 or higher to enable reifiable types in instanceof)

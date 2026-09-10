@@ -14,4 +14,4 @@ class A {
     }
 }
 
-@6:25: feature-not-supported-in-source-level: deconstruction patterns are not supported in -source 20 (use -source 21 or higher to enable deconstruction patterns)
+@6:25: feature-not-supported-in-source-level: deconstruction patterns are not supported in source level 20 (use source level 21 or higher to enable deconstruction patterns)

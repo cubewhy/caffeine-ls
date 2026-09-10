@@ -12,4 +12,4 @@ class A {
     }
 }
 
-@4:12: feature-not-supported-in-source-level: pattern matching in instanceof is not supported in -source 15 (use -source 16 or higher to enable pattern matching in instanceof)
+@4:12: feature-not-supported-in-source-level: pattern matching in instanceof is not supported in source level 15 (use source level 16 or higher to enable pattern matching in instanceof)

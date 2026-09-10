@@ -14,4 +14,4 @@ class A {
     }
 }
 
-@4:21: feature-not-supported-in-source-level: '<>' with anonymous inner classes is not supported in -source 8 (use -source 9 or higher to enable '<>' with anonymous inner classes)
+@4:21: feature-not-supported-in-source-level: '<>' with anonymous inner classes is not supported in source level 8 (use source level 9 or higher to enable '<>' with anonymous inner classes)

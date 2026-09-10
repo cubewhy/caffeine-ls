@@ -12,4 +12,4 @@ class A {
     }
 }
 
-@4:13: feature-not-supported-in-source-level: variables in try-with-resources are not supported in -source 8 (use -source 9 or higher to enable variables in try-with-resources)
+@4:13: feature-not-supported-in-source-level: variables in try-with-resources are not supported in source level 8 (use source level 9 or higher to enable variables in try-with-resources)

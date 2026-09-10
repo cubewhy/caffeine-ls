@@ -11,4 +11,4 @@ interface I {
     }
 }
 
-@3:4: feature-not-supported-in-source-level: private interface methods are not supported in -source 8 (use -source 9 or higher to enable private interface methods)
+@3:4: feature-not-supported-in-source-level: private interface methods are not supported in source level 8 (use source level 9 or higher to enable private interface methods)

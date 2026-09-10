@@ -39,7 +39,7 @@ snapshot!(
     records_at_15_is_reported,
     check_level_diagnostics(level(15), RECORD)
 );
-// Red: `records are not supported in -source 15 (use -source 16 or higher to
+// Red: `records are not supported in source level 15 (use source level 16 or higher to
 // enable records)`.
 
 snapshot!(
@@ -67,7 +67,7 @@ snapshot!(
     text_blocks_at_14_are_reported,
     check_level_diagnostics(level(14), TEXT_BLOCK)
 );
-// Red: `text blocks are not supported in -source 14` (plural wording).
+// Red: `text blocks are not supported in source level 14` (plural wording).
 
 snapshot!(
     text_blocks_at_15_are_legal,
@@ -96,7 +96,7 @@ snapshot!(
     switch_rules_at_13_are_reported,
     check_level_diagnostics(level(13), SWITCH_RULE)
 );
-// Red: `switch rules are not supported in -source 13`; `multiple case labels`
+// Red: `switch rules are not supported in source level 13`; `multiple case labels`
 // is swallowed, because the rule containing it is reported first.
 
 snapshot!(
@@ -124,7 +124,7 @@ snapshot!(
     switch_expressions_at_13_are_reported,
     check_level_diagnostics(level(13), SWITCH_EXPR)
 );
-// Red: `switch expressions are not supported in -source 13`.
+// Red: `switch expressions are not supported in source level 13`.
 
 snapshot!(
     switch_expressions_at_14_are_legal,
@@ -180,7 +180,7 @@ snapshot!(
     private_interface_method_at_8_is_reported,
     check_level_diagnostics(level(8), PRIVATE_INTERFACE_METHOD)
 );
-// Red: `private interface methods are not supported in -source 8`.
+// Red: `private interface methods are not supported in source level 8`.
 
 snapshot!(
     private_interface_method_at_9_is_legal,
@@ -226,7 +226,7 @@ snapshot!(
     var_at_9_is_reported,
     check_level_diagnostics(level(9), VAR_LOCAL)
 );
-// Red: `local variable type inference is not supported in -source 9` (javac has
+// Red: `local variable type inference is not supported in source level 9` (javac has
 // no fragment for this row and reports a plain "cannot find symbol" instead).
 
 snapshot!(
@@ -275,7 +275,7 @@ snapshot!(
     var_lambda_at_10_is_reported,
     check_level_diagnostics(level(10), VAR_LAMBDA)
 );
-// Red: `var syntax in implicit lambdas are not supported in -source 10` — the
+// Red: `var syntax in implicit lambdas are not supported in source level 10` — the
 // plural wording of javac's own `DiagKind`.
 
 snapshot!(
@@ -303,7 +303,7 @@ snapshot!(
     instanceof_pattern_at_15_is_reported,
     check_level_diagnostics(level(15), INSTANCEOF_PATTERN)
 );
-// Red: `pattern matching in instanceof is not supported in -source 15` — the
+// Red: `pattern matching in instanceof is not supported in source level 15` — the
 // singular wording (javac's `DiagKind.NORMAL`).
 
 snapshot!(
@@ -333,7 +333,7 @@ snapshot!(
     sealed_at_16_is_reported,
     check_level_diagnostics(level(16), SEALED)
 );
-// Red: `sealed classes are not supported in -source 16` once for the `sealed`
+// Red: `sealed classes are not supported in source level 16` once for the `sealed`
 // declaration — its `permits` clause is part of the same construct, not a
 // second report — and once for the `non-sealed` modifier of `Free`.
 
@@ -364,7 +364,7 @@ snapshot!(
     case_null_at_20_is_reported,
     check_level_diagnostics(level(20), CASE_NULL)
 );
-// Red: `null in switch cases is not supported in -source 20`. javac names the
+// Red: `null in switch cases is not supported in source level 20`. javac names the
 // pattern switch instead when the selector type is itself not a valid
 // pre-21 switch type (`switch (o)` over `Object`), which is a *type* test a
 // syntax walk cannot make; the label's own row is a real 21 error either way.
@@ -396,7 +396,7 @@ class A {
         )]
     )
 );
-// Red: `patterns in switch statements are not supported in -source 20`.
+// Red: `patterns in switch statements are not supported in source level 20`.
 
 // -- deconstruction patterns: 20 red, 21 green ---------------------------------
 
@@ -474,7 +474,7 @@ snapshot!(
     unnamed_local_at_21_is_reported,
     check_level_diagnostics(level(21), UNNAMED_LOCAL)
 );
-// Red: `unnamed variables are not supported in -source 21`.
+// Red: `unnamed variables are not supported in source level 21`.
 
 snapshot!(
     unnamed_local_at_22_is_legal,
@@ -568,7 +568,7 @@ snapshot!(
     primitive_pattern_below_21_with_preview_is_reported,
     check_level_diagnostics(preview(20), PRIMITIVE_PATTERN)
 );
-// Red: `patterns in switch statements are not supported in -source 20` — the
+// Red: `patterns in switch statements are not supported in source level 20` — the
 // enclosing pattern switch, reported before the preview-disabled pattern inside.
 
 // -- unconditional patterns in instanceof: 20 red, 21 green -------------------
@@ -590,7 +590,7 @@ snapshot!(
     unconditional_pattern_at_20_is_reported,
     check_level_diagnostics(level(20), UNCONDITIONAL_PATTERN)
 );
-// Red: `unconditional patterns in instanceof are not supported in -source 20` —
+// Red: `unconditional patterns in instanceof are not supported in source level 20` —
 // a `String` is always an `Object`, which is the only shape a syntax walk can
 // prove unconditional.
 
@@ -686,7 +686,7 @@ snapshot!(
     modules_at_8_are_reported,
     check_level_diagnostics(level(8), MODULE)
 );
-// Red: `modules are not supported in -source 8`.
+// Red: `modules are not supported in source level 8`.
 
 snapshot!(
     modules_at_9_are_legal,
@@ -715,7 +715,7 @@ snapshot!(
     diamond_anonymous_at_8_is_reported,
     check_level_diagnostics(level(8), DIAMOND_ANONYMOUS)
 );
-// Red: `'<>' with anonymous inner classes is not supported in -source 8` — the
+// Red: `'<>' with anonymous inner classes is not supported in source level 8` — the
 // singular wording, and javac's quoting of the operator.
 
 snapshot!(
@@ -763,7 +763,7 @@ snapshot!(
     try_resource_variable_at_8_is_reported,
     check_level_diagnostics(level(8), TRY_RESOURCE_VARIABLE)
 );
-// Red: `variables in try-with-resources are not supported in -source 8`.
+// Red: `variables in try-with-resources are not supported in source level 8`.
 
 snapshot!(
     try_resource_variable_at_9_is_legal,
@@ -810,7 +810,7 @@ snapshot!(
     reifiable_instanceof_at_15_is_reported,
     check_level_diagnostics(level(15), REIFIABLE_INSTANCEOF)
 );
-// Red: `reifiable types in instanceof are not supported in -source 15`.
+// Red: `reifiable types in instanceof are not supported in source level 15`.
 
 snapshot!(
     reifiable_instanceof_at_16_is_legal,
@@ -848,7 +848,7 @@ snapshot!(
 // Red then green: an editor pulls diagnostics as soon as a document is opened,
 // which happens before the build system reports the project. That early report
 // must not be memoized as "no level" for the rest of the session — `var` at
-// `-source 8` is reported once the load lands.
+// source level 8 is reported once the load lands.
 
 // -- an unknown level disables the whole report --------------------------------
 

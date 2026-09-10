@@ -12,5 +12,5 @@ sealed class A permits B {
 final class C extends A {
 }
 
-@2:0: feature-not-supported-in-source-level: sealed classes are not supported in -source 15 (use -source 17 or higher to enable sealed classes)
-@3:4: feature-not-supported-in-source-level: records are not supported in -source 15 (use -source 16 or higher to enable records)
+@2:0: feature-not-supported-in-source-level: sealed classes are not supported in source level 15 (use source level 17 or higher to enable sealed classes)
+@3:4: feature-not-supported-in-source-level: records are not supported in source level 15 (use source level 16 or higher to enable records)

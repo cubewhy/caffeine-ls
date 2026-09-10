@@ -22,4 +22,4 @@ class A {
     }
 }
 
-@4:8: feature-not-supported-in-source-level: local variable type inference is not supported in -source 8 (use -source 10 or higher to enable local variable type inference)
+@4:8: feature-not-supported-in-source-level: local variable type inference is not supported in source level 8 (use source level 10 or higher to enable local variable type inference)

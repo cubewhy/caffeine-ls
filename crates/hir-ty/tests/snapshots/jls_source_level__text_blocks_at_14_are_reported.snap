@@ -11,4 +11,4 @@ class A {
         """;
 }
 
-@3:15: feature-not-supported-in-source-level: text blocks are not supported in -source 14 (use -source 15 or higher to enable text blocks)
+@3:15: feature-not-supported-in-source-level: text blocks are not supported in source level 14 (use source level 15 or higher to enable text blocks)
