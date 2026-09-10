@@ -175,13 +175,45 @@ impl Inference {
                         // arm and give `α` an `Object` lower bound
                         // incompatible with `T extends NBT`, rejecting the
                         // constructor.
-                        let captured = crate::java::ty::capture_conversion(db, scope, *s);
+                        // §4.5.1: an *unbounded* wildcard source argument
+                        // contains every type argument, so against a target
+                        // argument that is itself a type variable — the `?`
+                        // of the enclosing formal, standing as its capture —
+                        // it constrains nothing at all. Capturing the source
+                        // first would compare two distinct capture variables
+                        // for equality and reject the invocation:
+                        // `Collectors.collectingAndThen(Collectors.toCollection(…), …)`
+                        // relates `Collector<T, ?, C>` to the enclosing
+                        // `<T2, A2, R2>` formals, whose middle argument is the
+                        // capture of the enclosing target's own `?`.
+                        let unbounded_against_var =
+                            sa.iter().zip(ta.iter()).any(|(s_arg, t_arg)| {
+                                matches!(s_arg.kind(db), TyKind::Wildcard(None))
+                                    && matches!(t_arg.kind(db), TyKind::TypeVar { .. })
+                            });
+                        let captured = if unbounded_against_var {
+                            *s
+                        } else {
+                            crate::java::ty::capture_conversion(db, scope, *s)
+                        };
                         if captured != *s {
                             worklist.push_back(Constraint::Sub(captured, *t));
                             return true;
                         }
                     }
                     for (s_arg, t_arg) in sa.iter().zip(ta.iter()) {
+                        // §4.5.1: `? <= T` holds for every type argument `T`,
+                        // so an unbounded wildcard source argument against a
+                        // *type variable* — the enclosing formal's `?`, or its
+                        // capture — constrains nothing. Queuing it would send
+                        // the wildcard through the source-wildcard reduction
+                        // (which substitutes its minimum, `Object`) and reject
+                        // the pair.
+                        if matches!(s_arg.kind(db), TyKind::Wildcard(None))
+                            && matches!(t_arg.kind(db), TyKind::TypeVar { .. })
+                        {
+                            continue;
+                        }
                         if s_arg.is_wildcard(db) {
                             worklist.push_back(Constraint::Sub(*s_arg, *t_arg));
                         } else {
@@ -304,9 +336,30 @@ impl Inference {
                 }
                 true
             }
-            // §18.2.3: a wildcard source against a concrete target argument is
-            // not contained.
-            (TyKind::Wildcard(_), _) => false,
+            // §4.5.1: containment of a wildcard *source* by a non-wildcard
+            // target argument — an inference variable, under §18.2.2's
+            // per-argument reduction, or a concrete type argument.
+            //   `? <= T`            holds for every `T`: the unbounded
+            //                       wildcard contains every type argument
+            //                       ([§4.5.1]), so it constrains nothing;
+            //   `? extends S' <= T` is `S' <: T`;
+            //   `? super S' <= T`   is `T <: S'`.
+            // Without the first rule a source wildcard argument against an
+            // *inference variable* rejected the candidate outright:
+            // `Collectors.collectingAndThen(Collectors.toCollection(…), …)`
+            // relates `Collector<T, ?, C>` to the enclosing `<T2, A2, R2>`
+            // formals, and the middle argument (`?`) meets the variable `A2`.
+            (TyKind::Wildcard(None), _) => true,
+            (TyKind::Wildcard(Some(bound)), _) => match bound.kind {
+                BoundKind::Upper => {
+                    worklist.push_back(Constraint::Sub(bound.ty, *t));
+                    true
+                }
+                BoundKind::Lower => {
+                    worklist.push_back(Constraint::Sub(*t, bound.ty));
+                    true
+                }
+            },
             _ => false,
         }
     }

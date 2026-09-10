@@ -168,7 +168,7 @@ impl InferCtx<'_> {
             let mut deferred = Vec::new();
             // The probe is speculative: diagnostics inside the argument
             // expressions are discarded, matching javac's overload resolution.
-            if let Some(invocation) = self.with_probing(|this| {
+            let probed = self.with_probing(|this| {
                 this.try_candidate(
                     &mut inference,
                     member,
@@ -181,7 +181,8 @@ impl InferCtx<'_> {
                     &mut deferred,
                     true,
                 )
-            }) {
+            });
+            if let Some(invocation) = probed {
                 applicable.push((member.clone(), invocation, deferred));
             }
         }

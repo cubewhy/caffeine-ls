@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Audiences.java:
+package com.example;
+
+import java.util.ArrayList;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+
+interface Audience {}
+
+class ForwardingAudience implements Audience {}
+
+class Audiences {
+    static final Collector<? super Audience, ?, ForwardingAudience> COLLECTOR =
+        Collectors.collectingAndThen(
+            Collectors.toCollection(ArrayList::new),
+            var0 -> new ForwardingAudience());
+}
+
+field COLLECTOR
+  locals: 
+  exprs: e1: java.util.function.Supplier<java.util.ArrayList> | e3: java.util.stream.Collector<java.lang.Object, ?, java.util.ArrayList> | e4: com.example.ForwardingAudience | e5: java.util.function.Function<? super java.util.ArrayList, ? extends com.example.ForwardingAudience> | e7: java.util.stream.Collector<java.lang.Object, CAP#0, com.example.ForwardingAudience>

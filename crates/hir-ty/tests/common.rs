@@ -1003,15 +1003,30 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             "java/util/stream/Collectors",
             Some("java/lang/Object"),
             &[],
-            &[("toList", "()Ljava/util/stream/Collector;")],
+            &[
+                ("toList", "()Ljava/util/stream/Collector;"),
+                // The two factories whose *nested* use relates a
+                // `Collector<T, ?, C>` result to the enclosing invocation's
+                // own type variables ([§18.2.2]).
+                (
+                    "toCollection",
+                    "(Ljava/util/function/Supplier;)Ljava/util/stream/Collector;",
+                ),
+                (
+                    "collectingAndThen",
+                    "(Ljava/util/stream/Collector;Ljava/util/function/Function;)Ljava/util/stream/Collector;",
+                ),
+            ],
             &[
                 // Real classfile shape (JVMS §4.7.9.1): the accumulator
                 // position is an unbounded wildcard (`*`, no bound), so
                 // inference must contain `α = ?` when reducing
                 // ⟨Collector<T,?,List<T>> → Collector<? super T,A,R⟩.
                 "<T:Ljava/lang/Object;>()Ljava/util/stream/Collector<TT;*Ljava/util/List<TT;>;>;",
+                "<T:Ljava/lang/Object;C::Ljava/util/Collection<TT;>;>(Ljava/util/function/Supplier<TC;>;)Ljava/util/stream/Collector<TT;*TC;>;",
+                "<T:Ljava/lang/Object;A:Ljava/lang/Object;R:Ljava/lang/Object;RR:Ljava/lang/Object;>(Ljava/util/stream/Collector<TT;TA;TR;>;Ljava/util/function/Function<-TR;+TRR;>;)Ljava/util/stream/Collector<TT;TA;TRR;>;",
             ],
-            &[0x0009], // ACC_PUBLIC | ACC_STATIC
+            &[0x0009, 0x0009, 0x0009], // ACC_PUBLIC | ACC_STATIC
         ),
         // The primitive-array `equals` overloads plus the generic and
         // primitive `copyOf` forms, in real-classfile order, so overload

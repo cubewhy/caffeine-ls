@@ -310,3 +310,37 @@ class Chain {
 ",
     )])
 );
+
+// -- §4.5.1/§18.2.2: an unbounded wildcard argument contains a variable ------
+// `collectingAndThen(toCollection(ArrayList::new), …)` relates the nested
+// call's `Collector<T, ?, C>` to the enclosing `<T2, A2, R2>` formals. The
+// middle argument `?` meets a target argument that is itself a type variable
+// (the enclosing target's own `?`, standing as its capture); §4.5.1 makes
+// `? <= T` hold for every `T`, so the pair constrains nothing. Capturing the
+// source first compared two distinct capture variables for equality and
+// rejected the nested invocation. javac accepts the declaration.
+
+snapshot!(
+    unbounded_wildcard_argument_against_enclosing_variable,
+    check_body_types(&[(
+        "/src/com/example/Audiences.java",
+        "\
+package com.example;
+
+import java.util.ArrayList;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+
+interface Audience {}
+
+class ForwardingAudience implements Audience {}
+
+class Audiences {
+    static final Collector<? super Audience, ?, ForwardingAudience> COLLECTOR =
+        Collectors.collectingAndThen(
+            Collectors.toCollection(ArrayList::new),
+            var0 -> new ForwardingAudience());
+}
+",
+    )])
+);
