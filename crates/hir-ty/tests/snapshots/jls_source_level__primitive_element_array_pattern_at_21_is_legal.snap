@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_source_level.rs
+expression: out
+---
+FILE /src/com/example/PrimitiveArray.java:
+package com.example;
+
+class A {
+    boolean m(Object o) {
+        boolean a = o instanceof byte[] bytes && bytes.length > 0;
+        boolean b = o instanceof byte[][] rows;
+        boolean c = o instanceof int[] numbers;
+        return a && b && c;
+    }
+}

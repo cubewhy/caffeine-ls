@@ -29,6 +29,11 @@
 //!   reference expression type. Patterns that are unconditional for another
 //!   reason (`String s; s instanceof String t`) stay unreported rather than
 //!   risk reporting a conditional pattern.
+//! - `primitive patterns` classifies by the pattern's *resolved* type kind:
+//!   JLS §4.3 makes an array type a reference type, so a pattern declaring
+//!   one — `o instanceof byte[] bytes`, whose element type is primitive — is
+//!   an ordinary type pattern ([§14.30.1]), never the preview primitive
+//!   pattern.
 //! - `primitive patterns` is not reported for a nested component of a record
 //!   pattern (`case Point(int x, int y)`), which javac accepts even below 23
 //!   whenever the component type is the same primitive
@@ -487,9 +492,21 @@ fn is_bare_var_type(node: &SyntaxNode<Lang>) -> bool {
         && tokens.next().is_none()
 }
 
-/// The first non-trivia token of a pattern's declared type.
+/// The first non-trivia token of a pattern's declared *primitive* type:
+/// `None` when the pattern declares no type, or declares an array type.
+///
+/// JLS §4.3: an array type is a reference type however primitive its element
+/// type is, so `o instanceof byte[] bytes` is an ordinary type pattern
+/// ([§14.30.1]) and only a pattern whose *type* is primitive is the preview
+/// primitive pattern. The parser emits `byte[]` as one `TYPE` node holding
+/// `[BYTE_KW, DIMENSIONS]` (see `types.rs`), so the first token alone cannot
+/// distinguish `byte[]` from `byte`; a `DIMENSIONS` child — one node for any
+/// number of `[]` pairs — rules the type out entirely.
 fn first_type_token(node: &SyntaxNode<Lang>) -> Option<SyntaxToken<Lang>> {
     let ty = node.children().find(|child| child.kind() == J::TYPE)?;
+    if ty.children().any(|child| child.kind() == J::DIMENSIONS) {
+        return None;
+    }
     ty.descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .find(|token| !token.kind().is_trivia())

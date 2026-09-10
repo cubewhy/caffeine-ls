@@ -571,6 +571,32 @@ snapshot!(
 // Red: `patterns in switch statements are not supported in source level 20` — the
 // enclosing pattern switch, reported before the preview-disabled pattern inside.
 
+// §4.3/[§14.30.1]: an array type is a *reference* type, so a type pattern
+// declaring one — however primitive its element type — is an ordinary type
+// pattern and never the preview primitive pattern. `byte[]`, `byte[][]` and
+// `int[]` are all legal at a level without preview.
+
+const PRIMITIVE_ELEMENT_ARRAY: &[(&str, &str)] = &[(
+    "/src/com/example/PrimitiveArray.java",
+    "\
+package com.example;
+
+class A {
+    boolean m(Object o) {
+        boolean a = o instanceof byte[] bytes && bytes.length > 0;
+        boolean b = o instanceof byte[][] rows;
+        boolean c = o instanceof int[] numbers;
+        return a && b && c;
+    }
+}
+",
+)];
+
+snapshot!(
+    primitive_element_array_pattern_at_21_is_legal,
+    check_level_diagnostics(level(21), PRIMITIVE_ELEMENT_ARRAY)
+);
+
 // -- unconditional patterns in instanceof: 20 red, 21 green -------------------
 
 const UNCONDITIONAL_PATTERN: &[(&str, &str)] = &[(
