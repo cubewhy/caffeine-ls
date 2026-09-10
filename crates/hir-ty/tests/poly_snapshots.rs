@@ -1083,3 +1083,59 @@ class R {
 ",
     )])
 );
+
+// -- §15.9.3/§15.27.3: a diamond inside a lambda body is a poly expression --
+// The lambda's body is a diamond whose class type variable must join the
+// *enclosing* invocation's inference (`REGISTRY.define(name, d -> new
+// StaticEnvironmentAttribute<>(d, false, null, null))` against
+// `<Z extends T> Z define(String, Function<D, Z>)`). With the class variable
+// attributed privately the body's type is frozen at `StaticEnvironmentAttribute
+// <Object>` before the enclosing bounds arrive, and the SAM-return constraint
+// conflicts with `Z`'s upper bound instead of relating the class variable to
+// it. javac infers `Z := StaticEnvironmentAttribute<T>` and accepts the call.
+
+snapshot!(
+    diamond_in_lambda_body_null_args,
+    check_body_types(&[(
+        "/src/com/example/Reg.java",
+        "\
+package com.example;
+
+import java.util.function.Function;
+
+class Data {}
+
+class Range {
+    static final Range ALL = new Range();
+}
+
+interface MappedEntity {}
+
+interface EnvironmentAttribute<E> extends MappedEntity {}
+
+class AttributeType<E> {}
+
+class StaticEnvironmentAttribute<E> implements EnvironmentAttribute<E> {
+    StaticEnvironmentAttribute(Data d, boolean synced, AttributeType<E> type, E def) {}
+}
+
+class Registry<T> {
+    <Z extends T> Z define(String name, Function<Data, Z> f) {
+        return null;
+    }
+
+    <Z extends T> Z define(String name, Range range, Function<Data, Z> f) {
+        return define(name, f);
+    }
+}
+
+class Reg {
+    static final Registry<MappedEntity> REGISTRY = new Registry<>();
+
+    static <T> EnvironmentAttribute<T> defineUnsynced(String name) {
+        return REGISTRY.define(name, d -> new StaticEnvironmentAttribute<>(d, false, null, null));
+    }
+}
+",
+    )])
+);

@@ -823,9 +823,33 @@ impl InferCtx<'_> {
                     // without contributing a return-type constraint": the
                     // early-out moved below the congruence rejection above, so
                     // a result-less body is still classified.
-                    let Some(body_ty) = body_inference.result else {
+                    let Some(mut body_ty) = body_inference.result else {
                         return true;
                     };
+                    // §15.9.3/§15.27.3: a lambda body that *is* a diamond
+                    // `new C<>(...)` is a poly expression itself, so the
+                    // created class's type variables belong to this
+                    // invocation's table ([§18.5.2.4]), exactly as for a
+                    // diamond written directly as an argument. Attributed in a
+                    // private table they are frozen before the enclosing
+                    // bounds arrive: the SAM-return constraint sees
+                    // `C<Object>`, whose implied-bound walk cannot relate the
+                    // class's type variable to the enclosing one, and the
+                    // invocation is rejected
+                    // (`define(name, d -> new StaticEnvironmentAttribute<>(d,
+                    // false, null, null))` against `<Z> Z define(String,
+                    // Function<D, Z>)` returning `EnvironmentAttribute<T>`).
+                    if let LambdaBody::Expr(expr) = body
+                        && matches!(self.tree.expr(expr), ExprData::New { diamond: true, .. })
+                        && let Some(created) = self.contribute_diamond_new(
+                            inference,
+                            expr,
+                            self.decapture(&sam.ret),
+                            phase,
+                        )
+                    {
+                        body_ty = created;
+                    }
                     // An error-typed body (a speculative probe whose
                     // parameters are still uninstantiated inference variables)
                     // constrains nothing — it must not reject the candidate.
@@ -874,9 +898,9 @@ impl InferCtx<'_> {
             // `synchronizedList(new ArrayList<>())` contributes
             // `ArrayList<α> <: List<T>`, so the target `List<String>` reaches
             // the element type.
-            ArgKind::DiamondNew { id } => {
-                self.contribute_diamond_new(inference, *id, formal, phase)
-            }
+            ArgKind::DiamondNew { id } => self
+                .contribute_diamond_new(inference, *id, formal, phase)
+                .is_some(),
         }
     }
 
@@ -887,17 +911,17 @@ impl InferCtx<'_> {
         id: ExprId,
         formal: Ty,
         phase: InvocationPhase,
-    ) -> bool {
+    ) -> Option<Ty> {
         let ExprData::New { ty, args, .. } = self.tree.expr(id).clone() else {
-            return true;
+            return None;
         };
         let class_ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &ty);
         let TyKind::Reference { name, .. } = class_ty.kind(self.db) else {
-            return true;
+            return None;
         };
         let type_params = self.class_type_param_bounds(name);
         if type_params.is_empty() {
-            return true;
+            return None;
         }
         let subst = inference.register_class_type_params(self.db, &type_params);
         // The created type with its type variables as fresh inference vars:
@@ -961,7 +985,7 @@ impl InferCtx<'_> {
         }
         // §15.9.3: the created class is compatible with the formal.
         inference.add_constraint(Constraint::Sub(created, formal));
-        true
+        Some(created)
     }
 
     /// instead of dead-ending on the captures themselves.

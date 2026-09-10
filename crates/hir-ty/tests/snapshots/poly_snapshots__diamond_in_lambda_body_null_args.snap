@@ -1,0 +1,61 @@
+---
+source: crates/hir-ty/tests/poly_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Reg.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Data {}
+
+class Range {
+    static final Range ALL = new Range();
+}
+
+interface MappedEntity {}
+
+interface EnvironmentAttribute<E> extends MappedEntity {}
+
+class AttributeType<E> {}
+
+class StaticEnvironmentAttribute<E> implements EnvironmentAttribute<E> {
+    StaticEnvironmentAttribute(Data d, boolean synced, AttributeType<E> type, E def) {}
+}
+
+class Registry<T> {
+    <Z extends T> Z define(String name, Function<Data, Z> f) {
+        return null;
+    }
+
+    <Z extends T> Z define(String name, Range range, Function<Data, Z> f) {
+        return define(name, f);
+    }
+}
+
+class Reg {
+    static final Registry<MappedEntity> REGISTRY = new Registry<>();
+
+    static <T> EnvironmentAttribute<T> defineUnsynced(String name) {
+        return REGISTRY.define(name, d -> new StaticEnvironmentAttribute<>(d, false, null, null));
+    }
+}
+
+field ALL
+  locals: 
+  exprs: e0: com.example.Range
+method StaticEnvironmentAttribute(com.example.Data, boolean, com.example.AttributeType<E>, E): <init>
+  locals: l0: com.example.Data | l1: boolean | l2: com.example.AttributeType<E> | l3: E
+  exprs: 
+method define(java.lang.String, java.util.function.Function<com.example.Data, Z>): Z
+  locals: l4: java.lang.String | l5: java.util.function.Function<com.example.Data, Z>
+  exprs: e1: null
+method define(java.lang.String, com.example.Range, java.util.function.Function<com.example.Data, Z>): Z
+  locals: l6: java.lang.String | l7: com.example.Range | l8: java.util.function.Function<com.example.Data, Z>
+  exprs: e2: java.lang.String | e3: java.util.function.Function<com.example.Data, Z> | e4: Z
+field REGISTRY
+  locals: 
+  exprs: e5: com.example.Registry<com.example.MappedEntity>
+method defineUnsynced(java.lang.String): com.example.EnvironmentAttribute<T>
+  locals: l9: java.lang.String
+  exprs: e6: java.lang.String | e7: com.example.Data | e8: boolean | e9: null | e10: null | e11: com.example.StaticEnvironmentAttribute<T> | e12: java.util.function.Function<com.example.Data, com.example.StaticEnvironmentAttribute<T>> | e13: com.example.Registry<com.example.MappedEntity> | e14: com.example.StaticEnvironmentAttribute<T>
