@@ -24,6 +24,20 @@ use super::{
     poly::{ApplicableCandidate, ArgInfo, ArgKind, MethodRefKind, poly_arity, poly_leaves},
 };
 
+/// The outcome of the speculative lambda-body inference: the body's result
+/// type ([§18.5.2.2]) and the §15.27.2 flow fact the §15.12.2.1 potential
+/// compatibility test needs.
+pub(super) struct LambdaBodyInference {
+    /// The body's result type: the expression body's inferred type, or
+    /// the least upper bound of a block's valued `return` expressions.
+    /// `None` when the body has no result expression — a block without a
+    /// valued `return`, or an expression body against a `void` SAM.
+    pub(super) result: Option<Ty>,
+    /// §14.22: the block body cannot complete normally. Always `false`
+    /// for an expression body, which produces a value.
+    pub(super) cannot_complete_normally: bool,
+}
+
 impl InferCtx<'_> {
     /// argument, inferred standalone.
     pub(super) fn arg_kinds(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
@@ -333,20 +347,6 @@ impl InferCtx<'_> {
                         name,
                     } = self.tree.expr(*id).clone()
                     && !self.method_ref_congruent(qualifier, type_name.as_ref(), &name, &sam.params)
-                {
-                    return None;
-                }
-                // §15.27.3: a block lambda that is not value-compatible — no
-                // `return` statement carries a value — is congruent only with
-                // a void function result. Without this check a void body stays
-                // applicable to a value-returning target
-                // (`assertDoesNotThrow(exe, msg)` would go ambiguous against
-                // the `ThrowingSupplier` overload).
-                if arity.is_some()
-                    && let ExprData::Lambda { body, .. } = self.tree.expr(*id).clone()
-                    && !sam.ret.is_void_like(self.db)
-                    && matches!(body, LambdaBody::Block(_))
-                    && !self.lambda_block_has_value(&body)
                 {
                     return None;
                 }
@@ -779,11 +779,52 @@ impl InferCtx<'_> {
                     let Some(sam) = single_abstract_method(self.db, &self.scope, &formal) else {
                         return true;
                     };
-                    let Some(body_ty) = self.infer_lambda_body_result(*id, &params, body, &sam)
-                    else {
+                    let body_inference = self.infer_lambda_body_result(*id, &params, body, &sam);
+                    // §15.12.2.1 (potential compatibility): a lambda argument
+                    // is potentially compatible with the candidate's function
+                    // type only when its arity matches (checked in
+                    // `try_candidate`) and its body's shape matches the result
+                    // kind — a `void` result requires a statement expression
+                    // ([§14.8]) or a void-compatible block, a value result an
+                    // expression or a value-compatible block ([§15.27.2]). A
+                    // candidate that fails this test is not potentially
+                    // applicable and never reaches the most-specific test of
+                    // §15.12.2.5.
+                    //
+                    // §15.27.2: a block is void-compatible iff every `return`
+                    // in it is a bare `return;`, and value-compatible iff it
+                    // cannot complete normally ([§14.22]) and every `return`
+                    // carries a value; a block may be both (a `throw`-only
+                    // body) or neither (`{ if (b) return 1; }`).
+                    let (valued_returns, bare_returns) = match body {
+                        LambdaBody::Block(stmt) => (
+                            self.stmt_has_valued_return(stmt),
+                            self.stmt_has_bare_return(stmt),
+                        ),
+                        LambdaBody::Expr(_) => (false, false),
+                    };
+                    let statement_expression = match body {
+                        LambdaBody::Expr(expr) => {
+                            super::lambda::is_statement_expression(&self.tree, expr)
+                        }
+                        LambdaBody::Block(_) => false,
+                    };
+                    let potentially_compatible = if sam.ret.is_void_like(self.db) {
+                        statement_expression || !valued_returns
+                    } else {
+                        matches!(body, LambdaBody::Expr(_))
+                            || (!bare_returns && body_inference.cannot_complete_normally)
+                    };
+                    if !potentially_compatible {
+                        return false;
+                    }
+                    // A body with no result expression stays "applicable
+                    // without contributing a return-type constraint": the
+                    // early-out moved below the congruence rejection above, so
+                    // a result-less body is still classified.
+                    let Some(body_ty) = body_inference.result else {
                         return true;
                     };
-
                     // An error-typed body (a speculative probe whose
                     // parameters are still uninstantiated inference variables)
                     // constrains nothing — it must not reject the candidate.
@@ -966,7 +1007,7 @@ impl InferCtx<'_> {
         params: &[(Name, Option<SpannedTypeRef>, TextRange)],
         body: LambdaBody,
         sam: &MethodData,
-    ) -> Option<Ty> {
+    ) -> LambdaBodyInference {
         self.lambda_params.push(FxHashMap::default());
         for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
             let ty = match declared {
@@ -1024,6 +1065,10 @@ impl InferCtx<'_> {
         // *result* constraint; applying it to the body's *target* keeps both
         // ends of the constraint in wildcard terms.
         let body_target = self.decapture(&sam.ret);
+        // §14.22: only a *block* body can fail to complete normally; an
+        // expression body always produces a value, so the flow fact starts
+        // `false` and is overwritten by the block arm.
+        let mut cannot_complete_normally = false;
         let result = match body {
             // §15.27.2: an expression lambda's body is a poly expression
             // whose target is the SAM's return type.
@@ -1052,6 +1097,11 @@ impl InferCtx<'_> {
                 self.lambda_returns.push(Vec::new());
                 self.with_target(None, |this| this.infer_stmt(stmt));
                 let returns = self.lambda_returns.pop().unwrap_or_default();
+                // §14.22: `infer_stmt` on the block leaves `exited` set
+                // exactly when the block cannot complete normally — the flow
+                // fact §15.27.2's value-compatibility test needs. It is read
+                // here, before the function's `self.exited` restore below.
+                cannot_complete_normally = self.exited;
                 match returns.as_slice() {
                     [] => None,
                     [single] => Some(*single),
@@ -1070,7 +1120,10 @@ impl InferCtx<'_> {
         self.lambda_depth -= 1;
         self.enclosing_ret = saved_ret;
         self.lambda_params.pop();
-        result
+        LambdaBodyInference {
+            result,
+            cannot_complete_normally,
+        }
     }
 
     /// `false` when no candidate is applicable against the formal.

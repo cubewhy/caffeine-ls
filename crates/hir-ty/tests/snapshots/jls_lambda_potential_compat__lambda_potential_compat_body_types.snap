@@ -1,0 +1,115 @@
+---
+source: crates/hir-ty/tests/jls_lambda_potential_compat.rs
+expression: out
+---
+FILE /src/com/example/Gate.java:
+package com.example;
+
+class Gate {
+    interface Task {
+        void run();
+    }
+
+    interface ValueTask<T> {
+        T call() throws Exception;
+    }
+
+    static String submit(Task task) {
+        return null;
+    }
+
+    static <T> T submit(ValueTask<T> task) {
+        return null;
+    }
+
+    static void sink() {
+    }
+
+    static void emptyBlock() {
+        submit(() -> {
+        });
+    }
+
+    static void tryCatchBlock() {
+        submit(() -> {
+            try {
+                sink();
+            } catch (Throwable throwable) {
+            }
+        });
+    }
+
+    static void whileBlock(boolean flag) {
+        submit(() -> {
+            while (flag) {
+            }
+        });
+    }
+
+    static void tryFinallyBlock() {
+        submit(() -> {
+            try {
+            } finally {
+            }
+        });
+    }
+
+    static void bareReturnBlock(boolean flag) {
+        submit(() -> {
+            if (flag) {
+                return;
+            }
+        });
+    }
+
+    static Object throwOnlyBlock() {
+        return submit(() -> {
+            throw new RuntimeException();
+        });
+    }
+
+    static Object constantTrueWhile() {
+        return submit(() -> {
+            while (true) {
+            }
+        });
+    }
+
+    static Integer expressionBody() {
+        return submit(() -> 42);
+    }
+}
+
+method submit(com.example.Gate.Task): java.lang.String
+  locals: l0: com.example.Gate.Task
+  exprs: e0: null
+method submit(com.example.Gate.ValueTask<T>): T
+  locals: l1: com.example.Gate.ValueTask<T>
+  exprs: e1: null
+method sink(): void
+  locals: 
+  exprs: 
+method emptyBlock(): void
+  locals: 
+  exprs: e2: com.example.Gate.Task | e3: java.lang.String
+method tryCatchBlock(): void
+  locals: l2: java.lang.Throwable
+  exprs: e4: void | e5: com.example.Gate.Task | e6: java.lang.String
+method whileBlock(boolean): void
+  locals: l3: boolean
+  exprs: e7: boolean | e8: boolean | e9: com.example.Gate.Task | e10: java.lang.String
+method tryFinallyBlock(): void
+  locals: 
+  exprs: e11: com.example.Gate.Task | e12: java.lang.String
+method bareReturnBlock(boolean): void
+  locals: l4: boolean
+  exprs: e13: boolean | e14: boolean | e15: com.example.Gate.Task | e16: java.lang.String
+method throwOnlyBlock(): java.lang.Object
+  locals: 
+  exprs: e17: java.lang.RuntimeException | e18: com.example.Gate.ValueTask<java.lang.Object> | e19: java.lang.Object
+method constantTrueWhile(): java.lang.Object
+  locals: 
+  exprs: e20: boolean | e21: boolean | e22: com.example.Gate.ValueTask<java.lang.Object> | e23: java.lang.Object
+method expressionBody(): java.lang.Integer
+  locals: 
+  exprs: e24: int | e25: com.example.Gate.ValueTask<java.lang.Integer> | e26: java.lang.Integer

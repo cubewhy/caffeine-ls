@@ -1,0 +1,81 @@
+---
+source: crates/hir-ty/tests/jls_lambda_potential_compat.rs
+expression: out
+---
+FILE /src/com/example/Gate.java:
+package com.example;
+
+class Gate {
+    interface Task {
+        void run();
+    }
+
+    interface ValueTask<T> {
+        T call() throws Exception;
+    }
+
+    static String submit(Task task) {
+        return null;
+    }
+
+    static <T> T submit(ValueTask<T> task) {
+        return null;
+    }
+
+    static void sink() {
+    }
+
+    static void emptyBlock() {
+        submit(() -> {
+        });
+    }
+
+    static void tryCatchBlock() {
+        submit(() -> {
+            try {
+                sink();
+            } catch (Throwable throwable) {
+            }
+        });
+    }
+
+    static void whileBlock(boolean flag) {
+        submit(() -> {
+            while (flag) {
+            }
+        });
+    }
+
+    static void tryFinallyBlock() {
+        submit(() -> {
+            try {
+            } finally {
+            }
+        });
+    }
+
+    static void bareReturnBlock(boolean flag) {
+        submit(() -> {
+            if (flag) {
+                return;
+            }
+        });
+    }
+
+    static Object throwOnlyBlock() {
+        return submit(() -> {
+            throw new RuntimeException();
+        });
+    }
+
+    static Object constantTrueWhile() {
+        return submit(() -> {
+            while (true) {
+            }
+        });
+    }
+
+    static Integer expressionBody() {
+        return submit(() -> 42);
+    }
+}

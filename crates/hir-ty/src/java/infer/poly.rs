@@ -3,7 +3,7 @@
 //! argument kinds contributed to a candidate's constraint table, and the
 //! recovery that re-infers poly arguments standalone.
 
-use hir_expand::body::{BodyTree, ExprData, ExprId, LambdaBody, StmtData, StmtId};
+use hir_expand::body::{BodyTree, ExprData, ExprId, StmtData, StmtId};
 
 use crate::java::{method::MethodData, ty::Ty};
 
@@ -178,31 +178,12 @@ pub(super) fn poly_arity(tree: &BodyTree, id: ExprId) -> Option<usize> {
 }
 
 impl InferCtx<'_> {
-    /// Whether a block lambda is value-compatible — its body cannot complete
-    /// normally and every `return` carries a value
-    /// ([JLS §15.27.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27.3),
-    /// [§14.17](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17),
-    /// [§14.22](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.22)):
-    /// a `throw`-only body (`var0 -> { throw ...; }`) never completes normally,
-    /// so it is value-compatible even though no `return` carries a value — and
-    /// likewise void-compatible, so it targets either function type. A block
-    /// without any valued `return` that *can* complete normally is only
-    /// void-compatible, so it cannot target a value-returning SAM.
-    pub(super) fn lambda_block_has_value(&self, body: &LambdaBody) -> bool {
-        let LambdaBody::Block(stmt) = *body else {
-            // An expression lambda's value compatibility is decided against
-            // its inferred result, not syntactically.
-            return true;
-        };
-        if self.stmt_has_valued_return(stmt) {
-            return true;
-        }
-        // No valued `return`: value-compatible only when the body cannot
-        // complete normally (a `throw` that is always reached) — a bare
-        // `return;` or an empty/fall-through body stays void-only.
-        !self.stmt_has_bare_return(stmt) && !self.stmt_can_complete_normally(stmt)
-    }
-
+    /// Whether the statement contains a `return` that carries a value — the
+    /// syntactic half of §15.27.2's value-compatibility test: value-compatible
+    /// requires *every* `return` to carry a value, so a valued `return`
+    /// anywhere is evidence the body is not merely void-compatible. The scan
+    /// never descends into expressions, so a nested lambda's `return` is not
+    /// attributed to the enclosing body.
     pub(super) fn stmt_has_valued_return(&self, stmt: StmtId) -> bool {
         match self.tree.stmt(stmt).clone() {
             StmtData::Return(Some(_)) | StmtData::Yield(_) => true,
@@ -249,8 +230,10 @@ impl InferCtx<'_> {
         }
     }
 
-    /// Whether the statement contains a bare `return;` — which forbids value
-    /// compatibility ([JLS §15.27.3]: every `return` must carry a value).
+    /// Whether the statement contains a bare `return;` — the syntactic half of
+    /// §15.27.2's void-compatibility test: void-compatible requires *every*
+    /// `return` to be a bare `return;`, and forbids value compatibility, whose
+    /// every `return` must carry a value.
     pub(super) fn stmt_has_bare_return(&self, stmt: StmtId) -> bool {
         match self.tree.stmt(stmt).clone() {
             StmtData::Return(None) => true,
@@ -293,55 +276,6 @@ impl InferCtx<'_> {
                         .any(|catch| self.stmt_has_bare_return(catch.body))
                     || finally.is_some_and(|finally| self.stmt_has_bare_return(finally))
             }
-        }
-    }
-
-    /// Whether the statement can complete normally ([JLS §14.22]). A
-    /// `throw`/`return`/`break`/`continue` cannot; an empty/decl/expr/assert
-    /// can; a block can iff every statement can (an abrupt statement makes the
-    /// rest unreachable); an `if` without `else` can (the false path skips);
-    /// an `if`-`else` can iff either branch can. Loops, switches and
-    /// try-statements are conservatively assumed abrupt (cannot) — an
-    /// over-accepting approximation: it makes more lambdas value-compatible
-    /// rather than fewer, so correct code is never newly rejected.
-    pub(super) fn stmt_can_complete_normally(&self, stmt: StmtId) -> bool {
-        match self.tree.stmt(stmt).clone() {
-            StmtData::Return(_)
-            | StmtData::Throw(_)
-            | StmtData::Break(_)
-            | StmtData::Continue(_)
-            | StmtData::Yield(_) => false,
-            StmtData::Empty
-            | StmtData::Decl { .. }
-            | StmtData::Expr(_)
-            | StmtData::Assert { .. }
-            | StmtData::LocalClass { .. }
-            | StmtData::Missing => true,
-            StmtData::Block(stmts) | StmtData::DeclGroup(stmts) => {
-                if stmts.is_empty() {
-                    return true;
-                }
-                stmts
-                    .iter()
-                    .all(|stmt| self.stmt_can_complete_normally(*stmt))
-            }
-            StmtData::Labeled { stmt, .. } | StmtData::Synchronized { body: stmt, .. } => {
-                self.stmt_can_complete_normally(stmt)
-            }
-            StmtData::If { then, els, .. } => match els {
-                None => true,
-                Some(els) => {
-                    self.stmt_can_complete_normally(then) || self.stmt_can_complete_normally(els)
-                }
-            },
-            // Conservative: assume abrupt (cannot complete) so that
-            // throw-carrying bodies are accepted as value-compatible.
-            StmtData::While { .. }
-            | StmtData::DoWhile { .. }
-            | StmtData::For { .. }
-            | StmtData::ForEach { .. }
-            | StmtData::Switch { .. }
-            | StmtData::Try { .. } => false,
         }
     }
 }

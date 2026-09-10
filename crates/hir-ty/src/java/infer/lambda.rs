@@ -726,7 +726,7 @@ impl InferCtx<'_> {
 /// as the body of a *void*-compatible lambda and discard their value
 /// ([§15.27.3]); any other valued expression (`()-> "str"` for a `Runnable`)
 /// is javac's `bad return type … unexpected return value`.
-fn is_statement_expression(tree: &hir_expand::body::BodyTree, expr: ExprId) -> bool {
+pub(super) fn is_statement_expression(tree: &hir_expand::body::BodyTree, expr: ExprId) -> bool {
     match tree.expr(expr) {
         ExprData::MethodCall { .. } | ExprData::New { .. } | ExprData::Assign { .. } => true,
         ExprData::Postfix { .. } => true,
