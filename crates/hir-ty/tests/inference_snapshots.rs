@@ -274,3 +274,39 @@ class QNeg {
 ",
     )])
 );
+
+// -- §18.3.1: a nested call's variable chained through equalities ------------
+// `read`'s `R` is constrained only by an *equality chain* built from the nested
+// `self()` call: `⟨?T = Boolean⟩` and `⟨?T = ?R⟩` imply `⟨Boolean = ?R⟩`. The
+// enclosing `ofNullable` adds `⟨?R <: ?T_optional⟩` from its own formal, and
+// the receiver chain then requires `Boolean`. Resolving `?T_optional` before
+// flattening the chain leaves its bound with an inference variable, so the
+// estimate pass resolves it to `Object` and the `boolean` return fails; javac
+// accepts the call.
+
+snapshot!(
+    nested_call_result_solved_from_chained_equalities,
+    check_body_types(&[(
+        "/src/com/example/Chain.java",
+        "\
+package com.example;
+
+import java.util.Optional;
+import java.util.function.Function;
+
+class Chain {
+    static <T> Function<T, T> self() {
+        return null;
+    }
+
+    static <R> R read(String key, Function<Boolean, R> f) {
+        return null;
+    }
+
+    boolean flag() {
+        return Optional.ofNullable(read(\"x\", self())).orElse(false);
+    }
+}
+",
+    )])
+);

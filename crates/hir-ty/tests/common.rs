@@ -1252,16 +1252,21 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 // resolves against: `<T> Optional<T> of(T)` ([JLS §15.13.1]
                 // inexact reference to a generic method, whose type parameter
                 // is only potentially applicable until the enclosing
-                // invocation's joint inference instantiates it).
+                // invocation's joint inference instantiates it), and
+                // `ofNullable`, whose argument is commonly a nested generic
+                // call whose own type variable must be solved before `T` can
+                // be ([§18.2.2]).
                 ("of", "(Ljava/lang/Object;)Ljava/util/Optional;"),
+                ("ofNullable", "(Ljava/lang/Object;)Ljava/util/Optional;"),
             ],
             &[
                 "()TT;",
                 "<U:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TU;>;)Ljava/util/Optional<TU;>;",
                 "(TT;)TT;",
                 "<T:Ljava/lang/Object;>(TT;)Ljava/util/Optional<TT;>;",
+                "<T:Ljava/lang/Object;>(TT;)Ljava/util/Optional<TT;>;",
             ],
-            &[0x0001, 0x0001, 0x0001, 0x0009], // of is ACC_PUBLIC | ACC_STATIC
+            &[0x0001, 0x0001, 0x0001, 0x0009, 0x0009], // of/ofNullable are ACC_PUBLIC | ACC_STATIC
             Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
         ),
         // Constructors the explicit-`super(args)` tests resolve against

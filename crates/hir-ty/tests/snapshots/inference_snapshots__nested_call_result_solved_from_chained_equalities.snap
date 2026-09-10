@@ -1,0 +1,33 @@
+---
+source: crates/hir-ty/tests/inference_snapshots.rs
+expression: out
+---
+FILE /src/com/example/Chain.java:
+package com.example;
+
+import java.util.Optional;
+import java.util.function.Function;
+
+class Chain {
+    static <T> Function<T, T> self() {
+        return null;
+    }
+
+    static <R> R read(String key, Function<Boolean, R> f) {
+        return null;
+    }
+
+    boolean flag() {
+        return Optional.ofNullable(read("x", self())).orElse(false);
+    }
+}
+
+method self(): java.util.function.Function<T, T>
+  locals: 
+  exprs: e0: null
+method read(java.lang.String, java.util.function.Function<java.lang.Boolean, R>): R
+  locals: l0: java.lang.String | l1: java.util.function.Function<java.lang.Boolean, R>
+  exprs: e1: null
+method flag(): boolean
+  locals: 
+  exprs: e2: boolean | e3: java.lang.String | e4: java.util.function.Function<java.lang.Boolean, java.lang.Boolean> | e5: java.lang.Boolean | e7: java.util.Optional<java.lang.Boolean> | e8: java.lang.Boolean

@@ -20,6 +20,33 @@ impl Inference {
         // seed the substitution with them so the caller's instantiation sees
         // the resolved values.
         let mut subst: FxHashMap<u64, Ty> = self.applied.clone();
+        // §18.3.1: the applied equalities chain (`⟨?4 = ?6⟩` with
+        // `⟨?6 = Boolean⟩`), and a bound that references the chained variable
+        // must see the *value*, not the next variable. Without flattening, the
+        // bound still contains an inference variable when the resolution loop
+        // inspects it, the variable is skipped there, and the estimate pass
+        // resolves the bound's owner to `Object` — an instantiation the call
+        // site then rejects (`Optional.ofNullable(readBoolean(..., identity()))
+        // .orElse(false)` inferred `Optional<Object>` and failed the
+        // `boolean` return).  The loop is bounded by the number of keys: a
+        // genuine cycle cannot shorten and stops changing.
+        let seeded: Vec<u64> = subst.keys().copied().collect();
+        for _ in 0..=seeded.len() {
+            let mut changed = false;
+            for key in &seeded {
+                let Some(value) = subst.get(key).copied() else {
+                    continue;
+                };
+                let updated = value.substitute_infer(db, &subst);
+                if subst.get(key).copied() != Some(updated) {
+                    subst.insert(*key, updated);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
         let ids: Vec<u64> = self.bounds.keys().copied().collect();
         // The *dependency* upper bounds of every variable: those whose type
         // mentions the variable itself ([JLS §18.3.2]), which
