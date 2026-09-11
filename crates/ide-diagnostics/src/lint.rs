@@ -83,17 +83,6 @@ impl LintKey {
         LintKey::Removal,
     ];
 
-    /// The string that names this warning in `@SuppressWarnings`
-    /// ([JLS §9.6.4.5]).
-    pub fn as_str(self) -> &'static str {
-        match self {
-            LintKey::Unchecked => "unchecked",
-            LintKey::RawTypes => "rawtypes",
-            LintKey::Deprecation => "deprecation",
-            LintKey::Removal => "removal",
-        }
-    }
-
     /// The key a `@SuppressWarnings` string names, or `None` for a string
     /// this analyzer does not recognize — which §9.6.4.5 requires it to
     /// ignore.

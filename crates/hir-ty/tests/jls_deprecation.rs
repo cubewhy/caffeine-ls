@@ -178,6 +178,41 @@ class UseS {
     )])
 );
 
+// §9.6.4.6: a constructor invocation is a use of the constructor, explicit
+// `super(...)`/`this(...)` delegation included. javac reports exactly one
+// line here — `super(1)` names the deprecated `P(int)`; `super(s)` names an
+// undeclared-by-deprecation overload, and `this()` targets a constructor of
+// the subclass, not of `P`.
+snapshot!(
+    constructor_invocations_are_reported,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/q/P.java",
+            "\
+package q;
+
+class P {
+    @Deprecated P(int i) {}
+    @Deprecated P() {}
+    P(String s) {}
+}
+"
+        ),
+        (
+            "/src/q/UseP.java",
+            "\
+package q;
+
+class UseP extends P {
+    UseP() { super(1); }
+    UseP(int x) { this(); }
+    UseP(String s) { super(s); }
+}
+"
+        )
+    ])
+);
+
 // §9.6.4.6: a static access writes its qualifier as a *type name*, so the
 // qualifier is a reference to the class on its own — javac reports it whether
 // or not the member is deprecated. javac:

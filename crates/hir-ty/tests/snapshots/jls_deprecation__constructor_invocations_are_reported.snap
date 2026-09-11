@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/P.java:
+package q;
+
+class P {
+    @Deprecated P(int i) {}
+    @Deprecated P() {}
+    P(String s) {}
+}
+
+FILE /src/q/UseP.java:
+package q;
+
+class UseP extends P {
+    UseP() { super(1); }
+    UseP(int x) { this(); }
+    UseP(String s) { super(s); }
+}
+
+method UseP(): <init>
+  @3:13..3:21 'super(1)': deprecated-use: P(int) in P has been deprecated

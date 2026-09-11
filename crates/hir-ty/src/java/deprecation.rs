@@ -14,6 +14,19 @@
 //! ([JVMS §4.7.15]) and from the `java.lang.Deprecated` annotation of the
 //! `RuntimeVisibleAnnotations` attribute — javac writes both, so a
 //! `forRemoval` library element is recognisable from either.
+//!
+//! Not covered, deliberately: a Javadoc-only `@deprecated` tag (§9.6.4.6
+//! defines a deprecated element as one *annotated* `@Deprecated`; javac's
+//! extra warning for the tag alone is its separate `[dep-ann]` lint, and the
+//! crate models no doc-comment tags), deprecated packages and modules, an
+//! `@Deprecated` *enum constant* (the lowered `EnumConstant` carries no
+//! annotations) and one on a *record component* (its propagation to the
+//! synthesized accessor has no item anchor), the implicit `super()` a
+//! subclass's default constructor runs on a deprecated superclass constructor
+//! (no call site exists to anchor it), and the preview-API warnings of §1.5,
+//! whose rule set (reflective versus normal APIs, the module exemption,
+//! disabled-means-error, the classfile `0xFFFF` minor version) is a distinct
+//! one.
 
 use hir_def::java::item_tree::{ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId};
 use hir_expand::body::Literal;

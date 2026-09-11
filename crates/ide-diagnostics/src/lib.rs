@@ -34,7 +34,8 @@ mod handlers;
 mod lint;
 pub use handlers::body::{code as body_code, message as body_message, related as body_related};
 pub use handlers::decl::{code as decl_code, message as decl_message};
-pub use lint::{LintConfig, LintKey, keeps_body_diagnostic, keeps_decl_diagnostic};
+use lint::LintKey;
+pub use lint::{LintConfig, keeps_body_diagnostic, keeps_decl_diagnostic};
 
 /// A diagnostic as the IDE layer sees it: its message, its primary and
 /// secondary ranges, its severity and its stable code.
