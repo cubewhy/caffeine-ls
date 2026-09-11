@@ -369,8 +369,10 @@ fn declaration_type_refs(data: &ItemData) -> Vec<&ItemTypeRef> {
 }
 
 /// The body id of an item, when it declares one — a method or constructor
-/// body. (The type-use annotations of a field initializer's expression types
-/// are covered by the enclosing file walk.)
+/// body. A field's initializer, an enum constant's arguments and an
+/// annotation element's default are *expression forests* rather than bodies,
+/// and the type annotations of the types they write (`(@A X) e`, `new @A X()`)
+/// are not walked yet.
 fn body_of(tree: &ItemTree, id: ItemId) -> Option<hir_expand::body::BodyId> {
     match tree.data(id) {
         ItemData::Method(method) => method.body(),
