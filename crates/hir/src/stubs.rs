@@ -165,6 +165,7 @@ impl<'a> StubStringTable<'a> {
             params: m.params.iter().map(|p| self.param(p)).collect(),
             annotations: m.annotations.iter().map(|a| self.annotation(a)).collect(),
             default_value: m.default_value.as_ref().map(|v| self.annotation_value(v)),
+            deprecated: m.deprecated,
         }
     }
 
@@ -176,6 +177,7 @@ impl<'a> StubStringTable<'a> {
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
             constant_value: f.constant_value.as_ref().map(|v| self.annotation_value(v)),
+            deprecated: f.deprecated,
         }
     }
 
@@ -198,6 +200,7 @@ impl<'a> StubStringTable<'a> {
             name: self.symbol(c.name),
             flags: c.flags,
             is_record: c.is_record,
+            deprecated: c.deprecated,
             super_class: c.super_class.as_ref().map(|t| self.type_ref(t)),
             interfaces: c.interfaces.iter().map(|t| self.type_ref(t)).collect(),
             type_params: c
@@ -374,6 +377,7 @@ impl<'a> DiskResolver<'a> {
             params: m.params.iter().map(|p| self.param(p)).collect(),
             annotations: m.annotations.iter().map(|a| self.annotation(a)).collect(),
             default_value: m.default_value.as_ref().map(|v| self.annotation_value(v)),
+            deprecated: m.deprecated,
         }
     }
 
@@ -385,6 +389,7 @@ impl<'a> DiskResolver<'a> {
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
             constant_value: f.constant_value.as_ref().map(|v| self.annotation_value(v)),
+            deprecated: f.deprecated,
         }
     }
 
@@ -403,6 +408,7 @@ impl<'a> DiskResolver<'a> {
             name: self.symbol(c.name),
             flags: c.flags,
             is_record: c.is_record,
+            deprecated: c.deprecated,
             super_class: c.super_class.as_ref().map(|t| self.type_ref(t)),
             interfaces: c.interfaces.iter().map(|t| self.type_ref(t)).collect(),
             type_params: c
@@ -494,6 +500,7 @@ mod tests {
             name: interner.get_or_intern("String"),
             flags: 0x0021, // ACC_PUBLIC | ACC_SUPER
             is_record: false,
+            deprecated: false,
             super_class: Some(TypeRef::Reference {
                 name: interner.get_or_intern("java.lang.Object"),
                 generic_args: Vec::new(),
@@ -519,6 +526,7 @@ mod tests {
                 params: Vec::new(),
                 annotations: Vec::new(),
                 default_value: None,
+                deprecated: false,
             }],
             fields: vec![FieldStub {
                 name: interner.get_or_intern("size"),
@@ -530,6 +538,7 @@ mod tests {
                 },
                 annotations: Vec::new(),
                 constant_value: Some(AnnotationValue::Primitive(PrimitiveValue::Int(42))),
+                deprecated: false,
             }],
             annotations: vec![AnnotationSig {
                 annotation_type: TypeRef::Reference {

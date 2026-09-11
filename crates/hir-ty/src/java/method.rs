@@ -1184,7 +1184,7 @@ fn package_of(fqn: &str) -> Option<String> {
 /// `Outer$Inner` ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2));
 /// source names nest with dots and must use [`source_top_level`] instead —
 /// `$` inside them is an ordinary identifier character ([JLS §3.8]).
-fn top_level_of(fqn: &str) -> String {
+pub(crate) fn top_level_of(fqn: &str) -> String {
     match fqn.find('$') {
         Some(i) => fqn[..i].to_owned(),
         None => fqn.to_owned(),
@@ -1196,7 +1196,7 @@ fn top_level_of(fqn: &str) -> String {
 /// `com.example.Outer`, an unnamed-package `Outer.Inner` is `Outer`
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)).
 /// Source names never separate nesting with `$`, so none is split off.
-fn source_top_level(package: Option<&str>, fqn: &str) -> String {
+pub(crate) fn source_top_level(package: Option<&str>, fqn: &str) -> String {
     let rest = match package {
         Some(pkg) => fqn
             .strip_prefix(pkg)
@@ -2742,6 +2742,10 @@ pub struct FieldData {
     /// declaration (including the implicit enum-constant and record-component
     /// fields of a source class). `None` for library members.
     pub owner_file: Option<FileId>,
+    /// The item id of the source declaration, when there is one — the anchor
+    /// the declaration-level checks report at (the deprecated-use warning
+    /// reads the declaration's own `@Deprecated` from it).
+    pub decl_item: Option<ItemId>,
     /// The field's type, instantiated with the declaring type's type arguments.
     pub ty: Ty,
     /// The classfile descriptor of a library field
@@ -2947,6 +2951,7 @@ fn library_class_fields(
             name: name.to_owned(),
             owner: fqn.clone(),
             owner_file: None,
+            decl_item: None,
             ty,
             descriptor: Some(SmolStr::from(interner.resolve(&field.descriptor))),
             is_static,
@@ -3037,6 +3042,7 @@ fn source_class_fields(
                     name: name.to_owned(),
                     owner: fqn.clone(),
                     owner_file: Some(source.file),
+                    decl_item: Some(item),
                     ty,
                     is_static,
                     access: interface_access_of(declaring_interface, &field.modifiers),
@@ -3057,6 +3063,7 @@ fn source_class_fields(
                     name: name.to_owned(),
                     owner: fqn.clone(),
                     owner_file: Some(source.file),
+                    decl_item: Some(item),
                     ty: Ty::reference(db, Name::new(&fqn), binding.values().copied().collect()),
                     is_static: true,
                     access: Access::Public,
@@ -3087,6 +3094,11 @@ fn source_class_fields(
                 name: component_name.to_owned(),
                 owner: fqn.clone(),
                 owner_file: Some(source.file),
+                // A record component is not an `ItemId`, so the synthesized
+                // field has no declaration anchor; a `@Deprecated` on a
+                // component is a javac *warning* about the annotation having
+                // no effect here, not a deprecation of the component.
+                decl_item: None,
                 ty: ty.substitute(db, &binding),
                 is_static: false,
                 access: Access::Private,

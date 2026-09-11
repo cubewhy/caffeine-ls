@@ -6,6 +6,7 @@
 //! at display time live here, one place per diagnostic.
 
 use hir_expand::body::BodyTree;
+use hir_ty::java::deprecation::Deprecation;
 use hir_ty::java::diagnostics::{IllegalAccessKind, NonStaticThisKind};
 use hir_ty::java::ty::Ty;
 use hir_ty::{TyDatabase, TypeError};
@@ -113,6 +114,10 @@ pub fn code(diag: &TypeError) -> DiagnosticCode {
             DiagnosticCode::Java(CannotUseDiamondWithNonGeneric)
         }
         TypeError::NotSupportedInRelease { .. } => DiagnosticCode::Java(ApiNotSupportedInRelease),
+        TypeError::DeprecatedUse { deprecation, .. } => match deprecation {
+            Deprecation::Ordinary => DiagnosticCode::Java(DeprecatedUse),
+            Deprecation::Terminal => DiagnosticCode::Java(DeprecatedForRemoval),
+        },
     }
 }
 
@@ -437,6 +442,9 @@ pub fn message(db: &dyn TyDatabase, diag: &TypeError, bodies: &BodyTree) -> Stri
         NotSupportedInRelease {
             api, found, added, ..
         } => super::release::render(db, api, *found, *added),
+        TypeError::DeprecatedUse {
+            api, deprecation, ..
+        } => super::deprecation::message(db, api, *deprecation),
     }
 }
 

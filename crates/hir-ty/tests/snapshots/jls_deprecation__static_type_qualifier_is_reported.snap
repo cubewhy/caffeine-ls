@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Stat.java:
+package q;
+
+@Deprecated
+class Stat {
+    @Deprecated static int f;
+    static int g;
+    static void m() {}
+    @Deprecated static void n() {}
+}
+
+FILE /src/q/UseStat.java:
+package q;
+
+class UseStat {
+    void a() { int x = Stat.f; }
+    void b() { int x = Stat.g; }
+    void c() { Stat.m(); }
+    void d() { Stat.n(); }
+    void e() { new Stat(); }
+}
+
+method a(): void
+  @3:23..3:27 'Stat': deprecated-use: Stat in q has been deprecated
+  @3:28..3:29 'f': deprecated-use: f in Stat has been deprecated
+method b(): void
+  @4:23..4:27 'Stat': deprecated-use: Stat in q has been deprecated
+method c(): void
+  @5:15..5:19 'Stat': deprecated-use: Stat in q has been deprecated
+method d(): void
+  @6:15..6:19 'Stat': deprecated-use: Stat in q has been deprecated
+  @6:20..6:21 'n': deprecated-use: n() in Stat has been deprecated
+method e(): void
+  @7:19..7:23 'Stat': deprecated-use: Stat in q has been deprecated

@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Both.java:
+package q;
+
+@Deprecated
+class Both {
+    @Deprecated void sm() {}
+    @Deprecated static int f = 1;
+    static class Nested {
+        @Deprecated void nm() {}
+    }
+}
+
+FILE /src/q/Cases.java:
+package q;
+
+@Deprecated(forRemoval = true)
+class Gone {
+    @Deprecated(forRemoval = true) void gm() {}
+}
+
+class Cases {
+    void a() { new Gone(); }
+    void b() { new Gone().gm(); }
+}
+
+method a(): void
+  @8:19..8:23 'Gone': deprecated-for-removal: Gone in q has been deprecated and marked for removal
+method b(): void
+  @9:26..9:28 'gm': deprecated-for-removal: gm() in Gone has been deprecated and marked for removal
+  @9:19..9:23 'Gone': deprecated-for-removal: Gone in q has been deprecated and marked for removal

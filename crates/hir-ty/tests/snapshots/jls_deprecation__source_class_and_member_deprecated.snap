@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Both.java:
+package q;
+
+@Deprecated
+class Both {
+    @Deprecated void sm() {}
+    @Deprecated static int f = 1;
+    static class Nested {
+        @Deprecated void nm() {}
+    }
+}
+
+FILE /src/q/Cases.java:
+package q;
+
+class Cases {
+    void a() { new Both(); }
+    void b() { new Both().sm(); }
+    void c() { int x = Both.f; }
+    void d() { new Both.Nested().nm(); }
+}
+
+method a(): void
+  @3:19..3:23 'Both': deprecated-use: Both in q has been deprecated
+method b(): void
+  @4:26..4:28 'sm': deprecated-use: sm() in Both has been deprecated
+  @4:19..4:23 'Both': deprecated-use: Both in q has been deprecated
+method c(): void
+  @5:23..5:27 'Both': deprecated-use: Both in q has been deprecated
+  @5:28..5:29 'f': deprecated-use: f in Both has been deprecated
+method d(): void
+  @6:33..6:35 'nm': deprecated-use: nm() in Nested has been deprecated
+  @6:19..6:30 'Both.Nested': deprecated-use: Both in q has been deprecated

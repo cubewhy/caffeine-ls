@@ -181,6 +181,11 @@ pub struct ClassStub<N> {
     pub flags: u16,
     /// Whether the class file carries a `Record` attribute.
     pub is_record: bool,
+    /// Whether the class file carries the `Deprecated` attribute
+    /// ([JVMS §4.7.15](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.15))
+    /// — the marker of an element annotated `@Deprecated`
+    /// ([JLS §9.6.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.6)).
+    pub deprecated: bool,
     pub super_class: Option<TypeRef<N>>,
     pub interfaces: Vec<TypeRef<N>>,
     pub type_params: Vec<TypeParameter<N>>,
@@ -218,6 +223,11 @@ pub struct MethodStub<N> {
 
     /// The default value of an annotation entry
     pub default_value: Option<AnnotationValue<N>>,
+
+    /// Whether the class file carries the `Deprecated` attribute
+    /// ([JVMS §4.7.15](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.15))
+    /// — the marker of a method annotated `@Deprecated`.
+    pub deprecated: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
@@ -231,6 +241,10 @@ pub struct FieldStub<N> {
     pub field_type: TypeRef<N>,
     pub annotations: Vec<AnnotationSig<N>>,
     pub constant_value: Option<AnnotationValue<N>>,
+    /// Whether the class file carries the `Deprecated` attribute
+    /// ([JVMS §4.7.15](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.15))
+    /// — the marker of a field annotated `@Deprecated`.
+    pub deprecated: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]

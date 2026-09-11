@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/UseLib.java:
+package q;
+
+import com.example.Legacy;
+import com.example.Tagged;
+
+class UseLib {
+    void a() { new Legacy().am(); }
+    void b() { new Legacy.Nested().nm(); }
+    void c() { int x = new Tagged().af; }
+}
+
+method a(): void
+  @6:28..6:30 'am': deprecated-use: am() in Legacy has been deprecated
+  @6:19..6:25 'Legacy': deprecated-use: Legacy in com.example has been deprecated
+method b(): void
+  @7:19..7:32 'Legacy.Nested': deprecated-for-removal: Nested in Legacy has been deprecated and marked for removal
+  @7:19..7:32 'Legacy.Nested': deprecated-use: Legacy in com.example has been deprecated
+method c(): void
+  @8:36..8:38 'af': deprecated-for-removal: af in Tagged has been deprecated and marked for removal
+  @8:27..8:33 'Tagged': deprecated-use: Tagged in com.example has been deprecated

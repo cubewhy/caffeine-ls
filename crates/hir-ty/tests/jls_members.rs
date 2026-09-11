@@ -9,8 +9,8 @@
 mod common;
 
 use crate::common::{
-    ClassSpec, check_body_types, check_body_types_with_libs, check_class_diagnostics,
-    check_methods, check_resolve_src, check_source_methods,
+    ClassSpec, DeprecationSpec, check_body_types, check_body_types_with_libs,
+    check_class_diagnostics, check_methods, check_resolve_src, check_source_methods,
 };
 use syntax::stub::PrimitiveType;
 
@@ -708,6 +708,9 @@ snapshot!(
             method_sigs: &[""],
             method_access: &[0x0002], // ACC_PRIVATE, like a real enum ctor
             sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         }],
         &[(
             "/src/com/example/Use.java",

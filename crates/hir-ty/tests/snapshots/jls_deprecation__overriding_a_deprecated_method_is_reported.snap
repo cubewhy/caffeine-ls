@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Ov.java:
+package q;
+
+class Ov {
+    @Deprecated void dm() {}
+}
+
+FILE /src/q/UseOv.java:
+package q;
+
+class UseOv extends Ov {
+    void dm() {}
+}
+
+@3:9: deprecated-use: dm() in Ov has been deprecated

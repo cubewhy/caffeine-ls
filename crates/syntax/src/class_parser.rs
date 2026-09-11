@@ -147,6 +147,12 @@ impl<'a> ClassParser<'a> {
             .attributes
             .iter()
             .any(|attr| matches!(attr, AttributeInfo::Record { .. }));
+        // §9.6.4.6: `@Deprecated` is recorded in the class file as the
+        // `Deprecated` attribute ([JVMS §4.7.15]), which is what a compiler
+        // reading a library sees. The annotation is emitted alongside it too
+        // (`java.lang.Deprecated` is `RUNTIME`-retained), but the attribute is
+        // the marker the JLS names.
+        let deprecated = Self::has_deprecated_attribute(&node.attributes);
 
         // A variable-arity record component ([JLS §8.10.1]) is encoded as an
         // array descriptor with `ACC_VARARGS` on the canonical constructor
@@ -174,6 +180,7 @@ impl<'a> ClassParser<'a> {
             name: self.interner.get_or_intern(simple_name),
             flags: node.access_flags,
             is_record,
+            deprecated,
             super_class,
             interfaces,
 
@@ -271,6 +278,7 @@ impl<'a> ClassParser<'a> {
             field_type,
             annotations: self.map_annotations(&node.attributes, constant_pool),
             constant_value,
+            deprecated: Self::has_deprecated_attribute(&node.attributes),
         }
     }
 
@@ -367,6 +375,7 @@ impl<'a> ClassParser<'a> {
             type_params,
             annotations: self.map_annotations(&node.attributes, constant_pool),
             default_value,
+            deprecated: Self::has_deprecated_attribute(&node.attributes),
         }
     }
 
@@ -426,6 +435,15 @@ impl<'a> ClassParser<'a> {
         let return_type = self.parse_type_ref(&mut chars);
 
         (params, return_type)
+    }
+
+    /// Whether an attribute list carries the `Deprecated` attribute
+    /// ([JVMS §4.7.15]) — the classfile form of an `@Deprecated` annotation
+    /// ([JLS §9.6.4.6]).
+    fn has_deprecated_attribute(attributes: &[AttributeInfo]) -> bool {
+        attributes
+            .iter()
+            .any(|attr| matches!(attr, AttributeInfo::Deprecated))
     }
 
     fn map_annotations(

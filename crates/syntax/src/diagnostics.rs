@@ -124,6 +124,14 @@ pub enum JavaDiagnosticCode {
     /// §5.5.2/[§15.16]: a cast to a parameterized type cannot be checked at
     /// run time — unchecked cast.
     UncheckedCast,
+    /// §9.6.4.6: a reference names an element annotated `@Deprecated`.
+    /// javac: `{element} in {owner} has been deprecated` — its `[deprecation]`
+    /// lint.
+    DeprecatedUse,
+    /// §9.6.4.6: a reference names an element annotated
+    /// `@Deprecated(forRemoval = true)`. javac: `{element} in {owner} has been
+    /// deprecated and marked for removal` — its `[removal]` lint.
+    DeprecatedForRemoval,
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method.
     MethodDoesNotOverride,
@@ -524,6 +532,8 @@ impl JavaDiagnosticCode {
             UncheckedConversion => Some("compiler.warn.unchecked.assign"),
             UncheckedInvocation => Some("compiler.warn.unchecked.call"),
             UncheckedCast => Some("compiler.warn.unchecked.cast"),
+            DeprecatedUse => Some("compiler.warn.has.been.deprecated"),
+            DeprecatedForRemoval => Some("compiler.warn.has.been.deprecated.for.removal"),
             MethodDoesNotOverride => Some("compiler.err.method.does.not.override.superclass"),
             MethodDoesNotOverrideStatic => Some("compiler.err.override.static"),
             UnreachableStatement => Some("compiler.err.unreachable.stmt"),
@@ -680,6 +690,8 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
             JavaDiagnosticCode::UncheckedInvocation => "unchecked-invocation",
             JavaDiagnosticCode::UncheckedCast => "unchecked-cast",
+            JavaDiagnosticCode::DeprecatedUse => "deprecated-use",
+            JavaDiagnosticCode::DeprecatedForRemoval => "deprecated-for-removal",
             JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
             JavaDiagnosticCode::MethodDoesNotOverrideStatic => "method-does-not-override-static",
             JavaDiagnosticCode::UnreachableStatement => "unreachable-statement",

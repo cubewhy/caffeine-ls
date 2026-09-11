@@ -7,6 +7,7 @@
 
 use hir_ty::TyDatabase;
 use hir_ty::java::decl_check::{DeclDiagnostic, SafeVarargsRejection};
+use hir_ty::java::deprecation::Deprecation;
 use hir_ty::java::ty::Ty;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 
@@ -194,6 +195,10 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         DeclDiagnostic::NotSupportedInRelease { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::ApiNotSupportedInRelease)
         }
+        DeclDiagnostic::DeprecatedUse { deprecation, .. } => match deprecation {
+            Deprecation::Ordinary => DiagnosticCode::Java(JavaDiagnosticCode::DeprecatedUse),
+            Deprecation::Terminal => DiagnosticCode::Java(JavaDiagnosticCode::DeprecatedForRemoval),
+        },
     }
 }
 
@@ -589,6 +594,9 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
         DeclDiagnostic::NotSupportedInRelease {
             api, found, added, ..
         } => super::release::render(db, api, *found, *added),
+        DeclDiagnostic::DeprecatedUse {
+            api, deprecation, ..
+        } => super::deprecation::message(db, api, *deprecation),
     }
 }
 

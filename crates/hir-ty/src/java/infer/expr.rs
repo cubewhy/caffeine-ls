@@ -745,10 +745,12 @@ impl InferCtx<'_> {
         // static field read through its declaring type.
         if let Some(field) = self.static_import_field(name.as_str()) {
             self.check_release_api_field(expr, &field);
+            self.check_deprecated_field(expr, &field);
             return field.ty;
         }
         if let Some(field) = self.pick_field_of_chain(name.as_str()) {
             self.check_release_api_field(expr, &field);
+            self.check_deprecated_field(expr, &field);
             // §8.3.3: a simple-name read of a same-class field declared
             // textually later, of the same static/instance kind, is an
             // illegal forward reference. A qualified read (`this.b`) takes
@@ -836,10 +838,12 @@ impl InferCtx<'_> {
         if prefix.is_empty() {
             if let Some(field) = self.static_import_field(last) {
                 self.check_release_api_field(expr, &field);
+                self.check_deprecated_field(expr, &field);
                 return field.ty;
             }
             if let Some(field) = self.pick_field_of_chain(last) {
                 self.check_release_api_field(expr, &field);
+                self.check_deprecated_field(expr, &field);
                 // §15.11/[§8.1.3]: a simple-name read of an instance field of
                 // the implicit receiver from a static context.
                 if self.static_context && !field.is_static {
@@ -868,6 +872,7 @@ impl InferCtx<'_> {
         };
         if let Some(field) = pick_field(self.db, &self.scope, &prefix_ty, last, &self.access) {
             self.check_release_api_field(expr, &field);
+            self.check_deprecated_field(expr, &field);
             return field.ty;
         }
         // §15.11: a qualified name whose last component is no member of the
@@ -986,6 +991,7 @@ impl InferCtx<'_> {
                 }
                 Some(field) => {
                     self.check_release_api_field(expr, &field);
+                    self.check_deprecated_field(expr, &field);
                     field.ty
                 }
                 None => {
@@ -1002,7 +1008,12 @@ impl InferCtx<'_> {
         // resolves to a type, not a value ([§15.11.1]): a bare name or a
         // qualified name such as `java.util.Collections`.
         let (receiver, is_static) = match self.dotted_type_name(target) {
-            Some(ty) => (ty, true),
+            Some(ty) => {
+                // §9.6.4.6: the written `Type` of `Type.field` is a reference
+                // to the class, separate from the field's own deprecation.
+                self.check_deprecated_type_qualifier(target, &ty);
+                (ty, true)
+            }
             // §15.26: the receiver of a qualified field access is evaluated
             // for its *value* even on the left-hand side of an assignment —
             // `a.b = v` writes `b`, not `a` ([§15.11.1]). The mutating /
@@ -1018,6 +1029,7 @@ impl InferCtx<'_> {
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => {
                 self.check_release_api_field(expr, &field);
+                self.check_deprecated_field(expr, &field);
                 // §8.3.1.2/[§16]: writing a `final` field is legal only as the
                 // blank-final initialization through a bare `this` receiver in
                 // the matching initializer context of the field's own class;

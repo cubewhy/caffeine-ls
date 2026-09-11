@@ -9,7 +9,8 @@ mod common;
 use hir_ty::{InvocationContext, InvocationMode, Ty};
 
 use crate::common::{
-    ClassSpec, TestDatabase, TyBuilder, check_methods_lib_ctx, check_source_methods_ctx,
+    ClassSpec, DeprecationSpec, TestDatabase, TyBuilder, check_methods_lib_ctx,
+    check_source_methods_ctx,
 };
 
 type Sample = (&'static str, TyBuilder, &'static str, &'static [TyBuilder]);
@@ -61,6 +62,9 @@ fn access_classes() -> Vec<ClassSpec<'static>> {
             method_sigs: &["", ""],
             method_access: &[0x0001, 0x0001 | 0x0008],
             sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         common::class(
             "com/example/D",

@@ -36,7 +36,7 @@ use crate::{db::LibraryId, stubs::DiskClassOrModuleRecord};
 
 /// Version of the on-disk layout; bumped on incompatible changes. Also
 /// selects the cache directory (`stubs/v{N}`).
-pub const CACHE_FORMAT_VERSION: u32 = 2;
+pub const CACHE_FORMAT_VERSION: u32 = 3;
 
 /// Libraries untouched for this long are eligible for pruning when they are
 /// no longer registered by the running session.

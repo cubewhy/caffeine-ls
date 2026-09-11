@@ -16,7 +16,8 @@
 mod common;
 
 use crate::common::{
-    ClassSpec, check_body_types_with_libs, check_class_diagnostics, class_with_methods_access,
+    ClassSpec, DeprecationSpec, check_body_types_with_libs, check_class_diagnostics,
+    class_with_methods_access,
 };
 
 // -- green: on-demand imports that resolve against the classpath ---------------
@@ -179,6 +180,9 @@ snapshot!(
                 method_sigs: &[],
                 method_access: &[],
                 sig: None,
+                deprecation: DeprecationSpec::NONE,
+                field_deprecations: &[],
+                method_deprecations: &[],
             },
         ],
         &[(

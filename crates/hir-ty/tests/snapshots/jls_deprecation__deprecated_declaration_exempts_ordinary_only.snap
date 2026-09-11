@@ -1,0 +1,31 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/R.java:
+package q;
+
+class R {
+    @Deprecated(forRemoval = true) void t() {}
+    @Deprecated void o() {}
+}
+
+FILE /src/q/UseR.java:
+package q;
+
+class UseR {
+    void a() { R r = new R(); r.t(); r.o(); }
+    @Deprecated void dep() { R r = new R(); r.t(); r.o(); }
+    @SuppressWarnings("deprecation") void sd() { R r = new R(); r.t(); r.o(); }
+    @SuppressWarnings("removal") void sr() { R r = new R(); r.t(); r.o(); }
+}
+
+method a(): void
+  @3:32..3:33 't': deprecated-for-removal: t() in R has been deprecated and marked for removal
+  @3:39..3:40 'o': deprecated-use: o() in R has been deprecated
+method dep(): void
+  @4:46..4:47 't': deprecated-for-removal: t() in R has been deprecated and marked for removal
+method sd(): void
+  @5:66..5:67 't': deprecated-for-removal: t() in R has been deprecated and marked for removal
+method sr(): void
+  @6:69..6:70 'o': deprecated-use: o() in R has been deprecated

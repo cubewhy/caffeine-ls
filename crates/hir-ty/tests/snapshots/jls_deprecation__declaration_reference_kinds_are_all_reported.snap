@@ -1,0 +1,34 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Refs.java:
+package q;
+
+class Refs {
+    @Deprecated static class C {}
+    @Deprecated static class Base {}
+    @Deprecated static interface I {}
+    @Deprecated @interface Ann {}
+}
+
+FILE /src/q/UseRefs.java:
+package q;
+
+import java.util.List;
+
+class UseRefs extends Refs.Base implements Refs.I {
+    Refs.C field;
+    void param(Refs.C c) {}
+    Refs.C ret() { return null; }
+    void argument(List<Refs.C> l) {}
+    @Refs.Ann void annotated() {}
+}
+
+@4:22: deprecated-use: Base in Refs has been deprecated
+@4:43: deprecated-use: I in Refs has been deprecated
+@5:4: deprecated-use: C in Refs has been deprecated
+@6:15: deprecated-use: C in Refs has been deprecated
+@7:4: deprecated-use: C in Refs has been deprecated
+@8:23: deprecated-use: C in Refs has been deprecated
+@9:5: deprecated-use: Ann in Refs has been deprecated

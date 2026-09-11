@@ -621,6 +621,15 @@ pub enum DeclDiagnostic {
         added: u8,
         range: Option<rowan::TextRange>,
     },
+    /// §9.6.4.6: a declaration-position reference to an element declared
+    /// `@Deprecated` — a supertype, a member's written type, an annotation
+    /// type, or an overriding method whose overridden declaration is
+    /// deprecated.
+    DeprecatedUse {
+        api: crate::java::deprecation::DeprecatedApi,
+        deprecation: crate::java::deprecation::Deprecation,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 /// Why `@SafeVarargs` was rejected ([JLS §9.6.4.7]).
@@ -664,6 +673,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { .. }
             | DeclDiagnostic::ConflictingImport { .. }
             | DeclDiagnostic::ModuleNotAccessible { .. }
+            | DeclDiagnostic::DeprecatedUse { .. }
             | DeclDiagnostic::RawTypeUse { .. }
             | DeclDiagnostic::WrongTypeArgumentCount { .. }
             | DeclDiagnostic::InvalidSafeVarargs { .. }
@@ -828,6 +838,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::NotSupportedInRelease {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::DeprecatedUse {
                 range: name_range, ..
             } => *name_range,
             _ => None,
@@ -1028,7 +1041,66 @@ fn check_class(
     let all = method::all_methods_raw(db, scope, &self_ty, &ctx);
     let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == fqn).collect();
     let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != fqn).collect();
+    // §9.6.4.6: *overriding* a deprecated method is a use of it, reported at
+    // the overriding method's own name (javac's caret). The exemption is
+    // decided per pair, from the deprecation in force at the overriding
+    // declaration and from the shared-outermost-class rule.
+    let enclosing = crate::java::db::deprecated_enclosing_query(db, db.file_text(file));
+    let overriding_outermost = Name::new(&crate::java::method::source_top_level(
+        tree.package.as_ref().map(Name::as_str),
+        fqn,
+    ));
     for method in &declared {
+        for super_method in &inherited {
+            if !same_signature(db, method, super_method) {
+                continue;
+            }
+            let Some(deprecation) = crate::java::deprecation::member_deprecation(
+                db,
+                scope,
+                &super_method.owner,
+                &super_method.name,
+                super_method.owner_file.zip(super_method.decl_item),
+                super_method.descriptor.as_deref(),
+            ) else {
+                continue;
+            };
+            let api = crate::java::deprecation::method_api(super_method);
+            let in_force = method
+                .decl_item
+                .and_then(|item| enclosing.get(&item))
+                .and_then(|info| info.enclosing);
+            if crate::java::deprecation::is_exempt(
+                db,
+                scope,
+                in_force,
+                Some(&overriding_outermost),
+                &api,
+                deprecation,
+            ) {
+                continue;
+            }
+            let range = method
+                .decl_item
+                .and_then(|item| item_name_range(db, file, tree, item));
+            if out.iter().any(|existing| {
+                matches!(
+                    existing,
+                    DeclDiagnostic::DeprecatedUse {
+                        api: seen,
+                        range: seen_range,
+                        ..
+                    } if *seen == api && *seen_range == range
+                )
+            }) {
+                continue;
+            }
+            out.push(DeclDiagnostic::DeprecatedUse {
+                api,
+                deprecation,
+                range,
+            });
+        }
         for super_method in &inherited {
             if same_signature(db, method, super_method) {
                 // The class's *own* redeclaration of an inherited signature:

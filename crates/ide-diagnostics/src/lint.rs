@@ -68,12 +68,20 @@ pub enum LintKey {
     RawTypes,
     /// Deprecation (JLS §9.6.4.6) — the string `"deprecation"`.
     Deprecation,
+    /// Terminal deprecation (JLS §9.6.4.6), `@Deprecated(forRemoval = true)`
+    /// — the string `"removal"`.
+    Removal,
 }
 
 impl LintKey {
     /// Every key this build knows, for the `all` shorthand of the client
     /// configuration.
-    pub const ALL: [LintKey; 3] = [LintKey::Unchecked, LintKey::RawTypes, LintKey::Deprecation];
+    pub const ALL: [LintKey; 4] = [
+        LintKey::Unchecked,
+        LintKey::RawTypes,
+        LintKey::Deprecation,
+        LintKey::Removal,
+    ];
 
     /// The string that names this warning in `@SuppressWarnings`
     /// ([JLS §9.6.4.5]).
@@ -82,6 +90,7 @@ impl LintKey {
             LintKey::Unchecked => "unchecked",
             LintKey::RawTypes => "rawtypes",
             LintKey::Deprecation => "deprecation",
+            LintKey::Removal => "removal",
         }
     }
 
@@ -93,6 +102,7 @@ impl LintKey {
             "unchecked" => Some(LintKey::Unchecked),
             "rawtypes" => Some(LintKey::RawTypes),
             "deprecation" => Some(LintKey::Deprecation),
+            "removal" => Some(LintKey::Removal),
             _ => None,
         }
     }
@@ -136,11 +146,15 @@ impl LintConfig {
         Self { enabled }
     }
 
-    /// The keys reported without any client configuration: javac warns about
-    /// neither the raw-type nor the unchecked-conversion warnings unless
-    /// `-Xlint` names them, so nothing is on by default.
+    /// The keys reported without any client configuration: javac reports the
+    /// raw-type and unchecked-conversion warnings only when `-Xlint` names
+    /// them, but it reports *terminal* deprecation
+    /// (`@Deprecated(forRemoval = true)`) unconditionally — ordinary
+    /// deprecation needs `-Xlint:deprecation`, terminal only needs `-Xlint`
+    /// not to be `none`. So `removal` alone is on by default
+    /// ([JLS §9.6.4.6]).
     fn default_enabled() -> FxHashSet<LintKey> {
-        FxHashSet::default()
+        FxHashSet::from_iter([LintKey::Removal])
     }
 
     pub fn enables(&self, key: LintKey) -> bool {
@@ -152,7 +166,7 @@ impl LintConfig {
 /// the warning keys in effect for it — its own plus every enclosing
 /// declaration's ([JLS §9.6.4.5]).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SuppressionScope {
+pub(crate) struct SuppressionScope {
     pub range: TextRange,
     pub keys: FxHashSet<LintKey>,
 }
@@ -161,7 +175,7 @@ pub struct SuppressionScope {
 ///
 /// A warning at `range` is suppressed when some returned scope both contains
 /// `range` and carries its key; [`is_suppressed`] performs that check.
-pub fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<SuppressionScope> {
+pub(crate) fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<SuppressionScope> {
     let tree = hir::file_item_tree(db, file_id);
     let Some((_map, source)) = hir_ty::java::range_ctx::range_ctx(db, file_id, tree.language)
     else {
@@ -177,7 +191,7 @@ pub fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<Suppressi
 
 /// Whether a warning of `key` reported at `range` is suppressed by any scope
 /// in `scopes` ([JLS §9.6.4.5]).
-pub fn is_suppressed(scopes: &[SuppressionScope], range: TextRange, key: LintKey) -> bool {
+pub(crate) fn is_suppressed(scopes: &[SuppressionScope], range: TextRange, key: LintKey) -> bool {
     scopes
         .iter()
         .any(|scope| scope.keys.contains(&key) && scope.range.contains_range(range))
@@ -301,6 +315,15 @@ fn is_suppress_warnings(name: &str) -> bool {
     name == "SuppressWarnings" || name.ends_with(".SuppressWarnings")
 }
 
+/// The lint key of a deprecation: `removal` for a terminally deprecated
+/// element, `deprecation` otherwise ([JLS §9.6.4.6]).
+fn lint_of_deprecation(deprecation: hir_ty::java::deprecation::Deprecation) -> LintKey {
+    match deprecation {
+        hir_ty::java::deprecation::Deprecation::Ordinary => LintKey::Deprecation,
+        hir_ty::java::deprecation::Deprecation::Terminal => LintKey::Removal,
+    }
+}
+
 /// The lint key of a body diagnostic, or `None` for an error (no string
 /// suppresses it, and a client lint set cannot disable it).
 pub(crate) fn lint_of_body(diag: &TypeError) -> Option<LintKey> {
@@ -310,6 +333,7 @@ pub(crate) fn lint_of_body(diag: &TypeError) -> Option<LintKey> {
         | TypeError::UncheckedInvocation { .. }
         | TypeError::UncheckedCast { .. }
         | TypeError::UncheckedArgument { .. } => Some(LintKey::Unchecked),
+        TypeError::DeprecatedUse { deprecation, .. } => Some(lint_of_deprecation(*deprecation)),
         _ => None,
     }
 }
@@ -318,6 +342,9 @@ pub(crate) fn lint_of_body(diag: &TypeError) -> Option<LintKey> {
 pub(crate) fn lint_of_decl(diag: &DeclDiagnostic) -> Option<LintKey> {
     match diag {
         DeclDiagnostic::RawTypeUse { .. } => Some(LintKey::RawTypes),
+        DeclDiagnostic::DeprecatedUse { deprecation, .. } => {
+            Some(lint_of_deprecation(*deprecation))
+        }
         _ => None,
     }
 }

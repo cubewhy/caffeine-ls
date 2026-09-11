@@ -764,6 +764,7 @@ impl InferCtx<'_> {
             // The reference's own expression, so the report underlines the
             // reference rather than the whole lambda.
             self.check_release_api_method(expr, &method);
+            self.check_deprecated_method(expr, &method);
         }
     }
 }

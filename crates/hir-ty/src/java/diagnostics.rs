@@ -446,6 +446,15 @@ pub enum TypeError {
     /// infer. javac: `cannot infer type arguments for {C} … cannot use '<>'
     /// with non-generic class {C}`.
     CannotUseDiamondWithNonGeneric { expr: ExprId, class: Ty },
+    /// §9.6.4.6: the reference names an element declared `@Deprecated` — a
+    /// deprecation warning. `location`/`range` point at the reference itself
+    /// (a name-bearing reference underlines its own name range).
+    DeprecatedUse {
+        location: DiagLocation,
+        api: crate::java::deprecation::DeprecatedApi,
+        deprecation: crate::java::deprecation::Deprecation,
+        range: Option<TextRange>,
+    },
     /// JEP 247: the platform API this reference resolved to is not part of the
     /// release the source set targets
     /// ([JLS §7.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.3),
@@ -525,6 +534,7 @@ impl TypeError {
             | ModuleNotAccessible { location, .. }
             | TypeArgumentOutOfBounds { location, .. }
             | WrongTypeArgumentCount { location, .. }
+            | DeprecatedUse { location, .. }
             | NotSupportedInRelease { location, .. } => location.clone(),
             AlreadyCaught { local, .. } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
@@ -542,6 +552,18 @@ impl TypeError {
             | TypeError::TypeArgumentOutOfBounds { range, .. }
             | TypeError::WrongTypeArgumentCount { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
+            // The written type reference records its own name span; an
+            // invocation or field access names no type, so its caret is the
+            // member/method identifier, as for the other name-bearing
+            // diagnostics.
+            TypeError::DeprecatedUse {
+                location, range, ..
+            } => range.or_else(|| match location {
+                DiagLocation::Expr(expr) => tree
+                    .expr_name_range(*expr)
+                    .or_else(|| tree.expr_range(*expr)),
+                other => other.range(tree),
+            }),
             // The lambda parameter's name range, recorded at lowering time.
             TypeError::LambdaParameterAlreadyDefined { range, .. } => Some(*range),
             // §15.12.2: a wrong-argument diagnostic points at a *single*

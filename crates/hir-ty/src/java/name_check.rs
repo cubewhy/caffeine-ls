@@ -27,8 +27,9 @@ use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use crate::{
-    java::db::TyDatabase,
+    java::db::{TyDatabase, deprecated_enclosing_query},
     java::decl_check::DeclDiagnostic,
+    java::deprecation::{self, DeprecatedReference},
     java::diagnostics::DiagLocation,
     java::range_ctx::range_ctx,
     java::release_api,
@@ -98,6 +99,40 @@ pub(crate) fn check_spanned(
     for reference in &spanned.refs {
         check_reference(db, scope, resolver, &reference.name, reference.range, into);
     }
+}
+
+/// The *deprecated* classes a source type reference names ([JLS §9.6.4.6]),
+/// one entry per reference name — the class itself and each of its enclosing
+/// classes, at the reference's own name span.
+///
+/// The range-bearing reference list is the source of truth for both the
+/// resolution and the report, exactly as for
+/// [`check_spanned`](crate::java::name_check::check_spanned).
+pub(crate) fn deprecation_hits(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    spanned: &SpannedTypeRef,
+) -> Vec<DeprecatedReference> {
+    if !can_resolve(db, scope) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for reference in &spanned.refs {
+        let NameResolution::Resolved(name) =
+            resolve_name_checked(db, scope, resolver, &reference.name)
+        else {
+            continue;
+        };
+        for (deprecation, api) in deprecation::class_hits(db, scope, &name) {
+            out.push(DeprecatedReference {
+                api,
+                deprecation,
+                range: reference.range,
+            });
+        }
+    }
+    out
 }
 
 /// The checked resolution outcome of one reference name, pushed into `into`.
@@ -333,18 +368,26 @@ pub(crate) fn declaration_type_diagnostics(
     let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let mut out = Vec::new();
 
+    #[allow(clippy::too_many_arguments)]
     fn walk(
         db: &dyn TyDatabase,
+        file_id: FileId,
         scope: &hir::ResolutionScope,
         tree: &ItemTree,
         map: &AstIdMap,
         source: &SourceFile,
         type_params: &FxHashMap<ItemId, Vec<crate::java::resolve::ScopedTypeParam>>,
+        outermost: &Name,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let resolver = Resolver::new(tree, type_params, id);
         let mut issues = Vec::new();
+        // §9.6.4.6: the deprecation in force for this declaration — its own
+        // `@Deprecated`, or the innermost enclosing one that carries it.
+        let enclosing = deprecated_enclosing_query(db, db.file_text(file_id))
+            .get(&id)
+            .and_then(|info| info.enclosing);
         // The reference names of every declaration type reference, with the
         // source range of each (resolved on demand from the syntax tree);
         // name_check's `check_spanned` covers the *body* type references.
@@ -352,6 +395,9 @@ pub(crate) fn declaration_type_diagnostics(
             let occurrences = ranges::type_ref_occurrences(map, source, tyref);
             for (name, range) in occurrences.iter().cloned() {
                 check_reference(db, scope, &resolver, &name, range, &mut issues);
+                check_reference_deprecation(
+                    db, scope, &resolver, &name, range, enclosing, outermost, out,
+                );
             }
             // JLS §4.8/§4.12.2: a declared type naming a generic class without
             // its type arguments is a raw type — legal, reported as a warning.
@@ -386,6 +432,18 @@ pub(crate) fn declaration_type_diagnostics(
         for annotation in item_annotation_refs(tree.data(id)) {
             let range = ranges::annotation_name_range(map, source, annotation);
             check_reference(db, scope, &resolver, &annotation.name, range, &mut issues);
+            // A deprecated *annotation type* is a deprecated class reference
+            // like any other.
+            check_reference_deprecation(
+                db,
+                scope,
+                &resolver,
+                &annotation.name,
+                range,
+                enclosing,
+                outermost,
+                out,
+            );
         }
         for issue in issues {
             match issue {
@@ -414,24 +472,69 @@ pub(crate) fn declaration_type_diagnostics(
             }
         }
         for &child in tree.data(id).body() {
-            walk(db, scope, tree, map, source, type_params, child, out);
+            walk(
+                db,
+                file_id,
+                scope,
+                tree,
+                map,
+                source,
+                type_params,
+                outermost,
+                child,
+                out,
+            );
         }
     }
 
+    // The outermost class of the file's first top-level declaration is the
+    // unit §9.6.4.6's same-outermost-class exemption compares; each top-level
+    // declaration of the unit is its own outermost class.
     for &top in &tree.top {
+        let outermost = hir::source_class_fqn(db, file, top).unwrap_or_else(|| Name::new(""));
         walk(
             db,
+            file,
             &scope,
             tree,
             map,
             &source,
             type_params.as_ref(),
+            &outermost,
             top,
             &mut out,
         );
     }
     out.extend(import_diagnostics(db, &scope, tree, map, &source));
     out
+}
+
+/// The deprecated classes a *declaration*-position reference name denotes,
+/// pushed into `out` ([JLS §9.6.4.6]).
+#[allow(clippy::too_many_arguments)]
+fn check_reference_deprecation(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    name: &Name,
+    range: Option<TextRange>,
+    enclosing: Option<deprecation::Deprecation>,
+    outermost: &Name,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    let NameResolution::Resolved(fqn) = resolve_name_checked(db, scope, resolver, name) else {
+        return;
+    };
+    for (deprecation, api) in deprecation::class_hits(db, scope, &fqn) {
+        if deprecation::is_exempt(db, scope, enclosing, Some(outermost), &api, deprecation) {
+            continue;
+        }
+        out.push(DeclDiagnostic::DeprecatedUse {
+            api,
+            deprecation,
+            range,
+        });
+    }
 }
 
 /// The source range spanning a declaration type reference: from the first

@@ -3,10 +3,12 @@
 //! and boxing shortcuts, and the comparability/castability tests.
 
 use hir_expand::body::{BinaryOp, ExprData, ExprId, UnaryOp};
+use rowan::TextRange;
 use syntax::stub::PrimitiveType;
 
 use crate::java::{
     const_eval::Const,
+    deprecation,
     diagnostics::{DiagLocation, TypeError},
     method::{FieldData, MethodData},
     release_api::{self, ReleaseApi},
@@ -81,6 +83,110 @@ impl InferCtx<'_> {
             return;
         }
         self.diagnostics.push(diagnostic);
+    }
+
+    /// JLS §9.6.4.6: the reference at `location` names the deprecated `api`.
+    ///
+    /// Reported only when neither exemption applies: the use is not inside a
+    /// declaration that is itself (ordinarily) deprecated, and the use and the
+    /// element are not within the same outermost class.
+    pub(super) fn check_deprecated(
+        &mut self,
+        location: DiagLocation,
+        api: deprecation::DeprecatedApi,
+        deprecation: deprecation::Deprecation,
+        range: Option<TextRange>,
+    ) {
+        if self.deprecation_exempt(&api, deprecation) {
+            return;
+        }
+        self.report(TypeError::DeprecatedUse {
+            location,
+            api,
+            deprecation,
+            range,
+        });
+    }
+
+    /// Whether the reference to the deprecated `api` is exempt from the
+    /// warning ([JLS §9.6.4.6]).
+    fn deprecation_exempt(
+        &self,
+        api: &deprecation::DeprecatedApi,
+        deprecation: deprecation::Deprecation,
+    ) -> bool {
+        deprecation::is_exempt(
+            self.db,
+            &self.scope,
+            self.enclosing_deprecated,
+            self.use_site_outermost.as_ref(),
+            api,
+            deprecation,
+        )
+    }
+
+    /// JLS §9.6.4.6: the `Type.member` qualifier of a static access is
+    /// written as a type name, so it is itself a reference to the (possibly
+    /// deprecated) class — javac reports it whatever the member's own
+    /// deprecation, and reports it once, at the type name.
+    pub(super) fn check_deprecated_type_qualifier(&mut self, target: ExprId, ty: &Ty) {
+        let TyKind::Reference { name, .. } = ty.kind(self.db) else {
+            return;
+        };
+        let range = self.tree.expr_range(target);
+        for (deprecation, api) in deprecation::class_hits(self.db, &self.scope, name) {
+            if self.deprecation_exempt(&api, deprecation) {
+                continue;
+            }
+            self.report(TypeError::DeprecatedUse {
+                location: DiagLocation::Expr(target),
+                api,
+                deprecation,
+                range,
+            });
+        }
+    }
+
+    /// JLS §9.6.4.6: the invocation at `expr` resolves a deprecated method or
+    /// constructor.
+    pub(super) fn check_deprecated_method(&mut self, expr: ExprId, method: &MethodData) {
+        let Some(deprecation) = deprecation::member_deprecation(
+            self.db,
+            &self.scope,
+            &method.owner,
+            &method.name,
+            method.owner_file.zip(method.decl_item),
+            method.descriptor.as_deref(),
+        ) else {
+            return;
+        };
+        self.check_deprecated(
+            DiagLocation::Expr(expr),
+            deprecation::method_api(method),
+            deprecation,
+            None,
+        );
+    }
+
+    /// JLS §9.6.4.6: the field read or write at `expr` resolves a deprecated
+    /// field.
+    pub(super) fn check_deprecated_field(&mut self, expr: ExprId, field: &FieldData) {
+        let Some(deprecation) = deprecation::member_deprecation(
+            self.db,
+            &self.scope,
+            &field.owner,
+            &field.name,
+            field.owner_file.zip(field.decl_item),
+            field.descriptor.as_deref(),
+        ) else {
+            return;
+        };
+        self.check_deprecated(
+            DiagLocation::Expr(expr),
+            deprecation::field_api(field),
+            deprecation,
+            None,
+        );
     }
 
     /// inference ([JLS §18.5.2.4]).

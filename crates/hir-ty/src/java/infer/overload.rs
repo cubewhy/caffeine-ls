@@ -463,7 +463,10 @@ impl InferCtx<'_> {
             name: method.name.clone(),
             owner: method.owner.clone(),
             owner_file: method.owner_file,
-            decl_item: None,
+            // The declaration the member came from does not change with the
+            // type arguments the invocation instantiates it at (the same
+            // reason `descriptor` is carried).
+            decl_item: method.decl_item,
             params: formals
                 .iter()
                 .map(|p| p.substitute_infer(self.db, resolved))

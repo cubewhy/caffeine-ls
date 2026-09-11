@@ -336,6 +336,9 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
             method_sigs: &[],
             method_access,
             sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         })
     }
 
@@ -714,6 +717,56 @@ pub struct ClassSpec<'a> {
     /// means `ACC_PUBLIC` for every method.
     pub method_access: &'a [u16],
     pub sig: Option<&'a str>,
+    /// How the class itself is marked deprecated ([JLS §9.6.4.6]).
+    pub deprecation: DeprecationSpec,
+    /// How each field is marked deprecated, parallel to `fields`; an empty
+    /// slice means no field is.
+    pub field_deprecations: &'a [DeprecationSpec],
+    /// How each method is marked deprecated, parallel to `methods`; an empty
+    /// slice means no method is.
+    pub method_deprecations: &'a [DeprecationSpec],
+}
+
+/// How a fixture declaration is marked deprecated ([JLS §9.6.4.6]): the
+/// classfile `Deprecated` attribute ([JVMS §4.7.15]) and/or a
+/// `java.lang.Deprecated` annotation in `RuntimeVisibleAnnotations`, carrying
+/// the annotation's `forRemoval` argument when it has one.
+///
+/// javac writes both markers, but each is independently recognisable, so the
+/// fixtures exercise both: a stub built from a *hand-written* classfile may
+/// carry either alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeprecationSpec {
+    /// Whether to emit the zero-length `Deprecated` attribute.
+    pub attribute: bool,
+    /// Whether to emit a `java.lang.Deprecated` annotation, and its
+    /// `forRemoval` argument: the outer `None` means "no annotation", the
+    /// inner one "no argument".
+    pub annotation: Option<Option<bool>>,
+}
+
+impl DeprecationSpec {
+    /// Not deprecated.
+    pub const NONE: Self = Self {
+        attribute: false,
+        annotation: None,
+    };
+    /// The `Deprecated` attribute alone — the shape a compiler that writes
+    /// only the attribute produces.
+    pub const ATTRIBUTE: Self = Self {
+        attribute: true,
+        annotation: None,
+    };
+    /// A bare `@Deprecated` annotation alone.
+    pub const ANNOTATION: Self = Self {
+        attribute: false,
+        annotation: Some(None),
+    };
+    /// `@Deprecated(forRemoval = true)`, as a terminal deprecation.
+    pub const FOR_REMOVAL: Self = Self {
+        attribute: false,
+        annotation: Some(Some(true)),
+    };
 }
 
 pub fn class(
@@ -755,6 +808,9 @@ pub fn class_sig(
         method_sigs: &[],
         method_access: &[],
         sig,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -777,6 +833,9 @@ pub fn class_with_methods(
         method_sigs,
         method_access: &[],
         sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -801,6 +860,9 @@ pub fn class_with_methods_access_sig(
         method_sigs,
         method_access,
         sig,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -824,6 +886,9 @@ pub fn class_with_methods_access(
         method_sigs,
         method_access,
         sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -850,6 +915,9 @@ pub fn annotation(fqn: &'static str) -> ClassSpec<'static> {
         method_sigs: &[],
         method_access: &[],
         sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -871,6 +939,9 @@ pub fn annotation_with_methods(
         method_sigs: &[],
         method_access: &[],
         sig: None,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -890,6 +961,9 @@ pub fn interface_sig(
         method_sigs: &[],
         method_access: &[],
         sig,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -912,6 +986,9 @@ pub fn interface_with_methods(
         method_sigs,
         method_access: &[],
         sig,
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -934,6 +1011,9 @@ pub fn functional_interface(
         method_sigs,
         method_access: &[0x0401u16; 8],
         sig: Some(sig),
+        deprecation: DeprecationSpec::NONE,
+        field_deprecations: &[],
+        method_deprecations: &[],
     }
 }
 
@@ -971,6 +1051,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             ],
             sig: None,
             fields: &[],
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         // Records have an implicit superclass `java.lang.Record`
         // ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10)),
@@ -1039,6 +1122,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             method_sigs: &[""],
             method_access: &[0x0001],
             sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         // §4.2.1: every wrapper class is declared final in the real JDK.
@@ -1077,6 +1163,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             ],
             method_access: &[0x0401, 0x0009],
             sig: Some("<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;"),
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         functional_interface(
             "java/util/function/Predicate",
@@ -1156,6 +1245,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             ],
             method_access: &[0x0401, 0x0409, 0x0001, 0x0001, 0x0001, 0x0409, 0x0001],
             sig: Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         // §9.4.4: the primitive `ToIntFunction` functional interface backing
         // `Comparator.comparingInt`/`thenComparingInt` ([JLS §9.8]).
@@ -1228,6 +1320,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             method_sigs: &["(TO;)TV;", "(TK;TV;)TV;", ""],
             method_access: &[0x0401, 0x0401, 0x0401],
             sig: Some("<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;"),
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         class_sig(
             "java/util/HashMap",
@@ -1320,6 +1415,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             method_access: &[0x0009; 12], // ACC_PUBLIC | ACC_STATIC
             sig: None,
             fields: &[],
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         class("java/lang/Throwable", Some("java/lang/Object"), &[]),
         class("java/lang/Exception", Some("java/lang/Throwable"), &[]),
@@ -1462,6 +1560,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
                 0x0409, // ACC_PUBLIC | ACC_STATIC
             ],
             sig: Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         },
         class_sig(
             "java/util/AbstractList",
@@ -1620,6 +1721,13 @@ impl Pool {
         idx
     }
 
+    fn integer(&mut self, value: i32) -> u16 {
+        let mut entry = Vec::with_capacity(5);
+        entry.push(3); // CONSTANT_Integer
+        entry.extend_from_slice(&value.to_be_bytes());
+        self.alloc(&entry)
+    }
+
     fn class(&mut self, name: &str) -> u16 {
         if let Some(&idx) = self.classes.get(name) {
             return idx;
@@ -1671,6 +1779,55 @@ pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
         })
         .collect();
 
+    // Deprecation markers ([JLS §9.6.4.6]): the zero-length `Deprecated`
+    // attribute ([JVMS §4.7.15]) and the `java.lang.Deprecated` annotation of
+    // a `RuntimeVisibleAnnotations` attribute, whose `forRemoval` argument is
+    // an element-value pair with a `boolean` constant.
+    let deprecation_attribute = pool.utf8("Deprecated");
+    let runtime_visible_annotations = pool.utf8("RuntimeVisibleAnnotations");
+    let deprecated_annotation_type = pool.utf8("Ljava/lang/Deprecated;");
+    let for_removal_name = pool.utf8("forRemoval");
+    let boolean_true = pool.integer(1);
+    let boolean_false = pool.integer(0);
+
+    // The attribute block of one declaration: its deprecation markers in
+    // source order, prefixed by their count.
+    let deprecation_attributes = |marking: DeprecationSpec| -> Vec<u8> {
+        let mut attributes: Vec<Vec<u8>> = Vec::new();
+        if marking.attribute {
+            let mut attr = Vec::new();
+            attr.extend_from_slice(&deprecation_attribute.to_be_bytes());
+            attr.extend_from_slice(&0u32.to_be_bytes()); // attribute_length
+            attributes.push(attr);
+        }
+        if let Some(for_removal) = marking.annotation {
+            let mut attr = Vec::new();
+            attr.extend_from_slice(&runtime_visible_annotations.to_be_bytes());
+            let mut body = Vec::new();
+            body.extend_from_slice(&1u16.to_be_bytes()); // num_annotations
+            body.extend_from_slice(&deprecated_annotation_type.to_be_bytes());
+            match for_removal {
+                Some(value) => {
+                    body.extend_from_slice(&1u16.to_be_bytes()); // num_element_value_pairs
+                    body.extend_from_slice(&for_removal_name.to_be_bytes());
+                    body.push(b'Z'); // boolean
+                    let value = if value { boolean_true } else { boolean_false };
+                    body.extend_from_slice(&value.to_be_bytes());
+                }
+                None => body.extend_from_slice(&0u16.to_be_bytes()),
+            }
+            attr.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            attr.extend_from_slice(&body);
+            attributes.push(attr);
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&(attributes.len() as u16).to_be_bytes());
+        for attr in attributes {
+            out.extend_from_slice(&attr);
+        }
+        out
+    };
+
     let mut out = Vec::new();
     out.extend_from_slice(&[0xCA, 0xFE, 0xBA, 0xBE]);
     out.extend_from_slice(&0u16.to_be_bytes()); // minor version
@@ -1687,47 +1844,58 @@ pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
     }
 
     out.extend_from_slice(&(fields.len() as u16).to_be_bytes());
-    for (name, desc) in fields {
+    for (i, (name, desc)) in fields.iter().enumerate() {
         out.extend_from_slice(&0x0001u16.to_be_bytes()); // ACC_PUBLIC
         out.extend_from_slice(&name.to_be_bytes());
         out.extend_from_slice(&desc.to_be_bytes());
-        out.extend_from_slice(&0u16.to_be_bytes()); // attributes
+        let marking = spec
+            .field_deprecations
+            .get(i)
+            .copied()
+            .unwrap_or(DeprecationSpec::NONE);
+        out.extend_from_slice(&deprecation_attributes(marking));
     }
 
     out.extend_from_slice(&(methods.len() as u16).to_be_bytes());
     for (i, (name, desc)) in methods.iter().enumerate() {
         let (sig_name, sig_index) = method_sigs[i];
-        let attributes = if sig_name == 0 {
+        let signature = if sig_name == 0 {
             Vec::new()
         } else {
             let mut attr = Vec::new();
-            attr.extend_from_slice(&1u16.to_be_bytes()); // attributes_count
             attr.extend_from_slice(&sig_name.to_be_bytes()); // attribute_name_index
             attr.extend_from_slice(&2u32.to_be_bytes()); // attribute_length
             attr.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
             attr
         };
+        let marking = spec
+            .method_deprecations
+            .get(i)
+            .copied()
+            .unwrap_or(DeprecationSpec::NONE);
+        let mut attributes = deprecation_attributes(marking);
+        let count =
+            u16::from_be_bytes([attributes[0], attributes[1]]) + u16::from(!signature.is_empty());
+        attributes[..2].copy_from_slice(&count.to_be_bytes());
+        attributes.extend_from_slice(&signature);
         let method_access = spec.method_access.get(i).copied().unwrap_or(0x0001); // ACC_PUBLIC
         out.extend_from_slice(&method_access.to_be_bytes());
         out.extend_from_slice(&name.to_be_bytes());
         out.extend_from_slice(&desc.to_be_bytes());
-        if attributes.is_empty() {
-            out.extend_from_slice(&0u16.to_be_bytes()); // attributes
-        } else {
-            out.extend_from_slice(&attributes);
-        }
+        out.extend_from_slice(&attributes);
     }
 
-    // class attributes: an optional `Signature` attribute (JVMS §4.7.9.1).
-    match (sig_name, sig_index) {
-        (Some(sig_name), Some(sig_index)) => {
-            out.extend_from_slice(&1u16.to_be_bytes()); // attributes_count
-            out.extend_from_slice(&sig_name.to_be_bytes()); // attribute_name_index
-            out.extend_from_slice(&2u32.to_be_bytes()); // attribute_length
-            out.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
-        }
-        _ => out.extend_from_slice(&0u16.to_be_bytes()), // class attributes
+    // class attributes: an optional `Signature` attribute (JVMS §4.7.9.1) and
+    // the deprecation markers.
+    let mut class_attributes = deprecation_attributes(spec.deprecation);
+    if let (Some(sig_name), Some(sig_index)) = (sig_name, sig_index) {
+        let count = u16::from_be_bytes([class_attributes[0], class_attributes[1]]) + 1;
+        class_attributes[..2].copy_from_slice(&count.to_be_bytes());
+        class_attributes.extend_from_slice(&sig_name.to_be_bytes()); // attribute_name_index
+        class_attributes.extend_from_slice(&2u32.to_be_bytes()); // attribute_length
+        class_attributes.extend_from_slice(&sig_index.to_be_bytes()); // signature_index
     }
+    out.extend_from_slice(&class_attributes);
     out
 }
 
@@ -2159,6 +2327,47 @@ pub fn check_body_types_with_libs(specs: &[ClassSpec<'static>], files: &[(&str, 
     register_source_set_classpath(&mut db, &fixture, files, classpath, &[(extra.lib, info)]);
 
     render_body_types(&db, files)
+}
+
+/// [`check_body_diagnostic_spans`] with an extra third-party library jar
+/// (`specs`) on the compile classpath.
+pub fn check_body_diagnostic_spans_with_libs(
+    specs: &[ClassSpec<'static>],
+    files: &[(&str, &str)],
+) -> String {
+    let (mut db, _extra) = source_set_with_libs(specs, files);
+    render_body_diagnostic_spans(&db, files)
+}
+
+/// [`check_class_diagnostics`] with an extra third-party library jar (`specs`)
+/// on the compile classpath.
+pub fn check_class_diagnostics_with_libs(
+    specs: &[ClassSpec<'static>],
+    files: &[(&str, &str)],
+) -> String {
+    let (mut db, _extra) = source_set_with_libs(specs, files);
+    render_class_diagnostics(&db, files)
+}
+
+/// The database of a JDK fixture plus a temporary jar built from `specs`; the
+/// returned jar keeps the fixture directory alive.
+fn source_set_with_libs(
+    specs: &[ClassSpec<'static>],
+    files: &[(&str, &str)],
+) -> (TestDatabase, TempJar) {
+    let fixture = jdk_fixture();
+    let extra = temp_jar("widgets", specs);
+    let mut db = TestDatabase::new();
+    let info = LibraryInfo::new(
+        LibraryKind::Jar,
+        AbsPathBuf::assert_utf8(extra.path.as_std_path().to_owned()),
+    );
+    let classpath = vec![
+        hir::ClasspathEntry::Library(fixture.lib),
+        hir::ClasspathEntry::Library(extra.lib),
+    ];
+    register_source_set_classpath(&mut db, &fixture, files, classpath, &[(extra.lib, info)]);
+    (db, extra)
 }
 
 /// The lint configuration of a conformance renderer: every key this build

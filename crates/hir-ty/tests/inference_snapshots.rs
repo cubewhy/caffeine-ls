@@ -12,7 +12,7 @@ use hir_ty::Ty;
 use syntax::stub::PrimitiveType;
 
 use crate::common::{
-    ClassSpec, TestDatabase, TyBuilder, check_body_types, check_source_methods_ctx,
+    ClassSpec, DeprecationSpec, TestDatabase, TyBuilder, check_body_types, check_source_methods_ctx,
 };
 
 type Sample = (&'static str, TyBuilder, &'static str, &'static [TyBuilder]);
@@ -209,6 +209,9 @@ snapshot!(
             method_access: &[0x0009, 0x0009, 0x0009],
             sig: Some("<K:Ljava/lang/Object;V:Ljava/lang/Object;>java/lang/Object;"),
             fields: &[],
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
         }],
         &[(
             "/src/com/example/App.java",

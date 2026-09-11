@@ -81,6 +81,7 @@ impl InferCtx<'_> {
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
             Some((method, deferred)) => {
                 self.check_release_api_method(expr, &method);
+                self.check_deprecated_method(expr, &method);
                 self.reinfer_deferred(&method, &deferred);
                 // §11.2.1: a delegating constructor's declared exceptions add
                 // to the enclosing liability.
@@ -337,6 +338,7 @@ impl InferCtx<'_> {
         ) {
             Some((method, deferred)) => {
                 self.check_release_api_method(expr, &method);
+                self.check_deprecated_method(expr, &method);
                 // §15.12.3/[§15.8.4]: `super.m(...)` invokes the method *as
                 // declared in the supertype* — the receiver's own override
                 // never applies. An abstract supertype member therefore has
@@ -483,6 +485,9 @@ impl InferCtx<'_> {
                     // `Type.method(...)` — a static invocation whose receiver
                     // expression is a pure type name ([§15.12.1]): a bare name or
                     // a qualified name such as `java.util.Collections`.
+                    // §9.6.4.6: the written type name is itself a reference to
+                    // the (possibly deprecated) class.
+                    self.check_deprecated_type_qualifier(receiver, &ty);
                     return (ty, InvocationMode::Static, false);
                 }
                 match self.tree.expr(receiver).clone() {

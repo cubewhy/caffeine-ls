@@ -9,5 +9,6 @@
 
 pub mod body;
 pub mod decl;
+pub mod deprecation;
 pub mod level;
 pub mod release;

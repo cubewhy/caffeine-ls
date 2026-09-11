@@ -150,6 +150,11 @@ pub(crate) fn body_types_impl(
     let resolver = Resolver::new(&tree, type_params, item);
     let access = access_context(db, file, item);
     let enclosing_class = enclosing_self_ty(db, file, &tree, item, &scope, &resolver);
+    // §6.3/[§8.1.3]: the chain of enclosing class-like declarations of `item`,
+    // outermost first; the first element is the *outermost* one, which
+    // [JLS §9.6.4.6]'s same-outermost-class exemption compares.
+    let enclosing_names = crate::java::resolve::enclosing_type_chain(&tree, item);
+    let use_site_outermost = enclosing_names.first().cloned();
     let mut ctx = InferCtx {
         db,
         scope,
@@ -157,14 +162,14 @@ pub(crate) fn body_types_impl(
         resolver,
         access,
         enclosing_class,
-        enclosing_chain: {
-            // The chain of enclosing class-like declarations of `item`,
-            // innermost first, as raw types ([§6.3], [§8.1.3]).
-            crate::java::resolve::enclosing_type_chain(&tree, item)
-                .into_iter()
-                .map(|name| Ty::reference(db, name.as_str(), Vec::new()))
-                .collect()
-        },
+        enclosing_chain: enclosing_names
+            .into_iter()
+            .map(|name| Ty::reference(db, name.as_str(), Vec::new()))
+            .collect(),
+        enclosing_deprecated: crate::java::db::deprecated_enclosing_query(db, db.file_text(file))
+            .get(&item)
+            .and_then(|info| info.enclosing),
+        use_site_outermost,
         enclosing_ret: None,
         enclosing_throws: Vec::new(),
         thrown: Vec::new(),
@@ -384,6 +389,29 @@ pub(crate) fn body_types_impl(
             &spanned,
             &mut issues,
         );
+        // §9.6.4.6: a written reference to a deprecated class — the class
+        // itself and each deprecated enclosing class of it — is a deprecation
+        // warning, anchored to the reference's own name span.
+        for hit in
+            crate::java::name_check::deprecation_hits(db, &ctx.scope, &ctx.resolver, &spanned)
+        {
+            if crate::java::deprecation::is_exempt(
+                db,
+                &ctx.scope,
+                ctx.enclosing_deprecated,
+                ctx.use_site_outermost.as_ref(),
+                &hit.api,
+                hit.deprecation,
+            ) {
+                continue;
+            }
+            resolved_diags.push(TypeError::DeprecatedUse {
+                location: location.clone(),
+                api: hit.api,
+                deprecation: hit.deprecation,
+                range: hit.range,
+            });
+        }
         for issue in issues {
             match issue {
                 crate::java::name_check::TypeRefDiag::CannotResolve { name, range } => {
@@ -531,6 +559,14 @@ struct InferCtx<'a> {
     enclosing_class: Option<Ty>,
     /// class ([§6.5.5.1], [§8.1.3]).
     enclosing_chain: Vec<Ty>,
+    /// The deprecation in force at this body ([JLS §9.6.4.6]): the enclosing
+    /// declaration's own `@Deprecated`, or the innermost enclosing one that
+    /// carries it. A use inside such a declaration is exempt from *ordinary*
+    /// deprecation warnings.
+    enclosing_deprecated: Option<crate::java::deprecation::Deprecation>,
+    /// The outermost class of this body's declaration — the unit the
+    /// same-outermost-class exemption of [JLS §9.6.4.6] compares.
+    use_site_outermost: Option<Name>,
     /// type ([JLS §18.5.2.4]) of the expressions it returns.
     enclosing_ret: Option<Ty>,
     /// check ([§11.2]).

@@ -126,6 +126,59 @@ pub(crate) fn type_params_map_query(
     Arc::new(resolve::type_params_map(&tree, file_id))
 }
 
+/// Whether a declaration is deprecated, and whether it or any enclosing
+/// declaration is ([JLS §9.6.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.6)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DeprecationInfo {
+    /// The declaration's own `@Deprecated`, when it carries one.
+    pub own: Option<crate::java::deprecation::Deprecation>,
+    /// `own` or, failing that, the innermost enclosing declaration's — the
+    /// deprecation that exempts the body from ordinary deprecation warnings.
+    pub enclosing: Option<crate::java::deprecation::Deprecation>,
+}
+
+/// For every item of `file`: whether the declaration itself is deprecated, and
+/// whether it or any enclosing declaration is ([JLS §9.6.4.6]). Computed in a
+/// single tree walk per file and memoized; invalidated together with the
+/// file's item tree when the file text changes.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn deprecated_enclosing_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashMap<ItemId, DeprecationInfo>> {
+    let file_id = *file.file_id(db);
+    let tree = hir::file_item_tree(db, file_id);
+    let type_params = type_params_map_query(db, file);
+    let scope = scope_for_file(db, file_id);
+    let mut map: FxHashMap<ItemId, DeprecationInfo> = FxHashMap::default();
+    fn walk(
+        db: &dyn TyDatabase,
+        scope: &hir::ResolutionScope,
+        tree: &hir_def::java::item_tree::ItemTree,
+        type_params: &FxHashMap<ItemId, Vec<resolve::ScopedTypeParam>>,
+        id: ItemId,
+        inherited: Option<crate::java::deprecation::Deprecation>,
+        map: &mut FxHashMap<ItemId, DeprecationInfo>,
+    ) {
+        let resolver = Resolver::new(tree, type_params, id);
+        let own = crate::java::deprecation::annotation_deprecation(
+            db,
+            scope,
+            &resolver,
+            crate::java::deprecation::item_annotations(tree.data(id)),
+        );
+        let enclosing = own.or(inherited);
+        map.insert(id, DeprecationInfo { own, enclosing });
+        for &child in tree.data(id).body() {
+            walk(db, scope, tree, type_params, child, enclosing, map);
+        }
+    }
+    for &top in &tree.top {
+        walk(db, &scope, &tree, type_params, top, None, &mut map);
+    }
+    Arc::new(map)
+}
+
 /// The canonical fully qualified name
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
 /// of the nearest enclosing class or interface declaration of every item of

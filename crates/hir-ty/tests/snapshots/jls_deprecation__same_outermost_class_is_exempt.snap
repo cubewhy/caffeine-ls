@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/Outer.java:
+package q;
+
+class Outer {
+    @Deprecated void dm() {}
+    static class Inner {
+        void u() { new Outer().dm(); }
+    }
+    void self() { new Outer().dm(); }
+}

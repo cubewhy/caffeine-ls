@@ -34,10 +34,7 @@ mod handlers;
 mod lint;
 pub use handlers::body::{code as body_code, message as body_message, related as body_related};
 pub use handlers::decl::{code as decl_code, message as decl_message};
-pub use lint::{
-    LintConfig, LintKey, SuppressionScope, is_suppressed, keeps_body_diagnostic,
-    keeps_decl_diagnostic, suppression_scopes,
-};
+pub use lint::{LintConfig, LintKey, keeps_body_diagnostic, keeps_decl_diagnostic};
 
 /// A diagnostic as the IDE layer sees it: its message, its primary and
 /// secondary ranges, its severity and its stable code.
@@ -187,17 +184,6 @@ pub(crate) fn collect_type_diagnostics(
             sink.push(file_id, diagnostic);
         }
     }
-}
-
-/// The body diagnostics of one item, built exactly as
-/// [`collect_type_diagnostics`] builds them, for per-item consumers.
-pub fn item_diagnostics(
-    db: &dyn hir_ty::TyDatabase,
-    file_id: FileId,
-    item: ItemId,
-    lints: &LintConfig,
-) -> Vec<Diagnostic> {
-    item_diagnostics_impl(db, file_id, item, lints)
 }
 
 fn item_diagnostics_impl(

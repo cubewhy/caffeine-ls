@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/S.java:
+package q;
+
+class S {
+    @Deprecated void o() {}
+    @Deprecated(forRemoval = true) void t() {}
+}
+
+class UseS {
+    @SuppressWarnings("deprecation") void a() { S s = new S(); s.o(); }
+    @SuppressWarnings("removal") void b() { S s = new S(); s.t(); }
+    @SuppressWarnings("deprecation") void c() { S s = new S(); s.t(); }
+    @SuppressWarnings("removal") void d() { S s = new S(); s.o(); }
+}
+
+method c(): void
+  @10:65..10:66 't': deprecated-for-removal: t() in S has been deprecated and marked for removal
+method d(): void
+  @11:61..11:62 'o': deprecated-use: o() in S has been deprecated
