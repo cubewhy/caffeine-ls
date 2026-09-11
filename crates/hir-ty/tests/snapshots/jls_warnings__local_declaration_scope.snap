@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void m(List<String> xs) {
+        List raw = xs;
+        @SuppressWarnings("unchecked")
+        List<String> unchecked = raw;
+    }
+}
+
+method m(java.util.List<java.lang.String>): void
+  @6:13..6:21 'raw = xs': raw-type-use: Raw use of parameterized class 'List'

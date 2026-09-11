@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    @SuppressWarnings("rawtypes")
+    void other(List xs) {
+    }
+
+    void m(List xs) {
+    }
+}
+
+@9:11: raw-type-use: Raw use of parameterized class 'List'

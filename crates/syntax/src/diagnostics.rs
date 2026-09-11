@@ -118,6 +118,12 @@ pub enum JavaDiagnosticCode {
     /// §5.1.9/§5.2: a raw value converts to a parameterized type without a
     /// static guarantee — unchecked conversion.
     UncheckedConversion,
+    /// §5.1.9/[§15.12.2.6]: an invocation of a member reached through a raw
+    /// type has an erased signature — unchecked call.
+    UncheckedInvocation,
+    /// §5.5.2/[§15.16]: a cast to a parameterized type cannot be checked at
+    /// run time — unchecked cast.
+    UncheckedCast,
     /// §9.6.4.4: a method annotated `@Override` overrides or implements no
     /// supertype method.
     MethodDoesNotOverride,
@@ -493,6 +499,8 @@ impl JavaDiagnosticCode {
             DuplicateCaseLabel => Some("compiler.err.duplicate.case.label"),
             RawTypeUse => Some("compiler.warn.raw.class.use"),
             UncheckedConversion => Some("compiler.warn.unchecked.assign"),
+            UncheckedInvocation => Some("compiler.warn.unchecked.call"),
+            UncheckedCast => Some("compiler.warn.unchecked.cast"),
             MethodDoesNotOverride => Some("compiler.err.method.does.not.override.superclass"),
             MethodDoesNotOverrideStatic => Some("compiler.err.override.static"),
             UnreachableStatement => Some("compiler.err.unreachable.stmt"),
@@ -637,6 +645,8 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::DuplicateCaseLabel => "duplicate-case-label",
             JavaDiagnosticCode::RawTypeUse => "raw-type-use",
             JavaDiagnosticCode::UncheckedConversion => "unchecked-conversion",
+            JavaDiagnosticCode::UncheckedInvocation => "unchecked-invocation",
+            JavaDiagnosticCode::UncheckedCast => "unchecked-cast",
             JavaDiagnosticCode::MethodDoesNotOverride => "method-does-not-override",
             JavaDiagnosticCode::MethodDoesNotOverrideStatic => "method-does-not-override-static",
             JavaDiagnosticCode::UnreachableStatement => "unreachable-statement",

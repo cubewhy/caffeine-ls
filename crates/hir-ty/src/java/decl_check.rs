@@ -559,6 +559,13 @@ pub enum DeclDiagnostic {
         implementation: Ty,
         range: Option<rowan::TextRange>,
     },
+    /// §4.8/§4.12.2: a *declaration* type reference names a generic class
+    /// without its type arguments. javac: `found raw type: {ty}`; the message
+    /// is javac's, IntelliJ-style. `range` spans the type reference.
+    RawTypeUse {
+        ty: Ty,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 impl DeclDiagnostic {
@@ -597,6 +604,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ModuleNotAccessible { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ModuleNotAccessible)
+            }
+            DeclDiagnostic::RawTypeUse { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)
             }
             DeclDiagnostic::UnexpectedPackagePath { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnexpectedPackagePath)
@@ -802,6 +812,9 @@ impl DeclDiagnostic {
                     "Package in which '{}' is declared is not visible from the current module",
                     name.as_str()
                 )
+            }
+            DeclDiagnostic::RawTypeUse { ty, .. } => {
+                format!("Raw use of parameterized class '{}'", ty.display_simple(db))
             }
             DeclDiagnostic::UnexpectedPackagePath { expected, dir, .. } => format!(
                 "Package name '{}' does not correspond to the file path '{}'",
@@ -1124,6 +1137,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { .. }
             | DeclDiagnostic::ConflictingImport { .. }
             | DeclDiagnostic::ModuleNotAccessible { .. }
+            | DeclDiagnostic::RawTypeUse { .. }
             | DeclDiagnostic::UnexpectedPackagePath { .. }
             | DeclDiagnostic::DuplicatePackage { .. }
             | DeclDiagnostic::DuplicateClass { .. }
@@ -1166,6 +1180,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { range, .. }
             | DeclDiagnostic::ConflictingImport { range, .. }
             | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
+            DeclDiagnostic::RawTypeUse { range, .. } => *range,
             DeclDiagnostic::UnexpectedPackagePath { name_range, .. } => *name_range,
             DeclDiagnostic::DuplicatePackage { name_range, .. }
             | DeclDiagnostic::DuplicateClass { name_range, .. }
@@ -1270,6 +1285,23 @@ impl DeclDiagnostic {
             DeclDiagnostic::ServiceImplementationNotSubtype {
                 range: name_range, ..
             } => *name_range,
+            _ => None,
+        }
+    }
+
+    /// Whether this diagnostic is a *warning* — a legal program reported for
+    /// its unsoundness ([§4.12.2] raw types) — rather than a compile-time
+    /// error.
+    pub fn is_warning(&self) -> bool {
+        self.suppression_key().is_some()
+    }
+
+    /// The `@SuppressWarnings` key that names this warning
+    /// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)),
+    /// or `None` for an error (which no string suppresses).
+    pub fn suppression_key(&self) -> Option<crate::java::warnings::LintKey> {
+        match self {
+            DeclDiagnostic::RawTypeUse { .. } => Some(crate::java::warnings::LintKey::RawTypes),
             _ => None,
         }
     }
@@ -1436,6 +1468,18 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     for top in &tree.top {
         walk(db, file, &scope, &tree, *top, &mut out);
     }
+    // JLS §9.6.4.5: a warning named by an enclosing `@SuppressWarnings` is not
+    // reported at all. Only the warnings are filtered — no string suppresses
+    // an error.
+    out.retain(|diagnostic| {
+        let Some(key) = diagnostic.suppression_key() else {
+            return true;
+        };
+        let Some(range) = diagnostic.range() else {
+            return true;
+        };
+        !crate::java::warnings::warning_is_suppressed(db, file, range, key)
+    });
     out
 }
 

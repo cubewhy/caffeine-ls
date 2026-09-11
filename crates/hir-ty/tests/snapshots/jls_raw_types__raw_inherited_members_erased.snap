@@ -23,4 +23,4 @@ class Raw {
 method m(com.example.Raw.Check<?>): void
   locals: l0: com.example.Raw.Check<?> | l1: com.example.Raw.CheckContainer
   exprs: e0: com.example.Raw.CheckContainer | e1: com.example.Raw.Check<?> | e2: com.example.Raw.CheckContainer | e3: boolean
-  diags: l1@12:23: raw-type-use: Raw use of parameterized class 'CheckContainer'
+  diags: l1@12:23: raw-type-use: Raw use of parameterized class 'CheckContainer' | e3@13:11: unchecked-invocation: Unchecked call to 'add' as a member of the raw type 'List'

@@ -30,3 +30,4 @@ method m(java.lang.Object): java.lang.Object
 method use(java.util.List): void
   locals: l2: java.util.List | l3: java.lang.Object
   exprs: e2: java.util.List | e3: java.util.List<java.lang.Object>
+  diags: e3@14:19: unchecked-invocation: Unchecked method invocation: 'List' to 'List<Object>'

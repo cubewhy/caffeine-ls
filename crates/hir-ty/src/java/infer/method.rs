@@ -353,6 +353,16 @@ impl InferCtx<'_> {
                         });
                     }
                 }
+                // §5.1.9/[§15.12.2.6]: the selected member was reached through
+                // a *raw* receiver ([§4.8]) and its declaration is generic, so
+                // its signature was erased and the invocation cannot be
+                // statically checked — javac's `unchecked call to … as a
+                // member of the raw type …`.
+                self.warn_unchecked_invocation(expr, &method);
+                // §5.1.9/§15.12.2.2: an actual argument whose type is raw
+                // converting to a parameterized formal is an unchecked method
+                // invocation. Reported once, on the invocation.
+                self.warn_unchecked_arguments(expr, &arg_kinds, &method);
                 // §18.5.2.2/§18.5.2.4: the resolved formal parameters are the
                 // target types of the poly arguments — the lambda, method
                 // reference or nested invocation is re-inferred against the

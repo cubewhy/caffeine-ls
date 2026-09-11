@@ -204,7 +204,13 @@ pub(crate) fn collect_declaration_diagnostics(
                 &diagnostic.message(db),
                 range,
                 Some(diagnostic.code()),
-                Severity::Error,
+                // A raw-type declaration report is a warning ([JLS §4.12.2]):
+                // a legal program, flagged for its unsoundness.
+                if diagnostic.is_warning() {
+                    Severity::Warning
+                } else {
+                    Severity::Error
+                },
             ),
         );
     }

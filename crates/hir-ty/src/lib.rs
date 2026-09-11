@@ -115,4 +115,5 @@ pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{
     BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
 };
+pub use java::warnings::{LintKey, SuppressionScope, is_suppressed, suppression_scopes};
 pub use syntax::{DiagnosticCode, JavaDiagnosticCode};

@@ -357,6 +357,18 @@ pub struct MethodData {
     /// The method's own type parameters
     /// ([JLS §8.4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.4)).
     pub type_params: Vec<MethodTypeParam>,
+    /// Whether this member's signature was *erased* because it was reached
+    /// through a raw receiver ([JLS §4.8]) while its declaration mentions the
+    /// declaring class's type parameters — the condition under which an
+    /// invocation of it is an unchecked call
+    /// ([§5.1.9](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.9),
+    /// javac's `unchecked call to … as a member of the raw type …`).
+    ///
+    /// A member whose declared signature mentions no type parameter (`void
+    /// m(String)`) keeps a fully-checked invocation even on a raw receiver,
+    /// which is why the flag records the *declaration*, not merely the raw
+    /// receiver.
+    pub raw_erased: bool,
 }
 
 impl MethodData {
@@ -781,6 +793,7 @@ fn member_set_impl(
             declaring_top_level: Some("Object".to_owned()),
             declaring_interface: false,
             type_params: Vec::new(),
+            raw_erased: false,
         });
     }
     // §8.4.8.1: an overriding method replaces the overridden one in the
@@ -1280,6 +1293,20 @@ fn library_class_methods(
             crate::java::resolve::ty_from_library_signature(db, tyref, &signature)
                 .substitute(db, &binding)
         };
+        // JLS §4.8 with §5.1.9: an instance member reached through a raw
+        // receiver has an *erased* signature, so an invocation of it cannot be
+        // statically checked — javac's `unchecked call to … as a member of the
+        // raw type …`. The erasure is observable exactly when the declared
+        // formal types mention a type variable (the class's or the method's
+        // own) or the method declares its own type parameters; a member whose
+        // formals are ground (`void m(String)`) stays checked.
+        let raw_erased = is_raw
+            && !flags.is_static()
+            && (!method.type_params.is_empty()
+                || method
+                    .params
+                    .iter()
+                    .any(|param| member_lower(&param.param_type).contains_type_var(db)));
         let type_params = method
             .type_params
             .iter()
@@ -1339,6 +1366,7 @@ fn library_class_methods(
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface,
             type_params,
+            raw_erased,
         });
     }
     out
@@ -1428,6 +1456,20 @@ fn source_class_methods(
             }
         };
         let is_compact_ctor = method.is_compact_constructor();
+        // JLS §4.8 with §5.1.9: an instance member reached through a raw
+        // receiver has an *erased* signature, so an invocation of it is
+        // unchecked — javac's `unchecked call to … as a member of the raw
+        // type …`. The erasure is observable when the declared formal types
+        // mention a type variable (the class's or a method's own) or the
+        // method declares its own type parameters; a member whose formals are
+        // ground (`void m(String)`) stays checked.
+        let raw_erased = is_raw
+            && !method.modifiers.is_static()
+            && (!method.sig.type_params.is_empty()
+                || method_params_query(db, key)
+                    .iter()
+                    .map(instantiate)
+                    .any(|param| param.contains_type_var(db)));
         // §8.10.4: a record *compact* constructor (`record R(int x) { R { …
         // } }`) is declared without a formal parameter list — its signature
         // is the record's component list. The canonical constructor is the
@@ -1514,6 +1556,7 @@ fn source_class_methods(
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface,
             type_params,
+            raw_erased,
         });
     }
     // §8.8.9: a class with no constructor has an implicit *default*
@@ -1564,6 +1607,7 @@ fn source_class_methods(
             declaring_top_level: declaring_top_level.clone(),
             declaring_interface: false,
             type_params: Vec::new(),
+            raw_erased: false,
         });
     }
     // §8.9.3: every enum type has two implicit static members —
@@ -1593,6 +1637,7 @@ fn source_class_methods(
                 declaring_top_level: declaring_top_level.clone(),
                 declaring_interface: false,
                 type_params: Vec::new(),
+                raw_erased: false,
             });
         }
         if !declared.contains("valueOf") && (name.is_empty() || name == "valueOf") {
@@ -1614,6 +1659,7 @@ fn source_class_methods(
                 declaring_top_level: declaring_top_level.clone(),
                 declaring_interface: false,
                 type_params: Vec::new(),
+                raw_erased: false,
             });
         }
     }
@@ -1661,6 +1707,7 @@ fn source_class_methods(
                 declaring_top_level: declaring_top_level.clone(),
                 declaring_interface: false,
                 type_params: Vec::new(),
+                raw_erased: false,
             });
         }
         // §8.10.3: every record implicitly implements `equals`, `hashCode`
@@ -1726,6 +1773,7 @@ fn source_class_methods(
                 declaring_top_level: declaring_top_level.clone(),
                 declaring_interface: false,
                 type_params: Vec::new(),
+                raw_erased: false,
             });
         }
         // §8.10.4: a record has a *canonical constructor* whose parameters
@@ -1787,6 +1835,7 @@ fn source_class_methods(
                         declaring_top_level: declaring_top_level.clone(),
                         declaring_interface: false,
                         type_params: Vec::new(),
+                        raw_erased: false,
                     });
                 }
             }
@@ -2282,6 +2331,7 @@ fn instantiate(
         declaring_top_level: method.declaring_top_level.clone(),
         declaring_interface: method.declaring_interface,
         type_params: method.type_params.clone(),
+        raw_erased: method.raw_erased,
     })
 }
 

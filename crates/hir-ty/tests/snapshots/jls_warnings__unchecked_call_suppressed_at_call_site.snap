@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Box<X> {
+    void put(X value) {
+    }
+}
+
+class Body {
+    @SuppressWarnings("unchecked")
+    void m(Box raw) {
+        raw.put("x");
+    }
+}

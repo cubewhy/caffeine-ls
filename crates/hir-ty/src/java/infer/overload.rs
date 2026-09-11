@@ -485,6 +485,7 @@ impl InferCtx<'_> {
             declaring_top_level: method.declaring_top_level.clone(),
             declaring_interface: method.declaring_interface,
             type_params: method.type_params.clone(),
+            raw_erased: method.raw_erased,
         };
         if resolve {
             let resolved = match inference.solve_after(self.db, &self.scope, phase) {

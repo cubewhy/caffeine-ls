@@ -272,6 +272,22 @@ pub enum TypeError {
     /// target; the conversion succeeds but carries no static element-type
     /// guarantee. A warning, not an error.
     UncheckedConversion { expr: ExprId, from: Ty, to: Ty },
+    /// §5.1.9/§15.12.2.6: an invocation of a member reached through a raw
+    /// type ([§4.8]) has an erased signature, so the call is unchecked. A
+    /// warning, not an error — javac's `unchecked call to … as a member of
+    /// the raw type …`.
+    UncheckedInvocation {
+        expr: ExprId,
+        method: Name,
+        owner: Name,
+    },
+    /// §5.5.2/§15.16: a cast to a parameterized type cannot be checked at run
+    /// time, so it is an unchecked cast. A warning, not an error.
+    UncheckedCast { expr: ExprId, from: Ty, to: Ty },
+    /// §5.1.9/§15.12.2.2: a raw argument converting to a parameterized formal
+    /// makes the invocation an unchecked method invocation. A warning, not an
+    /// error.
+    UncheckedArgument { expr: ExprId, from: Ty, to: Ty },
     /// §14.22: a statement is unreachable — the statement before it cannot
     /// complete normally (`return`, `throw`, `break`, `continue`).
     UnreachableStatement { stmt: StmtId },
@@ -480,6 +496,9 @@ impl TypeError {
             TypeError::DuplicateCaseLabel { .. } => DiagnosticCode::Java(DuplicateCaseLabel),
             TypeError::RawTypeUse { .. } => DiagnosticCode::Java(RawTypeUse),
             TypeError::UncheckedConversion { .. } => DiagnosticCode::Java(UncheckedConversion),
+            TypeError::UncheckedInvocation { .. } => DiagnosticCode::Java(UncheckedInvocation),
+            TypeError::UncheckedArgument { .. } => DiagnosticCode::Java(UncheckedInvocation),
+            TypeError::UncheckedCast { .. } => DiagnosticCode::Java(UncheckedCast),
             TypeError::UnreachableStatement { .. } => DiagnosticCode::Java(UnreachableStatement),
             TypeError::MissingReturnValue { .. } => DiagnosticCode::Java(MissingReturnValue),
             TypeError::CatchNeverThrown { .. } => DiagnosticCode::Java(CatchNeverThrown),
@@ -537,8 +556,27 @@ impl TypeError {
     pub fn is_warning(&self) -> bool {
         matches!(
             self,
-            TypeError::RawTypeUse { .. } | TypeError::UncheckedConversion { .. }
+            TypeError::RawTypeUse { .. }
+                | TypeError::UncheckedConversion { .. }
+                | TypeError::UncheckedInvocation { .. }
+                | TypeError::UncheckedCast { .. }
+                | TypeError::UncheckedArgument { .. }
         )
+    }
+
+    /// The `@SuppressWarnings` key that names this warning
+    /// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)),
+    /// or `None` for an error (which no string suppresses).
+    pub fn suppression_key(&self) -> Option<crate::java::warnings::LintKey> {
+        use crate::java::warnings::LintKey;
+        match self {
+            TypeError::RawTypeUse { .. } => Some(LintKey::RawTypes),
+            TypeError::UncheckedConversion { .. }
+            | TypeError::UncheckedInvocation { .. }
+            | TypeError::UncheckedCast { .. }
+            | TypeError::UncheckedArgument { .. } => Some(LintKey::Unchecked),
+            _ => None,
+        }
     }
 
     /// The location of the error within its body.
@@ -577,7 +615,10 @@ impl TypeError {
             | NotExhaustive { expr, .. }
             | NonConstantCaseLabel { expr, .. }
             | DuplicateCaseLabel { expr, .. }
-            | UncheckedConversion { expr, .. } => DiagLocation::Expr(*expr),
+            | UncheckedConversion { expr, .. }
+            | UncheckedInvocation { expr, .. }
+            | UncheckedCast { expr, .. }
+            | UncheckedArgument { expr, .. } => DiagLocation::Expr(*expr),
             UnreachableStatement { stmt } => DiagLocation::Stmt(*stmt),
             ContinueOutsideLoop { stmt }
             | BreakOutsideSwitchOrLoop { stmt }
@@ -585,7 +626,6 @@ impl TypeError {
             | NotALoopLabel { stmt, .. } => DiagLocation::Stmt(*stmt),
             IncorrectNumberOfPatternComponents { pattern, .. } => DiagLocation::Pattern(*pattern),
             PatternDominated { pattern } => DiagLocation::Pattern(*pattern),
-            CannotUseDiamondWithNonGeneric { expr, .. } => DiagLocation::Expr(*expr),
             CannotUseDiamondWithNonGeneric { expr, .. } => DiagLocation::Expr(*expr),
             MissingReturnValue { .. } => DiagLocation::Method,
             CatchNeverThrown { local, .. } => DiagLocation::Local(*local),
@@ -681,7 +721,10 @@ impl TypeError {
             | TypeError::NotDefinitelyAssigned { expr, .. }
             | TypeError::VariableAlreadyAssigned { expr, .. }
             | TypeError::DuplicateCaseLabel { expr, .. }
-            | TypeError::UncheckedConversion { expr, .. } => tree
+            | TypeError::UncheckedConversion { expr, .. }
+            | TypeError::UncheckedInvocation { expr, .. }
+            | TypeError::UncheckedCast { expr, .. }
+            | TypeError::UncheckedArgument { expr, .. } => tree
                 .expr_name_range(*expr)
                 .or_else(|| tree.expr_range(*expr)),
             _ => self.location().range(tree),
@@ -900,6 +943,21 @@ impl TypeError {
                     render_simple(db, *to)
                 )
             }
+            UncheckedInvocation { method, owner, .. } => format!(
+                "Unchecked call to '{}' as a member of the raw type '{}'",
+                method.as_str(),
+                owner.simple_name()
+            ),
+            UncheckedCast { from, to, .. } => format!(
+                "Unchecked cast: '{}' to '{}'",
+                render_simple(db, *from),
+                render_simple(db, *to)
+            ),
+            UncheckedArgument { from, to, .. } => format!(
+                "Unchecked method invocation: '{}' to '{}'",
+                render_simple(db, *from),
+                render_simple(db, *to)
+            ),
             UnreachableStatement { .. } => "Unreachable statement".to_owned(),
             MissingReturnValue { .. } => "Missing return statement".to_owned(),
             CatchNeverThrown { caught, .. } => format!(

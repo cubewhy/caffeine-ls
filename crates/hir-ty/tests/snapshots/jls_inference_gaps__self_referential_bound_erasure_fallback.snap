@@ -23,3 +23,4 @@ method copyOf(java.util.Collection<E>): com.example.Raw
 method copy(java.util.Collection): void
   locals: l1: java.util.Collection | l2: com.example.Raw
   exprs: e1: java.util.Collection | e2: com.example.Raw
+  diags: e2@10:16: unchecked-invocation: Unchecked method invocation: 'Collection' to 'Collection<Enum>'

@@ -355,7 +355,113 @@ impl InferCtx<'_> {
         }
     }
 
-    /// their bare-name labels are resolved as constants above.
+    /// JLS §5.1.9/[§15.12.2.6]: an invocation of a member *declared in a raw
+    /// type* ([§4.8]) whose signature was erased to a generic declaration is
+    /// an unchecked call — javac's `unchecked call to …`. The receiver's raw
+    /// use erases the member's parameter types to their bounds, so the
+    /// invocation is legal but cannot be statically checked against the
+    /// declaration's own type parameters.
+    pub(super) fn warn_unchecked_invocation(
+        &mut self,
+        expr: ExprId,
+        method: &crate::java::method::MethodData,
+    ) {
+        if self.probing || !method.raw_erased {
+            return;
+        }
+        self.report(TypeError::UncheckedInvocation {
+            expr,
+            method: Name::new(&method.name),
+            owner: Name::new(method.owner.as_str()),
+        });
+    }
+
+    /// JLS §5.1.9/[§15.12.2.2]: an actual argument whose type is *raw*
+    /// ([§4.8]) converting to a parameterized formal makes the invocation an
+    /// unchecked method invocation — javac's `unchecked method invocation:
+    /// method …`. The invocation is reported once, on the call, from the first
+    /// such argument.
+    pub(super) fn warn_unchecked_arguments(
+        &mut self,
+        expr: ExprId,
+        arg_kinds: &[crate::java::infer::poly::ArgInfo],
+        method: &crate::java::method::MethodData,
+    ) {
+        if self.probing {
+            return;
+        }
+        for (info, formal) in arg_kinds.iter().zip(&method.params) {
+            let Some(leaf) = info.leaves.first() else {
+                continue;
+            };
+            let crate::java::infer::poly::ArgKind::Concrete(actual) = leaf else {
+                continue;
+            };
+            if actual.is_error(self.db) || formal.is_error(self.db) {
+                continue;
+            }
+            if !self.is_raw_type(actual) {
+                continue;
+            }
+            let parameterized =
+                matches!(formal.kind(self.db), TyKind::Reference { args, .. } if !args.is_empty());
+            if parameterized
+                && !crate::java::subtyping::is_subtype(self.db, &self.scope, actual, formal)
+            {
+                self.report(TypeError::UncheckedArgument {
+                    expr,
+                    from: *actual,
+                    to: *formal,
+                });
+                return;
+            }
+        }
+    }
+
+    /// JLS §5.5.2/[§15.16]: a cast to a parameterized type whose top-level
+    /// arguments are not all wildcards cannot be checked at run time — the
+    /// erasure test is all the JVM can perform — so the cast is an *unchecked
+    /// cast* unless the source is already a subtype of the target. javac's
+    /// `unchecked cast: … to …`. A cast to a reifiable target (a raw type, a
+    /// wildcard-parameterized one, an array of primitives) is fully checked
+    /// and is not reported.
+    pub(super) fn warn_unchecked_cast(&mut self, expr: ExprId, src: &Ty, dst: &Ty) {
+        if self.probing || src.is_error(self.db) || dst.is_error(self.db) {
+            return;
+        }
+        // A cast to a type variable, or to an array whose element is one
+        // ([§5.5.1]), carries no type arguments to check; the erasure test is
+        // the whole cast.
+        if dst.contains_type_var(self.db) {
+            return;
+        }
+        let target = cast_target(self.db, dst);
+        let TyKind::Reference { args, .. } = target.kind(self.db) else {
+            return;
+        };
+        // §4.7: the target is reifiable when every top-level argument is an
+        // *unbounded* wildcard ([§4.5.1]) — `List<?>` carries no type
+        // information to check, so the cast is statically decidable; a
+        // bounded wildcard (`? extends Number`) is not reifiable and the cast
+        // is unchecked.
+        if args
+            .iter()
+            .all(|arg| matches!(arg.kind(self.db), TyKind::Wildcard(None)))
+        {
+            return;
+        }
+        if crate::java::subtyping::is_subtype(self.db, &self.scope, src, dst) {
+            return;
+        }
+        self.report(TypeError::UncheckedCast {
+            expr,
+            from: *src,
+            to: *dst,
+        });
+    }
+
+    /// the label's own scope.
+
     pub(super) fn check_case_label(&mut self, label: ExprId, selector: &Ty) {
         if matches!(self.tree.expr(label).clone(), ExprData::Missing)
             || selector.is_error(self.db)
@@ -443,4 +549,16 @@ impl InferCtx<'_> {
             }
         }
     }
+}
+
+/// The type a cast's type-argument check applies to
+/// ([JLS §5.5.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.5.2)):
+/// an array's element type, so `(List<String>[]) o` is unchecked exactly as
+/// `(List<String>) o` is; any non-array type is itself.
+fn cast_target(db: &dyn crate::java::db::TyDatabase, ty: &Ty) -> Ty {
+    let mut current = *ty;
+    while let TyKind::Array(inner) = current.kind(db) {
+        current = **inner;
+    }
+    current
 }

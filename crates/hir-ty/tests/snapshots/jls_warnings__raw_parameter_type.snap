@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/jls_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void m(List xs) {
+    }
+}

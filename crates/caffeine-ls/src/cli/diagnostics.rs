@@ -33,6 +33,7 @@ pub fn run(args: &DiagnosticsArgs) -> anyhow::Result<i32> {
         &root,
         select_build_system.map(str::to_string),
         args.java_home.as_deref(),
+        &resolve_lints(&args.lints),
     )
     .context("failed to start headless language server")?;
 
@@ -72,6 +73,18 @@ pub fn run(args: &DiagnosticsArgs) -> anyhow::Result<i32> {
     } else {
         crate::cli::EXIT_FINDINGS
     })
+}
+
+/// The lint keys the headless client enables ([JLS §9.6.4.5]): those named by
+/// `--lints`, or every key this server knows for the `all` shorthand. Unknown
+/// keys are passed through unchanged so the server's own gate ignores them —
+/// §9.6.4.5 requires exactly that.
+fn resolve_lints(requested: &[String]) -> Vec<String> {
+    const KNOWN: [&str; 3] = ["rawtypes", "unchecked", "deprecation"];
+    if requested.iter().any(|lint| lint == "all") {
+        return KNOWN.iter().map(|lint| (*lint).to_owned()).collect();
+    }
+    requested.to_vec()
 }
 
 fn resolve_root(path: &Option<PathBuf>) -> anyhow::Result<AbsPathBuf> {

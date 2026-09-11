@@ -13,4 +13,5 @@ class L extends java.util.ArrayList implements I {
 }
 class Missing implements I {}
 
+@5:16: raw-type-use: Raw use of parameterized class 'ArrayList'
 @8:6: unimplemented-abstract-method: Class 'Missing' must either be declared abstract or implement abstract method 'add()' in 'I'

@@ -372,11 +372,17 @@ impl InferCtx<'_> {
                             target: cast_ty,
                         });
                     }
+                    // §5.5.2: a cast to a parameterized target is an unchecked
+                    // cast — its type arguments cannot be tested at run time,
+                    // whether the source is a raw type ([§4.8], where the cast
+                    // is also an unchecked conversion) or an unrelated
+                    // reference type. One `unchecked` warning on the cast.
+                    self.warn_unchecked_cast(expr, &operand, &cast_ty);
                     cast_ty
                 }
             }
-            // §15.20.2: `instanceof` always has type `boolean`; the reference type of
-            // the check must be reifiable ([§4.7]), and a pattern test
+            // §15.20.2: `instanceof` always has type `boolean`; the reference
+            // type of the check must be reifiable ([§4.7]), and a pattern test
             // ([§14.30]) additionally resolves the pattern, recording the type
             // of each variable it binds ([§14.30.1], [§14.30.2]).
             ExprData::InstanceOf { expr, pattern, ty } => {

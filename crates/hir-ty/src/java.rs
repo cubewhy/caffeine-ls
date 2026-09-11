@@ -25,3 +25,4 @@ pub mod range_ctx;
 pub mod resolve;
 pub mod subtyping;
 pub mod ty;
+pub mod warnings;

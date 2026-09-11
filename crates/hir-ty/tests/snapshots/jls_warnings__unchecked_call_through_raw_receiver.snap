@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Box<X> {
+    void put(X value) {
+    }
+}
+
+class Body {
+    void m(Box raw) {
+        raw.put("x");
+    }
+}
+
+method m(com.example.Box): void
+  @9:12..9:15 'put': unchecked-invocation: Unchecked call to 'put' as a member of the raw type 'Box'

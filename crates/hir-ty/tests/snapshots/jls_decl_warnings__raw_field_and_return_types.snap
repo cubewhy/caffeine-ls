@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+import java.util.Map;
+
+class Body {
+    List field;
+
+    Map m() {
+        return null;
+    }
+}
+
+@6:4: raw-type-use: Raw use of parameterized class 'List'
+@8:4: raw-type-use: Raw use of parameterized class 'Map'

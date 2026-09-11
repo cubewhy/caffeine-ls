@@ -45,6 +45,14 @@ pub struct DiagnosticsArgs {
     #[arg(long, value_enum, default_value_t = SeverityFilter::Error)]
     pub min_severity: SeverityFilter,
 
+    /// Lint keys to enable ([JLS §9.6.4.5]): `rawtypes`, `unchecked`,
+    /// `deprecation`. Lint-level diagnostics are opt-in, exactly as in an
+    /// editor; without them only the errors are reported. Comma-separate
+    /// several or repeat the flag; `--lints all` enables every key this
+    /// server knows.
+    #[arg(long, value_delimiter = ',')]
+    pub lints: Vec<String>,
+
     /// Build system to pick when the workspace layout is ambiguous
     #[arg(long, value_enum)]
     pub build_system: Option<BuildSystemChoice>,

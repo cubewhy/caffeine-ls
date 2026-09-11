@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_warnings.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    void m(Object o) {
+        List<String> strings = (List<String>) o;
+    }
+}
+
+method m(java.lang.Object): void
+  @6:46..6:47 'o': unchecked-cast: Unchecked cast: 'Object' to 'List<String>'

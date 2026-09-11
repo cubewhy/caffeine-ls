@@ -30,7 +30,7 @@ use crate::{
     java::decl_check::DeclDiagnostic,
     java::diagnostics::DiagLocation,
     java::range_ctx::range_ctx,
-    java::resolve::{NameResolution, Resolver, resolve_name_checked},
+    java::resolve::{NameResolution, Resolver, resolve_name_checked, resolve_type_ref},
 };
 use hir_def::java::ranges;
 
@@ -319,8 +319,21 @@ pub(crate) fn declaration_type_diagnostics(
         // source range of each (resolved on demand from the syntax tree);
         // name_check's `check_spanned` covers the *body* type references.
         for tyref in item_type_refs(tree.data(id)) {
-            for (name, range) in ranges::type_ref_occurrences(map, source, tyref) {
+            let occurrences = ranges::type_ref_occurrences(map, source, tyref);
+            for (name, range) in occurrences.iter().cloned() {
                 check_reference(db, scope, &resolver, &name, range, &mut issues);
+            }
+            // JLS §4.8/§4.12.2: a declared type naming a generic class without
+            // its type arguments is a raw type — legal, reported as a warning.
+            // The range is the whole type reference, as javac's caret is.
+            let ty = resolve_type_ref(db, scope, &resolver, tyref);
+            if crate::java::warnings::is_raw_reference(db, scope, &ty)
+                && let Some(range) = tyref_range(&occurrences)
+            {
+                out.push(DeclDiagnostic::RawTypeUse {
+                    ty,
+                    range: Some(range),
+                });
             }
         }
         // §9.7/§6.5.5.1: the declaration's annotation names resolve like any
@@ -363,6 +376,16 @@ pub(crate) fn declaration_type_diagnostics(
     }
     out.extend(import_diagnostics(db, &scope, tree, map, &source));
     out
+}
+
+/// The source range spanning a declaration type reference: from the first
+/// reference name's start to the last one's end ([`ranges::type_ref_occurrences`]),
+/// so a qualified or parameterized type is covered whole. `None` when the
+/// reference was synthesized (a placeholder with no syntax node).
+fn tyref_range(occurrences: &[(Name, Option<TextRange>)]) -> Option<TextRange> {
+    let start = occurrences.first()?.1?.start();
+    let end = occurrences.last()?.1?.end();
+    Some(TextRange::new(start, end))
 }
 
 /// The single-type-import validation of a compilation unit ([JLS §7.5.1])

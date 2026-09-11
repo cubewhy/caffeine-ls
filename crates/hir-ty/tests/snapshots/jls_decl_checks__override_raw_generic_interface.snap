@@ -13,3 +13,5 @@ class Conv implements Converter {
         return value;
     }
 }
+
+@4:22: raw-type-use: Raw use of parameterized class 'Converter'

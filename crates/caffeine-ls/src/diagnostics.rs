@@ -36,7 +36,9 @@ pub(crate) fn lint_allows(lints: &[String], diagnostic: &ide::Diagnostic) -> boo
     use syntax::{DiagnosticCode, JavaDiagnosticCode};
     let gated = match diagnostic.code {
         Some(DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)) => "rawtypes",
-        Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedConversion)) => "unchecked",
+        Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedConversion))
+        | Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedInvocation))
+        | Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedCast)) => "unchecked",
         _ => return true,
     };
     lints.iter().any(|lint| lint == gated)

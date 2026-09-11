@@ -52,3 +52,4 @@ method getOnlineFriendName(com.example.OnlineFriend): java.lang.String
 method m(java.util.ArrayList<com.example.OnlineFriend>): void
   locals: l2: java.util.ArrayList<com.example.OnlineFriend>
   exprs: e5: java.util.function.Function<? super com.example.OnlineFriend, ? extends java.lang.String> | e7: java.util.Comparator | e9: java.util.function.ToIntFunction<? super com.example.OnlineFriend> | e11: java.util.Comparator<com.example.OnlineFriend> | e12: java.util.Comparator<com.example.OnlineFriend> | e13: java.util.ArrayList<com.example.OnlineFriend> | e14: void
+  diags: e12@30:67: unchecked-invocation: Unchecked method invocation: 'Comparator' to 'Comparator<? super String>'
