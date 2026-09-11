@@ -1,58 +1,38 @@
 ---
 source: crates/caffeine-ls/tests/lsp_snapshots.rs
-expression: "(default_items, linted_items)"
+expression: items
 ---
 [
-  [
-    {
-      "range": {
-        "start": {
-          "line": 4,
-          "character": 10
-        },
-        "end": {
-          "line": 4,
-          "character": 14
-        }
+  {
+    "range": {
+      "start": {
+        "line": 4,
+        "character": 10
       },
-      "severity": 2,
-      "code": "compiler.warn.has.been.deprecated.for.removal",
-      "source": "caffeine-ls",
-      "message": "stop() in Thread has been deprecated and marked for removal"
-    }
-  ],
-  [
-    {
-      "range": {
-        "start": {
-          "line": 4,
-          "character": 10
-        },
-        "end": {
-          "line": 4,
-          "character": 14
-        }
-      },
-      "severity": 2,
-      "code": "compiler.warn.has.been.deprecated.for.removal",
-      "source": "caffeine-ls",
-      "message": "stop() in Thread has been deprecated and marked for removal"
+      "end": {
+        "line": 4,
+        "character": 14
+      }
     },
-    {
-      "range": {
-        "start": {
-          "line": 5,
-          "character": 10
-        },
-        "end": {
-          "line": 5,
-          "character": 15
-        }
+    "severity": 2,
+    "code": "compiler.warn.has.been.deprecated.for.removal",
+    "source": "caffeine-ls",
+    "message": "stop() in Thread has been deprecated and marked for removal"
+  },
+  {
+    "range": {
+      "start": {
+        "line": 5,
+        "character": 10
       },
-      "severity": 2,
-      "code": "compiler.warn.has.been.deprecated",
-      "source": "caffeine-ls",
-      "message": "getId() in Thread has been deprecated"
-    }
-  ]
+      "end": {
+        "line": 5,
+        "character": 15
+      }
+    },
+    "severity": 2,
+    "code": "compiler.warn.has.been.deprecated",
+    "source": "caffeine-ls",
+    "message": "getId() in Thread has been deprecated"
+  }
 ]

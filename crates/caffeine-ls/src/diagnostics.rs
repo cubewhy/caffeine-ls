@@ -12,11 +12,11 @@
 //!
 //! The LSP `resultId` of a file is a deterministic hash of its diagnostics:
 //! the workspace pull carries a `result_id` *precomputed in the parallel
-//! [`ide::Analysis::workspace_reports`] pass* (raw report + client lint keys),
-//! while the per-file document pull hashes its converted items. Equal content
-//! yields the same id, so after an edit that does not change a file's
-//! diagnostics the server echoes `WorkspaceUnchangedDocumentDiagnosticReport`
-//! — the `full=1 unchanged=N-1` steady state.
+//! [`ide::Analysis::workspace_reports`] pass*, while the per-file document
+//! pull hashes its converted items. Equal content yields the same id, so after
+//! an edit that does not change a file's diagnostics the server echoes
+//! `WorkspaceUnchangedDocumentDiagnosticReport` — the `full=1 unchanged=N-1`
+//! steady state.
 
 use std::hash::{Hash, Hasher};
 
@@ -42,10 +42,9 @@ pub(crate) fn check_cancelled(snapshot: &GlobalStateSnapshot) -> anyhow::Result<
 }
 
 /// The wire-level diagnostics of a file, range-converted from an
-/// already-computed report.
-///
-/// The report arrives from [`ide::Analysis`] already restricted to the client's
-/// lint set ([JLS §9.6.4.5]), so no gating happens here.
+/// already-computed report: every diagnostic the checks produced, minus the
+/// warnings an enclosing `@SuppressWarnings` names ([JLS §9.6.4.5]), so
+/// nothing is filtered here.
 pub(crate) fn convert_items(
     snapshot: &GlobalStateSnapshot,
     file_id: FileId,
@@ -88,7 +87,7 @@ pub(crate) fn render_id(hash: u64) -> String {
 /// rayon workers over shared salsa memo tables — O(1) cache hits for
 /// unaffected files, recompute only files whose inputs actually moved. The
 /// `result_id` of every file is *precomputed inside that parallel pass* (a
-/// content hash of the raw report plus the client lint keys), so a cache hit
+/// content hash of the raw report), so a cache hit
 /// never converts items or re-hashes on the main thread: an unchanged file is
 /// echoed straight from its `result_id`. Only cache misses
 /// ([`convert_items`]) run the LSP conversion. Because the `resultId` is a
@@ -110,9 +109,7 @@ pub(crate) fn workspace_diagnostic_reports(
 
     check_cancelled(snapshot)?;
 
-    let reports = snapshot
-        .analysis
-        .workspace_reports(snapshot.config.client_lints())?;
+    let reports = snapshot.analysis.workspace_reports()?;
     if reports.is_empty() {
         return Ok(Vec::new());
     }
@@ -146,7 +143,7 @@ pub(crate) fn workspace_diagnostic_reports(
         }
 
         // Cache miss: only the files that actually changed pay for the
-        // lint-filter + UTF-16 coordinate conversion.
+        // UTF-16 coordinate conversion.
         let diagnostics = convert_items(snapshot, file, &workspace_report.report)?;
         items.push(
             lsp_types::WorkspaceDocumentDiagnosticReport::WorkspaceFullDocumentDiagnosticReport(

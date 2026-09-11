@@ -33,7 +33,6 @@ pub fn run(args: &DiagnosticsArgs) -> anyhow::Result<i32> {
         &root,
         select_build_system.map(str::to_string),
         args.java_home.as_deref(),
-        &args.lints,
     )
     .context("failed to start headless language server")?;
 

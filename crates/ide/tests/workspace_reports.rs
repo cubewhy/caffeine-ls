@@ -77,7 +77,7 @@ fn by_file(reports: &[WorkspaceReport]) -> HashMap<FileId, &WorkspaceReport> {
 /// The single-file [`ide::Analysis::file_report`] result, for comparison with
 /// the workspace pull, which runs under the same (empty) client lint set.
 fn single(analysis: &Analysis, file: FileId) -> Vec<ide::Diagnostic> {
-    analysis.file_report(file, &[]).unwrap().to_vec()
+    analysis.file_report(file).unwrap().to_vec()
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn workspace_reports_matches_per_file_reports() {
         ],
     )]);
     let analysis = fixture.analysis();
-    let reports = analysis.workspace_reports(&[]).unwrap();
+    let reports = analysis.workspace_reports().unwrap();
 
     // One report per source file, sorted by file id.
     assert_eq!(reports.len(), 3);
@@ -123,7 +123,7 @@ fn workspace_reports_matches_per_file_reports() {
             "every report carries a precomputed result id"
         );
     }
-    let second = analysis.workspace_reports(&[]).unwrap();
+    let second = analysis.workspace_reports().unwrap();
     assert_eq!(
         reports
             .iter()
@@ -163,13 +163,7 @@ fn workspace_reports_matches_per_file_reports() {
 #[test]
 fn workspace_reports_empty_without_source_roots() {
     let fixture = build(&[]);
-    assert!(
-        fixture
-            .analysis()
-            .workspace_reports(&[])
-            .unwrap()
-            .is_empty()
-    );
+    assert!(fixture.analysis().workspace_reports().unwrap().is_empty());
 }
 
 #[test]
@@ -186,7 +180,7 @@ fn workspace_reports_reflect_incremental_edits() {
         ],
     )]);
 
-    let before = fixture.analysis().workspace_reports(&[]).unwrap();
+    let before = fixture.analysis().workspace_reports().unwrap();
     let map = by_file(&before);
     assert!(
         map[&fixture.file(2)]
@@ -205,7 +199,7 @@ fn workspace_reports_reflect_incremental_edits() {
     );
     fixture.host.apply_change(change);
 
-    let after = fixture.analysis().workspace_reports(&[]).unwrap();
+    let after = fixture.analysis().workspace_reports().unwrap();
     let map = by_file(&after);
     assert!(map[&fixture.file(1)].report.is_empty());
     assert!(map[&fixture.file(2)].report.is_empty());
@@ -236,7 +230,7 @@ fn workspace_reports_declaration_edit_preserves_unaffected_files() {
     )]);
     let file_b = fixture.file(2);
 
-    let before = fixture.analysis().workspace_reports(&[]).unwrap();
+    let before = fixture.analysis().workspace_reports().unwrap();
     let b_before = by_file(&before)[&file_b];
 
     // Edit A's *declaration*: add a method whose body errors. Nothing B
@@ -252,7 +246,7 @@ fn workspace_reports_declaration_edit_preserves_unaffected_files() {
     );
     fixture.host.apply_change(change);
 
-    let after = fixture.analysis().workspace_reports(&[]).unwrap();
+    let after = fixture.analysis().workspace_reports().unwrap();
     let map = by_file(&after);
     let a_after = map[&fixture.file(1)];
     let b_after = map[&file_b];
@@ -272,37 +266,4 @@ fn workspace_reports_declaration_edit_preserves_unaffected_files() {
     assert_eq!(b_before.report, b_after.report);
     assert_eq!(b_before.result_id, b_after.result_id);
     assert!(Arc::ptr_eq(&b_before.report, &b_after.report));
-}
-
-/// The precomputed `result_id` folds in the client lint keys: the same
-/// unchanged report must hash differently under a different lint config, so a
-/// `didChangeConfiguration` invalidates every cached id and forces full
-/// re-sends.
-#[test]
-fn workspace_reports_result_ids_fold_lints() {
-    let fixture = build(&[(
-        main_source_set(0),
-        vec![
-            (1, "/src/p/A.java", "package p;\npublic class A {\n}\n"),
-            (
-                2,
-                "/src/p/B.java",
-                "package p;\npublic class B {\n    void m(A a) { a.go(); }\n}\n",
-            ),
-        ],
-    )]);
-    let analysis = fixture.analysis();
-
-    let no_lints = analysis.workspace_reports(&[]).unwrap();
-    let with_lints = analysis
-        .workspace_reports(&["rawtypes".to_string(), "unchecked".to_string()])
-        .unwrap();
-    assert_eq!(no_lints.len(), with_lints.len());
-    for (plain, lints) in no_lints.iter().zip(with_lints.iter()) {
-        assert_eq!(plain.report, lints.report, "reports must be identical");
-        assert_ne!(
-            plain.result_id, lints.result_id,
-            "a different lint config must invalidate the result id"
-        );
-    }
 }

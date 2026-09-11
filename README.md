@@ -29,12 +29,10 @@ caffeine-ls diagnostics path/to/project
 # JSON report for tooling, written to a file
 caffeine-ls diagnostics . --format json -o report.json
 
-# count warnings as findings too (see exit codes)
+# count warnings as findings too (see exit codes); every lint-level warning
+# (raw types, unchecked conversions, deprecation) is reported, so this is how
+# a report is narrowed to the errors
 caffeine-ls diagnostics . --min-severity warning
-
-# report the lint-level warnings (raw types, unchecked conversions,
-# deprecation of `@Deprecated` elements)
-caffeine-ls diagnostics . --lints rawtypes,unchecked,deprecation
 
 # resolve ambiguous workspaces (e.g. gradle + maven files in one root)
 caffeine-ls diagnostics . --build-system maven
@@ -47,7 +45,6 @@ Options:
 | `--format <text\|json>` | Report format (default `text`) |
 | `-o, --output <FILE>` | Write the report to a file instead of stdout |
 | `--min-severity <error\|warning\|all>` | Threshold for reported diagnostics and the exit code (default `error`) |
-| `--lints <KEY,...>` | Lint keys to enable: `rawtypes`, `unchecked`, `deprecation`, `removal` (or `all`). Lint-level warnings are opt-in, as in an editor; without this only the errors and the terminal-deprecation warnings (`removal`, on by default as in javac) are reported |
 | `--build-system <gradle\|maven\|eclipse\|idea>` | Pick a build system when the layout is ambiguous |
 | `--java-home <PATH>` | JDK used for workspace loading and library indexing |
 | `--log-file <FILE>` | Also write server logs to a file |

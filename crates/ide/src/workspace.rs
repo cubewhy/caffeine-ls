@@ -27,15 +27,13 @@ pub struct WorkspaceReport {
     pub result_id: String,
 }
 
-/// The deterministic `resultId` of a file's report: a 64-bit hash of the
-/// diagnostics plus the client lint keys. `DefaultHasher` (SipHash, zero keys)
-/// is deterministic across runs, and folding the lints in keeps the id
-/// sensitive to the client's `rawtypes`/`unchecked` config — a
-/// `didChangeConfiguration` change still forces full re-sends.
-fn report_result_id(report: &[Diagnostic], lints: &[String]) -> String {
+/// The deterministic `resultId` of a file's report: a 64-bit content hash of
+/// the diagnostics. `DefaultHasher` (SipHash, zero keys) is deterministic
+/// across runs, so equal content yields the same id and an unchanged file
+/// keeps its id across edits to unrelated files.
+fn report_result_id(report: &[Diagnostic]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     report.hash(&mut hasher);
-    lints.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -53,11 +51,7 @@ fn report_result_id(report: &[Diagnostic], lints: &[String]) -> String {
 /// every worker, rayon propagates the unwind (preserving the `Cancelled`
 /// payload), and the caller's [`Analysis::with_db`] boundary turns it into a
 /// `Cancellable::Err`. Results are sorted by file id for determinism.
-///
-/// `lints` are the client-enabled lint keys (`rawtypes`, `unchecked`, ...):
-/// each worker folds them into the report's `result_id` so a lint-config
-/// change invalidates every cached id without a main-thread conversion pass.
-pub fn workspace_reports(db: &RootDatabase, lints: &[String]) -> Vec<WorkspaceReport> {
+pub fn workspace_reports(db: &RootDatabase) -> Vec<WorkspaceReport> {
     let files = db.source_files();
     if files.is_empty() {
         return Vec::new();
@@ -76,12 +70,9 @@ pub fn workspace_reports(db: &RootDatabase, lints: &[String]) -> Vec<WorkspaceRe
         .into_par_iter()
         .zip(databases.into_par_iter())
         .flat_map_iter(|(chunk, db)| {
-            // One lint configuration per worker: `LintConfig` is a small set
-            // and rebuilding it keeps the parallel closure plain `Fn`.
-            let config = ide_diagnostics::LintConfig::from_keys(lints);
             chunk.into_iter().map(move |file| {
-                let report = ide_diagnostics::file_report(&db, file, &config);
-                let result_id = report_result_id(&report, lints);
+                let report = ide_diagnostics::file_report(&db, file);
+                let result_id = report_result_id(&report);
                 WorkspaceReport {
                     file,
                     report,

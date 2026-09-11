@@ -1550,11 +1550,11 @@ exit 0
 /// The deprecation warnings of
 /// [JLS §9.6.4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.6)
 /// end to end: `Thread.stop()` is `@Deprecated(forRemoval = true)` and
-/// `Thread.getId()` plainly `@Deprecated` in a modern JDK, so the default
-/// client configuration must report the terminal one (javac's `removal` is on
-/// by default) and a client enabling `deprecation` must add the ordinary one.
-/// The messages are javac's own: `stop() in Thread has been deprecated and
-/// marked for removal`, `getId() in Thread has been deprecated`.
+/// `Thread.getId()` plainly `@Deprecated` in a modern JDK, and both are
+/// reported — a client's configuration has no lint switch, so the terminal
+/// and the ordinary warning arrive together. The messages are javac's own:
+/// `stop() in Thread has been deprecated and marked for removal`,
+/// `getId() in Thread has been deprecated`.
 ///
 /// Requires a real JDK (`JAVA_HOME`), like the release-view test: the platform
 /// stub index is what makes `java.lang.Thread` resolvable here.
@@ -1615,73 +1615,56 @@ exit 0
     }
     let _guard = EnvGuard(java_home_before);
 
-    // One workspace per client lint configuration: the configuration arrives
-    // at initialization, so a second run is how a different `lints` set is
-    // exercised.
-    let pull = |lints: Option<serde_json::Value>| -> Vec<serde_json::Value> {
-        let mut config = json!({ "java_home": java_home });
-        if let Some(lints) = lints {
-            config["lints"] = lints;
-        }
-        let lsp = create_lsp_with_config(config, |root| {
-            std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
-            std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
-            std::fs::write(
-                root.join("src/main/java/demo/Main.java"),
-                "package demo;\n\nclass Main {\n    void f(Thread t) {\n        t.stop();\n        t.getId();\n    }\n}\n",
-            )
-            .unwrap();
-        });
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/demo/Main.java"),
+            "package demo;\n\nclass Main {\n    void f(Thread t) {\n        t.stop();\n        t.getId();\n    }\n}\n",
+        )
+        .unwrap();
+    });
 
-        let path = "/src/main/java/demo/Main.java";
-        lsp.open_document(path);
-        lsp.wait_until_workspace_is_loaded();
+    let path = "/src/main/java/demo/Main.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
 
-        let report = lsp.pull_document_diagnostics(path);
-        let lsp_types::DocumentDiagnosticReport::RelatedFullDocumentDiagnosticReport(report) =
-            report
-        else {
-            panic!("expected a full diagnostic report, got: {report:?}");
-        };
-        report
-            .full_document_diagnostic_report
-            .items
-            .iter()
-            .map(|item| serde_json::to_value(item).unwrap())
-            .collect()
+    let report = lsp.pull_document_diagnostics(path);
+    let lsp_types::DocumentDiagnosticReport::RelatedFullDocumentDiagnosticReport(report) = report
+    else {
+        panic!("expected a full diagnostic report, got: {report:?}");
     };
+    let items: Vec<serde_json::Value> = report
+        .full_document_diagnostic_report
+        .items
+        .iter()
+        .map(|item| serde_json::to_value(item).unwrap())
+        .collect();
 
-    // The default configuration reports the terminal deprecation only:
-    // javac's `removal` is on by default, `deprecation` is not.
-    let default_items = pull(None);
-    assert!(
-        default_items.iter().any(|item| {
-            item["severity"] == 2
-                && item["code"] == "compiler.warn.has.been.deprecated.for.removal"
-                && item["message"].as_str().is_some_and(|m| {
-                    m == "stop() in Thread has been deprecated and marked for removal"
-                })
-        }),
-        "the default configuration must report the terminal deprecation: {default_items:?}"
-    );
+    for (code, message) in [
+        (
+            "compiler.warn.has.been.deprecated.for.removal",
+            "stop() in Thread has been deprecated and marked for removal",
+        ),
+        (
+            "compiler.warn.has.been.deprecated",
+            "getId() in Thread has been deprecated",
+        ),
+    ] {
+        assert!(
+            items.iter().any(|item| {
+                item["severity"] == 2
+                    && item["code"] == code
+                    && item["message"].as_str().is_some_and(|m| m == message)
+            }),
+            "expected {code} ({message}), got: {items:?}"
+        );
+    }
     assert_eq!(
-        default_items.len(),
-        1,
-        "only the terminal deprecation is on by default: {default_items:?}"
+        items.len(),
+        2,
+        "exactly the two deprecations of `Thread` are expected: {items:?}"
     );
 
-    // Enabling `deprecation` adds the ordinary warning.
-    let linted_items = pull(Some(json!(["deprecation"])));
-    assert!(
-        linted_items.iter().any(|item| {
-            item["severity"] == 2
-                && item["code"] == "compiler.warn.has.been.deprecated"
-                && item["message"]
-                    .as_str()
-                    .is_some_and(|m| m == "getId() in Thread has been deprecated")
-        }),
-        "enabling `deprecation` must add the ordinary warning: {linted_items:?}"
-    );
-
-    insta::assert_json_snapshot!("deprecation_diagnostics", (default_items, linted_items));
+    insta::assert_json_snapshot!("deprecation_diagnostics", items);
 }

@@ -114,7 +114,6 @@ impl HeadlessServer {
         workspace_root: &AbsPathBuf,
         select_build_system: Option<String>,
         java_home: Option<&Path>,
-        lints: &[String],
     ) -> anyhow::Result<Self> {
         let root_uri: Uri = Uri::from_file_path(PathBuf::from(workspace_root.as_str()))
             .map_err(|_| anyhow::format_err!("failed to build URI for {workspace_root}"))?;
@@ -125,15 +124,6 @@ impl HeadlessServer {
             initialization_options["java_home"] =
                 serde_json::Value::String(java_home.to_string_lossy().into_owned());
         }
-        // The client-enabled lint keys ([JLS §9.6.4.5]); the key matches
-        // `ClientConfig`'s serde field name.
-        initialization_options["lints"] = serde_json::Value::Array(
-            lints
-                .iter()
-                .map(|lint| serde_json::Value::String(lint.clone()))
-                .collect(),
-        );
-
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id() as i32),

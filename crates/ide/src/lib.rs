@@ -12,7 +12,6 @@ pub use ide_db::{
     line_index::{LineCol, LineIndex},
 };
 pub use ide_diagnostics::Diagnostic;
-use ide_diagnostics::LintConfig;
 use rustc_hash::FxHashSet;
 pub use syntax::{DiagnosticCode, JavaDiagnosticCode, KotlinDiagnosticCode};
 use triomphe::Arc;
@@ -104,43 +103,24 @@ impl Analysis {
 
     /// The type-layer diagnostics of the file, collected from the inference of
     /// every body it owns (see [`ide_diagnostics::type_diagnostics`]).
-    ///
-    /// `lints` are the client-enabled lint keys (`rawtypes`, `unchecked`,
-    /// ...); a diagnostic whose key is not among them is not reported.
-    pub fn type_diagnostics(
-        &self,
-        file_id: FileId,
-        lints: &[String],
-    ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| {
-            ide_diagnostics::type_diagnostics(db, file_id, &LintConfig::from_keys(lints))
-        })
+    pub fn type_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::type_diagnostics(db, file_id))
     }
 
     /// The declaration-level diagnostics of the file — unknown-type/ambiguity
     /// and import reports ([JLS §6.5.5.1], [§7.5]) and the inheritance check
     /// of every class-like declaration ([§8.4.8.3], [§9.4.1.3], [§9.6.4.4]) —
     /// see [`ide_diagnostics::declaration_diagnostics`].
-    pub fn declaration_diagnostics(
-        &self,
-        file_id: FileId,
-        lints: &[String],
-    ) -> Cancellable<Vec<Diagnostic>> {
-        self.with_db(|db| {
-            ide_diagnostics::declaration_diagnostics(db, file_id, &LintConfig::from_keys(lints))
-        })
+    pub fn declaration_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
+        self.with_db(|db| ide_diagnostics::declaration_diagnostics(db, file_id))
     }
 
     /// The type-layer and declaration-level diagnostics of the file, merged
     /// and memoized as one salsa query (see
     /// [`ide_diagnostics::file_diagnostics`]).
-    pub fn file_diagnostics(
-        &self,
-        file_id: FileId,
-        lints: &[String],
-    ) -> Cancellable<Vec<Diagnostic>> {
+    pub fn file_diagnostics(&self, file_id: FileId) -> Cancellable<Vec<Diagnostic>> {
         self.with_db(|db| {
-            ide_diagnostics::file_diagnostics(db, file_id, &LintConfig::from_keys(lints))
+            ide_diagnostics::file_diagnostics(db, file_id)
                 .iter()
                 .cloned()
                 .collect()
@@ -149,17 +129,11 @@ impl Analysis {
 
     /// The complete report of the file — its syntax diagnostics plus its merged
     /// type and declaration diagnostics — the unit the LSP diagnostics store
-    /// tracks and diffs per file (see [`ide_diagnostics::file_report`]).
-    ///
-    /// `lints` are the client-enabled lint keys (`rawtypes`, `unchecked`,
-    /// ...); an unchanged report is returned as the memoized `Arc`, so a repeat
-    /// pull under the same config is an O(1) cache hit.
-    pub fn file_report(
-        &self,
-        file_id: FileId,
-        lints: &[String],
-    ) -> Cancellable<triomphe::Arc<[Diagnostic]>> {
-        self.with_db(|db| ide_diagnostics::file_report(db, file_id, &LintConfig::from_keys(lints)))
+    /// tracks and diffs per file (see [`ide_diagnostics::file_report`]). The
+    /// memoized `Arc` is returned as it is, so a repeat pull is an O(1) cache
+    /// hit.
+    pub fn file_report(&self, file_id: FileId) -> Cancellable<triomphe::Arc<[Diagnostic]>> {
+        self.with_db(|db| ide_diagnostics::file_report(db, file_id))
     }
 
     /// The workspace source files whose declarations the file's type outputs
@@ -190,12 +164,8 @@ impl Analysis {
     /// The complete diagnostic report of every workspace source file, computed
     /// in parallel across the memoized per-file salsa queries (see
     /// [`workspace::workspace_reports`]). The `workspace/diagnostic` pull.
-    ///
-    /// `lints` are the client-enabled lint keys (`rawtypes`, `unchecked`,
-    /// ...); each worker folds them into the precomputed `result_id` of its
-    /// report, so a lint-config change invalidates every cached id.
-    pub fn workspace_reports(&self, lints: &[String]) -> Cancellable<Vec<WorkspaceReport>> {
-        self.with_db(|db| workspace::workspace_reports(db, lints))
+    pub fn workspace_reports(&self) -> Cancellable<Vec<WorkspaceReport>> {
+        self.with_db(workspace::workspace_reports)
     }
 
     /// The declared symbols of a file, in declaration order.

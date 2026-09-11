@@ -1,7 +1,9 @@
 //! Lint policy: the `@SuppressWarnings` vocabulary and scopes
-//! ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)),
-//! the client's enabled lint set, and the severity/lint key of every
-//! diagnostic the type layer reports.
+//! ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5))
+//! and the severity/lint key of every diagnostic the type layer reports.
+//!
+//! Every kind of warning this analyzer can produce is reported; §9.6.4.5 fixes
+//! how a *declaration* suppresses one, not a set a client may switch off.
 //!
 //! `@SuppressWarnings` gives the programmer control over the lint-like
 //! warnings a compiler would otherwise report. §9.6.4.5 fixes both the scope
@@ -52,11 +54,14 @@ use hir_ty::{DeclDiagnostic, TyDatabase, TypeError};
 use ide_db::Severity;
 use ide_db::base_db::FileText;
 
-/// A warning kind this analyzer reports that `@SuppressWarnings` can name.
+/// A warning kind this analyzer reports, named by the string
+/// `@SuppressWarnings` uses for it ([JLS §9.6.4.5]).
 ///
-/// The spelling is the one §9.6.4.5 mandates for the unchecked and
-/// deprecation warnings; `rawtypes` is the reference implementation's
-/// documented non-standard name for the raw-type warning of
+/// Every kind is reported: §9.6.4.5 fixes the *scope* of a suppression and its
+/// vocabulary, not a switch a client can turn off. The spelling is the one
+/// §9.6.4.5 mandates for the unchecked and deprecation warnings; `rawtypes` is
+/// the reference implementation's documented non-standard name for the
+/// raw-type warning of
 /// [§4.12.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.2),
 /// which javac emits as `[rawtypes]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,15 +79,6 @@ pub enum LintKey {
 }
 
 impl LintKey {
-    /// Every key this build knows, for the `all` shorthand of the client
-    /// configuration.
-    pub const ALL: [LintKey; 4] = [
-        LintKey::Unchecked,
-        LintKey::RawTypes,
-        LintKey::Deprecation,
-        LintKey::Removal,
-    ];
-
     /// The key a `@SuppressWarnings` string names, or `None` for a string
     /// this analyzer does not recognize — which §9.6.4.5 requires it to
     /// ignore.
@@ -94,60 +90,6 @@ impl LintKey {
             "removal" => Some(LintKey::Removal),
             _ => None,
         }
-    }
-}
-
-/// The lint keys in effect for a client run: the keys the client enabled plus
-/// the keys javac reports without any flag.
-///
-/// The set is a set of *enabled* keys only — a key the client does not name is
-/// simply not enabled, never explicitly turned off — because javac's lint
-/// configuration is additive in the same way.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LintConfig {
-    enabled: FxHashSet<LintKey>,
-}
-
-impl LintConfig {
-    /// Every key this build knows: the configuration of the memoized report,
-    /// which must contain every diagnostic that survives `@SuppressWarnings`
-    /// regardless of what the client asked for.
-    pub fn all() -> Self {
-        Self {
-            enabled: LintKey::ALL.into_iter().collect(),
-        }
-    }
-
-    /// The keys named by `keys`, plus the default-on ones. The `all` shorthand
-    /// means every key this build knows; unknown strings are ignored
-    /// ([JLS §9.6.4.5]).
-    pub fn from_keys(keys: &[String]) -> Self {
-        let mut enabled = Self::default_enabled();
-        for key in keys {
-            if key == "all" {
-                enabled.extend(LintKey::ALL);
-                continue;
-            }
-            if let Some(key) = LintKey::from_str(key) {
-                enabled.insert(key);
-            }
-        }
-        Self { enabled }
-    }
-
-    /// The keys reported without any client configuration: javac reports the
-    /// raw-type and unchecked-conversion warnings only when `-Xlint` names
-    /// them, but it reports *terminal* deprecation
-    /// (`@Deprecated(forRemoval = true)`) unconditionally — ordinary
-    /// deprecation needs `-Xlint:deprecation`, terminal only needs `-Xlint`
-    /// not to be `none`. So `removal` alone is on by default
-    /// ([JLS §9.6.4.6]).
-    fn default_enabled() -> FxHashSet<LintKey> {
-        FxHashSet::from_iter([LintKey::Removal])
-    }
-
-    pub fn enables(&self, key: LintKey) -> bool {
-        self.enabled.contains(&key)
     }
 }
 
@@ -271,10 +213,9 @@ fn suppress_keys(modifier_list: &SyntaxNode<Lang>) -> FxHashSet<LintKey> {
 /// per file and memoized. Invalidated together with the file's item tree when
 /// the file text changes.
 ///
-/// The scopes are independent of the client's lint configuration — the client
-/// set is applied on top, by [`keeps_body_diagnostic`] and
-/// [`keeps_decl_diagnostic`] — so the memoized report stays valid across a
-/// lint-config change.
+/// The scopes are the only input to suppression
+/// ([`keeps_body_diagnostic`], [`keeps_decl_diagnostic`]), so the memoized
+/// report is the report.
 #[salsa::tracked(returns(ref))]
 pub(crate) fn warning_scopes_query(db: &dyn TyDatabase, file: FileText) -> Arc<[SuppressionScope]> {
     let file_id = *file.file_id(db);
@@ -361,23 +302,20 @@ pub(crate) fn severity_of_decl(diag: &DeclDiagnostic) -> Severity {
 }
 
 /// Whether a body diagnostic survives the in-source `@SuppressWarnings` scopes
-/// and the client's lint set ([JLS §9.6.4.5]).
+/// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
 ///
 /// An error — a diagnostic no lint key names — is always kept; a warning is
-/// kept when the client enabled its key and no enclosing declaration names it.
+/// kept unless an enclosing declaration names its key. Every warning kind is
+/// reported, so a suppressed warning is the only one this drops.
 pub fn keeps_body_diagnostic(
     db: &dyn TyDatabase,
     file_id: FileId,
     bodies: &BodyTree,
     diag: &TypeError,
-    lints: &LintConfig,
 ) -> bool {
     let Some(key) = lint_of_body(diag) else {
         return true;
     };
-    if !lints.enables(key) {
-        return false;
-    }
     let Some(range) = diag.range(bodies) else {
         // A synthetic construct (`Missing` source) has no range, so no scope
         // contains it.
@@ -386,20 +324,12 @@ pub fn keeps_body_diagnostic(
     !warning_is_suppressed(db, file_id, range, key)
 }
 
-/// Whether a declaration diagnostic survives the in-source `@SuppressWarnings`
-/// scopes and the client's lint set ([JLS §9.6.4.5]).
-pub fn keeps_decl_diagnostic(
-    db: &dyn TyDatabase,
-    file_id: FileId,
-    diag: &DeclDiagnostic,
-    lints: &LintConfig,
-) -> bool {
+/// Whether a declaration diagnostic survives the in-source
+/// `@SuppressWarnings` scopes ([JLS §9.6.4.5]).
+pub fn keeps_decl_diagnostic(db: &dyn TyDatabase, file_id: FileId, diag: &DeclDiagnostic) -> bool {
     let Some(key) = lint_of_decl(diag) else {
         return true;
     };
-    if !lints.enables(key) {
-        return false;
-    }
     let Some(range) = diag.range() else {
         return true;
     };

@@ -18,7 +18,7 @@ use hir_ty::java::db::{file_dependency_refs, file_resolved_deps};
 use hir_ty::{pick_field, pick_method};
 use vfs::FileId;
 
-use crate::common::{TestDatabase, all_lints, jdk_fixture, register_source_set, source_context};
+use crate::common::{TestDatabase, jdk_fixture, register_source_set, source_context};
 
 /// The path of `file_id` within the `files` fixture (`FileId(i+1)` ↔ `files[i]`).
 fn path_of(files: &[(&str, &str)], file_id: FileId) -> String {
@@ -241,7 +241,7 @@ fn diagnostics_report_changes_when_dependency_edits() {
 
     let a = FileId::from_raw(1);
     let b = FileId::from_raw(2);
-    let diagnostics_before = ide_diagnostics::file_diagnostics(&db, b, &all_lints());
+    let diagnostics_before = ide_diagnostics::file_diagnostics(&db, b);
 
     // Edit `A`: `go()` becomes one-argument, breaking `B`'s call.
     let mut change = FileChange::default();
@@ -252,7 +252,7 @@ fn diagnostics_report_changes_when_dependency_edits() {
     change.apply(&mut db);
 
     assert_ne!(
-        ide_diagnostics::file_diagnostics(&db, b, &all_lints()),
+        ide_diagnostics::file_diagnostics(&db, b),
         diagnostics_before,
         "B's diagnostics must change when A (its dependency) edits"
     );
@@ -280,8 +280,8 @@ fn diagnostics_report_stable_for_unrelated_edit() {
 
     let b = FileId::from_raw(2);
     let c = FileId::from_raw(3);
-    let b_before = ide_diagnostics::file_diagnostics(&db, b, &all_lints());
-    let c_before = ide_diagnostics::file_diagnostics(&db, c, &all_lints());
+    let b_before = ide_diagnostics::file_diagnostics(&db, b);
+    let c_before = ide_diagnostics::file_diagnostics(&db, c);
 
     // Edit the unrelated `C` in a way that changes *its own* diagnostics (an
     // undefined-name report appears/disappears); `B`'s report must not move.
@@ -293,12 +293,12 @@ fn diagnostics_report_stable_for_unrelated_edit() {
     change.apply(&mut db);
 
     assert_eq!(
-        ide_diagnostics::file_diagnostics(&db, b, &all_lints()),
+        ide_diagnostics::file_diagnostics(&db, b),
         b_before,
         "B must not be re-derived when an unrelated file edits"
     );
     assert_ne!(
-        ide_diagnostics::file_diagnostics(&db, c, &all_lints()),
+        ide_diagnostics::file_diagnostics(&db, c),
         c_before,
         "C's own report moves with its own edit"
     );

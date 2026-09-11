@@ -15,8 +15,8 @@ use hir::{LibraryInfo, LibraryKind};
 use vfs::AbsPathBuf;
 
 use crate::common::{
-    TestDatabase, all_lints, check_body_types, check_class_diagnostics, class, decl_code,
-    decl_message, keeps_decl_diagnostic, register_source_set_classpath, temp_jar,
+    TestDatabase, check_body_types, check_class_diagnostics, class, decl_code, decl_message,
+    keeps_decl_diagnostic, register_source_set_classpath, temp_jar,
 };
 
 snapshot!(
@@ -114,7 +114,7 @@ fn check_with_libs(specs: &[common::ClassSpec<'static>], files: &[(&str, &str)])
         let file_id = vfs::FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::class_diagnostics(&db, file_id) {
-            if !keeps_decl_diagnostic(&db, file_id, &diag, &all_lints()) {
+            if !keeps_decl_diagnostic(&db, file_id, &diag) {
                 continue;
             }
             let at = diag

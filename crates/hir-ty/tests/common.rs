@@ -20,8 +20,8 @@ use hir::{
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
 pub use ide_diagnostics::{
-    LintConfig, body_code, body_message, body_related, decl_code, decl_message,
-    keeps_body_diagnostic, keeps_decl_diagnostic,
+    body_code, body_message, body_related, decl_code, decl_message, keeps_body_diagnostic,
+    keeps_decl_diagnostic,
 };
 use tempfile::TempDir;
 use triomphe::Arc;
@@ -2370,14 +2370,6 @@ fn source_set_with_libs(
     (db, extra)
 }
 
-/// The lint configuration of a conformance renderer: every key this build
-/// knows, so a snapshot shows every warning the analyzer can produce and only
-/// the in-source `@SuppressWarnings` scopes hide any
-/// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
-pub fn all_lints() -> LintConfig {
-    LintConfig::all()
-}
-
 fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
@@ -2438,7 +2430,7 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                 .filter(|diag| {
                     // §9.6.4.5: a warning named by an enclosing
                     // `@SuppressWarnings` is not reported at all.
-                    keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints())
+                    keeps_body_diagnostic(db, file_id, &bodies, diag)
                 })
                 .map(|diag| {
                     let loc = match diag.location() {
@@ -2777,7 +2769,7 @@ fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -> St
             let reported: Vec<_> = types
                 .diagnostics
                 .iter()
-                .filter(|diag| keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints()))
+                .filter(|diag| keeps_body_diagnostic(db, file_id, &bodies, diag))
                 .collect();
             if reported.is_empty() {
                 continue;
@@ -2850,7 +2842,7 @@ fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
         for diag in hir_ty::class_diagnostics(db, file_id) {
             // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings` is
             // not reported at all.
-            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+            if !keeps_decl_diagnostic(db, file_id, &diag) {
                 continue;
             }
             let at = diag
@@ -2898,7 +2890,7 @@ pub fn check_module_diagnostics(files: &[(&str, &str)]) -> String {
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::module_diagnostics(&db, file_id) {
-            if !keeps_decl_diagnostic(&db, file_id, &diag, &all_lints()) {
+            if !keeps_decl_diagnostic(&db, file_id, &diag) {
                 continue;
             }
             let at = diag
@@ -2946,7 +2938,7 @@ fn render_level_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::level_diagnostics(db, file_id) {
-            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+            if !keeps_decl_diagnostic(db, file_id, &diag) {
                 continue;
             }
             let at = diag
@@ -3060,7 +3052,7 @@ fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> Stri
             format!("@{line}:{col}", line = lc.line, col = lc.col)
         };
         for diag in hir_ty::class_diagnostics(db, file_id) {
-            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+            if !keeps_decl_diagnostic(db, file_id, &diag) {
                 continue;
             }
             let Some(range) = diag.range() else {
@@ -3080,7 +3072,7 @@ fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> Stri
                 continue;
             };
             for diag in &types.diagnostics {
-                if !keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints()) {
+                if !keeps_body_diagnostic(db, file_id, &bodies, diag) {
                     continue;
                 }
                 let Some(range) = diag.range(&bodies) else {
