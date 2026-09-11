@@ -1,0 +1,26 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "resultId": "47082f4ad4c0ea0c",
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 4,
+          "character": 46
+        },
+        "end": {
+          "line": 4,
+          "character": 54
+        }
+      },
+      "severity": 1,
+      "code": "api-not-supported-in-release",
+      "source": "caffeine-ls",
+      "message": "class 'java.util.SequencedCollection' is not supported in release 8 (added in release 21)"
+    }
+  ],
+  "kind": "full"
+}

@@ -20,6 +20,11 @@ pub struct MavenProject {
     pub test_classpath: Vec<MavenClasspathEntry>,
     pub java_language_version: Option<String>,
     pub java_language_preview: Option<bool>,
+    /// The explicit `maven.compiler.release` of the project, when it set one
+    /// (`javac --release N`, [JEP 247](https://openjdk.org/jeps/247)).
+    /// `maven.compiler.source` alone does not select a platform view, so it
+    /// never fills this.
+    pub java_release: Option<u8>,
     pub java_home: Option<String>,
 }
 

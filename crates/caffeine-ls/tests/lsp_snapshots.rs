@@ -25,6 +25,11 @@ fn setup_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Serializes the tests that mutate the process environment (`PATH`,
+/// `JAVA_HOME`) to point at a shim build system: the variables are global, so
+/// two such tests running concurrently would race for them.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 static SETUP: LazyLock<()> = LazyLock::new(|| {
     setup_logging().expect("Failed to setup logger");
 
@@ -397,6 +402,8 @@ fn test_workspace_load_reports_progress() {
 #[test]
 fn test_build_sync_reports_structured_progress() {
     use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
 
     let shim_dir = tempfile::tempdir().unwrap();
     let shim = shim_dir.path().join("gradle");
@@ -1553,6 +1560,145 @@ public class A {
         Some(0),
         "the fixed workspace report must be clean: {after_fix}"
     );
+
+    lsp.shutdown();
+}
+
+/// The release-view check end to end through the build-system path: a Gradle
+/// shim reports `--release 8` while `JAVA_HOME` points at a real JDK 9+, so the
+/// server resolves `java.util.SequencedCollection` and `List.of` against the
+/// runtime JDK and must report both as `api-not-supported-in-release`
+/// ([JEP 247](https://openjdk.org/jeps/247)).
+#[test]
+fn test_release_api_diagnostic() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let java_home = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|p| std::path::Path::new(p).join("lib/ct.sym").is_file());
+    let Some(java_home) = java_home else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/ct.sym");
+        return;
+    };
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{{"workspace_name":"demo","projects":[{{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[],"test_classpath":[],"java_release":8,"java_language_version":"8","java_home":"{java_home}"}}]}}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    // SAFETY: the test process is single-threaded at this point.
+    unsafe {
+        std::env::set_var("JAVA_HOME", &java_home);
+    }
+    struct EnvGuard;
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: single-threaded, as above.
+            unsafe {
+                std::env::remove_var("JAVA_HOME");
+            }
+        }
+    }
+    let _guard = EnvGuard;
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: single-threaded, as above.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let lsp = create_lsp_with_progress_and_setup(|root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/demo/Main.java"),
+            "package demo;\n\nclass Main {\n    void f() {\n        java.util.SequencedCollection<String> c = null;\n        java.util.List<String> l = java.util.List.of(\"a\");\n    }\n}\n",
+        )
+        .unwrap();
+    });
+
+    let path = "/src/main/java/demo/Main.java";
+    lsp.open_document(path);
+
+    // The Gradle sync and the workspace load it drives happen on the server's
+    // own thread; wait for the sync to report completion before pulling, so the
+    // report is the loaded workspace's and not the pre-load fallback's.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut synced = false;
+    while !synced && std::time::Instant::now() < deadline {
+        match lsp
+            .notification_receiver
+            .recv_timeout(std::time::Duration::from_millis(100))
+        {
+            Ok(notif) if notif.method == "$/progress" => {
+                let token = notif
+                    .params
+                    .get("token")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default();
+                let ended = notif
+                    .params
+                    .get("value")
+                    .and_then(|v| v.get("kind"))
+                    .and_then(|k| k.as_str())
+                    == Some("end");
+                if token.starts_with("sync-") && ended {
+                    synced = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(synced, "the Gradle sync never completed");
+
+    let diagnostics = lsp.pull_document_diagnostics(path);
+
+    let lsp_types::DocumentDiagnosticReport::RelatedFullDocumentDiagnosticReport(report) =
+        &diagnostics
+    else {
+        panic!("expected a full diagnostic report, got: {diagnostics:?}");
+    };
+    let codes: Vec<String> = report
+        .full_document_diagnostic_report
+        .items
+        .iter()
+        .map(|diag| match diag.code.as_ref() {
+            Some(lsp_types::Code::String(code)) => code.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+
+    assert!(
+        codes
+            .iter()
+            .all(|code| code.contains("api-not-supported-in-release")),
+        "expected only release reports, got: {codes:?}"
+    );
+    assert_eq!(
+        codes.len(),
+        1,
+        "expected the release report of `SequencedCollection`, got: {diagnostics:?}"
+    );
+
+    insta::assert_json_snapshot!("release_api_diagnostic", diagnostics);
 
     lsp.shutdown();
 }

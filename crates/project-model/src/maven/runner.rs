@@ -178,6 +178,10 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
                 ..level
             });
 
+        // JEP 247: only an explicit `maven.compiler.release` selects a platform
+        // view, so a `maven.compiler.source` alone leaves this unset.
+        let release = project.java_release;
+
         let resolved_java_home = project
             .java_home
             .map(|path_str| AbsPathBuf::assert_utf8(PathBuf::from(path_str)))
@@ -315,7 +319,7 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
             root_path: abs_project_dir,
             target_sdk,
             language_level,
-            release: None,
+            release,
             source_sets,
         };
 

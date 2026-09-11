@@ -165,6 +165,10 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
                 }),
         };
 
+        // JEP 247: only an explicit `--release` selects a platform view, so
+        // `sourceCompatibility` alone leaves `release` unset.
+        let release = project.java_release;
+
         let resolved_java_home = project
             .java_home
             .map(|path_str| AbsPathBuf::assert_utf8(PathBuf::from(path_str)));
@@ -308,7 +312,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
             root_path: abs_project_dir,
             target_sdk,
             language_level,
-            release: None,
+            release,
             source_sets,
         };
 

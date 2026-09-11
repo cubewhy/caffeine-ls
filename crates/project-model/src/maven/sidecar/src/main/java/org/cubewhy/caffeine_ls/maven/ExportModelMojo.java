@@ -153,6 +153,27 @@ public class ExportModelMojo extends AbstractMojo {
                 javaLangVersion = javaLangVersion.substring(2);
             }
 
+            // `javac --release N` (JEP 247) is the only spelling that selects a
+            // platform view, so only `maven.compiler.release` fills this; a
+            // `maven.compiler.source` alone leaves the key absent. The value is
+            // what the importer reads as a release, so it is written as a
+            // number.
+            Integer javaRelease = null;
+            String releaseProperty = proj.getProperties().getProperty("maven.compiler.release");
+            if (releaseProperty != null) {
+                String normalized = releaseProperty.startsWith("1.")
+                        ? releaseProperty.substring(2)
+                        : releaseProperty;
+                try {
+                    int parsed = Integer.parseInt(normalized);
+                    if (parsed > 0 && parsed <= 255) {
+                        javaRelease = parsed;
+                    }
+                } catch (NumberFormatException ignored) {
+                    // An unparsable release must not fail the workspace import.
+                }
+            }
+
             String javaHome = normalizePath(new File(System.getProperty("java.home")));
 
             Map<String, Object> modelProject = new LinkedHashMap<>();
@@ -166,6 +187,9 @@ public class ExportModelMojo extends AbstractMojo {
             modelProject.put("compile_classpath", compileClasspathEntries);
             modelProject.put("test_classpath", testClasspathEntries);
             modelProject.put("java_language_version", javaLangVersion);
+            if (javaRelease != null) {
+                modelProject.put("java_release", javaRelease);
+            }
             modelProject.put("java_language_preview",
                     Boolean.parseBoolean(proj.getProperties().getProperty("maven.compiler.enablePreview", "false")));
             modelProject.put("java_home", javaHome);
