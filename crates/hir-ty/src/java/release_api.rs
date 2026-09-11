@@ -119,3 +119,29 @@ pub(crate) fn class_of_reference(
     let fqn = db.hir_state().interner.resolve(&class.entry.fqn);
     hir::ct_sym_class_not_in_release(db, class.library, release, fqn)
 }
+
+/// JEP 247 for one member of the platform class `owner` (its binary FQN,
+/// [JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)):
+/// `Some((found, added))` when the runtime JDK provides the member but the
+/// release's platform view does not. `descriptor` is the member's classfile
+/// descriptor ([JVMS §4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5)/[§4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)),
+/// or `None` to match a member of that name of either kind — the form a static
+/// single import needs
+/// ([JLS §7.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.4)).
+pub(crate) fn member_of_owner(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    owner: &str,
+    name: &str,
+    descriptor: Option<&str>,
+) -> Option<(u8, u8)> {
+    let release = release_of(db, scope)?;
+    let hir::Resolved::Library(class) = hir::fqn_resolve(db, scope, owner)? else {
+        // A source class is not platform API.
+        return None;
+    };
+    if !is_platform(db, class.library) {
+        return None;
+    }
+    hir::ct_sym_member_not_in_release(db, class.library, release, owner, name, descriptor)
+}

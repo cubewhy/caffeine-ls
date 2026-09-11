@@ -743,10 +743,12 @@ impl InferCtx<'_> {
         }
         // §7.5.4: a simple name may name a statically imported member — a
         // static field read through its declaring type.
-        if let Some(ty) = self.static_import_field(name.as_str()) {
-            return ty;
+        if let Some(field) = self.static_import_field(name.as_str()) {
+            self.check_release_api_field(expr, &field);
+            return field.ty;
         }
         if let Some(field) = self.pick_field_of_chain(name.as_str()) {
+            self.check_release_api_field(expr, &field);
             // §8.3.3: a simple-name read of a same-class field declared
             // textually later, of the same static/instance kind, is an
             // illegal forward reference. A qualified read (`this.b`) takes
@@ -811,14 +813,14 @@ impl InferCtx<'_> {
     }
 
     /// makes the simple name `FIELD` a static member access (§15.11.1).
-    pub(super) fn static_import_field(&self, simple: &str) -> Option<Ty> {
+    pub(super) fn static_import_field(&self, simple: &str) -> Option<FieldData> {
         for (owner, member) in self.resolver.static_import_owners(simple) {
             let receiver = Ty::reference(self.db, owner.as_str(), Vec::new());
             let access = self.access.with_mode(InvocationMode::Static);
             if let Some(field) = pick_field(self.db, &self.scope, &receiver, &member, &access)
                 .filter(|field| field.is_static)
             {
-                return Some(field.ty);
+                return Some(field);
             }
         }
         None
@@ -832,10 +834,12 @@ impl InferCtx<'_> {
             None => ("", text),
         };
         if prefix.is_empty() {
-            if let Some(ty) = self.static_import_field(last) {
-                return ty;
+            if let Some(field) = self.static_import_field(last) {
+                self.check_release_api_field(expr, &field);
+                return field.ty;
             }
             if let Some(field) = self.pick_field_of_chain(last) {
+                self.check_release_api_field(expr, &field);
                 // §15.11/[§8.1.3]: a simple-name read of an instance field of
                 // the implicit receiver from a static context.
                 if self.static_context && !field.is_static {
@@ -863,6 +867,7 @@ impl InferCtx<'_> {
             return self.error();
         };
         if let Some(field) = pick_field(self.db, &self.scope, &prefix_ty, last, &self.access) {
+            self.check_release_api_field(expr, &field);
             return field.ty;
         }
         // §15.11: a qualified name whose last component is no member of the
@@ -979,7 +984,10 @@ impl InferCtx<'_> {
                     });
                     self.error()
                 }
-                Some(field) => field.ty,
+                Some(field) => {
+                    self.check_release_api_field(expr, &field);
+                    field.ty
+                }
                 None => {
                     // §15.11: no field of the name on the superclass.
                     self.report(TypeError::NoSuchField {
@@ -1009,6 +1017,7 @@ impl InferCtx<'_> {
         }
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => {
+                self.check_release_api_field(expr, &field);
                 // §8.3.1.2/[§16]: writing a `final` field is legal only as the
                 // blank-final initialization through a bare `this` receiver in
                 // the matching initializer context of the field's own class;

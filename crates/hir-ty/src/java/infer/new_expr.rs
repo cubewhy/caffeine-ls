@@ -190,6 +190,7 @@ impl InferCtx<'_> {
             &access,
             None,
         ) {
+            self.check_release_api_method(expr, &method);
             self.warn_unchecked_invocation(expr, &method);
             self.reinfer_deferred(&method, &deferred);
             // §11.2.1: a class instance creation throws the checked

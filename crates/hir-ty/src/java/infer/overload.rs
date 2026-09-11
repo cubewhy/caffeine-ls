@@ -484,6 +484,9 @@ impl InferCtx<'_> {
             declaring_interface: method.declaring_interface,
             type_params: method.type_params.clone(),
             raw_erased: method.raw_erased,
+            // The identity of the member does not change with the type
+            // arguments the invocation instantiates it at.
+            descriptor: method.descriptor.clone(),
         };
         if resolve {
             let resolved = match inference.solve_after(self.db, &self.scope, phase) {

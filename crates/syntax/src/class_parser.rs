@@ -266,6 +266,7 @@ impl<'a> ClassParser<'a> {
 
         FieldStub {
             name: self.interner.get_or_intern(&node.name),
+            descriptor: self.interner.get_or_intern(&node.descriptor),
             flags: node.access_flags,
             field_type,
             annotations: self.map_annotations(&node.attributes, constant_pool),
@@ -359,6 +360,7 @@ impl<'a> ClassParser<'a> {
         MethodStub {
             flags: node.access_flags,
             name: self.interner.get_or_intern(&node.name),
+            descriptor: self.interner.get_or_intern(&node.descriptor),
             return_type,
             params,
             throws_list,

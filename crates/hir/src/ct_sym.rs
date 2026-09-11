@@ -64,17 +64,21 @@
 //! here: javac rejects such a use through the module system instead
 //! ([JLS §7.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.3)).
 
-use std::fs::File;
+use std::{fs::File, io::Read as _};
 
 use anyhow::Context as _;
 use base_db::salsa;
 use camino::{Utf8Path, Utf8PathBuf};
+use hir_def::jvm::access::JvmAccessFlags;
+use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
+use syntax::stub::ClassOrModuleStub;
 use triomphe::Arc;
 use zip::ZipArchive;
 
 use crate::db::{HirDatabase, LibraryId, ProjectGraph};
+use crate::stubs::ClassRecord;
 
 /// The release bounds and per-class release sets of one SDK's `ct.sym`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,7 +204,7 @@ fn ct_sym_path(archive: &Utf8Path) -> Option<Utf8PathBuf> {
 /// is no release set ([`dir_covers`]).
 fn build_index(path: &Utf8Path) -> anyhow::Result<CtSymIndex> {
     let file = File::open(path).with_context(|| format!("failed to open {path}"))?;
-    let mut archive =
+    let archive =
         ZipArchive::new(file).with_context(|| format!("invalid symbol archive {path}"))?;
 
     let mut classes: FxHashMap<SmolStr, CtSymClass> = FxHashMap::default();
@@ -336,6 +340,141 @@ fn earliest_release_providing(index: &CtSymIndex, fqn: &str, release: u8) -> Opt
         return None;
     }
     (release + 1..=index.max_release()).find(|added| index.provides(fqn, *added))
+}
+
+/// JEP 247 for one member of a platform class. `name`/`descriptor` are the
+/// classfile identity of the member
+/// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6) for
+/// methods and constructors — `<init>` for a constructor — and
+/// [§4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5) for fields,
+/// where the name alone is already unique); `descriptor: None` matches a member
+/// of that name of either kind (the form a static single import needs,
+/// [JLS §7.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.4)),
+/// and with it the *synthesized* members of a classfile — a bridge or synthetic
+/// method — are ignored, exactly as source member resolution ignores them.
+///
+/// `Some((found, added))` when the release's platform view does not declare the
+/// member but a later release does. `None` when the release view declares it,
+/// when the archive cannot answer for `release` (outside its release bounds),
+/// when the class itself is absent from the release's view (the class-level
+/// report covers that case, and the two must not both fire), or when no later
+/// release declares the member.
+pub fn ct_sym_member_not_in_release(
+    db: &dyn HirDatabase,
+    library: LibraryId,
+    release: u8,
+    fqn: &str,
+    name: &str,
+    descriptor: Option<&str>,
+) -> Option<(u8, u8)> {
+    let index = ct_sym_index_ref(db, library)?;
+    if !index.covers_release(release) {
+        return None;
+    }
+    // The check answers for a member of a class the release view provides; a
+    // class the view lacks is [`ct_sym_class_not_in_release`]'s report.
+    if !index.provides(fqn, release) {
+        return None;
+    }
+    let declares = |release: u8| {
+        ct_sym_class_view(db, library, release, fqn)
+            .is_some_and(|class| declares_member(db, &class, name, descriptor))
+    };
+    if declares(release) {
+        return None;
+    }
+    (release + 1..=index.max_release())
+        .find(|added| declares(*added))
+        .map(|added| (release, added))
+}
+
+/// Whether a class declaration as of one release declares a member of the
+/// given classfile identity ([JVMS §4.5], [§4.6]).
+fn declares_member(
+    db: &dyn HirDatabase,
+    class: &ClassRecord,
+    name: &str,
+    descriptor: Option<&str>,
+) -> bool {
+    let interner = &db.hir_state().interner;
+    if let Some(descriptor) = descriptor {
+        if class.methods.iter().any(|method| {
+            interner.resolve(&method.name) == name
+                && interner.resolve(&method.descriptor) == descriptor
+        }) {
+            return true;
+        }
+        return class.fields.iter().any(|field| {
+            interner.resolve(&field.name) == name
+                && interner.resolve(&field.descriptor) == descriptor
+        });
+    }
+    // A name-only match ignores the members a classfile synthesizes, as source
+    // member resolution does ([JVMS §4.6], the `ACC_BRIDGE`/`ACC_SYNTHETIC`
+    // filter of `library_class_methods`).
+    class.methods.iter().any(|method| {
+        interner.resolve(&method.name) == name
+            && !JvmAccessFlags::from_bits_retain(method.flags)
+                .intersects(JvmAccessFlags::BRIDGE | JvmAccessFlags::SYNTHETIC)
+    }) || class
+        .fields
+        .iter()
+        .any(|field| interner.resolve(&field.name) == name)
+}
+
+/// The declaration of platform class `fqn` as of `release`, parsed from the
+/// `.sig` the archive's view of that release holds (memoized per library,
+/// release and name). `None` when the release's view does not hold the class,
+/// when its entry cannot be read, or when the entry does not parse as a class.
+fn ct_sym_class_view(
+    db: &dyn HirDatabase,
+    library: LibraryId,
+    release: u8,
+    fqn: &str,
+) -> Option<Arc<ClassRecord>> {
+    let project_graph = ProjectGraph::try_get(db)?;
+    ct_sym_class_view_query(db, project_graph, library, release, Name::new(fqn)).clone()
+}
+
+#[salsa::tracked(returns(ref))]
+fn ct_sym_class_view_query(
+    db: &dyn HirDatabase,
+    _project_graph: ProjectGraph,
+    library: LibraryId,
+    release: u8,
+    fqn: Name,
+) -> Option<Arc<ClassRecord>> {
+    let index = ct_sym_index_ref(db, library)?;
+    let fqn = fqn.as_str();
+    let (dir, module) = index.part_for(fqn, release)?;
+    let archive = crate::db::library_archive(db, library)?;
+    let path = ct_sym_path(&archive)?;
+    let (package, simple) = match fqn.rsplit_once('.') {
+        Some((package, simple)) => (package.replace('.', "/"), simple),
+        None => (String::new(), fqn),
+    };
+    let entry = format!("{dir}/{module}/{package}/{simple}.sig");
+    let interner = &db.hir_state().interner;
+    let bytes = read_entry(&path, &entry)?;
+    match syntax::class_parser::ClassParser::new(interner).parse_cafebabe(&bytes) {
+        Ok(ClassOrModuleStub::Class(class)) => Some(Arc::new(class)),
+        Ok(ClassOrModuleStub::Module(_)) => None,
+        Err(err) => {
+            tracing::warn!(path = %path, entry = %entry, "failed to parse a symbol file: {err:#}");
+            None
+        }
+    }
+}
+
+/// The bytes of one archive entry, `None` when the archive or the entry cannot
+/// be read.
+fn read_entry(path: &Utf8Path, entry: &str) -> Option<Vec<u8>> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut file = archive.by_name(entry).ok()?;
+    let mut bytes = Vec::with_capacity(file.size() as usize);
+    file.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 #[cfg(test)]

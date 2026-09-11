@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/RefUse.java:
+package com.example;
+
+class RefUse {
+    java.util.function.Supplier<String> s;
+    void f(java.util.Api a) {
+        s = a::newer;
+    }
+}
+
+@5:12: api-not-supported-in-release: method 'newer()' in 'java.util.Api' is not supported in release 8 (added in release 11)

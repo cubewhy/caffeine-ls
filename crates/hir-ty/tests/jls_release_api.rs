@@ -144,3 +144,143 @@ snapshot!(
 );
 // Red at 8, green at 11: the report is keyed on the source set's release, so a
 // workspace reload at a different one re-derives it.
+
+// -- members added later: 8 red, 11 green --------------------------------------
+
+/// `Api`'s runtime shape: `old()` and both constructors, `newer()` and `FIELD`
+/// added at release 11 (`BCDEFGHIJK`), exactly as the release-8 and release-11
+/// `.sig` files of the fixture split them.
+const API_USE: &[(&str, &str)] = &[(
+    "/src/com/example/ApiUse.java",
+    "\
+package com.example;
+
+class ApiUse {
+    void f(java.util.Api a) {
+        a.newer();
+        String s = java.util.Api.FIELD;
+        java.util.Api b = new java.util.Api(1);
+    }
+}
+",
+)];
+
+fn api_use_at(release: u8) -> String {
+    check_release_diagnostics(Some(release), API_USE)
+}
+
+snapshot!(members_added_later_at_8_are_reported, api_use_at(8));
+// Red thrice: the invocation, the qualified field read and the constructor,
+// each naming its own member kind.
+
+snapshot!(members_at_11_are_clean, api_use_at(11));
+// Green: release 11 is where the fixture's `.sig` first declares all three.
+
+snapshot!(
+    inherited_member_reports_its_declaring_class,
+    check_release_diagnostics(
+        Some(8),
+        &[(
+            "/src/com/example/SubUse.java",
+            "\
+package com.example;
+
+class SubUse {
+    void f(java.util.Sub s) {
+        s.newer();
+    }
+}
+",
+        )],
+    ),
+);
+// Red against `java.util.Api`, the *declaring* class (`Sub` itself declares
+// only its constructor) — the identity a platform release is checked against.
+
+snapshot!(
+    member_at_the_release_is_clean,
+    check_release_diagnostics(
+        Some(8),
+        &[(
+            "/src/com/example/OldUse.java",
+            "\
+package com.example;
+
+class OldUse {
+    void f(java.util.Api a) {
+        a.old();
+        java.util.Api b = new java.util.Api();
+    }
+}
+",
+        )],
+    ),
+);
+// Green: `old()` and the no-arg constructor are in the release-8 view.
+
+snapshot!(
+    method_reference_added_later_at_8_is_reported,
+    check_release_diagnostics(
+        Some(8),
+        &[(
+            "/src/com/example/RefUse.java",
+            "\
+package com.example;
+
+class RefUse {
+    java.util.function.Supplier<String> s;
+    void f(java.util.Api a) {
+        s = a::newer;
+    }
+}
+",
+        )],
+    ),
+);
+// Red: a method reference resolves a member too, and reports at the reference.
+
+snapshot!(
+    static_import_of_a_later_member_at_8_is_reported,
+    check_release_diagnostics(
+        Some(8),
+        &[(
+            "/src/com/example/StaticImport.java",
+            "\
+package com.example;
+
+import static java.util.Api.staticCall;
+
+class StaticImport {
+    void f() {
+        staticCall();
+    }
+}
+",
+        )],
+    ),
+);
+// Red at the import name — the source form names the member without its
+// descriptor, so that report is the name-only `member` form — and again at the
+// use, whose own reference resolves the member. javac reports both too
+// (the import, then `cannot find symbol` at the use).
+
+snapshot!(
+    member_of_an_untracked_class_reports_nothing,
+    check_release_diagnostics(
+        Some(8),
+        &[(
+            "/src/com/example/AbsentUse.java",
+            "\
+package com.example;
+
+class AbsentUse {
+    void f(java.util.Absent a) {
+        a.toString();
+    }
+}
+",
+        )],
+    ),
+);
+// Green: `java.util.Absent` is in no directory of the archive, so none of its
+// members is ever reported.

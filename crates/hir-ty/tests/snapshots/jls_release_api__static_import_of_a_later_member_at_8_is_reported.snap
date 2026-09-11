@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/StaticImport.java:
+package com.example;
+
+import static java.util.Api.staticCall;
+
+class StaticImport {
+    void f() {
+        staticCall();
+    }
+}
+
+@2:0: api-not-supported-in-release: member 'staticCall' in 'java.util.Api' is not supported in release 8 (added in release 11)
+@6:8: api-not-supported-in-release: method 'staticCall()' in 'java.util.Api' is not supported in release 8 (added in release 11)

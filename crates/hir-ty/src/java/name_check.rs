@@ -499,6 +499,35 @@ pub(crate) fn import_diagnostics(
         }
     }
 
+    // §7.5.4: a static single import names one member of the type its prefix
+    // names (`import static pkg.Type.member;`). JEP 247: both the type and the
+    // member resolve against the runtime JDK here, so a member the release's
+    // platform view does not declare is reported — by name alone, which is as
+    // precise as the source form gets.
+    for import in tree
+        .imports
+        .iter()
+        .filter(|import| import.is_static && !import.is_asterisk)
+    {
+        let text = import.name.as_str();
+        let Some((owner, member)) = text.rsplit_once('.') else {
+            // `import static member;` — a type of the unnamed package; nothing
+            // observable to check.
+            continue;
+        };
+        if let Some((found, added)) = release_api::member_of_owner(db, scope, owner, member, None) {
+            out.push(DeclDiagnostic::NotSupportedInRelease {
+                api: crate::java::release_api::ReleaseApi::Member {
+                    owner: owner.to_owned(),
+                    name: member.to_owned(),
+                },
+                found,
+                added,
+                range: import_range(import),
+            });
+        }
+    }
+
     // §7.5.2: the package of an on-demand import must exist
     // (`import java.*;` is rejected by javac). The stored name already has
     // the trailing `.*` stripped at lowering.

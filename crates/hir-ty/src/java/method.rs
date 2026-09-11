@@ -33,6 +33,7 @@
 //! through the `target` argument of [`pick_method`].
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use smol_str::SmolStr;
 use vfs::FileId;
 
 use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
@@ -369,6 +370,13 @@ pub struct MethodData {
     /// which is why the flag records the *declaration*, not merely the raw
     /// receiver.
     pub raw_erased: bool,
+    /// The classfile descriptor of a library member
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6) for a
+    /// method, [§4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5) for a
+    /// field). `None` for a source declaration and for a member this crate
+    /// synthesizes (`Object.clone` on an array type, the implicit members of a
+    /// source class).
+    pub descriptor: Option<SmolStr>,
 }
 
 impl MethodData {
@@ -794,6 +802,7 @@ fn member_set_impl(
             declaring_interface: false,
             type_params: Vec::new(),
             raw_erased: false,
+            descriptor: None,
         });
     }
     // §8.4.8.1: an overriding method replaces the overridden one in the
@@ -1346,6 +1355,7 @@ fn library_class_methods(
             owner: fqn.clone(),
             owner_file: None,
             decl_item: None,
+            descriptor: Some(SmolStr::from(interner.resolve(&method.descriptor))),
             params: method
                 .params
                 .iter()
@@ -1559,6 +1569,7 @@ fn source_class_methods(
             declaring_interface,
             type_params,
             raw_erased,
+            descriptor: None,
         });
     }
     // §8.8.9: a class with no constructor has an implicit *default*
@@ -1610,6 +1621,7 @@ fn source_class_methods(
             declaring_interface: false,
             type_params: Vec::new(),
             raw_erased: false,
+            descriptor: None,
         });
     }
     // §8.9.3: every enum type has two implicit static members —
@@ -1640,6 +1652,7 @@ fn source_class_methods(
                 declaring_interface: false,
                 type_params: Vec::new(),
                 raw_erased: false,
+                descriptor: None,
             });
         }
         if !declared.contains("valueOf") && (name.is_empty() || name == "valueOf") {
@@ -1662,6 +1675,7 @@ fn source_class_methods(
                 declaring_interface: false,
                 type_params: Vec::new(),
                 raw_erased: false,
+                descriptor: None,
             });
         }
     }
@@ -1710,6 +1724,7 @@ fn source_class_methods(
                 declaring_interface: false,
                 type_params: Vec::new(),
                 raw_erased: false,
+                descriptor: None,
             });
         }
         // §8.10.3: every record implicitly implements `equals`, `hashCode`
@@ -1776,6 +1791,7 @@ fn source_class_methods(
                 declaring_interface: false,
                 type_params: Vec::new(),
                 raw_erased: false,
+                descriptor: None,
             });
         }
         // §8.10.4: a record has a *canonical constructor* whose parameters
@@ -1838,6 +1854,7 @@ fn source_class_methods(
                         declaring_interface: false,
                         type_params: Vec::new(),
                         raw_erased: false,
+                        descriptor: None,
                     });
                 }
             }
@@ -2334,6 +2351,9 @@ fn instantiate(
         declaring_interface: method.declaring_interface,
         type_params: method.type_params.clone(),
         raw_erased: method.raw_erased,
+        // The identity of the member does not change with the type arguments
+        // the invocation instantiates it at.
+        descriptor: method.descriptor.clone(),
     })
 }
 
@@ -2724,6 +2744,10 @@ pub struct FieldData {
     pub owner_file: Option<FileId>,
     /// The field's type, instantiated with the declaring type's type arguments.
     pub ty: Ty,
+    /// The classfile descriptor of a library field
+    /// ([JVMS §4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5)). `None`
+    /// for a source declaration and for a field this crate synthesizes.
+    pub descriptor: Option<SmolStr>,
     /// Whether the field is static.
     pub is_static: bool,
     /// The access of the field
@@ -2924,6 +2948,7 @@ fn library_class_fields(
             owner: fqn.clone(),
             owner_file: None,
             ty,
+            descriptor: Some(SmolStr::from(interner.resolve(&field.descriptor))),
             is_static,
             access: Access::from_flags(field.flags),
             is_final: JvmAccessFlags::from_bits_retain(field.flags).is_final(),
@@ -3018,6 +3043,7 @@ fn source_class_fields(
                     is_final,
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),
+                    descriptor: None,
                 });
             }
             // §8.9.2: each enum constant is an implicitly `public static
@@ -3037,6 +3063,7 @@ fn source_class_fields(
                     is_final: true,
                     declaring_package: declaring_package.clone(),
                     declaring_top_level: declaring_top_level.clone(),
+                    descriptor: None,
                 });
             }
             _ => {}
@@ -3066,6 +3093,7 @@ fn source_class_fields(
                 is_final: true,
                 declaring_package: declaring_package.clone(),
                 declaring_top_level: declaring_top_level.clone(),
+                descriptor: None,
             });
         }
     }

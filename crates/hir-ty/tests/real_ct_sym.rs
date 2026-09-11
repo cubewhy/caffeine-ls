@@ -103,3 +103,104 @@ fn real_ct_sym_indexes_and_reports() {
         );
     }
 }
+
+/// The member-level check on the real archive: `java.lang.String.strip()` is
+/// the case that motivated the feature — absent from the release-8 view of
+/// `String` and present from release 11 (`B`), and reached by descriptor.
+#[test]
+fn real_ct_sym_reports_members_added_later() {
+    let Some((db, lib)) = real_jdk() else {
+        return;
+    };
+    let index = hir::ct_sym_index(&db, lib).expect("the SDK ships a readable ct.sym");
+    let (min, max) = (index.min_release(), index.max_release());
+    eprintln!("ct.sym covers releases {min}..={max}");
+
+    // `String.strip()` (JVMS §4.6 descriptor `()Ljava/lang/String;`): added in
+    // release 11, and therefore missing from the release-8 view — which is what
+    // a project compiling with `--release 8` must be told.
+    assert_eq!(
+        hir::ct_sym_member_not_in_release(
+            &db,
+            lib,
+            8,
+            "java.lang.String",
+            "strip",
+            Some("()Ljava/lang/String;")
+        ),
+        Some((8, 11))
+    );
+    // From release 11 on, the view declares it.
+    assert_eq!(
+        hir::ct_sym_member_not_in_release(
+            &db,
+            lib,
+            11,
+            "java.lang.String",
+            "strip",
+            Some("()Ljava/lang/String;")
+        ),
+        None
+    );
+
+    // `List.of(E)` was added in release 9, `List.getFirst()` in 21 (`java.util.List`
+    // is in the archive's view for 8 and 21 alike, so both are member-level
+    // reports, not class-level ones).
+    assert_eq!(
+        hir::ct_sym_class_not_in_release(&db, lib, 8, "java.util.List"),
+        None
+    );
+    assert_eq!(
+        hir::ct_sym_member_not_in_release(
+            &db,
+            lib,
+            8,
+            "java.util.List",
+            "of",
+            Some("(Ljava/lang/Object;)Ljava/util/List;")
+        ),
+        Some((8, 9))
+    );
+    // The descriptor is the classfile identity — not the generic `Signature`
+    // of the declaration, which for `getFirst` is `()TE;` while the descriptor
+    // is `()Ljava/lang/Object;`.
+    assert_eq!(
+        hir::ct_sym_member_not_in_release(
+            &db,
+            lib,
+            8,
+            "java.util.List",
+            "getFirst",
+            Some("()Ljava/lang/Object;")
+        ),
+        Some((8, 21))
+    );
+    assert_eq!(
+        hir::ct_sym_member_not_in_release(
+            &db,
+            lib,
+            21,
+            "java.util.List",
+            "getFirst",
+            Some("()Ljava/lang/Object;")
+        ),
+        None
+    );
+
+    // A member that has been there all along is never reported, in any release
+    // the archive can answer for.
+    for release in min..=max {
+        assert_eq!(
+            hir::ct_sym_member_not_in_release(
+                &db,
+                lib,
+                release,
+                "java.lang.String",
+                "length",
+                Some("()I")
+            ),
+            None,
+            "String.length() exists at release {release}"
+        );
+    }
+}

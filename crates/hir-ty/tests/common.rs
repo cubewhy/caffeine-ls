@@ -259,17 +259,20 @@ pub fn release_fixture() -> ReleaseFixture {
 /// shape of an internal `jdk.internal.*` class.
 pub fn release_jdk_classes() -> Vec<ClassSpec<'static>> {
     let mut classes = jdk_classes();
-    let mut api = class_with_methods(
+    let mut api = class_with_methods_access(
         "java/util/Api",
         Some("java/lang/Object"),
         &[],
         &[
             ("old", "()Ljava/lang/String;"),
             ("newer", "()Ljava/lang/String;"),
+            ("staticCall", "()V"),
             ("<init>", "()V"),
             ("<init>", "(I)V"),
         ],
-        &["", "", "", ""],
+        &["", "", "", "", ""],
+        // `staticCall` is reached statically, so it must carry ACC_STATIC.
+        &[0x0001, 0x0001, 0x0009, 0x0001, 0x0001],
     );
     api.fields = &[("FIELD", "Ljava/lang/String;")];
     classes.push(api);
@@ -314,6 +317,7 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
         fqn: &'static str,
         super_class: &'static str,
         methods: &'static [(&'static str, &'static str)],
+        method_access: &'static [u16],
         fields: &'static [(&'static str, &'static str)],
     ) -> Vec<u8> {
         class_bytes(&ClassSpec {
@@ -323,23 +327,26 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
             access: 0x0021, // ACC_PUBLIC | ACC_SUPER
             fields,
             methods,
-            // An empty slice means "no method carries a `Signature`", and the
-            // default method access is `ACC_PUBLIC`.
+            // An empty slice means "no method carries a `Signature`"; the
+            // method access defaults to `ACC_PUBLIC` per method.
             method_sigs: &[],
-            method_access: &[],
+            method_access,
             sig: None,
         })
     }
 
     const CTOR: &[(&str, &str)] = &[("<init>", "()V")];
     const API_8: &[(&str, &str)] = &[("old", "()Ljava/lang/String;"), ("<init>", "()V")];
-    const API_11: &[(&str, &str)] = &[
+    const FIELD_11: &[(&str, &str)] = &[("FIELD", "Ljava/lang/String;")];
+    const API_11_STATIC: &[(&str, &str)] = &[
         ("old", "()Ljava/lang/String;"),
         ("newer", "()Ljava/lang/String;"),
+        ("staticCall", "()V"),
         ("<init>", "()V"),
         ("<init>", "(I)V"),
     ];
-    const FIELD_11: &[(&str, &str)] = &[("FIELD", "Ljava/lang/String;")];
+    // `old`, `newer`, the two constructors, then the static method.
+    const API_11_ACCESS: &[u16] = &[0x0001, 0x0001, 0x0009, 0x0001, 0x0001];
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     // A real archive lists its directories too; the reader must skip them.
@@ -354,39 +361,55 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
         class(
             dir,
             "Api",
-            sig("java/util/Api", "java/lang/Object", API_8, &[]),
+            sig("java/util/Api", "java/lang/Object", API_8, &[], &[]),
         );
-        class(dir, "Sub", sig("java/util/Sub", "java/util/Api", CTOR, &[]));
+        class(
+            dir,
+            "Sub",
+            sig("java/util/Sub", "java/util/Api", CTOR, &[], &[]),
+        );
     }
     class(
         "BCDEFGHIJK",
         "Api",
-        sig("java/util/Api", "java/lang/Object", API_11, FIELD_11),
+        sig(
+            "java/util/Api",
+            "java/lang/Object",
+            API_11_STATIC,
+            API_11_ACCESS,
+            FIELD_11,
+        ),
     );
     class(
         "BCDEFGHIJK",
         "Api$Nested",
-        sig("java/util/Api$Nested", "java/lang/Object", CTOR, &[]),
+        sig("java/util/Api$Nested", "java/lang/Object", CTOR, &[], &[]),
     );
     class(
         "BCDEFGHIJK",
         "Later",
-        sig("java/util/Later", "java/lang/Object", &[("go", "()V")], &[]),
+        sig(
+            "java/util/Later",
+            "java/lang/Object",
+            &[("go", "()V")],
+            &[],
+            &[],
+        ),
     );
     class(
         "BCDEFGHIJK",
         "Sub",
-        sig("java/util/Sub", "java/util/Api", CTOR, &[]),
+        sig("java/util/Sub", "java/util/Api", CTOR, &[], &[]),
     );
     // A module descriptor and the surrogate package file: neither is a type a
     // compilation unit can name.
     entries.push((
         "8/java.base/module-info.sig".to_owned(),
-        sig("module-info", "java/lang/Object", &[], &[]),
+        sig("module-info", "java/lang/Object", &[], &[], &[]),
     ));
     entries.push((
         "8/java.base/java/util/package-info.sig".to_owned(),
-        sig("java/util/package-info", "java/lang/Object", &[], &[]),
+        sig("java/util/package-info", "java/lang/Object", &[], &[], &[]),
     ));
     entries
 }

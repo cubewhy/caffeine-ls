@@ -1,0 +1,13 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/OldUse.java:
+package com.example;
+
+class OldUse {
+    void f(java.util.Api a) {
+        a.old();
+        java.util.Api b = new java.util.Api();
+    }
+}

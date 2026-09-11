@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/SubUse.java:
+package com.example;
+
+class SubUse {
+    void f(java.util.Sub s) {
+        s.newer();
+    }
+}
+
+@4:8: api-not-supported-in-release: method 'newer()' in 'java.util.Api' is not supported in release 8 (added in release 11)

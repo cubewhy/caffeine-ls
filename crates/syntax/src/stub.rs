@@ -205,6 +205,11 @@ pub struct ParamData<N> {
 pub struct MethodStub<N> {
     pub flags: u16,
     pub name: N,
+    /// The classfile descriptor of the method
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)) —
+    /// the identity of a member across a platform release, where the
+    /// `Signature` attribute ([JVMS §4.7.9.1]) may not be available.
+    pub descriptor: N,
     pub return_type: TypeRef<N>,
     pub type_params: Vec<TypeParameter<N>>,
     pub throws_list: Vec<TypeRef<N>>,
@@ -219,6 +224,9 @@ pub struct MethodStub<N> {
 pub struct FieldStub<N> {
     /// The name of the field (from the constant pool).
     pub name: N,
+    /// The classfile descriptor of the field
+    /// ([JVMS §4.5](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.5)).
+    pub descriptor: N,
     pub flags: u16,
     pub field_type: TypeRef<N>,
     pub annotations: Vec<AnnotationSig<N>>,

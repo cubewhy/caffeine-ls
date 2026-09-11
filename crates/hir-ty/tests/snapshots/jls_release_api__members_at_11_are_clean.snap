@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/ApiUse.java:
+package com.example;
+
+class ApiUse {
+    void f(java.util.Api a) {
+        a.newer();
+        String s = java.util.Api.FIELD;
+        java.util.Api b = new java.util.Api(1);
+    }
+}

@@ -12,7 +12,9 @@ pub mod project;
 pub mod stubs;
 pub mod symbol_index;
 
-pub use ct_sym::{CtSymIndex, ct_sym_class_not_in_release, ct_sym_index};
+pub use ct_sym::{
+    CtSymIndex, ct_sym_class_not_in_release, ct_sym_index, ct_sym_member_not_in_release,
+};
 pub use db::{
     ClassGenericInfo, HirDatabase, HirState, JavaDatabase, JvmDatabase, KotlinDatabase, LibraryId,
     LibraryKind, ProjectGraph, ResolutionScope, Resolved, ResolvedClass, SourceClass,

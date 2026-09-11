@@ -154,6 +154,7 @@ impl<'a> StubStringTable<'a> {
         MethodStub {
             flags: m.flags,
             name: self.symbol(m.name),
+            descriptor: self.symbol(m.descriptor),
             return_type: self.type_ref(&m.return_type),
             type_params: m
                 .type_params
@@ -170,6 +171,7 @@ impl<'a> StubStringTable<'a> {
     pub fn field(&mut self, f: &FieldStub<Symbol>) -> FieldStub<u32> {
         FieldStub {
             name: self.symbol(f.name),
+            descriptor: self.symbol(f.descriptor),
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -361,6 +363,7 @@ impl<'a> DiskResolver<'a> {
         MethodStub {
             flags: m.flags,
             name: self.symbol(m.name),
+            descriptor: self.symbol(m.descriptor),
             return_type: self.type_ref(&m.return_type),
             type_params: m
                 .type_params
@@ -377,6 +380,7 @@ impl<'a> DiskResolver<'a> {
     pub fn field(&self, f: &FieldStub<u32>) -> FieldStub<Symbol> {
         FieldStub {
             name: self.symbol(f.name),
+            descriptor: self.symbol(f.descriptor),
             flags: f.flags,
             field_type: self.type_ref(&f.field_type),
             annotations: f.annotations.iter().map(|a| self.annotation(a)).collect(),
@@ -508,6 +512,7 @@ mod tests {
             methods: vec![MethodStub {
                 flags: 0x0001, // ACC_PUBLIC
                 name: interner.get_or_intern("length"),
+                descriptor: interner.get_or_intern("()I"),
                 return_type: TypeRef::Primitive(PrimitiveType::Int),
                 type_params: Vec::new(),
                 throws_list: Vec::new(),
@@ -517,6 +522,7 @@ mod tests {
             }],
             fields: vec![FieldStub {
                 name: interner.get_or_intern("size"),
+                descriptor: interner.get_or_intern("I"),
                 flags: 0x0001,
                 field_type: TypeRef::Reference {
                     name: interner.get_or_intern("int"),

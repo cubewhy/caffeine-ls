@@ -80,6 +80,7 @@ impl InferCtx<'_> {
         let arg_kinds = self.arg_kinds(args);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
             Some((method, deferred)) => {
+                self.check_release_api_method(expr, &method);
                 self.reinfer_deferred(&method, &deferred);
                 // §11.2.1: a delegating constructor's declared exceptions add
                 // to the enclosing liability.
@@ -335,6 +336,7 @@ impl InferCtx<'_> {
             explicit_type_args,
         ) {
             Some((method, deferred)) => {
+                self.check_release_api_method(expr, &method);
                 // §15.12.3/[§15.8.4]: `super.m(...)` invokes the method *as
                 // declared in the supertype* — the receiver's own override
                 // never applies. An abstract supertype member therefore has

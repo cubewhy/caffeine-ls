@@ -7,7 +7,9 @@ use syntax::stub::PrimitiveType;
 
 use crate::java::{
     const_eval::Const,
-    diagnostics::TypeError,
+    diagnostics::{DiagLocation, TypeError},
+    method::{FieldData, MethodData},
+    release_api::{self, ReleaseApi},
     ty::{Ty, TyKind, boxed_type, capture_conversion, unboxed_primitive},
 };
 
@@ -16,6 +18,61 @@ use super::{Flow, InferCtx};
 impl InferCtx<'_> {
     pub(super) fn error(&self) -> Ty {
         Ty::error(self.db)
+    }
+
+    /// JEP 247: the invocation resolved a platform member the source set's
+    /// release does not provide. Reported at `expr`, the reference's own
+    /// expression.
+    pub(super) fn check_release_api_method(&mut self, expr: ExprId, method: &MethodData) {
+        let Some(descriptor) = method.descriptor.as_deref() else {
+            // A source declaration or a synthesized member is not platform API.
+            return;
+        };
+        let Some((found, added)) = release_api::member_of_owner(
+            self.db,
+            &self.scope,
+            &method.owner,
+            &method.name,
+            Some(descriptor),
+        ) else {
+            return;
+        };
+        self.report(TypeError::NotSupportedInRelease {
+            location: DiagLocation::Expr(expr),
+            api: ReleaseApi::Method {
+                owner: method.owner.clone(),
+                name: method.name.clone(),
+                params: method.params.clone(),
+            },
+            found,
+            added,
+        });
+    }
+
+    /// JEP 247: the read or write resolved a platform field the source set's
+    /// release does not provide.
+    pub(super) fn check_release_api_field(&mut self, expr: ExprId, field: &FieldData) {
+        let Some(descriptor) = field.descriptor.as_deref() else {
+            return;
+        };
+        let Some((found, added)) = release_api::member_of_owner(
+            self.db,
+            &self.scope,
+            &field.owner,
+            &field.name,
+            Some(descriptor),
+        ) else {
+            return;
+        };
+        self.report(TypeError::NotSupportedInRelease {
+            location: DiagLocation::Expr(expr),
+            api: ReleaseApi::Field {
+                owner: field.owner.clone(),
+                name: field.name.clone(),
+            },
+            found,
+            added,
+        });
     }
 
     /// total-failure path — not once per probed overload.

@@ -303,7 +303,7 @@ impl InferCtx<'_> {
                 expected: decaptured,
             });
         }
-        self.resolve_method_ref(qualifier, type_name, name, &sam.params);
+        self.resolve_method_ref(expr, qualifier, type_name, name, &sam.params);
         target
     }
 
@@ -750,6 +750,7 @@ impl InferCtx<'_> {
 
     pub(super) fn resolve_method_ref(
         &mut self,
+        expr: ExprId,
         qualifier: Option<ExprId>,
         type_name: Option<&SpannedTypeRef>,
         name: &Name,
@@ -759,7 +760,11 @@ impl InferCtx<'_> {
         // selection [`Self::method_ref_return`] feeds the inference constraints
         // with — so a reference to a name that resolves only to inapplicable
         // overloads does not silently type against the first declaration.
-        let _ = self.method_ref_candidate(qualifier, type_name, name, sam_params);
+        if let Some(method) = self.method_ref_candidate(qualifier, type_name, name, sam_params) {
+            // The reference's own expression, so the report underlines the
+            // reference rather than the whole lambda.
+            self.check_release_api_method(expr, &method);
+        }
     }
 }
 
