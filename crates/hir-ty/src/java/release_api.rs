@@ -41,46 +41,7 @@ pub enum ReleaseApi {
     Member { owner: String, name: String },
 }
 
-impl ReleaseApi {
-    /// The report line: `<api> is not supported in release {found} (added in
-    /// release {added})`, where `<api>` is `class 'X'`, `method 'm(A, B)' in
-    /// 'X'`, `constructor 'X(A)' in 'X'` (the simple name of the owner),
-    /// `field 'f' in 'X'` or `member 'm' in 'X'`. Parameter types render
-    /// through [`Ty::display`] and join with `", "` — the same rendering a
-    /// resolved invocation uses.
-    pub fn render(&self, db: &dyn TyDatabase, found: u8, added: u8) -> String {
-        let api = match self {
-            ReleaseApi::Class { name } => format!("class '{}'", name.as_str()),
-            ReleaseApi::Method {
-                owner,
-                name,
-                params,
-            } => {
-                let params = params
-                    .iter()
-                    .map(|ty| ty.display(db).to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if name == "<init>" {
-                    format!(
-                        "constructor '{}({params})' in '{owner}'",
-                        simple_name(owner)
-                    )
-                } else {
-                    format!("method '{name}({params})' in '{owner}'")
-                }
-            }
-            ReleaseApi::Field { owner, name } => format!("field '{name}' in '{owner}'"),
-            ReleaseApi::Member { owner, name } => format!("member '{name}' in '{owner}'"),
-        };
-        format!("{api} is not supported in release {found} (added in release {added})")
-    }
-}
-
-/// The simple name of a (binary) owner FQN, for the constructor rendering.
-fn simple_name(owner: &str) -> &str {
-    owner.rsplit('.').next().unwrap_or(owner)
-}
+impl ReleaseApi {}
 
 /// The release `scope`'s files compile against
 /// ([JEP 247](https://openjdk.org/jeps/247)). `Classpath` and `JdkBuiltins`

@@ -17,8 +17,9 @@
 //!   ([`java::ty`]), source name resolution ([`java::resolve`]),
 //!   subtyping ([`java::subtyping`]), method resolution ([`java::method`]),
 //!   expression inference ([`java::infer`], [`java::inference`]) and the
-//!   declaration diagnostics ([`java::decl_check`], [`java::name_check`],
-//!   [`java::diagnostics`], [`java::dep_index`], [`java::const_eval`]);
+//!   structured diagnostics the checks produce ([`java::decl_check`],
+//!   [`java::name_check`], [`java::diagnostics`], [`java::dep_index`],
+//!   [`java::const_eval`]);
 //! * [`kotlin`] — the Kotlin type layer scaffold.
 //!
 //! The [`Ty`] model ([`java::ty`], [JLS §4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.1)–[§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)):
@@ -116,5 +117,3 @@ pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{
     BoundKind, Ty, TyData, TyDisplay, TyKind, WildcardBound, capture_conversion, ty_from_source,
 };
-pub use java::warnings::{LintKey, SuppressionScope, is_suppressed, suppression_scopes};
-pub use syntax::{DiagnosticCode, JavaDiagnosticCode};

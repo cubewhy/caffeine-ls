@@ -1,3 +1,23 @@
+//! The IDE's diagnostics: what every check reports, and how it is presented.
+//!
+//! The type layer (`hir-ty`) *detects*: it records structured diagnostics —
+//! [`hir_ty::TypeError`] for a body, [`hir_ty::DeclDiagnostic`] for a
+//! declaration — and nothing else. This crate owns the *policy and
+//! presentation* on top of them:
+//!
+//! * the lint vocabulary and the `@SuppressWarnings` scopes of
+//!   [JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)
+//!   ([`lint`]), and therefore which diagnostics a client's lint set enables
+//!   and which an enclosing declaration suppresses;
+//! * each diagnostic's severity ([`Severity::Warning`] exactly for the
+//!   diagnostics a lint key names);
+//! * each diagnostic's stable [`DiagnosticCode`] and its user-facing message
+//!   and secondary detail ([`handlers`]).
+//!
+//! The collected report ([`file_report`], [`file_diagnostics`]) is what the
+//! LSP layer pulls per file, and the conformance renderers in `hir-ty`'s
+//! integration tests print from the same surface.
+
 use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use ide_db::{
     FileRange, RootDatabase, Severity,
@@ -10,7 +30,23 @@ use vfs::FileId;
 
 use triomphe::Arc;
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+mod handlers;
+mod lint;
+pub use handlers::body::{code as body_code, message as body_message, related as body_related};
+pub use handlers::decl::{code as decl_code, message as decl_message};
+pub use lint::{
+    LintConfig, LintKey, SuppressionScope, is_suppressed, keeps_body_diagnostic,
+    keeps_decl_diagnostic, suppression_scopes,
+};
+
+/// A diagnostic as the IDE layer sees it: its message, its primary and
+/// secondary ranges, its severity and its stable code.
+///
+/// Identity is *content*: the lint key that gates the diagnostic is policy
+/// metadata ([`Diagnostic::lint`]), excluded from `PartialEq`/`Hash` so a
+/// report compares — and hashes into the LSP `resultId` — the same regardless
+/// of which client lint set produced it.
+#[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub message: String,
     pub range: FileRange,
@@ -23,6 +59,36 @@ pub struct Diagnostic {
     /// (e.g. the `required:`/`found:`/`reason:` detail of an invocation or
     /// assignment mismatch, IntelliJ-style).
     pub related_information: Vec<RelatedInformation>,
+    /// The lint key that gates this diagnostic ([JLS §9.6.4.5]), or `None` for
+    /// an error — which no string suppresses and no client lint set disables.
+    /// Recorded so the memoized report can be filtered by a client's lint set
+    /// without recomputing; never surfaced to a client, and not part of the
+    /// diagnostic's identity.
+    pub(crate) lint: Option<LintKey>,
+}
+
+impl PartialEq for Diagnostic {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+            && self.range == other.range
+            && self.severity == other.severity
+            && self.unused == other.unused
+            && self.code == other.code
+            && self.related_information == other.related_information
+    }
+}
+
+impl Eq for Diagnostic {}
+
+impl std::hash::Hash for Diagnostic {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.message.hash(state);
+        self.range.hash(state);
+        self.severity.hash(state);
+        self.unused.hash(state);
+        self.code.hash(state);
+        self.related_information.hash(state);
+    }
 }
 
 /// A single item of a diagnostic's [`Diagnostic::related_information`]: a
@@ -87,7 +153,7 @@ pub(crate) fn collect_syntax(sink: &mut DiagnosticSink, db: &dyn SourceDatabase,
     for e in parse.errors() {
         sink.push(
             file_id,
-            make_diagnostic(file_id, &e.message, e.range, e.code, Severity::Error),
+            make_diagnostic(file_id, &e.message, e.range, e.code, Severity::Error, None),
         );
     }
 }
@@ -97,10 +163,15 @@ pub(crate) fn collect_syntax(sink: &mut DiagnosticSink, db: &dyn SourceDatabase,
 /// method, constructor, initializer, field initializer and enum constant
 /// argument in the file (see [`hir_ty::body_types`]). Each diagnostic's range
 /// is the source range of the offending construct, computed from its body-IR
-/// arena id.
-pub fn type_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
+/// arena id, and only the ones `lints` enables are reported
+/// ([JLS §9.6.4.5]).
+pub fn type_diagnostics(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    lints: &LintConfig,
+) -> Vec<Diagnostic> {
     let mut sink = DiagnosticSink::new();
-    collect_type_diagnostics(&mut sink, db, file_id);
+    collect_type_diagnostics(&mut sink, db, file_id, lints);
     sink.into_file(file_id)
 }
 
@@ -108,46 +179,72 @@ pub(crate) fn collect_type_diagnostics(
     sink: &mut DiagnosticSink,
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
+    lints: &LintConfig,
 ) {
     let tree = hir::file_item_tree(db, file_id);
-    let bodies = hir::file_body_tree(db, file_id);
     for (item_id, _) in all_items(&tree) {
-        let Some(body_types) = hir_ty::body_types(db, file_id, item_id) else {
-            continue;
-        };
-        for diagnostic in &body_types.diagnostics {
-            let Some(range) = diagnostic.range(&bodies) else {
-                // A synthetic construct (e.g. a `Missing` expression lowered
-                // from broken source) has no range to point at.
-                continue;
-            };
-            let related = diagnostic
-                .related(db, &bodies)
-                .into_iter()
-                .map(|(message, range)| RelatedInformation {
-                    message,
-                    range: FileRange::new(file_id, range),
-                });
-            sink.push(
-                file_id,
-                make_diagnostic(
-                    file_id,
-                    &diagnostic.message(db, &bodies),
-                    range,
-                    Some(diagnostic.code()),
-                    // Raw-type and unchecked-conversion reports are warnings
-                    // ([JLS §4.12.2], [§5.1.9]): legal programs, flagged for
-                    // their unsoundness.
-                    if diagnostic.is_warning() {
-                        Severity::Warning
-                    } else {
-                        Severity::Error
-                    },
-                )
-                .with_related(related),
-            );
+        for diagnostic in item_diagnostics_impl(db, file_id, item_id, lints) {
+            sink.push(file_id, diagnostic);
         }
     }
+}
+
+/// The body diagnostics of one item, built exactly as
+/// [`collect_type_diagnostics`] builds them, for per-item consumers.
+pub fn item_diagnostics(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    item: ItemId,
+    lints: &LintConfig,
+) -> Vec<Diagnostic> {
+    item_diagnostics_impl(db, file_id, item, lints)
+}
+
+fn item_diagnostics_impl(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    item_id: ItemId,
+    lints: &LintConfig,
+) -> Vec<Diagnostic> {
+    let bodies = hir::file_body_tree(db, file_id);
+    let Some(body_types) = hir_ty::body_types(db, file_id, item_id) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for diagnostic in &body_types.diagnostics {
+        // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings`, or one
+        // whose key the client did not enable, is not reported at all. No
+        // string suppresses an error.
+        if !lint::keeps_body_diagnostic(db, file_id, &bodies, diagnostic, lints) {
+            continue;
+        }
+        let Some(range) = diagnostic.range(&bodies) else {
+            // A synthetic construct (e.g. a `Missing` expression lowered
+            // from broken source) has no range to point at.
+            continue;
+        };
+        let related = body_related(db, diagnostic, &bodies)
+            .into_iter()
+            .map(|(message, range)| RelatedInformation {
+                message,
+                range: FileRange::new(file_id, range),
+            });
+        out.push(
+            make_diagnostic(
+                file_id,
+                &body_message(db, diagnostic, &bodies),
+                range,
+                Some(body_code(diagnostic)),
+                // Raw-type and unchecked-conversion reports are warnings
+                // ([JLS §4.12.2], [§5.1.9]): legal programs, flagged for
+                // their unsoundness.
+                lint::severity_of_body(diagnostic),
+                lint::lint_of_body(diagnostic),
+            )
+            .with_related(related),
+        );
+    }
+    out
 }
 
 /// The declaration-level diagnostics of a file ([JLS §6.5.5.1], [§7.5], [§8],
@@ -159,9 +256,13 @@ pub(crate) fn collect_type_diagnostics(
 ///
 /// [`hir_ty::level_diagnostics`] adds the source-level checks: every construct
 /// newer than the level the file's source set is compiled at.
-pub fn declaration_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Vec<Diagnostic> {
+pub fn declaration_diagnostics(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    lints: &LintConfig,
+) -> Vec<Diagnostic> {
     let mut sink = DiagnosticSink::new();
-    collect_declaration_diagnostics(&mut sink, db, file_id);
+    collect_declaration_diagnostics(&mut sink, db, file_id, lints);
     sink.into_file(file_id)
 }
 
@@ -169,8 +270,14 @@ pub(crate) fn collect_declaration_diagnostics(
     sink: &mut DiagnosticSink,
     db: &dyn hir_ty::TyDatabase,
     file_id: FileId,
+    lints: &LintConfig,
 ) {
     for diagnostic in hir_ty::class_diagnostics(db, file_id) {
+        // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings`, or one
+        // whose key the client did not enable, is not reported at all.
+        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic, lints) {
+            continue;
+        }
         let Some(range) = diagnostic.range().or_else(|| {
             // The hierarchy checks (incompatible override, conflicting
             // defaults, missing `@Override`) are keyed to the declaring method
@@ -201,16 +308,13 @@ pub(crate) fn collect_declaration_diagnostics(
             file_id,
             make_diagnostic(
                 file_id,
-                &diagnostic.message(db),
+                &decl_message(db, &diagnostic),
                 range,
-                Some(diagnostic.code()),
+                Some(decl_code(&diagnostic)),
                 // A raw-type declaration report is a warning ([JLS §4.12.2]):
                 // a legal program, flagged for its unsoundness.
-                if diagnostic.is_warning() {
-                    Severity::Warning
-                } else {
-                    Severity::Error
-                },
+                lint::severity_of_decl(&diagnostic),
+                lint::lint_of_decl(&diagnostic),
             ),
         );
     }
@@ -219,6 +323,9 @@ pub(crate) fn collect_declaration_diagnostics(
     // a subtype of its service) of a `module-info.java`. Every module
     // diagnostic carries its own range.
     for diagnostic in hir_ty::module_diagnostics(db, file_id) {
+        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic, lints) {
+            continue;
+        }
         let Some(range) = diagnostic.range() else {
             continue;
         };
@@ -226,16 +333,20 @@ pub(crate) fn collect_declaration_diagnostics(
             file_id,
             make_diagnostic(
                 file_id,
-                &diagnostic.message(db),
+                &decl_message(db, &diagnostic),
                 range,
-                Some(diagnostic.code()),
+                Some(decl_code(&diagnostic)),
                 Severity::Error,
+                None,
             ),
         );
     }
     // A construct newer than the file's project source level (e.g. a record in
     // a `-source 11` module). Always an error: javac rejects it too.
     for diagnostic in hir_ty::level_diagnostics(db, file_id) {
+        if !lint::keeps_decl_diagnostic(db, file_id, &diagnostic, lints) {
+            continue;
+        }
         let Some(range) = diagnostic.range() else {
             continue;
         };
@@ -243,10 +354,11 @@ pub(crate) fn collect_declaration_diagnostics(
             file_id,
             make_diagnostic(
                 file_id,
-                &diagnostic.message(db),
+                &decl_message(db, &diagnostic),
                 range,
-                Some(diagnostic.code()),
+                Some(decl_code(&diagnostic)),
                 Severity::Error,
+                None,
             ),
         );
     }
@@ -267,14 +379,44 @@ pub(crate) fn file_diagnostics_query(
 ) -> Arc<[Diagnostic]> {
     let file_id = *file.file_id(db);
     let mut sink = DiagnosticSink::new();
-    collect_type_diagnostics(&mut sink, db, file_id);
-    collect_declaration_diagnostics(&mut sink, db, file_id);
+    // The memoized report carries every diagnostic that survives the in-source
+    // `@SuppressWarnings` scopes; the client's lint set is applied on top by
+    // [`file_diagnostics`], so a lint-config change does not recompute it.
+    collect_type_diagnostics(&mut sink, db, file_id, &LintConfig::all());
+    collect_declaration_diagnostics(&mut sink, db, file_id, &LintConfig::all());
     Arc::from(sink.into_file(file_id))
 }
 
-/// The merged type + declaration diagnostics of a file.
-pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Diagnostic]> {
-    file_diagnostics_query(db, db.file_text(file_id))
+/// The merged type + declaration diagnostics of a file, restricted to the lint
+/// keys `lints` enables ([JLS §9.6.4.5]).
+pub fn file_diagnostics(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    lints: &LintConfig,
+) -> Arc<[Diagnostic]> {
+    filter_report(&file_diagnostics_query(db, db.file_text(file_id)), lints)
+}
+
+/// Filters a memoized report by `lints`, returning it unchanged — the same
+/// `Arc`, so the LSP layer's cache hit and `result_id` are untouched — when it
+/// already contains nothing the client disabled.
+fn filter_report(report: &Arc<[Diagnostic]>, lints: &LintConfig) -> Arc<[Diagnostic]> {
+    if report.iter().all(|diagnostic| enabled(diagnostic, lints)) {
+        return Arc::clone(report);
+    }
+    Arc::from(
+        report
+            .iter()
+            .filter(|diagnostic| enabled(diagnostic, lints))
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// Whether a diagnostic's lint key is one the client enabled; an error — a
+/// diagnostic no key names — is always enabled.
+fn enabled(diagnostic: &Diagnostic, lints: &LintConfig) -> bool {
+    diagnostic.lint.is_none_or(|key| lints.enables(key))
 }
 
 /// The complete report of a file — syntax plus merged type and declaration
@@ -301,11 +443,15 @@ pub(crate) fn file_report_query(db: &dyn hir_ty::TyDatabase, file: FileText) -> 
 }
 
 /// The complete report of a file: its syntax diagnostics plus its merged type
-/// and declaration diagnostics. This is the unit the LSP diagnostics store
-/// tracks and diffs per file. Memoized per [`FileText`] by
-/// [`file_report_query`].
-pub fn file_report(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Diagnostic]> {
-    file_report_query(db, db.file_text(file_id))
+/// and declaration diagnostics, restricted to the lint keys `lints` enables
+/// ([JLS §9.6.4.5]). This is the unit the LSP diagnostics store tracks and
+/// diffs per file. Memoized per [`FileText`] by [`file_report_query`].
+pub fn file_report(
+    db: &dyn hir_ty::TyDatabase,
+    file_id: FileId,
+    lints: &LintConfig,
+) -> Arc<[Diagnostic]> {
+    filter_report(&file_report_query(db, db.file_text(file_id)), lints)
 }
 
 fn find_method(tree: &ItemTree, id: ItemId, name: &str) -> Option<ItemId> {
@@ -343,6 +489,7 @@ fn make_diagnostic(
     range: TextRange,
     code: Option<DiagnosticCode>,
     severity: Severity,
+    lint: Option<LintKey>,
 ) -> Diagnostic {
     let range = FileRange::new(file_id, range);
     Diagnostic {
@@ -352,6 +499,7 @@ fn make_diagnostic(
         unused: false,
         code,
         related_information: Vec::new(),
+        lint,
     }
 }
 

@@ -357,7 +357,7 @@ pub(crate) fn declaration_type_diagnostics(
             // its type arguments is a raw type — legal, reported as a warning.
             // The range is the whole type reference, as javac's caret is.
             let ty = resolve_type_ref(db, scope, &resolver, tyref);
-            if crate::java::warnings::is_raw_reference(db, scope, &ty)
+            if crate::java::raw_type::is_raw_reference(db, scope, &ty)
                 && let Some(range) = tyref_range(&occurrences)
             {
                 out.push(DeclDiagnostic::RawTypeUse {

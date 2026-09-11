@@ -190,17 +190,6 @@ impl InferCtx<'_> {
         ConstEnv::new(&self.tree, &self.const_locals).eval(id)
     }
 
-    /// ([§8.1.2]) used without its type arguments.
-    pub(super) fn is_raw_type(&self, ty: &Ty) -> bool {
-        match ty.kind(self.db) {
-            TyKind::Reference { name, args } if args.is_empty() => {
-                !ty.is_error(self.db)
-                    && crate::java::resolve::class_is_generic(self.db, &self.scope, name)
-            }
-            _ => false,
-        }
-    }
-
     /// `List<? extends Number>`, `ArrayList<T>`), is not.
     pub(super) fn is_reifiable(&self, ty: &Ty) -> bool {
         match ty.kind(self.db) {
@@ -294,7 +283,7 @@ impl InferCtx<'_> {
             return;
         };
         if let TyKind::Reference { .. } = ty.kind(self.db)
-            && self.is_raw_type(&ty)
+            && crate::java::raw_type::is_raw_reference(self.db, &self.scope, &ty)
         {
             self.report(TypeError::RawTypeUse { local, ty });
         }
@@ -357,7 +346,10 @@ impl InferCtx<'_> {
 
     /// is parameterized succeeds by *unchecked conversion*; report it.
     pub(super) fn warn_unchecked(&mut self, expr: ExprId, src: &Ty, dst: &Ty) {
-        if src.is_error(self.db) || dst.is_error(self.db) || !self.is_raw_type(src) {
+        if src.is_error(self.db)
+            || dst.is_error(self.db)
+            || !crate::java::raw_type::is_raw_reference(self.db, &self.scope, src)
+        {
             return;
         }
         let parameterized =
@@ -417,7 +409,7 @@ impl InferCtx<'_> {
             if actual.is_error(self.db) || formal.is_error(self.db) {
                 continue;
             }
-            if !self.is_raw_type(actual) {
+            if !crate::java::raw_type::is_raw_reference(self.db, &self.scope, actual) {
                 continue;
             }
             let parameterized =

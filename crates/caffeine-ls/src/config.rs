@@ -148,10 +148,11 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 pub struct ClientConfig {
     pub cache_dir: Option<PathBuf>,
     pub java_home: Option<PathBuf>,
-    /// Enabled `-Xlint`-style warnings ([JLS-adjacent]; javac emits
+    /// Enabled `-Xlint`-style warnings ([JLS §9.6.4.5]; javac emits
     /// `rawtypes` and `unchecked` only with an explicit flag). Recognized
-    /// keys today: `rawtypes`, `unchecked`. Empty (the default) matches
-    /// plain `javac`, which reports neither.
+    /// keys today: `rawtypes`, `unchecked`, `deprecation`. A JSON array on
+    /// the wire (comma-separated on the CLI); `all` enables every key this
+    /// build knows, and an unrecognized key names nothing.
     pub lints: Vec<String>,
 }
 

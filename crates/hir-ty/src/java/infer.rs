@@ -442,43 +442,9 @@ pub(crate) fn body_types_impl(
         body,
         exprs: ctx.types,
         locals: ctx.locals,
-        // JLS §9.6.4.5: `@SuppressWarnings` suppresses the warnings of the
-        // annotated declaration and of every part of it, so a suppressed
-        // warning is not a warning at all and is dropped here — at the single
-        // place warnings are produced — rather than filtered by each consumer.
-        diagnostics: suppressed_filter(db, file, ctx.diagnostics),
+        diagnostics: ctx.diagnostics,
         field_touched: ctx.flow.field_touched,
     })
-}
-
-/// Drops every warning named by an enclosing `@SuppressWarnings`
-/// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
-///
-/// The scopes are the file's ([`crate::java::db::warning_scopes_query`], one
-/// tree walk per file); a diagnostic is suppressed when its own source range
-/// falls inside a scope whose keys name it. Errors are never suppressed —
-/// §9.6.4.5 governs warnings only.
-fn suppressed_filter(
-    db: &dyn TyDatabase,
-    file: FileId,
-    diagnostics: Vec<TypeError>,
-) -> Vec<TypeError> {
-    if !diagnostics.iter().any(|d| d.suppression_key().is_some()) {
-        return diagnostics;
-    }
-    let bodies = hir::file_body_tree(db, file);
-    diagnostics
-        .into_iter()
-        .filter(|diagnostic| {
-            let Some(key) = diagnostic.suppression_key() else {
-                return true;
-            };
-            let Some(range) = diagnostic.range(&bodies) else {
-                return true;
-            };
-            !crate::java::warnings::warning_is_suppressed(db, file, range, key)
-        })
-        .collect()
 }
 
 /// argument lists, where no blank `final` field write is legal.

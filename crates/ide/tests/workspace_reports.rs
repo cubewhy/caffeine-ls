@@ -74,9 +74,10 @@ fn by_file(reports: &[WorkspaceReport]) -> HashMap<FileId, &WorkspaceReport> {
     reports.iter().map(|report| (report.file, report)).collect()
 }
 
-/// The single-file [`ide::Analysis::file_report`] result, for comparison.
+/// The single-file [`ide::Analysis::file_report`] result, for comparison with
+/// the workspace pull, which runs under the same (empty) client lint set.
 fn single(analysis: &Analysis, file: FileId) -> Vec<ide::Diagnostic> {
-    analysis.file_report(file).unwrap().to_vec()
+    analysis.file_report(file, &[]).unwrap().to_vec()
 }
 
 #[test]

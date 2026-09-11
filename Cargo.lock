@@ -1210,6 +1210,7 @@ name = "ide-diagnostics"
 version = "0.0.0"
 dependencies = [
  "hir",
+ "hir-expand",
  "hir-ty",
  "ide-db",
  "ra_ap_vfs",

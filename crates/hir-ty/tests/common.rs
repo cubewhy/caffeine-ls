@@ -19,6 +19,10 @@ use hir::{
 };
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_ty::{DiagLocation, Ty, TyDatabase, is_assignable, is_subtype, supertypes};
+pub use ide_diagnostics::{
+    LintConfig, body_code, body_message, body_related, decl_code, decl_message,
+    keeps_body_diagnostic, keeps_decl_diagnostic,
+};
 use tempfile::TempDir;
 use triomphe::Arc;
 use triomphe::Arc as Arc3;
@@ -2157,6 +2161,14 @@ pub fn check_body_types_with_libs(specs: &[ClassSpec<'static>], files: &[(&str, 
     render_body_types(&db, files)
 }
 
+/// The lint configuration of a conformance renderer: every key this build
+/// knows, so a snapshot shows every warning the analyzer can produce and only
+/// the in-source `@SuppressWarnings` scopes hide any
+/// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
+pub fn all_lints() -> LintConfig {
+    LintConfig::all()
+}
+
 fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     let mut lines = files
         .iter()
@@ -2211,32 +2223,38 @@ fn render_body_types(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                     .collect::<Vec<_>>()
                     .join(" | ")
             ));
-            if !types.diagnostics.is_empty() {
-                lines.push(format!(
-                    "  diags: {}",
-                    types
-                        .diagnostics
-                        .iter()
-                        .map(|diag| {
-                            let loc = match diag.location() {
-                                DiagLocation::Expr(id) => format!("{id}"),
-                                DiagLocation::Local(id) => format!("{id}"),
-                                DiagLocation::Pattern(id) => format!("p{id}"),
-                                DiagLocation::Stmt(id) => format!("s{id}"),
-                                DiagLocation::Method => "method".to_owned(),
-                            };
-                            let at = diag
-                                .range(&bodies)
-                                .map(|r| {
-                                    let lc = line_index.line_col(r.start());
-                                    format!("@{line}:{col}", line = lc.line, col = lc.col)
-                                })
-                                .unwrap_or_default();
-                            format!("{loc}{at}: {}: {}", diag.code(), diag.message(db, &bodies))
+            let diags: Vec<String> = types
+                .diagnostics
+                .iter()
+                .filter(|diag| {
+                    // §9.6.4.5: a warning named by an enclosing
+                    // `@SuppressWarnings` is not reported at all.
+                    keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints())
+                })
+                .map(|diag| {
+                    let loc = match diag.location() {
+                        DiagLocation::Expr(id) => format!("{id}"),
+                        DiagLocation::Local(id) => format!("{id}"),
+                        DiagLocation::Pattern(id) => format!("p{id}"),
+                        DiagLocation::Stmt(id) => format!("s{id}"),
+                        DiagLocation::Method => "method".to_owned(),
+                    };
+                    let at = diag
+                        .range(&bodies)
+                        .map(|r| {
+                            let lc = line_index.line_col(r.start());
+                            format!("@{line}:{col}", line = lc.line, col = lc.col)
                         })
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                ));
+                        .unwrap_or_default();
+                    format!(
+                        "{loc}{at}: {}: {}",
+                        body_code(diag),
+                        body_message(db, diag, &bodies)
+                    )
+                })
+                .collect();
+            if !diags.is_empty() {
+                lines.push(format!("  diags: {}", diags.join(" | ")));
             }
         }
     }
@@ -2544,21 +2562,29 @@ fn render_body_diagnostic_spans(db: &TestDatabase, files: &[(&str, &str)]) -> St
             let Some(types) = hir_ty::body_types(db, file_id, id) else {
                 continue;
             };
-            if types.diagnostics.is_empty() {
+            // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings` is
+            // not reported at all, so it neither prints a line nor opens a
+            // header for its item.
+            let reported: Vec<_> = types
+                .diagnostics
+                .iter()
+                .filter(|diag| keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints()))
+                .collect();
+            if reported.is_empty() {
                 continue;
             }
             lines.push(header);
-            for diag in &types.diagnostics {
+            for diag in reported {
                 let Some(range) = diag.range(&bodies) else {
                     continue;
                 };
                 let span = span_text(&line_index, text, range);
                 lines.push(format!(
                     "  {span}: {}: {}",
-                    diag.code(),
-                    diag.message(db, &bodies)
+                    body_code(diag),
+                    body_message(db, diag, &bodies)
                 ));
-                for (message, rel_range) in diag.related(db, &bodies) {
+                for (message, rel_range) in body_related(db, diag, &bodies) {
                     let rel_span = span_text(&line_index, text, rel_range);
                     lines.push(format!("    -> {rel_span}: {message}"));
                 }
@@ -2613,6 +2639,11 @@ fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::class_diagnostics(db, file_id) {
+            // §9.6.4.5: a warning named by an enclosing `@SuppressWarnings` is
+            // not reported at all.
+            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+                continue;
+            }
             let at = diag
                 .range()
                 .map(|r| {
@@ -2625,14 +2656,18 @@ fn render_class_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
             // annotation-target diagnostics carry none and render bare.
             let method = diag.method_name();
             if method.is_empty() {
-                lines.push(format!("{at}: {}: {}", diag.code(), diag.message(db)));
+                lines.push(format!(
+                    "{at}: {}: {}",
+                    decl_code(&diag),
+                    decl_message(db, &diag)
+                ));
             } else {
                 lines.push(format!(
                     "method {}: {}: {}{}",
                     method,
-                    diag.code(),
+                    decl_code(&diag),
                     at,
-                    diag.message(db)
+                    decl_message(db, &diag)
                 ));
             }
         }
@@ -2654,6 +2689,9 @@ pub fn check_module_diagnostics(files: &[(&str, &str)]) -> String {
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::module_diagnostics(&db, file_id) {
+            if !keeps_decl_diagnostic(&db, file_id, &diag, &all_lints()) {
+                continue;
+            }
             let at = diag
                 .range()
                 .map(|r| {
@@ -2661,7 +2699,11 @@ pub fn check_module_diagnostics(files: &[(&str, &str)]) -> String {
                     format!("@{line}:{col}", line = lc.line, col = lc.col)
                 })
                 .unwrap_or_default();
-            lines.push(format!("{at}: {}: {}", diag.code(), diag.message(&db)));
+            lines.push(format!(
+                "{at}: {}: {}",
+                decl_code(&diag),
+                decl_message(&db, &diag)
+            ));
         }
     }
     lines.join("\n")
@@ -2695,6 +2737,9 @@ fn render_level_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
         let file_id = FileId::from_raw((i + 1) as u32);
         let line_index = line_index::LineIndex::new(text);
         for diag in hir_ty::level_diagnostics(db, file_id) {
+            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+                continue;
+            }
             let at = diag
                 .range()
                 .map(|r| {
@@ -2702,7 +2747,11 @@ fn render_level_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String
                     format!("@{line}:{col}", line = lc.line, col = lc.col)
                 })
                 .unwrap_or_default();
-            lines.push(format!("{at}: {}: {}", diag.code(), diag.message(db)));
+            lines.push(format!(
+                "{at}: {}: {}",
+                decl_code(&diag),
+                decl_message(db, &diag)
+            ));
         }
     }
     lines.join("\n")
@@ -2802,14 +2851,17 @@ fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> Stri
             format!("@{line}:{col}", line = lc.line, col = lc.col)
         };
         for diag in hir_ty::class_diagnostics(db, file_id) {
+            if !keeps_decl_diagnostic(db, file_id, &diag, &all_lints()) {
+                continue;
+            }
             let Some(range) = diag.range() else {
                 continue;
             };
             lines.push(format!(
                 "{}: {}: {}",
                 at(range),
-                diag.code(),
-                diag.message(db)
+                decl_code(&diag),
+                decl_message(db, &diag)
             ));
         }
         let tree = hir::file_item_tree(db, file_id);
@@ -2819,14 +2871,17 @@ fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> Stri
                 continue;
             };
             for diag in &types.diagnostics {
+                if !keeps_body_diagnostic(db, file_id, &bodies, diag, &all_lints()) {
+                    continue;
+                }
                 let Some(range) = diag.range(&bodies) else {
                     continue;
                 };
                 lines.push(format!(
                     "{}: {}: {}",
                     at(range),
-                    diag.code(),
-                    diag.message(db, &bodies)
+                    body_code(diag),
+                    body_message(db, diag, &bodies)
                 ));
             }
         }

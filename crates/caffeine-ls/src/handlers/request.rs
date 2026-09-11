@@ -29,7 +29,9 @@ pub fn on_diagnostic(
     // Compute the report through the memoized salsa query; the `result_id` is a
     // deterministic fingerprint of the items, so an unchanged file echoes
     // `Unchanged` across edits to unrelated files.
-    let report = state.analysis.file_report(file_id)?;
+    let report = state
+        .analysis
+        .file_report(file_id, state.config.client_lints())?;
     let items = diagnostics::convert_items(&state, file_id, &report)?;
     let id = diagnostics::render_id(diagnostics::result_id(&items));
     if params.previous_result_id.as_deref() == Some(id.as_str()) {

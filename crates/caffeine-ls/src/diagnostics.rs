@@ -30,20 +30,6 @@ use crate::{
     lsp::diagnostics as lsp_diagnostics,
 };
 
-/// Whether a diagnostic passes the client's lint configuration; shared with
-/// the document-diagnostic handler.
-pub(crate) fn lint_allows(lints: &[String], diagnostic: &ide::Diagnostic) -> bool {
-    use syntax::{DiagnosticCode, JavaDiagnosticCode};
-    let gated = match diagnostic.code {
-        Some(DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)) => "rawtypes",
-        Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedConversion))
-        | Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedInvocation))
-        | Some(DiagnosticCode::Java(JavaDiagnosticCode::UncheckedCast)) => "unchecked",
-        _ => return true,
-    };
-    lints.iter().any(|lint| lint == gated)
-}
-
 /// A checkpoint an expensive diagnostics pull consults on entry: if the client
 /// cancelled the in-flight request, abort instead of doing the work (which
 /// would otherwise run to completion, burning CPU past the cancel). Mid-pull
@@ -55,21 +41,22 @@ pub(crate) fn check_cancelled(snapshot: &GlobalStateSnapshot) -> anyhow::Result<
     Ok(())
 }
 
-/// The wire-level diagnostics of a file, lint-filtered and range-converted
-/// from an already-computed report.
+/// The wire-level diagnostics of a file, range-converted from an
+/// already-computed report.
+///
+/// The report arrives from [`ide::Analysis`] already restricted to the client's
+/// lint set ([JLS §9.6.4.5]), so no gating happens here.
 pub(crate) fn convert_items(
     snapshot: &GlobalStateSnapshot,
     file_id: FileId,
     report: &Arc<[ide::Diagnostic]>,
 ) -> Cancellable<Vec<lsp_types::Diagnostic>> {
     let line_index = snapshot.file_line_index(file_id)?;
-    let lints = snapshot.config.client_lints();
     let Ok(uri) = snapshot.file_id_to_url(file_id) else {
         return Ok(Vec::new());
     };
     Ok(report
         .iter()
-        .filter(|diagnostic| lint_allows(lints, diagnostic))
         .map(|diagnostic| {
             lsp_diagnostics::convert_diagnostic(&line_index, &uri, diagnostic.clone())
         })

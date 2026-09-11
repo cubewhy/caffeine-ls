@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 hir.workspace = true
+hir-expand.workspace = true
 hir-ty.workspace = true
 ide-db.workspace = true
 rowan.workspace = true

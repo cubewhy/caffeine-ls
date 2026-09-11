@@ -126,19 +126,6 @@ pub(crate) fn type_params_map_query(
     Arc::new(resolve::type_params_map(&tree, file_id))
 }
 
-/// The `@SuppressWarnings` scopes of `file`
-/// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)),
-/// computed in a single tree walk per file and memoized. Invalidated together
-/// with the file's item tree when the file text changes.
-#[salsa::tracked(returns(ref))]
-pub(crate) fn warning_scopes_query(
-    db: &dyn TyDatabase,
-    file: FileText,
-) -> Arc<[crate::java::warnings::SuppressionScope]> {
-    let file_id = *file.file_id(db);
-    crate::java::warnings::suppression_scopes(db, file_id).into()
-}
-
 /// The canonical fully qualified name
 /// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
 /// of the nearest enclosing class or interface declaration of every item of

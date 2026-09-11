@@ -1,4 +1,7 @@
-//! Warning suppression ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
+//! Lint policy: the `@SuppressWarnings` vocabulary and scopes
+//! ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)),
+//! the client's enabled lint set, and the severity/lint key of every
+//! diagnostic the type layer reports.
 //!
 //! `@SuppressWarnings` gives the programmer control over the lint-like
 //! warnings a compiler would otherwise report. §9.6.4.5 fixes both the scope
@@ -31,16 +34,23 @@
 //! ([§14.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.4.2))
 //! suppresses within that declaration exactly as one on a method does, and a
 //! local is not an item.
+//!
+//! Detection stays in `hir-ty` — it produces the structured diagnostics and
+//! nothing else. This module owns what happens to them: which are warnings,
+//! which string names them, whether a client enabled them, and whether an
+//! enclosing declaration suppresses them.
 
+use hir_expand::body::BodyTree;
 use rowan::{SyntaxNode, TextRange};
 use rustc_hash::FxHashSet;
 use syntax::SourceFile;
 use syntax::java::{Lang, SyntaxKind as J};
+use triomphe::Arc;
 use vfs::FileId;
 
-use crate::java::db::TyDatabase;
-use crate::java::range_ctx::range_ctx;
-use crate::java::ty::{Ty, TyKind};
+use hir_ty::{DeclDiagnostic, TyDatabase, TypeError};
+use ide_db::Severity;
+use ide_db::base_db::FileText;
 
 /// A warning kind this analyzer reports that `@SuppressWarnings` can name.
 ///
@@ -61,6 +71,10 @@ pub enum LintKey {
 }
 
 impl LintKey {
+    /// Every key this build knows, for the `all` shorthand of the client
+    /// configuration.
+    pub const ALL: [LintKey; 3] = [LintKey::Unchecked, LintKey::RawTypes, LintKey::Deprecation];
+
     /// The string that names this warning in `@SuppressWarnings`
     /// ([JLS §9.6.4.5]).
     pub fn as_str(self) -> &'static str {
@@ -84,6 +98,56 @@ impl LintKey {
     }
 }
 
+/// The lint keys in effect for a client run: the keys the client enabled plus
+/// the keys javac reports without any flag.
+///
+/// The set is a set of *enabled* keys only — a key the client does not name is
+/// simply not enabled, never explicitly turned off — because javac's lint
+/// configuration is additive in the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LintConfig {
+    enabled: FxHashSet<LintKey>,
+}
+
+impl LintConfig {
+    /// Every key this build knows: the configuration of the memoized report,
+    /// which must contain every diagnostic that survives `@SuppressWarnings`
+    /// regardless of what the client asked for.
+    pub fn all() -> Self {
+        Self {
+            enabled: LintKey::ALL.into_iter().collect(),
+        }
+    }
+
+    /// The keys named by `keys`, plus the default-on ones. The `all` shorthand
+    /// means every key this build knows; unknown strings are ignored
+    /// ([JLS §9.6.4.5]).
+    pub fn from_keys(keys: &[String]) -> Self {
+        let mut enabled = Self::default_enabled();
+        for key in keys {
+            if key == "all" {
+                enabled.extend(LintKey::ALL);
+                continue;
+            }
+            if let Some(key) = LintKey::from_str(key) {
+                enabled.insert(key);
+            }
+        }
+        Self { enabled }
+    }
+
+    /// The keys reported without any client configuration: javac warns about
+    /// neither the raw-type nor the unchecked-conversion warnings unless
+    /// `-Xlint` names them, so nothing is on by default.
+    fn default_enabled() -> FxHashSet<LintKey> {
+        FxHashSet::default()
+    }
+
+    pub fn enables(&self, key: LintKey) -> bool {
+        self.enabled.contains(&key)
+    }
+}
+
 /// One `@SuppressWarnings` scope: the annotated declaration's source range and
 /// the warning keys in effect for it — its own plus every enclosing
 /// declaration's ([JLS §9.6.4.5]).
@@ -99,7 +163,8 @@ pub struct SuppressionScope {
 /// `range` and carries its key; [`is_suppressed`] performs that check.
 pub fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<SuppressionScope> {
     let tree = hir::file_item_tree(db, file_id);
-    let Some((_map, source)) = range_ctx(db, file_id, tree.language) else {
+    let Some((_map, source)) = hir_ty::java::range_ctx::range_ctx(db, file_id, tree.language)
+    else {
         return Vec::new();
     };
     let SourceFile::Java(file) = &source else {
@@ -199,38 +264,33 @@ fn suppress_keys(modifier_list: &SyntaxNode<Lang>) -> FxHashSet<LintKey> {
     out
 }
 
+/// The `@SuppressWarnings` scopes of `file`, computed in a single tree walk
+/// per file and memoized. Invalidated together with the file's item tree when
+/// the file text changes.
+///
+/// The scopes are independent of the client's lint configuration — the client
+/// set is applied on top, by [`keeps_body_diagnostic`] and
+/// [`keeps_decl_diagnostic`] — so the memoized report stays valid across a
+/// lint-config change.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn warning_scopes_query(db: &dyn TyDatabase, file: FileText) -> Arc<[SuppressionScope]> {
+    let file_id = *file.file_id(db);
+    suppression_scopes(db, file_id).into()
+}
+
 /// Whether a warning of `key` reported at `range` is suppressed in `file`
 /// ([JLS §9.6.4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.5)).
 ///
-/// The scopes are memoized per file
-/// ([`crate::java::db::warning_scopes_query`]), so this is a binary search over
-/// a short list per diagnostic — the shape both warning production points
-/// (body inference and the declaration walk) call.
-pub fn warning_is_suppressed(
+/// The scopes are memoized per file ([`warning_scopes_query`]), so this is a
+/// binary search over a short list per diagnostic.
+fn warning_is_suppressed(
     db: &dyn TyDatabase,
     file_id: FileId,
     range: TextRange,
     key: LintKey,
 ) -> bool {
-    let scopes = crate::java::db::warning_scopes_query(db, db.file_text(file_id));
+    let scopes = warning_scopes_query(db, db.file_text(file_id));
     is_suppressed(scopes, range, key)
-}
-
-/// Whether `ty` is a *raw* use of a generic class
-/// ([JLS §4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8),
-/// [§4.12.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.2)):
-/// a reference type written without type arguments whose class declares type
-/// parameters. A non-generic class (`String`) and a parameterized use
-/// (`List<String>`) are not raw.
-///
-/// The check is on the *written* form: `List<String>`'s erasure is also named
-/// `List` with no arguments, so this must be asked of the reference as it
-/// appears in source (or in a classfile `Signature`), never of an erased type.
-pub fn is_raw_reference(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &Ty) -> bool {
-    let TyKind::Reference { name, args } = ty.kind(db) else {
-        return false;
-    };
-    args.is_empty() && !ty.is_error(db) && crate::java::resolve::class_is_generic(db, scope, name)
 }
 
 /// Whether an annotation's qualified name denotes `java.lang.SuppressWarnings`
@@ -239,4 +299,93 @@ pub fn is_raw_reference(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: &
 fn is_suppress_warnings(name: &str) -> bool {
     let name = name.trim();
     name == "SuppressWarnings" || name.ends_with(".SuppressWarnings")
+}
+
+/// The lint key of a body diagnostic, or `None` for an error (no string
+/// suppresses it, and a client lint set cannot disable it).
+pub(crate) fn lint_of_body(diag: &TypeError) -> Option<LintKey> {
+    match diag {
+        TypeError::RawTypeUse { .. } => Some(LintKey::RawTypes),
+        TypeError::UncheckedConversion { .. }
+        | TypeError::UncheckedInvocation { .. }
+        | TypeError::UncheckedCast { .. }
+        | TypeError::UncheckedArgument { .. } => Some(LintKey::Unchecked),
+        _ => None,
+    }
+}
+
+/// The lint key of a declaration diagnostic, or `None` for an error.
+pub(crate) fn lint_of_decl(diag: &DeclDiagnostic) -> Option<LintKey> {
+    match diag {
+        DeclDiagnostic::RawTypeUse { .. } => Some(LintKey::RawTypes),
+        _ => None,
+    }
+}
+
+/// Whether the type layer reports `diag` as a *warning* — a legal program
+/// reported for its unsoundness ([§4.12.2] raw types, [§5.1.9] unchecked
+/// conversion) — rather than as a compile-time error. Exactly the diagnostics
+/// a lint key names.
+pub(crate) fn severity_of_body(diag: &TypeError) -> Severity {
+    if lint_of_body(diag).is_some() {
+        Severity::Warning
+    } else {
+        Severity::Error
+    }
+}
+
+/// Whether the declaration layer reports `diag` as a warning rather than an
+/// error ([§4.12.2]).
+pub(crate) fn severity_of_decl(diag: &DeclDiagnostic) -> Severity {
+    if lint_of_decl(diag).is_some() {
+        Severity::Warning
+    } else {
+        Severity::Error
+    }
+}
+
+/// Whether a body diagnostic survives the in-source `@SuppressWarnings` scopes
+/// and the client's lint set ([JLS §9.6.4.5]).
+///
+/// An error — a diagnostic no lint key names — is always kept; a warning is
+/// kept when the client enabled its key and no enclosing declaration names it.
+pub fn keeps_body_diagnostic(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    bodies: &BodyTree,
+    diag: &TypeError,
+    lints: &LintConfig,
+) -> bool {
+    let Some(key) = lint_of_body(diag) else {
+        return true;
+    };
+    if !lints.enables(key) {
+        return false;
+    }
+    let Some(range) = diag.range(bodies) else {
+        // A synthetic construct (`Missing` source) has no range, so no scope
+        // contains it.
+        return true;
+    };
+    !warning_is_suppressed(db, file_id, range, key)
+}
+
+/// Whether a declaration diagnostic survives the in-source `@SuppressWarnings`
+/// scopes and the client's lint set ([JLS §9.6.4.5]).
+pub fn keeps_decl_diagnostic(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    diag: &DeclDiagnostic,
+    lints: &LintConfig,
+) -> bool {
+    let Some(key) = lint_of_decl(diag) else {
+        return true;
+    };
+    if !lints.enables(key) {
+        return false;
+    }
+    let Some(range) = diag.range() else {
+        return true;
+    };
+    !warning_is_suppressed(db, file_id, range, key)
 }

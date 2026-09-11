@@ -76,8 +76,11 @@ pub fn workspace_reports(db: &RootDatabase, lints: &[String]) -> Vec<WorkspaceRe
         .into_par_iter()
         .zip(databases.into_par_iter())
         .flat_map_iter(|(chunk, db)| {
+            // One lint configuration per worker: `LintConfig` is a small set
+            // and rebuilding it keeps the parallel closure plain `Fn`.
+            let config = ide_diagnostics::LintConfig::from_keys(lints);
             chunk.into_iter().map(move |file| {
-                let report = ide_diagnostics::file_report(&db, file);
+                let report = ide_diagnostics::file_report(&db, file, &config);
                 let result_id = report_result_id(&report, lints);
                 WorkspaceReport {
                     file,
