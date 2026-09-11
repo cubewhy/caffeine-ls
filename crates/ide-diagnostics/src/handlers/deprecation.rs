@@ -12,6 +12,12 @@
 //! package — spelled `unnamed package` when there is none, so a class of the
 //! unnamed package reads `Top in unnamed package has been deprecated` while
 //! its member reads `m() in Top has been deprecated`.
+//!
+//! One deliberate divergence: a *generic* method is named by its
+//! invocation-site form — the instantiated parameter types, without javac's
+//! `<T>` type-parameter prefix (`g(List<Object>)` where javac prints
+//! `<T>g(List<T>)`). The declaration's own parameter types are not part of a
+//! resolved member, and naming the member is what the message is for.
 
 use hir_ty::TyDatabase;
 use hir_ty::java::deprecation::{DeprecatedApi, Deprecation};
@@ -41,12 +47,21 @@ fn api_text(db: &dyn TyDatabase, api: &DeprecatedApi) -> String {
             owner,
             name,
             params,
+            varargs,
         } => {
-            let params = params
+            let mut params = params
                 .iter()
                 .map(|ty| display_param(db, *ty))
-                .collect::<Vec<_>>()
-                .join(",");
+                .collect::<Vec<_>>();
+            // A variable-arity formal is named by its element type: javac
+            // prints `v(int...)`, not `v(int[])`.
+            if *varargs
+                && let Some(last) = params.last_mut()
+                && let Some(element) = last.strip_suffix("[]")
+            {
+                *last = format!("{element}...");
+            }
+            let params = params.join(",");
             if name.as_str() == "<init>" {
                 // A constructor is named after its class, without a space
                 // after the commas of its parameter list (javac's own

@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/M.java:
+package q;
+
+import java.util.List;
+
+class M {
+    @Deprecated void p(int a, String b) {}
+    @Deprecated <T> void g(List<T> l) {}
+    @Deprecated void v(int... xs) {}
+}
+
+FILE /src/q/UseM.java:
+package q;
+
+class UseM {
+    void a(M m) { m.p(1, "x"); m.g(null); m.v(1, 2); }
+}
+
+method a(q.M): void
+  @3:20..3:21 'p': deprecated-use: p(int,String) in M has been deprecated
+  @3:33..3:34 'g': deprecated-use: g(List<Object>) in M has been deprecated
+  @3:44..3:45 'v': deprecated-use: v(int...) in M has been deprecated

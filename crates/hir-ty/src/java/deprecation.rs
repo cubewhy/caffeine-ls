@@ -59,11 +59,14 @@ pub enum DeprecatedApi {
     /// nested class, the package for a top-level one (the empty name for the
     /// unnamed package).
     Class { name: Name, owner: Name },
-    /// A method or constructor; `name` is `<init>` for a constructor.
+    /// A method or constructor; `name` is `<init>` for a constructor and
+    /// `varargs` records a variable-arity declaration, whose last parameter
+    /// is the array its element type packs into.
     Method {
         owner: Name,
         name: Name,
         params: Vec<Ty>,
+        varargs: bool,
     },
     /// A field.
     Field { owner: Name, name: Name },
@@ -447,6 +450,7 @@ pub(crate) fn method_api(data: &MethodData) -> DeprecatedApi {
         owner: Name::new(&data.owner),
         name: Name::new(&data.name),
         params: data.params.clone(),
+        varargs: data.varargs,
     }
 }
 

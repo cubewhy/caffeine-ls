@@ -209,6 +209,42 @@ class UseTop {
     ])
 );
 
+// §9.6.4.6: the `{0}` operand names the member the way javac does — the
+// parameter *types*, their simple names joined by `,`, and a variable-arity
+// formal by its element type with `...` (javac: `p(int,String) in M`,
+// `v(int...) in M`). A generic method is the one divergence: it is named by
+// its invocation-site form rather than javac's `<T>g(List<T>)` (see
+// `handlers::deprecation`).
+snapshot!(
+    parameter_lists_render_like_javac,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/q/M.java",
+            "\
+package q;
+
+import java.util.List;
+
+class M {
+    @Deprecated void p(int a, String b) {}
+    @Deprecated <T> void g(List<T> l) {}
+    @Deprecated void v(int... xs) {}
+}
+"
+        ),
+        (
+            "/src/q/UseM.java",
+            "\
+package q;
+
+class UseM {
+    void a(M m) { m.p(1, \"x\"); m.g(null); m.v(1, 2); }
+}
+"
+        )
+    ])
+);
+
 // §9.6.4.6: a constructor invocation is a use of the constructor, explicit
 // `super(...)`/`this(...)` delegation included. javac reports exactly one
 // line here — `super(1)` names the deprecated `P(int)`; `super(s)` names an
