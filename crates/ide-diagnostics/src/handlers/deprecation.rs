@@ -4,14 +4,14 @@
 //! `compiler.warn.has.been.deprecated` = `{0} in {1} has been deprecated` and
 //! `compiler.warn.has.been.deprecated.for.removal` = `{0} in {1} has been
 //! deprecated and marked for removal`. `{0}` is the API as javac spells it —
-//! the simple name of a class, `name(params)` for a method (the constructor
-//! under its class's simple name), the bare name for a field — and `{1}` is
-//! the simple name of the declaring class, or the package for a top-level
-//! class. An element of the unnamed package renders without the `in` clause
-//! (`Top in unnamed package has been deprecated` is javac's wording for a
-//! *class*; a member of a class in the unnamed package reads
-//! `m() in Top has been deprecated`, whose `{1}` is the class, not the
-//! package).
+//! the simple name of a class, `name(params)` for a method (a constructor
+//! under its class's simple name, its parameter types' simple names joined by
+//! `,`), the bare name for a field — and `{1}` is the simple name of the
+//! declaring class for a member, and for a class the operand javac's
+//! `Symbol.location()` carries: an enclosing class's simple name, or the
+//! package — spelled `unnamed package` when there is none, so a class of the
+//! unnamed package reads `Top in unnamed package has been deprecated` while
+//! its member reads `m() in Top has been deprecated`.
 
 use hir_ty::TyDatabase;
 use hir_ty::java::deprecation::{DeprecatedApi, Deprecation};
@@ -24,19 +24,12 @@ pub(crate) fn message(
     deprecation: Deprecation,
 ) -> String {
     let text = api_text(db, api);
-    match owner_operand(api).map(|owner| owner_text(api, owner)) {
-        Some(owner) => match deprecation {
-            Deprecation::Ordinary => format!("{text} in {owner} has been deprecated"),
-            Deprecation::Terminal => {
-                format!("{text} in {owner} has been deprecated and marked for removal")
-            }
-        },
-        None => match deprecation {
-            Deprecation::Ordinary => format!("{text} has been deprecated"),
-            Deprecation::Terminal => {
-                format!("{text} has been deprecated and marked for removal")
-            }
-        },
+    let owner = owner_text(api, owner_operand(api));
+    match deprecation {
+        Deprecation::Ordinary => format!("{text} in {owner} has been deprecated"),
+        Deprecation::Terminal => {
+            format!("{text} in {owner} has been deprecated and marked for removal")
+        }
     }
 }
 
@@ -68,22 +61,23 @@ fn api_text(db: &dyn TyDatabase, api: &DeprecatedApi) -> String {
 }
 
 /// The `{1}` operand of `api`: a member's declaring class, or a class's own
-/// owner operand (its package, or its enclosing class's simple name). A
-/// top-level class of the unnamed package has no owner at all.
-fn owner_operand(api: &DeprecatedApi) -> Option<&hir_expand::name::Name> {
-    let owner = match api {
+/// owner operand (its package, or its enclosing class's simple name).
+fn owner_operand(api: &DeprecatedApi) -> &hir_expand::name::Name {
+    match api {
         DeprecatedApi::Class { owner, .. } => owner,
         DeprecatedApi::Method { owner, .. } | DeprecatedApi::Field { owner, .. } => owner,
-    };
-    (!owner.as_str().is_empty()).then_some(owner)
+    }
 }
 
 /// The rendered `{1}` operand. A member's owner is a class, printed by its
-/// simple name; a class's owner is a package or an enclosing class, printed
-/// as it stands.
+/// simple name; a class's owner is a package or an enclosing class, printed as
+/// it stands — the unnamed package as javac's own spelling of it.
 fn owner_text(api: &DeprecatedApi, owner: &hir_expand::name::Name) -> String {
     match api {
-        DeprecatedApi::Class { .. } => owner.as_str().to_owned(),
+        DeprecatedApi::Class { .. } => match owner.as_str() {
+            "" => "unnamed package".to_owned(),
+            package => package.to_owned(),
+        },
         DeprecatedApi::Method { .. } | DeprecatedApi::Field { .. } => {
             simple_name(owner.as_str()).to_owned()
         }

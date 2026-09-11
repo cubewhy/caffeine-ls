@@ -178,6 +178,37 @@ class UseS {
     )])
 );
 
+// §9.6.4.6: a class of the *unnamed* package has javac's `unnamed package` as
+// its "in" operand, while a member of it names the class. javac:
+// ```text
+// UseTop.java:2: warning: [deprecation] Top in unnamed package has been deprecated
+// UseTop.java:3: warning: [deprecation] Top in unnamed package has been deprecated
+// UseTop.java:3: warning: [deprecation] m() in Top has been deprecated
+// ```
+snapshot!(
+    unnamed_package_is_named,
+    check_body_diagnostic_spans(&[
+        (
+            "/src/Top.java",
+            "\
+@Deprecated
+class Top {
+    @Deprecated void m() {}
+}
+"
+        ),
+        (
+            "/src/UseTop.java",
+            "\
+class UseTop {
+    void a() { new Top(); }
+    void b() { new Top().m(); }
+}
+"
+        )
+    ])
+);
+
 // §9.6.4.6: a constructor invocation is a use of the constructor, explicit
 // `super(...)`/`this(...)` delegation included. javac reports exactly one
 // line here — `super(1)` names the deprecated `P(int)`; `super(s)` names an

@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/Top.java:
+@Deprecated
+class Top {
+    @Deprecated void m() {}
+}
+
+FILE /src/UseTop.java:
+class UseTop {
+    void a() { new Top(); }
+    void b() { new Top().m(); }
+}
+
+method a(): void
+  @1:19..1:22 'Top': deprecated-use: Top in unnamed package has been deprecated
+method b(): void
+  @2:25..2:26 'm': deprecated-use: m() in Top has been deprecated
+  @2:19..2:22 'Top': deprecated-use: Top in unnamed package has been deprecated
