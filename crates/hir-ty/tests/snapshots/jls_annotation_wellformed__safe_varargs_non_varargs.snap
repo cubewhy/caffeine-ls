@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    @SafeVarargs
+    static <T> void m(T xs) {
+    }
+}
+
+@3:5: invalid-safevarargs: Invalid @SafeVarargs annotation: method is not variable arity

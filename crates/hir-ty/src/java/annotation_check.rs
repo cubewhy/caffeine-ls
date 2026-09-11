@@ -47,7 +47,7 @@ use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
 use crate::java::db::TyDatabase;
-use crate::java::decl_check::DeclDiagnostic;
+use crate::java::decl_check::{DeclDiagnostic, SafeVarargsRejection};
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, ty_from_library};
 use crate::java::subtyping::is_assignable;
@@ -96,6 +96,7 @@ pub(crate) fn annotation_diagnostics(
 
     fn walk(
         db: &dyn TyDatabase,
+        file: FileId,
         tree: &ItemTree,
         bodies: &BodyTree,
         scope: &hir::ResolutionScope,
@@ -112,7 +113,9 @@ pub(crate) fn annotation_diagnostics(
         let resolver = Resolver::new(tree, type_params, id);
         // §9.6.4.1: the declaration annotations of the item itself.
         for annotation in declaration_annotations(data) {
-            check_declaration_annotation(db, &resolver, scope, data, annotation, map, source, out);
+            check_declaration_annotation(
+                db, file, id, &resolver, scope, data, annotation, map, source, out,
+            );
         }
         // §9.6.4.1/[§9.7.4]: the annotations of a record's *components* have
         // element type `RECORD_COMPONENT` (Table 9.7-1); like a field, a
@@ -168,6 +171,7 @@ pub(crate) fn annotation_diagnostics(
         for &child in data.body() {
             walk(
                 db,
+                file,
                 tree,
                 bodies,
                 scope,
@@ -183,6 +187,7 @@ pub(crate) fn annotation_diagnostics(
     for &top in &tree.top {
         walk(
             db,
+            file,
             tree,
             &bodies,
             &scope,
@@ -194,6 +199,97 @@ pub(crate) fn annotation_diagnostics(
         );
     }
     out
+}
+
+/// JLS §9.6.4.7: `@SafeVarargs` may annotate only a method or constructor that
+/// is *variable arity* and is `static`, `final` or `private` — the cases in
+/// which the declaration cannot be overridden with a different arity and
+/// therefore cannot produce the heap pollution the annotation promises to
+/// suppress ([§8.4.1]). javac: `Invalid SafeVarargs annotation. …`.
+fn check_safe_varargs(
+    data: &ItemData,
+    annotation_range: Option<rowan::TextRange>,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    let ItemData::Method(method) = data else {
+        out.push(DeclDiagnostic::InvalidSafeVarargs {
+            reason: SafeVarargsRejection::NotAMethod,
+            range: annotation_range,
+        });
+        return;
+    };
+    // JLS §9.6.4.7: the requirement is variable arity first — a *varargs*
+    // constructor is a legal target (javac accepts `@SafeVarargs P(T... a)`),
+    // while a non-varargs one is rejected as "not a varargs method".
+    if !method.sig.params.last().is_some_and(|param| param.varargs) {
+        out.push(DeclDiagnostic::InvalidSafeVarargs {
+            reason: SafeVarargsRejection::NotVarargs,
+            range: annotation_range,
+        });
+        return;
+    }
+    if method.is_constructor() {
+        return;
+    }
+    let modifiers = &method.modifiers;
+    if !(modifiers.is_static() || modifiers.is_final() || modifiers.is_private()) {
+        out.push(DeclDiagnostic::InvalidSafeVarargs {
+            reason: SafeVarargsRejection::Instance,
+            range: annotation_range,
+        });
+    }
+}
+
+/// JLS §9.6.4.9: `@FunctionalInterface` may annotate only an interface, and
+/// that interface must declare exactly one abstract method — excluding
+/// `Object`'s public methods ([§9.8]) and `default`/`static` members, which are
+/// not abstract. javac: `Unexpected @FunctionalInterface annotation`.
+fn check_functional_interface(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    file: FileId,
+    item: ItemId,
+    data: &ItemData,
+    annotation_range: Option<rowan::TextRange>,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    let ItemData::Interface(_) = data else {
+        out.push(DeclDiagnostic::NotAFunctionalInterfaceAnnotation {
+            range: annotation_range,
+        });
+        return;
+    };
+    // §9.8: the interface's abstract methods are *the members of `F`* — its
+    // own declaration's plus every superinterface's, deduped by signature
+    // ([§9.4.1]), since a functional interface may inherit its single abstract
+    // method rather than declare it. The member set is the one the override
+    // checks use: a declaration-level enumeration of the interface's own
+    // hierarchies.
+    let Some(fqn) = hir::source_class_fqn(db, file, item) else {
+        return;
+    };
+    let class_ty = Ty::reference(db, Name::new(fqn.as_str()), Vec::new());
+    let ctx = crate::java::method::access_context(db, file, item);
+    let abstract_count = crate::java::method::all_methods(db, scope, &class_ty, &ctx)
+        .into_iter()
+        .filter(|method| method.abstract_)
+        .filter(|method| !is_object_method_override(&Name::new(&method.name)))
+        .count();
+    if abstract_count != 1 {
+        out.push(DeclDiagnostic::NotAFunctionalInterfaceAnnotation {
+            range: annotation_range,
+        });
+    }
+}
+
+/// Whether `name` is one of `java.lang.Object`'s public methods, which
+/// [JLS §9.8] excludes from the abstract-method count of a functional
+/// interface.
+fn is_object_method_override(name: &Name) -> bool {
+    matches!(
+        name.as_str(),
+        "equals" | "hashCode" | "toString" | "clone" | "finalize"
+    )
 }
 
 /// The declaration annotations of an item, in source order.
@@ -265,8 +361,11 @@ fn body_of(tree: &ItemTree, id: ItemId) -> Option<hir_expand::body::BodyId> {
 
 /// Checks the declaration annotations of one item against its element type
 /// ([JLS §9.6.4.1]).
+#[allow(clippy::too_many_arguments)]
 fn check_declaration_annotation(
     db: &dyn TyDatabase,
+    file: FileId,
+    item: ItemId,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
     data: &ItemData,
@@ -275,6 +374,17 @@ fn check_declaration_annotation(
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    // §9.6.4.7/§9.6.4.9: two annotations carry a *well-formedness* requirement
+    // on the declaration they annotate, beyond the `@Target` applicability of
+    // §9.6.4.1 — `@SafeVarargs` on a method that cannot suppress heap
+    // pollution, and `@FunctionalInterface` on something that is not one.
+    let annotation_range = hir_def::java::ranges::annotation_name_range(map, source, annotation);
+    if annotation.name.as_str() == "SafeVarargs" {
+        check_safe_varargs(data, annotation_range, out);
+    }
+    if annotation.name.as_str() == "FunctionalInterface" {
+        check_functional_interface(db, scope, file, item, data, annotation_range, out);
+    }
     let Some(element_type) = element_type_of(data) else {
         return;
     };

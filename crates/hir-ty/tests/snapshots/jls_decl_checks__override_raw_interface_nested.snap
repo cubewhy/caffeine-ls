@@ -17,3 +17,4 @@ class Outer {
 }
 
 @5:47: raw-type-use: Raw use of parameterized class 'Converter'
+@7:30: raw-type-use: Raw use of parameterized class 'Class'

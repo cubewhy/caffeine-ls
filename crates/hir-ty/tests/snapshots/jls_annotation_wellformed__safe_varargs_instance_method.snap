@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    @SafeVarargs
+    <T> void b(T... xs) {
+    }
+}
+
+@3:5: invalid-safevarargs: Invalid @SafeVarargs annotation: instance method is neither final nor private

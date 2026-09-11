@@ -374,6 +374,17 @@ pub enum TypeError {
         bound: Ty,
         range: Option<TextRange>,
     },
+    /// §4.5: a parameterized type names a class with the wrong number of type
+    /// arguments. javac: `wrong number of type arguments; required {n}` (or
+    /// `type {C} does not take parameters` for a non-generic class).
+    /// `location` anchors the diagnostic and `range` the type reference's own
+    /// name span.
+    WrongTypeArgumentCount {
+        location: DiagLocation,
+        ty: Ty,
+        expected: usize,
+        range: Option<TextRange>,
+    },
     /// §15.9: a class instance creation whose type argument is a wildcard
     /// (`new ArrayList<?>()`) — a wildcard never names a concrete type, so
     /// nothing is created. javac: `unexpected type; required: exact type,
@@ -525,6 +536,9 @@ impl TypeError {
             TypeError::TypeArgumentOutOfBounds { .. } => {
                 DiagnosticCode::Java(TypeArgumentOutOfBounds)
             }
+            TypeError::WrongTypeArgumentCount { .. } => {
+                DiagnosticCode::Java(WrongTypeArgumentCount)
+            }
             TypeError::CannotInstantiateWildcard { .. } => {
                 DiagnosticCode::Java(CannotInstantiateWildcard)
             }
@@ -643,7 +657,8 @@ impl TypeError {
             CannotResolveType { location, .. }
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. }
-            | TypeArgumentOutOfBounds { location, .. } => location.clone(),
+            | TypeArgumentOutOfBounds { location, .. }
+            | WrongTypeArgumentCount { location, .. } => location.clone(),
             AlreadyCaught { local, .. } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
@@ -658,6 +673,7 @@ impl TypeError {
             | TypeError::AmbiguousName { range, .. }
             | TypeError::ModuleNotAccessible { range, .. }
             | TypeError::TypeArgumentOutOfBounds { range, .. }
+            | TypeError::WrongTypeArgumentCount { range, .. }
             | TypeError::MissingReturnValue { range } => *range,
             // The lambda parameter's name range, recorded at lowering time.
             TypeError::LambdaParameterAlreadyDefined { range, .. } => Some(*range),
@@ -1013,6 +1029,17 @@ impl TypeError {
                     "Variable '{}' is already defined in the scope",
                     name.as_str()
                 )
+            }
+            WrongTypeArgumentCount { ty, expected, .. } => {
+                if *expected == 0 {
+                    format!("Type '{}' does not take parameters", render_simple(db, *ty))
+                } else {
+                    format!(
+                        "Wrong number of type arguments for '{}': required {}",
+                        render_simple(db, *ty),
+                        expected
+                    )
+                }
             }
             TypeArgumentOutOfBounds {
                 name,

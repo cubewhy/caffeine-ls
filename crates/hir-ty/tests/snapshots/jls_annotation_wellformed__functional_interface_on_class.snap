@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    @FunctionalInterface
+    static class NotAnInterface {
+    }
+}
+
+@3:5: not-a-functional-interface: Not a functional interface

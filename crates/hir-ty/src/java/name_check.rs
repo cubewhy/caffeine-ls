@@ -335,6 +335,19 @@ pub(crate) fn declaration_type_diagnostics(
                     range: Some(range),
                 });
             }
+            // JLS §4.5: every written reference in the declaration type must
+            // carry exactly the type arguments its class declares, nested
+            // arguments and wildcard bounds included. javac: `wrong number of
+            // type arguments; required {n}`.
+            if let Some((bad, expected)) =
+                crate::java::resolve::type_argument_arity_mismatch(db, scope, &resolver, &tyref.ty)
+            {
+                out.push(DeclDiagnostic::WrongTypeArgumentCount {
+                    ty: bad,
+                    expected,
+                    range: tyref_range(&occurrences),
+                });
+            }
         }
         // §9.7/§6.5.5.1: the declaration's annotation names resolve like any
         // type reference — an unknown `@Name` is reported the same way (*not*

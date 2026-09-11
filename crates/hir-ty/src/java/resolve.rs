@@ -974,6 +974,109 @@ fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
     }
 }
 
+/// JLS §4.5: the number of type arguments a *parameterized type* must carry
+/// for the class named by `fqn`, or `None` when the name does not resolve to a
+/// class whose parameter list is recoverable.
+///
+/// A raw use (no arguments at all) is legal for any generic class
+/// ([§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)),
+/// so the caller compares only when arguments *are* written: zero arguments
+/// against zero parameters is the non-generic case and is legal too, while
+/// any other mismatch is an error (`wrong number of type arguments; required
+/// {n}`, or `type {C} does not take parameters` for the zero case).
+pub fn type_argument_arity(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &Name,
+) -> Option<usize> {
+    let resolved = hir::fqn_resolve(db, scope, fqn.as_str())?;
+    match &resolved {
+        hir::Resolved::Library(_) => hir::class_generic_info(db, &resolved)
+            .map(|info| info.type_params.len())
+            // A classfile without a `Signature` attribute declares none.
+            .or(Some(0)),
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => Some(d.type_params.len()),
+                ItemData::Record(d) => Some(d.type_params.len()),
+                // Enums and annotations cannot declare type parameters
+                // ([§8.9], [§9.6]).
+                ItemData::Enum(_) | ItemData::Annotation(_) => Some(0),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// JLS §4.5: the first reference in `tyref` that is written with the wrong
+/// number of type arguments, as `(reference, expected)`, or `None` when the
+/// whole written type is well-formed.
+///
+/// The comparison is on the *written* argument count against the number the
+/// named class declares. That distinction matters for a qualified member type
+/// (`TreeTypeAdapter.GsonContextImpl`, a non-generic inner class of a generic
+/// outer): the resolved [`Ty`] carries the outer's argument while the source
+/// writes none, and the member class itself declares none, so the use is legal.
+///
+/// A *raw* use (no arguments at all, [§4.8]) is legal for any generic class,
+/// so a reference without arguments is skipped — but a class declaring none
+/// cannot take them, which is why the empty case is still checked. The walk
+/// covers nested arguments (`List<Map<String>>` is wrong at the argument even
+/// though the outer `List` is fine) and wildcard bounds ([§4.5.1]), each of
+/// which is a type reference in its own right.
+pub fn type_argument_arity_mismatch(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    resolver: &Resolver,
+    tyref: &TypeRef<Name>,
+) -> Option<(Ty, usize)> {
+    match tyref {
+        TypeRef::Reference { name, generic_args } => {
+            // A *qualified member type* names its type arguments on the
+            // *qualifier*: in `Outer<T>.Inner`, `T` instantiates `Outer`, and
+            // `Inner` takes none of its own ([§6.5.5.2], [§4.5]). The lowered
+            // reference keeps the qualifier's arguments on the whole name, so
+            // the pair cannot be told apart from the reference alone — skip it
+            // whenever the name's qualifier is a *type* (`Outer.Inner`, where
+            // the qualifier resolves to a class) rather than a package
+            // (`java.util.List`, where the arguments are `List`'s own).
+            if let Some((prefix, _)) = name.as_str().rsplit_once('.') {
+                let qualifier = resolve_reference_name(db, scope, resolver, &Name::new(prefix));
+                if hir::fqn_resolve(db, scope, qualifier.as_str()).is_some() {
+                    return None;
+                }
+            }
+            let resolved = resolve_type_ref(db, scope, resolver, tyref);
+            if let TyKind::Reference { name: fqn, .. } = resolved.kind(db)
+                && let Some(expected) = type_argument_arity(db, scope, fqn)
+                // §4.8: writing no arguments is the *raw* use, legal for any
+                // generic class; every other count must match the declaration
+                // exactly (including 0 — a non-generic class takes none).
+                && expected != generic_args.len()
+                && !(generic_args.is_empty() && expected != 0)
+            {
+                return Some((resolved, expected));
+            }
+            for arg in generic_args {
+                if let Some(found) = type_argument_arity_mismatch(db, scope, resolver, arg) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        // §4.5.1: a wildcard's bound is a type reference too.
+        TypeRef::Wildcard { bound } => match bound.as_deref() {
+            Some(TypeBound::Upper(inner)) | Some(TypeBound::Lower(inner)) => {
+                type_argument_arity_mismatch(db, scope, resolver, inner)
+            }
+            None => None,
+        },
+        TypeRef::Array(inner) => type_argument_arity_mismatch(db, scope, resolver, inner),
+        _ => None,
+    }
+}
+
 /// The resolution scope of a source file: its source set, or the JDK
 /// built-ins when the file is not mapped to a source root.
 pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionScope {

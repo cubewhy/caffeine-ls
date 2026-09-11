@@ -911,20 +911,22 @@ fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) 
 /// ([JLS §8.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.2),
 /// [§8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1),
 /// [§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)):
-/// identical parameter types, both static or neither. The signature — and
-/// with it override-equivalence — never includes variable-arity-ness: a
-/// method's parameter types are already in the array-lowered form
-/// (`String...` is `String[]`, [§8.4.1]), so a `void m(String...)` and a
-/// `void m(String[])` declare the same signature ([§8.4.2]) and one may
-/// override the other ([§8.4.8.1], [§9.4.1.2]). Two such members differing
-/// only in declaring type are the same method inherited and overridden down
-/// the hierarchy — the return type is deliberately *not* compared: an
-/// override may narrow it (covariant returns, [§8.4.8.3]) and a static
-/// declaration hides the supertype one regardless of its result type
-/// ([§6.4.3.2], [§15.12.1]), so in both cases the most-derived declaration
-/// replaces the ancestor.
+/// the same name, identical parameter types, and both static or neither. The
+/// signature — and with it override-equivalence — never includes
+/// variable-arity-ness: a method's parameter types are already in the
+/// array-lowered form (`String...` is `String[]`, [§8.4.1]), so a
+/// `void m(String...)` and a `void m(String[])` declare the same signature
+/// ([§8.4.2]) and one may override the other ([§8.4.8.1], [§9.4.1.2]).
+///
+/// The *name* is part of it: two methods of one type that differ only in name
+/// (`void a()` and `void b()`) are unrelated members, so the wildcard
+/// enumeration ([`all_methods`]) must keep both — only same-name candidates
+/// can shadow one another. Two members with the same signature differing only
+/// in declaring type are the same method inherited and overridden down the
+/// hierarchy; the return type is deliberately *not* compared, since an
+/// override may narrow it (covariant returns, [§8.4.8.3]).
 fn same_overriding_signature(a: &MethodData, b: &MethodData) -> bool {
-    a.params == b.params && a.is_static == b.is_static
+    a.name == b.name && a.params == b.params && a.is_static == b.is_static
 }
 
 /// The abstract methods of the interface `ty` and its superinterfaces

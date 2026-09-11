@@ -566,6 +566,39 @@ pub enum DeclDiagnostic {
         ty: Ty,
         range: Option<rowan::TextRange>,
     },
+    /// §4.5: a *declaration* type reference carries the wrong number of type
+    /// arguments for the class it names. javac: `wrong number of type
+    /// arguments; required {n}` (`type {C} does not take parameters` for a
+    /// non-generic class). `range` spans the type reference.
+    WrongTypeArgumentCount {
+        ty: Ty,
+        expected: usize,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.6.4.7: `@SafeVarargs` on a declaration that cannot suppress heap
+    /// pollution — anything but a variable-arity `static`, `final` or
+    /// `private` method. javac: `Invalid SafeVarargs annotation. …`.
+    InvalidSafeVarargs {
+        reason: SafeVarargsRejection,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.6.4.9: `@FunctionalInterface` on something that is not a functional
+    /// interface — not an interface, or one whose abstract-method count
+    /// ([§9.8]) is not one. javac: `Unexpected @FunctionalInterface
+    /// annotation`.
+    NotAFunctionalInterfaceAnnotation { range: Option<rowan::TextRange> },
+}
+
+/// Why `@SafeVarargs` was rejected ([JLS §9.6.4.7]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SafeVarargsRejection {
+    /// The annotation is not on a method or constructor at all.
+    NotAMethod,
+    /// Not a variable-arity method ([§8.4.1]).
+    NotVarargs,
+    /// An instance method that is neither `final` nor `private` — a subclass
+    /// may override it with a different arity.
+    Instance,
 }
 
 impl DeclDiagnostic {
@@ -607,6 +640,15 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::RawTypeUse { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::RawTypeUse)
+            }
+            DeclDiagnostic::WrongTypeArgumentCount { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::WrongTypeArgumentCount)
+            }
+            DeclDiagnostic::InvalidSafeVarargs { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::InvalidSafeVarargs)
+            }
+            DeclDiagnostic::NotAFunctionalInterfaceAnnotation { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::NotAFunctionalInterface)
             }
             DeclDiagnostic::UnexpectedPackagePath { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnexpectedPackagePath)
@@ -815,6 +857,32 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::RawTypeUse { ty, .. } => {
                 format!("Raw use of parameterized class '{}'", ty.display_simple(db))
+            }
+            DeclDiagnostic::InvalidSafeVarargs { reason, .. } => match reason {
+                SafeVarargsRejection::NotAMethod => {
+                    "Invalid @SafeVarargs annotation: not a method or constructor".to_owned()
+                }
+                SafeVarargsRejection::NotVarargs => {
+                    "Invalid @SafeVarargs annotation: method is not variable arity".to_owned()
+                }
+                SafeVarargsRejection::Instance => {
+                    "Invalid @SafeVarargs annotation: instance method is neither final nor private"
+                        .to_owned()
+                }
+            },
+            DeclDiagnostic::NotAFunctionalInterfaceAnnotation { .. } => {
+                "Not a functional interface".to_owned()
+            }
+            DeclDiagnostic::WrongTypeArgumentCount { ty, expected, .. } => {
+                if *expected == 0 {
+                    format!("Type '{}' does not take parameters", ty.display_simple(db))
+                } else {
+                    format!(
+                        "Wrong number of type arguments for '{}': required {}",
+                        ty.display_simple(db),
+                        expected
+                    )
+                }
             }
             DeclDiagnostic::UnexpectedPackagePath { expected, dir, .. } => format!(
                 "Package name '{}' does not correspond to the file path '{}'",
@@ -1138,6 +1206,9 @@ impl DeclDiagnostic {
             | DeclDiagnostic::ConflictingImport { .. }
             | DeclDiagnostic::ModuleNotAccessible { .. }
             | DeclDiagnostic::RawTypeUse { .. }
+            | DeclDiagnostic::WrongTypeArgumentCount { .. }
+            | DeclDiagnostic::InvalidSafeVarargs { .. }
+            | DeclDiagnostic::NotAFunctionalInterfaceAnnotation { .. }
             | DeclDiagnostic::UnexpectedPackagePath { .. }
             | DeclDiagnostic::DuplicatePackage { .. }
             | DeclDiagnostic::DuplicateClass { .. }
@@ -1180,7 +1251,10 @@ impl DeclDiagnostic {
             | DeclDiagnostic::UnresolvedStaticImport { range, .. }
             | DeclDiagnostic::ConflictingImport { range, .. }
             | DeclDiagnostic::ModuleNotAccessible { range, .. } => *range,
-            DeclDiagnostic::RawTypeUse { range, .. } => *range,
+            DeclDiagnostic::RawTypeUse { range, .. }
+            | DeclDiagnostic::WrongTypeArgumentCount { range, .. }
+            | DeclDiagnostic::InvalidSafeVarargs { range, .. }
+            | DeclDiagnostic::NotAFunctionalInterfaceAnnotation { range } => *range,
             DeclDiagnostic::UnexpectedPackagePath { name_range, .. } => *name_range,
             DeclDiagnostic::DuplicatePackage { name_range, .. }
             | DeclDiagnostic::DuplicateClass { name_range, .. }

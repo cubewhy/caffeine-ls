@@ -306,14 +306,32 @@ impl InferCtx<'_> {
         location: DiagLocation,
         spanned: &SpannedTypeRef,
     ) {
-        let TypeRef::Reference {
-            name: _,
-            generic_args,
-        } = &spanned.ty
-        else {
+        let TypeRef::Reference { generic_args, .. } = &spanned.ty else {
             return;
         };
         if generic_args.is_empty() {
+            return;
+        }
+        let range = spanned.first_ref().and_then(|r| r.range);
+        // JLS §4.5: every written reference in the type must carry exactly
+        // the type arguments its class declares — a *raw* use (none at all,
+        // [§4.8]) is the one legal way to omit them, so only a
+        // written-but-wrong count is reported, and the check covers the
+        // outermost reference, nested arguments and wildcard bounds.
+        // javac: `wrong number of type arguments; required {n}`, or
+        // `type {C} does not take parameters` when the class declares none.
+        if let Some((ty, expected)) = crate::java::resolve::type_argument_arity_mismatch(
+            self.db,
+            &self.scope,
+            &self.resolver,
+            &spanned.ty,
+        ) {
+            self.report(TypeError::WrongTypeArgumentCount {
+                location,
+                ty,
+                expected,
+                range,
+            });
             return;
         }
         let resolved = resolve_type_ref(self.db, &self.scope, &self.resolver, &spanned.ty);
@@ -328,7 +346,6 @@ impl InferCtx<'_> {
         else {
             return;
         };
-        let range = spanned.first_ref().and_then(|r| r.range);
         self.report(TypeError::TypeArgumentOutOfBounds {
             location,
             name: param,

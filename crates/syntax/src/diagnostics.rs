@@ -339,6 +339,12 @@ pub enum JavaDiagnosticCode {
     /// `M<String>`. javac: `type argument {a} is not within bounds of
     /// type-variable {T}`.
     TypeArgumentOutOfBounds,
+    /// §4.5: a parameterized type names a class with the wrong number of
+    /// type arguments.
+    WrongTypeArgumentCount,
+    /// §9.6.4.7: `@SafeVarargs` on a declaration that cannot suppress heap
+    /// pollution.
+    InvalidSafeVarargs,
     /// §8.4.2: two methods of one class have the same erasure
     /// ([§4.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6))
     /// but different parameterized signatures — `void m(List<String>)` and
@@ -564,6 +570,8 @@ impl JavaDiagnosticCode {
             }
             DuplicateDeclaration => Some("compiler.err.already.defined"),
             TypeArgumentOutOfBounds => Some("compiler.err.not.within.bounds"),
+            WrongTypeArgumentCount => Some("compiler.err.wrong.number.type.args"),
+            InvalidSafeVarargs => Some("compiler.err.invalid.safevarargs"),
             NameClashSameErasure => Some("compiler.err.name.clash.same.erasure"),
             CannotInstantiateWildcard => Some("compiler.err.type.found.req"),
             GenericCannotExtendThrowable => Some("compiler.err.generic.throwable"),
@@ -724,6 +732,8 @@ impl JavaDiagnosticCode {
             }
             JavaDiagnosticCode::DuplicateDeclaration => "duplicate-declaration",
             JavaDiagnosticCode::TypeArgumentOutOfBounds => "type-argument-not-within-bounds",
+            JavaDiagnosticCode::WrongTypeArgumentCount => "wrong-type-argument-count",
+            JavaDiagnosticCode::InvalidSafeVarargs => "invalid-safevarargs",
             JavaDiagnosticCode::NameClashSameErasure => "name-clash-same-erasure",
             JavaDiagnosticCode::CannotInstantiateWildcard => "cannot-instantiate-wildcard",
             JavaDiagnosticCode::GenericCannotExtendThrowable => "generic-cannot-extend-throwable",

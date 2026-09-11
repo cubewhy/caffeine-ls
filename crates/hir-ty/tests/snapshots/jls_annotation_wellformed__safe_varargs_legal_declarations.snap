@@ -1,0 +1,24 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    @SafeVarargs
+    static <T> void a(T... xs) {
+    }
+
+    @SafeVarargs
+    final <T> void b(T... xs) {
+    }
+
+    @SafeVarargs
+    private <T> void c(T... xs) {
+    }
+
+    @SafeVarargs
+    Body(String... xs) {
+    }
+}

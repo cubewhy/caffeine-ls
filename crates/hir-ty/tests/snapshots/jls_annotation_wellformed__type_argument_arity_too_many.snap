@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+
+class Body {
+    List<String, Integer> broken;
+}
+
+@5:4: wrong-type-argument-count: Wrong number of type arguments for 'List<String, Integer>': required 1

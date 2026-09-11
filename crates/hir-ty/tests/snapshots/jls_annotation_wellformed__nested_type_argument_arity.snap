@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.List;
+import java.util.Map;
+
+class Body {
+    List<Map<String>> broken;
+}
+
+@6:4: wrong-type-argument-count: Wrong number of type arguments for 'Map<String>': required 2

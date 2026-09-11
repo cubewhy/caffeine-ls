@@ -762,7 +762,16 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             &["", "", ""],
             &[0x0401, 0x0401, 0x0401], // ACC_PUBLIC | ACC_ABSTRACT
         ),
-        class("java/lang/Class", Some("java/lang/Object"), &[]),
+        // Real-classfile shape: `java.lang.Class` declares one type parameter
+        // (`Class<T>`), which the classfile's `Signature` attribute carries
+        // ([JVMS §4.7.9.1]). Without it, a `Class<?>` use would look like
+        // arguments on a non-generic class ([§4.5]).
+        class_sig(
+            "java/lang/Class",
+            Some("java/lang/Object"),
+            &[],
+            Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
+        ),
         interface("java/lang/CharSequence"),
         interface_sig(
             "java/lang/Comparable",

@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_annotation_wellformed.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    @FunctionalInterface
+    interface F {
+        void apply();
+
+        default void extra() {
+        }
+
+        static void helper() {
+        }
+
+        boolean equals(Object other);
+
+        int hashCode();
+
+        String toString();
+    }
+}
