@@ -1589,9 +1589,7 @@ name = "lsp-test"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
- "dashmap",
  "gen-lsp-types",
- "insta",
  "lsp-server",
  "serde_json",
  "tempfile",

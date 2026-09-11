@@ -3,8 +3,24 @@ source: crates/caffeine-ls/tests/lsp_snapshots.rs
 expression: diagnostics
 ---
 {
-  "resultId": "47082f4ad4c0ea0c",
+  "resultId": "b46a39aee72134f9",
   "items": [
+    {
+      "range": {
+        "start": {
+          "line": 5,
+          "character": 35
+        },
+        "end": {
+          "line": 5,
+          "character": 57
+        }
+      },
+      "severity": 1,
+      "code": "api-not-supported-in-release",
+      "source": "caffeine-ls",
+      "message": "method 'of(java.lang.String)' in 'java.util.List' is not supported in release 8 (added in release 9)"
+    },
     {
       "range": {
         "start": {

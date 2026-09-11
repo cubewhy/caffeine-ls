@@ -1,18 +1,9 @@
-use std::{path::PathBuf, sync::LazyLock};
+use std::sync::LazyLock;
 
-use caffeine_ls::{
-    config::{Config, ConfigChange, ConfigErrors},
-    from_json,
-};
-use camino::Utf8PathBuf;
 use lsp_test::{LspHarness, lsp_fixture};
-use lsp_types::{
-    FileChangeType, Notification, Position, Range, ShowMessageNotification, WorkspaceFolders,
-    WorkspaceFoldersInitializeParams,
-};
+use lsp_types::{FileChangeType, Position, Range};
 use serde_json::json;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
-use vfs::AbsPathBuf;
 
 fn setup_logging() -> anyhow::Result<()> {
     let stderr_layer = fmt::layer().with_writer(std::io::stderr).with_ansi(false);
@@ -32,162 +23,37 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static SETUP: LazyLock<()> = LazyLock::new(|| {
     setup_logging().expect("Failed to setup logger");
-
-    rayon::ThreadPoolBuilder::new()
-        .thread_name(|ix| format!("RayonWorker{}", ix))
-        .build_global()
-        .unwrap();
 });
 
+/// Client config for the snapshot tests.
+///
+/// `java_home` points at a path that cannot exist, so the server registers no
+/// SDK and skips the platform (jimage) stub index: that index runs on the
+/// server's task pool while holding a database snapshot, which blocks the main
+/// loop's next write — and therefore every request issued before it finishes —
+/// for as long as the parse takes. Tests that need platform classes pass their
+/// own config (see `test_release_api_diagnostic`). The path must be absolute:
+/// `AbsPathBuf::assert_utf8` panics otherwise.
+fn default_client_config() -> serde_json::Value {
+    json!({ "java_home": std::env::temp_dir().join("caffeine-ls-test-no-jdk") })
+}
+
 fn create_lsp() -> LspHarness {
-    create_lsp_with_setup(|_| {})
+    create_lsp_with_config(default_client_config(), |_| {})
 }
 
 fn create_lsp_with_setup(setup: impl FnOnce(&std::path::Path)) -> LspHarness {
-    LazyLock::force(&SETUP);
-    let client_config = json!({});
-
-    LspHarness::start_with_setup(client_config, setup, run_server)
+    create_lsp_with_config(default_client_config(), setup)
 }
 
-fn create_lsp_with_progress() -> LspHarness {
-    LazyLock::force(&SETUP);
-    let client_config = json!({});
-
-    LspHarness::start_with_setup_progress(client_config, |_| {}, run_server)
-}
-
-fn create_lsp_with_progress_and_setup(
-    setup: impl FnOnce(&std::path::Path) + Send + 'static,
+fn create_lsp_with_config(
+    config: serde_json::Value,
+    setup: impl FnOnce(&std::path::Path),
 ) -> LspHarness {
     LazyLock::force(&SETUP);
-    let client_config = json!({});
-
-    LspHarness::start_with_setup_progress(client_config, setup, run_server)
-}
-
-fn run_server(connection: lsp_server::Connection) {
-    let (initialize_id, initialize_params) = connection.initialize_start().unwrap();
-
-    tracing::info!("InitializeParams: {}", initialize_params);
-    #[allow(deprecated)]
-    let lsp_types::InitializeParams {
-        root_uri,
-        capabilities,
-        workspace_folders_initialize_params: WorkspaceFoldersInitializeParams { workspace_folders },
-        initialization_options,
-        client_info,
-        ..
-    } = from_json::<lsp_types::InitializeParams>("InitializeParams", &initialize_params).unwrap();
-
-    let root_path = root_uri
-        .and_then(|it| it.to_file_path().ok())
-        .map(patch_path_prefix)
-        .and_then(|it| Utf8PathBuf::from_path_buf(it).ok())
-        .and_then(|it| AbsPathBuf::try_from(it).ok())
-        .unwrap();
-
-    if let Some(client_info) = &client_info {
-        tracing::info!(
-            "Client '{}' {}",
-            client_info.name,
-            client_info.version.as_deref().unwrap_or_default()
-        );
-    }
-
-    let workspace_folders = match workspace_folders {
-        Some(WorkspaceFolders::WorkspaceFolderList(folders)) => Some(folders),
-        _ => None,
-    };
-
-    let workspace_roots = workspace_folders
-        .map(|workspaces| {
-            workspaces
-                .into_iter()
-                .filter_map(|it| it.uri.to_file_path().ok())
-                .map(patch_path_prefix)
-                .filter_map(|it| Utf8PathBuf::from_path_buf(it).ok())
-                .filter_map(|it| AbsPathBuf::try_from(it).ok())
-                .collect::<Vec<_>>()
-        })
-        .filter(|workspaces| !workspaces.is_empty())
-        .unwrap_or_else(|| vec![root_path.clone()]);
-    let mut config = Config::new(capabilities, workspace_roots, client_info, None);
-    if let Some(json) = initialization_options {
-        let mut change = ConfigChange::default();
-
-        change.change_client_config(json);
-
-        let error_sink: ConfigErrors;
-        (config, error_sink, _) = config.apply_change(change);
-
-        if !error_sink.is_empty() {
-            use lsp_types::{MessageType, ShowMessageParams};
-            let not = lsp_server::Notification::new(
-                ShowMessageNotification::METHOD.to_string(),
-                ShowMessageParams {
-                    kind: MessageType::Warning,
-                    message: error_sink.to_string(),
-                },
-            );
-            connection
-                .sender
-                .send(lsp_server::Message::Notification(not))
-                .unwrap();
-        }
-    }
-
-    let server_capabilities = caffeine_ls::server_capabilities(&config);
-
-    let initialize_result = lsp_types::InitializeResult {
-        capabilities: server_capabilities,
-        server_info: Some(lsp_types::ServerInfo {
-            name: caffeine_ls::NAME.to_string(),
-            version: Some(caffeine_ls::VERSION.to_string()),
-        }),
-    };
-
-    let initialize_result = serde_json::to_value(initialize_result).unwrap();
-
-    connection
-        .initialize_finish(initialize_id, initialize_result)
-        .expect("Failed to finish initialization");
-
-    caffeine_ls::main_loop(config, connection).unwrap();
-
-    tracing::info!("server did shut down");
-}
-
-fn patch_path_prefix(path: PathBuf) -> PathBuf {
-    use std::path::{Component, Prefix};
-    if cfg!(windows) {
-        // VSCode might report paths with the file drive in lowercase, but this can mess
-        // with env vars set by tools and build scripts executed by r-a such that it invalidates
-        // cargo's compilations unnecessarily. https://github.com/rust-lang/rust-analyzer/issues/14683
-        // So we just uppercase the drive letter here unconditionally.
-        // (doing it conditionally is a pain because std::path::Prefix always reports uppercase letters on windows)
-        let mut comps = path.components();
-        match comps.next() {
-            Some(Component::Prefix(prefix)) => {
-                let prefix = match prefix.kind() {
-                    Prefix::Disk(d) => {
-                        format!("{}:", d.to_ascii_uppercase() as char)
-                    }
-                    Prefix::VerbatimDisk(d) => {
-                        format!(r"\\?\{}:", d.to_ascii_uppercase() as char)
-                    }
-                    _ => return path,
-                };
-                let mut path = PathBuf::new();
-                path.push(prefix);
-                path.extend(comps);
-                path
-            }
-            _ => path,
-        }
-    } else {
-        path
-    }
+    LspHarness::start_with_setup(config, setup, |connection| {
+        caffeine_ls::cli::serve::run(connection).unwrap()
+    })
 }
 
 #[macro_export]
@@ -202,8 +68,6 @@ macro_rules! lsp_test {
             {
                 $body
             };
-
-            $lsp.shutdown();
         }
     };
 }
@@ -338,49 +202,56 @@ lsp_test!(
     }
 );
 
+/// The `(token, kind)` pair of a `$/progress` notification.
+fn progress_event(notif: &lsp_server::Notification) -> Option<(String, String)> {
+    let token = match notif.params.get("token")? {
+        serde_json::Value::String(token) => token.clone(),
+        serde_json::Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    let kind = notif
+        .params
+        .get("value")?
+        .get("kind")?
+        .as_str()?
+        .to_string();
+    Some((token, kind))
+}
+
 #[test]
 fn test_workspace_load_reports_progress() {
-    let lsp = create_lsp_with_progress();
+    let lsp = create_lsp();
 
     // The temp workspace has no build system, so only the VFS scan phase
     // runs; it must surface as `$/progress` begin/end pairs (which clients
     // only deliver after the `window/workDoneProgress/create` handshake).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let notifications = lsp.wait_for_notifications(
+        "$/progress",
+        std::time::Duration::from_secs(10),
+        |notifications| {
+            let began = notifications
+                .iter()
+                .filter_map(progress_event)
+                .any(|(_, kind)| kind == "begin");
+            let ended = notifications
+                .iter()
+                .filter_map(progress_event)
+                .any(|(_, kind)| kind == "end");
+            began && ended
+        },
+    );
+
     let mut began = std::collections::HashSet::new();
     let mut ended = std::collections::HashSet::new();
-
-    while std::time::Instant::now() < deadline {
-        match lsp
-            .notification_receiver
-            .recv_timeout(std::time::Duration::from_millis(100))
-        {
-            Ok(notif) if notif.method == "$/progress" => {
-                let kind = notif
-                    .params
-                    .get("value")
-                    .and_then(|v| v.get("kind"))
-                    .and_then(|k| k.as_str());
-                let token = notif
-                    .params
-                    .get("token")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                match kind {
-                    Some("begin") => {
-                        began.insert(token);
-                    }
-                    Some("end") => {
-                        ended.insert(token);
-                    }
-                    _ => {}
-                }
+    for (token, kind) in notifications.iter().filter_map(progress_event) {
+        match kind.as_str() {
+            "begin" => {
+                began.insert(token);
+            }
+            "end" => {
+                ended.insert(token);
             }
             _ => {}
-        }
-
-        if !began.is_empty() && !ended.is_empty() {
-            break;
         }
     }
 
@@ -392,8 +263,6 @@ fn test_workspace_load_reports_progress() {
         !ended.is_empty(),
         "server never reported a $/progress end for workspace loading"
     );
-
-    lsp.shutdown();
 }
 
 /// A fake `gradle` executable that replays realistic console output, so the
@@ -435,22 +304,29 @@ exit 0
         .unwrap_or_else(|| env!("CARGO_MANIFEST_DIR").to_string());
 
     // Set PATH/JAVA_HOME so the server's `Command::new("gradle")` finds the
-    // shim and `get_java_home` succeeds. Restored on drop.
-    struct EnvGuard;
+    // shim and `get_java_home` succeeds. Restored on drop: other tests in this
+    // binary read JAVA_HOME to locate a real JDK
+    // (`test_release_api_diagnostic`), and clearing it here would make them
+    // skip silently.
+    struct EnvGuard(Option<std::ffi::OsString>);
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            // SAFETY: single-threaded test process; no other thread reads the
-            // env var concurrently in a way that would be unsound.
+            // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this
+            // guard (it is declared first, so it drops last).
             unsafe {
-                std::env::remove_var("JAVA_HOME");
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("JAVA_HOME", previous),
+                    None => std::env::remove_var("JAVA_HOME"),
+                }
             }
         }
     }
-    // SAFETY: test process is single-threaded at this point.
+    let java_home_before = std::env::var_os("JAVA_HOME");
+    // SAFETY: env mutation is serialized by ENV_LOCK.
     unsafe {
         std::env::set_var("JAVA_HOME", &java_home);
     }
-    let _guard = EnvGuard;
+    let _guard = EnvGuard(java_home_before);
 
     let path_var = std::env::var("PATH").unwrap_or_default();
     // SAFETY: test process is single-threaded at this point.
@@ -461,56 +337,50 @@ exit 0
         );
     }
 
-    let lsp = create_lsp_with_progress_and_setup(|root| {
+    let lsp = create_lsp_with_setup(|root| {
         std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
         std::fs::create_dir_all(root.join("src/main/java")).unwrap();
     });
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    lsp.wait_until_workspace_is_loaded();
+
+    let notifications = lsp.wait_for_notifications(
+        "$/progress",
+        std::time::Duration::from_secs(15),
+        |notifications| {
+            notifications
+                .iter()
+                .filter_map(progress_event)
+                .any(|(token, kind)| token.starts_with("sync-") && kind == "end")
+        },
+    );
+
     let mut messages: Vec<String> = Vec::new();
     let mut saw_100 = false;
-
-    while std::time::Instant::now() < deadline {
-        match lsp
-            .notification_receiver
-            .recv_timeout(std::time::Duration::from_millis(100))
-        {
-            Ok(notif) if notif.method == "$/progress" => {
-                let token = notif
-                    .params
-                    .get("token")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default()
-                    .to_string();
-                if !token.starts_with("sync-") {
-                    continue;
-                }
-                if let Some(msg) = notif
-                    .params
-                    .get("value")
-                    .and_then(|v| v.get("message"))
-                    .and_then(|m| m.as_str())
-                {
-                    messages.push(msg.to_string());
-                }
-                if let Some(100) = notif
-                    .params
-                    .get("value")
-                    .and_then(|v| v.get("percentage"))
-                    .and_then(|p| p.as_u64())
-                {
-                    saw_100 = true;
-                }
-            }
-            _ => {}
+    for notif in &notifications {
+        let Some((token, _)) = progress_event(notif) else {
+            continue;
+        };
+        if !token.starts_with("sync-") {
+            continue;
         }
-
-        if saw_100 {
-            break;
+        if let Some(msg) = notif
+            .params
+            .get("value")
+            .and_then(|v| v.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            messages.push(msg.to_string());
+        }
+        if let Some(100) = notif
+            .params
+            .get("value")
+            .and_then(|v| v.get("percentage"))
+            .and_then(|p| p.as_u64())
+        {
+            saw_100 = true;
         }
     }
-
-    lsp.shutdown();
 
     assert!(
         saw_100,
@@ -547,8 +417,6 @@ fn test_syntax_diagnostics_before_workspace_load() {
     let diagnostics = lsp.pull_document_diagnostics("/src/Main.java");
 
     insta::assert_json_snapshot!("syntax_diagnostics_before_workspace_load", diagnostics);
-
-    lsp.shutdown();
 }
 
 #[test]
@@ -586,8 +454,6 @@ record Point(int x, int y) {}
         |response| !response.is_null(),
     );
     insta::assert_json_snapshot!("document_symbols", response);
-
-    lsp.shutdown();
 }
 
 #[test]
@@ -694,15 +560,15 @@ public interface Bar {
         1
     );
 
-    // Resolve without data is a request error (surfaces as null in this
-    // harness).
-    let broken = lsp.request(
-        "workspaceSymbol/resolve",
-        json!({ "name": "Foo", "kind": 5, "location": { "uri": "file:///x" } }),
-    );
-    assert!(broken.is_null());
-
-    lsp.shutdown();
+    // Resolve without data is a request error.
+    let error = lsp
+        .request_raw(
+            "workspaceSymbol/resolve",
+            json!({ "name": "Foo", "kind": 5, "location": { "uri": "file:///x" } }),
+        )
+        .expect_err("resolve without data must be a request error");
+    assert_eq!(error.code, lsp_server::ErrorCode::InternalError as i32);
+    assert!(error.message.contains("missing data"), "{error:?}");
 }
 
 /// Sends `method`/`params`, retrying while `accept` fails. The server cancels
@@ -807,8 +673,6 @@ class Nav {
     let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
     let normalized = normalize_uris(response, &workspace_root);
     insta::assert_json_snapshot!("goto_definition_field_read", normalized);
-
-    lsp.shutdown();
 }
 
 #[test]
@@ -854,8 +718,6 @@ class Nav {
         |response| !response.is_null(),
     );
     insta::assert_json_snapshot!("hover_method_declaration", response);
-
-    lsp.shutdown();
 }
 
 /// Re-issues `workspace/diagnostic` until `pred` holds, returning the accepted
@@ -1043,8 +905,6 @@ fn cross_file_typing_resolves_dependent_error() {
             && r["items"].as_array().is_some_and(|items| items.is_empty())
     });
     insta::assert_json_snapshot!("cross_file_typing_fixed_b", normalize_and_sort(after, &lsp));
-
-    lsp.shutdown();
 }
 
 /// The inverse direction: deleting the method from `A` puts the error back into
@@ -1084,8 +944,6 @@ fn cross_file_reverts_when_method_removed() {
         "cross_file_revert_broken_b",
         normalize_and_sort(broken, &lsp)
     );
-
-    lsp.shutdown();
 }
 
 /// Deleting a source file on disk (reported via the client's
@@ -1131,8 +989,6 @@ fn cross_file_deletes_when_source_file_removed_on_disk() {
         "cross_file_deleted_after_delete",
         normalize_and_sort(after, &lsp)
     );
-
-    lsp.shutdown();
 }
 
 /// After a source file is deleted, pulling diagnostics for its URI (e.g. the
@@ -1164,14 +1020,12 @@ fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
 
     // Pulling the deleted file's diagnostics must yield an empty full report.
     let uri = lsp.uri(b);
-    let response = lsp.request(
-        "textDocument/diagnostic",
-        json!({ "textDocument": { "uri": uri } }),
-    );
-    assert!(
-        !response.is_null(),
-        "deleted file pull must not be an internal error, got: {response}"
-    );
+    let response = lsp
+        .request_raw(
+            "textDocument/diagnostic",
+            json!({ "textDocument": { "uri": uri } }),
+        )
+        .expect("deleted file pull must not be an internal error");
     assert_eq!(
         response["kind"].as_str(),
         Some("full"),
@@ -1182,7 +1036,6 @@ fn cross_file_deleted_file_diagnostic_is_empty_not_error() {
         Some(0),
         "deleted file pull must carry no items: {response}"
     );
-    lsp.shutdown();
 }
 
 /// Deleting a file must refresh the diagnostics of its watched dependents: a
@@ -1226,8 +1079,6 @@ fn cross_file_delete_refreshes_dependent_diagnostics() {
         }),
         "B must report the unresolved A: {report}"
     );
-
-    lsp.shutdown();
 }
 
 /// Adding a file must refresh the diagnostics of the watched files that
@@ -1277,8 +1128,6 @@ fn cross_file_add_refreshes_dependent_diagnostics() {
             .is_some_and(|items| items.is_empty()),
         "B's diagnostics must clear after A appears: {after}"
     );
-
-    lsp.shutdown();
 }
 
 /// `result_id` round-trip: pulling again with the previous id yields a tiny
@@ -1311,7 +1160,6 @@ fn cross_file_result_id_roundtrip() {
         second.get("items").is_none(),
         "Unchanged report must not re-serialize items"
     );
-    lsp.shutdown();
 }
 
 /// `workspace/diagnostic`: the whole-workspace pull returns one full report per
@@ -1365,8 +1213,6 @@ fn cross_file_workspace_pull() {
         "cross_file_workspace_pull_after_fix",
         normalize_and_sort(after_fix, &lsp)
     );
-
-    lsp.shutdown();
 }
 
 /// A burst of body-only edits must not move a file's result id: the
@@ -1408,8 +1254,6 @@ public class A {
         "body-only edits must not change the report: {after}"
     );
     assert_eq!(after["resultId"].as_str(), Some(first_id.as_str()));
-
-    lsp.shutdown();
 }
 
 /// A `textDocument/diagnostic` pull issued immediately after `didChange` must
@@ -1481,8 +1325,6 @@ public class A {
             .is_some_and(|items| !items.is_empty()),
         "reintroduced error must be reported immediately: {after_break}"
     );
-
-    lsp.shutdown();
 }
 
 /// `workspace/diagnostic` must behave like the single-document pull: a pull
@@ -1560,8 +1402,6 @@ public class A {
         Some(0),
         "the fixed workspace report must be clean: {after_fix}"
     );
-
-    lsp.shutdown();
 }
 
 /// The release-view check end to end through the build-system path: a Gradle
@@ -1601,20 +1441,25 @@ exit 0
     perms.set_mode(0o755);
     std::fs::set_permissions(&shim, perms).unwrap();
 
-    // SAFETY: the test process is single-threaded at this point.
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this guard
+    // (it is declared first, so it drops last).
+    let java_home_before = std::env::var_os("JAVA_HOME");
     unsafe {
         std::env::set_var("JAVA_HOME", &java_home);
     }
-    struct EnvGuard;
+    struct EnvGuard(Option<std::ffi::OsString>);
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            // SAFETY: single-threaded, as above.
+            // SAFETY: as above.
             unsafe {
-                std::env::remove_var("JAVA_HOME");
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("JAVA_HOME", previous),
+                    None => std::env::remove_var("JAVA_HOME"),
+                }
             }
         }
     }
-    let _guard = EnvGuard;
+    let _guard = EnvGuard(java_home_before);
 
     let path_var = std::env::var("PATH").unwrap_or_default();
     // SAFETY: single-threaded, as above.
@@ -1625,7 +1470,7 @@ exit 0
         );
     }
 
-    let lsp = create_lsp_with_progress_and_setup(|root| {
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
         std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
         std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
         std::fs::write(
@@ -1638,36 +1483,10 @@ exit 0
     let path = "/src/main/java/demo/Main.java";
     lsp.open_document(path);
 
-    // The Gradle sync and the workspace load it drives happen on the server's
-    // own thread; wait for the sync to report completion before pulling, so the
-    // report is the loaded workspace's and not the pre-load fallback's.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    let mut synced = false;
-    while !synced && std::time::Instant::now() < deadline {
-        match lsp
-            .notification_receiver
-            .recv_timeout(std::time::Duration::from_millis(100))
-        {
-            Ok(notif) if notif.method == "$/progress" => {
-                let token = notif
-                    .params
-                    .get("token")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default();
-                let ended = notif
-                    .params
-                    .get("value")
-                    .and_then(|v| v.get("kind"))
-                    .and_then(|k| k.as_str())
-                    == Some("end");
-                if token.starts_with("sync-") && ended {
-                    synced = true;
-                }
-            }
-            _ => {}
-        }
-    }
-    assert!(synced, "the Gradle sync never completed");
+    // The Gradle sync, the workspace load it drives, and the platform stub index
+    // all run on the server's own threads; the gate returns only once every
+    // progress token has ended, so the pull below sees the loaded workspace.
+    lsp.wait_until_workspace_is_loaded();
 
     let diagnostics = lsp.pull_document_diagnostics(path);
 
@@ -1686,19 +1505,44 @@ exit 0
         })
         .collect();
 
+    let messages: Vec<&str> = report
+        .full_document_diagnostic_report
+        .items
+        .iter()
+        .map(|diag| match &diag.message {
+            lsp_types::Message::String(message) => message.as_str(),
+            other => panic!("expected a string diagnostic message, got: {other:?}"),
+        })
+        .collect();
+
     assert!(
         codes
             .iter()
             .all(|code| code.contains("api-not-supported-in-release")),
         "expected only release reports, got: {codes:?}"
     );
+    // `SequencedCollection` arrived in release 21 and `List.of` in release 9, so a
+    // `--release 8` compile must flag both: the single-report expectation this
+    // used to carry was recorded before the platform stub index was awaited, and
+    // could not be reproduced with a real JDK (the pre-gate pull saw only the
+    // class report).
     assert_eq!(
-        codes.len(),
-        1,
-        "expected the release report of `SequencedCollection`, got: {diagnostics:?}"
+        messages.len(),
+        2,
+        "expected the release reports of `SequencedCollection` and `List.of`, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("SequencedCollection")),
+        "expected the `SequencedCollection` report, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("java.util.List") && message.contains("of(")),
+        "expected the `List.of` report, got: {messages:?}"
     );
 
     insta::assert_json_snapshot!("release_api_diagnostic", diagnostics);
-
-    lsp.shutdown();
 }

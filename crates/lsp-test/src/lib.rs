@@ -1,23 +1,34 @@
-use crossbeam_channel::{bounded, unbounded};
-use dashmap::DashMap;
-use lsp_server::{Connection, Message, Notification, Request, RequestId};
+//! A synchronous in-process LSP client for end-to-end server tests.
+//!
+//! The test thread owns every receive (rust-analyzer's slow-test client works
+//! the same way): a request blocks until the matching response arrives, every
+//! other message is buffered for later inspection, and the server's
+//! `window/workDoneProgress/create` requests are answered inline so progress
+//! notifications keep flowing. Nothing can be lost to a reader thread, a server
+//! error is reported as an error rather than an empty result, and a server that
+//! never answers fails the test with the method it is stuck on.
+//!
+//! A request issued while the server is still loading its workspace waits for
+//! the load to finish first: the load's salsa write blocks the server's main
+//! loop, which is also what reads the request channel ([`LspHarness::request`]
+//! → [`LspHarness::wait_for_in_flight_load`]).
+
+use crossbeam_channel::RecvTimeoutError;
+use lsp_server::{Connection, Message, Notification, Request, RequestId, Response, ResponseError};
 use lsp_types::{
     ClientCapabilities, ClientInfo, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
     DocumentDiagnosticReport, FileChangeType, FileEvent, InitializeParams, PartialResultParams,
     Position, Range, TextDocumentContentChangePartial, TextDocumentIdentifier, TextDocumentItem,
-    Uri, VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceFolder,
-    WorkspaceFoldersInitializeParams,
+    Uri, VersionedTextDocumentIdentifier, WindowClientCapabilities, WorkDoneProgressParams,
+    WorkspaceFolder, WorkspaceFoldersInitializeParams,
 };
 use std::{
-    collections::HashMap,
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
     fs,
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicI32, Ordering},
-    },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 
@@ -26,34 +37,72 @@ pub mod macros;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// How long a request waits for its response. rust-analyzer's slow-test client
+/// uses the same budget: a server that is loading a workspace blocks its main
+/// loop (a salsa write waits for every database snapshot clone to drop), so a
+/// request issued during the load is answered only after it finishes.
+const REQUEST_TIMEOUT: Duration = if cfg!(target_os = "macos") {
+    Duration::from_secs(300)
+} else {
+    Duration::from_secs(120)
+};
+
+/// Quiet period without `$/progress` traffic required before
+/// [`LspHarness::wait_until_workspace_is_loaded`] declares the load over:
+/// phase changes (a build sync ending, the workspace graph being applied) are
+/// not announced by a token of their own, so the gate waits out the gap between
+/// "all tokens ended" and "no further token begins".
+const QUIESCE_WINDOW: Duration = Duration::from_millis(250);
+
+/// Nothing arrived before the deadline (as opposed to a closed connection).
+struct Timeout;
+
+struct ProgressState {
+    /// Whether any `$/progress` notification has been seen — distinguishes "the
+    /// server has not started loading yet" from "everything finished".
+    seen: bool,
+    /// Tokens begun and not yet ended.
+    active: HashSet<String>,
+    /// When the last `$/progress` notification arrived.
+    last_activity: Instant,
+}
+
 pub struct LspHarness {
     server_handle: Option<JoinHandle<()>>,
-    client_connection: Connection,
-    next_id: AtomicI32,
+    client: Connection,
+    next_id: Cell<i32>,
     pub workspace_root: TempDir,
     cache_dir: TempDir,
-    config: serde_json::Value,
-    client_capabilities: ClientCapabilities,
-    notification_sender: crossbeam_channel::Sender<Notification>,
-    pub notification_receiver: crossbeam_channel::Receiver<Notification>,
-    marks: RwLock<HashMap<String, Position>>,
-    pending_requests: Arc<DashMap<RequestId, crossbeam_channel::Sender<serde_json::Value>>>,
-    document_versions: DashMap<Uri, i32>,
+    /// Every message the client has received, oldest first.
+    messages: RefCell<Vec<Message>>,
+    marks: RefCell<HashMap<String, Position>>,
+    document_versions: RefCell<HashMap<Uri, i32>>,
+    progress: RefCell<ProgressState>,
+    /// Methods of server→client requests this client deliberately does not answer.
+    unanswered: RefCell<Vec<String>>,
+    /// Set when a receive observes the server hanging up, so `Drop` can skip the
+    /// shutdown handshake and let the join report the server's own panic.
+    closed: Cell<bool>,
+}
+
+/// The capabilities every harness advertises. `workDoneProgress` is required
+/// for `$/progress` notifications, which carry the workspace-load signal;
+/// nothing else is advertised, because nothing else is observed by the tests.
+fn client_capabilities() -> ClientCapabilities {
+    ClientCapabilities {
+        window: Some(WindowClientCapabilities {
+            work_done_progress: Some(true),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
 }
 
 impl LspHarness {
-    /// Starts the LSP server in a background thread using an in-memory connection.
-    /// `init_backend` is a closure that takes the server side of the `Connection`.
-    pub fn start<F>(config: serde_json::Value, init_backend: F) -> Self
-    where
-        F: FnOnce(Connection) + Send + 'static,
-    {
-        Self::start_with_setup(config, |_| {}, init_backend)
-    }
-
-    /// Like [`Self::start`], but runs `setup` on the workspace root before the
-    /// server is initialized, allowing tests to control what the initial
-    /// workspace probe sees.
+    /// Starts `init_backend` on a background thread over an in-memory connection
+    /// and completes the `initialize`/`initialized` handshake. `setup` runs on
+    /// the workspace root first, so a test controls what the initial workspace
+    /// probe finds.
     pub fn start_with_setup<F, S>(config: serde_json::Value, setup: S, init_backend: F) -> Self
     where
         F: FnOnce(Connection) + Send + 'static,
@@ -64,158 +113,33 @@ impl LspHarness {
 
         setup(workspace_root.path());
 
-        // Create an in-memory connection pair for the client (harness) and server
-        let (client_connection, server_connection) = Connection::memory();
-
-        // Spawn the language server on a background thread
-        let server_handle = thread::spawn(move || {
-            init_backend(server_connection);
-        });
-
-        let (notif_tx, notif_rx) = unbounded();
+        let (client, server) = Connection::memory();
+        let server_handle = thread::spawn(move || init_backend(server));
 
         let harness = Self {
             server_handle: Some(server_handle),
-            client_connection,
-            next_id: AtomicI32::new(1),
+            client,
+            next_id: Cell::new(1),
             workspace_root,
             cache_dir,
-            config,
-            client_capabilities: ClientCapabilities {
-                ..Default::default()
-            },
-            notification_receiver: notif_rx,
-            notification_sender: notif_tx,
-            marks: Default::default(),
-            pending_requests: Default::default(),
-            document_versions: Default::default(),
+            messages: RefCell::new(Vec::new()),
+            marks: RefCell::new(HashMap::new()),
+            document_versions: RefCell::new(HashMap::new()),
+            progress: RefCell::new(ProgressState {
+                seen: false,
+                active: HashSet::new(),
+                last_activity: Instant::now(),
+            }),
+            unanswered: RefCell::new(Vec::new()),
+            closed: Cell::new(false),
         };
 
-        let pending_requests = harness.pending_requests.clone();
-        let notification_sender = harness.notification_sender.clone();
-        let client_receiver = harness.client_connection.receiver.clone();
-        let client_sender = harness.client_connection.sender.clone();
-
-        // Spawn a background thread to listen to messages coming from the server
-        thread::spawn(move || {
-            for msg in client_receiver {
-                match msg {
-                    Message::Response(res) => {
-                        if let Some((_, tx)) = pending_requests.remove(&res.id) {
-                            let _ = tx.send(res.result.unwrap_or_default());
-                        }
-                    }
-                    Message::Notification(notif) => {
-                        if let Err(e) = notification_sender.send(notif) {
-                            eprintln!("Failed to send notification: {}", e);
-                        }
-                    }
-                    Message::Request(req) => {
-                        if req.method == "workspace/diagnosticRefresh" {
-                            let _ = client_sender.send(Message::Response(
-                                lsp_server::Response::new_ok(req.id, serde_json::Value::Null),
-                            ));
-                        } else {
-                            eprintln!("Received request from server: {}", req.method);
-                        }
-                    }
-                }
-            }
-        });
-
-        harness.init();
+        harness.initialize(config);
 
         harness
     }
 
-    /// Like [`Self::start_with_setup`], but advertises `workDoneProgress`
-    /// support and answers `window/workDoneProgress/create` requests, so tests
-    /// can observe `$/progress` notifications from the server.
-    pub fn start_with_setup_progress<F, S>(
-        config: serde_json::Value,
-        setup: S,
-        init_backend: F,
-    ) -> Self
-    where
-        F: FnOnce(Connection) + Send + 'static,
-        S: FnOnce(&std::path::Path),
-    {
-        let workspace_root = tempfile::tempdir().expect("Failed to create temporary workspace");
-        let cache_dir = tempfile::tempdir().expect("Failed to create temporary cache dir");
-
-        setup(workspace_root.path());
-
-        // Create an in-memory connection pair for the client (harness) and server
-        let (client_connection, server_connection) = Connection::memory();
-
-        // Spawn the language server on a background thread
-        let server_handle = thread::spawn(move || {
-            init_backend(server_connection);
-        });
-
-        let (notif_tx, notif_rx) = unbounded();
-
-        let harness = Self {
-            server_handle: Some(server_handle),
-            client_connection,
-            next_id: AtomicI32::new(1),
-            workspace_root,
-            cache_dir,
-            config,
-            client_capabilities: ClientCapabilities {
-                window: Some(lsp_types::WindowClientCapabilities {
-                    work_done_progress: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            notification_receiver: notif_rx,
-            notification_sender: notif_tx,
-            marks: Default::default(),
-            pending_requests: Default::default(),
-            document_versions: Default::default(),
-        };
-
-        let pending_requests = harness.pending_requests.clone();
-        let notification_sender = harness.notification_sender.clone();
-        let client_receiver = harness.client_connection.receiver.clone();
-        let client_sender = harness.client_connection.sender.clone();
-
-        // Spawn a background thread to listen to messages coming from the server
-        thread::spawn(move || {
-            for msg in client_receiver {
-                match msg {
-                    Message::Response(res) => {
-                        if let Some((_, tx)) = pending_requests.remove(&res.id) {
-                            let _ = tx.send(res.result.unwrap_or_default());
-                        }
-                    }
-                    Message::Notification(notif) => {
-                        if let Err(e) = notification_sender.send(notif) {
-                            eprintln!("Failed to send notification: {}", e);
-                        }
-                    }
-                    Message::Request(req) => {
-                        if req.method == "window/workDoneProgress/create"
-                            || req.method == "workspace/diagnosticRefresh"
-                        {
-                            let _ = client_sender.send(Message::Response(
-                                lsp_server::Response::new_ok(req.id, serde_json::Value::Null),
-                            ));
-                        } else {
-                            eprintln!("Received request from server: {}", req.method);
-                        }
-                    }
-                }
-            }
-        });
-
-        harness.init();
-
-        harness
-    }
-
-    fn init(&self) {
+    fn initialize(&self, config: serde_json::Value) {
         let root_uri = Uri::from_file_path(self.workspace_root.path())
             .expect("Failed to convert workspace path to URI");
 
@@ -226,7 +150,7 @@ impl LspHarness {
             .expect("cache dir path is not valid UTF-8")
             .to_owned();
 
-        let mut config = self.config.clone();
+        let mut config = config;
         let cache_dir_value = serde_json::Value::String(cache_dir);
         match &mut config {
             serde_json::Value::Object(obj) => {
@@ -243,7 +167,7 @@ impl LspHarness {
         let init_params = InitializeParams {
             root_uri: Some(root_uri.clone()),
             initialization_options: Some(config),
-            capabilities: self.client_capabilities.clone(),
+            capabilities: client_capabilities(),
             workspace_folders_initialize_params: WorkspaceFoldersInitializeParams::new(Some(
                 vec![WorkspaceFolder {
                     uri: root_uri,
@@ -261,8 +185,241 @@ impl LspHarness {
         let init_params =
             serde_json::to_value(init_params).expect("Failed to serialize init params");
 
+        // A real round trip: a server that never answers `initialize` fails here,
+        // naming the method, instead of hanging on the first request after it.
         self.request("initialize", init_params);
         self.notify("initialized", serde_json::json!({}));
+    }
+
+    /// Receives one message, buffering it and answering the server requests the
+    /// client implements. `Ok(None)` means the server closed the connection,
+    /// `Err(Timeout)` that nothing arrived in time.
+    fn recv(&self, timeout: Duration) -> Result<Option<Message>, Timeout> {
+        let msg = match self.client.receiver.recv_timeout(timeout) {
+            Ok(msg) => msg,
+            Err(RecvTimeoutError::Timeout) => return Err(Timeout),
+            Err(RecvTimeoutError::Disconnected) => {
+                self.closed.set(true);
+                return Ok(None);
+            }
+        };
+        self.observe(&msg);
+        Ok(Some(msg))
+    }
+
+    fn observe(&self, msg: &Message) {
+        match msg {
+            Message::Request(req) => {
+                self.messages.borrow_mut().push(msg.clone());
+                match req.method.as_str() {
+                    // Answered inline: without the acknowledgement the server
+                    // buffers every further `$/progress` event for the token, and
+                    // the readiness gate would never see it end.
+                    "window/workDoneProgress/create" | "workspace/diagnosticRefresh" => {
+                        let response = Response::new_ok(req.id.clone(), serde_json::Value::Null);
+                        let _ = self.client.sender.send(Message::Response(response));
+                    }
+                    // Deliberately left unanswered: the build-system selection
+                    // dialog (`window/showMessageRequest`) is what keeps
+                    // `test_syntax_diagnostics_before_workspace_load`'s workspace
+                    // unloaded, which is the state under test.
+                    other => {
+                        tracing::debug!(method = other, "buffering server request");
+                        self.unanswered.borrow_mut().push(other.to_string());
+                    }
+                }
+            }
+            Message::Notification(notif) => {
+                self.messages.borrow_mut().push(msg.clone());
+                if notif.method == "$/progress" {
+                    self.track_progress(&notif.params);
+                }
+            }
+            Message::Response(_) => {}
+        }
+    }
+
+    /// Tracks `$/progress` token lifecycles; `token` is a string in this server
+    /// (`scan-{version}`, `index-{root}`, `sync-{root}`), but integer tokens are
+    /// handled too.
+    fn track_progress(&self, params: &serde_json::Value) {
+        let token = match params.get("token") {
+            Some(serde_json::Value::String(token)) => token.clone(),
+            Some(serde_json::Value::Number(number)) => number.to_string(),
+            _ => return,
+        };
+        let kind = params
+            .get("value")
+            .and_then(|value| value.get("kind"))
+            .and_then(|kind| kind.as_str());
+        tracing::debug!(token, kind, "progress"); // the load timeline, for a hanging gate
+
+        let mut progress = self.progress.borrow_mut();
+        progress.seen = true;
+        progress.last_activity = Instant::now();
+        match kind {
+            Some("begin") => {
+                progress.active.insert(token);
+            }
+            Some("end") => {
+                progress.active.remove(&token);
+            }
+            _ => {}
+        }
+    }
+
+    /// Waits out a workspace load that is still in flight, so a request is sent
+    /// to a server that can answer it. A no-op when the server announced no
+    /// progress at all: only a workspace that is deliberately never loaded (the
+    /// ambiguous build-system case) arrives here mid-load without a token.
+    fn wait_for_in_flight_load(&self) {
+        if self.progress.borrow().seen {
+            self.wait_until_workspace_is_loaded();
+        }
+    }
+
+    /// Blocks until the server has finished loading the workspace: every
+    /// `$/progress` token it began has ended and no further token started within
+    /// [`QUIESCE_WINDOW`].
+    ///
+    /// Panics when the server reports no progress at all: that means the
+    /// workspace is deliberately never loaded (the ambiguous build-system case,
+    /// whose test must not call this) or the server died.
+    pub fn wait_until_workspace_is_loaded(&self) {
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        loop {
+            {
+                let progress = self.progress.borrow();
+                if progress.seen
+                    && progress.active.is_empty()
+                    && progress.last_activity.elapsed() >= QUIESCE_WINDOW
+                {
+                    return;
+                }
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "workspace never finished loading; {}",
+                    self.describe_context()
+                );
+            }
+            match self.recv(QUIESCE_WINDOW) {
+                Ok(Some(_)) => continue,
+                Err(Timeout) => continue, // quiet window elapsed; re-check readiness
+                Ok(None) => panic!("server closed the connection while loading the workspace"),
+            }
+        }
+    }
+
+    /// All notifications of `method` received so far, waiting for more until
+    /// `done` holds or `timeout` elapses (a panic with everything collected).
+    pub fn wait_for_notifications(
+        &self,
+        method: &str,
+        timeout: Duration,
+        done: impl Fn(&[Notification]) -> bool,
+    ) -> Vec<Notification> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let collected: Vec<Notification> = self
+                .messages
+                .borrow()
+                .iter()
+                .filter_map(|msg| match msg {
+                    Message::Notification(notif) if notif.method == method => Some(notif.clone()),
+                    _ => None,
+                })
+                .collect();
+            if done(&collected) {
+                return collected;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                panic!("timed out waiting for `{method}` notifications: {collected:#?}");
+            }
+            match self.recv(remaining) {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("server closed the connection while waiting for `{method}`"),
+                Err(Timeout) => {
+                    panic!("timed out waiting for `{method}` notifications: {collected:#?}")
+                }
+            }
+        }
+    }
+
+    pub fn request(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
+        self.request_raw(method, params).unwrap_or_else(|err| {
+            panic!(
+                "server returned an error for {method}: {} (code {})",
+                err.message, err.code
+            )
+        })
+    }
+
+    /// Like [`Self::request`], but hands the server's error response back instead
+    /// of panicking. Callers use it where the error itself is what is under test
+    /// (resolve without `data`, a pull of a deleted file).
+    pub fn request_raw(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ResponseError> {
+        // A request sent while the workspace load is in flight would only be read
+        // after it finishes: the load's salsa write blocks the main loop, which
+        // is also what reads this connection.
+        self.wait_for_in_flight_load();
+
+        let id = RequestId::from(self.next_id.get());
+        self.next_id.set(self.next_id.get() + 1);
+        tracing::info!(method, "send request");
+
+        let request = Request::new(id.clone(), method.to_string(), params);
+        self.client
+            .sender
+            .send(Message::Request(request))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "server closed the connection before {method}; {}",
+                    self.describe_context()
+                )
+            });
+
+        loop {
+            match self.recv(REQUEST_TIMEOUT) {
+                Ok(Some(Message::Response(response))) => {
+                    assert_eq!(
+                        response.id, id,
+                        "response for a request this client did not send"
+                    );
+                    return match response.error {
+                        Some(error) => Err(error),
+                        None => Ok(response.result.unwrap_or(serde_json::Value::Null)),
+                    };
+                }
+                Ok(Some(_)) => {} // buffered by `observe`
+                Ok(None) => panic!(
+                    "server closed the connection while answering {method}; {}",
+                    self.describe_context()
+                ),
+                Err(Timeout) => panic!(
+                    "no response for {method} within {REQUEST_TIMEOUT:?}; {}",
+                    self.describe_context()
+                ),
+            }
+        }
+    }
+
+    /// What the client saw, for failure messages: progress tokens still active
+    /// and the server requests that were left unanswered (the latter is how a
+    /// stuck build-system dialog shows up).
+    fn describe_context(&self) -> String {
+        let progress = self.progress.borrow();
+        format!(
+            "progress tokens active: {:?}, load progress seen: {}; unanswered server requests: {:?}",
+            progress.active,
+            progress.seen,
+            self.unanswered.borrow(),
+        )
     }
 
     pub fn write_file(&self, relative_path: &str, content: &str) -> Uri {
@@ -302,8 +459,7 @@ impl LspHarness {
             let character = before.lines().last().map(|l| l.len()).unwrap_or(0) as u32;
 
             self.marks
-                .write()
-                .unwrap()
+                .borrow_mut()
                 .insert(normalized_path.to_string(), Position { line, character });
             final_content = content.replace("<|>", "");
         }
@@ -311,28 +467,10 @@ impl LspHarness {
         self.write_file(normalized_path, &final_content)
     }
 
-    pub fn pos(&self, path: &str) -> Position {
-        let normalized_path = path.trim_start_matches('/');
-
-        self.marks
-            .read()
-            .unwrap()
-            .get(normalized_path)
-            .cloned()
-            .unwrap_or_else(|| {
-                let available_keys: Vec<_> = self.marks.read().unwrap().keys().cloned().collect();
-                panic!(
-                    "No mark <|> found in path: '{}'. Available marks: {:?}",
-                    normalized_path, available_keys
-                )
-            })
-    }
-
-    pub fn pop_pos(&self, path: &str) -> Position {
+    fn pop_pos(&self, path: &str) -> Position {
         let normalized_path = path.trim_start_matches('/');
         self.marks
-            .write()
-            .unwrap()
+            .borrow_mut()
             .remove(normalized_path)
             .unwrap_or_else(|| panic!("No mark <|> found to pop in path: '{}'", normalized_path))
     }
@@ -345,34 +483,13 @@ impl LspHarness {
         Uri::from_file_path(path).expect("Failed to convert path to URI")
     }
 
-    pub fn notify(&self, method: &str, params: serde_json::Value) {
+    fn notify(&self, method: &str, params: serde_json::Value) {
         tracing::info!(method, ?params, "send notification");
         let notif = Notification::new(method.to_string(), params);
-        self.client_connection
+        self.client
             .sender
             .send(Message::Notification(notif))
-            .unwrap();
-    }
-
-    pub fn request(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
-        let id = RequestId::from(self.next_id.fetch_add(1, Ordering::SeqCst));
-        let req = Request::new(id.clone(), method.to_string(), params);
-
-        let (tx, rx) = bounded(1);
-        self.pending_requests.insert(id.clone(), tx);
-
-        self.client_connection
-            .sender
-            .send(Message::Request(req))
-            .unwrap();
-
-        tracing::info!(method, "send request");
-
-        // Fail loudly instead of hanging forever when the server never answers
-        // (e.g. it is stuck or the connection was dropped): a diagnostic
-        // deadlock must surface as a clear failure, not an infinite timeout.
-        rx.recv_timeout(Duration::from_secs(30))
-            .unwrap_or_else(|e| panic!("server never answered {method}: {e}"))
+            .unwrap_or_else(|_| panic!("server closed the connection before {method}"));
     }
 
     pub fn open_document(&self, relative_path: &str) -> Uri {
@@ -441,9 +558,12 @@ impl LspHarness {
     pub fn change_document_incremental(&self, relative_path: &str, range: Range, text: &str) {
         let uri = self.uri(relative_path);
 
-        let mut version_entry = self.document_versions.entry(uri.clone()).or_insert(0);
-        *version_entry += 1;
-        let version = *version_entry;
+        let version = {
+            let mut versions = self.document_versions.borrow_mut();
+            let version = versions.entry(uri.clone()).or_insert(0);
+            *version += 1;
+            *version
+        };
 
         #[allow(deprecated)]
         let params = DidChangeTextDocumentParams {
@@ -483,7 +603,7 @@ impl LspHarness {
                 before.lines().last().map(|l| l.len()).unwrap_or(0) as u32
             };
 
-            self.marks.write().unwrap().insert(
+            self.marks.borrow_mut().insert(
                 normalized_path.to_string(),
                 Position {
                     line: new_line,
@@ -508,8 +628,9 @@ impl LspHarness {
 
     /// Issues `textDocument/diagnostic` for `relative_path`, returning the raw
     /// JSON response so tests can assert on `resultId` and `relatedDocuments`.
-    /// Retries while the server is cancelling (salsa raises `Cancelled` when a
-    /// write lands mid-query; real clients do the same).
+    /// A single request is enough: a request cancelled by a write landing
+    /// mid-query is re-run on a fresh snapshot by the server itself, which still
+    /// answers the original id.
     pub fn pull_document_diagnostics_raw_with_previous(
         &self,
         relative_path: &str,
@@ -531,48 +652,35 @@ impl LspHarness {
         let json_params =
             serde_json::to_value(params).expect("failed to serialize document diagnostic params");
 
-        for _ in 0..100 {
-            let response = self.request("textDocument/diagnostic", json_params.clone());
-            if response.is_null() {
-                thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            return response;
-        }
-        panic!("server never answered a diagnostic pull")
+        self.request("textDocument/diagnostic", json_params)
     }
+}
 
-    /// Drains `notification_receiver`, collecting at most `max` notifications
-    /// whose method matches `method`, within `timeout`.
-    pub fn wait_notifications(
-        &self,
-        method: &str,
-        max: usize,
-        timeout: Duration,
-    ) -> Vec<Notification> {
-        let deadline = std::time::Instant::now() + timeout;
-        let mut out = Vec::new();
-        while out.len() < max && std::time::Instant::now() < deadline {
-            if let Ok(notif) = self
-                .notification_receiver
-                .recv_timeout(Duration::from_millis(25))
-                && notif.method == method
-            {
-                out.push(notif);
+impl Drop for LspHarness {
+    fn drop(&mut self) {
+        // A test that is already unwinding must not panic again while dropping.
+        if std::thread::panicking() {
+            return;
+        }
+        // `closed` is set by `recv` the moment it observes the server hanging up.
+        if !self.closed.get() {
+            // Best-effort handshake, without waiting for the response: a server
+            // that died took its end of the connection with it, and its own panic
+            // is the failure — the join below re-raises it, so a failed send here
+            // must not be reported instead.
+            let id = RequestId::from(self.next_id.get());
+            let shutdown = Request::new(id, "shutdown".to_string(), serde_json::Value::Null);
+            if self.client.sender.send(Message::Request(shutdown)).is_ok() {
+                let exit = Notification::new("exit".to_string(), serde_json::Value::Null);
+                let _ = self.client.sender.send(Message::Notification(exit));
             }
         }
-        out
-    }
-
-    pub fn shutdown(mut self) {
-        let _ = self.request("shutdown", serde_json::Value::Null);
-        self.notify("exit", serde_json::Value::Null);
-
-        // Close the connection channel gracefully to unblock loops depending on it.
-        drop(self.client_connection.sender);
-
-        if let Some(handle) = self.server_handle.take() {
-            let _ = handle.join();
+        if let Some(handle) = self.server_handle.take()
+            && let Err(payload) = handle.join()
+        {
+            // A panicking server thread is the failure, not the timeout it would
+            // otherwise cause.
+            std::panic::resume_unwind(payload);
         }
     }
 }
