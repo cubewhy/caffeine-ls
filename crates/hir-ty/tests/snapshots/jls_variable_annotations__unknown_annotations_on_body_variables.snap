@@ -1,0 +1,36 @@
+---
+source: crates/hir-ty/tests/jls_variable_annotations.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE) @interface TYPE_USE {}
+@Target(ElementType.LOCAL_VARIABLE) @interface LOCAL_VARIABLE {}
+@Target(ElementType.PARAMETER) @interface PARAMETER {}
+@Target(ElementType.FIELD) @interface FIELD {}
+@Target(ElementType.METHOD) @interface METHOD {}
+
+class Anns {
+void locals() {
+        @Missing int local = 0;
+        for (@Missing int element : new int[0]) {
+        }
+        try (@MissingCloseable java.io.Closeable resource = null) {
+        } catch (@Missing RuntimeException exception) {
+        }
+        Object value = null;
+        if (value instanceof @Missing String pattern) {
+        }
+        java.util.function.Consumer<String> lambda = (@Missing String parameter) -> {
+        };
+    }
+}
+
+method locals(): void
+  locals: l0: int | l1: int | l2: java.lang.RuntimeException | l3: java.io.Closeable | l4: java.lang.Object | l5: java.lang.String | l6: java.util.function.Consumer<java.lang.String>
+  exprs: e0: int | e1: int | e2: int[] | e3: null | e4: null | e5: java.lang.Object | e6: boolean | e7: boolean | e8: java.util.function.Consumer<java.lang.String>
+  diags: l0@13:9: cannot-resolve-type: Cannot resolve symbol 'Missing' | l1@14:14: cannot-resolve-type: Cannot resolve symbol 'Missing' | l3@16:14: cannot-resolve-type: Cannot resolve symbol 'MissingCloseable' | l2@17:18: cannot-resolve-type: Cannot resolve symbol 'Missing' | pp0@20:30: cannot-resolve-type: Cannot resolve symbol 'Missing' | e8@22:55: cannot-resolve-type: Cannot resolve symbol 'Missing'

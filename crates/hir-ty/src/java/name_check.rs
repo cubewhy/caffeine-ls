@@ -23,6 +23,7 @@ use hir_expand::{
 use rowan::TextRange;
 use rustc_hash::FxHashMap;
 use syntax::SourceFile;
+use syntax::stub::TypeRef;
 use vfs::FileId;
 
 use crate::{
@@ -278,6 +279,12 @@ fn item_annotation_refs(data: &ItemData) -> Vec<&ItemAnnotationRef> {
         ItemData::Method(d) => {
             annotations(&d.annotations, &mut out);
             type_params(&d.sig.type_params, &mut out);
+            // §9.7.4: a formal parameter's declaration annotations are the
+            // annotations of its own modifier list, lowered with the
+            // signature ([`hir_def::java::item_tree::Param::annotations`]).
+            for param in &d.sig.params {
+                annotations(&param.annotations, &mut out);
+            }
         }
         ItemData::Field(d) => annotations(&d.annotations, &mut out),
         ItemData::EnumConstant(_) | ItemData::StaticInit(_) | ItemData::InstanceInit(_) => {}
@@ -570,8 +577,32 @@ pub(crate) fn expr_forest_type_refs(
 }
 
 fn record_local(bodies: &BodyTree, local: LocalId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
-    if let Some(ty) = &bodies.local(local).ty {
+    let binding = bodies.local(local);
+    if let Some(ty) = &binding.ty {
         out.push((DiagLocation::Local(local), ty.clone()));
+    }
+    for annotation in &binding.annotations {
+        out.push((DiagLocation::Local(local), annotation_reference(annotation)));
+    }
+}
+
+/// A one-name reference to an annotation's type name ([JLS
+/// §9.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7)):
+/// an annotation is written as a type name and resolves like one
+/// ([§6.5.5.1] — an annotation type *is* a reference type). It is how the
+/// *declaration* annotations of a variable a body declares enter the same
+/// resolution the type references of that body get: `refs` carries exactly
+/// the annotation's name and source range, so the resolution and the report
+/// are the ones every other reference receives; the type the wrapper names is
+/// never read.
+fn annotation_reference(annotation: &hir_expand::span::AnnotationRef) -> SpannedTypeRef {
+    SpannedTypeRef {
+        ty: TypeRef::Reference {
+            name: annotation.name.name.clone(),
+            generic_args: Vec::new(),
+        },
+        refs: vec![annotation.name.clone()],
+        type_use_annotations: Vec::new(),
     }
 }
 
@@ -579,6 +610,14 @@ fn record_pattern(bodies: &BodyTree, id: PatternId, out: &mut Vec<(DiagLocation,
     match bodies.pattern(id) {
         hir_expand::body::PatternData::Type(data) => {
             out.push((DiagLocation::Pattern(id), data.ty.clone()));
+            // §14.30.1: the pattern's binding is a variable declaration, so
+            // an annotation written before its type is one of its own
+            // ([§9.7.4]).
+            if let Some(binding) = data.binding {
+                for annotation in &bodies.local(binding).annotations {
+                    out.push((DiagLocation::Pattern(id), annotation_reference(annotation)));
+                }
+            }
         }
         hir_expand::body::PatternData::Record(data) => {
             out.push((DiagLocation::Pattern(id), data.ty.clone()));
@@ -799,6 +838,11 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             for param in params {
                 if let Some(ty) = &param.ty {
                     out.push((DiagLocation::Expr(id), ty.clone()));
+                }
+                // §15.27.1/[§9.7.4]: a lambda parameter's declaration
+                // annotations, like a formal parameter's.
+                for annotation in &param.annotations {
+                    out.push((DiagLocation::Expr(id), annotation_reference(annotation)));
                 }
             }
             match body {

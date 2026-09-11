@@ -25,6 +25,10 @@
 //! argument, an array dimension, the variable-arity modifier of `String @A
 //! ... p`), so nothing but `TYPE_USE` is applicable there.
 //!
+//! The annotations themselves are type names, so each resolves like one
+//! ([§6.5.5.1]): an annotation type that exists nowhere on the classpath is
+//! reported as an unknown reference, exactly as it is for a declaration.
+//!
 //! Every scenario below is verified against `javac -XDrawDiagnostics`: the
 //! reported positions and the `compiler.err.annotation.type.not.applicable` /
 //! `...not.applicable.to.type` split match it. The one deliberate divergence
@@ -39,7 +43,7 @@
 #[macro_use]
 mod common;
 
-use crate::common::check_class_diagnostics;
+use crate::common::{check_body_types, check_class_diagnostics};
 
 /// The annotation types the scenarios below use: each restricts exactly one
 /// element type, so what a diagnostic reports is the element type of the
@@ -371,6 +375,51 @@ snapshot!(
 
     void declarations(@TYPE_USE int parameter) {
         @TYPE_USE int local = 0;
+    }
+"
+        ),
+    )])
+);
+
+// -- the annotation *name* resolves like a type name -------------------------
+
+// §6.5.5.1: an annotation is written as a type name, so an unresolvable one
+// is reported at the annotation name — for a formal parameter (the
+// declaration pass) exactly as for a field.
+snapshot!(
+    unknown_annotation_on_a_parameter,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        &unit(
+            "\
+    void method(@Missing int unknown, @FIELD int known) {
+    }
+"
+        ),
+    )])
+);
+
+// The same for the variables a *body* declares: a local, an enhanced-for
+// variable, a resource, an exception parameter, a pattern binding and a
+// lambda parameter. Each is reported at its own name ([§9.7.4]).
+snapshot!(
+    unknown_annotations_on_body_variables,
+    check_body_types(&[(
+        "/src/com/example/Anns.java",
+        &unit(
+            "\
+    void locals() {
+        @Missing int local = 0;
+        for (@Missing int element : new int[0]) {
+        }
+        try (@MissingCloseable java.io.Closeable resource = null) {
+        } catch (@Missing RuntimeException exception) {
+        }
+        Object value = null;
+        if (value instanceof @Missing String pattern) {
+        }
+        java.util.function.Consumer<String> lambda = (@Missing String parameter) -> {
+        };
     }
 "
         ),
