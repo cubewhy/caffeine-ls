@@ -3,11 +3,10 @@
 //! and a method reference resolves its target and arity against the SAM.
 
 use hir_expand::{
-    body::{ExprData, ExprId, LambdaBody},
+    body::{ExprData, ExprId, LambdaBody, LambdaParam},
     name::Name,
     span::SpannedTypeRef,
 };
-use rowan::TextRange;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
@@ -30,7 +29,7 @@ impl InferCtx<'_> {
     pub(super) fn lambda_type(
         &mut self,
         expr: ExprId,
-        params: &[(Name, Option<SpannedTypeRef>, TextRange)],
+        params: &[LambdaParam],
         body: LambdaBody,
     ) -> Ty {
         let Some(target) = self.target else {
@@ -62,7 +61,8 @@ impl InferCtx<'_> {
             return self.error();
         }
         self.lambda_params.push(FxHashMap::default());
-        for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
+        for (param, formal) in params.iter().zip(&sam.params) {
+            let (name, declared, range) = (&param.name, &param.ty, param.range);
             let ty = match declared {
                 Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
                 // An inferred parameter takes the SAM formal's type
@@ -79,7 +79,7 @@ impl InferCtx<'_> {
                     }
                 }
             };
-            self.check_lambda_param_duplicate(expr, name, *range);
+            self.check_lambda_param_duplicate(expr, name, range);
             self.lambda_params
                 .last_mut()
                 .expect("lambda param scope pushed")

@@ -19,4 +19,4 @@ class Anns {
     @T String ok;
 }
 
-@12:5: annotation-not-applicable: Annotation '@M' is not applicable to 'FIELD'
+@12:5: annotation-not-applicable: '@M' not applicable to field

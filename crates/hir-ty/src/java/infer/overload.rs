@@ -5,11 +5,9 @@
 //! re-inference of poly arguments.
 
 use hir_expand::{
-    body::{ExprData, ExprId, LambdaBody},
+    body::{ExprData, ExprId, LambdaBody, LambdaParam},
     name::Name,
-    span::SpannedTypeRef,
 };
-use rowan::TextRange;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
@@ -901,8 +899,8 @@ impl InferCtx<'_> {
                     // declared type must conform to, exactly as for the return
                     // side above.
                     if sam.params.len() == params.len() {
-                        for ((_, declared, _), formal_param) in params.iter().zip(&sam.params) {
-                            let Some(tyref) = declared else {
+                        for (param, formal_param) in params.iter().zip(&sam.params) {
+                            let Some(tyref) = &param.ty else {
                                 continue;
                             };
                             let declared_ty =
@@ -1053,13 +1051,14 @@ impl InferCtx<'_> {
     pub(super) fn infer_lambda_body_result(
         &mut self,
         expr: ExprId,
-        params: &[(Name, Option<SpannedTypeRef>, TextRange)],
+        params: &[LambdaParam],
         body: LambdaBody,
         sam: &MethodData,
     ) -> LambdaBodyInference {
         self.lambda_params.push(FxHashMap::default());
-        for ((name, declared, range), formal) in params.iter().zip(&sam.params) {
-            let ty = match declared {
+        for (param, formal) in params.iter().zip(&sam.params) {
+            let (name, range) = (&param.name, param.range);
+            let ty = match &param.ty {
                 Some(tyref) => resolve_type_ref(self.db, &self.scope, &self.resolver, tyref),
                 None => match formal.kind(self.db) {
                     TyKind::TypeVar {
@@ -1076,7 +1075,7 @@ impl InferCtx<'_> {
                     _ => *formal,
                 },
             };
-            self.check_lambda_param_duplicate(expr, name, *range);
+            self.check_lambda_param_duplicate(expr, name, range);
             self.lambda_params
                 .last_mut()
                 .expect("lambda param scope pushed")

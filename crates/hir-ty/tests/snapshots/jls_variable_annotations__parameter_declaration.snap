@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_variable_annotations.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE) @interface TYPE_USE {}
+@Target(ElementType.LOCAL_VARIABLE) @interface LOCAL_VARIABLE {}
+@Target(ElementType.PARAMETER) @interface PARAMETER {}
+@Target(ElementType.FIELD) @interface FIELD {}
+@Target(ElementType.METHOD) @interface METHOD {}
+
+class Anns {
+Anns(@PARAMETER int ok, @TYPE_USE int typeUse, @FIELD int field, @LOCAL_VARIABLE int local) {
+    }
+
+    void method(@PARAMETER int ok, @TYPE_USE int typeUse, @METHOD int method) {
+    }
+}
+
+@12:48: annotation-not-applicable: '@FIELD' not applicable to parameter
+@12:66: annotation-not-applicable: '@LOCAL_VARIABLE' not applicable to parameter
+@15:59: annotation-not-applicable: '@METHOD' not applicable to parameter

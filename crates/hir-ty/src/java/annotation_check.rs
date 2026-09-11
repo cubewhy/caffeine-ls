@@ -37,12 +37,12 @@ use hir_def::java::item_tree::{
     ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef,
 };
 use hir_expand::{
-    body::{BodyTree, ExprId, Literal, PatternId, StmtId},
+    body::{BodyTree, ExprId, Literal, LocalId, PatternId, StmtId},
     name::Name,
     span::{AnnotationValue, SpannedTypeRef},
 };
 use rust_asm::constants::ACC_ENUM;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
@@ -137,36 +137,47 @@ pub(crate) fn annotation_diagnostics(
                 }
             }
         }
+        // §9.6.4.1/[§9.7.4]: the declaration annotations of a method's or
+        // constructor's formal parameters (`void m(@A int p)`). Their element
+        // type is `PARAMETER` (Table 9.7-1); the written type gives a
+        // `TYPE_USE`-only annotation the parameter's type to apply to, and a
+        // formal parameter always writes one (`var` is not a legal parameter
+        // type, [§8.4.1]).
+        if let ItemData::Method(method) = data {
+            for param in &method.sig.params {
+                for annotation in &param.annotations {
+                    check_variable_annotation(
+                        db,
+                        &resolver,
+                        scope,
+                        annotation,
+                        "PARAMETER",
+                        true,
+                        map,
+                        source,
+                        out,
+                    );
+                }
+            }
+        }
         // §9.6.4.1/[§9.7.4]: the type-use annotations on the item's type
         // references (field types, method signatures, record component types,
-        // superclass/interfaces, type-parameter bounds).
+        // superclass/interfaces, type-parameter bounds). Every one of these
+        // is a *type* position — a type argument, an array dimension, a
+        // qualified-segment annotation — so the annotation must be applicable
+        // in type contexts ([§9.6.4.1]).
         for tyref in declaration_type_refs(data) {
-            check_type_use_item(
-                db,
-                &resolver,
-                scope,
-                element_type_of(data),
-                tyref,
-                map,
-                source,
-                out,
-            );
+            check_type_use_item(db, &resolver, scope, tyref, map, source, out);
         }
-        // The body-position type-use annotations: casts, `new`, `instanceof`,
-        // class literals, method-reference type names, lambda parameter types
-        // and local variable types. The "enclosing declaration" of a type in
-        // a body is the body's owner.
+        // The body-side annotations: the declaration annotations of every
+        // variable the body declares (locals, enhanced-for variables,
+        // resources, exception parameters, pattern bindings and lambda
+        // parameters) and the type annotations of every type it writes
+        // (casts, `new`, `instanceof`, class literals, method-reference type
+        // names, lambda parameter types and local variable types).
         if let Some(body) = body_of(tree, id) {
             let body_data = bodies.bodies.get(body.0);
-            check_body_type_use(
-                db,
-                &resolver,
-                bodies,
-                scope,
-                element_type_of(data),
-                body_data,
-                out,
-            );
+            check_body_annotations(db, &resolver, bodies, scope, body_data, out);
         }
         for &child in data.body() {
             walk(
@@ -453,6 +464,141 @@ fn check_target(
     });
 }
 
+/// The applicability core of a *variable declaration*'s annotation
+/// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4),
+/// [§9.6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.4.1)):
+/// an annotation written among the modifiers of a variable declaration
+/// (`@Ann int x;`, `void m(@Ann int p)`, `(x instanceof @Ann String s)`) is
+/// applicable when
+///
+/// - its `@Target` contains the declaration's element type (`element_type` —
+///   `LOCAL_VARIABLE` for a local, enhanced-for, resource or pattern
+///   variable; `PARAMETER` for a formal, exception or lambda parameter
+///   [§9.6.4.1] Table 9.7-1), in which case it is a *declaration*
+///   annotation; or
+/// - its `@Target` contains `TYPE_USE` **and** the declaration writes a type,
+///   in which case it is a *type annotation* on that type (§9.7.4: the type
+///   closest to the annotation is the written type, the element type of an
+///   array type).
+///
+/// A `var` declaration ([§14.4], [§15.27.1]) writes no type, so the second
+/// case has no closest type to attach to and is a compile-time error
+/// ([§9.7.4]).
+fn check_variable_target(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    name: &Name,
+    range: Option<rowan::TextRange>,
+    element_type: &'static str,
+    has_written_type: bool,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    let Some(targets) = resolve_annotation_type(db, resolver, scope, name) else {
+        // An unresolvable annotation type (or one without `@Target`) has no
+        // target to enforce: empty `@Target` is applicable to every
+        // declaration ([§9.6.4.1]).
+        return;
+    };
+    if targets_contain(&targets, element_type) {
+        return;
+    }
+    if targets_contain(&targets, "TYPE_USE") {
+        if has_written_type {
+            return;
+        }
+        out.push(DeclDiagnostic::AnnotatedVar {
+            name: name.clone(),
+            range,
+        });
+        return;
+    }
+    out.push(DeclDiagnostic::AnnotationNotApplicable {
+        name: name.clone(),
+        element_type,
+        range,
+    });
+}
+
+/// Whether an annotation is applicable in a *type context* ([§9.6.4.1],
+/// [§9.7.4]): every type context — a type argument, an array dimension, a
+/// cast, a class literal, ... — requires an annotation whose `@Target`
+/// contains `TYPE_USE`. Unlike a declaration position, no other element type
+/// makes the annotation applicable: the annotated type may belong to a
+/// declaration, but the annotation applies to the *type*, not to the
+/// declaration ([§9.6.4.1]).
+fn type_context_applicable(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    name: &Name,
+) -> bool {
+    let Some(targets) = resolve_annotation_type(db, resolver, scope, name) else {
+        // An unresolvable annotation type (or one without `@Target`) has no
+        // target to enforce.
+        return true;
+    };
+    targets_contain(&targets, "TYPE_USE")
+}
+
+/// The variable-declaration applicability check over an *item* annotation —
+/// a method's or constructor's formal parameter
+/// ([`hir_def::java::item_tree::Param::annotations`]).
+#[allow(clippy::too_many_arguments)]
+fn check_variable_annotation(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    annotation: &ItemAnnotationRef,
+    element_type: &'static str,
+    has_written_type: bool,
+    map: &hir_expand::ast_id_map::AstIdMap,
+    source: &syntax::SourceFile,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    // §9.7.1: the element-value arguments are checked regardless of whether
+    // the target check passes.
+    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
+    check_variable_target(
+        db,
+        resolver,
+        scope,
+        &annotation.name,
+        ranges::annotation_name_range(map, source, annotation),
+        element_type,
+        has_written_type,
+        out,
+    );
+}
+
+/// The variable-declaration applicability check over a *span* annotation —
+/// every body-side variable (a local, enhanced-for variable, resource,
+/// exception parameter, pattern binding or lambda parameter), whose ranges
+/// are still carried.
+fn check_variable_annotation_ranged(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    scope: &hir::ResolutionScope,
+    annotation: &hir_expand::span::AnnotationRef,
+    element_type: &'static str,
+    has_written_type: bool,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    // §9.7.1: the element-value arguments are checked regardless of whether
+    // the target check passes.
+    check_annotation_elements_ranged(db, resolver, scope, annotation, out);
+    check_variable_target(
+        db,
+        resolver,
+        scope,
+        &annotation.name.name,
+        annotation.name.range,
+        element_type,
+        has_written_type,
+        out,
+    );
+}
+
 /// Whether a declaration carries a type that an annotation written before it
 /// may attach to as a type annotation ([§9.7.4]): the field's type, the
 /// method's return type. A *type* declaration — a class, interface, enum,
@@ -480,50 +626,23 @@ fn check_type_use_item(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
     tyref: &ItemTypeRef,
     map: &hir_expand::ast_id_map::AstIdMap,
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     for annotation in &tyref.type_use_annotations {
-        check_type_use_annotation(
-            db,
-            resolver,
-            scope,
-            element_type,
-            annotation,
-            map,
-            source,
-            out,
-        );
+        check_type_use_annotation(db, resolver, scope, annotation, map, source, out);
     }
 }
 
-/// Checks the type-use annotations of one spanned type — the *body* path
-/// (casts, `new`, `instanceof`, class literals, local variable types), whose
-/// spans still carry their ranges ([JLS §9.7.4], [§9.6.4.1]).
-fn check_type_use(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
-    spanned: &SpannedTypeRef,
-    out: &mut Vec<DeclDiagnostic>,
-) {
-    for annotation in &spanned.type_use_annotations {
-        check_type_use_annotation_ranged(db, resolver, scope, element_type, annotation, out);
-    }
-}
-
-/// The shared type-use applicability check over an *item* annotation: the
-/// annotation's target must contain `TYPE_USE` or the element type of the
-/// enclosing declaration ([§9.6.4.1]).
+/// The shared type-use applicability check over an *item* annotation: every
+/// type context requires an annotation applicable in type contexts, i.e. one
+/// whose `@Target` contains `TYPE_USE` ([§9.6.4.1], [§9.7.4]).
 fn check_type_use_annotation(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
     annotation: &ItemAnnotationRef,
     map: &hir_expand::ast_id_map::AstIdMap,
     source: &syntax::SourceFile,
@@ -532,15 +651,9 @@ fn check_type_use_annotation(
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
     check_annotation_elements(db, resolver, scope, annotation, map, source, out);
-    let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name) else {
-        return;
-    };
-    let applicable = targets_contain(&targets, "TYPE_USE")
-        || element_type.is_some_and(|et| targets_contain(&targets, et));
-    if !applicable {
-        out.push(DeclDiagnostic::AnnotationNotApplicable {
+    if !type_context_applicable(db, resolver, scope, &annotation.name) {
+        out.push(DeclDiagnostic::AnnotationNotApplicableToType {
             name: annotation.name.clone(),
-            element_type: "TYPE_USE",
             range: ranges::annotation_name_range(map, source, annotation),
         });
     }
@@ -552,22 +665,15 @@ fn check_type_use_annotation_ranged(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
     annotation: &hir_expand::span::AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
     check_annotation_elements_ranged(db, resolver, scope, annotation, out);
-    let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name.name) else {
-        return;
-    };
-    let applicable = targets_contain(&targets, "TYPE_USE")
-        || element_type.is_some_and(|et| targets_contain(&targets, et));
-    if !applicable {
-        out.push(DeclDiagnostic::AnnotationNotApplicable {
+    if !type_context_applicable(db, resolver, scope, &annotation.name.name) {
+        out.push(DeclDiagnostic::AnnotationNotApplicableToType {
             name: annotation.name.name.clone(),
-            element_type: "TYPE_USE",
             range: annotation.name.range,
         });
     }
@@ -611,381 +717,491 @@ fn check_annotation_elements_ranged(
     }
 }
 
-/// Walks one body for type-use annotations in expression and local-variable
-/// type contexts ([JLS §9.7.4]): casts, `new`, `instanceof`, class literals,
-/// method-reference type names, lambda parameter types, explicit invocation
-/// type arguments and local variable types.
-fn check_body_type_use(
+/// Walks one body for the annotations it contains ([JLS §9.7.4]): the
+/// declaration annotations of every variable declaration in it — locals,
+/// enhanced-for variables, resources, exception parameters, pattern bindings
+/// and lambda parameters — and the type annotations of every type it writes —
+/// casts, `new`, `instanceof`, class literals, method-reference type names,
+/// explicit invocation type arguments, lambda parameter types and local
+/// variable types.
+///
+/// The *method's* own parameters are absent here: their declaration
+/// annotations are lowered with the signature
+/// ([`hir_def::java::item_tree::Param::annotations`]) and their types are
+/// declaration type references, so the item walk covers both (checking them
+/// again here would report every one of them twice).
+/// The annotation walk of one body: the state a single pass needs, plus the
+/// *annotation occurrences* it has already checked.
+///
+/// A declaration's modifier list is shared by every variable it declares
+/// (`@Ann int a = 1, b = 2;`) and a written type is copied to each of them,
+/// so the same source occurrence reaches the walk more than once. javac
+/// reports one diagnostic per *written* annotation, so an occurrence — the
+/// annotation name's source range — is the unit checked, and a body is the
+/// unit it is checked in.
+struct BodyAnnotations<'a> {
+    db: &'a dyn TyDatabase,
+    resolver: &'a Resolver,
+    scope: &'a hir::ResolutionScope,
+    bodies: &'a BodyTree,
+    /// The source ranges of the annotation occurrences already checked.
+    checked: FxHashSet<rowan::TextRange>,
+}
+
+/// Walks one body for the annotations it contains ([JLS §9.7.4]): the
+/// declaration annotations of every variable declaration in it — locals,
+/// enhanced-for variables, resources, exception parameters, pattern bindings
+/// and lambda parameters — and the type annotations of every type it writes —
+/// casts, `new`, `instanceof`, class literals, method-reference type names,
+/// explicit invocation type arguments, lambda parameter types and local
+/// variable types.
+///
+/// The *method's* own parameters are absent here: their declaration
+/// annotations are lowered with the signature
+/// ([`hir_def::java::item_tree::Param::annotations`]) and their types are
+/// declaration type references, so the item walk covers both (checking them
+/// again here would report every one of them twice).
+fn check_body_annotations(
     db: &dyn TyDatabase,
     resolver: &Resolver,
     bodies: &BodyTree,
     scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
     body: &hir_expand::body::Body,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    for &param in &body.params {
-        let local = bodies.local(param);
-        if let Some(ty) = &local.ty {
-            check_type_use(db, resolver, scope, element_type, ty, out);
-        }
-    }
+    let mut walk = BodyAnnotations {
+        db,
+        resolver,
+        scope,
+        bodies,
+        checked: FxHashSet::default(),
+    };
     for &stmt in &body.stmts {
-        check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+        walk.stmt(stmt, out);
     }
 }
 
-/// Recurses over a statement's expressions, checking each type reference.
-fn check_stmt_type_use(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    bodies: &BodyTree,
-    scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
-    stmt: StmtId,
-    out: &mut Vec<DeclDiagnostic>,
-) {
-    use hir_expand::body::{StmtData as S, SwitchLabel as L};
-    match bodies.stmt(stmt).clone() {
-        S::Decl { local, initializer } => {
-            let local = bodies.local(local);
-            if let Some(ty) = &local.ty {
-                check_type_use(db, resolver, scope, element_type, ty, out);
+impl BodyAnnotations<'_> {
+    /// Checks the declaration annotations of one body-side variable binding
+    /// ([JLS §9.7.4]): each is applicable iff its `@Target` contains the
+    /// declaration's element type (`element_type`), or — when the
+    /// declaration writes a type — `TYPE_USE`, in which case the annotation
+    /// applies to that type. A `var` declaration writes no type ([§14.4],
+    /// [§15.27.1]), so a `TYPE_USE`-only annotation has no closest type to
+    /// apply to there.
+    fn binding(
+        &mut self,
+        local: LocalId,
+        element_type: &'static str,
+        out: &mut Vec<DeclDiagnostic>,
+    ) {
+        let binding = self.bodies.local(local);
+        let has_written_type = binding.ty.is_some();
+        for annotation in &binding.annotations {
+            self.annotation(annotation, element_type, has_written_type, out);
+        }
+    }
+
+    /// Checks one annotation occurrence, once (see [`Self::mark_checked`]).
+    fn annotation(
+        &mut self,
+        annotation: &hir_expand::span::AnnotationRef,
+        element_type: &'static str,
+        has_written_type: bool,
+        out: &mut Vec<DeclDiagnostic>,
+    ) {
+        if !self.mark_checked(annotation.name.range) {
+            return;
+        }
+        check_variable_annotation_ranged(
+            self.db,
+            self.resolver,
+            self.scope,
+            annotation,
+            element_type,
+            has_written_type,
+            out,
+        );
+    }
+
+    /// Checks the type annotations of one written type, each occurrence once
+    /// (see [`Self::mark_checked`]).
+    fn type_use(&mut self, spanned: &SpannedTypeRef, out: &mut Vec<DeclDiagnostic>) {
+        for annotation in &spanned.type_use_annotations {
+            if !self.mark_checked(annotation.name.range) {
+                continue;
             }
-            if let Some(expr) = initializer {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
+            check_type_use_annotation_ranged(self.db, self.resolver, self.scope, annotation, out);
+        }
+    }
+
+    /// Marks one annotation occurrence as checked, returning whether it is
+    /// new. An occurrence with no source range cannot be identified, so it is
+    /// always checked.
+    fn mark_checked(&mut self, range: Option<rowan::TextRange>) -> bool {
+        match range {
+            Some(range) => self.checked.insert(range),
+            None => true,
+        }
+    }
+
+    /// Recurses over a statement's expressions and variable declarations,
+    /// checking each type reference and each declaration annotation.
+    fn stmt(&mut self, stmt: StmtId, out: &mut Vec<DeclDiagnostic>) {
+        use hir_expand::body::{StmtData as S, SwitchLabel as L};
+        match self.bodies.stmt(stmt).clone() {
+            S::Decl { local, initializer } => {
+                // §9.7.4/[§9.6.4.1]: a local variable declaration's annotation
+                // modifiers (`@Ann int x = ...`), element type `LOCAL_VARIABLE`.
+                self.binding(local, "LOCAL_VARIABLE", out);
+                let binding = self.bodies.local(local);
+                if let Some(ty) = &binding.ty {
+                    self.type_use(ty, out);
+                }
+                if let Some(expr) = initializer {
+                    self.expr(expr, out);
+                }
             }
-        }
-        S::DeclGroup(stmts) => {
-            for stmt in stmts {
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+            S::DeclGroup(stmts) => {
+                for stmt in stmts {
+                    self.stmt(stmt, out);
+                }
             }
-        }
-        S::Block(stmts) => {
-            for stmt in stmts {
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+            S::Block(stmts) => {
+                for stmt in stmts {
+                    self.stmt(stmt, out);
+                }
             }
-        }
-        S::Expr(expr) => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
-        }
-        S::Labeled { stmt, .. } => {
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
-        }
-        S::If { cond, then, els } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, then, out);
-            if let Some(els) = els {
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, els, out);
+            S::Expr(expr) => {
+                self.expr(expr, out);
             }
-        }
-        S::While { cond, body, .. } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, body, out);
-        }
-        S::DoWhile { body, cond } => {
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, body, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
-        }
-        S::For {
-            init,
-            cond,
-            step,
-            body,
-        } => {
-            for stmt in init {
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+            S::Labeled { stmt, .. } => {
+                self.stmt(stmt, out);
             }
-            if let Some(cond) = cond {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
+            S::If { cond, then, els } => {
+                self.expr(cond, out);
+                self.stmt(then, out);
+                if let Some(els) = els {
+                    self.stmt(els, out);
+                }
             }
-            for expr in step {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
+            S::While { cond, body, .. } => {
+                self.expr(cond, out);
+                self.stmt(body, out);
             }
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, body, out);
-        }
-        S::ForEach {
-            var,
-            iterable,
-            body,
-        } => {
-            let local = bodies.local(var);
-            if let Some(ty) = &local.ty {
-                check_type_use(db, resolver, scope, element_type, ty, out);
+            S::DoWhile { body, cond } => {
+                self.stmt(body, out);
+                self.expr(cond, out);
             }
-            check_expr_type_use(db, resolver, bodies, scope, element_type, iterable, out);
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, body, out);
-        }
-        S::Switch { scrutinee, arms } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, scrutinee, out);
-            for arm in arms {
-                for label in &arm.labels {
-                    match label {
-                        L::Expr(expr) | L::Guard(expr) => check_expr_type_use(
-                            db,
-                            resolver,
-                            bodies,
-                            scope,
-                            element_type,
-                            *expr,
-                            out,
-                        ),
-                        L::Pattern(_) => {}
+            S::For {
+                init,
+                cond,
+                step,
+                body,
+            } => {
+                for stmt in init {
+                    self.stmt(stmt, out);
+                }
+                if let Some(cond) = cond {
+                    self.expr(cond, out);
+                }
+                for expr in step {
+                    self.expr(expr, out);
+                }
+                self.stmt(body, out);
+            }
+            S::ForEach {
+                var,
+                iterable,
+                body,
+            } => {
+                // §14.14.2: the loop variable is a local variable declaration
+                // ([§9.6.4.1]: element type `LOCAL_VARIABLE`).
+                self.binding(var, "LOCAL_VARIABLE", out);
+                if let Some(ty) = &self.bodies.local(var).ty {
+                    self.type_use(ty, out);
+                }
+                self.expr(iterable, out);
+                self.stmt(body, out);
+            }
+            S::Switch { scrutinee, arms } => {
+                self.expr(scrutinee, out);
+                for arm in arms {
+                    for label in &arm.labels {
+                        match label {
+                            L::Expr(expr) | L::Guard(expr) => {
+                                self.expr(*expr, out);
+                            }
+                            // §14.30.2/§14.30.3: a `case` label's pattern — its
+                            // type reference carries type annotations and its
+                            // binding carries declaration annotations, exactly
+                            // like an `instanceof` pattern.
+                            L::Pattern(pattern) => {
+                                self.pattern(*pattern, out);
+                            }
+                        }
+                    }
+                    for stmt in arm.body {
+                        self.stmt(stmt, out);
                     }
                 }
-                for stmt in arm.body {
-                    check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+            }
+            S::Return(expr) => {
+                if let Some(expr) = expr {
+                    self.expr(expr, out);
                 }
             }
-        }
-        S::Return(expr) => {
-            if let Some(expr) = expr {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
+            S::Yield(expr) => {
+                self.expr(expr, out);
             }
-        }
-        S::Yield(expr) => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
-        }
-        S::Throw(expr) | S::Synchronized { expr, .. } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
-        }
-        S::Try {
-            resources,
-            body,
-            catches,
-            finally,
-        } => {
-            for resource in resources {
-                let local = bodies.local(resource.local);
-                if let Some(ty) = &local.ty {
-                    check_type_use(db, resolver, scope, element_type, ty, out);
-                }
-                if let Some(initializer) = resource.initializer {
-                    check_expr_type_use(
-                        db,
-                        resolver,
-                        bodies,
-                        scope,
-                        element_type,
-                        initializer,
-                        out,
-                    );
-                }
+            S::Throw(expr) | S::Synchronized { expr, .. } => {
+                self.expr(expr, out);
             }
-            check_stmt_type_use(db, resolver, bodies, scope, element_type, body, out);
-            for catch in catches {
-                for ty in &catch.param_types {
-                    check_type_use(db, resolver, scope, element_type, ty, out);
-                }
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, catch.body, out);
-            }
-            if let Some(finally) = finally {
-                check_stmt_type_use(db, resolver, bodies, scope, element_type, finally, out);
-            }
-        }
-        S::Assert { cond, msg } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
-            if let Some(msg) = msg {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, msg, out);
-            }
-        }
-        S::Empty | S::Break(_) | S::Continue(_) | S::LocalClass { .. } | S::Missing => {}
-    }
-}
-
-/// Checks the type references of one expression node, then recurses into its
-/// children ([JLS §9.7.4] type-use contexts).
-fn check_expr_type_use(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    bodies: &BodyTree,
-    scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
-    expr: ExprId,
-    out: &mut Vec<DeclDiagnostic>,
-) {
-    use hir_expand::body::{ExprData as E, LambdaBody as L, SwitchLabel as SL};
-    match bodies.expr(expr).clone() {
-        E::Cast { ty, expr: inner } => {
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, inner, out);
-        }
-        E::New {
-            ty, args, receiver, ..
-        } => {
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-            for arg in args {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, arg, out);
-            }
-            if let Some(receiver) = receiver {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, receiver, out);
-            }
-        }
-        E::InstanceOf {
-            expr: inner,
-            ty: Some(ty),
-            pattern,
-        } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, inner, out);
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-            if let Some(pattern) = pattern {
-                check_pattern_type_use(db, resolver, bodies, scope, element_type, pattern, out);
-            }
-        }
-        E::InstanceOf {
-            expr: inner,
-            ty: None,
-            pattern,
-        } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, inner, out);
-            if let Some(pattern) = pattern {
-                check_pattern_type_use(db, resolver, bodies, scope, element_type, pattern, out);
-            }
-        }
-        E::ClassLit(ty) => {
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-        }
-        E::MethodRef {
-            qualifier,
-            type_name,
-            ..
-        } => {
-            if let Some(qualifier) = qualifier {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, qualifier, out);
-            }
-            if let Some(ty) = type_name {
-                check_type_use(db, resolver, scope, element_type, &ty, out);
-            }
-        }
-        E::MethodCall {
-            receiver,
-            type_args,
-            args,
-            ..
-        } => {
-            if let Some(receiver) = receiver {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, receiver, out);
-            }
-            for ty in type_args {
-                check_type_use(db, resolver, scope, element_type, &ty, out);
-            }
-            for arg in args {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, arg, out);
-            }
-        }
-        E::Lambda { params, body } => {
-            for (_, declared, _) in params {
-                if let Some(ty) = declared {
-                    check_type_use(db, resolver, scope, element_type, &ty, out);
-                }
-            }
-            match body {
-                L::Expr(expr) => {
-                    check_expr_type_use(db, resolver, bodies, scope, element_type, expr, out);
-                }
-                L::Block(stmt) => {
-                    check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
-                }
-            }
-        }
-        E::NewArray {
-            ty,
-            dims,
-            initializer,
-        } => {
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-            for dim in dims {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, dim, out);
-            }
-            if let Some(initializer) = initializer {
-                for elem in initializer {
-                    check_expr_type_use(db, resolver, bodies, scope, element_type, elem, out);
-                }
-            }
-        }
-        E::ArrayInit(elems) => {
-            for elem in elems {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, elem, out);
-            }
-        }
-        E::Unary { expr: inner, .. } | E::Postfix { expr: inner, .. } | E::Paren(inner) => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, inner, out);
-        }
-        E::Binary { lhs, rhs, .. } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, lhs, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, rhs, out);
-        }
-        E::Assign { lhs, rhs, .. } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, lhs, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, rhs, out);
-        }
-        E::Conditional {
-            cond, then, els, ..
-        } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, cond, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, then, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, els, out);
-        }
-        E::Switch { scrutinee, arms } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, scrutinee, out);
-            for arm in arms {
-                for label in &arm.labels {
-                    if let SL::Expr(expr) = label {
-                        check_expr_type_use(db, resolver, bodies, scope, element_type, *expr, out);
+            S::Try {
+                resources,
+                body,
+                catches,
+                finally,
+            } => {
+                for resource in resources {
+                    // §9.6.4.1: a resource variable is a local variable
+                    // declaration ([§14.20.3]).
+                    self.binding(resource.local, "LOCAL_VARIABLE", out);
+                    if let Some(ty) = &self.bodies.local(resource.local).ty {
+                        self.type_use(ty, out);
+                    }
+                    if let Some(initializer) = resource.initializer {
+                        self.expr(initializer, out);
                     }
                 }
-                for stmt in arm.body {
-                    check_stmt_type_use(db, resolver, bodies, scope, element_type, stmt, out);
+                self.stmt(body, out);
+                for catch in catches {
+                    // §9.6.4.1: "Formal and exception parameter declarations"
+                    // ([§8.4.1], [§9.4], [§14.20]) — element type `PARAMETER`.
+                    self.binding(catch.param, "PARAMETER", out);
+                    for ty in &catch.param_types {
+                        self.type_use(ty, out);
+                    }
+                    self.stmt(catch.body, out);
+                }
+                if let Some(finally) = finally {
+                    self.stmt(finally, out);
                 }
             }
-        }
-        E::CtorCall { args, .. } | E::Template { args } => {
-            for arg in args {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, arg, out);
+            S::Assert { cond, msg } => {
+                self.expr(cond, out);
+                if let Some(msg) = msg {
+                    self.expr(msg, out);
+                }
             }
+            S::Empty | S::Break(_) | S::Continue(_) | S::LocalClass { .. } | S::Missing => {}
         }
-        E::ArrayAccess { array, index } => {
-            check_expr_type_use(db, resolver, bodies, scope, element_type, array, out);
-            check_expr_type_use(db, resolver, bodies, scope, element_type, index, out);
-        }
-        E::FieldAccess { target, .. } => {
-            if let Some(target) = target {
-                check_expr_type_use(db, resolver, bodies, scope, element_type, target, out);
-            }
-        }
-        E::This { .. }
-        | E::Super { .. }
-        | E::Var(_)
-        | E::NamePath(_)
-        | E::Literal(_)
-        | E::Null
-        | E::Missing => {}
     }
-}
 
-/// The type references of a pattern ([JLS §14.30] type patterns and record
-/// patterns).
-fn check_pattern_type_use(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    bodies: &BodyTree,
-    scope: &hir::ResolutionScope,
-    element_type: Option<&'static str>,
-    pattern: PatternId,
-    out: &mut Vec<DeclDiagnostic>,
-) {
-    use hir_expand::body::{PatternData as P, TypePattern as TP};
-    match bodies.pattern(pattern).clone() {
-        P::Type(TP { ty, .. }) => {
-            check_type_use(db, resolver, scope, element_type, &ty, out);
-        }
-        P::Record(pattern) => {
-            check_type_use(db, resolver, scope, element_type, &pattern.ty, out);
-            for component in pattern.components {
-                check_pattern_type_use(db, resolver, bodies, scope, element_type, component, out);
+    /// Checks the type references of one expression node, then recurses into
+    /// its children ([JLS §9.7.4] type-use contexts).
+    fn expr(&mut self, expr: ExprId, out: &mut Vec<DeclDiagnostic>) {
+        use hir_expand::body::{ExprData as E, LambdaBody as L, SwitchLabel as SL};
+        match self.bodies.expr(expr).clone() {
+            E::Cast { ty, expr: inner } => {
+                self.type_use(&ty, out);
+                self.expr(inner, out);
             }
+            E::New {
+                ty, args, receiver, ..
+            } => {
+                self.type_use(&ty, out);
+                for arg in args {
+                    self.expr(arg, out);
+                }
+                if let Some(receiver) = receiver {
+                    self.expr(receiver, out);
+                }
+            }
+            E::InstanceOf {
+                expr: inner,
+                ty: Some(ty),
+                pattern,
+            } => {
+                self.expr(inner, out);
+                self.type_use(&ty, out);
+                if let Some(pattern) = pattern {
+                    self.pattern(pattern, out);
+                }
+            }
+            E::InstanceOf {
+                expr: inner,
+                ty: None,
+                pattern,
+            } => {
+                self.expr(inner, out);
+                if let Some(pattern) = pattern {
+                    self.pattern(pattern, out);
+                }
+            }
+            E::ClassLit(ty) => {
+                self.type_use(&ty, out);
+            }
+            E::MethodRef {
+                qualifier,
+                type_name,
+                ..
+            } => {
+                if let Some(qualifier) = qualifier {
+                    self.expr(qualifier, out);
+                }
+                if let Some(ty) = type_name {
+                    self.type_use(&ty, out);
+                }
+            }
+            E::MethodCall {
+                receiver,
+                type_args,
+                args,
+                ..
+            } => {
+                if let Some(receiver) = receiver {
+                    self.expr(receiver, out);
+                }
+                for ty in type_args {
+                    self.type_use(&ty, out);
+                }
+                for arg in args {
+                    self.expr(arg, out);
+                }
+            }
+            E::Lambda { params, body } => {
+                for param in params {
+                    // §9.7.4: a lambda parameter's declaration annotations
+                    // (`(@Ann int v) -> ...`), element type `PARAMETER` — a
+                    // lambda parameter is a formal parameter declaration
+                    // ([§15.27.1]). A *concise* parameter (`(v) -> ...`) writes
+                    // neither a type nor a modifier, so it carries none.
+                    for annotation in &param.annotations {
+                        self.annotation(annotation, "PARAMETER", param.ty.is_some(), out);
+                    }
+                    if let Some(ty) = &param.ty {
+                        self.type_use(ty, out);
+                    }
+                }
+                match body {
+                    L::Expr(expr) => {
+                        self.expr(expr, out);
+                    }
+                    L::Block(stmt) => {
+                        self.stmt(stmt, out);
+                    }
+                }
+            }
+            E::NewArray {
+                ty,
+                dims,
+                initializer,
+            } => {
+                self.type_use(&ty, out);
+                for dim in dims {
+                    self.expr(dim, out);
+                }
+                if let Some(initializer) = initializer {
+                    for elem in initializer {
+                        self.expr(elem, out);
+                    }
+                }
+            }
+            E::ArrayInit(elems) => {
+                for elem in elems {
+                    self.expr(elem, out);
+                }
+            }
+            E::Unary { expr: inner, .. } | E::Postfix { expr: inner, .. } | E::Paren(inner) => {
+                self.expr(inner, out);
+            }
+            E::Binary { lhs, rhs, .. } => {
+                self.expr(lhs, out);
+                self.expr(rhs, out);
+            }
+            E::Assign { lhs, rhs, .. } => {
+                self.expr(lhs, out);
+                self.expr(rhs, out);
+            }
+            E::Conditional {
+                cond, then, els, ..
+            } => {
+                self.expr(cond, out);
+                self.expr(then, out);
+                self.expr(els, out);
+            }
+            E::Switch { scrutinee, arms } => {
+                self.expr(scrutinee, out);
+                for arm in arms {
+                    for label in &arm.labels {
+                        match label {
+                            SL::Expr(expr) | SL::Guard(expr) => {
+                                self.expr(*expr, out);
+                            }
+                            // §14.30.2/§14.30.3: a `case` label's pattern — a
+                            // type pattern's type carries type annotations and
+                            // its binding carries declaration annotations, like
+                            // an `instanceof` pattern.
+                            SL::Pattern(pattern) => {
+                                self.pattern(*pattern, out);
+                            }
+                        }
+                    }
+                    for stmt in arm.body {
+                        self.stmt(stmt, out);
+                    }
+                }
+            }
+            E::CtorCall { args, .. } | E::Template { args } => {
+                for arg in args {
+                    self.expr(arg, out);
+                }
+            }
+            E::ArrayAccess { array, index } => {
+                self.expr(array, out);
+                self.expr(index, out);
+            }
+            E::FieldAccess { target, .. } => {
+                if let Some(target) = target {
+                    self.expr(target, out);
+                }
+            }
+            E::This { .. }
+            | E::Super { .. }
+            | E::Var(_)
+            | E::NamePath(_)
+            | E::Literal(_)
+            | E::Null
+            | E::Missing => {}
         }
-        P::MatchAll => {}
+    }
+
+    /// The type references of a pattern ([JLS §14.30] type patterns and
+    /// record patterns), plus the declaration annotations of the variables
+    /// its components bind.
+    fn pattern(&mut self, pattern: PatternId, out: &mut Vec<DeclDiagnostic>) {
+        use hir_expand::body::{PatternData as P, TypePattern as TP};
+        match self.bodies.pattern(pattern).clone() {
+            P::Type(TP { ty, binding }) => {
+                self.type_use(&ty, out);
+                // §14.30.1/[§9.6.4.1]: a type pattern is a local variable
+                // declaration, so the pattern variable's element type is
+                // `LOCAL_VARIABLE`. The binding's own `ty` is the pattern's type,
+                // so only its *declaration* annotations are checked here (the
+                // type annotations were checked just above).
+                if let Some(binding) = binding {
+                    self.binding(binding, "LOCAL_VARIABLE", out);
+                }
+            }
+            P::Record(pattern) => {
+                self.type_use(&pattern.ty, out);
+                for component in pattern.components {
+                    self.pattern(component, out);
+                }
+            }
+            P::MatchAll => {}
+        }
     }
 }
 

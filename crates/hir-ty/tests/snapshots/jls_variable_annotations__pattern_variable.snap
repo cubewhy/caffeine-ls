@@ -1,0 +1,43 @@
+---
+source: crates/hir-ty/tests/jls_variable_annotations.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE) @interface TYPE_USE {}
+@Target(ElementType.LOCAL_VARIABLE) @interface LOCAL_VARIABLE {}
+@Target(ElementType.PARAMETER) @interface PARAMETER {}
+@Target(ElementType.FIELD) @interface FIELD {}
+@Target(ElementType.METHOD) @interface METHOD {}
+
+class Anns {
+void patterns(Object value) {
+        if (value instanceof @LOCAL_VARIABLE String ok) {
+        }
+        if (value instanceof @TYPE_USE String typeUse) {
+        }
+        if (value instanceof @FIELD String field) {
+        }
+        if (value instanceof @PARAMETER String parameter) {
+        }
+    }
+
+    void switchPatterns(Object value) {
+        switch (value) {
+            case @LOCAL_VARIABLE String ok -> {
+            }
+            case @FIELD String field -> {
+            }
+            default -> {
+            }
+        }
+    }
+}
+
+@17:30: annotation-not-applicable: '@FIELD' not applicable to local variable
+@19:30: annotation-not-applicable: '@PARAMETER' not applicable to local variable
+@27:18: annotation-not-applicable: '@FIELD' not applicable to local variable

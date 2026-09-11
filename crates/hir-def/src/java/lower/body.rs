@@ -20,9 +20,9 @@ use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 use hir_expand::{
     body::{
         AnonymousMethod, AssignOp, BinaryOp, Body, BodyId, CatchClause, CtorCallTarget, ExprData,
-        ExprId, Label, LabelId, LambdaBody, Literal, Local, LocalId, PatternData, PatternId,
-        PostfixOp, RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel, TypePattern,
-        UnaryOp,
+        ExprId, Label, LabelId, LambdaBody, LambdaParam, Literal, Local, LocalId, PatternData,
+        PatternId, PostfixOp, RecordPattern, Resource, StmtData, StmtId, SwitchArm, SwitchLabel,
+        TypePattern, UnaryOp,
     },
     name::Name,
     span::{NameRef, SpannedTypeRef},
@@ -31,7 +31,10 @@ use hir_expand::{
 use crate::java::item_tree::ItemId;
 use crate::java::lower::LowerCtx;
 
-use super::walk::{token_is, token_text, trimmed_text, type_from};
+use super::walk::{
+    declaration_modifier_lists, modifier_annotations, token_is, token_text, trimmed_text,
+    type_annotations_after_type, type_from,
+};
 
 /// Lowers the `BLOCK` of a method or constructor as a [`Body`], binding the
 /// formal parameters (`None` for compact constructors).
@@ -71,6 +74,16 @@ pub(super) fn lower_expr(
     Some(expr(ctx, owner, node))
 }
 
+/// Whether a declared type is the `var` keyword rather than a type: `var` is
+/// a contextual keyword that lexes as an identifier, so a `var` declaration
+/// (a local, a resource or a lambda parameter) lowers it as a reference type
+/// named `var` with no arguments ([JLS §14.4], [§15.27.1]). Such a
+/// declaration has an *inferred* type and therefore no declared type to
+/// carry.
+fn is_var_ref(ty: &SpannedTypeRef) -> bool {
+    matches!(&ty.ty, TypeRef::Reference { name, generic_args } if name.as_str() == "var" && generic_args.is_empty())
+}
+
 /// The first expression-kind child of `node`, if any.
 pub(super) fn find_expression_child(node: &SyntaxNode<Lang>) -> Option<SyntaxNode<Lang>> {
     node.children().find(|c| is_expr_kind(c.kind()))
@@ -95,10 +108,9 @@ fn alloc_body(
 /// The `Local` model's `is_final` drives the `final`-assignment diagnostics
 /// of the type layer ([§8.3.1.2], [§16]).
 fn param_is_final(param: &SyntaxNode<Lang>) -> bool {
-    param
-        .children()
-        .filter(|c| c.kind() == J::MODIFIER_LIST)
-        .flat_map(|c| c.children_with_tokens())
+    declaration_modifier_lists(param)
+        .iter()
+        .flat_map(|mods| mods.children_with_tokens())
         .any(|e| matches!(e, rowan::NodeOrToken::Token(t) if t.kind() == J::FINAL_KW))
 }
 
@@ -122,12 +134,24 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                     refs: ty.refs,
                     type_use_annotations: ty.type_use_annotations,
                 };
+                // §8.4.1/§9.7.4: the annotations between the type and the
+                // `...` (`String @A ... p`) annotate the array type.
+                let trailing = type_annotations_after_type(&child);
+                ty.refs
+                    .extend(trailing.iter().map(|annotation| annotation.name.clone()));
+                ty.type_use_annotations.extend(trailing);
             }
             alloc_local(
                 ctx,
                 Local {
                     name,
                     ty: Some(ty),
+                    // §9.7.4: a method or constructor parameter's declaration
+                    // annotations are lowered with the signature
+                    // ([`hir_def::java::item_tree::Param::annotations`]), not
+                    // here (the body's parameter list is a second view of the
+                    // same declaration).
+                    annotations: Vec::new(),
                     is_final: param_is_final(&child),
                 },
                 child.text_range(),
@@ -351,14 +375,11 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 .find(|c| c.kind() == J::TYPE)
                 .map(|ty| {
                     let ty = type_from(&ty);
-                    // §14.4.1/§14.14.2: `var` — a contextual keyword lexed as
-                    // an identifier — writes no type; the loop variable's type
-                    // is the element type of the iterable ([§14.14.2]). The
-                    // parser lowers it as a reference type named `var`; detect
-                    // it here like `local_declaration` does, so a `None` type
-                    // marks the local for the type layer.
-                    let is_var =
-                        matches!(&ty.ty, TypeRef::Reference { name, .. } if name.as_str() == "var");
+                    // §14.4.1/§14.14.2: `var` writes no type; the loop
+                    // variable's type is the element type of the iterable
+                    // ([§14.14.2]), so a `None` type marks the local for the
+                    // type layer.
+                    let is_var = is_var_ref(&ty);
                     let name = node
                         .children()
                         .find(|c| c.kind() == J::VARIABLE_DECLARATOR)
@@ -381,11 +402,16 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                             mods.children_with_tokens()
                                 .any(|e| e.as_token().is_some_and(|t| t.kind() == J::FINAL_KW))
                         });
+                    // §9.7.4: the loop variable's declaration annotations —
+                    // the same `{VariableModifier}` prefix as any local
+                    // ([§14.14.2]).
+                    let annotations = modifier_annotations(node);
                     alloc_local(
                         ctx,
                         Local {
                             name,
                             ty: if is_var { None } else { Some(ty) },
+                            annotations,
                             is_final,
                         },
                         range,
@@ -496,6 +522,11 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
         return StmtData::Missing;
     }
     let mut decls = Vec::with_capacity(declarators.len());
+    // §9.7.4: the annotations of a local variable declaration are its
+    // `{VariableModifier}` prefix (`@Ann int x`), the same modifier list that
+    // may carry `final`; they annotate the *declaration*, and the type-use
+    // annotations of the written type are separate.
+    let annotations = modifier_annotations(&decl);
     for declarator in &declarators {
         let name = first_identifier(declarator).unwrap_or_else(missing_name);
         let local = alloc_local(
@@ -511,6 +542,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
                             .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error)),
                     )
                 },
+                annotations: annotations.clone(),
                 is_final,
             },
             declarator.text_range(),
@@ -570,6 +602,10 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         Local {
                             name,
                             ty: Some(ty),
+                            // §9.7.4: the exception parameter's annotation
+                            // modifiers (`catch (@Ann E e)`), which precede
+                            // the catch type.
+                            annotations: modifier_annotations(&p),
                             is_final: false,
                         },
                         p.text_range(),
@@ -655,6 +691,12 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error)),
                         )
                     },
+                    // §9.7.4: the resource declaration's annotation
+                    // modifiers (`try (@Ann R r = ...)`), the same
+                    // `{VariableModifier}` prefix as any local.
+                    annotations: modifier_annotations(&decl),
+                    // §14.20.3: a resource variable is implicitly `final` —
+                    // it is never assigned after initialization.
                     is_final: true,
                 },
                 declarator.text_range(),
@@ -1590,7 +1632,7 @@ fn anonymous_members(class_body: &SyntaxNode<Lang>) -> Vec<AnonymousMethod> {
 
 fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprData {
     use J::*;
-    let mut params: Vec<(Name, Option<SpannedTypeRef>, TextRange)> = Vec::new();
+    let mut params: Vec<LambdaParam> = Vec::new();
     // A single-parameter lambda `x -> body` lowers the parameter as a bare
     // identifier token ([JLS §15.27.1]); the other forms are parenthesized
     // node children (`FORMAL_PARAMETERS` for typed parameters,
@@ -1602,24 +1644,44 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
             .map(|token| token.text_range())
             .unwrap_or_else(|| c.text_range())
     }
-    fn param_of(c: &SyntaxNode<Lang>) -> (Name, Option<SpannedTypeRef>, TextRange) {
+    fn param_of(c: &SyntaxNode<Lang>) -> LambdaParam {
         let name = first_identifier(c).unwrap_or_else(missing_name);
         let range = name_range(c);
-        let ty = c
+        // §15.27.1: a normal parameter specifier is `{VariableModifier}
+        // LambdaParameterType VariableDeclaratorId`, where
+        // `LambdaParameterType` is either a type or the `var` keyword. A
+        // `var` parameter has an *inferred* type — like a `var` local it
+        // writes none ([§14.4]) — so the local carries `None` and the type
+        // layer infers it from the functional interface ([§15.27.3]).
+        let declared = c
             .children()
             .find(|t| t.kind() == TYPE)
             .map(|t| type_from(&t));
-        (name, ty, range)
+        let ty = match declared {
+            Some(declared) if is_var_ref(&declared) => None,
+            other => other,
+        };
+        // §9.7.4: the annotation modifiers of a normal lambda parameter
+        // (`(@Ann int v) -> ...`); a concise parameter carries none.
+        let annotations = modifier_annotations(c);
+        LambdaParam {
+            name,
+            ty,
+            annotations,
+            range,
+        }
     }
-    fn inferred_params(
-        c: &SyntaxNode<Lang>,
-        out: &mut Vec<(Name, Option<SpannedTypeRef>, TextRange)>,
-    ) {
+    fn inferred_params(c: &SyntaxNode<Lang>, out: &mut Vec<LambdaParam>) {
         for t in c.children_with_tokens() {
             match t {
                 rowan::NodeOrToken::Token(token) => {
                     if token_is(&token, J::IDENTIFIER) || token_is(&token, J::UNDERSCORE) {
-                        out.push((Name::new(token.text()), None, token.text_range()));
+                        out.push(LambdaParam {
+                            name: Name::new(token.text()),
+                            ty: None,
+                            annotations: Vec::new(),
+                            range: token.text_range(),
+                        });
                     }
                 }
                 rowan::NodeOrToken::Node(node) => inferred_params(&node, out),
@@ -1630,7 +1692,12 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
         match c {
             rowan::NodeOrToken::Token(token) => {
                 if token.kind() == IDENTIFIER || token.kind() == UNDERSCORE {
-                    params.push((Name::new(token.text()), None, token.text_range()));
+                    params.push(LambdaParam {
+                        name: Name::new(token.text()),
+                        ty: None,
+                        annotations: Vec::new(),
+                        range: token.text_range(),
+                    });
                 }
             }
             rowan::NodeOrToken::Node(c) => match c.kind() {
@@ -1670,7 +1737,11 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                 .map(|t| type_from(&t))
                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
             // §14.30.1: `Foo f` binds the identifier, whose declared type is
-            // the pattern type; `Foo _` binds nothing.
+            // the pattern type; `Foo _` binds nothing. Annotations before the
+            // pattern type (`o instanceof @Ann Foo f`) are the binding's
+            // declaration annotations ([§9.7.4]: the type pattern is a
+            // `LocalVariableDeclaration`).
+            let annotations = modifier_annotations(node);
             let binding = node
                 .children_with_tokens()
                 .filter_map(|e| e.as_token().cloned())
@@ -1681,6 +1752,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                         Local {
                             name: Name::new(t.text()),
                             ty: Some(ty.clone()),
+                            annotations: annotations.clone(),
                             is_final: false,
                         },
                         t.text_range(),
@@ -1975,6 +2047,7 @@ fn alloc_local_missing(ctx: &mut LowerCtx) -> LocalId {
         Local {
             name: missing_name(),
             ty: None,
+            annotations: Vec::new(),
             is_final: false,
         },
         TextRange::default(),

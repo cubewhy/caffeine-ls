@@ -13,4 +13,4 @@ import java.lang.annotation.ElementType;
 @M
 class Anns {}
 
-@7:1: annotation-not-applicable: Annotation '@M' is not applicable to 'TYPE'
+@7:1: annotation-not-applicable: '@M' not applicable to type

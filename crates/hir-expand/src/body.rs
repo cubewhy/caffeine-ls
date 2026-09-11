@@ -22,7 +22,7 @@ use crate::{
     arena::{Arena, ArenaId},
     ids::ItemId,
     name::Name,
-    span::SpannedTypeRef,
+    span::{AnnotationRef, SpannedTypeRef},
 };
 
 /// The id of an expression within its owning [`BodyTree`].
@@ -195,6 +195,16 @@ pub struct Body {
 pub struct Local {
     pub name: Name,
     pub ty: Option<SpannedTypeRef>,
+    /// The annotations written as modifiers of the declaration
+    /// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)),
+    /// in source order — the *declaration* annotations of this variable, as
+    /// opposed to the type annotations its type carries. A method or
+    /// constructor parameter's declaration annotations are lowered with the
+    /// signature instead ([`hir_def::java::item_tree::Param::annotations`]);
+    /// every other variable declaration — a local, a for-loop or enhanced-for
+    /// variable, a resource, a catch parameter, a pattern variable and a
+    /// lambda parameter ([`LambdaParam`]) — carries them here.
+    pub annotations: Vec<AnnotationRef>,
     /// Whether the declaration carries the `final` modifier ([§4.12.4]):
     /// a `final` local whose initializer is a constant expression is a
     /// *constant variable*, and reads of it are constant expressions
@@ -524,10 +534,8 @@ pub enum ExprData {
         els: ExprId,
     },
     /// A lambda expression ([§15.27](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27)).
-    /// Each parameter carries its name's source range ([JLS §6.4] anchors the
-    /// "already defined" diagnostic at the parameter name).
     Lambda {
-        params: Vec<(Name, Option<SpannedTypeRef>, TextRange)>,
+        params: Vec<LambdaParam>,
         body: LambdaBody,
     },
     /// A method reference `Type::name` / `expr::name` / `Type::new`
@@ -577,6 +585,24 @@ pub enum Literal {
 pub enum LambdaBody {
     Expr(ExprId),
     Block(StmtId),
+}
+
+/// One formal parameter of a lambda expression ([JLS §15.27.1]): a *normal*
+/// parameter specifier (`{VariableModifier} LambdaParameterType
+/// VariableDeclaratorId`) with a declared type — `(String s)`, `(@A int i)`,
+/// `(var v)` — or a *concise* one, an identifier with neither type nor
+/// modifiers (`(s)`). `ty` is `None` for a concise parameter and for a normal
+/// one written with `var`, whose type is inferred from the functional
+/// interface ([§15.27.3]); `annotations` carries the parameter's declaration
+/// annotations ([§9.7.4]) — necessarily empty for a concise parameter, which
+/// the grammar allows no modifiers on. `range` is the parameter name's source
+/// range ([JLS §6.4] anchors the "already defined" diagnostic at the name).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaParam {
+    pub name: Name,
+    pub ty: Option<SpannedTypeRef>,
+    pub annotations: Vec<AnnotationRef>,
+    pub range: TextRange,
 }
 
 /// One method declared in an anonymous class body

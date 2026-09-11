@@ -176,16 +176,40 @@ pub enum DeclDiagnostic {
         name: Name,
         name_range: Option<rowan::TextRange>,
     },
-    /// §9.6.4.1: an annotation's `@Target` does not include the element type
-    /// of the declaration (or type) it is applied to — javac's
-    /// `annotation @X is not applicable in this type context`. `name` is the
-    /// annotation's (possibly qualified) name; `element_type` is the
-    /// `ElementType` constant of the annotated declaration, or `TYPE_USE`
-    /// for a type context that neither the annotation's target nor the
-    /// declaration's element type covers.
+    /// §9.6.4.1: an annotation is applied in a *declaration context* whose
+    /// element type is not in its `@Target` set, and the use site is not a
+    /// type context the annotation may attach to instead ([§9.7.4]). javac:
+    /// `annotation interface not applicable to this kind of declaration`
+    /// (`compiler.err.annotation.type.not.applicable`); IntelliJ:
+    /// `'@X' not applicable to {target}`. `name` is the annotation's
+    /// (possibly qualified) name; `element_type` is the `ElementType`
+    /// constant of the annotated declaration — the target IntelliJ names in
+    /// its message ([`element_type_display`]).
     AnnotationNotApplicable {
         name: Name,
         element_type: &'static str,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.4: an annotation is applied in a *type context* — a type
+    /// argument, an array dimension, a cast, a class literal, a `new`, an
+    /// `instanceof` type, ... — but its `@Target` does not contain
+    /// `TYPE_USE`, which every type context requires ([§9.6.4.1]). javac:
+    /// `annotation @X not applicable in this type context`
+    /// (`compiler.err.annotation.type.not.applicable.to.type`); IntelliJ:
+    /// `'@X' not applicable to type use`.
+    AnnotationNotApplicableToType {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.4: an annotation that is applicable only in type contexts is
+    /// written before a type that is not written in source at all — a `var`
+    /// variable declaration or `var` lambda parameter ([§14.4], [§15.27.1])
+    /// — so the annotation has no closest type to apply to, which is a
+    /// compile-time error. IntelliJ: `'var' type may not be annotated`; javac
+    /// reports the declaration-context code
+    /// `compiler.err.annotation.type.not.applicable`.
+    AnnotatedVar {
+        name: Name,
         range: Option<rowan::TextRange>,
     },
     /// §9.7.1: an annotation element-value pair names an element the annotation
@@ -665,6 +689,12 @@ impl DeclDiagnostic {
             DeclDiagnostic::AnnotationNotApplicable { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::AnnotationNotApplicable)
             }
+            DeclDiagnostic::AnnotationNotApplicableToType { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AnnotationNotApplicableToType)
+            }
+            DeclDiagnostic::AnnotatedVar { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::AnnotatedVar)
+            }
             DeclDiagnostic::UnknownAnnotationMember { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationMember)
             }
@@ -903,13 +933,15 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::AnnotationNotApplicable {
                 name, element_type, ..
-            } => {
-                format!(
-                    "Annotation '@{}' is not applicable to '{}'",
-                    name.as_str(),
-                    element_type
-                )
+            } => format!(
+                "'@{}' not applicable to {}",
+                name.as_str(),
+                element_type_display(element_type)
+            ),
+            DeclDiagnostic::AnnotationNotApplicableToType { name, .. } => {
+                format!("'@{}' not applicable to type use", name.as_str())
             }
+            DeclDiagnostic::AnnotatedVar { .. } => "'var' type may not be annotated".to_owned(),
             DeclDiagnostic::UnknownAnnotationMember { name, .. } => {
                 format!("No annotation member named '{}'", name.as_str())
             }
@@ -1214,6 +1246,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicateClass { .. }
             | DeclDiagnostic::ClassPublicShouldBeInFile { .. }
             | DeclDiagnostic::AnnotationNotApplicable { .. }
+            | DeclDiagnostic::AnnotationNotApplicableToType { .. }
+            | DeclDiagnostic::AnnotatedVar { .. }
             | DeclDiagnostic::UnknownAnnotationMember { .. }
             | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
             | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
@@ -1260,6 +1294,12 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicateClass { name_range, .. }
             | DeclDiagnostic::ClassPublicShouldBeInFile { name_range, .. }
             | DeclDiagnostic::AnnotationNotApplicable {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AnnotationNotApplicableToType {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AnnotatedVar {
                 range: name_range, ..
             }
             | DeclDiagnostic::UnknownAnnotationMember {
@@ -1378,6 +1418,29 @@ impl DeclDiagnostic {
             DeclDiagnostic::RawTypeUse { .. } => Some(crate::java::warnings::LintKey::RawTypes),
             _ => None,
         }
+    }
+}
+
+/// The noun IntelliJ names an `ElementType` by in its
+/// `'@X' not applicable to {0}` message (`annotation.target.*` in
+/// `JavaPsiBundle`), for an `ElementType` constant as it is spelled in
+/// `java.lang.annotation` ([JLS §9.6.4.1] Table 9.7-1). The fallback keeps
+/// the constant itself, so a new element type never renders as nothing.
+fn element_type_display(element_type: &'static str) -> &'static str {
+    match element_type {
+        "ANNOTATION_TYPE" => "annotation type",
+        "CONSTRUCTOR" => "constructor",
+        "FIELD" => "field",
+        "LOCAL_VARIABLE" => "local variable",
+        "METHOD" => "method",
+        "MODULE" => "module",
+        "PACKAGE" => "package",
+        "PARAMETER" => "parameter",
+        "RECORD_COMPONENT" => "record component",
+        "TYPE" => "type",
+        "TYPE_PARAMETER" => "type parameter",
+        "TYPE_USE" => "type use",
+        other => other,
     }
 }
 

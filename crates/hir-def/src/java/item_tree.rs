@@ -708,6 +708,12 @@ pub struct Param {
     pub name: Name,
     pub ty: ItemTypeRef,
     pub varargs: bool,
+    /// The annotation modifiers of the parameter declaration
+    /// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4),
+    /// `void m(@A int p)`, `void m(@A String... p)`), in source order. The
+    /// type annotations of `ty` are separate: they annotate the *type*
+    /// ([§9.7.4]).
+    pub annotations: Vec<ItemAnnotationRef>,
 }
 
 /// The language-specific attributes of a method declaration, abstracted out of

@@ -1064,10 +1064,33 @@ fn param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Param {
     if let Some(dims) = node.children().find(|child| is(child, J::DIMENSIONS)) {
         ty = wrap_dims(ty, &dims);
     }
+    // §8.4.1/§9.7.4: the annotations the variable-arity parameter writes
+    // between its type and the `...` (`String @A ... p`) annotate the array
+    // type the parameter declares, so they join its type reference. They are
+    // *not* added to `ty.refs`: that list is paired positionally with the
+    // occurrences [`crate::java::ranges::type_ref_occurrences`] re-derives
+    // from the `TYPE` node, which does not contain them.
+    for trailing in trailing_modifier_lists(node) {
+        ty.type_use_annotations
+            .extend(item_annotations_from(&trailing, map));
+    }
     let name = first_token(node, J::IDENTIFIER)
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(missing_name);
-    Param { name, ty, varargs }
+    // §9.7.4: the annotation modifiers of a formal parameter declaration
+    // (`void m(@A int p)`) are its own modifier lists, like a field's; the
+    // annotations of its *type* (`String @A ... p`) joined the type
+    // reference above.
+    let annotations = declaration_modifier_lists(node)
+        .iter()
+        .flat_map(|mods| item_annotations_from(mods, map))
+        .collect();
+    Param {
+        name,
+        ty,
+        varargs,
+        annotations,
+    }
 }
 
 fn component_from(node: &SyntaxNode<Lang>, map: &AstIdMap) -> RecordComponent {
@@ -1109,6 +1132,76 @@ fn item_annotations_from(mods: &SyntaxNode<Lang>, map: &AstIdMap) -> Vec<ItemAnn
         .filter_map(|annotation| {
             annotation_ref(&annotation)
                 .map(|ranged| ItemAnnotationRef::from_spanned(ranged, &annotation, map))
+        })
+        .collect()
+}
+
+/// The `MODIFIER_LIST` children of a variable declaration or parameter node up
+/// to its `TYPE` child — the declaration's own `{VariableModifier}` prefix
+/// ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)):
+/// its declaration annotations and its `final`. A node without a type
+/// (`var`, or a declaration whose type failed to parse) has no `TYPE` to
+/// split at, so every modifier list counts as the declaration's.
+pub(crate) fn declaration_modifier_lists(node: &SyntaxNode<Lang>) -> Vec<SyntaxNode<Lang>> {
+    let type_start = declared_type_start(node);
+    node.children()
+        .filter(|child| is(child, J::MODIFIER_LIST))
+        .filter(|mods| type_start.is_none_or(|start| mods.text_range().start() < start))
+        .collect()
+}
+
+/// The `MODIFIER_LIST` children of a parameter node that follow its `TYPE`
+/// child: the *variable-arity modifier* of a varargs parameter
+/// ([JLS §8.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.1),
+/// `String @A ... p`). The grammar writes `UnannType` *before* it ([§9.7.4]:
+/// the annotation applies to the array type the variable-arity parameter
+/// declares, [§8.4.1]), so its annotations annotate the *type*, not the
+/// declaration.
+pub(crate) fn trailing_modifier_lists(node: &SyntaxNode<Lang>) -> Vec<SyntaxNode<Lang>> {
+    let type_start = declared_type_start(node);
+    node.children()
+        .filter(|child| is(child, J::MODIFIER_LIST))
+        .filter(|mods| type_start.is_some_and(|start| mods.text_range().start() > start))
+        .collect()
+}
+
+/// Where the `TYPE` child of a variable declaration or parameter node starts,
+/// the position that separates the declaration's modifiers from its type's.
+fn declared_type_start(node: &SyntaxNode<Lang>) -> Option<TextSize> {
+    node.children()
+        .find(|child| is(child, J::TYPE))
+        .map(|ty| ty.text_range().start())
+}
+
+/// The annotations of [`trailing_modifier_lists`], with their source ranges.
+pub(crate) fn type_annotations_after_type(node: &SyntaxNode<Lang>) -> Vec<AnnotationRef> {
+    trailing_modifier_lists(node)
+        .iter()
+        .flat_map(|mods| {
+            mods.children()
+                .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
+                .filter_map(|annotation| annotation_ref(&annotation))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The annotations of a variable declaration's own modifier lists
+/// ([`declaration_modifier_lists`]), with their source ranges — its
+/// *declaration* annotations ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)),
+/// in source order. A method or constructor's formal parameter carries its
+/// annotations in the item tree instead ([`Param::annotations`]); the
+/// body-side variable declarations (locals, resources, enhanced-for
+/// variables, exception parameters, pattern variables and lambda parameters)
+/// carry them in the body IR.
+pub(crate) fn modifier_annotations(node: &SyntaxNode<Lang>) -> Vec<AnnotationRef> {
+    declaration_modifier_lists(node)
+        .iter()
+        .flat_map(|mods| {
+            mods.children()
+                .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
+                .filter_map(|annotation| annotation_ref(&annotation))
+                .collect::<Vec<_>>()
         })
         .collect()
 }

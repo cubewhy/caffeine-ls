@@ -14,4 +14,4 @@ import java.lang.annotation.Target;
 @Marker
 class Anns {}
 
-@8:1: annotation-not-applicable: Annotation '@Marker' is not applicable to 'TYPE'
+@8:1: annotation-not-applicable: '@Marker' not applicable to type

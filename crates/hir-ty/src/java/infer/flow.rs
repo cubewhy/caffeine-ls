@@ -332,7 +332,8 @@ pub(super) fn effective_final_scan(
                 }
                 ExprData::Lambda { params, body } => {
                     self.scopes.push(FxHashMap::default());
-                    for (name, _, _) in &params {
+                    for param in &params {
+                        let name = &param.name;
                         // Lambda parameters are not `LocalId`s in the body
                         // tree; synthesize a placeholder identity so captures
                         // of the lambda's own parameters are not treated as

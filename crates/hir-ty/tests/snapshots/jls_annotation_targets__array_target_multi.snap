@@ -20,4 +20,4 @@ class Anns {
     void run() {}
 }
 
-@13:5: annotation-not-applicable: Annotation '@FF' is not applicable to 'METHOD'
+@13:5: annotation-not-applicable: '@FF' not applicable to method

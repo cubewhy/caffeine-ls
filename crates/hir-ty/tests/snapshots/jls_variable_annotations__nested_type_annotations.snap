@@ -1,0 +1,36 @@
+---
+source: crates/hir-ty/tests/jls_variable_annotations.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE) @interface TYPE_USE {}
+@Target(ElementType.LOCAL_VARIABLE) @interface LOCAL_VARIABLE {}
+@Target(ElementType.PARAMETER) @interface PARAMETER {}
+@Target(ElementType.FIELD) @interface FIELD {}
+@Target(ElementType.METHOD) @interface METHOD {}
+
+class Anns {
+java.util.List<@FIELD String> field;
+    java.util.List<@TYPE_USE String> typeUse;
+    int @FIELD [] fieldArray;
+    int @TYPE_USE [] typeUseArray;
+
+    void locals() {
+        java.util.List<@LOCAL_VARIABLE String> local = null;
+        java.util.List<@TYPE_USE String> ok = null;
+        int @METHOD [] method = null;
+    }
+
+    void parameters(java.util.List<@PARAMETER String> parameter) {}
+}
+
+@12:16: annotation-not-applicable-in-type-context: '@FIELD' not applicable to type use
+@14:9: annotation-not-applicable-in-type-context: '@FIELD' not applicable to type use
+@18:24: annotation-not-applicable-in-type-context: '@LOCAL_VARIABLE' not applicable to type use
+@20:13: annotation-not-applicable-in-type-context: '@METHOD' not applicable to type use
+@23:36: annotation-not-applicable-in-type-context: '@PARAMETER' not applicable to type use

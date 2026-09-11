@@ -195,10 +195,23 @@ pub enum JavaDiagnosticCode {
     /// file named after its simple name — which also means at most one `public`
     /// top-level type per file.
     ClassPublicShouldBeInFile,
-    /// §9.6.4.1: an annotation is used on a declaration or type whose element
-    /// type is not in its `@Target` set (or, for a type-use annotation, the
-    /// target includes neither `TYPE_USE` nor the declaration's element type).
+    /// §9.6.4.1: an annotation is used in a *declaration context* whose
+    /// element type is not in its `@Target` set (and the use site is not a
+    /// type context the annotation may attach to instead). javac:
+    /// `compiler.err.annotation.type.not.applicable`.
     AnnotationNotApplicable,
+    /// §9.7.4: an annotation is used in a *type context* — a type argument,
+    /// an array dimension, a cast, a class literal, ... — but its `@Target`
+    /// does not contain `TYPE_USE`. javac:
+    /// `compiler.err.annotation.type.not.applicable.to.type`.
+    AnnotationNotApplicableToType,
+    /// §9.7.4: an annotation that is applicable only in type contexts is
+    /// written before a type that is not written in source at all — a `var`
+    /// variable declaration or `var` lambda parameter — so there is no
+    /// closest type for it to annotate. IntelliJ: `'var' type may not be
+    /// annotated`; javac reports the declaration-context code
+    /// `compiler.err.annotation.type.not.applicable`.
+    AnnotatedVar,
     /// §9.7.1: an annotation element-value pair names an element the annotation
     /// type does not declare.
     UnknownAnnotationMember,
@@ -529,7 +542,11 @@ impl JavaDiagnosticCode {
             DuplicatePackage => None,
             DuplicateClass => Some("compiler.err.duplicate.class"),
             ClassPublicShouldBeInFile => Some("compiler.err.class.public.should.be.in.file"),
-            AnnotationNotApplicable => Some("compiler.err.annotation.not.applicable"),
+            AnnotationNotApplicable => Some("compiler.err.annotation.type.not.applicable"),
+            AnnotationNotApplicableToType => {
+                Some("compiler.err.annotation.type.not.applicable.to.type")
+            }
+            AnnotatedVar => Some("compiler.err.annotation.type.not.applicable"),
             UnknownAnnotationMember => Some("compiler.err.no.annotation.member"),
             DuplicateAnnotationMemberValue => {
                 Some("compiler.err.duplicate.annotation.member.value")
@@ -686,6 +703,10 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::DuplicateClass => "duplicate-class",
             JavaDiagnosticCode::ClassPublicShouldBeInFile => "class-public-should-be-in-file",
             JavaDiagnosticCode::AnnotationNotApplicable => "annotation-not-applicable",
+            JavaDiagnosticCode::AnnotationNotApplicableToType => {
+                "annotation-not-applicable-in-type-context"
+            }
+            JavaDiagnosticCode::AnnotatedVar => "annotated-var",
             JavaDiagnosticCode::UnknownAnnotationMember => "unknown-annotation-member",
             JavaDiagnosticCode::DuplicateAnnotationMemberValue => {
                 "duplicate-annotation-member-value"

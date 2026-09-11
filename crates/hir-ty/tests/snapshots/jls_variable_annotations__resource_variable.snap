@@ -1,0 +1,37 @@
+---
+source: crates/hir-ty/tests/jls_variable_annotations.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Target;
+
+@Target(ElementType.TYPE_USE) @interface TYPE_USE {}
+@Target(ElementType.LOCAL_VARIABLE) @interface LOCAL_VARIABLE {}
+@Target(ElementType.PARAMETER) @interface PARAMETER {}
+@Target(ElementType.FIELD) @interface FIELD {}
+@Target(ElementType.METHOD) @interface METHOD {}
+
+class Anns {
+static class Resource implements AutoCloseable {
+        public void close() {
+        }
+    }
+
+    void resources() throws Exception {
+        try (@LOCAL_VARIABLE Resource ok = new Resource()) {
+        }
+        try (@TYPE_USE Resource typeUse = new Resource()) {
+        }
+        try (@PARAMETER Resource parameter = new Resource()) {
+        }
+        try (@TYPE_USE var annotated = new Resource()) {
+        }
+    }
+}
+
+@22:14: annotation-not-applicable: '@PARAMETER' not applicable to local variable
+@24:14: annotated-var: 'var' type may not be annotated
+method close: cannot-override-final-method: Cannot override final method 'close()' in 'AutoCloseable'

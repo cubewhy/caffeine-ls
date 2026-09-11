@@ -5,7 +5,7 @@ use crate::{
     grammar::{
         decl::class_body,
         error_recover::{recover_parameter, recover_until},
-        modifiers::annotation,
+        modifiers::{annotation, variable_annotations_opt},
         names::qualified_name,
         stmt::{block, switch_common},
         types::{
@@ -871,6 +871,13 @@ pub fn case_pattern_or_constant(p: &mut Parser) {
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-Pattern
 fn pattern(p: &mut Parser) {
     let m = p.start();
+
+    // §14.30.1: a `TypePattern` is a `LocalVariableDeclaration`
+    // (`{VariableModifier} LocalVariableType VariableDeclaratorId`), and a
+    // `RecordPattern`'s reference type is preceded by the same annotations
+    // (`o instanceof @A Point(int x, int y)`, [§14.30.2]). They are consumed
+    // here so the branches below see the type that follows them.
+    variable_annotations_opt(p);
 
     if is_record_pattern_lookahead(p) {
         reference_type(p).ok();

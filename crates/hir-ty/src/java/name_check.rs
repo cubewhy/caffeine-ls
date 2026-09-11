@@ -796,8 +796,8 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             }
         }
         Lambda { params, body } => {
-            for (_, ty, _) in params {
-                if let Some(ty) = ty {
+            for param in params {
+                if let Some(ty) = &param.ty {
                     out.push((DiagLocation::Expr(id), ty.clone()));
                 }
             }

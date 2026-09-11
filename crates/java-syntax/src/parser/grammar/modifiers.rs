@@ -123,3 +123,26 @@ pub fn variable_modifier(p: &mut Parser) {
         m.complete(p, MODIFIER_LIST);
     }
 }
+
+/// The `{Annotation}` prefix of a *variable declaration* whose grammar allows
+/// no `final` — the type pattern of a pattern matching expression
+/// ([JLS §14.30.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30.1)):
+/// its `TypePattern` is a `LocalVariableDeclaration`
+/// (`{VariableModifier} LocalVariableType VariableDeclaratorId`), whose
+/// annotation modifiers precede the type. Unlike [`variable_modifier`] this
+/// deliberately leaves `final` unconsumed, so that an illegal
+/// `o instanceof final String s` keeps failing to parse rather than being
+/// silently accepted as a modifier.
+pub fn variable_annotations_opt(p: &mut Parser) {
+    if !p.at(AT) {
+        return;
+    }
+
+    let m = p.start();
+
+    while p.at(AT) {
+        annotation(p);
+    }
+
+    m.complete(p, MODIFIER_LIST);
+}

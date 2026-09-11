@@ -18,4 +18,4 @@ import java.lang.annotation.Target;
 @Ok
 @interface Anns {}
 
-@11:1: annotation-not-applicable: Annotation '@Inner' is not applicable to 'ANNOTATION_TYPE'
+@11:1: annotation-not-applicable: '@Inner' not applicable to annotation type

@@ -906,10 +906,11 @@ fn render_expr(out: &mut String, bodies: &BodyTree, id: ExprId) {
             "{id}: lambda ({}) -> {}",
             params
                 .iter()
-                .map(|(name, ty, _)| ty
+                .map(|param| param
+                    .ty
                     .as_ref()
-                    .map(|t| format!("{} {}", render_type(t), name))
-                    .unwrap_or_else(|| name.to_string()))
+                    .map(|t| format!("{} {}", render_type(t), param.name))
+                    .unwrap_or_else(|| param.name.to_string()))
                 .collect::<Vec<_>>()
                 .join(", "),
             match body {
