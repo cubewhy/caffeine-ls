@@ -99,12 +99,16 @@ struct CtSymClass {
 }
 
 impl CtSymIndex {
-    /// The lowest release the archive can answer for.
+    /// The lowest release the archive can answer for. `min_release() >
+    /// max_release()` means it can answer for none — the sentinel an archive
+    /// with no release directory at all yields, such as the pre-JDK-9 `ct.sym`
+    /// of a JDK 8 install, whose entries live under `META-INF/sym/`.
     pub fn min_release(&self) -> u8 {
         self.min_release
     }
 
-    /// The highest release the archive can answer for.
+    /// The highest release the archive can answer for. See
+    /// [`Self::min_release`] for the empty case.
     pub fn max_release(&self) -> u8 {
         self.max_release
     }
@@ -115,9 +119,11 @@ impl CtSymIndex {
     }
 
     /// Whether the archive is within its release bounds — the only releases it
-    /// carries a platform view for.
+    /// carries a platform view for. An archive with no release directory
+    /// answers for none.
     fn covers_release(&self, release: u8) -> bool {
-        (self.min_release..=self.max_release).contains(&release)
+        self.min_release <= self.max_release
+            && (self.min_release..=self.max_release).contains(&release)
     }
 
     /// Whether the platform view of `release` provides `fqn`.
@@ -184,18 +190,27 @@ fn lowest_named_release(dir: &str) -> u8 {
     dir.chars().filter_map(base36_value).min().unwrap_or(0)
 }
 
-/// The `ct.sym` of the SDK `library` belongs to: `ct.sym` next to the archive
-/// the library was registered from (`<sdk>/lib/ct.sym` for the `lib/modules`
-/// jimage and for `lib/rt.jar`), falling back to the pre-JDK-9 layout
-/// `<sdk>/jre/lib/ct.sym`. `None` when the SDK ships no symbol file.
+/// The `ct.sym` of the SDK `library` belongs to. The archive is looked for
+/// beside the platform archive the library was registered from — `<sdk>/lib`
+/// for the `lib/modules` jimage and `lib/rt.jar`, `<sdk>/jre/lib` for a JDK 8
+/// install's `jre/lib/rt.jar` — and, from either, at the SDK's own
+/// `<sdk>/lib/ct.sym` and `<sdk>/jre/lib/ct.sym`. `None` when the SDK ships no
+/// symbol file.
 fn ct_sym_path(archive: &Utf8Path) -> Option<Utf8PathBuf> {
+    // `<sdk>/lib/<archive>` or `<sdk>/jre/lib/<archive>`.
     let lib = archive.parent()?;
-    let sibling = lib.join("ct.sym");
-    if sibling.as_std_path().is_file() {
-        return Some(sibling);
-    }
-    let legacy = lib.parent()?.join("jre").join("lib").join("ct.sym");
-    legacy.as_std_path().is_file().then_some(legacy)
+    let home = if lib.parent()?.file_name() == Some("jre") {
+        lib.parent()?.parent()?
+    } else {
+        lib.parent()?
+    };
+    [
+        lib.join("ct.sym"),
+        home.join("lib").join("ct.sym"),
+        home.join("jre").join("lib").join("ct.sym"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.as_std_path().is_file())
 }
 
 /// Reads the archive's entry names into a [`CtSymIndex`]. Directories (names
@@ -208,6 +223,11 @@ fn build_index(path: &Utf8Path) -> anyhow::Result<CtSymIndex> {
         ZipArchive::new(file).with_context(|| format!("invalid symbol archive {path}"))?;
 
     let mut classes: FxHashMap<SmolStr, CtSymClass> = FxHashMap::default();
+    // Inverted on purpose: an archive that names no release keeps
+    // `min > max`, which [`CtSymIndex::covers_release`] reads as "answers for
+    // no release". The pre-JDK-9 `ct.sym` of a JDK 8 install is such an archive
+    // — its entries are jars under `META-INF/sym/rt.jar/`, not release
+    // directories.
     let mut min_release = u8::MAX;
     let mut max_release = 0u8;
 
@@ -508,5 +528,37 @@ mod tests {
         assert!(dir_covers("LMNOP", 21));
         // A name carrying `-` is not a release set at all (javac skips it).
         assert!(!dir_covers("8-mr1", 8));
+    }
+
+    /// The archive is found from every layout an SDK keeps its platform classes
+    /// in: the modular `<sdk>/lib/modules`, the legacy `<sdk>/lib/rt.jar` and a
+    /// JDK 8 install's `<sdk>/jre/lib/rt.jar`.
+    #[test]
+    fn symbol_archive_is_found_beside_the_platform_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(dir.path().join("jdk")).unwrap();
+        for archive in ["lib/modules", "lib/rt.jar", "jre/lib/rt.jar"] {
+            let archive = home.join(archive);
+            std::fs::create_dir_all(archive.parent().unwrap()).unwrap();
+            std::fs::write(&archive, b"").unwrap();
+        }
+        let bare = home.join("lib").join("modules");
+        assert_eq!(ct_sym_path(&bare), None);
+
+        // A JDK 9+ install keeps it under `lib/`.
+        let lib = home.join("lib").join("ct.sym");
+        std::fs::write(&lib, b"").unwrap();
+        assert_eq!(ct_sym_path(&bare), Some(lib.clone()));
+        assert_eq!(ct_sym_path(&home.join("lib").join("rt.jar")), Some(lib));
+
+        // A JDK 8 install keeps it under `jre/lib/` instead.
+        std::fs::remove_file(&home.join("lib").join("ct.sym")).unwrap();
+        let legacy = home.join("jre").join("lib").join("ct.sym");
+        std::fs::write(&legacy, b"").unwrap();
+        assert_eq!(
+            ct_sym_path(&home.join("jre").join("lib").join("rt.jar")),
+            Some(legacy.clone())
+        );
+        assert_eq!(ct_sym_path(&bare), Some(legacy));
     }
 }

@@ -6,8 +6,10 @@
 //! and `.sig` files that `rust-asm` must parse.
 //!
 //! The test skips — with a notice, never an assertion — when `JAVA_HOME` is
-//! unset, when the SDK ships no `lib/ct.sym`, or when a checked release lies
-//! above the archive's own last one (so an older JDK still passes).
+//! unset, when the SDK ships no symbol file, when that file carries no release
+//! directory (a pre-JDK-9 install, whose `ct.sym` holds `META-INF/sym/` jars
+//! instead), or when a checked release lies above the archive's own last one —
+//! so an older JDK still passes.
 
 mod common;
 
@@ -24,11 +26,6 @@ fn real_jdk() -> Option<(TestDatabase, LibraryId)> {
         return None;
     };
     let home = Utf8PathBuf::from(java_home);
-    let ct_sym = home.join("lib").join("ct.sym");
-    if !ct_sym.as_std_path().is_file() {
-        eprintln!("skipping: {ct_sym} does not exist");
-        return None;
-    }
     let archive = home.join("lib").join("modules");
     if !archive.as_std_path().is_file() {
         eprintln!("skipping: {archive} does not exist");
@@ -50,29 +47,51 @@ fn real_jdk() -> Option<(TestDatabase, LibraryId)> {
     Some((db, lib))
 }
 
+/// The archive's release bounds, or `None` with a notice when it carries no
+/// release directory at all — a pre-JDK-9 install, whose platform view is its
+/// own `rt.jar` and which therefore has no `--release` platform view to check.
+fn release_bounds(db: &TestDatabase, lib: LibraryId) -> Option<(u8, u8)> {
+    let index = hir::ct_sym_index(db, lib).expect("the SDK ships a readable symbol archive");
+    let (min, max) = (index.min_release(), index.max_release());
+    if min > max {
+        eprintln!(
+            "skipping: the SDK's symbol archive carries no release directory (pre-JDK-9 layout)"
+        );
+        return None;
+    }
+    eprintln!("ct.sym covers releases {min}..={max}");
+    Some((min, max))
+}
+
 #[test]
 fn real_ct_sym_indexes_and_reports() {
     let Some((db, lib)) = real_jdk() else {
         return;
     };
-    let index = hir::ct_sym_index(&db, lib).expect("the SDK ships a readable ct.sym");
-    let (min, max) = (index.min_release(), index.max_release());
-    eprintln!("ct.sym covers releases {min}..={max}");
-    assert!(max - min > 5, "the archive should span many releases");
+    let Some((min, max)) = release_bounds(&db, lib) else {
+        return;
+    };
+    let index = hir::ct_sym_index(&db, lib).expect("the SDK ships a readable symbol archive");
     // A class the archive tracks at all is tracked at the archive's last
     // release: `ct.sym` is generated from the very JDK that ships it.
     assert!(index.tracks("java.lang.Object"));
+    // `--release` cannot name a release the archive does not carry a view for.
+    assert!(hir::ct_sym_class_not_in_release(&db, lib, max, "java.util.List").is_none());
 
     // A class that first appeared in release 21 (`--release 20` rejects it and
     // `--release 21` accepts it) is exactly what `--release 8` must flag.
-    assert_eq!(
-        hir::ct_sym_class_not_in_release(&db, lib, 8, "java.util.SequencedCollection"),
-        Some((8, 21))
-    );
-    assert_eq!(
-        hir::ct_sym_class_not_in_release(&db, lib, 21, "java.util.SequencedCollection"),
-        None
-    );
+    if max >= 21 {
+        assert_eq!(
+            hir::ct_sym_class_not_in_release(&db, lib, 8, "java.util.SequencedCollection"),
+            Some((8, 21))
+        );
+        assert_eq!(
+            hir::ct_sym_class_not_in_release(&db, lib, 21, "java.util.SequencedCollection"),
+            None
+        );
+    } else {
+        eprintln!("skipping the release-21 assertions: the archive ends at {max}");
+    }
 
     // A class that has been there all along is never reported — under any
     // release the archive can answer for.
@@ -112,9 +131,9 @@ fn real_ct_sym_reports_members_added_later() {
     let Some((db, lib)) = real_jdk() else {
         return;
     };
-    let index = hir::ct_sym_index(&db, lib).expect("the SDK ships a readable ct.sym");
-    let (min, max) = (index.min_release(), index.max_release());
-    eprintln!("ct.sym covers releases {min}..={max}");
+    let Some((min, max)) = release_bounds(&db, lib) else {
+        return;
+    };
 
     // `String.strip()` (JVMS §4.6 descriptor `()Ljava/lang/String;`): added in
     // release 11, and therefore missing from the release-8 view — which is what
@@ -164,6 +183,10 @@ fn real_ct_sym_reports_members_added_later() {
     // The descriptor is the classfile identity — not the generic `Signature`
     // of the declaration, which for `getFirst` is `()TE;` while the descriptor
     // is `()Ljava/lang/Object;`.
+    if max < 21 {
+        eprintln!("skipping the release-21 member assertions: the archive ends at {max}");
+        return;
+    }
     assert_eq!(
         hir::ct_sym_member_not_in_release(
             &db,

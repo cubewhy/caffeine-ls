@@ -698,20 +698,27 @@ impl GlobalState {
         let mut sdk_library: FxHashMap<project_model::SdkId, project_model::LibraryId> =
             FxHashMap::default();
 
-        // JDKs: prefer the modular layout (`lib/modules`), fall back to the
-        // legacy `lib/rt.jar`.
+        // JDKs: prefer the modular layout (`lib/modules`), then the legacy
+        // `lib/rt.jar`, then the pre-JDK-9 layout (`jre/lib/rt.jar`), which is
+        // where a JDK 8 install keeps its platform classes.
         for sdk in graph.sdks.values() {
-            let modules = sdk.home_path.join("lib").join("modules");
-            let rt_jar = sdk.home_path.join("lib").join("rt.jar");
-            let (path, kind) =
-                if std::fs::metadata(std::path::Path::new(modules.as_path().as_str())).is_ok() {
-                    (modules, LibraryKind::Jimage)
-                } else {
-                    (rt_jar, LibraryKind::Jar)
-                };
-            if std::fs::metadata(std::path::Path::new(path.as_path().as_str())).is_ok()
-                && let Ok(id) = project_model::LibraryId::from_file_path(path.as_path().as_ref())
-            {
+            let candidates = [
+                (
+                    sdk.home_path.join("lib").join("modules"),
+                    LibraryKind::Jimage,
+                ),
+                (sdk.home_path.join("lib").join("rt.jar"), LibraryKind::Jar),
+                (
+                    sdk.home_path.join("jre").join("lib").join("rt.jar"),
+                    LibraryKind::Jar,
+                ),
+            ];
+            let Some((path, kind)) = candidates.into_iter().find(|(path, _)| {
+                std::fs::metadata(std::path::Path::new(path.as_path().as_str())).is_ok()
+            }) else {
+                continue;
+            };
+            if let Ok(id) = project_model::LibraryId::from_file_path(path.as_path().as_ref()) {
                 data.libraries
                     .entry(id)
                     .or_insert_with(|| LibraryInfo::new(kind, path.clone()));

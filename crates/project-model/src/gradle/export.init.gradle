@@ -222,13 +222,26 @@ gradle.projectsEvaluated {
                             }
                         } catch (Throwable ignored) {}
 
-                        if (compileJavaTask.respondTo('getJavaCompiler')) {
-                            def compilerProvider = compileJavaTask.getJavaCompiler()
-                            if (compilerProvider.isPresent()) {
-                                javaHome = normalizePath(compilerProvider.get().getMetadata().getInstallationPath().getAsFile())
+                        // The JVM that will actually compile: a configured
+                        // toolchain replaces the task's compiler, and its
+                        // installation is the platform the sources are checked
+                        // against. `respondTo` is *not* usable here — Gradle's
+                        // decorated task types reject it (their DynamicObject
+                        // answers only for real properties), and the throw
+                        // would silently skip this block — so the property is
+                        // probed directly.
+                        def compilerProvider = null
+                        try {
+                            if (compileJavaTask.hasProperty('javaCompiler')) {
+                                compilerProvider = compileJavaTask.property('javaCompiler')
                             }
-                        }
-                        else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
+                        } catch (Throwable ignored) {}
+
+                        if (compilerProvider != null && compilerProvider.isPresent()) {
+                            try {
+                                javaHome = normalizePath(compilerProvider.get().getMetadata().getInstallationPath().getAsFile())
+                            } catch (Throwable ignored) {}
+                        } else if (compileJavaTask.options.fork && compileJavaTask.options.forkOptions.javaHome != null) {
                             javaHome = normalizePath(compileJavaTask.options.forkOptions.javaHome)
                         }
                     }
