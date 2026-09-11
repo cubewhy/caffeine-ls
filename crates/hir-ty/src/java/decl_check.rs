@@ -23,6 +23,7 @@ use vfs::FileId;
 use crate::java::db::TyDatabase;
 use crate::java::method::{self, Access, InvocationContext, InvocationMode, MethodData};
 use crate::java::range_ctx::range_ctx;
+use crate::java::release_api::ReleaseApi;
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
 use crate::java::ty::{Ty, TyKind, TypeVarScope};
@@ -611,6 +612,18 @@ pub enum DeclDiagnostic {
     /// ([§9.8]) is not one. javac: `Unexpected @FunctionalInterface
     /// annotation`.
     NotAFunctionalInterfaceAnnotation { range: Option<rowan::TextRange> },
+    /// JEP 247: the platform API this reference resolved to is not part of the
+    /// release the compilation unit targets, so `javac --release` rejects it
+    /// ([JLS §7.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.3),
+    /// [JLS §13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-13.html#jls-13.1)).
+    NotSupportedInRelease {
+        api: ReleaseApi,
+        /// The release the source set compiles against.
+        found: u8,
+        /// The earliest release whose platform view provides the API.
+        added: u8,
+        range: Option<rowan::TextRange>,
+    },
 }
 
 /// Why `@SafeVarargs` was rejected ([JLS §9.6.4.7]).
@@ -809,6 +822,9 @@ impl DeclDiagnostic {
             }
             DeclDiagnostic::ServiceImplementationNotSubtype { .. } => {
                 DiagnosticCode::Java(JavaDiagnosticCode::ServiceImplementationNotSubtype)
+            }
+            DeclDiagnostic::NotSupportedInRelease { .. } => {
+                DiagnosticCode::Java(JavaDiagnosticCode::ApiNotSupportedInRelease)
             }
         }
     }
@@ -1206,6 +1222,9 @@ impl DeclDiagnostic {
                 implementation.display_simple(db),
                 service.display_simple(db)
             ),
+            DeclDiagnostic::NotSupportedInRelease {
+                api, found, added, ..
+            } => api.render(db, *found, *added),
         }
     }
 
@@ -1270,7 +1289,8 @@ impl DeclDiagnostic {
             | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. }
             | DeclDiagnostic::ModuleNotFound { .. }
             | DeclDiagnostic::PackageEmptyOrNotFound { .. }
-            | DeclDiagnostic::ServiceImplementationNotSubtype { .. } => "",
+            | DeclDiagnostic::ServiceImplementationNotSubtype { .. }
+            | DeclDiagnostic::NotSupportedInRelease { .. } => "",
         }
     }
 
@@ -1397,6 +1417,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::ServiceImplementationNotSubtype {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::NotSupportedInRelease {
                 range: name_range, ..
             } => *name_range,
             _ => None,

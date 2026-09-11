@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/Imported.java:
+package com.example;
+
+import java.util.Later;
+
+class Imported {}
+
+@2:0: api-not-supported-in-release: class 'java.util.Later' is not supported in release 8 (added in release 11)

@@ -193,6 +193,7 @@ pub fn build_graph_from_eclipse(
         root_path: abs_workspace_root,
         target_sdk: Some(sdk_id),
         language_level,
+        release: None,
         source_sets,
     };
 

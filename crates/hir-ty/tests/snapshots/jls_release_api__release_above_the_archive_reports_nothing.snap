@@ -1,0 +1,10 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/LaterUse.java:
+package com.example;
+
+class LaterUse {
+    java.util.Later l;
+}

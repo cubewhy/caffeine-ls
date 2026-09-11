@@ -222,6 +222,14 @@ pub struct ProjectData {
     /// exports nothing — a wrong level would produce false errors everywhere).
     pub language_level: Option<JavaLanguageLevel>,
 
+    /// The release of the platform API every source set of this project
+    /// compiles against (`javac --release N`,
+    /// [JEP 247](https://openjdk.org/jeps/247)), when the build system
+    /// reported one. Distinct from [`Self::language_level`]: `-source 8`
+    /// alone does not select a platform view, so `None` disables the
+    /// release-view check for the project's files.
+    pub release: Option<u8>,
+
     /// All source sets contained within the module (typically contains at least `Main` and `Test`).
     pub source_sets: FxHashMap<SourceSetKind, SourceSetData>,
 }
@@ -280,6 +288,7 @@ impl WorkspaceGraph {
             root_path: root.clone(),
             target_sdk: sdk,
             language_level: None,
+            release: None,
             source_sets: FxHashMap::from_iter([(
                 SourceSetKind::Main,
                 SourceSetData {

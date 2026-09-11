@@ -15,6 +15,7 @@ use rowan::TextRange;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
 
 use crate::java::db::TyDatabase;
+use crate::java::release_api::ReleaseApi;
 use crate::java::ty::Ty;
 
 /// Where a reported type error occurred, in the currency of the body IR: the
@@ -443,6 +444,16 @@ pub enum TypeError {
     /// infer. javac: `cannot infer type arguments for {C} … cannot use '<>'
     /// with non-generic class {C}`.
     CannotUseDiamondWithNonGeneric { expr: ExprId, class: Ty },
+    /// JEP 247: the platform API this reference resolved to is not part of the
+    /// release the source set targets
+    /// ([JLS §7.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.3),
+    /// [JLS §13.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-13.html#jls-13.1)).
+    NotSupportedInRelease {
+        location: DiagLocation,
+        api: ReleaseApi,
+        found: u8,
+        added: u8,
+    },
 }
 
 impl TypeError {
@@ -561,6 +572,9 @@ impl TypeError {
             TypeError::CannotUseDiamondWithNonGeneric { .. } => {
                 DiagnosticCode::Java(CannotUseDiamondWithNonGeneric)
             }
+            TypeError::NotSupportedInRelease { .. } => {
+                DiagnosticCode::Java(ApiNotSupportedInRelease)
+            }
         }
     }
 
@@ -658,7 +672,8 @@ impl TypeError {
             | AmbiguousName { location, .. }
             | ModuleNotAccessible { location, .. }
             | TypeArgumentOutOfBounds { location, .. }
-            | WrongTypeArgumentCount { location, .. } => location.clone(),
+            | WrongTypeArgumentCount { location, .. }
+            | NotSupportedInRelease { location, .. } => location.clone(),
             AlreadyCaught { local, .. } => DiagLocation::Local(*local),
             RawTypeUse { local, .. } => DiagLocation::Local(*local),
         }
@@ -1076,6 +1091,9 @@ impl TypeError {
                     class.display_simple(db)
                 )
             }
+            NotSupportedInRelease {
+                api, found, added, ..
+            } => api.render(db, *found, *added),
         }
     }
 

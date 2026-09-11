@@ -315,6 +315,7 @@ pub fn build_graph_from_maven_json(workspace: MavenWorkspace) -> WorkspaceGraph 
             root_path: abs_project_dir,
             target_sdk,
             language_level,
+            release: None,
             source_sets,
         };
 

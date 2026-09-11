@@ -91,6 +91,11 @@ pub struct ProjectGraphData {
     /// source set → the Java source level its files are compiled at. Absent
     /// entries mean "unknown": no source-level check runs for those files.
     pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
+    /// source set → the release of the platform API its files compile against
+    /// (`javac --release N`,
+    /// [JEP 247](https://openjdk.org/jeps/247)). Absent entries mean
+    /// "unknown": the release-view check runs for no file of that source set.
+    pub releases: FxHashMap<SourceSetId, u8>,
 }
 
 #[cfg(test)]

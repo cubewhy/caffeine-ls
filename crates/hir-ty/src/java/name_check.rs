@@ -31,6 +31,7 @@ use crate::{
     java::decl_check::DeclDiagnostic,
     java::diagnostics::DiagLocation,
     java::range_ctx::range_ctx,
+    java::release_api,
     java::resolve::{NameResolution, Resolver, resolve_name_checked, resolve_type_ref},
 };
 use hir_def::java::ranges;
@@ -67,6 +68,16 @@ pub(crate) enum TypeRefDiag {
         name: Name,
         range: Option<TextRange>,
     },
+    /// JEP 247: the name resolves against the runtime JDK, but the platform
+    /// API of the source set's release does not provide it.
+    NotSupportedInRelease {
+        name: Name,
+        range: Option<TextRange>,
+        /// The release the source set compiles against.
+        found: u8,
+        /// The earliest release whose platform view provides the name.
+        added: u8,
+    },
 }
 
 /// Checks the reference names of a source type reference (`&SpannedTypeRef`,
@@ -99,7 +110,19 @@ fn check_reference(
     into: &mut Vec<TypeRefDiag>,
 ) {
     match resolve_name_checked(db, scope, resolver, name) {
-        NameResolution::TypeVar | NameResolution::Resolved(_) => {}
+        NameResolution::TypeVar => {}
+        NameResolution::Resolved(name) => {
+            // JEP 247: a name that resolves against the runtime JDK may still
+            // be outside the platform API of the source set's `--release`.
+            if let Some((found, added)) = release_api::class_of_reference(db, scope, &name) {
+                into.push(TypeRefDiag::NotSupportedInRelease {
+                    name,
+                    range,
+                    found,
+                    added,
+                });
+            }
+        }
         NameResolution::Ambiguous(_) => into.push(TypeRefDiag::Ambiguous {
             name: name.clone(),
             range,
@@ -375,6 +398,19 @@ pub(crate) fn declaration_type_diagnostics(
                 TypeRefDiag::ModuleNotAccessible { name, range } => {
                     out.push(DeclDiagnostic::ModuleNotAccessible { name, range });
                 }
+                TypeRefDiag::NotSupportedInRelease {
+                    name,
+                    range,
+                    found,
+                    added,
+                } => {
+                    out.push(DeclDiagnostic::NotSupportedInRelease {
+                        api: crate::java::release_api::ReleaseApi::Class { name },
+                        found,
+                        added,
+                        range,
+                    });
+                }
             }
         }
         for &child in tree.data(id).body() {
@@ -442,6 +478,22 @@ pub(crate) fn import_diagnostics(
         if hir::fqn_resolve(db, scope, import.name.as_str()).is_none() {
             out.push(DeclDiagnostic::UnresolvedImport {
                 name: import.name.clone(),
+                range: import_range(import),
+            });
+        }
+    }
+
+    // JEP 247: the imported class exists on the runtime classpath but not in
+    // the platform API of the release — javac rejects the import as well as
+    // every use of it.
+    for import in &single_imports {
+        if let Some((found, added)) = release_api::class_of_reference(db, scope, &import.name) {
+            out.push(DeclDiagnostic::NotSupportedInRelease {
+                api: crate::java::release_api::ReleaseApi::Class {
+                    name: import.name.clone(),
+                },
+                found,
+                added,
                 range: import_range(import),
             });
         }

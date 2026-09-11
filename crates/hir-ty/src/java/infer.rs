@@ -407,6 +407,17 @@ pub(crate) fn body_types_impl(
                         range,
                     });
                 }
+                crate::java::name_check::TypeRefDiag::NotSupportedInRelease {
+                    name,
+                    range: _,
+                    found,
+                    added,
+                } => resolved_diags.push(TypeError::NotSupportedInRelease {
+                    location: location.clone(),
+                    api: crate::java::release_api::ReleaseApi::Class { name },
+                    found,
+                    added,
+                }),
             }
         }
     }

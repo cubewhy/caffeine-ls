@@ -106,6 +106,7 @@ pub use java::method::{
     MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
     pick_method, single_abstract_method,
 };
+pub use java::release_api::ReleaseApi;
 pub use java::resolve::scope_for_file as scope_for_test;
 pub use java::resolve::{
     Resolver, item_ty, method_params, record_component_types, resolve_type_ref, scope_for_file,

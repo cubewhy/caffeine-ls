@@ -74,6 +74,12 @@ pub struct ProjectGraph {
     /// entries mean "unknown": no source-level check runs for those files.
     #[returns(ref)]
     pub language_levels: FxHashMap<SourceSetId, JavaLanguageLevel>,
+    /// source set → the release of the platform API its files compile against
+    /// (`javac --release N`, [JEP 247](https://openjdk.org/jeps/247)). Absent
+    /// entries mean "unknown": the release-view check runs for no file of
+    /// that source set.
+    #[returns(ref)]
+    pub releases: FxHashMap<SourceSetId, u8>,
 }
 
 /// Per-library state: registration data plus the lazily built index.
@@ -163,6 +169,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         source_root_dirs,
         jdk_libraries,
         language_levels,
+        releases,
     } = data;
     match ProjectGraph::try_get(db) {
         Some(graph) => {
@@ -174,6 +181,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
             graph.set_source_root_dirs(db).to(source_root_dirs);
             graph.set_jdk_libraries(db).to(jdk_libraries);
             graph.set_language_levels(db).to(language_levels);
+            graph.set_releases(db).to(releases);
         }
         None => {
             ProjectGraph::new(
@@ -184,6 +192,7 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 source_root_dirs,
                 jdk_libraries,
                 language_levels,
+                releases,
             );
         }
     }
@@ -253,6 +262,24 @@ pub fn language_level_for_file(db: &dyn HirDatabase, file_id: FileId) -> Option<
     let source_set = source_set_for_file(db, file_id)?;
     let graph = ProjectGraph::try_get(db)?;
     graph.language_levels(db).get(&source_set).copied()
+}
+
+/// The release of the platform API `source_set` compiles against
+/// (`javac --release N`, [JEP 247](https://openjdk.org/jeps/247)), when the
+/// build system exported one. Reading the [`ProjectGraph`] input makes every
+/// consumer re-derive when the workspace is reloaded at a different release.
+pub fn release_for_source_set(db: &dyn HirDatabase, source_set: SourceSetId) -> Option<u8> {
+    let graph = ProjectGraph::try_get(db)?;
+    graph.releases(db).get(&source_set).copied()
+}
+
+/// The release of the platform API `file_id` compiles against. Reads the
+/// file→source-root input *before* consulting the [`ProjectGraph`], for the
+/// reason documented on [`language_level_for_file`]: a report memoized before
+/// the workspace load must not survive it.
+pub fn release_for_file(db: &dyn HirDatabase, file_id: FileId) -> Option<u8> {
+    let source_set = source_set_for_file(db, file_id)?;
+    release_for_source_set(db, source_set)
 }
 
 /// The tier-1 name index of a library: loaded from the on-disk cache or
@@ -369,6 +396,14 @@ fn library_index(db: &dyn HirDatabase, id: LibraryId) -> Option<Arc<LibraryIndex
     let state = db.hir_state();
     let library = state.libraries.get(&id)?;
     library.value().index.lock().clone()
+}
+
+/// The archive a registered library was loaded from, `None` when the library
+/// is not registered.
+pub(crate) fn library_archive(db: &dyn HirDatabase, id: LibraryId) -> Option<Utf8PathBuf> {
+    let state = db.hir_state();
+    let library = state.libraries.get(&id)?;
+    Some(library.value().archive.clone())
 }
 
 /// A class resolved to a specific library entry.

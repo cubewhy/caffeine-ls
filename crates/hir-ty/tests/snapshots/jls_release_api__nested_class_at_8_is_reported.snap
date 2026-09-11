@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/Nested.java:
+package com.example;
+
+class Nested {
+    java.util.Api.Nested n;
+}
+
+@3:4: api-not-supported-in-release: class 'java.util.Api.Nested' is not supported in release 8 (added in release 11)

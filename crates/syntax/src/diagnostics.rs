@@ -175,6 +175,10 @@ pub enum JavaDiagnosticCode {
     /// A construct that is a preview feature of the newest release and was used
     /// without `--enable-preview`. javac: `compiler.err.preview.feature.disabled`.
     PreviewFeatureDisabled,
+    /// A platform API that exists on the runtime JDK but not in the platform
+    /// view of the release the compilation unit targets
+    /// ([JEP 247](https://openjdk.org/jeps/247)).
+    ApiNotSupportedInRelease,
     /// §15.8.3/[§15.8.4]: the `this` or `super` keyword is used in a static
     /// context ([§8.1.3]) — a static method body, a static field initializer,
     /// a static initializer or an enum constant, where no enclosing instance
@@ -536,6 +540,10 @@ impl JavaDiagnosticCode {
                 Some("compiler.err.feature.not.supported.in.source")
             }
             PreviewFeatureDisabled => Some("compiler.err.preview.feature.disabled"),
+            // javac reports the same situation as the *different* diagnostic
+            // `compiler.err.cant.resolve.location`, whose caret sits at the
+            // reference; the release-aware report keeps its own stable code.
+            ApiNotSupportedInRelease => None,
             NonStaticThisFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             NonStaticFieldFromStaticContext => Some("compiler.err.non-static.cant.be.ref"),
             UnexpectedPackagePath => None,
@@ -693,6 +701,7 @@ impl JavaDiagnosticCode {
                 "feature-not-supported-in-source-level"
             }
             JavaDiagnosticCode::PreviewFeatureDisabled => "preview-feature-disabled",
+            JavaDiagnosticCode::ApiNotSupportedInRelease => "api-not-supported-in-release",
             JavaDiagnosticCode::NonStaticThisFromStaticContext => {
                 "non-static-this-from-static-context"
             }

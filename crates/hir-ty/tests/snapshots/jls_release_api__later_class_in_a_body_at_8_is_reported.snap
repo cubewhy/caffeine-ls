@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Body {
+    void f() {
+        java.util.Later l = null;
+    }
+}
+
+@4:24: api-not-supported-in-release: class 'java.util.Later' is not supported in release 8 (added in release 11)

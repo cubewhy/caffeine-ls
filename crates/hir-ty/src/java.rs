@@ -22,6 +22,7 @@ pub mod level_check;
 pub mod method;
 pub mod name_check;
 pub mod range_ctx;
+pub mod release_api;
 pub mod resolve;
 pub mod subtyping;
 pub mod ty;

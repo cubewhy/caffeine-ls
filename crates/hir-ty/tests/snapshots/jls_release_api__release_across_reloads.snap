@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_release_api.rs
+expression: out
+---
+--- at release 8
+FILE /src/com/example/LaterUse.java:
+package com.example;
+
+class LaterUse {
+    java.util.Later l;
+}
+
+@3:4: api-not-supported-in-release: class 'java.util.Later' is not supported in release 8 (added in release 11)
+--- at release 11
+FILE /src/com/example/LaterUse.java:
+package com.example;
+
+class LaterUse {
+    java.util.Later l;
+}

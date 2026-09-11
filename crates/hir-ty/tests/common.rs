@@ -218,6 +218,179 @@ pub fn register_jdk(db: &mut TestDatabase, fixture: &JdkFixture) {
     hir::set_project_graph(db, data);
 }
 
+/// A JDK fixture whose SDK also ships a `ct.sym` — the archive javac reads for
+/// `javac --release N`
+/// ([JEP 247](https://openjdk.org/jeps/247)). The archive is written next to
+/// the runtime jar, which is where [`hir::ct_sym`] derives its path from.
+pub struct ReleaseFixture {
+    pub jdk: JdkFixture,
+}
+
+pub fn release_fixture() -> ReleaseFixture {
+    let dir = TempDir::new().unwrap();
+    let base = camino::Utf8PathBuf::from_path_buf(dir.path().join("fixture")).unwrap();
+    std::fs::create_dir_all(&base).unwrap();
+    let jar = base.join("jdk.jar");
+    build_jar(&jar, &release_jdk_classes());
+    let lib = LibraryId::from_file_path(jar.as_std_path()).unwrap();
+    build_zip(&base.join("ct.sym"), &release_ct_sym_entries());
+    ReleaseFixture {
+        jdk: JdkFixture {
+            _dir: dir,
+            jar,
+            lib,
+        },
+    }
+}
+
+/// The runtime classes of the release fixture: the standard fixture, plus the
+/// classes the fake `ct.sym` tracks at different releases.
+///
+/// | class | runtime jar | `ct.sym` `8/` | `ct.sym` `9A/` | `ct.sym` `BCDEFGHIJK/` |
+/// |---|---|---|---|---|
+/// | `java.util.Api` | all members | `old()`, `<init>()` | `old()`, `<init>()` | `+ newer()`, `<init>(int)`, `FIELD` |
+/// | `java.util.Api$Nested` | `<init>()` | — | — | `<init>()` |
+/// | `java.util.Later` | `go()` | — | — | `go()` |
+/// | `java.util.Sub extends Api` | `<init>()` | `<init>()` | `<init>()` | `<init>()` |
+/// | `java.util.Absent` | `<init>()` | — | — | — |
+///
+/// So `newer`, `FIELD`, `Nested` and `Later` first appear in release 11 (`B`),
+/// and `java.util.Absent` is the class the archive never tracks at all — the
+/// shape of an internal `jdk.internal.*` class.
+pub fn release_jdk_classes() -> Vec<ClassSpec<'static>> {
+    let mut classes = jdk_classes();
+    let mut api = class_with_methods(
+        "java/util/Api",
+        Some("java/lang/Object"),
+        &[],
+        &[
+            ("old", "()Ljava/lang/String;"),
+            ("newer", "()Ljava/lang/String;"),
+            ("<init>", "()V"),
+            ("<init>", "(I)V"),
+        ],
+        &["", "", "", ""],
+    );
+    api.fields = &[("FIELD", "Ljava/lang/String;")];
+    classes.push(api);
+    classes.push(class_with_methods(
+        "java/util/Api$Nested",
+        Some("java/lang/Object"),
+        &[],
+        &[("<init>", "()V")],
+        &[""],
+    ));
+    classes.push(class_with_methods(
+        "java/util/Later",
+        Some("java/lang/Object"),
+        &[],
+        &[("go", "()V")],
+        &[""],
+    ));
+    classes.push(class_with_methods(
+        "java/util/Sub",
+        Some("java/util/Api"),
+        &[],
+        &[("<init>", "()V")],
+        &[""],
+    ));
+    classes.push(class_with_methods(
+        "java/util/Absent",
+        Some("java/lang/Object"),
+        &[],
+        &[("<init>", "()V")],
+        &[""],
+    ));
+    classes
+}
+
+/// The entries of the fake `ct.sym`, mirroring the real archive's layout
+/// (`<releaseDir>/<module>/<package path>/<SimpleName>.sig`) and its base-36
+/// release sets.
+fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
+    /// A `.sig` for `fqn` carrying `methods` and `fields` — the members that
+    /// release's view declares.
+    fn sig(
+        fqn: &'static str,
+        super_class: &'static str,
+        methods: &'static [(&'static str, &'static str)],
+        fields: &'static [(&'static str, &'static str)],
+    ) -> Vec<u8> {
+        class_bytes(&ClassSpec {
+            fqn,
+            super_class: Some(super_class),
+            interfaces: &[],
+            access: 0x0021, // ACC_PUBLIC | ACC_SUPER
+            fields,
+            methods,
+            // An empty slice means "no method carries a `Signature`", and the
+            // default method access is `ACC_PUBLIC`.
+            method_sigs: &[],
+            method_access: &[],
+            sig: None,
+        })
+    }
+
+    const CTOR: &[(&str, &str)] = &[("<init>", "()V")];
+    const API_8: &[(&str, &str)] = &[("old", "()Ljava/lang/String;"), ("<init>", "()V")];
+    const API_11: &[(&str, &str)] = &[
+        ("old", "()Ljava/lang/String;"),
+        ("newer", "()Ljava/lang/String;"),
+        ("<init>", "()V"),
+        ("<init>", "(I)V"),
+    ];
+    const FIELD_11: &[(&str, &str)] = &[("FIELD", "Ljava/lang/String;")];
+
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    // A real archive lists its directories too; the reader must skip them.
+    for dir in ["8", "9A", "BCDEFGHIJK"] {
+        entries.push((format!("{dir}/"), Vec::new()));
+        entries.push((format!("{dir}/java.base/"), Vec::new()));
+    }
+    let mut class = |dir: &str, name: &str, bytes: Vec<u8>| {
+        entries.push((format!("{dir}/java.base/java/util/{name}.sig"), bytes));
+    };
+    for dir in ["8", "9A"] {
+        class(
+            dir,
+            "Api",
+            sig("java/util/Api", "java/lang/Object", API_8, &[]),
+        );
+        class(dir, "Sub", sig("java/util/Sub", "java/util/Api", CTOR, &[]));
+    }
+    class(
+        "BCDEFGHIJK",
+        "Api",
+        sig("java/util/Api", "java/lang/Object", API_11, FIELD_11),
+    );
+    class(
+        "BCDEFGHIJK",
+        "Api$Nested",
+        sig("java/util/Api$Nested", "java/lang/Object", CTOR, &[]),
+    );
+    class(
+        "BCDEFGHIJK",
+        "Later",
+        sig("java/util/Later", "java/lang/Object", &[("go", "()V")], &[]),
+    );
+    class(
+        "BCDEFGHIJK",
+        "Sub",
+        sig("java/util/Sub", "java/util/Api", CTOR, &[]),
+    );
+    // A module descriptor and the surrogate package file: neither is a type a
+    // compilation unit can name.
+    entries.push((
+        "8/java.base/module-info.sig".to_owned(),
+        sig("module-info", "java/lang/Object", &[], &[]),
+    ));
+    entries.push((
+        "8/java.base/java/util/package-info.sig".to_owned(),
+        sig("java/util/package-info", "java/lang/Object", &[], &[]),
+    ));
+    entries
+}
+
 /// Registers a source set owning a single source root with `files` (path →
 /// text), the JDK fixture as a classpath library. Returns the source set id.
 /// The root becomes `SourceRootId(0)` (the first root applied). The source
@@ -238,6 +411,30 @@ pub fn register_source_set_at_level(
     fixture: &JdkFixture,
     files: &[(&str, &str)],
     level: Option<hir::JavaLanguageLevel>,
+) -> hir::SourceSetId {
+    register_source_set_with(db, fixture, files, level, None)
+}
+
+/// Like [`register_source_set_at_level`], but declares the release of the
+/// platform API the source set compiles against (`javac --release N`,
+/// [JEP 247](https://openjdk.org/jeps/247)) beside its source level. A `None`
+/// release leaves the release-view check off.
+pub fn register_source_set_at_release(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    files: &[(&str, &str)],
+    level: Option<hir::JavaLanguageLevel>,
+    release: Option<u8>,
+) -> hir::SourceSetId {
+    register_source_set_with(db, fixture, files, level, release)
+}
+
+fn register_source_set_with(
+    db: &mut TestDatabase,
+    fixture: &JdkFixture,
+    files: &[(&str, &str)],
+    level: Option<hir::JavaLanguageLevel>,
+    release: Option<u8>,
 ) -> hir::SourceSetId {
     let mut file_set = FileSet::default();
     for (i, (path, _)) in files.iter().enumerate() {
@@ -277,6 +474,9 @@ pub fn register_source_set_at_level(
         .insert(SourceRootId(0), source_set.clone());
     if let Some(level) = level {
         data.language_levels.insert(source_set.clone(), level);
+    }
+    if let Some(release) = release {
+        data.releases.insert(source_set.clone(), release);
     }
     hir::set_project_graph(db, data);
     source_set
@@ -1408,7 +1608,7 @@ impl Pool {
 }
 
 /// Encodes a minimal classfile (major 52, no attributes) for `spec`.
-fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
+pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
     let mut pool = Pool::new();
     let this_class = pool.class(spec.fqn);
     let super_class = match spec.super_class {
@@ -1513,6 +1713,20 @@ pub fn build_jar(path: &camino::Utf8Path, specs: &[ClassSpec]) {
         zip.start_file(format!("{}.class", spec.fqn), options)
             .unwrap();
         zip.write_all(&class_bytes(spec)).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+/// Builds a ZIP archive with explicit entry names — the shape a `ct.sym`
+/// fixture needs, whose entries are `<releaseDir>/<module>/<path>.sig` rather
+/// than `<fqn>.class`.
+pub fn build_zip(path: &camino::Utf8Path, entries: &[(String, Vec<u8>)]) {
+    let file = File::create(path.as_std_path()).unwrap();
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+    for (name, bytes) in entries {
+        zip.start_file(name.as_str(), options).unwrap();
+        zip.write_all(bytes).unwrap();
     }
     zip.finish().unwrap();
 }
@@ -2521,6 +2735,80 @@ pub fn check_level_diagnostics_across_first_load(
     format!(
         "--- queried before the workspace loaded\n{before}\n--- queried after the load\n{after}"
     )
+}
+
+/// The platform-release report of the source files
+/// (`javac --release N`, [JEP 247](https://openjdk.org/jeps/247)), rendered as
+/// `@{line}:{col}: {code}: {message}` — one line per declaration diagnostic
+/// and per body-inference diagnostic, ordered by file then source order. A
+/// `None` release reports nothing at all.
+pub fn check_release_diagnostics(release: Option<u8>, files: &[(&str, &str)]) -> String {
+    let fixture = release_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_at_release(&mut db, &fixture.jdk, files, None, release);
+    render_release_diagnostics(&db, files)
+}
+
+/// The platform-release report of the source files after loading the
+/// workspace twice at two different releases, to prove a reload re-derives the
+/// report rather than serving the first release's memoized answer.
+pub fn check_release_diagnostics_across_reloads(
+    first: u8,
+    second: u8,
+    files: &[(&str, &str)],
+) -> String {
+    let fixture = release_fixture();
+    let mut db = TestDatabase::new();
+    register_source_set_at_release(&mut db, &fixture.jdk, files, None, Some(first));
+    let before = render_release_diagnostics(&db, files);
+    register_source_set_at_release(&mut db, &fixture.jdk, files, None, Some(second));
+    let after = render_release_diagnostics(&db, files);
+    format!("--- at release {first}\n{before}\n--- at release {second}\n{after}")
+}
+
+fn render_release_diagnostics(db: &TestDatabase, files: &[(&str, &str)]) -> String {
+    let mut lines = files
+        .iter()
+        .map(|(path, text)| format!("FILE {path}:\n{text}"))
+        .collect::<Vec<_>>();
+    for (i, (_, text)) in files.iter().enumerate() {
+        let file_id = FileId::from_raw((i + 1) as u32);
+        let line_index = line_index::LineIndex::new(text);
+        let at = |range: rowan::TextRange| {
+            let lc = line_index.line_col(range.start());
+            format!("@{line}:{col}", line = lc.line, col = lc.col)
+        };
+        for diag in hir_ty::class_diagnostics(db, file_id) {
+            let Some(range) = diag.range() else {
+                continue;
+            };
+            lines.push(format!(
+                "{}: {}: {}",
+                at(range),
+                diag.code(),
+                diag.message(db)
+            ));
+        }
+        let tree = hir::file_item_tree(db, file_id);
+        let bodies = hir::file_body_tree(db, file_id);
+        for (id, _) in all_items(&tree) {
+            let Some(types) = hir_ty::body_types(db, file_id, id) else {
+                continue;
+            };
+            for diag in &types.diagnostics {
+                let Some(range) = diag.range(&bodies) else {
+                    continue;
+                };
+                lines.push(format!(
+                    "{}: {}: {}",
+                    at(range),
+                    diag.code(),
+                    diag.message(db, &bodies)
+                ));
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 /// Renders the resolved method call for each `(label, receiver, name, args)`
