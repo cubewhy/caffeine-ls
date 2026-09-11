@@ -156,12 +156,17 @@ class Outer {
 // §9.6.4.5/§9.6.4.6: `@SuppressWarnings` names the same keys the diagnostics
 // carry, so `"deprecation"` hides an ordinary warning and `"removal"` a
 // terminal one — a scope naming only one of them leaves the other standing.
+// The scope reaches a *declaration*-position reference too: the deprecated
+// parameter type of `e` is suppressed by the annotation on the method that
+// declares it.
 snapshot!(
     suppression_covers_deprecation_and_removal,
     check_body_diagnostic_spans(&[(
         "/src/q/S.java",
         "\
 package q;
+
+@Deprecated class D {}
 
 class S {
     @Deprecated void o() {}
@@ -173,6 +178,8 @@ class UseS {
     @SuppressWarnings(\"removal\") void b() { S s = new S(); s.t(); }
     @SuppressWarnings(\"deprecation\") void c() { S s = new S(); s.t(); }
     @SuppressWarnings(\"removal\") void d() { S s = new S(); s.o(); }
+    @SuppressWarnings(\"deprecation\") void e(D d) {}
+    void f(D d) {}
 }
 "
     )])
@@ -278,6 +285,29 @@ class UseP extends P {
 "
         )
     ])
+);
+
+// §9.6.4.5 for a *declaration*-position reference: the scope of the
+// annotation belongs to the declaration it annotates, so the deprecated
+// parameter type of `e` and the deprecated field type of `g` are suppressed
+// while the same references in `f` and `h` are reported.
+snapshot!(
+    suppression_covers_declaration_references,
+    check_class_diagnostics(&[(
+        "/src/q/S.java",
+        "\
+package q;
+
+@Deprecated class D {}
+
+class UseS {
+    @SuppressWarnings(\"deprecation\") void e(D d) {}
+    void f(D d) {}
+    @SuppressWarnings(\"deprecation\") D g;
+    D h;
+}
+"
+    )])
 );
 
 // §9.6.4.6: a static access writes its qualifier as a *type name*, so the

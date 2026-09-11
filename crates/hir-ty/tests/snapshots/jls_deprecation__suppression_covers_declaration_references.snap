@@ -1,0 +1,18 @@
+---
+source: crates/hir-ty/tests/jls_deprecation.rs
+expression: out
+---
+FILE /src/q/S.java:
+package q;
+
+@Deprecated class D {}
+
+class UseS {
+    @SuppressWarnings("deprecation") void e(D d) {}
+    void f(D d) {}
+    @SuppressWarnings("deprecation") D g;
+    D h;
+}
+
+@6:11: deprecated-use: D in q has been deprecated
+@8:4: deprecated-use: D in q has been deprecated
