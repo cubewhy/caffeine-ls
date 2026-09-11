@@ -16,7 +16,7 @@ use crate::java::{
     inference::{Constraint, Inference, InvocationPhase},
     method::{InvocationContext, MethodData, member_set, single_abstract_method},
     resolve::resolve_type_ref,
-    ty::{BoundKind, Ty, TyKind, WildcardBound, boxed_type},
+    ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, boxed_type},
 };
 
 use super::{
@@ -225,11 +225,11 @@ impl InferCtx<'_> {
         // is left to inference.
         let (formals, mut ret, throws_formals) = match explicit_type_args {
             Some(explicit) => {
-                let subst: FxHashMap<Name, Ty> = method
+                let subst: FxHashMap<TypeVarScope, Ty> = method
                     .type_params
                     .iter()
                     .zip(explicit.iter().copied())
-                    .map(|(tp, ty)| (tp.name.clone(), ty))
+                    .map(|(tp, ty)| (tp.scope.clone(), ty))
                     .collect();
                 let formals: Vec<Ty> = method
                     .params
@@ -614,13 +614,13 @@ impl InferCtx<'_> {
                     // enclosing `U`. Without the substitution the declared
                     // `Optional<T>` (rigid `T`) dead-ends the return
                     // constraint and `map` is reported inapplicable.
-                    let subst: FxHashMap<Name, Ty> = ref_method
+                    let subst: FxHashMap<TypeVarScope, Ty> = ref_method
                         .as_ref()
                         .map(|(ref_method, _)| {
                             ref_method
                                 .type_params
                                 .iter()
-                                .map(|tp| (tp.name.clone(), inference.fresh_var(self.db)))
+                                .map(|tp| (tp.scope.clone(), inference.fresh_var(self.db)))
                                 .collect()
                         })
                         .unwrap_or_default();
@@ -629,7 +629,7 @@ impl InferCtx<'_> {
                     // constrain the new variables from above.
                     if let Some((ref_method, _)) = &ref_method {
                         for tp in &ref_method.type_params {
-                            let var = subst[&tp.name];
+                            let var = subst[&tp.scope];
                             let bounds: Vec<Ty> = tp
                                 .bounds
                                 .iter()
@@ -956,7 +956,7 @@ impl InferCtx<'_> {
             type_params
                 .iter()
                 .map(|tp| {
-                    Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone())
+                    Ty::type_var(self.db, tp.scope.clone(), tp.bounds.clone())
                         .substitute(self.db, &subst)
                 })
                 .collect(),
@@ -970,7 +970,7 @@ impl InferCtx<'_> {
         // with the actual arguments may constrain the variables.
         let bare: Vec<Ty> = type_params
             .iter()
-            .map(|tp| Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone()))
+            .map(|tp| Ty::type_var(self.db, tp.scope.clone(), tp.bounds.clone()))
             .collect();
         let param_class = Ty::reference(self.db, name.clone(), bare.clone());
         let access = self.access.clone();
@@ -1016,11 +1016,10 @@ impl InferCtx<'_> {
     pub(super) fn decapture(&self, ty: &Ty) -> Ty {
         match ty.kind(self.db) {
             TyKind::TypeVar {
-                name,
+                scope,
                 bounds,
                 lower,
-                ..
-            } if name.as_str().starts_with("CAP#") => match lower {
+            } if scope.is_capture() => match lower {
                 Some(lower) => self.decapture(lower),
                 None => bounds
                     .first()

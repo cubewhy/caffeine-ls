@@ -39,7 +39,9 @@ use hir_expand::name::Name;
 use crate::{
     java::db::{ScopeId, ScopeKind, TyDatabase},
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
-    java::ty::{BoundKind, Ty, TyData, TyKind, WildcardBound, boxed_type, unboxed_primitive},
+    java::ty::{
+        BoundKind, Ty, TyData, TyKind, TypeVarScope, WildcardBound, boxed_type, unboxed_primitive,
+    },
 };
 
 /// The direct supertypes of `ty`
@@ -104,14 +106,24 @@ pub(crate) fn supertypes_impl(
                             // (e.g. `String`, whose parents are `Comparable<String>`)
                             // carries fully-ground parent types.
                             let interner = &db.hir_state().interner;
-                            let binding: FxHashMap<Name, Ty> = info
+                            let owner = Name::new(interner.resolve(&resolved.entry.fqn));
+                            let class_names: Vec<Name> = info
                                 .type_params
                                 .iter()
                                 .map(|tp| Name::new(interner.resolve(&tp.name)))
-                                .zip(args.iter().copied())
                                 .collect();
+                            // §4.10.2 with [§4.4]/[§6.3]: the supertypes are
+                            // instantiated with the receiver's arguments,
+                            // keyed by the declaring parameters' scopes.
+                            let binding: FxHashMap<TypeVarScope, Ty> =
+                                crate::java::resolve::library_class_binding(
+                                    &owner,
+                                    &class_names,
+                                    args,
+                                );
+                            let ctx = crate::java::resolve::LibrarySignature::class(&owner);
                             let instantiate = |tyref: &hir::TypeRef<hir::Symbol>| {
-                                crate::java::resolve::ty_from_library(db, tyref)
+                                crate::java::resolve::ty_from_library_signature(db, tyref, &ctx)
                                     .substitute(db, &binding)
                             };
                             let mut out = Vec::new();
@@ -238,11 +250,14 @@ pub(crate) fn source_supertypes(
         if args.is_empty() {
             resolved
         } else {
-            let binding: FxHashMap<Name, Ty> = declared
-                .iter()
-                .map(|tp| tp.name.clone())
-                .zip(args.iter().copied())
-                .collect();
+            // §4.10.2 with [§4.4]/[§6.3]: bind the class's *own* declared
+            // parameters, keyed by their declaring scopes.
+            let binding = crate::java::resolve::source_class_binding(
+                source.file,
+                source.item,
+                declared,
+                args,
+            );
             resolved.substitute(db, &binding)
         }
     };
@@ -491,7 +506,14 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
     let mut visited = FxHashSet::default();
     let mut stack = vec![sub];
     while let Some(current) = stack.pop() {
-        let TyKind::TypeVar { name, bounds, .. } = current.kind(db) else {
+        // Also the visited key: a variable is identified by its declaring
+        // parameter ([§4.4], [§6.3]), not by its bare name ([§6.4.1]).
+        let TyKind::TypeVar {
+            scope: var_scope,
+            bounds,
+            ..
+        } = current.kind(db)
+        else {
             continue;
         };
         // §4.10.2 with §5.1.10: a *source* capture variable `CAP` with lower
@@ -506,7 +528,7 @@ fn type_var_subtype(db: &dyn TyDatabase, scope: ScopeId, sub: Ty, sup: Ty) -> bo
         {
             return true;
         }
-        if !visited.insert(name) {
+        if !visited.insert(var_scope.clone()) {
             continue;
         }
         for bound in bounds {

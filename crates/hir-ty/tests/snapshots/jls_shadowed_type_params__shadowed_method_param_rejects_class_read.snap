@@ -23,3 +23,4 @@ method Shadow(T): <init>
 method m(): void
   locals: l1: T
   exprs: e4: com.example.Shadow<T> | e5: T
+  diags: e5@10:18: incompatible-types: Incompatible types. Found: 'T', required: 'T'

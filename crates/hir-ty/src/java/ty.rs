@@ -19,10 +19,12 @@
 
 use std::fmt;
 
+use hir_def::java::item_tree::ItemId;
 use hir_expand::name::Name;
 use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
+use vfs::FileId;
 
 use crate::java::db::TyDatabase;
 
@@ -86,22 +88,18 @@ pub enum TyKind {
     /// ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
     /// `? super T` captures to a variable with the `Object` upper bound and
     /// the `T` lower bound.
+    ///
+    /// The variable is identified by its declaring parameter ([§6.3], [§8.4.4]):
+    /// [`TypeVarScope`] carries the declaring declaration and the parameter's
+    /// own name, so a method type parameter that shadows a class type
+    /// parameter of the same name is a *distinct type*
+    /// ([§6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4.1),
+    /// javac's `T#1`/`T#2`), and a substitution declared over one declaration's
+    /// parameters never captures another's ([§4.4] capture-avoidance).
     TypeVar {
-        name: Name,
+        scope: TypeVarScope,
         bounds: Vec<Ty>,
         lower: Option<Ty>,
-        /// The syntactic scope that declares this type variable
-        /// ([JLS §6.4.1], [§8.4.4]): `"c"` for a class/interface/enum/record
-        /// type parameter, `"m"` for a method (or constructor) type
-        /// parameter, `"g"` for a generic method *reference* (the `type_name`
-        /// declaration captured during method-reference resolution) and
-        /// `"x"` for a capture variable ([§5.1.10]). A method type parameter
-        /// shadows a class type parameter of the same name, and the two are
-        /// *distinct types* — javac renders `T#1`/`T#2` — so interning a
-        /// `TyKind::TypeVar` by `(name, scope)` keeps the shadowing pair
-        /// apart and lets a name-keyed substitution distinguish which `T` it
-        /// may replace.
-        scope: &'static str,
     },
     /// An array type ([JLS §10.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.1)).
     Array(Box<Ty>),
@@ -142,6 +140,114 @@ pub enum BoundKind {
     Lower,
 }
 
+/// The declaring parameter of a type variable ([JLS §4.4], [§6.3]): the
+/// declaration that introduces it and the parameter's own name within that
+/// declaration — the identity a type variable is interned and substituted by.
+///
+/// [§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)
+/// introduces a type variable as `{TypeParameter}` — *which* declaration
+/// introduced it is part of what the variable is, not an annotation on it.
+/// [§6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)
+/// scopes that declaration, and
+/// [§6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4.1)
+/// makes a shadowing declaration introduce a *different* variable: a method
+/// type parameter named `T` and an enclosing class type parameter named `T`
+/// are two types javac renders `T#1`/`T#2`, not one. A substitution is
+/// declared over one declaration's parameters ([§4.4] capture-avoidance) and
+/// must therefore match on this identity, never on the bare name — a
+/// same-named variable of another declaration that merely *occurs* inside the
+/// substituted type is untouched.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum TypeVarScope {
+    /// A type parameter of a source class/interface/enum/record declaration
+    /// ([§8.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.2),
+    /// [§9.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.1.2)).
+    Class {
+        file: FileId,
+        item: ItemId,
+        name: Name,
+    },
+    /// A type parameter of a source method or constructor declaration
+    /// ([§8.4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.4),
+    /// [§8.8.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.4)).
+    Method {
+        file: FileId,
+        item: ItemId,
+        name: Name,
+    },
+    /// A type parameter of a classfile class or interface, identified by the
+    /// declaring class's binary name ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1)).
+    LibraryClass { owner: Name, name: Name },
+    /// A type parameter of a classfile method or constructor, identified by
+    /// the declaring class's binary name and the method's name
+    /// ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1)).
+    LibraryMethod {
+        owner: Name,
+        method: Name,
+        name: Name,
+    },
+    /// A capture variable ([§5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
+    /// a fresh variable, distinct per capture, not a declared parameter. `id`
+    /// is the session-wide serial that makes it fresh.
+    Capture { id: u64, name: Name },
+    /// A type variable whose declaring parameter is not recoverable at the
+    /// position that built it — a classfile signature lowered without its
+    /// declaring declaration, and a unit-test fixture. Identified by name
+    /// alone, so no declaration-scoped substitution ever matches it: a
+    /// variable that cannot be attributed to a declaration must not be
+    /// captured by another declaration's substitution.
+    Unnamed { name: Name },
+}
+
+impl TypeVarScope {
+    /// The variable's own name within its declaring parameter list — the name
+    /// javac renders.
+    pub fn name(&self) -> &Name {
+        match self {
+            TypeVarScope::Class { name, .. }
+            | TypeVarScope::Method { name, .. }
+            | TypeVarScope::LibraryClass { name, .. }
+            | TypeVarScope::LibraryMethod { name, .. }
+            | TypeVarScope::Capture { name, .. }
+            | TypeVarScope::Unnamed { name } => name,
+        }
+    }
+
+    /// Whether this is a capture variable ([§5.1.10]) rather than a declared
+    /// type parameter.
+    pub fn is_capture(&self) -> bool {
+        matches!(self, TypeVarScope::Capture { .. })
+    }
+
+    /// The scope of the type variable named `name` in a classfile `Signature`
+    /// attribute ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1))
+    /// of the class `owner`: the declaring *method's* own parameter when the
+    /// signature belongs to a method that declares the name, otherwise the
+    /// declaring class's. A classfile signature resolves type variables
+    /// innermost-first exactly as source does ([§6.4.1]): a method type
+    /// parameter shadows a class type parameter of the same name. A name
+    /// declared by neither — an enclosing class's parameter, whose arguments
+    /// the receiver does not carry — keeps the class-scoped identity, which no
+    /// binding of that class can match (bindings carry only the class's own
+    /// declared parameters), so it is left a variable rather than captured by
+    /// a same-named parameter of the class.
+    pub fn library(owner: &Name, method: Option<(&Name, &[Name])>, name: &Name) -> TypeVarScope {
+        if let Some((method_name, method_params)) = method
+            && method_params.contains(name)
+        {
+            return TypeVarScope::LibraryMethod {
+                owner: owner.clone(),
+                method: method_name.clone(),
+                name: name.clone(),
+            };
+        }
+        TypeVarScope::LibraryClass {
+            owner: owner.clone(),
+            name: name.clone(),
+        }
+    }
+}
+
 impl Ty {
     fn new(db: &dyn TyDatabase, kind: TyKind) -> Self {
         Self {
@@ -171,57 +277,58 @@ impl Ty {
         )
     }
 
-    /// A *class-scoped* type variable ([JLS §4.4]): a type parameter of the
-    /// enclosing class/interface/enum/record declaration.
-    pub fn type_var(db: &dyn TyDatabase, name: impl Into<Name>, bounds: Vec<Ty>) -> Self {
+    /// A type variable declared by `scope` ([JLS §4.4], [§6.3]).
+    ///
+    /// The scope carries both the declaring declaration and the parameter's
+    /// own name: the two names javac renders `T#1`/`T#2` are distinct types
+    /// ([§6.4.1]), and a substitution declared over one declaration's
+    /// parameters is capture-avoiding ([§4.4]) because it matches on the
+    /// scope, never on the bare name.
+    pub fn type_var(db: &dyn TyDatabase, scope: TypeVarScope, bounds: Vec<Ty>) -> Self {
         Self::new(
             db,
             TyKind::TypeVar {
-                name: name.into(),
+                scope,
                 bounds,
                 lower: None,
-                scope: "c",
             },
         )
     }
 
-    /// A *method-scoped* type variable ([JLS §8.4.4]): a type parameter of a
-    /// method or constructor declaration, which shadows a class type
-    /// parameter of the same name ([JLS §6.4.1]) and is a *distinct* type
-    /// (javac's `T#1`/`T#2`).
-    pub(crate) fn method_type_var(
+    /// A type variable with its `lower` bound set
+    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
+    /// the shape of a `? super T` capture variable.
+    pub(crate) fn type_var_with(
         db: &dyn TyDatabase,
-        name: impl Into<Name>,
+        scope: TypeVarScope,
         bounds: Vec<Ty>,
+        lower: Option<Ty>,
     ) -> Self {
         Self::new(
             db,
             TyKind::TypeVar {
-                name: name.into(),
+                scope,
                 bounds,
-                lower: None,
-                scope: "m",
+                lower,
             },
         )
     }
 
-    /// A *generic-reference* type variable: the type parameters of a generic
-    /// method named by a method reference ([JLS §15.13.1]), which stay
-    /// distinct from the class's own and from the referencing declaration's.
-    pub(crate) fn ref_type_var(
-        db: &dyn TyDatabase,
-        name: impl Into<Name>,
-        bounds: Vec<Ty>,
-    ) -> Self {
-        Self::new(
-            db,
-            TyKind::TypeVar {
-                name: name.into(),
-                bounds,
-                lower: None,
-                scope: "g",
-            },
-        )
+    /// A type variable with no recoverable declaring declaration — the
+    /// lowering fallback for a classfile signature built without its class
+    /// (e.g. an annotation element type) and the unit-test fixture. See
+    /// [`TypeVarScope::Unnamed`].
+    pub fn unscoped_var(db: &dyn TyDatabase, name: impl Into<Name>, bounds: Vec<Ty>) -> Self {
+        Self::type_var(db, TypeVarScope::Unnamed { name: name.into() }, bounds)
+    }
+
+    /// The declaring parameter of this type variable, or `None` for any other
+    /// type.
+    pub fn type_var_scope<'a>(&self, db: &'a dyn TyDatabase) -> Option<&'a TypeVarScope> {
+        match self.kind(db) {
+            TyKind::TypeVar { scope, .. } => Some(scope),
+            _ => None,
+        }
     }
 
     /// The declared bounds of this type variable
@@ -244,45 +351,36 @@ impl Ty {
         }
     }
 
-    /// A copy of this type variable carrying the given `lower` bound
-    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)).
-    pub(crate) fn with_lower(self, db: &dyn TyDatabase, lower: Option<Ty>) -> Ty {
-        match self.kind(db) {
-            TyKind::TypeVar {
-                name,
-                bounds,
-                scope,
-                ..
-            } => Ty::new(
-                db,
-                TyKind::TypeVar {
-                    name: name.clone(),
-                    bounds: bounds.clone(),
-                    lower,
-                    scope,
-                },
-            ),
-            _ => self,
-        }
-    }
-
     /// A capture variable ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
     /// a fresh type variable with the `Object` upper bound and the `lower`
-    /// bound (the `? super T` capture).
+    /// bound (the `? super T` capture). Freshness comes from the session-wide
+    /// serial in [`TypeVarScope::Capture`], so distinct captures never intern
+    /// to the same variable ([§5.1.10] requires a *fresh* variable per
+    /// capture).
     pub(crate) fn captured_var(db: &dyn TyDatabase, lower: Ty) -> Self {
-        let name = format!(
-            "CAP#{}",
-            NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-        );
-        Self::new(
+        let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let scope = TypeVarScope::Capture {
+            id,
+            name: Name::new(&format!("CAP#{id}")),
+        };
+        Ty::type_var_with(
             db,
-            TyKind::TypeVar {
-                name: Name::new(&name),
-                bounds: vec![Ty::reference(db, "java.lang.Object", Vec::new())],
-                lower: Some(lower),
-                scope: "x",
-            },
+            scope,
+            vec![Ty::reference(db, "java.lang.Object", Vec::new())],
+            Some(lower),
         )
+    }
+
+    /// A fresh capture variable with an upper bound
+    /// ([JLS §5.1.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.10)):
+    /// the shape a `? extends T` / bare `?` capture takes.
+    fn fresh_capture(db: &dyn TyDatabase, bound: Ty) -> Ty {
+        let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let scope = TypeVarScope::Capture {
+            id,
+            name: Name::new(&format!("CAP#{id}")),
+        };
+        Ty::type_var(db, scope, vec![bound])
     }
 
     pub fn array(db: &dyn TyDatabase, inner: Ty) -> Self {
@@ -419,7 +517,7 @@ impl Ty {
     #[stacksafe]
     pub fn contains_type_var_named_capture(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {
-            TyKind::TypeVar { name, .. } => name.as_str().starts_with("CAP#"),
+            TyKind::TypeVar { scope, .. } => scope.is_capture(),
             TyKind::Reference { args, .. } => args
                 .iter()
                 .any(|arg| arg.contains_type_var_named_capture(db)),
@@ -441,7 +539,7 @@ impl Ty {
     /// declaration that introduced the parameter carries.
     pub fn contains_declared_type_var(&self, db: &dyn TyDatabase) -> bool {
         match self.kind(db) {
-            TyKind::TypeVar { name, .. } => !name.as_str().starts_with("CAP#"),
+            TyKind::TypeVar { scope, .. } => !scope.is_capture(),
             TyKind::Reference { args, .. } => {
                 args.iter().any(|arg| arg.contains_declared_type_var(db))
             }
@@ -516,22 +614,14 @@ impl Ty {
                 (Some(a), Some(b)) => a.kind == b.kind && a.ty.same_shape(db, &b.ty),
                 _ => false,
             },
-            (
-                TyKind::TypeVar {
-                    name: a, scope: sa, ..
-                },
-                TyKind::TypeVar {
-                    name: b, scope: sb, ..
-                },
-            ) => {
-                // §4.4/§6.4.1: a type variable is identified by its
-                // declaring scope as well as its name — a method type
-                // parameter shadows and *differs* from the same-named class
-                // parameter, so a `T`-for-`T` pair across scopes is not the
-                // same shape. Same-scope same-name pairs (the self-
-                // referential bound of §4.4 truncated at different depths)
-                // stay identical.
-                a == b && sa == sb
+            (TyKind::TypeVar { scope: sa, .. }, TyKind::TypeVar { scope: sb, .. }) => {
+                // §4.4/§6.4.1: a type variable is identified by its declaring
+                // parameter — a method type parameter shadows and *differs*
+                // from the same-named class parameter, so a `T`-for-`T` pair
+                // across declarations is not the same shape. Same-scope pairs
+                // (the self-referential bound of §4.4 truncated at different
+                // depths) stay identical.
+                sa == sb
             }
             (TyKind::Intersection(a), TyKind::Intersection(b)) => {
                 a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.same_shape(db, y))
@@ -606,15 +696,24 @@ impl Ty {
         }
     }
 
-    /// Replaces every type variable named in `binding` with its type argument.
-    /// Used to instantiate the supertypes of a parameterized type
+    /// Replaces every type variable declared by a parameter in `binding` with
+    /// its type argument. Used to instantiate the supertypes of a
+    /// parameterized type
     /// ([JLS §4.10.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10.2)):
     /// the classfile signature of `ArrayList<E>` declares `extends AbstractList<E>`,
     /// and substituting `E → String` gives `AbstractList<String>`.
-    pub fn substitute(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
+    ///
+    /// The substitution is *capture-avoiding* ([JLS §4.4]): `binding` maps a
+    /// [`TypeVarScope`] — a declaring parameter — to its argument, and only a
+    /// variable with that exact scope is replaced. A same-named variable
+    /// declared by a *different* declaration that merely occurs inside the
+    /// substituted type ([§6.4.1] shadowing) is a different type and is left
+    /// untouched; a name-keyed substitution would rewrite it into the
+    /// argument of an unrelated variable.
+    pub fn substitute(&self, db: &dyn TyDatabase, binding: &FxHashMap<TypeVarScope, Ty>) -> Ty {
         rewrite_with(db, *self, |_db, ty| match ty.kind(db) {
-            TyKind::TypeVar { name, .. } => {
-                RewriteVerdict::Done(binding.get(name).copied().unwrap_or(ty))
+            TyKind::TypeVar { scope, .. } => {
+                RewriteVerdict::Done(binding.get(scope).copied().unwrap_or(ty))
             }
             _ => RewriteVerdict::Recur,
         })
@@ -635,13 +734,18 @@ impl Ty {
     /// `Comparable<T>`-style). A distinct variable keeps its bounds exactly —
     /// the two names cannot recurse (the class's parameters are distinct), so
     /// substituting them is a shallow name replacement.
-    pub fn substitute_incl_bounds(&self, db: &dyn TyDatabase, binding: &FxHashMap<Name, Ty>) -> Ty {
+    pub fn substitute_incl_bounds(
+        &self,
+        db: &dyn TyDatabase,
+        binding: &FxHashMap<TypeVarScope, Ty>,
+    ) -> Ty {
         rewrite_with(db, *self, |db, ty| match ty.kind(db) {
             // A variable bound by `binding` is replaced by its argument; the
             // argument's own bounds are plain-`substitute`d (a `class
-            // Box<K,T>`'s parameters are distinct, so no recursion can close
-            // through the two names) and the result is used as-is.
-            TyKind::TypeVar { name, .. } => match binding.get(name) {
+            // Box<K,T>`'s parameters are distinct declarations, so no
+            // recursion can close through the two scopes) and the result is
+            // used as-is.
+            TyKind::TypeVar { scope, .. } => match binding.get(scope) {
                 Some(argument) => RewriteVerdict::Done(argument.substitute(db, binding)),
                 // An unbound variable keeps its identity but its bounds
                 // reference the substituted parameters ([JLS §4.4]
@@ -654,8 +758,7 @@ impl Ty {
                         .iter()
                         .map(|b| b.substitute(db, binding))
                         .collect::<Vec<_>>();
-                    let rebuilt =
-                        Ty::type_var(db, name.clone(), bounds).with_lower(db, ty.lower(db));
+                    let rebuilt = Ty::type_var_with(db, scope.clone(), bounds, ty.lower(db));
                     RewriteVerdict::Done(rebuilt)
                 }
             },
@@ -895,7 +998,7 @@ impl fmt::Display for TyDisplay<'_> {
                 }
                 Ok(())
             }
-            TyKind::TypeVar { name, .. } => f.write_str(name.as_str()),
+            TyKind::TypeVar { scope, .. } => f.write_str(scope.name().as_str()),
             TyKind::Array(inner) => write!(f, "{}[]", inner.display(self.db)),
             TyKind::Intersection(members) => {
                 for (i, member) in members.iter().enumerate() {
@@ -989,6 +1092,7 @@ pub fn ty_from_type_ref<N>(
     db: &dyn TyDatabase,
     tyref: &TypeRef<N>,
     name: &mut dyn FnMut(&N) -> Name,
+    var: &mut dyn FnMut(&N) -> TypeVarScope,
 ) -> Ty {
     match tyref {
         TypeRef::Primitive(p) => Ty::primitive(db, *p),
@@ -998,7 +1102,7 @@ pub fn ty_from_type_ref<N>(
         } => {
             let args = generic_args
                 .iter()
-                .map(|arg| ty_from_type_ref(db, arg, name))
+                .map(|arg| ty_from_type_ref(db, arg, name, var))
                 .collect();
             Ty::reference(db, name(n), args)
         }
@@ -1007,16 +1111,16 @@ pub fn ty_from_type_ref<N>(
             bound.as_deref().map(|b| match b {
                 TypeBound::Upper(t) => Box::new(WildcardBound {
                     kind: BoundKind::Upper,
-                    ty: ty_from_type_ref(db, t, name),
+                    ty: ty_from_type_ref(db, t, name, var),
                 }),
                 TypeBound::Lower(t) => Box::new(WildcardBound {
                     kind: BoundKind::Lower,
-                    ty: ty_from_type_ref(db, t, name),
+                    ty: ty_from_type_ref(db, t, name, var),
                 }),
             }),
         ),
-        TypeRef::TypeVariable(v) => Ty::type_var(db, name(v), Vec::new()),
-        TypeRef::Array(inner) => Ty::array(db, ty_from_type_ref(db, inner, name)),
+        TypeRef::TypeVariable(v) => Ty::type_var(db, var(v), Vec::new()),
+        TypeRef::Array(inner) => Ty::array(db, ty_from_type_ref(db, inner, name, var)),
         TypeRef::Error => Ty::error(db),
     }
 }
@@ -1024,7 +1128,9 @@ pub fn ty_from_type_ref<N>(
 /// Lowers a source [`TypeRef<Name>`] without name resolution (names kept
 /// verbatim).
 pub fn ty_from_source(db: &dyn TyDatabase, tyref: &TypeRef<Name>) -> Ty {
-    ty_from_type_ref(db, tyref, &mut |n| n.clone())
+    ty_from_type_ref(db, tyref, &mut |n| n.clone(), &mut |n| {
+        TypeVarScope::Unnamed { name: n.clone() }
+    })
 }
 
 /// The next capture-variable name: capture variables are ordinary type
@@ -1042,10 +1148,7 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// [`crate::java::method::member_set`], and only there: the capture variables never
 /// reach the memoized subtype queries.
 pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
-    let fresh = |bound: Ty| {
-        let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ty::type_var(db, Name::new(&format!("CAP#{id}")), vec![bound])
-    };
+    let fresh = |bound: Ty| Ty::fresh_capture(db, bound);
     match ty.kind(db) {
         TyKind::Reference { name, args } => {
             // §5.1.10: the fresh variable of a *bare* `?` argument takes the
@@ -1063,7 +1166,10 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                         let id = NEXT_CAPTURE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         Some(Ty::type_var(
                             db,
-                            Name::new(&format!("CAP#{id}")),
+                            TypeVarScope::Capture {
+                                id,
+                                name: Name::new(&format!("CAP#{id}")),
+                            },
                             Vec::new(),
                         ))
                     } else {
@@ -1135,20 +1241,23 @@ fn type_param_upper_bounds(
     placeholders: &[Option<Ty>],
 ) -> Vec<Ty> {
     let object = Ty::reference(db, "java.lang.Object", Vec::new());
-    let params = crate::java::resolve::declared_type_param_bounds(db, scope, &Name::new(fqn));
+    // Scope-keyed so the *class's own* parameters are substituted ([§4.4],
+    // [§6.3]) and a same-named variable of another declaration inside a bound
+    // ([§6.4.1]) is left alone.
+    let params = crate::java::resolve::declared_type_param_scopes(db, scope, &Name::new(fqn));
     if params.is_empty() && hir::fqn_resolve(db, scope, fqn).is_some() {
         // A class with no recoverable type parameters (unresolvable name or a
         // source declaration whose tree the helper cannot see) has none.
         return Vec::new();
     }
-    let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
-    for (i, (name, _)) in params.iter().enumerate() {
+    let mut binding: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
+    for (i, (var_scope, _)) in params.iter().enumerate() {
         let arg = match (args.get(i), placeholders.get(i)) {
             (_, Some(Some(ph))) => *ph,
             (Some(arg), _) => *arg,
             _ => object,
         };
-        binding.insert(name.clone(), arg);
+        binding.insert(var_scope.clone(), arg);
     }
     params
         .iter()

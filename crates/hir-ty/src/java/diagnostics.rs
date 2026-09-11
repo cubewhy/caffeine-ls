@@ -1162,8 +1162,8 @@ fn arities_align(db: &dyn TyDatabase, required: &[Ty], found: usize, varargs: bo
 /// used to name the variable whose bound set failed to resolve ([§18.4]).
 fn declared_type_var_name(db: &dyn TyDatabase, ty: Ty) -> Option<String> {
     match ty.kind(db) {
-        crate::java::ty::TyKind::TypeVar { name, .. } if !name.as_str().starts_with("CAP#") => {
-            Some(name.as_str().to_owned())
+        crate::java::ty::TyKind::TypeVar { scope, .. } if !scope.is_capture() => {
+            Some(scope.name().as_str().to_owned())
         }
         crate::java::ty::TyKind::Reference { args, .. } => {
             args.iter().find_map(|arg| declared_type_var_name(db, *arg))

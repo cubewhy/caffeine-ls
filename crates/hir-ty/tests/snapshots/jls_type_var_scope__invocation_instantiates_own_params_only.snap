@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_type_var_scope.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+class Box<T> {
+    T value;
+
+    static <T> T unwrap(Box<T> box) {
+        return box.value;
+    }
+}
+
+class Body<T> {
+    T read(Box<T> box) {
+        return Box.unwrap(box);
+    }
+}
+
+method unwrap(com.example.Box<T>): T
+  locals: l0: com.example.Box<T>
+  exprs: e0: com.example.Box<T> | e1: T
+method read(com.example.Box<T>): T
+  locals: l1: com.example.Box<T>
+  exprs: e2: com.example.Box<T> | e4: T

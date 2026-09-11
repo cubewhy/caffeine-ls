@@ -25,7 +25,7 @@ use crate::java::method::{self, Access, InvocationContext, InvocationMode, Metho
 use crate::java::range_ctx::range_ctx;
 use crate::java::resolve::scope_for_file;
 use crate::java::subtyping;
-use crate::java::ty::{Ty, TyKind};
+use crate::java::ty::{Ty, TyKind, TypeVarScope};
 use base_db::LanguageKind;
 use hir_def::java::ranges;
 
@@ -2270,10 +2270,13 @@ fn same_declared_params(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> 
     // bound ([§4.4]) — which is what javac's signature erasure does — and
     // leaves class arguments (`String` vs `Integer`) intact, then requires
     // the two structural forms to coincide.
-    let mut substitute_bounds = |params: &[Ty], method: &MethodData| -> Vec<Ty> {
-        // Build the variable -> bound map (its declared first bound, or
-        // Object for an unbounded variable, [§4.4]).
-        let binding: FxHashMap<Name, Ty> = method
+    let substitute_bounds = |params: &[Ty], method: &MethodData| -> Vec<Ty> {
+        // Build the declaring parameter -> bound map (its declared first
+        // bound, or Object for an unbounded variable, [§4.4]). Keyed by the
+        // parameter's scope ([§6.3]) so only this method's own variables are
+        // erased and a same-named class parameter of the declaring class is
+        // left alone ([§6.4.1], [§4.4] capture-avoidance).
+        let binding: FxHashMap<TypeVarScope, Ty> = method
             .type_params
             .iter()
             .map(|tp| {
@@ -2282,7 +2285,7 @@ fn same_declared_params(db: &dyn TyDatabase, a: &MethodData, b: &MethodData) -> 
                     .first()
                     .cloned()
                     .unwrap_or_else(|| Ty::reference(db, "java.lang.Object", Vec::new()));
-                (tp.name.clone(), bound)
+                (tp.scope.clone(), bound)
             })
             .collect();
         params
@@ -2927,7 +2930,7 @@ fn file_has_direct_subclass(
         scope: &hir::ResolutionScope,
         type_params: &rustc_hash::FxHashMap<
             hir_def::java::item_tree::ItemId,
-            Vec<hir_def::java::item_tree::TypeParam>,
+            Vec<crate::java::resolve::ScopedTypeParam>,
         >,
         id: hir_def::java::item_tree::ItemId,
         fqn: &str,

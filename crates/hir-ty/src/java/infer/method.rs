@@ -709,13 +709,13 @@ fn reported_formals(db: &dyn crate::java::db::TyDatabase, method: &MethodData) -
     if method.type_params.is_empty() {
         return method.params.clone();
     }
-    let subst: rustc_hash::FxHashMap<Name, Ty> = method
+    let subst: rustc_hash::FxHashMap<crate::java::ty::TypeVarScope, Ty> = method
         .type_params
         .iter()
         .map(|tp| {
             (
-                tp.name.clone(),
-                Ty::type_var(db, tp.name.clone(), tp.bounds.clone()),
+                tp.scope.clone(),
+                Ty::type_var(db, tp.scope.clone(), tp.bounds.clone()),
             )
         })
         .collect();

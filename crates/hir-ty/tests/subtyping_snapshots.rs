@@ -40,7 +40,7 @@ fn super_of(db: &TestDatabase, ty: Ty) -> Ty {
 }
 
 fn bounded(db: &TestDatabase, name: &str, bounds: Vec<Ty>) -> Ty {
-    Ty::type_var(db, name, bounds)
+    Ty::unscoped_var(db, name, bounds)
 }
 
 snapshot! {

@@ -139,13 +139,16 @@ fn substitute_infer_fixpoint_with_cycle_is_bounded() {
 fn substitute_maps_type_vars_to_arguments() {
     let db = TestDatabase::new();
     // `<E> ArrayList<E>` instantiated with `E := String`: `E[]` → `String[]`.
-    let var = Ty::type_var(&db, "E", Vec::new());
+    let var = Ty::unscoped_var(&db, "E", Vec::new());
     let array = Ty::array(&db, var);
+    // The substitution is keyed by the declaring parameter ([JLS §4.4],
+    // §6.3), not by the bare name.
+    let scope = var
+        .type_var_scope(&db)
+        .expect("a type variable carries its declaring parameter")
+        .clone();
     let mut binding = FxHashMap::default();
-    binding.insert(
-        Name::new("E"),
-        Ty::reference(&db, "java.lang.String", Vec::new()),
-    );
+    binding.insert(scope, Ty::reference(&db, "java.lang.String", Vec::new()));
     let rewritten = array.substitute(&db, &binding);
     let TyKind::Array(inner) = rewritten.kind(&db) else {
         panic!("expected array");
@@ -164,20 +167,21 @@ fn substitute_incl_bounds_rewrites_recursive_bound() {
     let name_k = Name::new("K");
     let name_t = Name::new("T");
     let name_v = Name::new("V");
-    let k_ty = Ty::type_var(&db, name_k.clone(), Vec::new());
-    let t_ty = Ty::type_var(&db, name_t.clone(), Vec::new());
+    let k_ty = Ty::unscoped_var(&db, name_k.clone(), Vec::new());
+    let t_ty = Ty::unscoped_var(&db, name_t.clone(), Vec::new());
     let box_of = |db: &TestDatabase, args: Vec<Ty>| r(db, "com.example.Box", args);
 
     // `V extends Box<K, T>` (the bound references the substituted `T`).
-    let v_ty = Ty::type_var(&db, name_v.clone(), vec![box_of(&db, vec![k_ty, t_ty])]);
+    let v_ty = Ty::unscoped_var(&db, name_v.clone(), vec![box_of(&db, vec![k_ty, t_ty])]);
     // The type being rewritten: `Box<K, V>`.
     let ty = box_of(&db, vec![k_ty, v_ty]);
 
+    let t_scope = t_ty
+        .type_var_scope(&db)
+        .expect("a type variable carries its declaring parameter")
+        .clone();
     let mut binding = FxHashMap::default();
-    binding.insert(
-        name_t.clone(),
-        Ty::reference(&db, "java.lang.String", Vec::new()),
-    );
+    binding.insert(t_scope, Ty::reference(&db, "java.lang.String", Vec::new()));
     let rewritten = ty.substitute_incl_bounds(&db, &binding);
 
     // `Box<K, V>`; the second argument is `V`, kept but with its bound
@@ -186,10 +190,10 @@ fn substitute_incl_bounds_rewrites_recursive_bound() {
         panic!("expected reference");
     };
     assert_eq!(args.len(), 2);
-    let TyKind::TypeVar { name, bounds, .. } = args[1].kind(&db) else {
+    let TyKind::TypeVar { scope, bounds, .. } = args[1].kind(&db) else {
         panic!("expected type variable V");
     };
-    assert_eq!(name.as_str(), "V");
+    assert_eq!(scope.name().as_str(), "V");
     assert_eq!(bounds.len(), 1);
     let TyKind::Reference {
         name: bound_name,

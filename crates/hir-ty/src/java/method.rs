@@ -45,9 +45,9 @@ use crate::{
         item_ty_query, method_params_query, type_params_map_query,
     },
     java::inference::{Constraint, Inference, InvocationPhase},
-    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file, ty_from_library},
+    java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::subtyping::{is_subtype, supertypes_query},
-    java::ty::{Ty, TyData, TyKind, boxed_type, capture_conversion},
+    java::ty::{Ty, TyData, TyKind, TypeVarScope, boxed_type, capture_conversion},
 };
 
 /// How the method name is qualified: the invocation mode of
@@ -267,10 +267,22 @@ impl Access {
 /// with its declared bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)),
 /// kept so [`pick_method`] can run the invocation type inference of
 /// [JLS §18.5.2].
+///
+/// The parameter is identified by its [`TypeVarScope`] — the declaration that
+/// introduces it ([§4.4], [§6.3]) — so the invocation's substitution
+/// ([§18.5.2.2]) instantiates exactly the method's own variables and never a
+/// same-named variable of the declaring class ([§6.4.1]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MethodTypeParam {
-    pub name: Name,
+    pub scope: TypeVarScope,
     pub bounds: Vec<Ty>,
+}
+
+impl MethodTypeParam {
+    /// The parameter's own name within its declaration, as javac renders it.
+    pub fn name(&self) -> &Name {
+        self.scope.name()
+    }
 }
 
 /// A candidate method from the member set
@@ -731,10 +743,15 @@ fn member_set_impl(
     // itself, so re-point the result at it: the receiver `T` carries the full
     // `G<T>` bound and the chain stays member-resolution-capable.
     // Invocation-only, like the SELF channel above.
-    if !declaration && let TyKind::TypeVar { name, .. } = receiver.kind(db) {
-        let receiver_name = name.as_str();
+    if !declaration && let TyKind::TypeVar { scope, .. } = receiver.kind(db) {
+        let receiver_scope = scope.clone();
         for method in &mut out {
-            if matches!(method.ret.kind(db), TyKind::TypeVar { name, .. } if name.as_str() == receiver_name)
+            // §4.4/§6.3: the result is re-pointed only when it is *the
+            // receiver's own* type variable — same declaring parameter, not
+            // merely the same name (a same-named variable of another
+            // declaration, [§6.4.1], is a different type).
+            if let TyKind::TypeVar { scope, .. } = method.ret.kind(db)
+                && *scope == receiver_scope
             {
                 method.ret = receiver;
             }
@@ -1192,25 +1209,37 @@ fn library_class_methods(
     // JLS 4.8: a *raw* use of a generic class erases its members'
     // signatures; the erasure is applied to each constructed member below.
     let is_raw = args.is_empty() && !class.type_params.is_empty();
-    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
+    let fqn = interner.resolve(&class.fqn).to_owned();
+    let owner = Name::new(&fqn);
+    // §4.10.2: the receiver's arguments instantiate the declaring class's
+    // *own* parameters — the binding is keyed by each parameter's declaring
+    // scope ([§4.4], [§6.3]), so a same-named type variable appearing in a
+    // member's signature but declared by another declaration is not captured
+    // ([§6.4.1]).
+    let binding: FxHashMap<TypeVarScope, Ty> = if args.is_empty() {
         FxHashMap::default()
     } else {
         class
             .type_params
             .iter()
             .zip(args.iter().copied())
-            .map(|(tp, arg)| (Name::new(interner.resolve(&tp.name)), arg))
+            .map(|(tp, arg)| {
+                (
+                    TypeVarScope::LibraryClass {
+                        owner: owner.clone(),
+                        name: Name::new(interner.resolve(&tp.name)),
+                    },
+                    arg,
+                )
+            })
             .collect()
     };
-    let fqn = interner.resolve(&class.fqn).to_owned();
     let declaring_package = package_of(&fqn);
     let declaring_top_level = Some(top_level_of(&fqn));
     let declaring_interface = matches!(
         hir::ClassKind::from_flags(class.flags, class.is_record),
         hir::ClassKind::Interface | hir::ClassKind::Annotation
     );
-    let instantiate =
-        |tyref: &hir::TypeRef<hir::Symbol>| ty_from_library(db, tyref).substitute(db, &binding);
 
     let mut out = Vec::new();
     for method in &class.methods {
@@ -1233,18 +1262,41 @@ fn library_class_methods(
         if flags.contains(JvmAccessFlags::BRIDGE) || flags.contains(JvmAccessFlags::SYNTHETIC) {
             continue;
         }
+        // [§8.4.4]/[§6.4.1]: the method's own type parameters are declared by
+        // *this* method, so their scope is the method's — distinct from a
+        // same-named class parameter of the declaring class, which the class
+        // binding cannot therefore capture ([§4.4] capture-avoidance).
+        let method_names: Vec<Name> = method
+            .type_params
+            .iter()
+            .map(|tp| Name::new(interner.resolve(&tp.name)))
+            .collect();
+        let method_name = Name::new(interner.resolve(&method.name));
+        let signature = crate::java::resolve::LibrarySignature {
+            owner: &owner,
+            method: Some((&method_name, &method_names)),
+        };
+        let member_lower = |tyref: &hir::TypeRef<hir::Symbol>| {
+            crate::java::resolve::ty_from_library_signature(db, tyref, &signature)
+                .substitute(db, &binding)
+        };
         let type_params = method
             .type_params
             .iter()
-            .map(|tp| MethodTypeParam {
-                name: Name::new(interner.resolve(&tp.name)),
+            .zip(method_names.iter())
+            .map(|(tp, tp_name)| MethodTypeParam {
+                scope: TypeVarScope::LibraryMethod {
+                    owner: owner.clone(),
+                    method: method_name.clone(),
+                    name: tp_name.clone(),
+                },
                 // The bound is instantiated with the declaring class's type
                 // arguments: a `<U extends T>` bound on a generic class
                 // references the class type parameter `T`, which resolves to
                 // the receiver's actual argument here (§18.5.2.2). A bound
                 // over the method's own type parameters is untouched by the
                 // class binding and stays a bare type variable.
-                bounds: tp.bounds.iter().map(&instantiate).collect(),
+                bounds: tp.bounds.iter().map(member_lower).collect(),
             })
             .collect();
         // JLS 4.8: the *instance* members of a raw type have erased
@@ -1268,14 +1320,14 @@ fn library_class_methods(
             params: method
                 .params
                 .iter()
-                .map(|param| erase(instantiate(&param.param_type)))
+                .map(|param| erase(member_lower(&param.param_type)))
                 .collect(),
             param_names: None,
-            ret: erase(instantiate(&method.return_type)),
+            ret: erase(member_lower(&method.return_type)),
             throws: method
                 .throws_list
                 .iter()
-                .map(instantiate)
+                .map(&member_lower)
                 .map(erase)
                 .collect(),
             varargs: JvmAccessFlags::from_bits_retain(method.flags).is_varargs(),
@@ -1313,15 +1365,14 @@ fn source_class_methods(
     // JLS 4.8: a *raw* use of a generic class erases its members'
     // signatures; the erasure is applied to each constructed member below.
     let is_raw = args.is_empty() && !declared.is_empty();
-    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
-        FxHashMap::default()
-    } else {
-        declared
-            .iter()
-            .map(|tp| tp.name.clone())
-            .zip(args.iter().copied())
-            .collect()
-    };
+    // §4.10.2: the receiver's arguments instantiate the declaring class's
+    // *own* parameters. The binding is keyed by each parameter's declaring
+    // scope ([§4.4], [§6.3]), and a method type parameter is declared by the
+    // *method* ([§8.4.4]) — a distinct scope — so a method's own variable can
+    // never be captured by the class binding ([§6.4.1], [§4.4]
+    // capture-avoidance), with no name-level exclusion needed.
+    let binding: FxHashMap<TypeVarScope, Ty> =
+        crate::java::resolve::source_class_binding(source.file, source.item, declared, &args);
     let scope = scope_for_file(db, source.file);
     let type_params = type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
@@ -1345,39 +1396,27 @@ fn source_class_methods(
         if !name.is_empty() && method.name.as_str() != name {
             continue;
         }
-        // JLS §6.4.1/§8.4.4: a method type parameter shadows a class type
-        // parameter of the same name — the class binding must not capture
-        // the method's own variable (e.g. `PacketWrapper<T>.readEnumSet`
-        // `<T extends Enum<T>>` where `Class<T>` is the method's `T`, not the
-        // class's).
-        let method_names: FxHashSet<Name> = method
-            .sig
-            .type_params
-            .iter()
-            .map(|tp| tp.name.clone())
-            .collect();
-        let filtered: FxHashMap<Name, Ty> = binding
-            .iter()
-            .filter(|(k, _)| !method_names.contains(k))
-            .map(|(k, v)| (k.clone(), *v))
-            .collect();
         let method_resolver = Resolver::new(&tree, type_params, item);
         let type_params = method
             .sig
             .type_params
             .iter()
             .map(|tp| MethodTypeParam {
-                name: tp.name.clone(),
+                scope: TypeVarScope::Method {
+                    file: source.file,
+                    item,
+                    name: tp.name.clone(),
+                },
                 bounds: tp
                     .bounds
                     .iter()
                     .map(|bound| resolve_type_ref(db, &scope, &method_resolver, bound))
-                    .map(|bound| bound.substitute(db, &filtered))
+                    .map(|bound| bound.substitute(db, &binding))
                     .collect(),
             })
             .collect();
         let key = ItemKey::new(db, source.file, item);
-        let instantiate = |ty: &Ty| ty.substitute(db, &filtered);
+        let instantiate = |ty: &Ty| ty.substitute(db, &binding);
         // JLS 4.8: the *instance* members of a raw type have erased
         // signatures. A static member does not depend on the receiver's
         // type arguments at all, so its own generics stay intact.
@@ -2055,10 +2094,10 @@ fn instantiate(
     // The method's own type parameters become fresh inference variables; their
     // declared bounds are the initial upper bounds (§18.5.2.2), with the type
     // parameter names substituted by the variables.
-    let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+    let mut subst: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
     for tp in &method.type_params {
         let var = inference.fresh_var(db);
-        subst.insert(tp.name.clone(), var);
+        subst.insert(tp.scope.clone(), var);
         let bounds: Vec<Ty> = tp.bounds.iter().map(|b| b.substitute(db, &subst)).collect();
         if bounds.is_empty() {
             inference.add_upper(db, var, Ty::reference(db, "java.lang.Object", Vec::new()));
@@ -2794,17 +2833,19 @@ fn library_class_fields(
     // JLS 4.8: a *raw* use of a generic class erases its members'
     // signatures; the erasure is applied to each constructed member below.
     let is_raw = args.is_empty() && !class.type_params.is_empty();
-    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
-        FxHashMap::default()
-    } else {
-        class
-            .type_params
-            .iter()
-            .zip(args.iter().copied())
-            .map(|(tp, arg)| (Name::new(interner.resolve(&tp.name)), arg))
-            .collect()
-    };
     let fqn = interner.resolve(&class.fqn).to_owned();
+    let owner = Name::new(&fqn);
+    let class_names: Vec<Name> = class
+        .type_params
+        .iter()
+        .map(|tp| Name::new(interner.resolve(&tp.name)))
+        .collect();
+    // §4.10.2 with [§4.4]/[§6.3]: the field's declared type is instantiated
+    // with the receiver's arguments, keyed by the classfile parameters'
+    // declaring scopes.
+    let binding: FxHashMap<TypeVarScope, Ty> =
+        crate::java::resolve::library_class_binding(&owner, &class_names, &args);
+    let class_ctx = crate::java::resolve::LibrarySignature::class(&owner);
     let declaring_package = package_of(&fqn);
     let declaring_top_level = Some(top_level_of(&fqn));
     let mut out = Vec::new();
@@ -2817,7 +2858,9 @@ fn library_class_fields(
         // static field does not depend on the receiver's type arguments, so
         // its declared type stays intact.
         let ty = {
-            let ty = ty_from_library(db, &field.field_type).substitute(db, &binding);
+            let ty =
+                crate::java::resolve::ty_from_library_signature(db, &field.field_type, &class_ctx)
+                    .substitute(db, &binding);
             if is_raw && !is_static {
                 ty.erasure(db)
             } else {
@@ -2859,15 +2902,11 @@ fn source_class_fields(
     // JLS 4.8: a *raw* use of a generic class erases its members'
     // signatures; the erasure is applied to each constructed member below.
     let is_raw = args.is_empty() && !declared.is_empty();
-    let binding: FxHashMap<Name, Ty> = if args.is_empty() {
-        FxHashMap::default()
-    } else {
-        declared
-            .iter()
-            .map(|tp| tp.name.clone())
-            .zip(args.iter().copied())
-            .collect()
-    };
+    // §4.10.2 with [§4.4]/[§6.3]: the fields' declared types are instantiated
+    // with the receiver's arguments, keyed by the declaring parameters'
+    // scopes so only the class's *own* variables are replaced.
+    let binding: FxHashMap<TypeVarScope, Ty> =
+        crate::java::resolve::source_class_binding(source.file, source.item, declared, &args);
     let type_params = type_params_map_query(db, db.file_text(source.file));
     let resolver = Resolver::new(&tree, type_params, source.item);
     let scope = scope_for_file(db, source.file);

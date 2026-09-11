@@ -29,8 +29,70 @@ use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
     java::db::TyDatabase,
-    java::ty::{BoundKind, Ty, TyKind, WildcardBound, ty_from_type_ref},
+    java::ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, ty_from_type_ref},
 };
+
+/// A type parameter in scope at some item, together with the declaration that
+/// introduces it ([JLS §4.4], [§6.3]). The *name* drives lexical lookup
+/// ([§6.4.1]: the innermost declaration with a given name wins); the
+/// [`TypeVarScope`] is the identity the resolved variable interns and
+/// substitutes by, so a method parameter shadowing a same-named class
+/// parameter stays a distinct type.
+#[derive(Debug, Clone)]
+pub struct ScopedTypeParam {
+    pub param: TypeParam,
+    pub scope: TypeVarScope,
+}
+
+impl PartialEq for ScopedTypeParam {
+    /// Two in-scope parameters are the same when their declaring scopes are —
+    /// the scope is the parameter's identity ([JLS §4.4], [§6.3]), and it
+    /// determines the declaration the parameter (and hence its bounds) came
+    /// from. Used by the per-file query's return-value equality.
+    fn eq(&self, other: &Self) -> bool {
+        self.scope == other.scope
+    }
+}
+
+impl Eq for ScopedTypeParam {}
+
+impl std::ops::Deref for ScopedTypeParam {
+    type Target = TypeParam;
+    fn deref(&self) -> &TypeParam {
+        &self.param
+    }
+}
+
+/// The classfile `Signature`-lowering context ([JVMS §4.7.9.1]): the class
+/// whose signature is being lowered and, for a member signature, the member,
+/// so every type variable in it is attributed to its declaring parameter
+/// ([JLS §4.4], [§6.3]).
+#[derive(Clone, Copy)]
+pub struct LibrarySignature<'a> {
+    pub owner: &'a Name,
+    pub method: Option<(&'a Name, &'a [Name])>,
+}
+
+impl<'a> LibrarySignature<'a> {
+    /// The signature of the class `owner` itself (its supertypes, its own
+    /// type-parameter bounds, a field's type).
+    pub fn class(owner: &'a Name) -> Self {
+        Self {
+            owner,
+            method: None,
+        }
+    }
+
+    /// The scope of the type variable `name` within this signature
+    /// ([§6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4.1)):
+    /// the member's own parameter when the member declares that name,
+    /// otherwise the class's. A name declared by neither is an enclosing
+    /// class's parameter, which this signature does not carry an argument for
+    /// — it keeps the class identity so no binding of this class captures it.
+    fn scope_of(&self, name: &Name) -> TypeVarScope {
+        TypeVarScope::library(self.owner, self.method, name)
+    }
+}
 
 /// The per-file name context of a single item: its package, the compilation
 /// unit's imports, the type parameters in scope at the item and the fully
@@ -39,7 +101,7 @@ use crate::{
 pub struct Resolver {
     package: Option<Name>,
     imports: Vec<ImportItem>,
-    type_params: Vec<TypeParam>,
+    type_params: Vec<ScopedTypeParam>,
     /// The enclosing class-like declarations, innermost first, as canonical
     /// FQNs ([JLS §6.7]): their *member types* are in scope by simple name
     /// ([JLS §6.5.5.1]) ahead of any import.
@@ -52,7 +114,7 @@ impl Resolver {
     /// [`type_params_map`].
     pub fn new(
         tree: &ItemTree,
-        type_params: &FxHashMap<ItemId, Vec<TypeParam>>,
+        type_params: &FxHashMap<ItemId, Vec<ScopedTypeParam>>,
         item_id: ItemId,
     ) -> Self {
         Self {
@@ -101,7 +163,7 @@ impl Resolver {
         out
     }
 
-    pub fn type_params(&self) -> &[TypeParam] {
+    pub fn type_params(&self) -> &[ScopedTypeParam] {
         &self.type_params
     }
 
@@ -165,36 +227,63 @@ pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name
 /// own parameters, with their declared bounds
 /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
 /// Computed in a single tree walk so each item's scope is a map lookup.
-pub(crate) fn type_params_map(tree: &ItemTree) -> FxHashMap<ItemId, Vec<TypeParam>> {
+pub(crate) fn type_params_map(
+    tree: &ItemTree,
+    file: FileId,
+) -> FxHashMap<ItemId, Vec<ScopedTypeParam>> {
     fn collect(
         tree: &ItemTree,
+        file: FileId,
         id: ItemId,
-        outer: &[TypeParam],
-        map: &mut FxHashMap<ItemId, Vec<TypeParam>>,
+        outer: &[ScopedTypeParam],
+        map: &mut FxHashMap<ItemId, Vec<ScopedTypeParam>>,
     ) {
         let data = tree.data(id);
         let mut own = outer.to_vec();
+        // §4.4/§6.3: each parameter is introduced by the declaration that
+        // lists it, and its variable is identified by that declaration. A
+        // class declares class-scoped parameters, a method or constructor
+        // method-scoped ones; the two namespaces are distinct ([§6.4.1]), so
+        // a method parameter shadows a same-named class parameter rather than
+        // aliasing it.
+        let declare = |params: &[TypeParam], method: bool| -> Vec<ScopedTypeParam> {
+            params
+                .iter()
+                .map(|param| ScopedTypeParam {
+                    param: param.clone(),
+                    scope: if method {
+                        TypeVarScope::Method {
+                            file,
+                            item: id,
+                            name: param.name.clone(),
+                        }
+                    } else {
+                        TypeVarScope::Class {
+                            file,
+                            item: id,
+                            name: param.name.clone(),
+                        }
+                    },
+                })
+                .collect()
+        };
         match data {
             ItemData::Class(d) | ItemData::Interface(d) => {
-                own.extend(d.type_params.iter().cloned());
+                own.extend(declare(&d.type_params, false))
             }
-            ItemData::Record(d) => {
-                own.extend(d.type_params.iter().cloned());
-            }
-            ItemData::Method(m) => {
-                own.extend(m.sig.type_params.iter().cloned());
-            }
+            ItemData::Record(d) => own.extend(declare(&d.type_params, false)),
+            ItemData::Method(m) => own.extend(declare(&m.sig.type_params, true)),
             _ => {}
         }
         map.insert(id, own.clone());
         for &child in data.body() {
-            collect(tree, child, &own, map);
+            collect(tree, file, child, &own, map);
         }
     }
 
     let mut map = FxHashMap::default();
     for &top in &tree.top {
-        collect(tree, top, &[], &mut map);
+        collect(tree, file, top, &[], &mut map);
     }
     map
 }
@@ -268,6 +357,7 @@ fn resolve_type_ref_impl(
                 .map(|arg| resolve_type_ref_impl(db, scope, resolver, arg, resolving))
                 .collect();
             if let Some(tp) = resolver.type_params.iter().rfind(|tp| tp.name == *name) {
+                let var_scope = tp.scope.clone();
                 // A type parameter in scope wins over any type named the same.
                 // JLS §6.4.1: a method type parameter shadows a class type
                 // parameter of the same name — the innermost declaration wins,
@@ -287,7 +377,7 @@ fn resolve_type_ref_impl(
                     resolving.pop();
                     bounds
                 };
-                Ty::type_var(db, name.clone(), bounds)
+                Ty::type_var(db, var_scope, bounds)
             } else {
                 Ty::reference(db, resolve_reference_name(db, scope, resolver, name), args)
             }
@@ -305,7 +395,16 @@ fn resolve_type_ref_impl(
                 }),
             }),
         ),
-        TypeRef::TypeVariable(v) => Ty::type_var(db, v.clone(), Vec::new()),
+        // A `TypeVariable` reference names a type parameter directly rather
+        // than through a `Reference` node; resolve it against the same scope
+        // list so it interns as the declaring parameter's variable. Its bounds
+        // are omitted: this node shape is the recursion guard's and the
+        // classfile lowering's, where re-entering the bound would not
+        // terminate ([JLS §4.4]).
+        TypeRef::TypeVariable(v) => match resolver.type_params.iter().rfind(|tp| tp.name == *v) {
+            Some(tp) => Ty::type_var(db, tp.scope.clone(), Vec::new()),
+            None => Ty::unscoped_var(db, v.clone(), Vec::new()),
+        },
         TypeRef::Array(inner) => Ty::array(
             db,
             resolve_type_ref_impl(db, scope, resolver, inner, resolving),
@@ -810,6 +909,71 @@ fn join(prefix: &Name, suffix: &str) -> Name {
     Name::new(&text)
 }
 
+/// The substitution instantiating the type parameters of a *source* class
+/// declaration ([JLS §4.10.2]): each declared parameter, keyed by the scope it
+/// declares ([§4.4], [§6.3]), bound to the receiver's argument at the same
+/// index. A parameter list longer than the argument list leaves the extra
+/// parameters unbound (a raw or partially-applied use).
+pub fn source_class_binding(
+    file: FileId,
+    item: ItemId,
+    declared: &[TypeParam],
+    args: &[Ty],
+) -> FxHashMap<TypeVarScope, Ty> {
+    declared
+        .iter()
+        .zip(args.iter().copied())
+        .map(|(tp, arg)| {
+            (
+                TypeVarScope::Class {
+                    file,
+                    item,
+                    name: tp.name.clone(),
+                },
+                arg,
+            )
+        })
+        .collect()
+}
+
+/// The substitution instantiating the type parameters of a *classfile* class
+/// declaration ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1)):
+/// each declared parameter, keyed by its declaring class's binary name
+/// ([JLS §4.4], [§6.3]), bound to the receiver's argument at the same index.
+pub fn library_class_binding(
+    owner: &Name,
+    params: &[Name],
+    args: &[Ty],
+) -> FxHashMap<TypeVarScope, Ty> {
+    params
+        .iter()
+        .zip(args.iter().copied())
+        .map(|(name, arg)| {
+            (
+                TypeVarScope::LibraryClass {
+                    owner: owner.clone(),
+                    name: name.clone(),
+                },
+                arg,
+            )
+        })
+        .collect()
+}
+
+/// The canonical fully qualified name of a resolved class
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
+/// or `None` for a source class (whose name is not a binary one — bindings
+/// against it are keyed by its declaring item, not by name).
+fn resolved_fqn(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Option<Name> {
+    match resolved {
+        hir::Resolved::Library(class) => {
+            let interner = &db.hir_state().interner;
+            Some(Name::new(interner.resolve(&class.entry.fqn)))
+        }
+        hir::Resolved::Source(_) => None,
+    }
+}
+
 /// The resolution scope of a source file: its source set, or the JDK
 /// built-ins when the file is not mapped to a source root.
 pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionScope {
@@ -869,58 +1033,18 @@ pub fn type_argument_bound_violation(
     args: &[Ty],
 ) -> Option<(Name, Ty, Ty)> {
     let resolved = hir::fqn_resolve(db, scope, class_fqn.as_str())?;
-    // The declared type parameters as (name, resolved bounds).
-    let type_params: Vec<(Name, Vec<Ty>)> = match &resolved {
-        hir::Resolved::Library(_) => {
-            let info = hir::class_generic_info(db, &resolved)?;
-            if info.type_params.len() != args.len() {
-                return None;
-            }
-            let interner = &db.hir_state().interner;
-            info.type_params
-                .iter()
-                .map(|tp| {
-                    (
-                        Name::new(interner.resolve(&tp.name)),
-                        tp.bounds.iter().map(|b| ty_from_library(db, b)).collect(),
-                    )
-                })
-                .collect()
-        }
-        hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
-            let params = (match tree.data(source.item) {
-                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
-                ItemData::Record(d) => Some(&d.type_params),
-                _ => None,
-            })?;
-            if params.len() != args.len() {
-                return None;
-            }
-            let file_scope = scope_for_file(db, source.file);
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = Resolver::new(&tree, type_params, source.item);
-            params
-                .iter()
-                .map(|tp| {
-                    (
-                        tp.name.clone(),
-                        tp.bounds
-                            .iter()
-                            .map(|b| resolve_type_ref(db, &file_scope, &resolver, b))
-                            .collect(),
-                    )
-                })
-                .collect()
-        }
-    };
-    let binding: FxHashMap<Name, Ty> = type_params
+    // The declared type parameters as (declaring scope, resolved bounds).
+    let type_params = class_param_bounds(db, &resolved, class_fqn)?;
+    if type_params.len() != args.len() {
+        return None;
+    }
+    let binding: FxHashMap<TypeVarScope, Ty> = type_params
         .iter()
-        .map(|(name, _)| name.clone())
+        .map(|(var_scope, _)| var_scope.clone())
         .zip(args.iter().copied())
         .collect();
-    for (name, bounds) in type_params {
-        let Some(arg) = binding.get(&name).copied() else {
+    for (var_scope, bounds) in type_params {
+        let Some(arg) = binding.get(&var_scope).copied() else {
             continue;
         };
         // §4.5.1: a wildcard is not a concrete type argument — its own bounds
@@ -939,11 +1063,83 @@ pub fn type_argument_bound_violation(
                 continue;
             }
             if !crate::java::subtyping::is_subtype(db, scope, &arg, &bound) {
-                return Some((name, arg, bound));
+                return Some((var_scope.name().clone(), arg, bound));
             }
         }
     }
     None
+}
+
+/// The declared type parameters of `resolved` as
+/// `(declaring scope, resolved bounds)` in declaration order, or `None` when
+/// the declaration's parameter list cannot be recovered. `class_fqn` is the
+/// name the class was resolved under, used for the classfile identity when the
+/// stub carries no canonical name.
+fn class_param_bounds(
+    db: &dyn TyDatabase,
+    resolved: &hir::Resolved,
+    class_fqn: &Name,
+) -> Option<Vec<(TypeVarScope, Vec<Ty>)>> {
+    match resolved {
+        hir::Resolved::Library(_) => {
+            let info = hir::class_generic_info(db, resolved)?;
+            let interner = &db.hir_state().interner;
+            let owner = resolved_fqn(db, resolved).unwrap_or_else(|| class_fqn.clone());
+            let names: Vec<Name> = info
+                .type_params
+                .iter()
+                .map(|tp| Name::new(interner.resolve(&tp.name)))
+                .collect();
+            let ctx = LibrarySignature::class(&owner);
+            Some(
+                info.type_params
+                    .iter()
+                    .zip(names.iter())
+                    .map(|(tp, name)| {
+                        (
+                            TypeVarScope::LibraryClass {
+                                owner: owner.clone(),
+                                name: name.clone(),
+                            },
+                            tp.bounds
+                                .iter()
+                                .map(|b| ty_from_library_signature(db, b, &ctx))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            let params = match tree.data(source.item) {
+                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
+                ItemData::Record(d) => Some(&d.type_params),
+                _ => None,
+            }?;
+            let file_scope = scope_for_file(db, source.file);
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
+            let resolver = Resolver::new(&tree, type_params, source.item);
+            Some(
+                params
+                    .iter()
+                    .map(|tp| {
+                        (
+                            TypeVarScope::Class {
+                                file: source.file,
+                                item: source.item,
+                                name: tp.name.clone(),
+                            },
+                            tp.bounds
+                                .iter()
+                                .map(|b| resolve_type_ref(db, &file_scope, &resolver, b))
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+    }
 }
 
 /// The declared type parameters of the class named by `fqn` as
@@ -960,52 +1156,26 @@ pub fn declared_type_param_bounds(
     scope: &hir::ResolutionScope,
     fqn: &Name,
 ) -> Vec<(Name, Vec<Ty>)> {
+    declared_type_param_scopes(db, scope, fqn)
+        .into_iter()
+        .map(|(var_scope, bounds)| (var_scope.name().clone(), bounds))
+        .collect()
+}
+
+/// The declared type parameters of the class named by `fqn` as
+/// `(declaring scope, [bound Ty])` in declaration order — the identity-bearing
+/// companion of [`declared_type_param_bounds`], for callers that must
+/// substitute into the bounds ([§4.4] capture-avoidance) rather than merely
+/// read their names.
+pub fn declared_type_param_scopes(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    fqn: &Name,
+) -> Vec<(TypeVarScope, Vec<Ty>)> {
     let Some(resolved) = hir::fqn_resolve(db, scope, fqn.as_str()) else {
         return Vec::new();
     };
-    match &resolved {
-        hir::Resolved::Library(_) => {
-            let Some(info) = hir::class_generic_info(db, &resolved) else {
-                return Vec::new();
-            };
-            let interner = &db.hir_state().interner;
-            info.type_params
-                .iter()
-                .map(|tp| {
-                    (
-                        Name::new(interner.resolve(&tp.name)),
-                        tp.bounds.iter().map(|b| ty_from_library(db, b)).collect(),
-                    )
-                })
-                .collect()
-        }
-        hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
-            let params = match tree.data(source.item) {
-                ItemData::Class(d) | ItemData::Interface(d) => Some(&d.type_params),
-                ItemData::Record(d) => Some(&d.type_params),
-                _ => None,
-            };
-            let Some(params) = params else {
-                return Vec::new();
-            };
-            let file_scope = scope_for_file(db, source.file);
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = Resolver::new(&tree, type_params, source.item);
-            params
-                .iter()
-                .map(|tp| {
-                    (
-                        tp.name.clone(),
-                        tp.bounds
-                            .iter()
-                            .map(|b| resolve_type_ref(db, &file_scope, &resolver, b))
-                            .collect(),
-                    )
-                })
-                .collect()
-        }
-    }
+    class_param_bounds(db, &resolved, fqn).unwrap_or_default()
 }
 
 /// The declared type of an item: the type of a field, the return type of a
@@ -1038,7 +1208,39 @@ pub fn record_component_types(db: &dyn TyDatabase, file_id: FileId, item_id: Ite
 /// already fully qualified, so only the interner lookup is needed.
 pub fn ty_from_library(db: &dyn TyDatabase, tyref: &TypeRef<hir::Symbol>) -> Ty {
     let interner = &db.hir_state().interner;
-    ty_from_type_ref(db, tyref, &mut |symbol| Name::new(interner.resolve(symbol)))
+    ty_from_type_ref(
+        db,
+        tyref,
+        &mut |symbol| Name::new(interner.resolve(symbol)),
+        // No declaring context: a classfile signature lowered without its
+        // class cannot attribute its type variables to a parameter, so they
+        // become unscoped — no declaration-scoped binding captures them.
+        // Signatures that *do* carry type variables go through
+        // [`ty_from_library_signature`].
+        &mut |symbol| TypeVarScope::Unnamed {
+            name: Name::new(interner.resolve(symbol)),
+        },
+    )
+}
+
+/// Lowers a classfile [`TypeRef<Symbol>`] of `ctx`'s `Signature` attribute
+/// ([JVMS §4.7.9.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.9.1)),
+/// attributing every type variable to its declaring parameter ([JLS §4.4],
+/// [§6.3]) so a binding of that declaration instantiate exactly its own
+/// variables — and never a same-named parameter of another declaration
+/// ([§6.4.1]).
+pub fn ty_from_library_signature(
+    db: &dyn TyDatabase,
+    tyref: &TypeRef<hir::Symbol>,
+    ctx: &LibrarySignature<'_>,
+) -> Ty {
+    let interner = &db.hir_state().interner;
+    ty_from_type_ref(
+        db,
+        tyref,
+        &mut |symbol| Name::new(interner.resolve(symbol)),
+        &mut |symbol| ctx.scope_of(&Name::new(interner.resolve(symbol))),
+    )
 }
 
 pub(crate) fn item_data(tree: &ItemTree, item_id: ItemId) -> Option<&ItemData> {

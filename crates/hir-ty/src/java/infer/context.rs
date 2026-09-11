@@ -128,7 +128,15 @@ pub(super) fn enclosing_self_ty(
                         .iter()
                         .map(|b| resolve_type_ref(db, scope, resolver, b))
                         .collect();
-                    Ty::type_var(db, tp.name.clone(), bounds)
+                    Ty::type_var(
+                        db,
+                        crate::java::ty::TypeVarScope::Class {
+                            file,
+                            item: id,
+                            name: tp.name.clone(),
+                        },
+                        bounds,
+                    )
                 })
                 .collect();
             return Some(Ty::reference(db, fqn.as_str(), args));

@@ -1,0 +1,40 @@
+---
+source: crates/hir-ty/tests/jls_type_var_scope.rs
+expression: out
+---
+FILE /src/com/example/Body.java:
+package com.example;
+
+import java.util.function.Function;
+
+class Either<L, R> {
+    <X> X map(Function<L, X> first, Function<R, X> second) {
+        return null;
+    }
+}
+
+class Entry<T, A> {
+    A argument;
+
+    static <T> Entry<T, T> createOverride(T value) {
+        return null;
+    }
+}
+
+class Body {
+    static <T> Entry<T, ?> codec(Either<T, Entry<T, ?>> either) {
+        Function<T, Entry<T, ?>> first = Entry::createOverride;
+        Function<Entry<T, ?>, Entry<T, ?>> second = e -> e;
+        return either.map(first, second);
+    }
+}
+
+method map(java.util.function.Function<L, X>, java.util.function.Function<R, X>): X
+  locals: l0: java.util.function.Function<L, X> | l1: java.util.function.Function<R, X>
+  exprs: e0: null
+method createOverride(T): com.example.Entry<T, T>
+  locals: l2: T
+  exprs: e1: null
+method codec(com.example.Either<T, com.example.Entry<T, ?>>): com.example.Entry<T, ?>
+  locals: l3: com.example.Either<T, com.example.Entry<T, ?>> | l4: java.util.function.Function<T, com.example.Entry<T, ?>> | l5: java.util.function.Function<com.example.Entry<T, ?>, com.example.Entry<T, ?>>
+  exprs: e3: java.util.function.Function<T, com.example.Entry<T, ?>> | e4: com.example.Entry<T, ?> | e5: java.util.function.Function<com.example.Entry<T, ?>, com.example.Entry<T, ?>> | e6: java.util.function.Function<T, com.example.Entry<T, ?>> | e7: java.util.function.Function<com.example.Entry<T, ?>, com.example.Entry<T, ?>> | e8: com.example.Either<T, com.example.Entry<T, ?>> | e9: com.example.Entry<T, ?>

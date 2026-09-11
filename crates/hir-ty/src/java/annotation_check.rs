@@ -34,7 +34,7 @@
 //! is honored the same way.
 
 use hir_def::java::item_tree::{
-    ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef, TypeParam,
+    ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef,
 };
 use hir_expand::{
     body::{BodyTree, ExprId, Literal, PatternId, StmtId},
@@ -101,7 +101,7 @@ pub(crate) fn annotation_diagnostics(
         scope: &hir::ResolutionScope,
         map: &hir_expand::ast_id_map::AstIdMap,
         source: &syntax::SourceFile,
-        type_params: &FxHashMap<ItemId, Vec<TypeParam>>,
+        type_params: &FxHashMap<ItemId, Vec<crate::java::resolve::ScopedTypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {

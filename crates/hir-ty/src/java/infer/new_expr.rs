@@ -12,7 +12,7 @@ use crate::java::{
     inference::{Inference, InvocationPhase},
     method::{MethodData, member_set},
     resolve::resolve_type_ref,
-    ty::{Ty, TyData, TyKind},
+    ty::{Ty, TyData, TyKind, TypeVarScope},
 };
 
 use super::{InferCtx, poly::ArgInfo};
@@ -336,9 +336,9 @@ impl InferCtx<'_> {
                     stack.push(parent);
                     continue;
                 }
-                let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
+                let mut binding: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
                 for (parent_arg, target_arg) in parent_args.iter().zip(target_args.iter()) {
-                    if let TyKind::TypeVar { name, .. } = parent_arg.kind(self.db) {
+                    if let TyKind::TypeVar { scope, .. } = parent_arg.kind(self.db) {
                         // §15.9.2.2: a *wildcard* target argument bounds the
                         // created class's type variable — `? extends X` gives
                         // it the upper bound X, `? super X` the lower bound X
@@ -355,7 +355,7 @@ impl InferCtx<'_> {
                             _ if !target_arg.contains_infer_var(self.db) => *target_arg,
                             _ => continue,
                         };
-                        binding.insert(name.clone(), instantiation);
+                        binding.insert(scope.clone(), instantiation);
                     }
                 }
                 if !binding.is_empty() {
@@ -372,9 +372,11 @@ impl InferCtx<'_> {
         let Some(resolved) = hir::fqn_resolve(self.db, &self.scope, fqn.as_str()) else {
             return Vec::new();
         };
-        let names: Vec<Name> = match resolved {
+        let resolved = resolved.clone();
+        let names: Vec<Name> = match &resolved {
             hir::Resolved::Library(library) => {
-                let Some(info) = hir::class_generic_info(self.db, &hir::Resolved::Library(library))
+                let Some(info) =
+                    hir::class_generic_info(self.db, &hir::Resolved::Library(library.clone()))
                 else {
                     return Vec::new();
                 };
@@ -400,7 +402,23 @@ impl InferCtx<'_> {
         };
         names
             .into_iter()
-            .map(|name| Ty::type_var(self.db, name, Vec::new()))
+            .map(|name| {
+                let scope = match &resolved {
+                    hir::Resolved::Library(library) => TypeVarScope::LibraryClass {
+                        owner: {
+                            let interner = &self.db.hir_state().interner;
+                            Name::new(interner.resolve(&library.entry.fqn))
+                        },
+                        name: name.clone(),
+                    },
+                    hir::Resolved::Source(source) => TypeVarScope::Class {
+                        file: source.file,
+                        item: source.item,
+                        name: name.clone(),
+                    },
+                };
+                Ty::type_var(self.db, scope, Vec::new())
+            })
             .collect()
     }
 
@@ -414,19 +432,35 @@ impl InferCtx<'_> {
         };
         match resolved {
             hir::Resolved::Library(library) => {
-                let Some(info) = hir::class_generic_info(self.db, &hir::Resolved::Library(library))
+                let Some(info) =
+                    hir::class_generic_info(self.db, &hir::Resolved::Library(library.clone()))
                 else {
                     return Vec::new();
                 };
                 let interner = &self.db.hir_state().interner;
+                let owner = Name::new(interner.resolve(&library.entry.fqn));
+                let names: Vec<Name> = info
+                    .type_params
+                    .iter()
+                    .map(|tp| Name::new(interner.resolve(&tp.name)))
+                    .collect();
+                let ctx = crate::java::resolve::LibrarySignature::class(&owner);
                 info.type_params
                     .iter()
-                    .map(|tp| crate::java::method::MethodTypeParam {
-                        name: Name::new(interner.resolve(&tp.name)),
+                    .zip(names.iter())
+                    .map(|(tp, name)| crate::java::method::MethodTypeParam {
+                        scope: crate::java::ty::TypeVarScope::LibraryClass {
+                            owner: owner.clone(),
+                            name: name.clone(),
+                        },
                         bounds: tp
                             .bounds
                             .iter()
-                            .map(|bound| crate::java::resolve::ty_from_library(self.db, bound))
+                            .map(|bound| {
+                                crate::java::resolve::ty_from_library_signature(
+                                    self.db, bound, &ctx,
+                                )
+                            })
                             .collect(),
                     })
                     .collect()
@@ -455,7 +489,11 @@ impl InferCtx<'_> {
                     Some(declared) => declared
                         .iter()
                         .map(|tp| crate::java::method::MethodTypeParam {
-                            name: tp.name.clone(),
+                            scope: crate::java::ty::TypeVarScope::Class {
+                                file: source.file,
+                                item: source.item,
+                                name: tp.name.clone(),
+                            },
                             bounds: tp
                                 .bounds
                                 .iter()
@@ -486,7 +524,7 @@ impl InferCtx<'_> {
         }
         let bare: Vec<Ty> = type_params
             .iter()
-            .map(|tp| Ty::type_var(self.db, tp.name.clone(), tp.bounds.clone()))
+            .map(|tp| Ty::type_var(self.db, tp.scope.clone(), tp.bounds.clone()))
             .collect();
         // Resolve the constructors against the *parameterized* class so the
         // formal parameter types keep the class's type variables ([§15.9.2.2]).
@@ -523,12 +561,12 @@ impl InferCtx<'_> {
             if let Some(resolved) =
                 inference.solve_after(self.db, &self.scope, InvocationPhase::Loose)
             {
-                let mut binding: FxHashMap<Name, Ty> = FxHashMap::default();
-                for (tp_name, var) in &subst {
+                let mut binding: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
+                for (scope, var) in &subst {
                     if let Some(var_id) = var.as_infer_var(self.db)
                         && let Some(inst) = resolved.get(&var_id)
                     {
-                        binding.insert(tp_name.clone(), *inst);
+                        binding.insert(scope.clone(), *inst);
                     }
                 }
                 if binding.len() == type_params.len() {

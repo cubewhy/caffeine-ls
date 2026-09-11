@@ -38,14 +38,14 @@ snapshot! {
             "java.util.List<java.lang.String>[]",
             |db| Ty::array(db, r(db, "java.util.List", vec![r(db, "java.lang.String", vec![])])),
         ),
-        ("T", |db| Ty::type_var(db, "T", vec![])),
+        ("T", |db| Ty::unscoped_var(db, "T", vec![])),
         (
             "T extends java.lang.Number",
-            |db| Ty::type_var(db, "T", vec![r(db, "java.lang.Number", vec![])]),
+            |db| Ty::unscoped_var(db, "T", vec![r(db, "java.lang.Number", vec![])]),
         ),
         (
             "T extends java.lang.Number & java.io.Serializable",
-            |db| Ty::type_var(
+            |db| Ty::unscoped_var(
                 db,
                 "T",
                 vec![
@@ -140,7 +140,7 @@ snapshot! {
                 })))],
             ),
         ),
-        ("T", |db| Ty::type_var(db, "T", vec![])),
+        ("T", |db| Ty::unscoped_var(db, "T", vec![])),
         ("NotFound", |db| r(db, "NotFound", vec![])),
         ("<error>", |db| Ty::error(db)),
     ]),

@@ -77,7 +77,8 @@ fn render(db: &TestDatabase, ty: &Ty) -> String {
                 BoundKind::Lower => format!("? super {}", render(db, &bound.ty)),
             },
         },
-        TyKind::TypeVar { name, lower, .. } => {
+        TyKind::TypeVar { scope, lower, .. } => {
+            let name = scope.name();
             let upper: Vec<String> = ty
                 .bounds(db)
                 .iter()

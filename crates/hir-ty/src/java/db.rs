@@ -15,7 +15,7 @@
 use triomphe::Arc;
 
 use base_db::{FileText, salsa};
-use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
+use hir_def::java::item_tree::{ItemData, ItemId};
 use hir_expand::name::Name;
 use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::TypeRef;
@@ -120,10 +120,10 @@ impl ContextKey {
 pub(crate) fn type_params_map_query(
     db: &dyn TyDatabase,
     file: FileText,
-) -> Arc<FxHashMap<ItemId, Vec<TypeParam>>> {
+) -> Arc<FxHashMap<ItemId, Vec<resolve::ScopedTypeParam>>> {
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
-    Arc::new(resolve::type_params_map(&tree))
+    Arc::new(resolve::type_params_map(&tree, file_id))
 }
 
 /// The canonical fully qualified name

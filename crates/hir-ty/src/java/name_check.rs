@@ -309,7 +309,7 @@ pub(crate) fn declaration_type_diagnostics(
         tree: &ItemTree,
         map: &AstIdMap,
         source: &SourceFile,
-        type_params: &FxHashMap<ItemId, Vec<hir_def::java::item_tree::TypeParam>>,
+        type_params: &FxHashMap<ItemId, Vec<crate::java::resolve::ScopedTypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {

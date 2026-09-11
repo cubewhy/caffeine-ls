@@ -23,13 +23,13 @@
 
 use std::collections::VecDeque;
 
-use hir_expand::name::Name;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     java::db::TyDatabase,
     java::method::{MethodData, MethodTypeParam},
     java::ty::Ty,
+    java::ty::TypeVarScope,
 };
 
 mod incorporate;
@@ -311,11 +311,11 @@ impl Inference {
         &mut self,
         db: &dyn TyDatabase,
         type_params: &[MethodTypeParam],
-    ) -> FxHashMap<Name, Ty> {
-        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+    ) -> FxHashMap<TypeVarScope, Ty> {
+        let mut subst: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
         for tp in type_params {
             let var = self.fresh_var(db);
-            subst.insert(tp.name.clone(), var);
+            subst.insert(tp.scope.clone(), var);
             let bounds: Vec<Ty> = tp.bounds.iter().map(|b| b.substitute(db, &subst)).collect();
             if bounds.is_empty() {
                 self.add_upper(db, var, Ty::reference(db, "java.lang.Object", Vec::new()));
@@ -341,10 +341,10 @@ impl Inference {
         db: &dyn TyDatabase,
         method: &MethodData,
     ) -> (Vec<Ty>, Ty, Vec<Ty>) {
-        let mut subst: FxHashMap<Name, Ty> = FxHashMap::default();
+        let mut subst: FxHashMap<TypeVarScope, Ty> = FxHashMap::default();
         for tp in &method.type_params {
             let var = self.fresh_var(db);
-            subst.insert(tp.name.clone(), var);
+            subst.insert(tp.scope.clone(), var);
             let bounds: Vec<Ty> = tp.bounds.iter().map(|b| b.substitute(db, &subst)).collect();
             if bounds.is_empty() {
                 self.add_upper(db, var, Ty::reference(db, "java.lang.Object", Vec::new()));
