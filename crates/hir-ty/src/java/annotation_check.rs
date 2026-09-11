@@ -17,9 +17,17 @@
 //! - A declaration `D` with element type `E` may carry an annotation `T` iff
 //!   `T`'s target set contains `E` (or is empty, which makes `T` applicable to
 //!   every declaration except type parameters and package declarations).
-//! - A *type-use* annotation `T` on a type of `D` is applicable iff `T`'s
-//!   target contains `TYPE_USE`, or contains `E` itself ([§9.6.4.1] — the
-//!   annotated type belongs to the declaration, so its element type counts).
+//! - An annotation written among the modifiers of a *variable* declaration
+//!   (`@Ann int x;`, `void m(@Ann int p)`) — where §9.7.4 makes the same
+//!   annotation plausibly a declaration annotation or a type annotation — is
+//!   applicable iff `T`'s target contains the declaration's element type, or
+//!   contains `TYPE_USE` and the declaration writes a type for the annotation
+//!   to apply to. A `var` declaration ([§14.4], [§15.27.1]) writes none, so a
+//!   `TYPE_USE`-only annotation is an error there.
+//! - A *type annotation* `T` on a type — a type argument, an array dimension,
+//!   a cast, a class literal, ... — is applicable iff `T`'s target contains
+//!   `TYPE_USE` ([§9.6.4.1]: a type context admits nothing else, however the
+//!   type relates to a declaration).
 //! - An element value `V` is assignable to an element of declared type `T` by
 //!   assignment conversion ([§5.2]), with the §9.7.1 array shorthand (a single
 //!   non-initializer value against `T[]` is checked against `T`) and the
@@ -79,8 +87,9 @@ fn element_type_of(data: &ItemData) -> Option<&'static str> {
 
 /// The annotation diagnostics of every annotation in `file`, declaration and
 /// type-use alike, in source order: the `@Target` applicability checks
-/// ([JLS §9.6.4.1], [§9.7.4]) and the element-value argument checks
-/// ([§9.7.1]).
+/// ([JLS §9.6.4.1], [§9.7.4]) — over the declarations, the variable
+/// declarations a body introduces and every written type — and the
+/// element-value argument checks ([§9.7.1]).
 pub(crate) fn annotation_diagnostics(
     db: &dyn TyDatabase,
     file: FileId,
