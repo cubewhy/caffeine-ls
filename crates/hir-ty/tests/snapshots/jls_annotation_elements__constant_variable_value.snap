@@ -1,0 +1,38 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+@interface ShortAnn {
+    short h();
+}
+
+class Anns {
+    static final int K = 1;
+    static final int L = K;
+    static final String TEXT = "t";
+    static final short SHORT_K = 100;
+
+    @IntAnn(i = K)
+    @IntAnn(i = K + K)
+    @IntAnn(i = L)
+    @IntAnn(i = Anns.K)
+    @StringAnn(s = TEXT)
+    @StringAnn(s = "a" + K)
+    @ShortAnn(h = SHORT_K)
+    @ShortAnn(h = K)
+    @StringAnn(s = K)
+    void run() {}
+}
+
+@28:19: annotation-element-type-mismatch: Incompatible types. Found: 'int', required: 'String'

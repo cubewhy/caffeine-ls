@@ -628,11 +628,14 @@ fn field_constant(
         let hir::ClassOrModuleRecord::Class(class) = record.as_ref() else {
             return FieldValue::Unreadable;
         };
-        let Some(stub) = class
-            .fields
-            .iter()
-            .find(|stub| db.hir_state().interner.resolve(&stub.descriptor) == descriptor)
-        else {
+        // §4.5 identifies a field by its *name and* descriptor: a class may
+        // declare several fields of one descriptor (`Character.MIN_VALUE` and
+        // `Character.MAX_VALUE`), and their `ConstantValue`s differ.
+        let interner = &db.hir_state().interner;
+        let Some(stub) = class.fields.iter().find(|stub| {
+            interner.resolve(&stub.name) == field.name
+                && interner.resolve(&stub.descriptor) == descriptor
+        }) else {
             return FieldValue::Unreadable;
         };
         let Some(value) = stub.constant_value.as_ref() else {

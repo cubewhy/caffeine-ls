@@ -1,0 +1,11 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@SuppressWarnings()
+class Anns {}
+
+@2:1: missing-annotation-element: 'value' missing but required

@@ -316,3 +316,399 @@ class Anns {}
 // §9.7.1: `@SuppressWarnings`' elements are read from the JDK classfile —
 // its `value()` is `String[]`, against which the `int` literal fails (the
 // single-value array shortcut checks the component type `String`).
+
+// -- red: an element without a default value and without a pair ----------------
+
+snapshot!(
+    missing_element,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    int x();
+    int y() default 2;
+}
+
+@Ann
+class Anns {}
+
+@Ann()
+class Empty {}
+",
+    )])
+);
+// §9.7.1: a normal annotation must contain a pair for every element of the
+// annotation interface except those with a default value, so `@Ann` and
+// `@Ann()` — the degenerate case of no pairs at all — are both missing `x`.
+// The report is anchored at the annotation's *name*, and `y` (which has a
+// default) is not named.
+
+snapshot!(
+    missing_element_several,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    int x();
+    int y();
+    Class<?> c();
+}
+
+@Ann(c = String.class)
+class Anns {}
+",
+    )])
+);
+// §9.7.1: every element left without a pair is named, in declaration order,
+// in the single report.
+
+snapshot!(
+    missing_element_provided,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    int value();
+}
+
+@Ann(1)
+class Single {}
+",
+    )])
+);
+// §9.7.1: the single-argument form `@Ann(1)` is the implicit `value` pair, so
+// the element is not missing; nothing is reported.
+
+snapshot!(
+    missing_element_nested,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Inner {
+    int v();
+    int w() default 0;
+}
+
+@interface Outer {
+    Inner in();
+}
+
+@Outer(in = @Inner)
+class Anns {}
+",
+    )])
+);
+// §9.7.1: the rule runs for a nested annotation value too — its own argument
+// list is missing a pair for `Inner.v`.
+
+// -- green: constant expressions ([§15.29]) ------------------------------------
+
+snapshot!(
+    constant_expression_values,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    int i();
+}
+
+@Ann(i = 1 + 2)
+@Ann(i = 1 < 2 ? 300 : 1)
+@Ann(i = 'a')
+@Ann(i = (byte) 300)
+@Ann(i = +1)
+@Ann(i = ~1)
+@Ann(i = true ? 1 : 2)
+class Anns {}
+",
+    )])
+);
+// §9.7.1/[§15.29]: the arithmetic, shift, relational, conditional, unary and
+// cast forms of a constant expression are all admitted — each of these is a
+// constant expression of type `int`, so nothing is reported.
+
+snapshot!(
+    constant_string_concatenation,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    String s();
+}
+
+@Ann(s = \"a\" + 1)
+@Ann(s = \"a\" + 'b')
+class Anns {}
+",
+    )])
+);
+// §15.29/§15.18.1: `+` with a `String` operand is string concatenation, whose
+// result is itself a `String` constant expression.
+
+snapshot!(
+    abrupt_expression_value,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    int i();
+}
+
+@Ann(i = 1 / 0)
+class Anns {}
+",
+    )])
+);
+// §15.29: a constant expression must not complete abruptly — a division by a
+// zero constant divisor does, so the value is not one.
+
+snapshot!(
+    null_literal_value,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    String s();
+}
+
+@Ann(s = null)
+class Anns {}
+",
+    )])
+);
+// §9.7.1: "`v` is not `null`" — and §15.29's constant expressions are literals
+// of primitive type or of type `String`, so the null literal is not one. It is
+// assignable to the `String` element, so the constant-expression rule is what
+// reports it.
+
+// -- red/green: names that denote variables ([§6.5.6], [§4.12.4]) --------------
+
+snapshot!(
+    non_constant_field_value,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+class Anns {
+    int field = 1;
+    final int f1 = 1;
+
+    @IntAnn(i = field)
+    @IntAnn(i = this.f1)
+    @StringAnn(s = field)
+    void run() {}
+}
+",
+    )])
+);
+// §9.7.1/[§15.29]/[§4.12.4]: `field` is not `final` and `this.f1` is not the
+// qualified name `TypeName.Identifier` of [§6.5.6.2], so neither is a constant
+// variable — an `int` element reports the missing constant expression. Against
+// the `String` element the *type* is what is wrong first (`int` is not
+// assignable to `String`), which is the report javac makes too.
+
+snapshot!(
+    constant_variable_value,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+@interface ShortAnn {
+    short h();
+}
+
+class Anns {
+    static final int K = 1;
+    static final int L = K;
+    static final String TEXT = \"t\";
+    static final short SHORT_K = 100;
+
+    @IntAnn(i = K)
+    @IntAnn(i = K + K)
+    @IntAnn(i = L)
+    @IntAnn(i = Anns.K)
+    @StringAnn(s = TEXT)
+    @StringAnn(s = \"a\" + K)
+    @ShortAnn(h = SHORT_K)
+    @ShortAnn(h = K)
+    @StringAnn(s = K)
+    void run() {}
+}
+",
+    )])
+);
+// §4.12.4: `K` and `L` are constant variables — `final`, of type `int`, with a
+// constant expression as initializer — so every value above is a constant
+// expression ([§15.29]), and `K`'s value narrows to `short` ([§5.2]). Only the
+// last pair fails, and as a *type* mismatch: an `int` constant is not
+// assignable to a `String` element.
+
+// -- red/green: the class-literal form ([§15.8.2]) -----------------------------
+
+snapshot!(
+    class_literal_form,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Ann {
+    Class<?> c();
+}
+
+class Anns {
+    static final Class<?> THIS_TYPE = String.class;
+
+    @Ann(c = String.class)
+    @Ann(c = (String.class))
+    @Ann(c = THIS_TYPE)
+    void run() {}
+}
+",
+    )])
+);
+// §9.7.1: a `Class`-typed element takes the class literal itself
+// ([§15.8.2]) — `(String.class)` is a parenthesized expression, not a class
+// literal, and `THIS_TYPE` is a `Class`-valued constant variable, not a class
+// literal; both are reports javac makes.
+
+// -- red/green: the enum-constant form ([§8.9.1]) ------------------------------
+
+snapshot!(
+    enum_constant_form,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+enum Color { RED }
+
+@interface Ann {
+    Color c();
+}
+
+class Anns {
+    static final Color ME = Color.RED;
+    static final int NOT_ENOUGH = 1;
+
+    @Ann(c = Color.RED)
+    @Ann(c = (Color.RED))
+    @Ann(c = ME)
+    @Ann(c = null)
+    @Ann(c = NOT_ENOUGH)
+    void run() {}
+}
+",
+    )])
+);
+// §9.7.1/[§8.9.1]: an enum-typed element takes an enum constant. A
+// parenthesized `(Color.RED)` still is one — IntelliJ looks through the
+// parentheses, and so does javac — while `ME` (a `Color`-valued constant
+// variable) and `null` are not. An `int` value is not assignable to the enum
+// element at all, so it is a type mismatch.
+
+// -- red: a JDK annotation's element without a default -------------------------
+
+snapshot!(
+    missing_element_jdk_library,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@SuppressWarnings()
+class Anns {}
+",
+    )])
+);
+// §9.7.1: the elements of a JDK annotation are read from its classfile —
+// `java.lang.SuppressWarnings.value()` carries no `AnnotationDefault`
+// attribute ([JVMS §4.7.22]), so the empty argument list is missing its pair.
+
+// -- red/green: the JDK's own classfiles ---------------------------------------
+
+#[test]
+fn library_classfile_values() {
+    // The JDK's own classfiles: `Integer.MAX_VALUE` and `Math.PI` are
+    // *constant variables* ([§4.12.4]) whose `ConstantValue` attributes
+    // ([JVMS §4.7.2]) the layer reads; `File.separator` is a `static final
+    // String` *without* one, so it is no constant; `Character.MIN_VALUE` and
+    // `Character.MAX_VALUE` share a descriptor but not a value, so the
+    // constant narrowed into a `byte` element is the field's own. `@Deprecated`'s
+    // elements all carry an `AnnotationDefault` ([JVMS §4.7.22]) and
+    // `@SuppressWarnings`' one is given a value, so neither reports anything.
+    let Some(out) = crate::common::check_class_diagnostics_real_jdk(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+import java.io.File;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StrAnn {
+    String s();
+}
+
+@interface DblAnn {
+    double d();
+}
+
+@interface ByteAnn {
+    byte b();
+}
+
+@Deprecated
+@SuppressWarnings(\"unchecked\")
+class Anns {
+    @IntAnn(i = Integer.MAX_VALUE)
+    @DblAnn(d = Math.PI)
+    @IntAnn(i = Math.PI)
+    @StrAnn(s = Math.PI)
+    @StrAnn(s = File.separator)
+    @ByteAnn(b = Character.MIN_VALUE)
+    @ByteAnn(b = Character.MAX_VALUE)
+    void run() {}
+}
+",
+    )]) else {
+        return;
+    };
+    insta::assert_snapshot!("library_classfile_values", out);
+}

@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+class Anns {
+    int field = 1;
+    final int f1 = 1;
+
+    @IntAnn(i = field)
+    @IntAnn(i = this.f1)
+    @StringAnn(s = field)
+    void run() {}
+}
+
+@14:16: non-constant-annotation-element: Attribute value must be constant
+@15:16: non-constant-annotation-element: Attribute value must be constant
+@16:19: annotation-element-type-mismatch: Incompatible types. Found: 'int', required: 'String'

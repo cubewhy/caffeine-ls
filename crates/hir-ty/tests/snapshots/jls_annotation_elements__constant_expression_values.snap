@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Ann {
+    int i();
+}
+
+@Ann(i = 1 + 2)
+@Ann(i = 1 < 2 ? 300 : 1)
+@Ann(i = 'a')
+@Ann(i = (byte) 300)
+@Ann(i = +1)
+@Ann(i = ~1)
+@Ann(i = true ? 1 : 2)
+class Anns {}

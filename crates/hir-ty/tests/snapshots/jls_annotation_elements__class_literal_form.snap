@@ -1,0 +1,22 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Ann {
+    Class<?> c();
+}
+
+class Anns {
+    static final Class<?> THIS_TYPE = String.class;
+
+    @Ann(c = String.class)
+    @Ann(c = (String.class))
+    @Ann(c = THIS_TYPE)
+    void run() {}
+}
+
+@10:13: annotation-element-not-class-literal: Attribute value must be a class literal
+@11:13: annotation-element-not-class-literal: Attribute value must be a class literal

@@ -193,6 +193,19 @@ pub struct JdkFixture {
     pub lib: LibraryId,
 }
 
+impl JdkFixture {
+    /// The fixture jar's library registration, as the source set's JDK built-in.
+    fn library(&self) -> (LibraryId, LibraryInfo) {
+        (
+            self.lib,
+            LibraryInfo::new(
+                LibraryKind::Jar,
+                AbsPathBuf::assert_utf8(self.jar.as_std_path().to_owned()),
+            ),
+        )
+    }
+}
+
 pub fn jdk_fixture() -> JdkFixture {
     let dir = TempDir::new().unwrap();
     let base = camino::Utf8PathBuf::from_path_buf(dir.path().join("fixture")).unwrap();
@@ -442,7 +455,7 @@ pub fn register_source_set_at_level(
     files: &[(&str, &str)],
     level: Option<hir::JavaLanguageLevel>,
 ) -> hir::SourceSetId {
-    register_source_set_with(db, fixture, files, level, None)
+    register_source_set_with(db, fixture.library(), files, level, None)
 }
 
 /// Like [`register_source_set_at_level`], but declares the release of the
@@ -456,12 +469,14 @@ pub fn register_source_set_at_release(
     level: Option<hir::JavaLanguageLevel>,
     release: Option<u8>,
 ) -> hir::SourceSetId {
-    register_source_set_with(db, fixture, files, level, release)
+    register_source_set_with(db, fixture.library(), files, level, release)
 }
 
+/// Registers `files` as the single source set of `db`, compiled against `jdk`
+/// — the library registration of the JDK the source set is built on.
 fn register_source_set_with(
     db: &mut TestDatabase,
-    fixture: &JdkFixture,
+    jdk: (LibraryId, LibraryInfo),
     files: &[(&str, &str)],
     level: Option<hir::JavaLanguageLevel>,
     release: Option<u8>,
@@ -485,19 +500,14 @@ fn register_source_set_with(
         project: hir::ProjectId(0),
         kind: hir::SourceSetKind::Main,
     };
+    let (jdk_lib, jdk_info) = jdk;
     let mut data = hir::ProjectGraphData::default();
-    data.libraries.insert(
-        fixture.lib,
-        hir::LibraryInfo::new(
-            LibraryKind::Jar,
-            AbsPathBuf::assert_utf8(fixture.jar.as_std_path().to_owned()),
-        ),
-    );
-    data.jdk_libraries.push(fixture.lib);
+    data.libraries.insert(jdk_lib, jdk_info);
+    data.jdk_libraries.push(jdk_lib);
     data.source_sets.insert(
         source_set.clone(),
         Arc::new(hir::Classpath {
-            entries: vec![hir::ClasspathEntry::Library(fixture.lib)],
+            entries: vec![hir::ClasspathEntry::Library(jdk_lib)],
         }),
     );
     data.source_root_to_source_set
@@ -2879,6 +2889,44 @@ pub fn check_class_diagnostics(files: &[(&str, &str)]) -> String {
     let mut db = TestDatabase::new();
     register_source_set(&mut db, &fixture, files);
     render_class_diagnostics(&db, files)
+}
+
+/// Like [`check_class_diagnostics`], but resolving against the *real* JDK at
+/// `JAVA_HOME` rather than the fixture jar — the only way a test sees a
+/// classfile javac itself compiled, `ConstantValue` attributes
+/// ([JVMS §4.7.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.2))
+/// and `AnnotationDefault` attributes
+/// ([JVMS §4.7.22](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.22))
+/// included. `None` with a notice when `JAVA_HOME` is unset or ships no
+/// run-time image, so a machine without a JDK still passes.
+pub fn check_class_diagnostics_real_jdk(files: &[(&str, &str)]) -> Option<String> {
+    let mut db = TestDatabase::new();
+    register_source_set_with(&mut db, real_jdk_library()?, files, None, None);
+    Some(render_class_diagnostics(&db, files))
+}
+
+/// The library registration of the real JDK's run-time image at `JAVA_HOME`,
+/// or `None` with a notice when there is no readable image.
+fn real_jdk_library() -> Option<(LibraryId, LibraryInfo)> {
+    let Ok(java_home) = std::env::var("JAVA_HOME") else {
+        eprintln!("skipping: JAVA_HOME is not set");
+        return None;
+    };
+    let archive = camino::Utf8PathBuf::from(java_home)
+        .join("lib")
+        .join("modules");
+    if !archive.as_std_path().is_file() {
+        eprintln!("skipping: {archive} does not exist");
+        return None;
+    }
+    let lib = LibraryId::from_file_path(archive.as_std_path()).unwrap();
+    Some((
+        lib,
+        LibraryInfo::new(
+            LibraryKind::Jimage,
+            AbsPathBuf::assert_utf8(archive.into_std_path_buf()),
+        ),
+    ))
 }
 
 /// Like [`check_class_diagnostics`], but anchors the source root's base

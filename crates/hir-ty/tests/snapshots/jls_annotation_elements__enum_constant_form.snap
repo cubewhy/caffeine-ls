@@ -1,0 +1,28 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+enum Color { RED }
+
+@interface Ann {
+    Color c();
+}
+
+class Anns {
+    static final Color ME = Color.RED;
+    static final int NOT_ENOUGH = 1;
+
+    @Ann(c = Color.RED)
+    @Ann(c = (Color.RED))
+    @Ann(c = ME)
+    @Ann(c = null)
+    @Ann(c = NOT_ENOUGH)
+    void run() {}
+}
+
+@14:13: annotation-element-not-enum-constant: Attribute value must be an enum constant
+@15:13: annotation-element-not-enum-constant: Attribute value must be an enum constant
+@16:13: annotation-element-type-mismatch: Incompatible types. Found: 'int', required: 'Color'

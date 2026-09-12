@@ -1,0 +1,42 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+import java.io.File;
+
+@interface IntAnn {
+    int i();
+}
+
+@interface StrAnn {
+    String s();
+}
+
+@interface DblAnn {
+    double d();
+}
+
+@interface ByteAnn {
+    byte b();
+}
+
+@Deprecated
+@SuppressWarnings("unchecked")
+class Anns {
+    @IntAnn(i = Integer.MAX_VALUE)
+    @DblAnn(d = Math.PI)
+    @IntAnn(i = Math.PI)
+    @StrAnn(s = Math.PI)
+    @StrAnn(s = File.separator)
+    @ByteAnn(b = Character.MIN_VALUE)
+    @ByteAnn(b = Character.MAX_VALUE)
+    void run() {}
+}
+
+@25:16: annotation-element-type-mismatch: Incompatible types. Found: 'double', required: 'int'
+@26:16: annotation-element-type-mismatch: Incompatible types. Found: 'double', required: 'String'
+@27:16: non-constant-annotation-element: Attribute value must be constant
+@29:17: annotation-element-type-mismatch: Incompatible types. Found: 'char', required: 'byte'

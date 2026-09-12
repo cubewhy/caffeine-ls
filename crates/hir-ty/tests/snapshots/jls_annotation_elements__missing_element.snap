@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Ann {
+    int x();
+    int y() default 2;
+}
+
+@Ann
+class Anns {}
+
+@Ann()
+class Empty {}
+
+@7:1: missing-annotation-element: 'x' missing but required
+@10:1: missing-annotation-element: 'x' missing but required
