@@ -46,30 +46,6 @@ struct LibrarySourceIndex {
     entries: FxHashMap<SmolStr, SmolStr>,
 }
 
-impl LibrarySourceIndex {
-    /// The archive entry declaring the class `fqn`, or `None`.
-    ///
-    /// `fqn` may arrive in the binary spelling (`pkg.Outer$Inner`,
-    /// [JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)):
-    /// `$` is folded to `.` and then the longest prefix the index knows is
-    /// taken, which lands nested types on their outer compilation unit
-    /// (`java.util.Map.Entry` → `java/util/Map.java`). The lookup is also how
-    /// a **method/field** owner is resolved: a member is looked for in its
-    /// owning class's file.
-    fn lookup(&self, fqn: &str) -> Option<&SmolStr> {
-        let mut candidate = fqn.replace('$', ".");
-        loop {
-            if let Some(entry) = self.entries.get(candidate.as_str()) {
-                return Some(entry);
-            }
-            match candidate.rfind('.') {
-                Some(dot) => candidate.truncate(dot),
-                None => return None,
-            }
-        }
-    }
-}
-
 /// The path of an archive entry below the source root: the module prefix of a
 /// JDK 9+ `src.zip` entry is stripped. Those entries are
 /// `<module>/<package path>/X.java`, and a module name always contains a `.`
@@ -152,17 +128,6 @@ pub fn library_sources(db: &dyn HirDatabase, library: LibraryId) -> Option<Libra
         .library_sources(db)
         .get(&library)
         .cloned()
-}
-
-/// The archive entry declaring the class `fqn`, or `None` when the library has
-/// no sources or its archive does not lay the type out under its own name.
-pub fn library_source_entry(
-    db: &dyn HirDatabase,
-    library: LibraryId,
-    fqn: &str,
-) -> Option<Arc<str>> {
-    let index = library_source_index(db, library)?;
-    index.lookup(fqn).map(|entry| Arc::from(entry.as_str()))
 }
 
 /// The absolute path the entry is materialized at below `library`'s source

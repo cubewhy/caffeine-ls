@@ -8,9 +8,11 @@
 //! ([`hir_ty::BodyTypes::resolved`]): the exact declaration the reference
 //! denotes, overload selection ([JLS §15.12]) included. A declaration outside
 //! the workspace has no item of its own to quote, so it is found by the
-//! parameter types the resolution selected, compared *erased* ([§4.6]): no two
-//! members of one class share an erasure ([§8.4.2]), and the classfile writes
-//! the same erasure the declaration does. A class instance
+//! signature that resolution selected: a library member by the classfile
+//! descriptor it recorded ([JVMS §4.6]), a source declaration by the
+//! parameter types compared *erased* ([§4.6]) — no two members of one class
+//! share an erasure ([§8.4.2]), and the classfile writes the same erasure the
+//! declaration does. A class instance
 //! creation ([§15.9]) names the *constructor* it selected — the declaration
 //! the classfile calls `<init>`
 //! ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
@@ -63,6 +65,7 @@ use std::collections::VecDeque;
 
 use rowan::{TextRange, TextSize};
 use rustc_hash::FxHashSet;
+use smol_str::SmolStr;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId};
 
@@ -191,8 +194,10 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
         }
     }
 
-    // No recorded resolution: the reference is resolved through the classpath
-    // by name and arity. A library declaration that is not materialized yet
+    // No recorded resolution: the reference is resolved through the classpath.
+    // A member lookup keys on the signature the resolution selected, so an
+    // invocation inference did not resolve is not guessed at by name or
+    // argument count. A library declaration that is not materialized yet
     // cannot be answered here — the LSP layer loads it (reads the archive entry,
     // or decompiles the class) and re-runs the request (see
     // [`pending_library_files`]).
@@ -632,9 +637,13 @@ fn member_resolution(
             member_decl_name(method, reference),
             member_use_kind(reference),
             // §15.12.2.2: the member the invocation resolved to — its
-            // parameter types name one declaration, where the count alone
-            // would answer the first overload of that arity.
-            Params::Types(&method.params),
+            // classfile descriptor and parameter types name one declaration,
+            // where the count alone would answer the first overload of that
+            // arity.
+            Params::Recorded {
+                types: &method.params,
+                descriptor: method.descriptor.as_ref(),
+            },
             // Only a *constructor declaration* answers a constructor
             // selection: the recorded item of an inference fallback (a method
             // named like the class) is not one, so the lookup below finds the
@@ -928,13 +937,16 @@ enum Resolution {
         name: String,
     },
     /// A resolved library member: everything the signature renderer needs plus
-    /// where its declaring source is, if it is loaded.
+    /// where its declaring source is, if it is loaded. `descriptor` is the
+    /// classfile identity the resolution selected ([JVMS §4.6]), which the
+    /// renderer matches the stub by — `None` only for a member the walk could
+    /// not resolve through a signature.
     LibraryMember {
         library: hir::LibraryId,
         owner_fqn: Name,
         name: String,
         use_kind: Use,
-        arity: Option<usize>,
+        descriptor: Option<SmolStr>,
         decl: hir::LibrarySourceDecl,
     },
     /// A library file that has to be materialized before the reference can be
@@ -1026,14 +1038,21 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                     type_resolution(db, file, item, &Name::new(&name))
                 }),
             // A method invocation, with an implicit `this` receiver when
-            // `receiver` is empty ([JLS §15.12.1]).
-            ExprData::MethodCall {
-                receiver,
-                name,
-                args,
-                ..
-            } => {
-                let params = Params::Count(args.len());
+            // `receiver` is empty ([JLS §15.12.1]). The member is keyed on the
+            // recorded resolution ([§15.12.2]): without one the walk has no
+            // signature to select by, and an unresolved invocation is not
+            // guessed at by argument count.
+            ExprData::MethodCall { receiver, name, .. } => {
+                let body = items
+                    .iter()
+                    .find_map(|&item| hir_ty::body_types(db, file, item));
+                let params = match body.as_deref().and_then(|body| body.resolved.get(&expr_id)) {
+                    Some(hir_ty::ResolvedMember::Method(method)) => Params::Recorded {
+                        types: &method.params,
+                        descriptor: method.descriptor.as_ref(),
+                    },
+                    _ => Params::Unknown,
+                };
                 match receiver {
                     Some(receiver) => receiver_ty(db, file, &items, receiver)
                         .map_or_else(Vec::new, |ty| {
@@ -1290,7 +1309,7 @@ fn members_of_owner(
                     owner_fqn: fqn,
                     name: name.to_owned(),
                     use_kind,
-                    arity: params.arity(),
+                    descriptor: params.descriptor().cloned(),
                     decl: hir::LibrarySourceDecl::Loaded {
                         file: decl_file,
                         item,
@@ -1325,13 +1344,13 @@ fn members_of_owner(
             fqn,
             decl: hir::LibrarySourceDecl::Decompiled { class, path },
         } => {
-            if library_declares_member(db, library, &fqn, name, use_kind, params.arity()) {
+            if library_declares_member(db, library, &fqn, name, use_kind, params) {
                 MemberLookup::Found(Resolution::LibraryMember {
                     library,
                     owner_fqn: fqn,
                     name: name.to_owned(),
                     use_kind,
-                    arity: params.arity(),
+                    descriptor: params.descriptor().cloned(),
                     decl: hir::LibrarySourceDecl::Decompiled { class, path },
                 })
             } else {
@@ -1342,16 +1361,16 @@ fn members_of_owner(
     }
 }
 
-/// Whether the classfile stub of `owner_fqn` declares the member `name` with
-/// `arity` parameters — the only way to ask a sourceless owner about its
-/// members without running a decompiler over it.
+/// Whether the classfile stub of `owner_fqn` declares the member and signature
+/// `params` selects — the only way to ask a sourceless owner about its members
+/// without running a decompiler over it.
 fn library_declares_member(
     db: &RootDatabase,
     library: hir::LibraryId,
     owner_fqn: &Name,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> bool {
     let Some(record) = library_owner_stub(db, library, owner_fqn) else {
         return false;
@@ -1372,10 +1391,21 @@ fn library_declares_member(
                 Use::Constructor => "<init>",
                 _ => name,
             };
-            stub.methods.iter().any(|method| {
-                interner.resolve(&method.name) == classfile_name
-                    && arity.is_none_or(|arity| method.params.len() == arity)
-            })
+            let mut named = stub
+                .methods
+                .iter()
+                .filter(|method| interner.resolve(&method.name) == classfile_name);
+            match params.descriptor() {
+                // The classfile descriptor is the member's identity
+                // ([JVMS §4.6]): this names exactly the declaration the
+                // resolution selected.
+                Some(descriptor) => {
+                    named.any(|method| interner.resolve(&method.descriptor) == descriptor.as_str())
+                }
+                // No recorded signature: a name that denotes exactly one
+                // method is answerable, an overloaded one is not guessed at.
+                None => named.next().is_some() && named.next().is_none(),
+            }
         }
     }
 }
@@ -1425,40 +1455,47 @@ fn owner_lookup(db: &RootDatabase, file: FileId, owner_fqn: &str) -> OwnerLookup
     }
 }
 
-/// What a member lookup knows about the parameter list of the declaration it
-/// is looking for.
+/// The signature a member lookup keys on: what the JLS resolution
+/// ([JLS §15.12.2]) recorded for the reference, or nothing for a reference
+/// that names no invocation.
 #[derive(Debug, Clone, Copy)]
 enum Params<'a> {
-    /// Nothing: any declaration carrying the name answers — a field access, or
-    /// a walk that has no reference to read.
+    /// Nothing: a field access, or a name-only reference — a static import, an
+    /// `import` clause — with no invocation whose resolution could be read. A
+    /// name that denotes exactly one member is still answerable; an overloaded
+    /// one is not guessed at.
     Unknown,
-    /// The *count* of the invocation's arguments ([§15.12.1]): the first
-    /// declaration taking that many parameters answers.
-    Count(usize),
-    /// The parameter types the resolution selected
-    /// ([`hir_ty::MethodData::params`]): the declaration whose parameter types
-    /// are these, erased ([JLS §4.6]), answers. Two members of one class cannot
-    /// share an erasure ([§8.4.2]), so this names a single declaration where
-    /// the count alone answers the first overload of that arity —
-    /// `new ArrayList<>(c)` is `ArrayList(Collection)`, never the
-    /// `ArrayList(int)` of the same arity.
-    Types(&'a [Ty]),
+    /// The declaration the resolution selected ([`hir_ty::MethodData`]): its
+    /// classfile descriptor for a library member
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)),
+    /// its parameter types for a source one. The descriptor is the member's
+    /// identity on the classpath ([JVMS §4.6]), and erasure ([JLS §4.6]) names
+    /// a source declaration uniquely because no two members of one class share
+    /// an erasure ([§8.4.2]) — so the lookup names one declaration where a
+    /// parameter *count* would answer the first overload of that arity
+    /// (`new ArrayList<>(c)` is `ArrayList(Collection)`, never the
+    /// `ArrayList(int)` of the same arity).
+    Recorded {
+        types: &'a [Ty],
+        descriptor: Option<&'a SmolStr>,
+    },
 }
 
 impl Params<'_> {
-    /// The parameter count to match, when the types are not known.
-    fn arity(&self) -> Option<usize> {
+    /// The classfile identity of the selected member, when the resolution
+    /// carried one.
+    fn descriptor(&self) -> Option<&SmolStr> {
         match self {
             Params::Unknown => None,
-            Params::Count(count) => Some(*count),
-            Params::Types(types) => Some(types.len()),
+            Params::Recorded { descriptor, .. } => *descriptor,
         }
     }
 }
 
-/// The symbol of the member `name` declared in `file`, preferring the
-/// declaration `params` selects and falling back to a name-only match —
-/// mirroring the file-local `member_targets` shape.
+/// The symbol of the member `name` declared in `file` that `params` selects.
+/// A name that denotes exactly one declaration needs no signature to select
+/// it; an overloaded name the walk could not resolve is left unanswered rather
+/// than guessed by declaration order.
 fn member_item(
     db: &RootDatabase,
     file: FileId,
@@ -1491,21 +1528,14 @@ fn member_item(
             kind_matches && symbol.name.simple_name() == name
         })
         .collect();
-    let by_types = match params {
-        Params::Types(expected) => candidates
+    let selected = match params {
+        Params::Recorded { types, .. } => candidates
             .iter()
-            .find(|symbol| declares_params(db, file, symbol.item, expected)),
-        Params::Unknown | Params::Count(_) => None,
+            .find(|symbol| declares_params(db, file, symbol.item, types))
+            .map(|symbol| symbol.item),
+        Params::Unknown => None,
     };
-    let by_arity = params.arity().and_then(|arity| {
-        candidates
-            .iter()
-            .find(|symbol| parameter_count(tree, symbol.item) == Some(arity))
-    });
-    by_types
-        .or(by_arity)
-        .or_else(|| candidates.first())
-        .map(|symbol| symbol.item)
+    selected.or_else(|| (candidates.len() == 1).then(|| candidates[0].item))
 }
 
 /// Whether the declaration at `item` takes exactly the parameter types
@@ -1657,19 +1687,22 @@ fn library_owner_stub(
 /// return type come from the classfile stub (the authority); parameter names
 /// are the classfile's `MethodParameters` names when it has them
 /// ([JVMS §4.7.24](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.24))
-/// and the source declaration's names at the same index otherwise, and
-/// `arg{i}` when neither is available.
+/// and the selected source declaration's names at the same index otherwise,
+/// and `arg{i}` when neither is available.
 ///
 /// Renders as `ret name(T p, T p2)` for a method and `type name` for a field —
 /// the shape a Java declaration reads as, rather than a classfile descriptor.
+/// The member is the one the resolution selected: `descriptor` is the
+/// classfile identity it recorded ([JVMS §4.6]), which names one stub method
+/// where a parameter count would render the first overload of that arity.
 fn library_member_signature(
     db: &RootDatabase,
     library: hir::LibraryId,
     owner_fqn: &Name,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
-    source_file: Option<FileId>,
+    descriptor: Option<&str>,
+    source: Option<(FileId, ItemId)>,
 ) -> Option<HoverInfo> {
     let record = library_owner_stub(db, library, owner_fqn)?;
     let hir::ClassOrModuleStub::Class(stub) = record.as_ref() else {
@@ -1699,9 +1732,9 @@ fn library_member_signature(
             };
             let method = stub.methods.iter().find(|method| {
                 interner.resolve(&method.name) == classfile_name
-                    && arity.is_none_or(|arity| method.params.len() == arity)
+                    && descriptor
+                        .is_none_or(|descriptor| interner.resolve(&method.descriptor) == descriptor)
             })?;
-            let param_count = method.params.len();
             let head = match use_kind {
                 Use::Constructor => String::new(),
                 _ => {
@@ -1719,16 +1752,7 @@ fn library_member_signature(
                     let name = param
                         .name
                         .map(|symbol| interner.resolve(&symbol).to_owned())
-                        .or_else(|| {
-                            source_parameter_name(
-                                db,
-                                source_file,
-                                name,
-                                param_count,
-                                index,
-                                use_kind,
-                            )
-                        })
+                        .or_else(|| source_parameter_name(db, source, index))
                         .unwrap_or_else(|| format!("arg{index}"));
                     format!("{ty} {name}")
                 })
@@ -1740,19 +1764,15 @@ fn library_member_signature(
     }
 }
 
-/// The declared name of parameter `index` of the member `name` in the loaded
-/// library source file, when that declaration has the same parameter count.
+/// The declared name of parameter `index` of the library member the resolution
+/// selected, when its source declaration names one there.
 fn source_parameter_name(
     db: &RootDatabase,
-    source_file: Option<FileId>,
-    name: &str,
-    param_count: usize,
+    source: Option<(FileId, ItemId)>,
     index: usize,
-    use_kind: Use,
 ) -> Option<String> {
-    let file = source_file?;
+    let (file, item) = source?;
     let tree = hir::file_item_tree(db, file);
-    let item = member_item(db, file, &tree, name, use_kind, Params::Count(param_count))?;
     match tree.data(item) {
         ItemData::Method(method) => method
             .sig
@@ -1830,14 +1850,18 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
             owner_fqn,
             name,
             use_kind,
-            arity,
+            descriptor,
             decl,
         }) => {
-            let source_file = match decl {
-                hir::LibrarySourceDecl::Loaded { file, .. } => Some(file),
-                // A sourceless owner: only its parameter *names* would come out
-                // of the decompiled file, and they are not worth a JVM start on
-                // hover — the classfile stub already renders the signature.
+            // The declaration the resolution selected: a loaded source
+            // contributes the parameter *names* the classfile may omit; a
+            // sourceless owner contributes none (only its parameter names
+            // would come out of the decompiled file, and they are not worth a
+            // JVM start on hover — the classfile stub already renders the
+            // signature), and a pending one is materialized and the request
+            // re-run instead.
+            let source = match decl {
+                hir::LibrarySourceDecl::Loaded { file, item } => Some((file, item)),
                 hir::LibrarySourceDecl::Decompiled { .. } => None,
                 hir::LibrarySourceDecl::Pending { .. } => return None,
             };
@@ -1847,8 +1871,8 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
                 &owner_fqn,
                 &name,
                 use_kind,
-                arity,
-                source_file,
+                descriptor.as_deref(),
+                source,
             );
         }
         // A declaration has no merged signature of its own, and a `Variable`
@@ -1996,14 +2020,6 @@ enum Use {
     /// so a lookup has to distinguish it from a method that carries the
     /// class's name.
     Constructor,
-}
-
-/// The parameter count of the method declaration `item`, from the item tree.
-fn parameter_count(tree: &hir::hir_def::java::item_tree::ItemTree, item: ItemId) -> Option<usize> {
-    match tree.data(item) {
-        ItemData::Method(method) => Some(method.sig.params.len()),
-        _ => None,
-    }
 }
 
 /// The expressions whose source range contains `offset`, innermost (smallest

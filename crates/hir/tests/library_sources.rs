@@ -10,10 +10,7 @@ mod common;
 use common::{
     LibrarySourcesFixture, Root, RootFile, build_with_library_sources, fixture, main_source_set,
 };
-use hir::{
-    LibrarySourceDecl, library_source_decl, library_source_entry, library_source_for_file,
-    library_source_path,
-};
+use hir::{LibrarySourceDecl, library_source_decl, library_source_for_file};
 use project_model::LibraryId;
 use vfs::FileId;
 
@@ -83,54 +80,6 @@ fn fixture_db() -> Fixture {
         library_root,
         jdk_root,
     }
-}
-
-#[test]
-fn entry_lookup_lands_on_the_compilation_unit() {
-    let fixture = fixture_db();
-    let db = &fixture.db;
-
-    assert_eq!(
-        library_source_entry(db, fixture.library, "com.example.Foo").as_deref(),
-        Some("com/example/Foo.java")
-    );
-    // A nested type is declared by its outer compilation unit's file.
-    assert_eq!(
-        library_source_entry(db, fixture.library, "com.example.Outer$Inner").as_deref(),
-        Some("com/example/Outer.java")
-    );
-    assert_eq!(
-        library_source_entry(db, fixture.library, "com.example.Outer.Inner").as_deref(),
-        Some("com/example/Outer.java")
-    );
-    // A class the archive does not contain yields nothing.
-    assert_eq!(
-        library_source_entry(db, fixture.library, "com.example.Missing"),
-        None
-    );
-    // A library without attached sources yields nothing either.
-    assert_eq!(
-        library_source_entry(db, LibraryId(99), "com.example.Foo"),
-        None
-    );
-}
-
-#[test]
-fn module_prefixed_entries_strip_their_module() {
-    let fixture = fixture_db();
-    let db = &fixture.db;
-
-    assert_eq!(
-        library_source_entry(db, fixture.jdk, "java.lang.String").as_deref(),
-        Some("java.base/java/lang/String.java")
-    );
-
-    let path = library_source_path(db, fixture.jdk, "java.base/java/lang/String.java")
-        .expect("the entry materializes under the library root");
-    assert_eq!(
-        path.as_str(),
-        fixture.jdk_root.join("java/lang/String.java").as_str()
-    );
 }
 
 #[test]

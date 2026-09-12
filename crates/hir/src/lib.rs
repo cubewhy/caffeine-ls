@@ -29,8 +29,8 @@ pub use db::{
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use lib_source::{
-    LibrarySourceDecl, library_source_decl, library_source_entry, library_source_for_file,
-    library_source_path, library_sources,
+    LibrarySourceDecl, library_source_decl, library_source_for_file, library_source_path,
+    library_sources,
 };
 pub use modules::{
     ModuleCtx, ModuleDescriptor, ModuleGraph, WorkspaceModuleGraph, is_package_exported,

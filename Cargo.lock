@@ -1204,6 +1204,7 @@ dependencies = [
  "rayon",
  "rowan",
  "rustc-hash 2.1.2",
+ "smol_str",
  "syntax",
  "tempfile",
  "triomphe",

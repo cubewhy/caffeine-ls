@@ -433,22 +433,25 @@ fn member_declared_on_a_supertype_resolves_there() {
     );
 }
 
+/// JLS §15.12.2: the declaration a reference resolves to is the one the
+/// invocation selected, so an argument list no overload accepts names no
+/// member at all — the lookup does not fall back to a same-named declaration.
 #[test]
-fn overload_arity_prefers_a_match_then_falls_back_to_the_name() {
+fn an_invocation_with_no_applicable_overload_resolves_to_nothing() {
     let fixture = fixture(&["com/example/Overload.java"], false);
 
     let targets = fixture.definition("o.run(1)");
-    assert_eq!(targets.len(), 1);
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
     assert_eq!(targets[0].file, lib_file("com/example/Overload.java"));
-    let one_parameter = targets[0].range;
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(OVERLOAD_SRC, "public void run(int n)", "run"),
+        "the declaration the argument's type selects"
+    );
 
-    // An arity no overload declares falls back to the name-only match.
-    let targets = fixture.definition("o.run(1, 2)");
-    assert_eq!(targets.len(), 1);
-    assert_eq!(targets[0].file, lib_file("com/example/Overload.java"));
-    assert_ne!(
-        targets[0].range, one_parameter,
-        "the fallback is a name-only match, not the one-parameter overload"
+    assert!(
+        fixture.definition("o.run(1, 2)").is_empty(),
+        "no `Overload` declaration takes two arguments, so the reference names none"
     );
 }
 
@@ -513,6 +516,20 @@ fn hover_shows_the_merged_signature() {
     assert_eq!(
         fixture.hover("f.greet(1)").as_deref(),
         Some("void greet(int count)")
+    );
+}
+
+/// §15.12.2.2: the hovered signature is the overload the invocation selected,
+/// matched by the classfile descriptor the resolution recorded — not the first
+/// declaration of the same parameter count (`Loader(int size)` is declared
+/// before `Loader(Root root)`).
+#[test]
+fn hover_shows_the_overload_the_invocation_selected() {
+    let fixture = fixture(&["com/example/Loader.java", "com/example/Root.java"], false);
+
+    assert_eq!(
+        fixture.hover("loader.load").as_deref(),
+        Some("void load(com.example.Root root)")
     );
 }
 
