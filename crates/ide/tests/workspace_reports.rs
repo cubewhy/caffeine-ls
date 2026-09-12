@@ -5,9 +5,10 @@ use std::collections::HashMap;
 
 use triomphe::Arc;
 
-use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost, WorkspaceReport};
-use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
+use ide::{
+    Analysis, AnalysisHost, Change, Classpath, ProjectGraphData, SourceSetId, WorkspaceReport,
+};
+use ide_db::base_db::{SourceRoot, SourceRootId};
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
 fn main_source_set(project: u32) -> SourceSetId {
@@ -38,7 +39,7 @@ type FixtureRoot = (SourceSetId, Vec<(u32, &'static str, &'static str)>);
 /// Builds a host from fixture roots (mirrors the `symbol_snapshots` fixtures).
 fn build(roots: &[FixtureRoot]) -> Fixture {
     let mut host = AnalysisHost::new();
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     let mut all_roots = Vec::new();
     let mut data = ProjectGraphData::default();
     let mut files = HashMap::new();
@@ -64,8 +65,8 @@ fn build(roots: &[FixtureRoot]) -> Fixture {
         );
     }
     change.set_roots(all_roots);
+    change.set_project_graph(data);
     host.apply_change(change);
-    set_project_graph(host.raw_database_mut(), data);
     Fixture { host, files }
 }
 
@@ -192,7 +193,7 @@ fn workspace_reports_reflect_incremental_edits() {
     // Fix A on the host (A gains the missing `go()`): a fresh snapshot's pull
     // must re-derive B's cross-file error away through the shared memo tables,
     // leaving A's report clean.
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     change.change_file(
         fixture.file(1),
         Some("package p;\npublic class A {\n    public void go() {}\n}\n".to_string()),
@@ -236,7 +237,7 @@ fn workspace_reports_declaration_edit_preserves_unaffected_files() {
     // Edit A's *declaration*: add a method whose body errors. Nothing B
     // resolves against changes (`A` still declares the same `p.A`), so B must
     // stay clean and backdated; only A's report moves.
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     change.change_file(
         fixture.file(1),
         Some(

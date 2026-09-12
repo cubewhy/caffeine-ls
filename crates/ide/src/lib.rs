@@ -1,27 +1,31 @@
 use std::panic::AssertUnwindSafe;
+use std::path::Path;
 
-use ide_db::{
-    RootDatabase,
-    base_db::{FileChange, salsa::Cancelled},
-    line_index,
+use ide_db::{RootDatabase, base_db::salsa::Cancelled, line_index};
+
+pub use hir::{
+    Classpath, ClasspathEntry, LibraryInfo, LibraryKind, LibrarySources, ProjectGraphData,
+    SourceSetId, SourceSymbolKind,
 };
-
 pub use ide_db::{
     Severity,
     base_db::LanguageKind,
     line_index::{LineCol, LineIndex},
 };
 pub use ide_diagnostics::Diagnostic;
+pub use project_model::LibraryId;
 use rustc_hash::FxHashSet;
 pub use syntax::{DiagnosticCode, JavaDiagnosticCode, KotlinDiagnosticCode};
 use triomphe::Arc;
 use vfs::FileId;
 
+mod change;
 pub mod delta;
 pub mod nav;
 pub mod symbols;
 pub mod workspace;
 
+pub use change::Change;
 pub use nav::{HoverInfo, NavigationTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
@@ -45,8 +49,16 @@ impl AnalysisHost {
         }
     }
 
-    pub fn apply_change(&mut self, change: FileChange) {
+    /// Applies the change to the database. Outstanding snapshots are canceled.
+    pub fn apply_change(&mut self, change: Change) {
         change.apply(&mut self.db);
+    }
+
+    /// Enables the persistent (LMDB-backed) stub cache under
+    /// `<cache_dir>/stubs/vN`. Returns whether it could be enabled; without it
+    /// the stub index stays in memory only.
+    pub fn enable_persistent_stub_cache(&self, cache_dir: &Path) -> bool {
+        hir::enable_persistent_stub_cache(&self.db, cache_dir)
     }
 
     pub fn raw_database(&self) -> &RootDatabase {
@@ -254,5 +266,24 @@ impl Analysis {
         offset: rowan::TextSize,
     ) -> Cancellable<Option<HoverInfo>> {
         self.with_db(|db| nav::hover(db, file_id, offset))
+    }
+
+    /// The registered libraries (those reachable from some source set), in
+    /// unspecified order. Empty before the first workspace load.
+    pub fn registered_libraries(&self) -> Vec<LibraryId> {
+        hir::registered_libraries(&self.db)
+    }
+
+    /// Builds the stub index of one library on the calling thread, so the
+    /// first query that resolves into it does not pay the archive parse.
+    /// `Err(Cancelled)` when a write landed while it ran.
+    pub fn warmup_library(&self, id: LibraryId) -> Cancellable<()> {
+        self.with_db(|db| hir::warmup_library(db, id))
+    }
+
+    /// Drops the persistent stub-cache entries of libraries the current
+    /// project graph no longer registers. Called once a warmup pass finished.
+    pub fn prune_stub_cache(&self) {
+        hir::prune_stub_cache(&self.db)
     }
 }

@@ -3,9 +3,10 @@
 
 use triomphe::Arc;
 
-use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost, NavigationTarget};
-use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
+use ide::{
+    Analysis, AnalysisHost, Change, Classpath, NavigationTarget, ProjectGraphData, SourceSetId,
+};
+use ide_db::base_db::{SourceRoot, SourceRootId};
 use insta::assert_snapshot;
 use rowan::{TextRange, TextSize};
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -622,7 +623,7 @@ fn test_file(text: &str) -> Fixture {
     let file = FileId::from_raw(1);
     let path = "/src/main/java/com/example/Nav.java";
 
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     let mut file_set = FileSet::default();
     file_set.insert(
         file,
@@ -640,8 +641,8 @@ fn test_file(text: &str) -> Fixture {
             entries: Vec::new(),
         }),
     );
+    change.set_project_graph(data);
     host.apply_change(change);
-    set_project_graph(host.raw_database_mut(), data);
 
     Fixture {
         host,

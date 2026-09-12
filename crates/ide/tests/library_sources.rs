@@ -4,11 +4,12 @@
 
 use std::path::PathBuf;
 
-use hir::{Classpath, ClasspathEntry, LibraryInfo, LibraryKind, LibrarySources, ProjectGraphData};
-use ide::{Analysis, AnalysisHost};
-use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
+use ide::{
+    Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, LibraryId, LibraryInfo, LibraryKind,
+    LibrarySources, ProjectGraphData, SourceSetId,
+};
+use ide_db::base_db::{SourceRoot, SourceRootId};
 use lsp_test::classfile::{build_jar, class_bytes};
-use project_model::LibraryId;
 use rowan::TextSize;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
@@ -52,8 +53,8 @@ fn abs(path: PathBuf) -> AbsPathBuf {
     AbsPathBuf::assert_utf8(path)
 }
 
-fn main_source_set() -> hir::SourceSetId {
-    hir::SourceSetId {
+fn main_source_set() -> SourceSetId {
+    SourceSetId {
         project: project_model::ProjectId(0),
         kind: project_model::SourceSetKind::Main,
     }
@@ -135,7 +136,7 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
     let app = FileId::from_raw(1);
     let workspace_foo_file = FileId::from_raw(2);
 
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     let mut root = FileSet::default();
     root.insert(app, VfsPath::from(abs(base.join("src/app/App.java"))));
     change.change_file(app, Some(APP_SRC.to_owned()));
@@ -185,8 +186,8 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
     data.library_source_roots.insert(SourceRootId(1), library);
 
     let mut host = AnalysisHost::new();
+    change.set_project_graph(data);
     host.apply_change(change);
-    hir::set_project_graph(host.raw_database_mut(), data);
 
     Fixture {
         _dir: dir,

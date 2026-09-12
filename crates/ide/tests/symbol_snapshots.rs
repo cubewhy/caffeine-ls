@@ -3,9 +3,11 @@
 
 use std::collections::HashMap;
 
-use hir::{Classpath, ClasspathEntry, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost, DocumentSymbol, WorkspaceSymbolSummary};
-use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
+use ide::{
+    Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, DocumentSymbol, ProjectGraphData,
+    SourceSetId, SourceSymbolKind, WorkspaceSymbolSummary,
+};
+use ide_db::base_db::{SourceRoot, SourceRootId};
 use insta::assert_snapshot;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
@@ -45,7 +47,7 @@ type FixtureRoot = (SourceSetId, Vec<(u32, &'static str, &'static str)>);
 /// Builds a host from fixture roots.
 fn build(roots: &[FixtureRoot]) -> Fixture {
     let mut host = AnalysisHost::new();
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     let mut all_roots = Vec::new();
     let mut data = ProjectGraphData::default();
     let mut files = HashMap::new();
@@ -71,8 +73,8 @@ fn build(roots: &[FixtureRoot]) -> Fixture {
         );
     }
     change.set_roots(all_roots);
+    change.set_project_graph(data);
     host.apply_change(change);
-    set_project_graph(host.raw_database_mut(), data);
     Fixture { host, files }
 }
 
@@ -142,7 +144,7 @@ fn document_symbols_record_members() {
 
     let names: Vec<&str> = symbols
         .iter()
-        .filter(|s| s.kind != hir::SourceSymbolKind::Package)
+        .filter(|s| s.kind != SourceSymbolKind::Package)
         .map(|s| s.display_name.as_str())
         .collect();
     // The record, its two accessors and its canonical constructor, in order.
@@ -158,7 +160,7 @@ fn document_symbols_record_members() {
         .iter()
         .find(|s| s.display_name == "x(): int")
         .unwrap();
-    assert_eq!(x.kind, hir::SourceSymbolKind::Method);
+    assert_eq!(x.kind, SourceSymbolKind::Method);
     assert_eq!(x.item, None);
     assert_eq!(x.range, x.name_range);
     let point = symbols.iter().find(|s| s.display_name == "Point").unwrap();
@@ -186,7 +188,7 @@ fn document_symbols_record_varargs_and_overrides() {
 
     let names: Vec<&str> = symbols
         .iter()
-        .filter(|s| s.kind != hir::SourceSymbolKind::Package)
+        .filter(|s| s.kind != SourceSymbolKind::Package)
         .map(|s| s.display_name.as_str())
         .collect();
     // The accessor renders the array form; the explicitly declared canonical
@@ -252,7 +254,7 @@ fn document_symbol_package_item_and_fqn_detail() {
     let foo = analysis.document_symbols(fixture.file(1)).unwrap();
     let package = foo
         .iter()
-        .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
+        .find(|symbol| symbol.kind == SourceSymbolKind::Package)
         .unwrap();
     assert_eq!(package.name, "<default package>");
     assert_eq!(package.display_name, "<default package>");
@@ -266,7 +268,7 @@ fn document_symbol_package_item_and_fqn_detail() {
     let bar = analysis.document_symbols(fixture.file(2)).unwrap();
     let package = bar
         .iter()
-        .find(|symbol| symbol.kind == hir::SourceSymbolKind::Package)
+        .find(|symbol| symbol.kind == SourceSymbolKind::Package)
         .unwrap();
     assert_eq!(package.name, "com.example");
     assert_eq!(package.display_name, "com.example");
@@ -387,7 +389,7 @@ fn document_symbols_recompute_when_roots_attach() {
     let file_id = FileId::from_raw(1);
     let text = "package org.example;\n\npublic class Foo {\n    public void bar() {}\n}\n";
 
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     change.change_file(file_id, Some(text.to_string()));
     host.apply_change(change);
     assert!(
@@ -414,10 +416,10 @@ fn document_symbols_recompute_when_roots_attach() {
             entries: Vec::<ClasspathEntry>::new(),
         }),
     );
-    let mut change = FileChange::default();
+    let mut change = Change::default();
     change.set_roots(vec![SourceRoot::new(file_set)]);
+    change.set_project_graph(data);
     host.apply_change(change);
-    set_project_graph(host.raw_database_mut(), data);
 
     let symbols = host.snapshot().document_symbols(file_id).unwrap();
     assert!(
