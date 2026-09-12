@@ -5,6 +5,9 @@ on:
     branches: ["master"]
   pull_request:
     branches: ["master"]
+  # The nightly release workflow calls this so it ships exactly the artifacts
+  # this workflow produces.
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,25 +18,37 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux and Windows are both built on Linux, cross-compiled:
+          # `cross` builds the Linux binary inside its glibc container, and
+          # `cargo-xwin` builds the MSVC Windows binary against the Microsoft
+          # CRT/SDK it downloads (cross-rs has no MSVC image, so it cannot build
+          # that target itself).
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             vsce_target: linux-x64
             bin_name: caffeine-ls
+            builder: cross
 
-          - os: windows-latest
+          - os: ubuntu-latest
             target: x86_64-pc-windows-msvc
             vsce_target: win32-x64
             bin_name: caffeine-ls.exe
+            builder: cargo-xwin
 
+          # The Darwin binaries link against the macOS SDK, so they are built on
+          # real macOS runners: arm64 on an Apple Silicon image, x64 on an Intel
+          # one.
           - os: macos-latest
             target: aarch64-apple-darwin
             vsce_target: darwin-arm64
             bin_name: caffeine-ls
+            builder: cargo
 
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             vsce_target: darwin-x64
             bin_name: caffeine-ls
+            builder: cargo
 
     runs-on: ${{ matrix.os }}
 
@@ -46,13 +61,39 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross / cargo-xwin
+        if: matrix.builder != 'cargo'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: ${{ matrix.builder }}
+
+      # cargo-xwin links through the LLVM tools shipped with the toolchain
+      # (`rust-lld`, `llvm-ar`) and compiles C dependencies with `clang`, which
+      # the runner image already provides.
+      - name: Install LLVM tools for cargo-xwin
+        if: matrix.builder == 'cargo-xwin'
+        run: rustup component add llvm-tools-preview
+
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
+        with:
+          # cargo-xwin unpacks the Windows CRT and SDK here; without the cache
+          # every run would re-download them.
+          cache-directories: ${{ matrix.builder == 'cargo-xwin' && '~/.cache/cargo-xwin' || '' }}
 
       - name: Fetch decompiler jars
         run: cargo xtask prepare
 
-      - name: Build Rust binary
+      - name: Build Rust binary (cross)
+        if: matrix.builder == 'cross'
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Build Rust binary (cargo-xwin)
+        if: matrix.builder == 'cargo-xwin'
+        run: cargo xwin build --release --target ${{ matrix.target }}
+
+      - name: Build Rust binary (native)
+        if: matrix.builder == 'cargo'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Copy binary to extension bin folder
