@@ -415,6 +415,35 @@ pub fn item_type_references(
     out
 }
 
+/// The annotation names of a *declaration* item with the source range of each,
+/// in source order — the annotation counterpart of [`item_type_references`].
+///
+/// These are the item's *own* declaration annotations ([JLS §9.7]): the
+/// annotations of its modifier lists, of its record components, and of the type
+/// parameters and parameters of its signature. The declaration annotations of
+/// the variables a body declares ([§9.7.4]) are lowered with the body, where
+/// they sit on the local ([`hir_expand::body::Local::annotations`]), and are
+/// read by whoever walks that body.
+pub fn item_annotation_references(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: ItemId,
+) -> Vec<(Name, Option<TextRange>)> {
+    let tree = hir::file_item_tree(db, file);
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
+    item_annotation_refs(tree.data(item))
+        .into_iter()
+        .map(|annotation| {
+            (
+                annotation.name.clone(),
+                ranges::annotation_name_range(map, &source, annotation),
+            )
+        })
+        .collect()
+}
+
 /// The unknown-reference diagnostics of the *declaration* type references
 /// ([JLS §6.5.5.1], [§7.5.1]) — including the *annotation* references of the
 /// declarations ([JLS §9.7]) — and of the imports of a file.

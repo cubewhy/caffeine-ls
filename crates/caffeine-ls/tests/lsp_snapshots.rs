@@ -1148,6 +1148,49 @@ fn test_java_semantic_tokens() {
             "operator +=",
             "string \"sample\"",
             "number 0",
+            // The package and import names ([JLS §7.4], [§7.5]).
+            "namespace com.example",
+            "namespace java",
+            "namespace util",
+            "namespace List",
+            // Declarations, with the modifiers the lowering resolved.
+            "class+declaration Sample",
+            "typeParameter+declaration T",
+            "interface+declaration Marker",
+            "enum+declaration Kind",
+            "enumMember+declaration ALPHA",
+            "struct+declaration Pair",
+            "property+declaration left",
+            "property+declaration+readonly+static NAME",
+            "property+declaration count",
+            "method+declaration pick",
+            "method+declaration caller",
+            "method+declaration mark",
+            "typeParameter+declaration U",
+            // Type references: the declaration's own and the body's, written
+            // anywhere.
+            "type Marker",
+            "type Number",
+            "type Sample",
+            "type Integer",
+            "type List",
+            // A type parameter written in a method's signature: the method's
+            // own parameters are in scope for its *members*, not for the
+            // signature it declares them in.
+            "type U",
+            "decorator Deprecated",
+            // Body declarations.
+            "parameter+declaration values",
+            "parameter+declaration index",
+            "variable+declaration local",
+            "variable+declaration value",
+            // Body references, from the resolution the type layer recorded.
+            "variable local",
+            "variable value",
+            "property+modification count",
+            // Library members, reached through the unresolved fallback.
+            "property out",
+            "method println",
         ],
     );
 

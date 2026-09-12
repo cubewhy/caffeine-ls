@@ -262,6 +262,19 @@ pub fn component_range(
     node_of(map, source, component.ast).map(|node| node.text_range())
 }
 
+/// The source range of a record component's *name* — the `name` of `T name`,
+/// the component accessor's own identifier (mirror of `component_range`'s node
+/// walk, narrowed to the name token: the declared type is a nested `TYPE` node,
+/// so the first direct-child `IDENTIFIER` is the name).
+pub fn component_name_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    component: &RecordComponent,
+) -> Option<TextRange> {
+    let node = node_of(map, source, component.ast)?;
+    identifier_range(&node)
+}
+
 /// The source range of a field's initializer: from the end of the `=` token
 /// to the end of its declarator (mirror of `lower_field_decl`).
 pub fn field_initializer_range(

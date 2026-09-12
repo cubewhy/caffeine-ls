@@ -109,6 +109,12 @@ pub(crate) fn insert(map: &mut Highlights, range: TextRange, tag: HlTag, mods: H
     map.insert(range.start(), Highlight { range, tag, mods });
 }
 
+/// Whether a token over `range` is already recorded — the guard of a pass that
+/// only fills what the passes before it did not classify.
+pub(crate) fn contains(map: &Highlights, range: TextRange) -> bool {
+    map.contains_key(&range.start())
+}
+
 /// The semantic highlighting of the file, sorted by range start. Empty for a
 /// file whose language the server cannot tell (no source root yet) and for an
 /// unknown language.
