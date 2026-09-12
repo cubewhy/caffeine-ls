@@ -106,6 +106,41 @@ fn goto_slices<'a>(fixture: &'a Fixture, needle: &str, occurrence: usize) -> Vec
         })
         .collect()
 }
+
+/// Asserts that the reference at `needle`'s `occurrence`-th occurrence resolves
+/// to exactly one target — the declaration named `name`, whose range covers
+/// `declaration`, a needle inside that declaration's own text.
+fn assert_goto_covers(
+    fixture: &Fixture,
+    needle: &str,
+    occurrence: usize,
+    name: &str,
+    declaration: &str,
+) {
+    let offset = fixture.offset_start(needle, occurrence);
+    let targets = fixture
+        .analysis()
+        .goto_definition(fixture.file, offset)
+        .unwrap();
+    assert_eq!(
+        targets.len(),
+        1,
+        "case {needle:?}#{occurrence}: {targets:?}"
+    );
+    assert_eq!(targets[0].name, name, "case {needle:?}#{occurrence}");
+    let inside = TextSize::new(
+        fixture
+            .text
+            .find(declaration)
+            .unwrap_or_else(|| panic!("{declaration:?} is not in the fixture")) as u32,
+    );
+    assert!(
+        targets[0].range.contains(inside),
+        "case {needle:?}#{occurrence}: {:?} must cover {declaration:?}",
+        targets[0].range
+    );
+}
+
 /// Renders the navigation targets of `offset` under the given position, and
 /// the hover there, in a deterministic snapshot-friendly form.
 fn render_nav(fixture: &Fixture, needle: &str) -> String {
@@ -316,6 +351,11 @@ class Sub extends Base {
         return null;
     }
 
+    <T> T id(T v) {
+        T copy = null;
+        return copy;
+    }
+
     void use(Base b, Sub other, Box<Base> boxed) {
         count = b.count;
         self = b.self;
@@ -394,6 +434,68 @@ fn goto_reference_matrix() {
         .collect();
     cases.extend(MANY_MEMBER_NONE.iter().copied());
     assert_snapshot!("goto_reference_matrix", render_nav_many(&fixture, &cases));
+}
+
+/// The declaration-side references of [`MANY_SRC`] — a supertype, a type
+/// reference of a declaration or of a body, an annotation, an import: the
+/// needle locates the reference (at its `occurrence`-th occurrence), `name` is
+/// the declaration's simple name, and the last string a needle inside the
+/// target's own range.
+const MANY_DECL_GOTO: &[(&str, usize, &str, &str)] = &[
+    // §8.1.4/§9.1.2: a supertype clause names the class-like declaration.
+    ("Base {", 1, "Base", "class Base"),
+    ("Factory {", 1, "Factory", "interface Factory"),
+    // §9.7: an annotation names the annotation type.
+    ("Marker", 1, "Marker", "@interface Marker"),
+    // The declared type of a field, of a parameter and of a return type
+    // ([§8.3], [§8.4.1]) — declaration-side references, not expressions.
+    ("Base self", 0, "Base", "class Base"),
+    ("Base b", 0, "Base", "class Base"),
+    ("Base b", 2, "Base", "class Base"),
+    ("Base make", 0, "Base", "class Base"),
+    // A body's own type references: a local's declared type, a generic
+    // argument, a cast, an `instanceof` test, a class literal, an array
+    // creation ([§14.4], [§15.16], [§15.20.2], [§15.8.2], [§15.10.1]).
+    ("Base cast", 0, "Base", "class Base"),
+    ("Base> boxed", 0, "Base", "class Base"),
+    ("Base> {}", 0, "Base", "class Base"),
+    ("Base) other", 0, "Base", "class Base"),
+    ("Base;", 1, "Base", "class Base"),
+    ("Base.class", 0, "Base", "class Base"),
+    ("Base[1]", 0, "Base", "class Base"),
+    // §7.5.1: a single-type import names its type; §7.5.4: the last segment of
+    // a static import names the member, the segments before it its type.
+    ("Base;", 0, "Base", "class Base"),
+    ("STATIC;", 0, "STATIC", "STATIC = 1"),
+    ("Base.STATIC", 0, "Base", "class Base"),
+];
+
+/// The declaration-side references of [`MANY_SRC`] that name no declaration: a
+/// type variable ([§4.4]) is not a declaration.
+const MANY_DECL_NONE: &[(&str, usize)] = &[("T copy", 0)];
+
+#[test]
+fn goto_declaration_reference_matrix() {
+    let fixture = test_file(MANY_SRC);
+    for &(needle, occurrence, name, declaration) in MANY_DECL_GOTO {
+        assert_goto_covers(&fixture, needle, occurrence, name, declaration);
+    }
+    for &(needle, occurrence) in MANY_DECL_NONE {
+        assert_eq!(
+            goto_slices(&fixture, needle, occurrence),
+            Vec::<&str>::new(),
+            "case {needle:?}#{occurrence}"
+        );
+    }
+    let mut cases: Vec<(&str, usize)> = MANY_DECL_GOTO
+        .iter()
+        .map(|&(needle, occurrence, ..)| (needle, occurrence))
+        .collect();
+    cases.extend(MANY_DECL_NONE.iter().copied());
+    assert_snapshot!(
+        "goto_declaration_reference_matrix",
+        render_nav_many(&fixture, &cases)
+    );
 }
 
 fn test_file(text: &str) -> Fixture {

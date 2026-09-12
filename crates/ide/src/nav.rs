@@ -113,7 +113,105 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     // by name and arity. A library declaration that is not materialized yet
     // cannot be answered here — the LSP layer reads it into the database and
     // re-runs the request (see [`pending_library_sources`]).
+    let declaration = declaration_reference(db, file, offset);
+    if !declaration.is_empty() {
+        return targets(db, file, declaration);
+    }
     targets(db, file, resolve_at(db, file, offset))
+}
+
+/// The resolutions of a *declaration-side* reference: the type reference or
+/// annotation whose written name carries the offset, or the import the offset
+/// falls in. A declaration's own name carries no such reference, so an offset
+/// on a declaration stays unresolved — as does a name that resolves to
+/// nothing (a type variable, a package segment).
+fn declaration_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    let declared = declaration_type_ref_targets(db, file, offset);
+    if !declared.is_empty() {
+        return declared;
+    }
+    import_targets(db, file, offset)
+}
+
+/// The declarations the type reference at `offset` denotes: the reference whose
+/// own name range contains the offset, resolved in the scope of the item that
+/// carries it ([JLS §6.5.5.1]).
+///
+/// The enclosing items are consulted innermost first, then the rest of the
+/// file: a member's annotation and declared type lie *before* the declarator
+/// node a field item is anchored to (`@Anno Base f;`), so the reference the
+/// offset falls on may lie outside every item whose range contains the offset.
+fn declaration_type_ref_targets(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+) -> Vec<Resolution> {
+    let tree = hir::file_item_tree(db, file);
+    let enclosed = items_at(db, file, &tree, offset);
+    let mut rest: Vec<(TextRange, ItemId)> = all_items(db, file, &tree)
+        .into_iter()
+        .filter(|(range, _)| !range.contains(offset))
+        .collect();
+    rest.sort_by_key(|(range, _)| range.len());
+    for item in enclosed
+        .into_iter()
+        .chain(rest.into_iter().map(|(_, item)| item))
+    {
+        for (name, range) in hir_ty::item_type_references(db, file, item) {
+            if range.is_some_and(|range| range.contains(offset)) {
+                return type_resolution(db, file, Some(item), &name);
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// The declaration an import declaration's name denotes ([JLS §7.5]): the type
+/// of a single-type import, or — for a static import — the member its last
+/// segment names, with the type of the preceding segments. An on-demand
+/// import's `*` is no identifier and names no declaration, and a leading
+/// package segment names no type, so neither is answered.
+fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    let tree = hir::file_item_tree(db, file);
+    if tree.language == LanguageKind::Unknown {
+        return Vec::new();
+    }
+    let source = base_db::parse(db, file, tree.language).syntax_node(tree.language);
+    let map = hir::hir_def::db::ast_id_map(db, file, tree.language);
+    for import in &tree.imports {
+        let segments = hir::hir_def::java::ranges::import_segments(map, &source, import);
+        let Some(index) = segments
+            .iter()
+            .position(|(_, range)| range.contains(offset))
+        else {
+            continue;
+        };
+        let written = |last: usize| {
+            segments[..=last]
+                .iter()
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>()
+                .join(".")
+        };
+        // `import static Type.member;` — the last segment is the member, the
+        // segments before it name its (possibly nested) declaring type.
+        if import.is_static && index + 1 == segments.len() {
+            let owner = Name::new(&written(index - 1));
+            let member = import.name.simple_name();
+            for use_kind in [Use::Field, Use::Method] {
+                match member_of_named_owner(db, file, None, &owner, &member, use_kind, None) {
+                    MemberLookup::Found(resolution) => return vec![resolution],
+                    MemberLookup::PendingSource(source) => {
+                        return vec![Resolution::Pending(source)];
+                    }
+                    MemberLookup::Absent => {}
+                }
+            }
+            return Vec::new();
+        }
+        return type_resolution(db, file, None, &Name::new(&written(index)));
+    }
+    Vec::new()
 }
 
 /// The navigation target of a resolution: a declaration item, or a variable's
@@ -380,14 +478,15 @@ pub fn pending_library_sources(
     file: FileId,
     offset: TextSize,
 ) -> Vec<LibrarySourceRef> {
-    // The recorded resolution names the declaring source; the classpath walk
-    // names every unloaded owner along the receiver's hierarchy, so a hover —
-    // which still resolves through [`resolve_at`] — materializes everything it
-    // needs in one round.
+    // The recorded resolution names the declaring source; a declaration-side
+    // reference names its own; and the classpath walk names every unloaded
+    // owner along a member's hierarchy, so a hover — which still resolves
+    // through [`resolve_at`] — materializes everything it needs in one round.
     let mut seen: FxHashSet<(hir::LibraryId, Arc<str>)> = FxHashSet::default();
     let mut out = Vec::new();
     for resolution in recorded_reference(db, file, offset)
         .into_iter()
+        .chain(declaration_reference(db, file, offset))
         .chain(resolve_at(db, file, offset))
     {
         if let Resolution::Pending(source) = resolution
@@ -1114,31 +1213,35 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
 /// range) first: the enclosing class-like declarations, the member that
 /// carries the offset, and the nested declarations it contains.
 fn items_at(db: &RootDatabase, file: FileId, tree: &ItemTree, offset: TextSize) -> Vec<ItemId> {
+    let mut found: Vec<(TextRange, ItemId)> = all_items(db, file, tree)
+        .into_iter()
+        .filter(|(range, _)| range.contains(offset))
+        .collect();
+    found.sort_by_key(|(range, _)| range.len());
+    found.into_iter().map(|(_, item)| item).collect()
+}
+
+/// Every item of the file with its declaration range, in tree order.
+fn all_items(db: &RootDatabase, file: FileId, tree: &ItemTree) -> Vec<(TextRange, ItemId)> {
     fn walk(
         db: &RootDatabase,
         file: FileId,
         tree: &ItemTree,
-        offset: TextSize,
         item: ItemId,
         out: &mut Vec<(TextRange, ItemId)>,
     ) {
-        let Some(range) = item_range(db, file, tree, item) else {
-            return;
-        };
-        if !range.contains(offset) {
-            return;
+        if let Some(range) = item_range(db, file, tree, item) {
+            out.push((range, item));
         }
-        out.push((range, item));
         for &child in tree.data(item).body() {
-            walk(db, file, tree, offset, child, out);
+            walk(db, file, tree, child, out);
         }
     }
     let mut out = Vec::new();
     for &top in &tree.top {
-        walk(db, file, tree, offset, top, &mut out);
+        walk(db, file, tree, top, &mut out);
     }
-    out.sort_by_key(|(range, _)| range.len());
-    out.into_iter().map(|(_, item)| item).collect()
+    out
 }
 
 /// The body-carrying item ids whose range contains `offset`, innermost first —

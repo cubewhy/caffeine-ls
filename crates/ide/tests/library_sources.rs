@@ -339,6 +339,37 @@ fn unloaded_hierarchy_reports_every_owner_in_one_round() {
 }
 
 #[test]
+fn recorded_member_and_type_reference_agree_on_one_pending_source() {
+    let fixture = fixture(&[], false);
+
+    // The offset sits on the `new`'s type name: inference records the
+    // constructor's declaring class, the declaration-side walk reads the same
+    // written name, and the classpath walk resolves it as a class — all three
+    // name `com/example/Foo.java`, and the pending set lists it once.
+    let offset =
+        TextSize::new((APP_SRC.find("new com.example.Foo()").unwrap() + "new ".len()) as u32);
+    assert!(
+        fixture
+            .analysis()
+            .goto_definition(fixture.app, offset)
+            .unwrap()
+            .is_empty()
+    );
+
+    let pending = fixture
+        .analysis()
+        .pending_library_sources(fixture.app, offset)
+        .unwrap();
+    assert_eq!(
+        pending.len(),
+        1,
+        "expected one deduplicated pending source: {pending:?}"
+    );
+    assert!(pending[0].path.as_str().ends_with("com/example/Foo.java"));
+    assert!(pending[0].archive.as_str().ends_with("deps-sources.jar"));
+}
+
+#[test]
 fn hover_shows_the_merged_signature() {
     let fixture = fixture(&["com/example/Foo.java"], false);
 

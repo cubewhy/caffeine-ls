@@ -179,6 +179,40 @@ pub fn import_name_range(
     node_of(map, source, import.path).map(|node| node.text_range())
 }
 
+/// The identifier segments of an import declaration with their source ranges, in
+/// written order (`import static a.b.C.m;` → `a`, `b`, `C`, `m`); the `*` of an
+/// on-demand import is not a segment (mirror of `lower_import`'s name walk,
+/// `crate::java::lower::walk::lower_import`).
+pub fn import_segments(
+    map: &AstIdMap,
+    source: &SourceFile,
+    import: &ImportItem,
+) -> Vec<(String, TextRange)> {
+    let Some(node) = node_of(map, source, import.path) else {
+        return Vec::new();
+    };
+    let Some(path) = node.children().find(|child| is(child, J::IMPORT_PATH)) else {
+        return Vec::new();
+    };
+    let segments: Vec<(String, TextRange)> = path
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == J::IDENTIFIER)
+        .map(|token| (token.text().to_owned(), token.text_range()))
+        .collect();
+    // `lower_import` strips only a trailing `.*` from the path, so the joined
+    // segments are exactly the lowered name for both import forms.
+    debug_assert_eq!(
+        segments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("."),
+        import.name.as_str()
+    );
+    segments
+}
+
 /// The source range of a package declaration's name — the `QUALIFIED_NAME`
 /// child of the `PACKAGE_DECL` (mirror of `lower_package`).
 pub fn package_name_range(
