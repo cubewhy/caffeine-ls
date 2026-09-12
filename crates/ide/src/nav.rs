@@ -1,21 +1,26 @@
-//! Name-level navigation over the HIR: goto-definition and hover at an
-//! offset of a source file.
+//! Navigation over the HIR: goto-definition and hover at an offset of a
+//! source file.
 //!
-//! Navigation is source-side and name-based: a reference — a local variable
-//! use, a field access, a method invocation, or a type reference in a `new`,
-//! `instanceof` or class literal — resolves to the declaration(s) carrying
-//! the same simple name within the file ([JLS §6.5]). Locals resolve to
-//! their declaration exactly; members and types resolve to every same-named
-//! declaration in the file (overloads and shadows included). This foundation
-//! serves the LSP `textDocument/definition` and `textDocument/hover`
-//! requests; it deliberately stays name-based rather than running the full
-//! type-directed resolution of [§15.12].
+//! A reference names a declaration, and navigation answers with that
+//! declaration. A *body* reference — a local, a field or method access, an
+//! invocation, a constructor call, a method reference — is answered from the
+//! resolution the type layer recorded while inferring the body
+//! ([`hir_ty::BodyTypes::resolved`]): the exact declaration the reference
+//! denotes, overload selection ([JLS §15.12]) included. A
+//! *declaration-side* reference — an `extends`/`implements` clause, a field or
+//! parameter or return type, a `throws`, a generic argument, an annotation, an
+//! `import` — resolves the written name in the scope of the declaration that
+//! carries it ([§6.5.5.1], [§7.5]).
 //!
-//! When the file-local walk finds nothing, the reference is resolved through
-//! the classpath instead: a type or member reference that denotes a library
-//! declaration resolves to the *library's source file*, which the LSP layer
-//! materializes on demand. A library declaration whose source is not loaded
-//! yet is reported as pending rather than being answered.
+//! Only a reference the type layer did not resolve falls back to the
+//! name-based classpath walk ([`resolve_at`]): a body whose inference recorded
+//! nothing, an overload probe that produced no candidate, a type variable.
+//! Lambda parameters and the enum constants of a `case` label are not part of
+//! the recorded table and keep their own resolution.
+//!
+//! When a reference resolves into a library declaration whose source is not
+//! loaded yet, it is reported as pending rather than being answered: the LSP
+//! layer reads the archive entry into the database and re-runs the request.
 
 use std::collections::VecDeque;
 
@@ -28,7 +33,7 @@ use hir::JvmDatabase;
 use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     arena::ArenaId,
-    body::{BodyTree, ExprData, ExprId, LocalId},
+    body::{BodyTree, ExprData, ExprId, LocalId, StmtData, StmtId, SwitchLabel},
     name::Name,
 };
 use hir_ty::Ty;
@@ -63,80 +68,308 @@ pub struct HoverInfo {
     pub value: String,
 }
 
-/// The declarations the reference at `offset` resolves to ([JLS §6.5]) — a
-/// local variable use to its declaration, a field/method/type reference to
-/// every same-named source declaration of the file, or — when the file-local
-/// walk finds nothing — the classpath declaration the reference actually
-/// denotes.
+/// The declarations the reference at `offset` resolves to ([JLS §6.5]).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
+    java_definition(db, file, offset)
+}
+
+/// The Java declarations the reference at `offset` resolves to ([JLS §6.5]).
+fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
+    // §15.12: the type layer resolved this reference exactly — a local, a
+    // field, an overload-selected method or constructor, a method reference.
+    let recorded = recorded_reference(db, file, offset);
+    if !recorded.is_empty() {
+        return targets(db, file, recorded);
+    }
+
     let bodies = hir::file_body_tree(db, file);
-    for expr_id in exprs_at(&bodies, offset) {
-        let targets = match bodies.expr(expr_id).clone() {
-            ExprData::Var(name) => {
-                let name_str = name.as_str();
-                // §6.3: a local of this body — the innermost declaration in
-                // scope, so a shadowing inner declarator beats an outer one.
-                if let Some(local) = resolve_local(&bodies, name_str, offset) {
-                    return vec![NavigationTarget {
-                        file,
-                        range: bodies.local_range(local).unwrap_or_default(),
-                        name: name_str.to_owned(),
-                    }];
-                }
-                // Otherwise an implicit-receiver field or a statically
-                // imported constant — resolve like a field access.
-                member_targets(db, file, name_str, Use::Field, None)
-            }
-            ExprData::FieldAccess { name, .. } => {
-                member_targets(db, file, name.as_str(), Use::Field, None)
-            }
-            ExprData::MethodCall { name, args, .. } => {
-                let mut found =
-                    member_targets(db, file, name.as_str(), Use::Method, Some(args.len()));
-                if found.is_empty() {
-                    found = member_targets(db, file, name.as_str(), Use::Method, None);
-                }
-                found
-            }
-            // Type references: `new`, `instanceof`, class literals and
-            // qualified type names resolve to the class-like declarations of
-            // the name.
-            ExprData::New { ty, .. } | ExprData::ClassLit(ty) => {
-                let Some(name) = type_ref_name(&ty) else {
-                    return Vec::new();
-                };
-                type_targets(db, file, name)
-            }
-            ExprData::InstanceOf { ty, .. } => {
-                let Some(name) = ty.as_ref().and_then(|t| type_ref_name(t)) else {
-                    return Vec::new();
-                };
-                type_targets(db, file, name)
-            }
-            ExprData::NamePath(name) => type_targets(db, file, name.simple_name().to_owned()),
-            _ => Vec::new(),
+    // A reference the recorded table does not cover: a lambda parameter (the
+    // body IR carries it as a name/range pair, not a local), a local of a body
+    // the type layer could not infer, or the enum constant of a `case` label
+    // ([§14.11.1] labels are checked before inference).
+    for expr in exprs_at(&bodies, offset) {
+        let ExprData::Var(name) = bodies.expr(expr).clone() else {
+            continue;
         };
-        if !targets.is_empty() {
-            return targets;
+        // §6.4/[§15.27.2]: a lambda parameter shadows every enclosing local of
+        // the same name throughout its body, so it is looked up first.
+        if let Some(resolution) = lambda_param_resolution(&bodies, offset, &name) {
+            return targets(db, file, vec![resolution]);
+        }
+        if let Some(local) = resolve_local(&bodies, name.as_str(), offset) {
+            return vec![NavigationTarget {
+                file,
+                range: bodies.local_range(local).unwrap_or_default(),
+                name: name.as_str().to_owned(),
+            }];
+        }
+        let resolution = switch_label_resolution(db, file, offset, &name, expr);
+        if !resolution.is_empty() {
+            return targets(db, file, resolution);
         }
     }
 
-    // No same-file declaration: the reference may denote a classpath
-    // declaration. A library one that is not materialized yet cannot be
-    // answered here — the LSP layer reads it into the database and re-runs the
-    // request (see [`pending_library_sources`]).
-    resolve_at(db, file, offset)
+    // No recorded resolution: the reference is resolved through the classpath
+    // by name and arity. A library declaration that is not materialized yet
+    // cannot be answered here — the LSP layer reads it into the database and
+    // re-runs the request (see [`pending_library_sources`]).
+    targets(db, file, resolve_at(db, file, offset))
+}
+
+/// The navigation target of a resolution: a declaration item, or a variable's
+/// declarator range. `LibraryMember` (hover's merged-signature path) and
+/// `Pending` have no target — a pending one is materialized and the request
+/// re-run instead.
+fn targets(db: &RootDatabase, file: FileId, resolutions: Vec<Resolution>) -> Vec<NavigationTarget> {
+    resolutions
         .into_iter()
         .filter_map(|resolution| match resolution {
-            Resolution::Decl { file, item, name } => decl_target(db, file, item, &name),
+            Resolution::Decl {
+                file: decl_file,
+                item,
+                name,
+            } => decl_target(db, decl_file, item, &name),
+            Resolution::Variable { range, name } => Some(NavigationTarget { file, range, name }),
             Resolution::LibraryMember {
-                decl: hir::LibrarySourceDecl::Loaded { file, item },
+                decl:
+                    hir::LibrarySourceDecl::Loaded {
+                        file: decl_file,
+                        item,
+                    },
                 name,
                 ..
-            } => decl_target(db, file, item, &name),
+            } => decl_target(db, decl_file, item, &name),
             Resolution::LibraryMember { .. } | Resolution::Pending(_) => None,
         })
         .collect()
+}
+
+/// The resolutions inference recorded for the reference at `offset`, from the
+/// innermost expression that names a reference. See
+/// [`hir_ty::BodyTypes::resolved`]: an expression inference never resolved has
+/// no entry, and then no *outer* expression has one for this reference either —
+/// the enclosing invocation or field access names a different declaration.
+fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    let bodies = hir::file_body_tree(db, file);
+    let tree = hir::file_item_tree(db, file);
+    let items = body_items_at(db, file, &tree, offset);
+    for expr in exprs_at(&bodies, offset) {
+        if !names_a_reference(&bodies, expr) {
+            continue;
+        }
+        for &item in &items {
+            let Some(types) = hir_ty::body_types(db, file, item) else {
+                continue;
+            };
+            let Some(member) = types.resolved.get(&expr) else {
+                continue;
+            };
+            return match member {
+                hir_ty::ResolvedMember::Local(local) => match bodies.local_range(*local) {
+                    Some(range) => vec![Resolution::Variable {
+                        range,
+                        name: bodies.local(*local).name.as_str().to_owned(),
+                    }],
+                    None => Vec::new(),
+                },
+                member => member_resolution(db, file, member),
+            };
+        }
+        return Vec::new();
+    }
+    Vec::new()
+}
+
+/// Whether the expression at `expr` names a declaration — the expressions the
+/// type layer records a [`hir_ty::ResolvedMember`] for.
+fn names_a_reference(bodies: &BodyTree, expr: ExprId) -> bool {
+    matches!(
+        bodies.expr(expr),
+        ExprData::Var(_)
+            | ExprData::FieldAccess { .. }
+            | ExprData::MethodCall { .. }
+            | ExprData::New { .. }
+            | ExprData::ClassLit(_)
+            | ExprData::InstanceOf { .. }
+            | ExprData::NamePath(_)
+            | ExprData::MethodRef { .. }
+    )
+}
+
+/// The declaration a recorded body resolution names, through the classpath
+/// (mirrors [`members_of_owner`]).
+fn member_resolution(
+    db: &RootDatabase,
+    file: FileId,
+    member: &hir_ty::ResolvedMember,
+) -> Vec<Resolution> {
+    // The member's *declaration* form: the declaring class FQN, the parameter
+    // count of a method, and the workspace item when the declaration is a
+    // source one (a library member carries no file and no item).
+    let (name, use_kind, arity, source_decl, owner) = match member {
+        hir_ty::ResolvedMember::Method(method) => (
+            method.name.clone(),
+            Use::Method,
+            Some(method.params.len()),
+            method.owner_file.zip(method.decl_item),
+            method.owner.clone(),
+        ),
+        hir_ty::ResolvedMember::Field(field) => (
+            field.name.clone(),
+            Use::Field,
+            None,
+            field.owner_file.zip(field.decl_item),
+            field.owner.clone(),
+        ),
+        hir_ty::ResolvedMember::Local(_) => return Vec::new(),
+    };
+    if let Some((decl_file, item)) = source_decl {
+        return vec![Resolution::Decl {
+            file: decl_file,
+            item,
+            name,
+        }];
+    }
+    // A library member: `owner` is the *binary* FQN of the declaring class,
+    // which is the key the classfile index and the source index are looked up
+    // by.
+    match owner_lookup(db, file, &owner) {
+        OwnerLookup::Source(class) => vec![Resolution::Decl {
+            item: member_or_owner(db, class.file, class.item, &name, use_kind, arity),
+            file: class.file,
+            name,
+        }],
+        OwnerLookup::Library {
+            decl: hir::LibrarySourceDecl::Loaded { file, item },
+            ..
+        } => vec![Resolution::Decl {
+            item: member_or_owner(db, file, item, &name, use_kind, arity),
+            file,
+            name,
+        }],
+        OwnerLookup::Library {
+            library,
+            decl: hir::LibrarySourceDecl::Pending { entry, path },
+            ..
+        } => match hir::library_sources(db, library) {
+            Some(sources) => vec![Resolution::Pending(LibrarySourceRef {
+                library,
+                archive: sources.archive,
+                entry,
+                path,
+            })],
+            None => Vec::new(),
+        },
+        OwnerLookup::Unresolved => Vec::new(),
+    }
+}
+
+/// The declared member `name` of the owner class declared in `decl_file`,
+/// falling back to the owner declaration itself when the member has no source
+/// item of its own — an implicit constructor, a record accessor.
+fn member_or_owner(
+    db: &RootDatabase,
+    decl_file: FileId,
+    owner_item: ItemId,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> ItemId {
+    let tree = hir::file_item_tree(db, decl_file);
+    member_item(db, decl_file, &tree, name, use_kind, arity).unwrap_or(owner_item)
+}
+
+/// The lambda parameter the `Var` at `expr` names: the innermost enclosing
+/// lambda expression declaring a parameter of the name ([JLS §6.4], [§15.27.2]).
+/// The body IR keeps a lambda parameter as a name/range pair
+/// ([`hir_expand::body::LambdaParam`]) rather than a local, so no inference
+/// resolution exists for it.
+fn lambda_param_resolution(bodies: &BodyTree, offset: TextSize, name: &Name) -> Option<Resolution> {
+    for expr in exprs_at(bodies, offset) {
+        if let ExprData::Lambda { params, .. } = bodies.expr(expr)
+            && let Some(param) = params.iter().find(|param| &param.name == name)
+        {
+            return Some(Resolution::Variable {
+                range: param.range,
+                name: name.as_str().to_owned(),
+            });
+        }
+    }
+    None
+}
+
+/// The enum constant an unqualified `case NAME:` label at `label` names
+/// ([JLS §14.11.1]). A switch over an enum lowers its label as a bare `Var`,
+/// and `infer_switch_label` types it against the selector's constants *before*
+/// inference runs on it, so the recorded table has no entry.
+fn switch_label_resolution(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+    name: &Name,
+    label: ExprId,
+) -> Vec<Resolution> {
+    let bodies = hir::file_body_tree(db, file);
+    let Some(scrutinee) = switch_scrutinee_of(&bodies, offset, label) else {
+        return Vec::new();
+    };
+    let tree = hir::file_item_tree(db, file);
+    let items = body_items_at(db, file, &tree, offset);
+    let Some(selector) = items.iter().find_map(|&item| {
+        hir_ty::body_types(db, file, item)?
+            .exprs
+            .get(&scrutinee)
+            .copied()
+    }) else {
+        return Vec::new();
+    };
+    let Some(&item) = items.first() else {
+        return Vec::new();
+    };
+    let scope = hir_ty::scope_for_file(db, file);
+    // `case NAME` is an unqualified access to a *static* enum constant.
+    let access = hir_ty::access_context(db, file, item).with_mode(hir_ty::InvocationMode::Static);
+    let Some(field) = hir_ty::pick_field(db, &scope, &selector, name.as_str(), &access) else {
+        return Vec::new();
+    };
+    member_resolution(db, file, &hir_ty::ResolvedMember::Field(field))
+}
+
+/// The scrutinee of the innermost switch containing `offset` whose labels
+/// include the label expression `label`. A switch is a statement
+/// ([`StmtData::Switch`], §14.11) or a switch expression
+/// ([`ExprData::Switch`], §15.28); both carry the same arms.
+fn switch_scrutinee_of(bodies: &BodyTree, offset: TextSize, label: ExprId) -> Option<ExprId> {
+    let labels_include = |arms: &[hir_expand::body::SwitchArm]| {
+        arms.iter().any(|arm| {
+            arm.labels
+                .iter()
+                .any(|candidate| matches!(candidate, SwitchLabel::Expr(expr) if *expr == label))
+        })
+    };
+    let mut candidates: Vec<(u32, ExprId)> = Vec::new();
+    for (index, range) in bodies.stmt_ranges.iter().enumerate() {
+        if !range.contains(offset) {
+            continue;
+        }
+        if let StmtData::Switch { scrutinee, arms } = bodies.stmt(StmtId(ArenaId(index as u32)))
+            && labels_include(arms)
+        {
+            candidates.push((u32::from(range.len()), *scrutinee));
+        }
+    }
+    for expr in exprs_at(bodies, offset) {
+        if let ExprData::Switch { scrutinee, arms } = bodies.expr(expr)
+            && labels_include(arms)
+        {
+            let len = bodies
+                .expr_range(expr)
+                .map_or(0, |range| u32::from(range.len()));
+            candidates.push((len, *scrutinee));
+        }
+    }
+    candidates.sort_by_key(|(len, _)| *len);
+    candidates.first().map(|(_, scrutinee)| *scrutinee)
 }
 
 /// The library source files a reference resolves into but which are not loaded
@@ -147,13 +380,23 @@ pub fn pending_library_sources(
     file: FileId,
     offset: TextSize,
 ) -> Vec<LibrarySourceRef> {
-    resolve_at(db, file, offset)
+    // The recorded resolution names the declaring source; the classpath walk
+    // names every unloaded owner along the receiver's hierarchy, so a hover —
+    // which still resolves through [`resolve_at`] — materializes everything it
+    // needs in one round.
+    let mut seen: FxHashSet<(hir::LibraryId, Arc<str>)> = FxHashSet::default();
+    let mut out = Vec::new();
+    for resolution in recorded_reference(db, file, offset)
         .into_iter()
-        .filter_map(|resolution| match resolution {
-            Resolution::Pending(source) => Some(source),
-            _ => None,
-        })
-        .collect()
+        .chain(resolve_at(db, file, offset))
+    {
+        if let Resolution::Pending(source) = resolution
+            && seen.insert((source.library, source.entry.clone()))
+        {
+            out.push(source);
+        }
+    }
+    out
 }
 
 /// A library source file a reference resolves into but which is not loaded
@@ -176,6 +419,10 @@ enum Resolution {
         item: ItemId,
         name: String,
     },
+    /// A declaration the body IR carries without an item — a local variable, a
+    /// parameter, a pattern binding or a lambda parameter — at its declarator
+    /// range.
+    Variable { range: TextRange, name: String },
     /// A resolved library member: everything the signature renderer needs plus
     /// where its declaring source is, if it is loaded.
     LibraryMember {
@@ -197,7 +444,7 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
     let bodies = hir::file_body_tree(db, file);
     let tree = hir::file_item_tree(db, file);
     let symbols = hir::file_symbols(db, file);
-    let items = body_items_at(db, file, &tree, &symbols, offset);
+    let items = body_items_at(db, file, &tree, offset);
     let item = items.first().copied();
 
     for expr_id in exprs_at(&bodies, offset) {
@@ -388,8 +635,10 @@ fn member_in_hierarchy(
 
 /// An owner class of a member access, resolved through the classpath.
 enum OwnerLookup {
-    /// A workspace source class.
-    Source(FileId),
+    /// A workspace source class and its declaration item — the fallback target
+    /// of a member the class declares without an item (an implicit
+    /// constructor, a record accessor).
+    Source(hir::SourceClass),
     /// A library class and the location of its source declaration.
     Library {
         library: hir::LibraryId,
@@ -418,7 +667,8 @@ fn members_of_owner(
     arity: Option<usize>,
 ) -> MemberLookup {
     match owner_lookup(db, file, owner_fqn) {
-        OwnerLookup::Source(owner_file) => {
+        OwnerLookup::Source(class) => {
+            let owner_file = class.file;
             let tree = hir::file_item_tree(db, owner_file);
             match member_item(db, owner_file, &tree, name, use_kind, arity) {
                 Some(item) => MemberLookup::Found(Resolution::Decl {
@@ -499,7 +749,7 @@ fn owner_lookup(db: &RootDatabase, file: FileId, owner_fqn: &str) -> OwnerLookup
         return OwnerLookup::Unresolved;
     };
     match &resolved {
-        hir::Resolved::Source(class) => OwnerLookup::Source(class.file),
+        hir::Resolved::Source(class) => OwnerLookup::Source(*class),
         hir::Resolved::Library(class) => {
             let library = class.library;
             let fqn = resolved.fqn(db);
@@ -818,13 +1068,16 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
                 Some(source_file),
             );
         }
-        Some(Resolution::Decl { .. }) | None => {}
+        // A declaration has no merged signature of its own; a `Variable` is
+        // not a classpath resolution at all (the recorded table is the only
+        // path that produces one).
+        Some(Resolution::Decl { .. }) | Some(Resolution::Variable { .. }) | None => {}
     }
 
     // An expression's inferred type, from the enclosing body — walk the
     // innermost enclosing expressions first.
     for expr_id in exprs_at(&bodies, offset) {
-        for item in body_items_at(db, file, &tree, &symbols, offset) {
+        for item in body_items_at(db, file, &tree, offset) {
             if let Some(body) = hir_ty::body_types(db, file, item)
                 && let Some(ty) = body.exprs.get(&expr_id)
             {
@@ -841,7 +1094,7 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
             .local_range(LocalId(id))
             .is_some_and(|range| range.contains_inclusive(offset))
         {
-            for item in body_items_at(db, file, &tree, &symbols, offset) {
+            for item in body_items_at(db, file, &tree, offset) {
                 if let Some(body) = hir_ty::body_types(db, file, item)
                     && let Some(ty) = body.locals.get(&LocalId(id))
                 {
@@ -857,28 +1110,58 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
     render_symbol_decl(db, file, &tree, &symbols, offset)
 }
 
-/// The body-carrying item ids whose range contains `offset`, most-derived
-/// first — the owners whose `BodyTypes` may type the construct at the offset.
+/// Every item whose declaration range contains `offset`, innermost (smallest
+/// range) first: the enclosing class-like declarations, the member that
+/// carries the offset, and the nested declarations it contains.
+fn items_at(db: &RootDatabase, file: FileId, tree: &ItemTree, offset: TextSize) -> Vec<ItemId> {
+    fn walk(
+        db: &RootDatabase,
+        file: FileId,
+        tree: &ItemTree,
+        offset: TextSize,
+        item: ItemId,
+        out: &mut Vec<(TextRange, ItemId)>,
+    ) {
+        let Some(range) = item_range(db, file, tree, item) else {
+            return;
+        };
+        if !range.contains(offset) {
+            return;
+        }
+        out.push((range, item));
+        for &child in tree.data(item).body() {
+            walk(db, file, tree, offset, child, out);
+        }
+    }
+    let mut out = Vec::new();
+    for &top in &tree.top {
+        walk(db, file, tree, offset, top, &mut out);
+    }
+    out.sort_by_key(|(range, _)| range.len());
+    out.into_iter().map(|(_, item)| item).collect()
+}
+
+/// The body-carrying item ids whose range contains `offset`, innermost first —
+/// the owners whose [`hir_ty::BodyTypes`] may type the construct at the offset.
 fn body_items_at(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
-    symbols: &[hir::SourceSymbol],
     offset: TextSize,
 ) -> Vec<ItemId> {
-    let range_of = |item| item_range(db, file, &tree, item);
-    let mut candidates: Vec<(TextRange, ItemId)> = symbols
-        .iter()
-        .filter(|s| {
+    items_at(db, file, tree, offset)
+        .into_iter()
+        .filter(|&item| {
             matches!(
-                s.kind,
-                hir::SourceSymbolKind::Method | hir::SourceSymbolKind::Field
-            ) && range_of(s.item).is_some_and(|range| range.contains(offset))
+                tree.data(item),
+                ItemData::Method(_)
+                    | ItemData::Field(_)
+                    | ItemData::StaticInit(_)
+                    | ItemData::InstanceInit(_)
+                    | ItemData::EnumConstant(_)
+            )
         })
-        .filter_map(|s| range_of(s.item).map(|range| (range, s.item)))
-        .collect();
-    candidates.sort_by_key(|(range, _)| range.end() - range.start());
-    candidates.into_iter().map(|(_, item)| item).collect()
+        .collect()
 }
 
 /// The rendered signature of the declaration the offset falls inside: a
@@ -920,68 +1203,6 @@ fn render_symbol_decl(
 enum Use {
     Field,
     Method,
-}
-
-/// The same-named source declarations of `file` for a member use: fields and
-/// enum constants for a field access, methods (arity-preferred when given)
-/// for a call.
-fn member_targets(
-    db: &RootDatabase,
-    file: FileId,
-    simple: &str,
-    use_kind: Use,
-    arity: Option<usize>,
-) -> Vec<NavigationTarget> {
-    let tree = hir::file_item_tree(db, file);
-    hir::file_symbols(db, file)
-        .iter()
-        .filter(|s| {
-            let kind_matches = match use_kind {
-                Use::Field => matches!(
-                    s.kind,
-                    hir::SourceSymbolKind::Field | hir::SourceSymbolKind::EnumConstant
-                ),
-                Use::Method => s.kind == hir::SourceSymbolKind::Method,
-            };
-            kind_matches
-                && s.name.simple_name() == simple
-                && arity.is_none_or(|arity| {
-                    parameter_count(&tree, s.item).is_some_and(|count| count == arity)
-                })
-        })
-        .filter_map(|s| {
-            item_range(db, file, &tree, s.item).map(|range| NavigationTarget {
-                file,
-                range,
-                name: simple.to_owned(),
-            })
-        })
-        .collect()
-}
-
-/// The same-named class-like declarations of `file`.
-fn type_targets(db: &RootDatabase, file: FileId, simple: String) -> Vec<NavigationTarget> {
-    let tree = hir::file_item_tree(db, file);
-    hir::file_symbols(db, file)
-        .iter()
-        .filter(|s| {
-            matches!(
-                s.kind,
-                hir::SourceSymbolKind::Class
-                    | hir::SourceSymbolKind::Interface
-                    | hir::SourceSymbolKind::Enum
-                    | hir::SourceSymbolKind::Record
-                    | hir::SourceSymbolKind::Annotation
-            ) && s.name.simple_name() == simple
-        })
-        .filter_map(|s| {
-            item_range(db, file, &tree, s.item).map(|range| NavigationTarget {
-                file,
-                range,
-                name: simple.clone(),
-            })
-        })
-        .collect()
 }
 
 /// The parameter count of the method declaration `item`, from the item tree.

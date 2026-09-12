@@ -37,22 +37,83 @@ impl Fixture {
             .unwrap_or_else(|| panic!("needle {needle:?} not found in:\n{}", self.text));
         TextSize::new((idx + needle.len() / 2) as u32)
     }
+    /// The byte offset of `needle`'s first character, for its `occurrence`-th
+    /// (0-based) occurrence. The matrix cases anchor on the reference's own
+    /// first character, so nothing written before it can shift the offset onto
+    /// a receiver or an enclosing declaration.
+    fn offset_start(&self, needle: &str, occurrence: usize) -> TextSize {
+        let mut from = 0;
+        for _ in 0..occurrence {
+            let found = self.text[from..]
+                .find(needle)
+                .unwrap_or_else(|| panic!("occurrence {occurrence} of {needle:?} not found"));
+            from += found + needle.len();
+        }
+        let idx = self.text[from..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("occurrence {occurrence} of {needle:?} not found"));
+        TextSize::new((from + idx) as u32)
+    }
 }
 
-/// Renders the navigation targets of `offset` under the given position, and
-/// the hover there, in a deterministic snapshot-friendly form.
-fn render_nav(fixture: &Fixture, needle: &str) -> String {
+/// Renders one `needle` section per case — the offset at the start of the
+/// case's `occurrence`-th occurrence — in the same shape as [`render_nav`].
+fn render_nav_many(fixture: &Fixture, cases: &[(&str, usize)]) -> String {
+    cases
+        .iter()
+        .map(|&(needle, occurrence)| render_nav_at(fixture, needle, occurrence))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// [`render_nav`] with the offset of the `occurrence`-th occurrence of
+/// `needle`, at the needle's first character.
+fn render_nav_at(fixture: &Fixture, needle: &str, occurrence: usize) -> String {
+    render(
+        fixture,
+        fixture.offset_start(needle, occurrence),
+        format!("--- goto @{needle:?}#{occurrence} ---"),
+    )
+}
+
+/// Renders the navigation targets at `offset` and the hover there under
+/// `header`, in a deterministic snapshot-friendly form.
+fn render(fixture: &Fixture, offset: TextSize, header: String) -> String {
     let analysis = fixture.analysis();
-    let range = fixture.offset(needle);
-    let targets = analysis.goto_definition(fixture.file, range).unwrap();
-    let hover = analysis.hover(fixture.file, range).unwrap();
+    let targets = analysis.goto_definition(fixture.file, offset).unwrap();
+    let hover = analysis.hover(fixture.file, offset).unwrap();
     let targets = targets
         .iter()
         .map(|t| format!("{} @{:?}", t.name, t.range))
         .collect::<Vec<_>>()
         .join("\n");
     let hover = hover.as_ref().map(|h| h.value.as_str()).unwrap_or("<none>");
-    format!("--- goto @{needle:?} ---\n{targets}\n--- hover ---\n{hover}")
+    format!("{header}\n{targets}\n--- hover ---\n{hover}")
+}
+
+/// The declaration text every target of the reference at `needle`'s
+/// `occurrence`-th occurrence covers, in the fixture's own source.
+fn goto_slices<'a>(fixture: &'a Fixture, needle: &str, occurrence: usize) -> Vec<&'a str> {
+    let offset = fixture.offset_start(needle, occurrence);
+    fixture
+        .analysis()
+        .goto_definition(fixture.file, offset)
+        .unwrap()
+        .iter()
+        .map(|target| {
+            &fixture.text
+                [u32::from(target.range.start()) as usize..u32::from(target.range.end()) as usize]
+        })
+        .collect()
+}
+/// Renders the navigation targets of `offset` under the given position, and
+/// the hover there, in a deterministic snapshot-friendly form.
+fn render_nav(fixture: &Fixture, needle: &str) -> String {
+    render(
+        fixture,
+        fixture.offset(needle),
+        format!("--- goto @{needle:?} ---"),
+    )
 }
 
 const SRC: &str = r#"package com.example;
@@ -201,6 +262,138 @@ fn hover_over_dollar_field_declaration() {
         "hover_over_dollar_field_declaration",
         render_nav(&fixture, "x$y;\n")
     );
+}
+
+// -- a single-file matrix of references and the declarations they denote -------------
+// The fixture's source set has an empty classpath, so only same-file names
+// resolve: every target below is a declaration of this file.
+
+const MANY_SRC: &str = r#"package com.example;
+
+import com.example.Base;
+import static com.example.Base.STATIC;
+
+@interface Marker {}
+
+enum E {
+    FIRST,
+    SECOND
+}
+
+interface Factory {
+    int size(Base b);
+}
+
+class Box<T extends Base> {}
+
+class Base {
+    static int STATIC = 1;
+
+    int count;
+
+    Base self;
+
+    void method(int n) {}
+
+    void method(long n) {}
+
+    void pick(int n) {}
+
+    void pick(long n) {}
+}
+
+class Impl implements Factory {
+    public int size(Base b) {
+        return 0;
+    }
+}
+
+class Sub extends Base {
+    @Marker
+    int marked;
+
+    Base make() {
+        return null;
+    }
+
+    void use(Base b, Sub other, Box<Base> boxed) {
+        count = b.count;
+        self = b.self;
+        method(1);
+        super.method(1);
+        b.method(1L);
+        pick(1L);
+        int s = Base.STATIC;
+        E e = E.FIRST;
+        switch (e) {
+            case SECOND:
+                break;
+        }
+        Factory f = (Base q) -> q.count;
+        Base cast = (Base) other;
+        boolean is = other instanceof Base;
+        Class<?> lit = Base.class;
+        Base[] arr = new Base[1];
+        int local = 0;
+        int missing = nope + 1;
+    }
+}
+"#;
+
+/// The body and member references of [`MANY_SRC`]: the needle locates the
+/// reference — at the first character of its `occurrence`-th (0-based)
+/// occurrence — and the string is the declaration text its single target
+/// range covers.
+const MANY_MEMBER_GOTO: &[(&str, usize, &str)] = &[
+    // §6.5.6.1: a bare name is a field of the implicit `this`; the qualified
+    // form names the same declaration through the receiver.
+    ("count = b", 0, "count"),
+    ("count;", 1, "count"),
+    ("self = b", 0, "self"),
+    ("self;", 1, "self"),
+    // §15.12.2: overload selection — the `long` overload of each name, not the
+    // first same-named declaration of the file, and not the arity-equal one.
+    ("method(1);", 0, "void method(int n) {}"),
+    ("super.method(1)", 0, "void method(int n) {}"),
+    ("method(1L)", 0, "void method(long n) {}"),
+    ("pick(1L)", 0, "void pick(long n) {}"),
+    // A static field and the enum constants.
+    ("STATIC;", 1, "STATIC = 1"),
+    ("FIRST;", 0, "FIRST"),
+    ("SECOND:", 0, "SECOND"),
+    // §15.27.2: the body IR carries a lambda parameter as a name/range pair,
+    // not as a local, so the use names its declarator.
+    ("q.count", 0, "q"),
+];
+
+/// The references of [`MANY_SRC`] that name no declaration: a local's own
+/// declarator (§6.3 scopes a local from its declarator on, so a declaration is
+/// not a reference to itself) and a name nothing declares.
+const MANY_MEMBER_NONE: &[(&str, usize)] = &[("local = 0", 0), ("nope + 1", 0)];
+
+#[test]
+fn goto_reference_matrix() {
+    let fixture = test_file(MANY_SRC);
+    for &(needle, occurrence, declaration) in MANY_MEMBER_GOTO {
+        assert_eq!(
+            goto_slices(&fixture, needle, occurrence),
+            vec![declaration],
+            "case {needle:?}#{occurrence}"
+        );
+    }
+    for &(needle, occurrence) in MANY_MEMBER_NONE {
+        assert_eq!(
+            goto_slices(&fixture, needle, occurrence),
+            Vec::<&str>::new(),
+            "case {needle:?}#{occurrence}"
+        );
+    }
+    let mut cases: Vec<(&str, usize)> = MANY_MEMBER_GOTO
+        .iter()
+        .map(|&(needle, occurrence, _)| (needle, occurrence))
+        .collect();
+    cases.extend(MANY_MEMBER_NONE.iter().copied());
+    assert_snapshot!("goto_reference_matrix", render_nav_many(&fixture, &cases));
 }
 
 fn test_file(text: &str) -> Fixture {
