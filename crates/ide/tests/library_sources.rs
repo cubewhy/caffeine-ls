@@ -223,6 +223,12 @@ impl Fixture {
     }
 }
 
+/// The source text a navigation target's range covers: the declared name, not
+/// the whole declaration the definition was resolved from.
+fn target_text<'a>(text: &'a str, target: &ide::NavigationTarget) -> &'a str {
+    &text[u32::from(target.range.start()) as usize..u32::from(target.range.end()) as usize]
+}
+
 #[test]
 fn type_reference_resolves_into_library_sources() {
     let fixture = fixture(&["com/example/Foo.java"], false);
@@ -230,11 +236,10 @@ fn type_reference_resolves_into_library_sources() {
     let targets = fixture.definition("new com.example.Foo()");
     assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
     assert_eq!(targets[0].file, lib_file("com/example/Foo.java"));
-    assert!(
-        targets[0]
-            .range
-            .contains(TextSize::new(FOO_SRC.find("class Foo").unwrap() as u32)),
-        "the range must cover `class Foo`: {:?}",
+    assert_eq!(
+        target_text(FOO_SRC, &targets[0]),
+        "Foo",
+        "the definition is the class's own name: {:?}",
         targets[0].range
     );
 
@@ -272,9 +277,7 @@ fn workspace_declaration_shadows_the_library() {
         FileId::from_raw(2),
         "the workspace declaration must win over the library's"
     );
-    assert!(targets[0].range.contains(TextSize::new(
-        WORKSPACE_FOO_SRC.find("class Foo").unwrap() as u32
-    )));
+    assert_eq!(target_text(WORKSPACE_FOO_SRC, &targets[0]), "Foo");
 }
 
 #[test]
@@ -293,11 +296,10 @@ fn member_declared_on_a_supertype_resolves_there() {
     let targets = fixture.definition("child.greet(1)");
     assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
     assert_eq!(targets[0].file, lib_file("com/example/Root.java"));
-    assert!(
-        targets[0]
-            .range
-            .contains(TextSize::new(ROOT_SRC.find("void greet").unwrap() as u32)),
-        "the range must cover the `greet` declaration: {:?}",
+    assert_eq!(
+        target_text(ROOT_SRC, &targets[0]),
+        "greet",
+        "the definition is the member's own name: {:?}",
         targets[0].range
     );
 }

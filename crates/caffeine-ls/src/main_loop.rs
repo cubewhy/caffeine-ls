@@ -57,6 +57,19 @@ impl RootEntry {
     }
 }
 
+/// The source set of the *detached* root: the files the vfs partitions into
+/// the catch-all set, outside every configured source root. A synthetic
+/// project id no build-system project can carry keeps the set apart from every
+/// real one; a file that lands there resolves names against its own
+/// declarations (and the platform), which is what makes a standalone or
+/// scratch file navigate to itself.
+fn detached_source_set() -> SourceSetId {
+    SourceSetId {
+        project: project_model::ProjectId(u32::MAX),
+        kind: project_model::SourceSetKind::Main,
+    }
+}
+
 /// Percentage ranges assigned to each sync phase. Together they always span
 /// 0..=99; the sync completes by reporting 100% explicitly once the workspace
 /// model is parsed (right before the `WorkDoneProgressEnd`).
@@ -847,6 +860,25 @@ impl GlobalState {
                     .insert(SourceRootId(idx as u32), path.clone());
             }
         }
+        // The detached root (`partition_source_roots`' catch-all) is the last
+        // root, after every entry. It is a source set of its own so a file no
+        // configured root covers still resolves names against its own
+        // declarations; its classpath is the platform, so a standalone file
+        // keeps resolving `java.lang` types and nothing else.
+        let detached = detached_source_set();
+        project_graph
+            .source_root_to_source_set
+            .insert(SourceRootId(entries.len() as u32), detached.clone());
+        project_graph.source_sets.insert(
+            detached,
+            triomphe::Arc::new(Classpath {
+                entries: project_graph
+                    .jdk_libraries
+                    .iter()
+                    .map(|&library| GraphClasspathEntry::Library(library))
+                    .collect(),
+            }),
+        );
         // The graph and the roots go in as one change: `Change::apply` writes
         // the graph first, so the `SourceRootId`s it maps are the ones this
         // same change assigns to `roots` (vector order).
@@ -1044,16 +1076,26 @@ impl GlobalState {
 
         let vfs = self.vfs.read();
         let mut file_sets = file_set_config.partition(&vfs.0);
-        // The last set is the catch-all for files outside any source root.
-        file_sets.pop();
-        file_sets
+        // The last set is the catch-all for files outside every configured
+        // source root: a document the client opened that no build system or
+        // plain workspace root covers (a standalone file, a scratch file).
+        // It becomes a source root of its own — the *detached* root, always
+        // last, mapped to [`detached_source_set`] — so such a file is still
+        // lowered and navigates to its own declarations instead of being
+        // silently dropped from analysis.
+        let detached = file_sets.pop();
+        let mut roots: Vec<SourceRoot> = file_sets
             .into_iter()
             .zip(self.source_root_kinds.iter())
             .map(|(file_set, kind)| match kind {
                 SourceRootKind::SourceSet => SourceRoot::new(file_set),
                 SourceRootKind::Library(_) => SourceRoot::library(file_set),
             })
-            .collect()
+            .collect();
+        if let Some(detached) = detached {
+            roots.push(SourceRoot::new(detached));
+        }
+        roots
     }
 
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {

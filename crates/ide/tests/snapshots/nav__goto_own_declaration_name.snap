@@ -1,0 +1,40 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"Main {\", 0), (\"m;\\n\", 0), (\"count;\", 0), (\"pick(T first\", 0),\n(\"local = 0\", 0), (\"first, T second\", 0), (\"s) ->\", 0), (\"T> T pick\", 0),\n(\"Main m\", 0),])"
+---
+--- goto @"Main {"#0 ---
+Main @28..32
+--- hover ---
+class Main
+--- goto @"m;\n"#0 ---
+m @44..45
+--- hover ---
+m: Main
+--- goto @"count;"#0 ---
+count @56..61
+--- hover ---
+count: int
+--- goto @"pick(T first"#0 ---
+pick @74..78
+--- hover ---
+pick(T, T): T
+--- goto @"local = 0"#0 ---
+local @112..117
+--- hover ---
+local: int
+--- goto @"first, T second"#0 ---
+first @81..86
+--- hover ---
+first: T
+--- goto @"s) ->"#0 ---
+s @152..153
+--- hover ---
+<error>
+--- goto @"T> T pick"#0 ---
+T @69..70
+--- hover ---
+pick(T, T): T
+--- goto @"Main m"#0 ---
+Main @28..32
+--- hover ---
+class Main

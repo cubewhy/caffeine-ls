@@ -3,70 +3,70 @@ source: crates/ide/tests/nav.rs
 expression: "render_nav_many(&fixture, &cases)"
 ---
 --- goto @"Base {"#1 ---
-Base @218..397
+Base @224..228
 --- hover ---
 class Sub
 --- goto @"Factory {"#1 ---
-Factory @143..186
+Factory @153..160
 --- hover ---
 class Impl
 --- goto @"Marker"#1 ---
-Marker @87..107
+Marker @98..104
 --- hover ---
 class Sub
 --- goto @"Base self"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 class Base
 --- goto @"Base b"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 size(Base): int
 --- goto @"Base b"#2 ---
-Base @218..397
+Base @224..228
 --- hover ---
 b: com.example.Base
 --- goto @"Base make"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 make(): Base
 --- goto @"Base cast"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 use(Base, Sub, Box<Base>): void
 --- goto @"Base> boxed"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 boxed: com.example.Box<com.example.Base>
 --- goto @"Base> {}"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 class Box
 --- goto @"Base) other"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 com.example.Base
 --- goto @"Base;"#1 ---
-Base @218..397
+Base @224..228
 --- hover ---
 boolean
 --- goto @"Base.class"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 java.lang.Class<com.example.Base>
 --- goto @"Base[1]"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 com.example.Base[]
 --- goto @"Base;"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 <none>
 --- goto @"STATIC;"#0 ---
-STATIC @246..256
+STATIC @246..252
 --- hover ---
 <none>
 --- goto @"Base.STATIC"#0 ---
-Base @218..397
+Base @224..228
 --- hover ---
 <none>

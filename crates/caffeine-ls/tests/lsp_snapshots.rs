@@ -623,14 +623,21 @@ fn walk_json(value: &mut serde_json::Value, workspace_root: &str) {
     }
 }
 
-/// The LSP position of the middle of `needle` (ASCII fixture files only).
-fn position_of(text: &str, needle: &str) -> (u32, u32) {
-    let idx = text.find(needle).expect("needle in text") + needle.len() / 2;
-    let before = &text[..idx];
+/// The LSP position of byte `offset` in `text` (ASCII fixture files only).
+fn position_at(text: &str, offset: usize) -> (u32, u32) {
+    let before = &text[..offset];
     let line = before.matches('\n').count() as u32;
     let last = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
     let character = before[last..].chars().count() as u32;
     (line, character)
+}
+
+/// The LSP position of the middle of `needle` (ASCII fixture files only).
+fn position_of(text: &str, needle: &str) -> (u32, u32) {
+    position_at(
+        text,
+        text.find(needle).expect("needle in text") + needle.len() / 2,
+    )
 }
 
 #[test]
@@ -687,6 +694,8 @@ public class Base {
     public static int STATIC = 1;
 
     public int count;
+
+    public Base self;
 
     public void method(int n) {}
 
@@ -785,11 +794,13 @@ class Use<R> extends Base {
 
 /// One row of [`definition_matrix_over_a_workspace`]: the file whose reference
 /// is requested, the needle locating it (the `occurrence`-th occurrence, at its
-/// first character), the file the response must name, and a needle inside that
-/// target file's source the response range must cover.
+/// first character), the file the response must name, a needle inside that
+/// target's declaration, and the declaration's own name — the exact identifier
+/// the response range must be.
 type DefinitionRow = (
     &'static str,
     (&'static str, usize),
+    &'static str,
     &'static str,
     &'static str,
 );
@@ -803,6 +814,7 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("Base;", 0),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     // §8.1.4: an `extends` clause names the superclass.
     (
@@ -810,6 +822,7 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("Base {", 0),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     // §8.8.9/§15.9: a class creation with no applicable constructor names the
     // class itself; with one, the constructor declaration.
@@ -818,12 +831,14 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("new Sub()", 0),
         "/src/com/example/Sub.java",
         "class Sub",
+        "Sub",
     ),
     (
         "/src/com/example/Use.java",
         ("new Sub(1)", 0),
         "/src/com/example/Sub.java",
         "Sub(int",
+        "Sub",
     ),
     // §6.5.6.1: a field of the implicit `this`, and of an explicit receiver.
     (
@@ -831,11 +846,13 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("count = b", 0),
         "/src/com/example/Base.java",
         "count",
+        "count",
     ),
     (
         "/src/com/example/Use.java",
         ("count;", 0),
         "/src/com/example/Base.java",
+        "count",
         "count",
     ),
     // §15.12.2: overload selection — the invoked declaration, not the first
@@ -845,23 +862,27 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("method(1);", 0),
         "/src/com/example/Base.java",
         "void method(int",
+        "method",
     ),
     (
         "/src/com/example/Use.java",
         ("method(1)", 1),
         "/src/com/example/Base.java",
         "void method(int",
+        "method",
     ),
     (
         "/src/com/example/Use.java",
         ("method(1L)", 0),
         "/src/com/example/Base.java",
         "void method(long",
+        "method",
     ),
     (
         "/src/com/example/Use.java",
         ("STATIC", 0),
         "/src/com/example/Base.java",
+        "STATIC",
         "STATIC",
     ),
     // §7.5.4: a static import names the member its last segment writes, and the
@@ -871,12 +892,14 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("of;", 0),
         "/src/com/example/Helper.java",
         "static Base of(",
+        "of",
     ),
     (
         "/src/com/example/Use.java",
         ("of();", 0),
         "/src/com/example/Helper.java",
         "static Base of(",
+        "of",
     ),
     // §15.12.2.4: a variable-arity declaration.
     (
@@ -884,6 +907,7 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("sum(1, 2)", 0),
         "/src/com/example/Helper.java",
         "void sum(int...",
+        "sum",
     ),
     // §8.9.2/§14.11.1: an enum constant through its type and through a `case`
     // label.
@@ -892,11 +916,13 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("FIRST", 0),
         "/src/com/example/E.java",
         "FIRST",
+        "FIRST",
     ),
     (
         "/src/com/example/Use.java",
         ("SECOND:", 0),
         "/src/com/example/E.java",
+        "SECOND",
         "SECOND",
     ),
     // §9.7: an annotation name.
@@ -905,6 +931,7 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("Marker", 0),
         "/src/com/example/Marker.java",
         "@interface Marker",
+        "Marker",
     ),
     // §6.5.5.1: declaration-side and body type references.
     (
@@ -912,30 +939,35 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("Base;", 1),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     (
         "/src/com/example/Use.java",
         ("Base.class", 0),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     (
         "/src/com/example/Use.java",
         ("Base> list", 0),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     (
         "/src/com/example/Use.java",
         ("Base) other", 0),
         "/src/com/example/Base.java",
         "class Base",
+        "Base",
     ),
     // §15.27.2: a lambda parameter names its own declarator.
     (
         "/src/com/example/Use.java",
         ("elem.count", 0),
         "/src/com/example/Use.java",
+        "elem",
         "elem",
     ),
     // §4.4/§6.4.1: a written type variable names the parameter that declares it
@@ -945,21 +977,83 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("R value", 0),
         "/src/com/example/Use.java",
         "<R>",
+        "R",
     ),
     (
         "/src/com/example/Use.java",
         ("T copy", 0),
         "/src/com/example/Use.java",
         "<T>",
+        "T",
+    ),
+    // §6.5.5.1: a class naming itself — the declared type of a field of its own
+    // class names the class, not the field's own declaration.
+    (
+        "/src/com/example/Base.java",
+        ("Base self", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+        "Base",
+    ),
+    // A declaration's own name (§6.3: a declaration is not a reference to
+    // itself) still has a definition: goto-definition answers with the
+    // declaration it names — the class, the field, the method, the local, the
+    // lambda parameter and the type parameter.
+    (
+        "/src/com/example/Use.java",
+        ("Use<R> extends", 0),
+        "/src/com/example/Use.java",
+        "class Use",
+        "Use",
+    ),
+    (
+        "/src/com/example/Base.java",
+        ("count;", 0),
+        "/src/com/example/Base.java",
+        "count",
+        "count",
+    ),
+    (
+        "/src/com/example/Base.java",
+        ("method(int n)", 0),
+        "/src/com/example/Base.java",
+        "void method(int n",
+        "method",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("local = 0", 0),
+        "/src/com/example/Use.java",
+        "local",
+        "local",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("elem) ->", 0),
+        "/src/com/example/Use.java",
+        "elem",
+        "elem",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("R> extends", 0),
+        "/src/com/example/Use.java",
+        "<R>",
+        "R",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("T> T id", 0),
+        "/src/com/example/Use.java",
+        "<T>",
+        "T",
     ),
 ];
 
-/// The references of the matrix that name no declaration: a local's own
-/// declarator, and a name nothing declares.
-const DEFINITION_MATRIX_NONE: &[(&str, (&str, usize))] = &[
-    ("/src/com/example/Use.java", ("local = 0", 0)),
-    ("/src/com/example/Use.java", ("nope + 1", 0)),
-];
+/// The references of the matrix that name no declaration: a name nothing
+/// declares.
+const DEFINITION_MATRIX_NONE: &[(&str, (&str, usize))] =
+    &[("/src/com/example/Use.java", ("nope + 1", 0))];
 
 /// End to end over stdio: every reference of [`DEFINITION_MATRIX`] answers with
 /// the one declaration it denotes — file and range — and the unresolvable ones
@@ -980,7 +1074,7 @@ fn definition_matrix_over_a_workspace() {
     }
     lsp.wait_until_workspace_is_loaded();
 
-    for &(from, (needle, occurrence), to, declaration) in DEFINITION_MATRIX {
+    for &(from, (needle, occurrence), to, declaration, name) in DEFINITION_MATRIX {
         let position = start_of(&source_of(from), needle, occurrence);
         let response = lsp.request(
             "textDocument/definition",
@@ -1003,7 +1097,7 @@ fn definition_matrix_over_a_workspace() {
             path.ends_with(to.trim_start_matches('/')),
             "{from}: {needle:?}#{occurrence} answered {path:?}, expected {to:?}"
         );
-        assert_range_covers(locations[0]["range"].clone(), &source_of(to), declaration);
+        assert_definition_name(&locations[0]["range"], &source_of(to), declaration, name);
     }
 
     for &(from, (needle, occurrence)) in DEFINITION_MATRIX_NONE {
@@ -2226,7 +2320,12 @@ exit 0
         member_path.display()
     );
     assert!(member_path.is_file(), "{}", member_path.display());
-    assert_range_covers(locations[0]["range"].clone(), foo_source, "greet");
+    assert_definition_name(
+        &locations[0]["range"],
+        foo_source,
+        "public void greet(int count)",
+        "greet",
+    );
 
     let materialized = java_file_names(&cache_sources);
     assert_eq!(
@@ -2252,7 +2351,7 @@ exit 0
         member_path,
         "the type reference resolves into the same materialized file"
     );
-    assert_range_covers(type_locations[0]["range"].clone(), foo_source, "class Foo");
+    assert_definition_name(&type_locations[0]["range"], foo_source, "class Foo", "Foo");
 
     let second = lsp.request("textDocument/definition", type_params);
     assert_eq!(
@@ -2274,6 +2373,113 @@ exit 0
         report["items"].as_array().map(Vec::len),
         Some(0),
         "library sources report no diagnostics: {report:?}"
+    );
+}
+
+/// A document no configured source root covers — a scratch file, or a file
+/// opened with no workspace folder at all — is the vfs catch-all. It becomes a
+/// source root of its own (the *detached* root, mapped to a detached source
+/// set), so goto-definition still resolves its names against its own
+/// declarations: the file navigates to itself. Dropping the catch-all (as the
+/// partition once did) lowered such a file as `Unknown`, and every request
+/// answered `null`.
+#[test]
+fn detached_file_definition_navigates_to_itself() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let text = "public class Main {\n    Main m;\n}\n";
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this test.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        // Under the workspace root, but outside the build's source root.
+        std::fs::create_dir_all(root.join("scratch")).unwrap();
+        std::fs::write(root.join("scratch/Main.java"), text).unwrap();
+    });
+
+    let path = "/scratch/Main.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    for ((needle, occurrence), declaration, name) in [
+        // The declared type names the class…
+        (("Main m", 0), "class Main", "Main"),
+        // …and a declaration's own name names the declaration.
+        (("m;", 0), "Main m", "m"),
+        (("Main {", 0), "class Main", "Main"),
+    ] {
+        let position = start_of(text, needle, occurrence);
+        let response = lsp.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": lsp.uri(path) },
+                "position": position,
+            }),
+        );
+        let locations = response
+            .as_array()
+            .unwrap_or_else(|| panic!("{needle:?}#{occurrence} answered {response:?}"));
+        assert_eq!(locations.len(), 1, "{needle:?}#{occurrence}: {locations:?}");
+        assert_definition_name(&locations[0]["range"], text, declaration, name);
+    }
+}
+
+/// Asserts that `range` is exactly the `name` identifier written in the
+/// declaration `declaration` of `text`. A definition points at the declared
+/// name, not at the whole declaration: a whole-class range contains every
+/// reference to it, so a client that treats "already inside the definition" as
+/// a no-op would never move (`String` inside `String`).
+fn assert_definition_name(range: &serde_json::Value, text: &str, declaration: &str, name: &str) {
+    let declaration_at = text
+        .find(declaration)
+        .unwrap_or_else(|| panic!("{declaration:?} is not in the fixture"));
+    let name_at = declaration_at
+        + text[declaration_at..]
+            .find(name)
+            .unwrap_or_else(|| panic!("{name:?} is not in {declaration:?}"));
+    let start = position_at(text, name_at);
+    let end = position_at(text, name_at + name.len());
+    assert_eq!(
+        (
+            range["start"]["line"].as_u64(),
+            range["start"]["character"].as_u64()
+        ),
+        (Some(start.0 as u64), Some(start.1 as u64)),
+        "the definition must start at {name:?} in {declaration:?}"
+    );
+    assert_eq!(
+        (
+            range["end"]["line"].as_u64(),
+            range["end"]["character"].as_u64()
+        ),
+        (Some(end.0 as u64), Some(end.1 as u64)),
+        "the definition must end after {name:?} in {declaration:?}"
     );
 }
 
@@ -2374,10 +2580,34 @@ fn jdk_sources_are_materialized_and_navigable() {
         string_path.display()
     );
     let string_source = std::fs::read_to_string(&string_path).expect("the source was written");
-    assert_range_covers(
-        locations[0]["range"].clone(),
+    assert_definition_name(
+        &locations[0]["range"],
         &string_source,
         "public final class String",
+        "String",
+    );
+
+    // -- a self-reference *inside* the materialized class: the parameter type
+    // in `public String(String original) {` names the enclosing `String`. The
+    // definition is the class's own *name* — a range covering the whole class
+    // would contain the cursor, and a client that treats "already inside the
+    // definition" as a no-op would not move at all.
+    let self_uri = lsp_types::Uri::from_file_path(&string_path).expect("a file URI");
+    let (line, character) = position_of(&string_source, "String(String original)");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": self_uri },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    assert_definition_name(
+        &locations[0]["range"],
+        &string_source,
+        "public final class String",
+        "String",
     );
 
     // -- a member declared only on `Object`: the walk descends `String`'s
@@ -2401,10 +2631,11 @@ fn jdk_sources_are_materialized_and_navigable() {
     );
     let object_source = std::fs::read_to_string(&object_path).expect("the source was written");
     // The target is the `getClass` *declaration* in `Object`, not the class.
-    assert_range_covers(
-        locations[0]["range"].clone(),
+    assert_definition_name(
+        &locations[0]["range"],
         &object_source,
         "public final native Class<?> getClass()",
+        "getClass",
     );
 
     // Only the files those two references touched are on disk: `String.java`,

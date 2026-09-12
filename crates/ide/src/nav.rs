@@ -18,6 +18,14 @@
 //! Lambda parameters and the enum constants of a `case` label are not part of
 //! the recorded table and keep their own resolution.
 //!
+//! An offset on a *declaration's own name* — `m` in `Main m`, `Main` in
+//! `class Main`, `local` in `int local = 0` — resolves to nothing as a
+//! reference ([JLS §6.3] scopes a local from its own declarator on; a type's or
+//! member's name is written in its declaration, not read). Once every
+//! reference step above has found nothing, the *self* step ([`self_target`])
+//! answers such an offset with the declaration it names, so goto-definition is
+//! available on a declaration itself as it is on a use.
+//!
 //! When a reference resolves into a library declaration whose source is not
 //! loaded yet, it is reported as pending rather than being answered: the LSP
 //! layer reads the archive entry into the database and re-runs the request.
@@ -55,11 +63,36 @@ fn item_range(db: &RootDatabase, file: FileId, tree: &ItemTree, item: ItemId) ->
     hir::hir_def::java::ranges::item_range(map, &source, tree, item)
 }
 
+/// The source range of a declaration item's own *name* token, resolved on
+/// demand from the file's parse: the identifier a go-to-definition selects,
+/// not the whole declaration it names.
+fn item_name_range(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    item: ItemId,
+) -> Option<TextRange> {
+    let language = tree.language;
+    if language == LanguageKind::Unknown {
+        return None;
+    }
+    let source = base_db::parse(db, file, language).syntax_node(language);
+    let map = hir::hir_def::db::ast_id_map(db, file, language);
+    hir::hir_def::java::ranges::item_name_range(map, &source, tree, item)
+}
+
 /// The declaration a reference resolves to: a file and the source range of
 /// the declaring construct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
     pub file: FileId,
+    /// The source range of the declaration's own *name* token — the identifier
+    /// an editor jumps to and selects. Deliberately not the whole declaration:
+    /// a class's range contains every reference to it, so a definition that
+    /// covered the whole class would leave the cursor inside its own target,
+    /// and a client that treats "already inside the definition" as a no-op
+    /// would never move — the usual case for the JDK's sources, where `String`
+    /// is written inside `String`.
     pub range: TextRange,
     pub name: String,
 }
@@ -129,7 +162,120 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     if !declaration.is_empty() {
         return targets(db, declaration);
     }
-    targets(db, resolve_at(db, file, offset))
+    let resolved = resolve_at(db, file, offset);
+    if !resolved.is_empty() {
+        return targets(db, resolved);
+    }
+    // Nothing above resolved: the offset is on a declaration's own name, which
+    // is not a reference to itself (§6.3) but still has a definition — the
+    // declaration it names. Self-navigation answers it.
+    self_target(db, file, offset).into_iter().collect()
+}
+
+/// Goto-definition on a declaration's own name answers with the declaration
+/// itself: `m` in `Main m`, `Main` in `class Main`, `local` in
+/// `int local = 0`. These names are declarations, not references ([JLS §6.3]
+/// scopes a local from its own declarator on; a type's or member's name is
+/// written in its declaration), so no step above resolves them.
+///
+/// Only consulted once every *reference* step found nothing, so a name that is
+/// also read as a reference — the `Main` of `Main m` — is still answered by
+/// the reference (the class `Main`), never by a self-target.
+fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<NavigationTarget> {
+    let tree = hir::file_item_tree(db, file);
+    if tree.language == LanguageKind::Unknown {
+        return None;
+    }
+    let source = base_db::parse(db, file, tree.language).syntax_node(tree.language);
+    let map = hir::hir_def::db::ast_id_map(db, file, tree.language);
+
+    // A declared source item: its own identifier carries the offset.
+    if let Some(symbol) = hir::file_symbols(db, file)
+        .iter()
+        .filter(|symbol| {
+            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, symbol.item)
+                .is_some_and(|range| range.contains(offset))
+        })
+        .min_by_key(|symbol| {
+            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, symbol.item)
+                .map_or(u32::MAX, |range| u32::from(range.len()))
+        })
+        && let Some(target) = decl_target(db, file, symbol.item, symbol.name.simple_name())
+    {
+        return Some(target);
+    }
+
+    // A type parameter the offset is written as: `T` in `class Box<T>`, the
+    // `T` of `<T> T id(T v)`.
+    if let Some(target) = type_param_target(db, file, &tree, offset) {
+        return Some(target);
+    }
+
+    // A variable carried without an item of its own: a local, parameter,
+    // pattern binding or lambda parameter, at the identifier it was named by.
+    variable_target(&hir::file_body_tree(db, file), file, offset)
+}
+
+/// The declaration of the type parameter whose own name token carries `offset`,
+/// among the type parameters the items enclosing the offset declare.
+fn type_param_target(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    offset: TextSize,
+) -> Option<NavigationTarget> {
+    for item in items_at(db, file, tree, offset) {
+        let declared: &[hir::hir_def::java::item_tree::TypeParam] = match tree.data(item) {
+            ItemData::Class(data) | ItemData::Interface(data) => &data.type_params,
+            ItemData::Record(data) => &data.type_params,
+            ItemData::Method(data) => &data.sig.type_params,
+            _ => continue,
+        };
+        for param in declared {
+            let Some(declaration) = hir_ty::type_param_declaration(db, file, item, &param.name)
+            else {
+                continue;
+            };
+            if declaration.range.contains(offset) {
+                return Some(NavigationTarget {
+                    file: declaration.file,
+                    range: declaration.range,
+                    name: param.name.simple_name().to_owned(),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The variable a *declaration-side* name offset denotes: a local, parameter or
+/// pattern binding (a [`LocalId`]), or a lambda parameter (carried by the body
+/// IR as a name/range pair, not as a local). The target is the identifier the
+/// variable was named by, matching a use's target.
+fn variable_target(bodies: &BodyTree, file: FileId, offset: TextSize) -> Option<NavigationTarget> {
+    let mut best: Option<(TextRange, String)> = None;
+    let mut consider = |range: TextRange, name: &Name| {
+        if range.contains(offset)
+            && best
+                .as_ref()
+                .is_none_or(|(best, _)| range.len() < best.len())
+        {
+            best = Some((range, name.as_str().to_owned()));
+        }
+    };
+    for (id, local) in bodies.locals.iter() {
+        if let Some(range) = bodies.local_name_range(LocalId(id)) {
+            consider(range, &local.name);
+        }
+    }
+    for index in 0..bodies.expr_ranges.len() {
+        if let ExprData::Lambda { params, .. } = bodies.expr(ExprId(ArenaId(index as u32))) {
+            for param in params {
+                consider(param.range, &param.name);
+            }
+        }
+    }
+    best.map(|(range, name)| NavigationTarget { file, range, name })
 }
 
 /// The resolutions of a *declaration-side* reference: the type reference or
@@ -1025,7 +1171,11 @@ fn decl_target(
     name: &str,
 ) -> Option<NavigationTarget> {
     let tree = hir::file_item_tree(db, decl_file);
-    let range = item_range(db, decl_file, &tree, item)?;
+    // The declared *name*, not the whole declaration: see
+    // [`NavigationTarget::range`]. Falls back to the whole range for an item
+    // whose name token cannot be resolved.
+    let range = item_name_range(db, decl_file, &tree, item)
+        .or_else(|| item_range(db, decl_file, &tree, item))?;
     Some(NavigationTarget {
         file: decl_file,
         range,

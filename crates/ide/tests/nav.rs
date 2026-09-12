@@ -92,54 +92,14 @@ fn render(fixture: &Fixture, offset: TextSize, header: String) -> String {
     format!("{header}\n{targets}\n--- hover ---\n{hover}")
 }
 
-/// The declaration text every target of the reference at `needle`'s
-/// `occurrence`-th occurrence covers, in the fixture's own source.
-fn goto_slices<'a>(fixture: &'a Fixture, needle: &str, occurrence: usize) -> Vec<&'a str> {
+/// The navigation targets of the reference at `needle`'s `occurrence`-th
+/// occurrence, in resolution order.
+fn goto_targets(fixture: &Fixture, needle: &str, occurrence: usize) -> Vec<NavigationTarget> {
     let offset = fixture.offset_start(needle, occurrence);
     fixture
         .analysis()
         .goto_definition(fixture.file, offset)
         .unwrap()
-        .iter()
-        .map(|target| {
-            &fixture.text
-                [u32::from(target.range.start()) as usize..u32::from(target.range.end()) as usize]
-        })
-        .collect()
-}
-
-/// Asserts that the reference at `needle`'s `occurrence`-th occurrence resolves
-/// to exactly one target — the declaration named `name`, whose range covers
-/// `declaration`, a needle inside that declaration's own text.
-fn assert_goto_covers(
-    fixture: &Fixture,
-    needle: &str,
-    occurrence: usize,
-    name: &str,
-    declaration: &str,
-) {
-    let offset = fixture.offset_start(needle, occurrence);
-    let targets = fixture
-        .analysis()
-        .goto_definition(fixture.file, offset)
-        .unwrap();
-    assert_eq!(
-        targets.len(),
-        1,
-        "case {needle:?}#{occurrence}: {targets:?}"
-    );
-    assert_eq!(targets[0].name, name, "case {needle:?}#{occurrence}");
-    let inside = TextSize::new(
-        fixture
-            .text
-            .find(declaration)
-            .unwrap_or_else(|| panic!("{declaration:?} is not in the fixture")) as u32,
-    );
-    assert!(
-        targets[0].range.contains(inside),
-        "case {needle:?}#{occurrence}: {:?} must cover {declaration:?}",
-        targets[0].range
-    );
 }
 
 /// Renders the navigation targets of `offset` under the given position, and
@@ -399,56 +359,53 @@ class Outer<T> {
 
 /// The body and member references of [`MANY_SRC`]: the needle locates the
 /// reference — at the first character of its `occurrence`-th (0-based)
-/// occurrence — and the string is the declaration text its single target
-/// range covers.
-const MANY_MEMBER_GOTO: &[(&str, usize, &str)] = &[
+/// occurrence — `declaration` is a needle inside the declaration it resolves
+/// to, and `name` is that declaration's own name, the exact identifier the
+/// target range must cover.
+const MANY_MEMBER_GOTO: &[(&str, usize, &str, &str)] = &[
     // §6.5.6.1: a bare name is a field of the implicit `this`; the qualified
     // form names the same declaration through the receiver.
-    ("count = b", 0, "count"),
-    ("count;", 1, "count"),
-    ("self = b", 0, "self"),
-    ("self;", 1, "self"),
+    ("count = b", 0, "int count;", "count"),
+    ("count;", 1, "int count;", "count"),
+    ("self = b", 0, "Base self;", "self"),
+    ("self;", 1, "Base self;", "self"),
     // §15.12.2: overload selection — the declaration the argument types select,
     // not the first same-named declaration of the file and not one picked by
     // arity alone.
-    ("method(1);", 0, "void method(int n) {}"),
-    ("super.method(1)", 0, "void method(int n) {}"),
-    ("method(1L)", 0, "void method(long n) {}"),
-    ("pick(1L)", 0, "void pick(long n) {}"),
+    ("method(1);", 0, "void method(int n) {}", "method"),
+    ("super.method(1)", 0, "void method(int n) {}", "method"),
+    ("method(1L)", 0, "void method(long n) {}", "method"),
+    ("pick(1L)", 0, "void pick(long n) {}", "pick"),
     // A static field and the enum constants.
-    ("STATIC;", 1, "STATIC = 1"),
-    ("FIRST;", 0, "FIRST"),
-    ("SECOND:", 0, "SECOND"),
+    ("STATIC;", 1, "static int STATIC = 1;", "STATIC"),
+    ("FIRST;", 0, "FIRST,", "FIRST"),
+    ("SECOND:", 0, "SECOND", "SECOND"),
     // §15.27.2: the body IR carries a lambda parameter as a name/range pair,
     // not as a local, so the use names its declarator.
-    ("q.count", 0, "q"),
+    ("q.count", 0, "(Base q) ->", "q"),
 ];
 
-/// The references of [`MANY_SRC`] that name no declaration: a local's own
-/// declarator (§6.3 scopes a local from its declarator on, so a declaration is
-/// not a reference to itself) and a name nothing declares.
-const MANY_MEMBER_NONE: &[(&str, usize)] = &[("local = 0", 0), ("nope + 1", 0)];
+/// The references of [`MANY_SRC`] that name no declaration: a name nothing
+/// declares. (A local's own declarator is not a *reference* either, but
+/// goto-definition on its own name still answers with the declaration — see
+/// [`goto_own_declaration_name`].)
+const MANY_MEMBER_NONE: &[(&str, usize)] = &[("nope + 1", 0)];
 
 #[test]
 fn goto_reference_matrix() {
     let fixture = test_file(MANY_SRC);
-    for &(needle, occurrence, declaration) in MANY_MEMBER_GOTO {
-        assert_eq!(
-            goto_slices(&fixture, needle, occurrence),
-            vec![declaration],
-            "case {needle:?}#{occurrence}"
-        );
+    for &(needle, occurrence, declaration, name) in MANY_MEMBER_GOTO {
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
     }
     for &(needle, occurrence) in MANY_MEMBER_NONE {
-        assert_eq!(
-            goto_slices(&fixture, needle, occurrence),
-            Vec::<&str>::new(),
+        assert!(
+            goto_targets(&fixture, needle, occurrence).is_empty(),
             "case {needle:?}#{occurrence}"
         );
     }
     let mut cases: Vec<(&str, usize)> = MANY_MEMBER_GOTO
         .iter()
-        .map(|&(needle, occurrence, _)| (needle, occurrence))
+        .map(|&(needle, occurrence, ..)| (needle, occurrence))
         .collect();
     cases.extend(MANY_MEMBER_NONE.iter().copied());
     assert_snapshot!("goto_reference_matrix", render_nav_many(&fixture, &cases));
@@ -492,7 +449,7 @@ const MANY_DECL_GOTO: &[(&str, usize, &str, &str)] = &[
 fn goto_declaration_reference_matrix() {
     let fixture = test_file(MANY_SRC);
     for &(needle, occurrence, name, declaration) in MANY_DECL_GOTO {
-        assert_goto_covers(&fixture, needle, occurrence, name, declaration);
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
     }
     let cases: Vec<(&str, usize)> = MANY_DECL_GOTO
         .iter()
@@ -571,14 +528,74 @@ fn goto_variable_target_covers_the_name() {
     );
 }
 
+// -- a declaration's own name ([JLS §6.3]) ------------------------------------------
+// A declaration is not a reference to itself: `m` in `Main m`, `Main` in
+// `class Main`, `local` in `int local = 0` name a declaration, not a *use* of
+// one. Goto-definition on such a name still answers — with the declaration it
+// names. This "self" step is taken only after every reference step found
+// nothing, so the `Main` of `Main m` is answered by the class, not the field.
+
+const SELF_NAV_SRC: &str = r#"package com.example;
+
+class Main {
+    Main m;
+
+    int count;
+
+    <T> T pick(T first, T second) {
+        int local = 0;
+        Runnable r = (String s) -> s.length();
+        return first;
+    }
+}
+"#;
+
+#[test]
+fn goto_own_declaration_name() {
+    let fixture = test_file(SELF_NAV_SRC);
+
+    // The class's own name, a field's own declarator and a method's own name.
+    assert_targets_name(&fixture, "Main {", 0, "class Main", "Main");
+    assert_targets_name(&fixture, "m;\n", 0, "Main m", "m");
+    assert_targets_name(&fixture, "count;", 0, "int count;", "count");
+    assert_targets_name(&fixture, "pick(T first", 0, "T pick(T first", "pick");
+
+    // A variable's own declarator names the variable itself — the identifier,
+    // exactly as a use does.
+    assert_targets_name(&fixture, "local = 0", 0, "int local = 0", "local");
+    assert_targets_name(&fixture, "first, T second", 0, "T first", "first");
+    assert_targets_name(&fixture, "s) ->", 0, "(String s)", "s");
+
+    // A type parameter's own declaration in the list that declares it.
+    assert_targets_name(&fixture, "T> T pick", 0, "<T> T pick", "T");
+
+    // A declared type that names a same-file class is still read as a
+    // *reference*: the `Main` of `Main m` answers with the class.
+    assert_targets_name(&fixture, "Main m", 0, "class Main", "Main");
+
+    assert_snapshot!(
+        "goto_own_declaration_name",
+        render_nav_many(
+            &fixture,
+            &[
+                ("Main {", 0),
+                ("m;\n", 0),
+                ("count;", 0),
+                ("pick(T first", 0),
+                ("local = 0", 0),
+                ("first, T second", 0),
+                ("s) ->", 0),
+                ("T> T pick", 0),
+                ("Main m", 0),
+            ]
+        )
+    );
+}
+
 /// The single navigation target of the reference at `needle`'s `occurrence`-th
 /// occurrence.
 fn goto_target(fixture: &Fixture, needle: &str, occurrence: usize) -> NavigationTarget {
-    let offset = fixture.offset_start(needle, occurrence);
-    let mut targets = fixture
-        .analysis()
-        .goto_definition(fixture.file, offset)
-        .unwrap();
+    let mut targets = goto_targets(fixture, needle, occurrence);
     assert_eq!(
         targets.len(),
         1,

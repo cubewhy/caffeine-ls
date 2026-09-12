@@ -3,6 +3,6 @@ source: crates/ide/tests/nav.rs
 expression: "render_nav(&fixture, \"x$y;\\n\")"
 ---
 --- goto @"x$y;\n" ---
-
+x$y @42..45
 --- hover ---
 x$y: int
