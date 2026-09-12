@@ -39,7 +39,10 @@
 //! `java.lang.annotation.ElementType`), and from *library* classes via the
 //! classfile `RuntimeVisibleAnnotations` and method-signature stubs
 //! ([`hir::ClassRecord`]), so a `@Target(ElementType.X)` from a dependency jar
-//! is honored the same way.
+//! is honored the same way. The elements of a library annotation type are the
+//! methods its classfile declares ([§9.6.1]); an annotation interface that
+//! declares no methods declares no elements, so every pair of a normal
+//! annotation of it is an error ([§9.7.1]) and none can be missing.
 
 use hir_def::java::item_tree::{
     ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef,
@@ -1848,14 +1851,14 @@ fn annotation_type_elements(
             {
                 return None;
             }
-            if class.methods.is_empty() {
-                // A stub with no method records (the test fixture's minimal
-                // annotations) or a partially-read classfile carries no
-                // element information — an empty element list would report
-                // every argument as an unknown member, so treat it as
-                // uncheckable instead.
-                return None;
-            }
+            // §9.6.1: the elements of an annotation interface are exactly the
+            // methods it *declares* — so a classfile record's empty member
+            // list means the annotation interface declares no elements. The
+            // list is complete or absent: a classfile that fails to parse
+            // yields no record at all (and resolution fails instead), never a
+            // partial one. An element-free annotation interface therefore has
+            // nothing that could be missing, while every element-value pair of
+            // a normal annotation of it is an error ([§9.7.1]).
             Some(
                 class
                     .methods

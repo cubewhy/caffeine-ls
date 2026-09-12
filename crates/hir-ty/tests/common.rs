@@ -351,7 +351,9 @@ fn release_ct_sym_entries() -> Vec<(String, Vec<u8>)> {
             sig: None,
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         })
     }
 
@@ -721,6 +723,10 @@ pub struct ClassSpec<'a> {
     pub interfaces: &'a [&'a str],
     pub access: u16,
     pub fields: &'a [(&'a str, &'a str)],
+    /// The access flags of each field, parallel to `fields`; an empty slice
+    /// means `ACC_PUBLIC` for every field. An enum constant carries
+    /// `ACC_ENUM` ([JVMS §4.6]), which is how a classfile declares it.
+    pub field_access: &'a [u16],
     pub methods: &'a [(&'a str, &'a str)],
     pub method_sigs: &'a [&'a str],
     /// The access flags of each method, parallel to `methods`; an empty slice
@@ -735,6 +741,23 @@ pub struct ClassSpec<'a> {
     /// How each method is marked deprecated, parallel to `methods`; an empty
     /// slice means no method is.
     pub method_deprecations: &'a [DeprecationSpec],
+    /// The default value of each method, parallel to `methods`; an empty
+    /// slice means no method declares one. javac writes it as the
+    /// `AnnotationDefault` attribute ([JVMS §4.7.22]), which makes an
+    /// annotation element optional ([JLS §9.7.1]).
+    pub method_defaults: &'a [ClassSpecDefault],
+}
+
+/// The `AnnotationDefault` of one fixture element ([JVMS §4.7.22]), as the
+/// classfile's `element_value` encodes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClassSpecDefault {
+    /// A `String` default: tag `s` with the `CONSTANT_String` holding the
+    /// text.
+    String(&'static str),
+    /// A `boolean` default: tag `Z` with the `CONSTANT_Integer` holding
+    /// `1`/`0` ([JVMS §4.7.22.1]).
+    Boolean(bool),
 }
 
 /// How a fixture declaration is marked deprecated ([JLS §9.6.4.6]): the
@@ -820,7 +843,9 @@ pub fn class_sig(
         sig,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -845,7 +870,9 @@ pub fn class_with_methods(
         sig: None,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -872,7 +899,9 @@ pub fn class_with_methods_access_sig(
         sig,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -923,7 +952,9 @@ pub fn class_with_methods_access(
         sig: None,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -952,7 +983,9 @@ pub fn annotation(fqn: &'static str) -> ClassSpec<'static> {
         sig: None,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -963,6 +996,17 @@ pub fn annotation(fqn: &'static str) -> ClassSpec<'static> {
 pub fn annotation_with_methods(
     fqn: &'static str,
     methods: &'static [(&'static str, &'static str)],
+) -> ClassSpec<'static> {
+    annotation_with_method_defaults(fqn, methods, &[])
+}
+
+/// Like [`annotation_with_methods`], but each element also declares an
+/// `AnnotationDefault` ([JVMS §4.7.22]) — the attribute that makes an
+/// annotation element optional ([JLS §9.7.1]).
+pub fn annotation_with_method_defaults(
+    fqn: &'static str,
+    methods: &'static [(&'static str, &'static str)],
+    method_defaults: &'static [ClassSpecDefault],
 ) -> ClassSpec<'static> {
     ClassSpec {
         fqn,
@@ -976,7 +1020,9 @@ pub fn annotation_with_methods(
         sig: None,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults,
     }
 }
 
@@ -998,7 +1044,9 @@ pub fn interface_sig(
         sig,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -1023,7 +1071,9 @@ pub fn interface_with_methods(
         sig,
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -1048,7 +1098,9 @@ pub fn functional_interface(
         sig: Some(sig),
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
+        field_access: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 
@@ -1088,7 +1140,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             fields: &[],
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         // Records have an implicit superclass `java.lang.Record`
         // ([JLS §8.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10)),
@@ -1157,7 +1211,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: None,
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         class("java/lang/Number", Some("java/lang/Object"), &[]),
         // §4.2.1: every wrapper class is declared final in the real JDK.
@@ -1198,7 +1254,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: Some("<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;"),
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         functional_interface(
             "java/util/function/Predicate",
@@ -1280,7 +1338,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: Some("<T:Ljava/lang/Object;>Ljava/lang/Object;"),
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         // §9.4.4: the primitive `ToIntFunction` functional interface backing
         // `Comparator.comparingInt`/`thenComparingInt` ([JLS §9.8]).
@@ -1355,7 +1415,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: Some("<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;"),
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         class_sig(
             "java/util/HashMap",
@@ -1450,7 +1512,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             fields: &[],
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         class("java/lang/Throwable", Some("java/lang/Object"), &[]),
         class("java/lang/Exception", Some("java/lang/Throwable"), &[]),
@@ -1501,7 +1565,18 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         interface("java/io/Serializable"),
         // Annotations resolved by the declaration checks
         // ([JLS §9.7], [§9.6.4.4]) and by the annotation fixtures.
-        annotation("java/lang/Deprecated"),
+        // §9.6.1/§9.7.1: the real `java.lang.Deprecated` declares the
+        // optional elements `since` and `forRemoval`, each with an
+        // `AnnotationDefault` ([JVMS §4.7.22]) — so a bare `@Deprecated` pairs
+        // with nothing and is complete.
+        annotation_with_method_defaults(
+            "java/lang/Deprecated",
+            &[("since", "()Ljava/lang/String;"), ("forRemoval", "()Z")],
+            &[
+                ClassSpecDefault::String(""),
+                ClassSpecDefault::Boolean(false),
+            ],
+        ),
         annotation("java/lang/Override"),
         // `@SuppressWarnings` elements are enforced by the annotation
         // element-value check ([§9.7.1]); `value()` is `String[]`.
@@ -1513,10 +1588,55 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         annotation("java/lang/SafeVarargs"),
         annotation("java/lang/annotation/Annotation"),
         annotation("java/lang/annotation/Documented"),
-        annotation("java/lang/annotation/Retention"),
-        annotation("java/lang/annotation/Target"),
+        // §9.6.1: `Retention.value` and `Target.value` are the real elements
+        // of both annotation interfaces, and neither declares a default — an
+        // `@Retention(...)`/`@Target(...)` pair must name `value`.
+        annotation_with_methods(
+            "java/lang/annotation/Retention",
+            &[("value", "()Ljava/lang/annotation/RetentionPolicy;")],
+        ),
+        annotation_with_methods(
+            "java/lang/annotation/Target",
+            &[("value", "()[Ljava/lang/annotation/ElementType;")],
+        ),
         class("java/lang/annotation/RetentionPolicy", None, &[]),
-        class("java/lang/annotation/ElementType", None, &[]),
+        // §9.6.1/§9.7.1: the `@Target(...)` arguments are enum constants of
+        // the real `java.lang.annotation.ElementType`, a public final enum
+        // ([JLS §8.9]) whose constants are its `ACC_ENUM`-flagged
+        // `public static final` fields ([JVMS §4.1], [§4.6]) — verified with
+        // `javap -v java.lang.annotation.ElementType`. Without them the
+        // element-value check cannot resolve `ElementType.METHOD` and every
+        // `@Target(...)` argument would read as an unknown constant.
+        ClassSpec {
+            fqn: "java/lang/annotation/ElementType",
+            super_class: None,
+            interfaces: &[],
+            access: 0x4031, // ACC_PUBLIC | ACC_FINAL | ACC_SUPER | ACC_ENUM
+            fields: &[
+                ("TYPE", "Ljava/lang/annotation/ElementType;"),
+                ("FIELD", "Ljava/lang/annotation/ElementType;"),
+                ("METHOD", "Ljava/lang/annotation/ElementType;"),
+                ("PARAMETER", "Ljava/lang/annotation/ElementType;"),
+                ("CONSTRUCTOR", "Ljava/lang/annotation/ElementType;"),
+                ("LOCAL_VARIABLE", "Ljava/lang/annotation/ElementType;"),
+                ("ANNOTATION_TYPE", "Ljava/lang/annotation/ElementType;"),
+                ("PACKAGE", "Ljava/lang/annotation/ElementType;"),
+                ("TYPE_PARAMETER", "Ljava/lang/annotation/ElementType;"),
+                ("TYPE_USE", "Ljava/lang/annotation/ElementType;"),
+                ("MODULE", "Ljava/lang/annotation/ElementType;"),
+                ("RECORD_COMPONENT", "Ljava/lang/annotation/ElementType;"),
+            ],
+            // ACC_PUBLIC | ACC_STATIC | ACC_FINAL | ACC_ENUM
+            field_access: &[0x4019; 12],
+            methods: &[],
+            method_sigs: &[],
+            method_access: &[],
+            sig: None,
+            deprecation: DeprecationSpec::NONE,
+            field_deprecations: &[],
+            method_deprecations: &[],
+            method_defaults: &[],
+        },
         interface_with_methods(
             "java/lang/Iterable",
             &[],
@@ -1595,7 +1715,9 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
             sig: Some("<E:Ljava/lang/Object;>Ljava/lang/Object;Ljava/util/Collection<TE;>;"),
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         class_sig(
             "java/util/AbstractList",
@@ -1761,6 +1883,16 @@ impl Pool {
         self.alloc(&entry)
     }
 
+    /// A `CONSTANT_String` entry ([JVMS §4.4.3]) over its text's
+    /// `CONSTANT_Utf8` — how a classfile spells a `String` element value.
+    fn string(&mut self, s: &str) -> u16 {
+        let utf8_index = self.utf8(s);
+        let mut entry = Vec::with_capacity(3);
+        entry.push(8); // CONSTANT_String
+        entry.extend_from_slice(&utf8_index.to_be_bytes());
+        self.alloc(&entry)
+    }
+
     fn class(&mut self, name: &str) -> u16 {
         if let Some(&idx) = self.classes.get(name) {
             return idx;
@@ -1811,6 +1943,28 @@ pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
             }
         })
         .collect();
+    // The `AnnotationDefault` attribute of each element ([JVMS §4.7.22]),
+    // encoded as its single `element_value`: a `String` element as tag `s`
+    // with a `CONSTANT_String`, a `boolean` element as tag `Z` with a
+    // `CONSTANT_Integer` ([JVMS §4.7.22.1]). Pooled here for the same reason.
+    let annotation_default_name = pool.utf8("AnnotationDefault");
+    let mut method_defaults: Vec<Vec<u8>> = Vec::with_capacity(spec.methods.len());
+    for i in 0..spec.methods.len() {
+        let Some(default) = spec.method_defaults.get(i) else {
+            method_defaults.push(Vec::new());
+            continue;
+        };
+        let (tag, const_value_index) = match default {
+            ClassSpecDefault::String(text) => (b's', pool.string(text)),
+            ClassSpecDefault::Boolean(value) => (b'Z', pool.integer(i32::from(*value))),
+        };
+        let mut attr = Vec::new();
+        attr.extend_from_slice(&annotation_default_name.to_be_bytes());
+        attr.extend_from_slice(&3u32.to_be_bytes()); // element_value: tag + index
+        attr.push(tag);
+        attr.extend_from_slice(&const_value_index.to_be_bytes());
+        method_defaults.push(attr);
+    }
 
     // Deprecation markers ([JLS §9.6.4.6]): the zero-length `Deprecated`
     // attribute ([JVMS §4.7.15]) and the `java.lang.Deprecated` annotation of
@@ -1878,7 +2032,8 @@ pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
 
     out.extend_from_slice(&(fields.len() as u16).to_be_bytes());
     for (i, (name, desc)) in fields.iter().enumerate() {
-        out.extend_from_slice(&0x0001u16.to_be_bytes()); // ACC_PUBLIC
+        let field_access = spec.field_access.get(i).copied().unwrap_or(0x0001); // ACC_PUBLIC
+        out.extend_from_slice(&field_access.to_be_bytes());
         out.extend_from_slice(&name.to_be_bytes());
         out.extend_from_slice(&desc.to_be_bytes());
         let marking = spec
@@ -1907,10 +2062,13 @@ pub fn class_bytes(spec: &ClassSpec) -> Vec<u8> {
             .copied()
             .unwrap_or(DeprecationSpec::NONE);
         let mut attributes = deprecation_attributes(marking);
-        let count =
-            u16::from_be_bytes([attributes[0], attributes[1]]) + u16::from(!signature.is_empty());
+        let default = &method_defaults[i];
+        let count = u16::from_be_bytes([attributes[0], attributes[1]])
+            + u16::from(!signature.is_empty())
+            + u16::from(!default.is_empty());
         attributes[..2].copy_from_slice(&count.to_be_bytes());
         attributes.extend_from_slice(&signature);
+        attributes.extend_from_slice(default);
         let method_access = spec.method_access.get(i).copied().unwrap_or(0x0001); // ACC_PUBLIC
         out.extend_from_slice(&method_access.to_be_bytes());
         out.extend_from_slice(&name.to_be_bytes());

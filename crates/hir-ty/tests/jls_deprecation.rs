@@ -498,6 +498,7 @@ fn class_spec<'a>(fqn: &'a str) -> ClassSpec<'a> {
         interfaces: &[],
         access: 0x0021, // ACC_PUBLIC | ACC_SUPER
         fields: &[],
+        field_access: &[],
         methods: &[],
         method_sigs: &[],
         method_access: &[],
@@ -505,6 +506,7 @@ fn class_spec<'a>(fqn: &'a str) -> ClassSpec<'a> {
         deprecation: DeprecationSpec::NONE,
         field_deprecations: &[],
         method_deprecations: &[],
+        method_defaults: &[],
     }
 }
 

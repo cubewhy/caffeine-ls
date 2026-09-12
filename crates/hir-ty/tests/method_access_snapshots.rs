@@ -64,7 +64,9 @@ fn access_classes() -> Vec<ClassSpec<'static>> {
             sig: None,
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         },
         common::class(
             "com/example/D",

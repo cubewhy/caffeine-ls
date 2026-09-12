@@ -185,7 +185,9 @@ snapshot!(
                 sig: None,
                 deprecation: DeprecationSpec::NONE,
                 field_deprecations: &[],
+                field_access: &[],
                 method_deprecations: &[],
+                method_defaults: &[],
             },
         ],
         &[(

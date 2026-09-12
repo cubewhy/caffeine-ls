@@ -211,7 +211,9 @@ snapshot!(
             fields: &[],
             deprecation: DeprecationSpec::NONE,
             field_deprecations: &[],
+            field_access: &[],
             method_deprecations: &[],
+            method_defaults: &[],
         }],
         &[(
             "/src/com/example/App.java",

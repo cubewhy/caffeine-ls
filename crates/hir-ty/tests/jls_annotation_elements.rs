@@ -8,9 +8,10 @@
 //! value against an array-typed element is a one-element array shortcut.
 //!
 //! The renderer ([`check_class_diagnostics`]) prints one line per
-//! `@line:col` diagnostic; the annotation types here all resolve in the same
-//! compilation unit, so the elements are read from the annotation type's own
-//! source declaration.
+//! `@line:col` diagnostic; the annotation types here either resolve in the
+//! same compilation unit — so the elements are read from the annotation
+//! type's own source declaration — or are the JDK fixture's
+//! classfile-declared ones.
 
 #[macro_use]
 mod common;
@@ -408,6 +409,88 @@ class Anns {}
 );
 // §9.7.1: the rule runs for a nested annotation value too — its own argument
 // list is missing a pair for `Inner.v`.
+
+// -- red/green: an element-free annotation type ([§9.6.1], [§9.7.1]) -----------
+
+snapshot!(
+    element_free_annotation_type,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+class Anns {
+    @Override(target = \"\")
+    public String toString() {
+        return \"\";
+    }
+}
+",
+    )])
+);
+// §9.6.1/§9.7.1: `java.lang.Override` declares no methods, so its element list
+// is empty — no pair of a normal annotation of it can name an element. The
+// report is the pair's (at its value), and the method does override
+// `Object.toString`, so nothing else is reported.
+
+snapshot!(
+    element_free_annotation_elided_value,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+class Anns {
+    @Override(\"\")
+    public String toString() {
+        return \"\";
+    }
+}
+",
+    )])
+);
+// §9.7.1: the single-value form `@Override("")` is the implicit pair for the
+// element `value`, and an annotation interface without elements declares no
+// `value` either.
+
+snapshot!(
+    element_free_annotation_green,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+class Anns {
+    @Override
+    public String toString() {
+        return \"\";
+    }
+}
+",
+    )])
+);
+// §9.6.1/§9.7.1: an element-free annotation interface has nothing that could
+// be missing — a bare `@Override` on a real override is complete.
+
+snapshot!(
+    empty_library_annotation_type_arguments,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+import java.lang.annotation.Documented;
+
+@Documented(nope = 1)
+@interface Ann {}
+",
+    )])
+);
+// §9.6.1/§9.7.1: the same for a classfile-declared annotation type — the
+// fixture's `java.lang.annotation.Documented` declares no methods, so its
+// argument list can only name a non-element. `@Documented` is applicable to an
+// annotation type declaration (its `@Target` set is empty, [§9.6.4.1]), so the
+// pair is the only report.
 
 // -- green: constant expressions ([§15.29]) ------------------------------------
 
