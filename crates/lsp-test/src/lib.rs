@@ -84,6 +84,8 @@ pub struct LspHarness {
     /// Set when a receive observes the server hanging up, so `Drop` can skip the
     /// shutdown handshake and let the join report the server's own panic.
     closed: Cell<bool>,
+    /// The server's `initialize` result — the capabilities it negotiated.
+    init_result: RefCell<serde_json::Value>,
 }
 
 /// The capabilities every harness advertises. `workDoneProgress` is required
@@ -133,6 +135,7 @@ impl LspHarness {
             }),
             unanswered: RefCell::new(Vec::new()),
             closed: Cell::new(false),
+            init_result: RefCell::new(serde_json::Value::Null),
         };
 
         harness.initialize(config);
@@ -188,8 +191,15 @@ impl LspHarness {
 
         // A real round trip: a server that never answers `initialize` fails here,
         // naming the method, instead of hanging on the first request after it.
-        self.request("initialize", init_params);
+        let result = self.request("initialize", init_params);
+        *self.init_result.borrow_mut() = result;
         self.notify("initialized", serde_json::json!({}));
+    }
+
+    /// The server's `initialize` result — the capabilities it negotiated, e.g.
+    /// the semantic-tokens legend a request's indices are looked up in.
+    pub fn initialize_result(&self) -> serde_json::Value {
+        self.init_result.borrow().clone()
     }
 
     /// Receives one message, buffering it and answering the server requests the

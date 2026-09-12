@@ -1,7 +1,7 @@
 use crate::{
     config::ConfigErrors,
     line_index::{LineEndings, LineIndex},
-    lsp::from_proto,
+    lsp::{from_proto, semantic_tokens},
     mem_docs::MemDocs,
     task_pool::TaskPool,
 };
@@ -239,6 +239,11 @@ pub struct GlobalState {
     /// broken JDK or jar fails every navigation, and one warning is a diagnosis
     /// where one per navigation is noise.
     pub(crate) decompiler_error_reported: bool,
+    /// The semantic-token stream last sent for each document, so a
+    /// `textDocument/semanticTokens/full/delta` request can be answered with the
+    /// edit that turns it into the current one (see
+    /// [`crate::lsp::semantic_tokens::DeltaCache`]).
+    pub(crate) semantic_tokens: Arc<RwLock<semantic_tokens::DeltaCache>>,
 }
 
 impl GlobalState {
@@ -288,6 +293,7 @@ impl GlobalState {
             source_root_matchers: Vec::new(),
             library_archives: FxHashMap::default(),
             decompiler_error_reported: false,
+            semantic_tokens: Arc::new(RwLock::new(semantic_tokens::DeltaCache::default())),
         }
     }
 
@@ -454,6 +460,7 @@ impl GlobalState {
             vfs: Arc::clone(&self.vfs),
             mem_docs: self.mem_docs.clone(),
             cancelled: CancellationToken::default(),
+            semantic_tokens: Arc::clone(&self.semantic_tokens),
         }
     }
 
@@ -498,11 +505,20 @@ pub struct GlobalStateSnapshot {
     /// Set by `$/cancelRequest` for the request this snapshot serves; workers
     /// checkpoint it and abort early instead of finishing a full pull.
     pub(crate) cancelled: CancellationToken,
+    /// The semantic-token streams the server last sent, shared with the main
+    /// loop's state (see [`GlobalState::semantic_tokens`]).
+    semantic_tokens: Arc<RwLock<semantic_tokens::DeltaCache>>,
 }
 
 impl GlobalStateSnapshot {
     fn vfs_read(&self) -> MappedRwLockReadGuard<'_, vfs::Vfs> {
         RwLockReadGuard::map(self.vfs.read(), |(it, _)| it)
+    }
+
+    /// The semantic-token delta cache: the streams a `full/delta` request can
+    /// be diffed against, written by the `full` and `full/delta` handlers.
+    pub(crate) fn semantic_tokens(&self) -> &RwLock<semantic_tokens::DeltaCache> {
+        &self.semantic_tokens
     }
 
     /// Returns `None` if the file was excluded.

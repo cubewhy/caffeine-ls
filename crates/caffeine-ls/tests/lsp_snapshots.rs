@@ -883,6 +883,444 @@ fn position_of(text: &str, needle: &str) -> (u32, u32) {
     )
 }
 
+/// One decoded semantic token: where it is, how long it is, and the type and
+/// modifiers the server's own legend names it by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TokenRow {
+    line: u32,
+    col: u32,
+    len: u32,
+    ty: String,
+    mods: Vec<String>,
+}
+
+/// The flat five-integers-per-token `data` array of a token response.
+fn flat_data(response: &serde_json::Value) -> Vec<u32> {
+    response["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the response has no `data` array: {response}"))
+        .iter()
+        .map(|value| value.as_u64().expect("a token integer") as u32)
+        .collect()
+}
+
+/// Decodes `response`'s tokens against the legend the server advertised in
+/// `initialize`, applying the LSP delta rules: a token's line is relative to
+/// the previous token's line, and its start column is absolute when the line
+/// changed and relative to the previous token's start otherwise.
+fn decode_tokens(response: &serde_json::Value, legend: &serde_json::Value) -> Vec<TokenRow> {
+    let entries = |key: &str| -> Vec<String> {
+        legend[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("the legend has no `{key}`: {legend}"))
+            .iter()
+            .map(|value| value.as_str().expect("a legend entry").to_owned())
+            .collect()
+    };
+    let types = entries("tokenTypes");
+    let modifiers = entries("tokenModifiers");
+    let data = flat_data(response);
+    assert_eq!(data.len() % 5, 0, "a token is five integers: {data:?}");
+
+    let (mut line, mut col) = (0u32, 0u32);
+    data.chunks_exact(5)
+        .map(|token| {
+            if token[0] == 0 {
+                col += token[1];
+            } else {
+                line += token[0];
+                col = token[1];
+            }
+            TokenRow {
+                line,
+                col,
+                len: token[2],
+                ty: types[token[3] as usize].clone(),
+                mods: modifiers
+                    .iter()
+                    .enumerate()
+                    .filter(|&(bit, _)| token[4] & (1 << bit) != 0)
+                    .map(|(_, name)| name.clone())
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
+/// The source text one token covers. The fixtures are ASCII, so a column is the
+/// byte offset of the character within its line.
+fn token_text(source: &str, token: &TokenRow) -> String {
+    let mut line_start = 0;
+    for _ in 0..token.line {
+        line_start = source[line_start..].find('\n').expect("the line exists") + line_start + 1;
+    }
+    let start = line_start + token.col as usize;
+    source[start..start + token.len as usize].to_owned()
+}
+
+/// `ty[+mod…]` — the token's classification as the assertions spell it
+/// (`class+declaration`, `property+declaration+static+readonly`).
+fn token_kind(token: &TokenRow) -> String {
+    if token.mods.is_empty() {
+        token.ty.clone()
+    } else {
+        format!("{}+{}", token.ty, token.mods.join("+"))
+    }
+}
+
+/// `"line:col:len kind text"` rows, for snapshots.
+fn render_tokens(tokens: &[TokenRow], source: &str) -> Vec<String> {
+    tokens
+        .iter()
+        .map(|token| {
+            format!(
+                "{}:{}:{} {} {}",
+                token.line,
+                token.col,
+                token.len,
+                token_kind(token),
+                token_text(source, token)
+            )
+        })
+        .collect()
+}
+
+/// `"kind text"` rows — [`render_tokens`] without the positions, for order-free
+/// assertions.
+fn token_kinds(tokens: &[TokenRow], source: &str) -> Vec<String> {
+    tokens
+        .iter()
+        .map(|token| format!("{} {}", token_kind(token), token_text(source, token)))
+        .collect()
+}
+
+/// Asserts every expected `"<kind> <text>"` row is among `tokens`' rows.
+fn assert_kinds(tokens: &[TokenRow], source: &str, expected: &[&str]) {
+    let rows = token_kinds(tokens, source);
+    for want in expected {
+        assert!(
+            rows.contains(&(*want).to_owned()),
+            "no `{want}` row among {rows:#?}"
+        );
+    }
+}
+
+/// Whether a decoded token lies fully inside a `Range` as the request spells it.
+fn within(token: &TokenRow, range: &serde_json::Value) -> bool {
+    let edge = |name: &str| {
+        let at = &range[name];
+        (
+            at["line"].as_u64().expect("a line") as u32,
+            at["character"].as_u64().expect("a character") as u32,
+        )
+    };
+    let start = edge("start");
+    let end = edge("end");
+    // The encoder never lets a token span a line, so its end is `col + len` on
+    // its own line.
+    (token.line, token.col) >= start && (token.line, token.col + token.len) <= end
+}
+
+/// The semantic-tokens legend the server advertised, from the `initialize`
+/// result.
+fn legend_of(lsp: &LspHarness) -> serde_json::Value {
+    lsp.initialize_result()["capabilities"]["semanticTokensProvider"]["legend"].clone()
+}
+
+/// The Java fixture of the semantic-token tests: one file that exercises every
+/// classification rule.
+const JAVA_SEMANTIC_TOKENS: &str = r#"package com.example;
+
+import java.util.List;
+
+/** A doc comment. */
+public class Sample<T extends Number> implements Marker {
+    private static final String NAME = "sample";
+    private int count = 0;
+
+    enum Kind { ALPHA, BETA }
+
+    record Pair(int left, int right) { }
+
+    @Deprecated
+    public <U> U pick(List<U> values, int index) {
+        int local = index + 1;
+        for (U value : values) {
+            if (value == null) {
+                continue;
+            }
+            count += 1;
+        }
+        return values.get(local);
+    }
+
+    void caller() {
+        var s = new Sample<Integer>();
+        s.count = 3;
+        System.out.println(NAME.length());
+        /* block
+           comment */
+        Runnable r = () -> { int inner = 1; };
+    }
+}
+
+interface Marker {
+    void mark();
+}
+"#;
+
+/// The Kotlin fixture of the semantic-token tests.
+const KOTLIN_SEMANTIC_TOKENS: &str = r#"package com.example
+
+import kotlin.math.sqrt
+
+/**
+ * A KDoc comment.
+ */
+enum class Kind { ALPHA, BETA }
+
+data class Point(val x: Int, var y: Int)
+
+@Deprecated
+interface Greeter {
+    fun greet(name: String): String
+}
+
+fun <T : Number> List<T>.secondOrNull(): T? = getOrNull(1)
+
+class Impl : Greeter {
+    override fun greet(name: String): String {
+        val local = "Hello, $name"
+        var total = 0
+        for (item in listOf(1, 2)) { total += item }
+        /* block
+           comment */
+        return local + total + sqrt(4.0)
+    }
+}
+
+fun main() {
+    val greeter = Impl()
+    greeter.greet("hi")
+}
+"#;
+
+#[test]
+fn test_java_semantic_tokens() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Sample.java";
+    lsp.write_file(path, JAVA_SEMANTIC_TOKENS);
+    lsp.open_document(path);
+    // `file_language_kind` is derived from the source root the file joins when
+    // the workspace load applies, and a file outside every source set lowers
+    // as `Unknown` — no tokens at all.
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let response = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+    );
+    let tokens = decode_tokens(&response, &legend);
+    let rows = render_tokens(&tokens, JAVA_SEMANTIC_TOKENS);
+
+    // Spot checks that pin the classification, one per rule (order-free).
+    assert_kinds(
+        &tokens,
+        JAVA_SEMANTIC_TOKENS,
+        &[
+            // The lexical layer.
+            "keyword class",
+            "keyword interface",
+            "keyword int",
+            "keyword new",
+            "keyword null",
+            "keyword return",
+            "keyword for",
+            "keyword if",
+            "keyword continue",
+            "keyword void",
+            "modifier private",
+            "modifier static",
+            "modifier final",
+            "modifier public",
+            "operator +",
+            "operator +=",
+            "string \"sample\"",
+            "number 0",
+        ],
+    );
+
+    insta::assert_json_snapshot!("java_semantic_tokens", rows);
+}
+
+#[test]
+fn test_kotlin_semantic_tokens() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Sample.kt";
+    lsp.write_file(path, KOTLIN_SEMANTIC_TOKENS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let response = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+    );
+    let tokens = decode_tokens(&response, &legend);
+    let rows = render_tokens(&tokens, KOTLIN_SEMANTIC_TOKENS);
+
+    assert_kinds(
+        &tokens,
+        KOTLIN_SEMANTIC_TOKENS,
+        &[
+            // The lexical layer.
+            "keyword class",
+            "keyword fun",
+            "keyword val",
+            "keyword var",
+            "keyword interface",
+            "keyword for",
+            "keyword return",
+            "operator +",
+            "operator +=",
+            "number 0",
+            "number 4.0",
+        ],
+    );
+
+    insta::assert_json_snapshot!("kotlin_semantic_tokens", rows);
+}
+
+/// `textDocument/semanticTokens/range` answers exactly the requested window's
+/// slice of the full stream: the full response is the oracle.
+#[test]
+fn test_semantic_tokens_range() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Sample.java";
+    lsp.write_file(path, JAVA_SEMANTIC_TOKENS);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let uri = lsp.uri(path);
+    let full = decode_tokens(
+        &lsp.request(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": uri } }),
+        ),
+        &legend,
+    );
+
+    // A window over `caller`'s body: it starts and ends on a line boundary-ish
+    // span that fully contains the block comment, so the whole-highlight filter
+    // and the decoded token rows partition the file the same way.
+    let window = json!({
+        "start": { "line": 26, "character": 0 },
+        "end": { "line": 31, "character": 44 },
+    });
+    let range_tokens = decode_tokens(
+        &lsp.request(
+            "textDocument/semanticTokens/range",
+            json!({ "textDocument": { "uri": uri }, "range": window }),
+        ),
+        &legend,
+    );
+
+    let inside: Vec<TokenRow> = full
+        .iter()
+        .filter(|token| within(token, &window))
+        .cloned()
+        .collect();
+    assert!(!inside.is_empty(), "the window covers tokens");
+    assert_eq!(range_tokens, inside);
+}
+
+/// `textDocument/semanticTokens/full/delta` answers the edit that turns the
+/// stream the client holds into the current one; applying it must reproduce a
+/// fresh full response.
+#[test]
+fn test_semantic_tokens_delta() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Deltas.java";
+    let text = "package com.example;\n\nclass Deltas {\n    int count = 0;\n\n    int read() {\n        return count;\n    }\n}\n";
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let legend = legend_of(&lsp);
+    let uri = lsp.uri(path);
+    let full = lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let previous_id = full["resultId"]
+        .as_str()
+        .expect("a full response carries a result id")
+        .to_owned();
+    let before = flat_data(&full);
+
+    // The edit the client is about to send: a field added before `read`, so the
+    // stream changes in the middle.
+    let edited = text.replace("    int read() {", "    int extra = 1;\n\n    int read() {");
+    lsp.change_uri(&uri, 1, &edited);
+
+    let delta = lsp.request(
+        "textDocument/semanticTokens/full/delta",
+        json!({ "textDocument": { "uri": uri }, "previousResultId": previous_id }),
+    );
+    let edits = delta["edits"].as_array().expect("a delta response");
+    let applied = apply_edits(&before, edits);
+    let fresh = flat_data(&lsp.request(
+        "textDocument/semanticTokens/full",
+        json!({ "textDocument": { "uri": uri } }),
+    ));
+    assert_eq!(
+        applied, fresh,
+        "applying the delta must reproduce the current stream"
+    );
+    assert_eq!(edits.len(), 1, "one contiguous run changed: {edits:#?}");
+    assert_ne!(
+        delta["resultId"], full["resultId"],
+        "the new stream gets its own id"
+    );
+
+    let tokens = decode_tokens(&json!({ "data": applied }), &legend);
+    // The stream the client ends up with decodes to the edited file's tokens:
+    // the new field's `1` is there, next to the old `count = 0`.
+    assert_kinds(&tokens, &edited, &["number 0", "number 1"]);
+
+    // A request naming a stream this server never sent is answered in full, so
+    // the client can always recover.
+    let unknown = lsp.request(
+        "textDocument/semanticTokens/full/delta",
+        json!({ "textDocument": { "uri": uri }, "previousResultId": "0" }),
+    );
+    assert!(unknown.get("edits").is_none(), "got: {unknown:?}");
+    assert_eq!(flat_data(&unknown), fresh);
+}
+
+/// Applies a delta response's edits to a flat `data` array, the way a client
+/// does: at each `start`, delete `deleteCount` integers and splice in `data`.
+fn apply_edits(flat: &[u32], edits: &[serde_json::Value]) -> Vec<u32> {
+    let mut flat = flat.to_vec();
+    for edit in edits {
+        let start = edit["start"].as_u64().expect("start") as usize;
+        let delete_count = edit["deleteCount"].as_u64().expect("deleteCount") as usize;
+        let data: Vec<u32> = edit["data"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|value| value.as_u64().expect("a token integer") as u32)
+                    .collect()
+            })
+            .unwrap_or_default();
+        flat.splice(start..start + delete_count, data);
+    }
+    flat
+}
+
 #[test]
 fn test_goto_definition() {
     let lsp = create_lsp();

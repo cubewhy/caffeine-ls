@@ -188,6 +188,9 @@ impl GlobalState {
             .on_async::<WorkspaceSymbolResolveRequest>(handlers::on_workspace_symbol_resolve)
             .on_async::<DefinitionRequest>(handlers::on_goto_definition)
             .on_async::<HoverRequest>(handlers::on_hover)
+            .on_async::<SemanticTokensRequest>(handlers::on_semantic_tokens)
+            .on_async::<SemanticTokensDeltaRequest>(handlers::on_semantic_tokens_delta)
+            .on_async::<SemanticTokensRangeRequest>(handlers::on_semantic_tokens_range)
             .on_async::<handlers::LibraryFileContent>(handlers::on_library_file_content)
             // Add more requests here
             .finish();

@@ -182,6 +182,12 @@ pub fn on_did_close(
             tracing::error!("orphan DidCloseTextDocument: {}", path);
         }
 
+        // The client holds no stream of a document it closed, so the next
+        // request for it is a full one: the cached stream is dead weight.
+        if let Some((file_id, _)) = state.vfs.read().0.file_id(&path) {
+            state.semantic_tokens.write().forget(file_id);
+        }
+
         if let Some(path) = path.as_path() {
             state.loader.handle.invalidate(path.to_path_buf());
         }

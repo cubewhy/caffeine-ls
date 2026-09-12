@@ -250,6 +250,119 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
     }))
 }
 
+/// `textDocument/semanticTokens/full`: the file's semantic tokens — the
+/// resolved classification of every identifier plus the lexical layer
+/// (keywords, modifiers, literals, operators, comments). The result carries a
+/// `result_id` the client sends back in a `full/delta` request.
+pub fn on_semantic_tokens(
+    state: GlobalStateSnapshot,
+    params: SemanticTokensParams,
+) -> anyhow::Result<Option<SemanticTokens>> {
+    tracing::info!(uri = ?params.text_document.uri, "request semantic tokens");
+    let Some((file_id, tokens)) = encode_tokens(&state, &params.text_document.uri, None)? else {
+        return Ok(None);
+    };
+    let result_id = state
+        .semantic_tokens()
+        .write()
+        .store(file_id, tokens.clone());
+    Ok(Some(SemanticTokens {
+        result_id: Some(result_id),
+        data: tokens,
+    }))
+}
+
+/// `textDocument/semanticTokens/full/delta`: the edit that turns the stream the
+/// client holds into the current one, so an edit costs the client one small
+/// token edit instead of a full re-tokenization of the document.
+///
+/// The client names the stream with the `result_id` of the last response it
+/// received for the document; a request naming a stream this server did not
+/// send — a restarted server, a dropped answer — is answered in full
+/// ([`SemanticTokensDeltaResponse`] carries either shape).
+pub fn on_semantic_tokens_delta(
+    state: GlobalStateSnapshot,
+    params: SemanticTokensDeltaParams,
+) -> anyhow::Result<Option<SemanticTokensDeltaResponse>> {
+    tracing::info!(uri = ?params.text_document.uri, "request semantic tokens delta");
+
+    let uri = &params.text_document.uri;
+    let Some((file_id, tokens)) = encode_tokens(&state, uri, None)? else {
+        return Ok(None);
+    };
+    let mut cache = state.semantic_tokens().write();
+    let Some(previous) = cache.previous(file_id, &params.previous_result_id) else {
+        // Nothing to diff against: answer in full, which the client treats as a
+        // fresh stream (`result_id` included).
+        let result_id = cache.store(file_id, tokens.clone());
+        return Ok(Some(
+            SemanticTokens {
+                result_id: Some(result_id),
+                data: tokens,
+            }
+            .into(),
+        ));
+    };
+    let edits = crate::lsp::semantic_tokens::delta_edits(previous, &tokens);
+    let result_id = cache.store(file_id, tokens);
+    Ok(Some(
+        SemanticTokensDelta {
+            result_id: Some(result_id),
+            edits,
+        }
+        .into(),
+    ))
+}
+
+/// `textDocument/semanticTokens/range`: the tokens of one requested range. The
+/// file's tokens are computed whole and filtered to the highlights the range
+/// *fully* contains, so the client's view of a window is exactly the window's
+/// slice of the full answer. A range's tokens are a view of the document, not a
+/// stream of it, so it carries no `result_id` and does not touch the delta
+/// cache.
+pub fn on_semantic_tokens_range(
+    state: GlobalStateSnapshot,
+    params: SemanticTokensRangeParams,
+) -> anyhow::Result<Option<SemanticTokens>> {
+    tracing::info!(uri = ?params.text_document.uri, "request semantic tokens");
+    let Some((_, tokens)) = encode_tokens(&state, &params.text_document.uri, Some(params.range))?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(SemanticTokens {
+        result_id: None,
+        data: tokens,
+    }))
+}
+
+/// Encodes the tokens of `uri` — the whole document, or the highlights `range`
+/// fully contains — with the file they belong to (the delta cache's key).
+fn encode_tokens(
+    state: &GlobalStateSnapshot,
+    uri: &Uri,
+    range: Option<Range>,
+) -> anyhow::Result<Option<(FileId, Vec<SemanticToken>)>> {
+    // The file may have been deleted since the request was queued; a client
+    // showing the old buffer gets no tokens rather than an error.
+    let Some(file_id) = state.url_to_file_id(uri)? else {
+        return Ok(None);
+    };
+    let line_index = state.file_line_index(file_id)?;
+    let range = range
+        .map(|range| crate::lsp::from_proto::text_range(&line_index, range))
+        .transpose()?;
+    let highlights = state
+        .analysis
+        .highlight(file_id)?
+        .into_iter()
+        .filter(|highlight| range.is_none_or(|range| range.contains_range(highlight.range)))
+        .collect();
+    Ok(Some((
+        file_id,
+        crate::lsp::semantic_tokens::highlights_to_tokens(highlights, &line_index),
+    )))
+}
+
 /// `caffeine_ls/libraryFileContent`: the content provider a client reads a
 /// library view through, instead of reaching into the server's cache directory
 /// (whose path it does not know and whose layout is the server's business).

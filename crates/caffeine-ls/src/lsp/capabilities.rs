@@ -42,6 +42,19 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
         ),
         definition_provider: Some(true.into()),
         hover_provider: Some(true.into()),
+        semantic_tokens_provider: Some(
+            SemanticTokensOptions {
+                legend: crate::lsp::semantic_tokens::legend(),
+                // A range request is answered from the file's full token
+                // stream, filtered. `delta: true` lets the client send back the
+                // `result_id` of the stream it holds and receive only the edit
+                // that turns it into the current one.
+                range: Some(true.into()),
+                full: Some(SemanticTokensFullDelta { delta: Some(true) }.into()),
+                work_done_progress_options: Default::default(),
+            }
+            .into(),
+        ),
         ..Default::default()
     }
 }

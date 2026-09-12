@@ -21,11 +21,13 @@ use vfs::FileId;
 
 mod change;
 pub mod delta;
+pub mod highlight;
 pub mod nav;
 pub mod symbols;
 pub mod workspace;
 
 pub use change::Change;
+pub use highlight::{Highlight, HlMods, HlTag};
 pub use nav::{HoverInfo, LibraryFileRef, NavigationTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
@@ -307,5 +309,11 @@ impl Analysis {
         offset: rowan::TextSize,
     ) -> Cancellable<Option<HoverInfo>> {
         self.with_db(|db| nav::hover(db, file_id, offset))
+    }
+
+    /// The semantic highlighting of the file — the model behind the LSP
+    /// `textDocument/semanticTokens` requests, sorted by range start.
+    pub fn highlight(&self, file_id: FileId) -> Cancellable<Vec<Highlight>> {
+        self.with_db(|db| highlight::highlight(db, file_id))
     }
 }

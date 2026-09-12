@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+bitflags.workspace = true
 dashmap.workspace = true
 hir.workspace = true
 hir-expand.workspace = true
