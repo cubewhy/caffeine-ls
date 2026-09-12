@@ -1670,9 +1670,13 @@ exit 0
 }
 
 /// A dependency jar beside its sibling `-sources.jar`: `textDocument/definition`
-/// on a type the jar declares materializes the one source file it needs out of
-/// the archive, loads it into the database, and answers with the real source
+/// on a member the jar declares materializes the source files it needs out of
+/// the archive, loads them into the database, and answers with the real source
 /// location — a classfile stub alone has no file and no range.
+///
+/// The fixture's `Foo extends Base`, both declared by the jar, so the first
+/// member request walks two owners that are not loaded yet and reads both files
+/// in a single round, then resolves into `Foo.java`.
 ///
 /// The model JSON reports the jar as a `flat-file` origin, so the sources are
 /// found by the sibling probe (`<stem>-sources.jar`) and not by the build
@@ -1683,9 +1687,10 @@ fn library_source_definition_materializes_and_navigates() {
 
     let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
 
-    let foo_source =
-        "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n}\n";
+    let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    public void greet(int count) {}\n}\n";
+    let base_source =
+        "package com.example;\n\npublic class Base {\n    public void hello(int n) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
     let app_path = "/src/main/java/app/App.java";
 
     let shim_dir = tempfile::tempdir().unwrap();
@@ -1719,15 +1724,34 @@ exit 0
         std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
         lsp_test::classfile::build_jar(
             &root.join("lib/foo.jar"),
-            &[(
-                "com/example/Foo.class",
-                lsp_test::classfile::class_bytes("com/example/Foo", &[], &[("greet", 1)]),
-            )],
+            &[
+                (
+                    "com/example/Foo.class",
+                    lsp_test::classfile::class_bytes(
+                        "com/example/Foo",
+                        "com/example/Base",
+                        &[],
+                        &[("greet", 1)],
+                    ),
+                ),
+                (
+                    "com/example/Base.class",
+                    lsp_test::classfile::class_bytes(
+                        "com/example/Base",
+                        "java/lang/Object",
+                        &[],
+                        &[("hello", 1)],
+                    ),
+                ),
+            ],
         )
         .unwrap();
         lsp_test::classfile::build_jar(
             &root.join("lib/foo-sources.jar"),
-            &[("com/example/Foo.java", foo_source.as_bytes().to_vec())],
+            &[
+                ("com/example/Foo.java", foo_source.as_bytes().to_vec()),
+                ("com/example/Base.java", base_source.as_bytes().to_vec()),
+            ],
         )
         .unwrap();
     });
@@ -1735,53 +1759,63 @@ exit 0
     lsp.open_document(app_path);
     lsp.wait_until_workspace_is_loaded();
 
-    let (line, character) = position_of(app_source, "com.example.Foo()");
+    // -- the member call resolves the same way now that both files are loaded.
+    let (line, character) = position_of(app_source, "f.greet(1)");
     let params = json!({
         "textDocument": { "uri": lsp.uri(app_path) },
         "position": { "line": line, "character": character },
     });
-
-    // The request defers, the server materializes the file and re-runs the
-    // request, so this one call returns the final answer.
     let response = lsp.request("textDocument/definition", params.clone());
     let locations = response.as_array().expect("definition locations");
     assert_eq!(locations.len(), 1, "got: {response:?}");
 
-    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
-    let materialized_path = uri.to_file_path().expect("a file URI");
+    let member_uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let member_path = member_uri.to_file_path().expect("a file URI");
     let cache_sources = lsp.cache_dir().join("sources").join("v1");
     assert!(
-        materialized_path.starts_with(&cache_sources),
+        member_path.starts_with(&cache_sources),
         "expected a path under {}, got {}",
         cache_sources.display(),
-        materialized_path.display()
+        member_path.display()
     );
     assert!(
-        materialized_path.ends_with("com/example/Foo.java"),
-        "unexpected path: {}",
-        materialized_path.display()
+        member_path.ends_with("com/example/Foo.java"),
+        "the member is declared by `Foo`: {}",
+        member_path.display()
     );
-    assert!(
-        materialized_path.is_file(),
-        "the materialized source must exist on disk: {}",
-        materialized_path.display()
-    );
-    assert_range_covers(locations[0]["range"].clone(), foo_source, "class Foo");
+    assert!(member_path.is_file(), "{}", member_path.display());
+    assert_range_covers(locations[0]["range"].clone(), foo_source, "greet");
 
-    // Only the one file the reference needed is on disk.
     let materialized = java_file_names(&cache_sources);
     assert_eq!(
         materialized,
-        vec!["Foo.java".to_string()],
-        "only the navigated file is materialized"
+        vec!["Base.java".to_string(), "Foo.java".to_string()],
+        "one round materialized exactly the owners it walked"
     );
 
-    // The second request answers from the loaded file — the deferred path runs
-    // once per source file, not once per request.
-    let second = lsp.request("textDocument/definition", params);
+    // -- the type reference resolves the same way, and the source is already
+    // loaded: a second request answers in a single pass.
+    let (line, character) = position_of(app_source, "com.example.Foo()");
+    let type_params = json!({
+        "textDocument": { "uri": lsp.uri(app_path) },
+        "position": { "line": line, "character": character },
+    });
+    let type_response = lsp.request("textDocument/definition", type_params.clone());
+    let type_locations = type_response.as_array().expect("definition locations");
+    assert_eq!(type_locations.len(), 1, "got: {type_response:?}");
+    let type_uri: lsp_types::Uri =
+        serde_json::from_value(type_locations[0]["uri"].clone()).unwrap();
     assert_eq!(
-        second, response,
-        "the second request answers from the loaded file"
+        type_uri.to_file_path().unwrap(),
+        member_path,
+        "the type reference resolves into the same materialized file"
+    );
+    assert_range_covers(type_locations[0]["range"].clone(), foo_source, "class Foo");
+
+    let second = lsp.request("textDocument/definition", type_params);
+    assert_eq!(
+        second, type_response,
+        "the deferred path runs once per source file, not once per request"
     );
     assert_eq!(
         java_file_names(&cache_sources),
@@ -1792,7 +1826,7 @@ exit 0
     // A library source file is read-only third-party code: its report is empty.
     let report = lsp.request(
         "textDocument/diagnostic",
-        json!({ "textDocument": { "uri": locations[0]["uri"].clone() } }),
+        json!({ "textDocument": { "uri": type_locations[0]["uri"].clone() } }),
     );
     assert_eq!(
         report["items"].as_array().map(Vec::len),

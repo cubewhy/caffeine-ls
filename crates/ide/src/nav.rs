@@ -17,7 +17,10 @@
 //! materializes on demand. A library declaration whose source is not loaded
 //! yet is reported as pending rather than being answered.
 
+use std::collections::VecDeque;
+
 use rowan::{TextRange, TextSize};
+use rustc_hash::FxHashSet;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId};
 
@@ -27,6 +30,7 @@ use hir_expand::{
     body::{BodyTree, ExprData, ExprId, LocalId},
     name::Name,
 };
+use hir_ty::Ty;
 
 use crate::RootDatabase;
 use ide_db::base_db::{self, LanguageKind};
@@ -192,9 +196,8 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
     let bodies = hir::file_body_tree(db, file);
     let tree = hir::file_item_tree(db, file);
     let symbols = hir::file_symbols(db, file);
-    let item = body_items_at(db, file, &tree, &symbols, offset)
-        .first()
-        .copied();
+    let items = body_items_at(db, file, &tree, &symbols, offset);
+    let item = items.first().copied();
 
     for expr_id in exprs_at(&bodies, offset) {
         let resolution = match bodies.expr(expr_id).clone() {
@@ -208,7 +211,92 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                 .map_or_else(Vec::new, |name| {
                     type_resolution(db, file, item, &Name::new(&name))
                 }),
-            ExprData::NamePath(name) => type_resolution(db, file, item, &name),
+            // A method invocation, with an implicit `this` receiver when
+            // `receiver` is empty ([JLS §15.12.1]).
+            ExprData::MethodCall {
+                receiver,
+                name,
+                args,
+                ..
+            } => {
+                let arity = Some(args.len());
+                match receiver {
+                    Some(receiver) => receiver_ty(db, file, &items, receiver)
+                        .map_or_else(Vec::new, |ty| {
+                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, arity)
+                        }),
+                    None => enclosing_class_receiver(db, file, &tree, &symbols, offset)
+                        .map_or_else(Vec::new, |ty| {
+                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, arity)
+                        }),
+                }
+            }
+            // A field access, with an implicit receiver when `target` is empty.
+            ExprData::FieldAccess { target, name } => match target {
+                Some(target) => receiver_ty(db, file, &items, target).map_or_else(Vec::new, |ty| {
+                    member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, None)
+                }),
+                None => enclosing_class_receiver(db, file, &tree, &symbols, offset)
+                    .map_or_else(Vec::new, |ty| {
+                        member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, None)
+                    }),
+            },
+            // A statically imported member ([JLS §7.5.4]): `import static
+            // pkg.Type.MEMBER` (or `.*`) puts the member itself in scope.
+            ExprData::Var(name) => {
+                let resolver = hir_ty::Resolver::for_file(&tree);
+                let mut found = Vec::new();
+                let mut pending = Vec::new();
+                for (owner, member) in resolver.static_import_owners(name.as_str()) {
+                    match member_of_named_owner(db, file, item, &owner, &member, Use::Field, None) {
+                        MemberLookup::Found(resolution) => {
+                            found = vec![resolution];
+                            break;
+                        }
+                        // A pending owner is only reported after every owner
+                        // was probed.
+                        MemberLookup::PendingSource(source) => pending.push(source),
+                        MemberLookup::Absent => {}
+                    }
+                }
+                if !found.is_empty() {
+                    found
+                } else {
+                    pending.into_iter().map(Resolution::Pending).collect()
+                }
+            }
+            // A qualified name in expression position: `Outer.Inner`,
+            // `Type.field`. [JLS §6.5.2] reclassifies an ambiguous name as a
+            // type first and only then as an expression name, so the whole
+            // text is tried as a type reference before its last segment is
+            // read as a member of the class its prefix denotes.
+            ExprData::NamePath(name) => {
+                let as_type = type_resolution(db, file, item, &name);
+                if !as_type.is_empty() {
+                    as_type
+                } else {
+                    match name.as_str().rsplit_once('.') {
+                        Some((prefix, member)) => {
+                            match member_of_named_owner(
+                                db,
+                                file,
+                                item,
+                                &Name::new(prefix),
+                                member,
+                                Use::Field,
+                                None,
+                            ) {
+                                MemberLookup::Found(resolution) => vec![resolution],
+                                MemberLookup::PendingSource(source) => {
+                                    vec![Resolution::Pending(source)]
+                                }
+                                MemberLookup::Absent => Vec::new(),
+                            }
+                        }
+                        None => Vec::new(),
+                    }
+                }
+            }
             _ => Vec::new(),
         };
         if !resolution.is_empty() {
@@ -216,6 +304,251 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
         }
     }
     Vec::new()
+}
+
+/// The type of the expression `receiver`, read from the body that owns it.
+fn receiver_ty(db: &RootDatabase, file: FileId, items: &[ItemId], receiver: ExprId) -> Option<Ty> {
+    items.iter().find_map(|&item| {
+        hir_ty::body_types(db, file, item).and_then(|body| body.exprs.get(&receiver).cloned())
+    })
+}
+
+/// The receiver type of an implicit-`this` member access: the enclosing
+/// class-like declaration of the offset.
+fn enclosing_class_receiver(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    symbols: &[hir::SourceSymbol],
+    offset: TextSize,
+) -> Option<Ty> {
+    let fqn = symbols
+        .iter()
+        .filter(|symbol| {
+            matches!(
+                symbol.kind,
+                hir::SourceSymbolKind::Class
+                    | hir::SourceSymbolKind::Interface
+                    | hir::SourceSymbolKind::Enum
+                    | hir::SourceSymbolKind::Record
+                    | hir::SourceSymbolKind::Annotation
+            )
+        })
+        .filter(|symbol| {
+            item_range(db, file, tree, symbol.item).is_some_and(|range| range.contains(offset))
+        })
+        .min_by_key(|symbol| {
+            let range = item_range(db, file, tree, symbol.item).unwrap_or_default();
+            range.end() - range.start()
+        })
+        .and_then(|symbol| hir::source_class_fqn(db, file, symbol.item))?;
+    Some(Ty::reference(db, fqn, Vec::new()))
+}
+
+/// The resolution of a member of `receiver`, walking the receiver's own class
+/// and its supertypes breadth-first, so the most-derived declaration wins
+/// ([JLS §8.4.8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.1),
+/// [§9.4.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.1)).
+///
+/// The walk collects **every** unloaded owner along the hierarchy in one pass
+/// (typically the class plus its supertypes, 3-6 files), so a request needs
+/// exactly one materialization round instead of one per supertype level. Those
+/// pending refs are only reported once the hierarchy was walked with nothing
+/// found — that is what keeps it to one round.
+fn member_in_hierarchy(
+    db: &RootDatabase,
+    file: FileId,
+    receiver: Ty,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> Vec<Resolution> {
+    let scope = hir_ty::scope_for_file(db, file);
+    let mut queue = VecDeque::from([receiver]);
+    let mut seen: FxHashSet<Name> = FxHashSet::default();
+    let mut pending: Vec<LibrarySourceRef> = Vec::new();
+    while let Some(ty) = queue.pop_front() {
+        // A primitive or array receiver has no reference type to search.
+        let Some((fqn, _)) = ty.as_reference(db) else {
+            continue;
+        };
+        if !seen.insert(fqn.clone()) {
+            continue;
+        }
+        match members_of_owner(db, file, fqn.as_str(), name, use_kind, arity) {
+            MemberLookup::Found(resolution) => return vec![resolution],
+            MemberLookup::PendingSource(source) => pending.push(source),
+            MemberLookup::Absent => {}
+        }
+        queue.extend(hir_ty::supertypes(db, &scope, &ty));
+    }
+    pending.into_iter().map(Resolution::Pending).collect()
+}
+
+/// An owner class of a member access, resolved through the classpath.
+enum OwnerLookup {
+    /// A workspace source class.
+    Source(FileId),
+    /// A library class and the location of its source declaration.
+    Library {
+        library: hir::LibraryId,
+        fqn: Name,
+        decl: hir::LibrarySourceDecl,
+    },
+    /// Nothing on the classpath carries the name.
+    Unresolved,
+}
+
+/// The declared member named `name` of one owner class.
+enum MemberLookup {
+    Found(Resolution),
+    PendingSource(LibrarySourceRef),
+    Absent,
+}
+
+/// The declared member named `name` of the owner class `owner_fqn`, which must
+/// already be canonical ([JLS §6.7]).
+fn members_of_owner(
+    db: &RootDatabase,
+    file: FileId,
+    owner_fqn: &str,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> MemberLookup {
+    match owner_lookup(db, file, owner_fqn) {
+        OwnerLookup::Source(owner_file) => {
+            let tree = hir::file_item_tree(db, owner_file);
+            match member_item(db, owner_file, &tree, name, use_kind, arity) {
+                Some(item) => MemberLookup::Found(Resolution::Decl {
+                    file: owner_file,
+                    item,
+                    name: name.to_owned(),
+                }),
+                // A *loaded* owner's member set is conclusive.
+                None => MemberLookup::Absent,
+            }
+        }
+        OwnerLookup::Library {
+            library,
+            fqn,
+            decl: hir::LibrarySourceDecl::Loaded {
+                file: decl_file, ..
+            },
+        } => {
+            let tree = hir::file_item_tree(db, decl_file);
+            match member_item(db, decl_file, &tree, name, use_kind, arity) {
+                Some(item) => MemberLookup::Found(Resolution::LibraryMember {
+                    library,
+                    owner_fqn: fqn,
+                    name: name.to_owned(),
+                    use_kind,
+                    arity,
+                    decl: hir::LibrarySourceDecl::Loaded {
+                        file: decl_file,
+                        item,
+                    },
+                }),
+                None => MemberLookup::Absent,
+            }
+        }
+        // The owning source is not loaded, so nothing about its members is
+        // known: the file has to be read before the member set can be.
+        OwnerLookup::Library {
+            library,
+            decl: hir::LibrarySourceDecl::Pending { entry, path },
+            ..
+        } => match hir::library_sources(db, library) {
+            Some(sources) => MemberLookup::PendingSource(LibrarySourceRef {
+                library,
+                archive: sources.archive,
+                entry,
+                path,
+            }),
+            None => MemberLookup::Absent,
+        },
+        OwnerLookup::Unresolved => MemberLookup::Absent,
+    }
+}
+
+/// The declared member named `name` of the class the written type name
+/// `owner_name` denotes ([JLS §6.5.5.1]).
+fn member_of_named_owner(
+    db: &RootDatabase,
+    file: FileId,
+    item: Option<ItemId>,
+    owner_name: &Name,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> MemberLookup {
+    let fqn = match hir_ty::resolve_type_name_at(db, file, item, owner_name) {
+        hir_ty::NameResolution::Resolved(fqn) | hir_ty::NameResolution::NotAccessible(fqn) => fqn,
+        hir_ty::NameResolution::TypeVar
+        | hir_ty::NameResolution::Ambiguous(_)
+        | hir_ty::NameResolution::Unresolved => return MemberLookup::Absent,
+    };
+    members_of_owner(db, file, fqn.as_str(), name, use_kind, arity)
+}
+
+/// The class `owner_fqn` denotes in `file`'s scope, and where its source is.
+fn owner_lookup(db: &RootDatabase, file: FileId, owner_fqn: &str) -> OwnerLookup {
+    let scope = hir_ty::scope_for_file(db, file);
+    let Some(resolved) = hir::fqn_resolve(db, &scope, owner_fqn) else {
+        return OwnerLookup::Unresolved;
+    };
+    match &resolved {
+        hir::Resolved::Source(class) => OwnerLookup::Source(class.file),
+        hir::Resolved::Library(class) => {
+            let library = class.library;
+            let fqn = resolved.fqn(db);
+            match hir::library_source_decl(db, library, fqn.as_str()) {
+                Some(decl) => OwnerLookup::Library {
+                    library,
+                    fqn: fqn.as_name().clone(),
+                    decl,
+                },
+                // A library class with no source layout has no members to
+                // navigate into.
+                None => OwnerLookup::Unresolved,
+            }
+        }
+    }
+}
+
+/// The symbol of the member `name` declared in `file`, preferring the one that
+/// takes `arity` parameters and falling back to a name-only match — mirroring
+/// the file-local `member_targets` shape.
+fn member_item(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> Option<ItemId> {
+    let symbols = hir::file_symbols(db, file);
+    let candidates: Vec<&hir::SourceSymbol> = symbols
+        .iter()
+        .filter(|symbol| {
+            let kind_matches = match use_kind {
+                Use::Field => matches!(
+                    symbol.kind,
+                    hir::SourceSymbolKind::Field | hir::SourceSymbolKind::EnumConstant
+                ),
+                Use::Method => symbol.kind == hir::SourceSymbolKind::Method,
+            };
+            kind_matches && symbol.name.simple_name() == name
+        })
+        .collect();
+    let by_arity = arity.and_then(|arity| {
+        candidates
+            .iter()
+            .find(|symbol| parameter_count(tree, symbol.item) == Some(arity))
+    });
+    by_arity
+        .or_else(|| candidates.first())
+        .map(|symbol| symbol.item)
 }
 
 /// The classpath resolution of the type name written at `item` in `file`.

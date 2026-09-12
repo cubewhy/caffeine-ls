@@ -10,14 +10,19 @@ use std::{io::Write as _, path::Path};
 use zip::write::{SimpleFileOptions, ZipWriter};
 
 /// Hand-encodes a public class `fqn` (slash-separated, e.g. `com/example/Foo`)
-/// extending `java.lang.Object`, with a default constructor, the given
-/// `public int` fields and `public void` methods (each `(name, parameter
-/// count)` of `int` parameters), as a classfile digestible by `rust-asm`.
+/// extending `super_fqn`, with a default constructor, the given `public int`
+/// fields and `public void` methods (each `(name, parameter count)` of `int`
+/// parameters), as a classfile digestible by `rust-asm`.
 ///
 /// The class carries no `MethodParameters` attribute: that is the whole point
 /// of the source merge — a library method's parameter names can then only come
 /// from the source declaration.
-pub fn class_bytes(fqn: &str, fields: &[&str], methods: &[(&str, usize)]) -> Vec<u8> {
+pub fn class_bytes(
+    fqn: &str,
+    super_fqn: &str,
+    fields: &[&str],
+    methods: &[(&str, usize)],
+) -> Vec<u8> {
     /// Appends a `CONSTANT_Utf8` entry, returning its constant-pool index.
     fn utf8(entries: &mut Vec<Vec<u8>>, value: &str) -> u16 {
         let mut bytes = vec![1u8];
@@ -38,7 +43,7 @@ pub fn class_bytes(fqn: &str, fields: &[&str], methods: &[(&str, usize)]) -> Vec
     let mut entries: Vec<Vec<u8>> = Vec::new();
     let fqn_index = utf8(&mut entries, fqn);
     let this_class = class_ref(&mut entries, fqn_index);
-    let object_index = utf8(&mut entries, "java/lang/Object");
+    let object_index = utf8(&mut entries, super_fqn);
     let super_class = class_ref(&mut entries, object_index);
     let init_name = utf8(&mut entries, "<init>");
     let init_descriptor = utf8(&mut entries, "()V");

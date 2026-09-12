@@ -19,18 +19,19 @@ const GREETER_SRC: &str = "package com.example;\n\npublic class Greeter extends 
 const ROOT_SRC: &str =
     "package com.example;\n\npublic class Root {\n    public void greet(int count) {}\n}\n";
 const OVERLOAD_SRC: &str = "package com.example;\n\npublic class Overload {\n    public void run() {}\n\n    public void run(int n) {}\n}\n";
-/// The classfile of `Pair` declares `combine(int, int)`, the source only
-/// `combine(int first)`: the parameter-name merge then takes `first` from the
-/// source and falls back to an index name for the second parameter.
-const PAIR_SRC: &str =
-    "package com.example;\n\npublic class Pair {\n    public void combine(int first) {}\n}\n";
 const WORKSPACE_FOO_SRC: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n}\n";
+const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    void call(com.example.Child child, com.example.Overload o) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n    }\n}\n";
 
 /// The classpath jar's source archive entries, in a fixed order so the file id
 /// of a library source is `1000 + index`.
-const LIB_SOURCES: &[(&str, &str)] = &[("com/example/Foo.java", FOO_SRC)];
+const LIB_SOURCES: &[(&str, &str)] = &[
+    ("com/example/Foo.java", FOO_SRC),
+    ("com/example/Child.java", CHILD_SRC),
+    ("com/example/Greeter.java", GREETER_SRC),
+    ("com/example/Root.java", ROOT_SRC),
+    ("com/example/Overload.java", OVERLOAD_SRC),
+];
 
 /// The file id the library fixture assigns to `entry`.
 fn lib_file(entry: &str) -> FileId {
@@ -70,10 +71,47 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
     let sources_jar = base.join("lib/deps-sources.jar");
     let lib_root = base.join("sources/deps");
 
-    let classes: Vec<(String, Vec<u8>)> = vec![(
-        "com/example/Foo.class".to_owned(),
-        class_bytes("com/example/Foo", &[], &[("greet", 1)]),
-    )];
+    let classes: Vec<(String, Vec<u8>)> = vec![
+        (
+            "com/example/Foo.class".to_owned(),
+            class_bytes("com/example/Foo", "java/lang/Object", &[], &[("greet", 1)]),
+        ),
+        (
+            "com/example/Child.class".to_owned(),
+            class_bytes("com/example/Child", "com/example/Greeter", &[], &[]),
+        ),
+        (
+            "com/example/Greeter.class".to_owned(),
+            class_bytes(
+                "com/example/Greeter",
+                "com/example/Root",
+                &[],
+                &[("hello", 1)],
+            ),
+        ),
+        (
+            "com/example/Root.class".to_owned(),
+            class_bytes("com/example/Root", "java/lang/Object", &[], &[("greet", 1)]),
+        ),
+        (
+            "com/example/Overload.class".to_owned(),
+            class_bytes(
+                "com/example/Overload",
+                "java/lang/Object",
+                &[],
+                &[("run", 0), ("run", 1)],
+            ),
+        ),
+        (
+            "com/example/Pair.class".to_owned(),
+            class_bytes(
+                "com/example/Pair",
+                "java/lang/Object",
+                &[],
+                &[("combine", 2)],
+            ),
+        ),
+    ];
     let class_entries: Vec<(&str, Vec<u8>)> = classes
         .iter()
         .map(|(name, bytes)| (name.as_str(), bytes.clone()))
@@ -223,4 +261,66 @@ fn workspace_declaration_shadows_the_library() {
     assert!(targets[0].range.contains(TextSize::new(
         WORKSPACE_FOO_SRC.find("class Foo").unwrap() as u32
     )));
+}
+
+#[test]
+fn member_declared_on_a_supertype_resolves_there() {
+    let fixture = fixture(
+        &[
+            "com/example/Child.java",
+            "com/example/Greeter.java",
+            "com/example/Root.java",
+        ],
+        false,
+    );
+
+    // `Child extends Greeter extends Root`; `greet` is declared only on `Root`,
+    // so the walk descends the whole hierarchy and lands on the declaring file.
+    let targets = fixture.definition("child.greet(1)");
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
+    assert_eq!(targets[0].file, lib_file("com/example/Root.java"));
+    assert!(
+        targets[0]
+            .range
+            .contains(TextSize::new(ROOT_SRC.find("void greet").unwrap() as u32)),
+        "the range must cover the `greet` declaration: {:?}",
+        targets[0].range
+    );
+}
+
+#[test]
+fn overload_arity_prefers_a_match_then_falls_back_to_the_name() {
+    let fixture = fixture(&["com/example/Overload.java"], false);
+
+    let targets = fixture.definition("o.run(1)");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].file, lib_file("com/example/Overload.java"));
+    let one_parameter = targets[0].range;
+
+    // An arity no overload declares falls back to the name-only match.
+    let targets = fixture.definition("o.run(1, 2)");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].file, lib_file("com/example/Overload.java"));
+    assert_ne!(
+        targets[0].range, one_parameter,
+        "the fallback is a name-only match, not the one-parameter overload"
+    );
+}
+
+#[test]
+fn unloaded_hierarchy_reports_every_owner_in_one_round() {
+    // Only `Child` is loaded; the walk still collects both unloaded owners of
+    // its hierarchy in a single call, so the request needs one round.
+    let fixture = fixture(&["com/example/Child.java"], false);
+
+    assert!(fixture.definition("child.greet(1)").is_empty());
+
+    let pending = fixture
+        .analysis()
+        .pending_library_sources(fixture.app, fixture.offset("child.greet(1)"))
+        .unwrap();
+    let entries: Vec<&str> = pending.iter().map(|source| source.entry.as_ref()).collect();
+    assert_eq!(pending.len(), 2, "expected both owners, got {pending:?}");
+    assert!(entries.contains(&"com/example/Greeter.java"), "{entries:?}");
+    assert!(entries.contains(&"com/example/Root.java"), "{entries:?}");
 }
