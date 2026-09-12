@@ -89,7 +89,8 @@ pub enum AnnotationValue {
     /// source text. The single remaining producer is the annotation of a
     /// *written type* ([§9.7.4]): type lowering walks a `TYPE` node with no
     /// owning declaration, so there is no expression arena to lower the value
-    /// into — and the element-value checks do not walk those annotations.
+    /// into. Those annotations' element values are still checked, but one the
+    /// checks cannot evaluate is possibly constant and reports nothing.
     Unresolved { text: String },
 }
 

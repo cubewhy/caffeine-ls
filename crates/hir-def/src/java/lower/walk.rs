@@ -901,8 +901,8 @@ fn annotation_ref(
 
 /// The annotation of an `ANNOTATION`/`MARKER_ANNOTATION` syntax node lowered
 /// *without* an expression arena — the annotation of a written type
-/// ([§9.7.4]), whose values stay their raw source text
-/// ([`AnnotationValue::Unresolved`]).
+/// ([§9.7.4]), whose values have no arena to lower into and stay their raw
+/// source text ([`AnnotationValue::Unresolved`]).
 fn annotation_ref_text(annotation: &SyntaxNode<Lang>) -> Option<AnnotationRef> {
     annotation_ref_impl(None, None, annotation)
 }

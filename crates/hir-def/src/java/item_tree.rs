@@ -501,8 +501,8 @@ pub enum ItemAnnotationValue {
     /// `ConditionalExpression`).
     Expr(hir_expand::body::ExprId),
     /// An element value whose expression arena is unavailable, kept as its raw
-    /// source text — the annotation of a *written type* ([§9.7.4]), which the
-    /// element-value checks do not walk.
+    /// source text — the annotation of a *written type* ([§9.7.4]), which has
+    /// no owning declaration to lower the value against.
     Unresolved { text: String },
 }
 
