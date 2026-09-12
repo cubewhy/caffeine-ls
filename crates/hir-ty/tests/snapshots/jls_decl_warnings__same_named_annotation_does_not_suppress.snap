@@ -1,0 +1,41 @@
+---
+source: crates/hir-ty/tests/jls_decl_warnings.rs
+expression: out
+---
+FILE /src/com/example/Own.java:
+package com.example;
+
+import java.util.List;
+
+@interface SuppressWarnings {
+    String[] value();
+}
+
+class Own {
+    @SuppressWarnings("rawtypes")
+    void m(List xs) {
+    }
+}
+
+FILE /src/com/other/SuppressWarnings.java:
+package com.other;
+
+public @interface SuppressWarnings {
+    String[] value();
+}
+
+FILE /src/com/example/Imported.java:
+package com.example;
+
+import java.util.List;
+
+import com.other.SuppressWarnings;
+
+class Imported {
+    @SuppressWarnings("rawtypes")
+    void m(List xs) {
+    }
+}
+
+@10:11: raw-type-use: Raw use of parameterized class 'List'
+@8:11: raw-type-use: Raw use of parameterized class 'List'

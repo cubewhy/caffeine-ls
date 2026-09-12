@@ -43,6 +43,8 @@
 //! enclosing declaration suppresses them.
 
 use hir_expand::body::BodyTree;
+use hir_expand::name::Name;
+use hir_ty::java::resolve::NameResolution;
 use rowan::{SyntaxNode, TextRange};
 use rustc_hash::FxHashSet;
 use syntax::SourceFile;
@@ -116,7 +118,13 @@ pub(crate) fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<Su
         return Vec::new();
     };
     let mut out = Vec::new();
-    collect(&file.syntax_node, &FxHashSet::default(), &mut out);
+    collect(
+        db,
+        file_id,
+        &file.syntax_node,
+        &FxHashSet::default(),
+        &mut out,
+    );
     out
 }
 
@@ -138,13 +146,15 @@ pub(crate) fn is_suppressed(scopes: &[SuppressionScope], range: TextRange, key: 
 /// exactly the annotated declaration — the unit §9.6.4.5 scopes the
 /// suppression to.
 fn collect(
+    db: &dyn TyDatabase,
+    file_id: FileId,
     node: &SyntaxNode<Lang>,
     inherited: &FxHashSet<LintKey>,
     out: &mut Vec<SuppressionScope>,
 ) {
     let mut keys = inherited.clone();
     if node.kind() == J::MODIFIER_LIST {
-        let own = suppress_keys(node);
+        let own = suppress_keys(db, file_id, node);
         if !own.is_empty() {
             keys.extend(own);
             if let Some(declaration) = node.parent() {
@@ -156,23 +166,34 @@ fn collect(
         }
     }
     for child in node.children() {
-        collect(&child, &keys, out);
+        collect(db, file_id, &child, &keys, out);
     }
 }
 
 /// The keys named by every `@SuppressWarnings` annotation of one
-/// `MODIFIER_LIST`, as a set. Unrecognized strings are dropped
-/// ([JLS §9.6.4.5]).
-fn suppress_keys(modifier_list: &SyntaxNode<Lang>) -> FxHashSet<LintKey> {
+/// `MODIFIER_LIST`, as a set. An annotation of another type — including one
+/// that merely *spells* its name the same — names nothing; unrecognized
+/// strings are dropped ([JLS §9.6.4.5]).
+fn suppress_keys(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    modifier_list: &SyntaxNode<Lang>,
+) -> FxHashSet<LintKey> {
     let mut out = FxHashSet::default();
     for annotation in modifier_list.children() {
         if annotation.kind() != J::ANNOTATION {
             continue;
         }
-        let named = annotation.children().any(|child| {
-            child.kind() == J::QUALIFIED_NAME && is_suppress_warnings(&child.text().to_string())
-        });
-        if !named {
+        // The annotation's written name is the first `QUALIFIED_NAME` of its
+        // node — the same node the item tree lowers the name from
+        // ([`hir_def::java::lower::walk::annotation_name_ref`]).
+        let Some(name_node) = annotation
+            .descendants()
+            .find(|node| node.kind() == J::QUALIFIED_NAME)
+        else {
+            continue;
+        };
+        if !is_suppress_warnings(db, file_id, &name_node) {
             continue;
         }
         let Some(args) = annotation
@@ -237,13 +258,27 @@ fn warning_is_suppressed(
     is_suppressed(scopes, range, key)
 }
 
-/// Whether an annotation's qualified name denotes `java.lang.SuppressWarnings`
-/// — the simple name, or any qualified spelling of it
-/// ([JLS §6.5.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5)).
-fn is_suppress_warnings(name: &str) -> bool {
-    let name = name.trim();
-    name == "SuppressWarnings" || name.ends_with(".SuppressWarnings")
+/// Whether a written annotation name denotes `java.lang.SuppressWarnings`
+/// itself — the *symbol*, not a spelling ([JLS
+/// §6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1)).
+/// The name resolves in the context of the declaration it annotates, so a
+/// `SuppressWarnings` type declared in the file's package, imported with that
+/// name, or nested in an enclosing class is *that* annotation: it suppresses
+/// nothing, as javac has it ([JLS §9.6.4.5]).
+fn is_suppress_warnings(
+    db: &dyn TyDatabase,
+    file_id: FileId,
+    name_node: &SyntaxNode<Lang>,
+) -> bool {
+    let name = Name::new(name_node.text().to_string().trim());
+    matches!(
+        hir_ty::java::resolve::resolve_written_name(db, file_id, name_node, &name),
+        NameResolution::Resolved(resolved) if resolved.as_str() == SUPPRESS_WARNINGS
+    )
 }
+
+/// The fully qualified name of the annotation §9.6.4.5 gives its meaning to.
+const SUPPRESS_WARNINGS: &str = "java.lang.SuppressWarnings";
 
 /// The lint key of a deprecation: `removal` for a terminally deprecated
 /// element, `deprecation` otherwise ([JLS §9.6.4.6]).

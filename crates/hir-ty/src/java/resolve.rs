@@ -19,16 +19,22 @@
 //! the candidates are probed with [`hir::fqn_resolve`] against that scope's
 //! classpath, and the first one that exists wins.
 
+use rowan::{SyntaxNode, TextRange};
 use rustc_hash::FxHashMap;
 use stacksafe::stacksafe;
+use syntax::SourceFile;
+use syntax::java::Lang;
 use vfs::FileId;
 
 use hir_def::java::item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam};
+use hir_def::java::ranges;
+use hir_expand::ast_id_map::AstIdMap;
 use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
 use crate::{
     java::db::TyDatabase,
+    java::range_ctx::range_ctx,
     java::ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, ty_from_type_ref},
 };
 
@@ -127,6 +133,19 @@ impl Resolver {
 
     pub fn package(&self) -> Option<&Name> {
         self.package.as_ref()
+    }
+
+    /// The resolver of a construct that belongs to no item — the annotations
+    /// of a package declaration, say: the compilation unit's package and
+    /// imports, with no declaration's type parameters or enclosing types
+    /// around it.
+    pub fn for_file(tree: &ItemTree) -> Self {
+        Self {
+            package: tree.package.clone(),
+            imports: tree.imports.clone(),
+            type_params: Vec::new(),
+            enclosing: Vec::new(),
+        }
     }
 
     pub fn imports(&self) -> &[ImportItem] {
@@ -754,6 +773,83 @@ fn fqn_visible(db: &dyn TyDatabase, module_ctx: &hir::ModuleCtx, fqn: &str) -> b
         Some((package, _)) => module_ctx.package_visible(&db.hir_state().interner, package),
         None => true,
     }
+}
+
+/// The canonical class a *written* reference name denotes at the position of
+/// `node` in `file` ([JLS
+/// §6.5.5.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.5.1)):
+/// `name` resolved in the context of the innermost declaration containing
+/// `node` — that declaration's type parameters, the member types of the
+/// classes enclosing it, the compilation unit's imports and its package — or in
+/// the compilation unit's own context when no declaration encloses it (the
+/// annotations of a package declaration).
+///
+/// The resolver is the one the declaration itself would use, so a written name
+/// is answered by the *symbol* it denotes: a class of the same spelling
+/// declared in the file's package, imported, or nested in an enclosing class
+/// is that class, not the platform type the spelling resembles.
+pub fn resolve_written_name(
+    db: &dyn TyDatabase,
+    file: FileId,
+    node: &SyntaxNode<Lang>,
+    name: &Name,
+) -> NameResolution {
+    let tree = hir::file_item_tree(db, file);
+    let resolver = resolver_at(db, file, &tree, node);
+    resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
+}
+
+/// The resolver in force at the declaration owning `node`: the innermost item
+/// whose source range contains it, or the compilation unit's own context
+/// ([`Resolver::for_file`]) when no item does.
+fn resolver_at(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    node: &SyntaxNode<Lang>,
+) -> Resolver {
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
+    let target = node
+        .parent()
+        .map_or_else(|| node.text_range(), |parent| parent.text_range());
+    let Some(item) = range_ctx(db, file, tree.language)
+        .and_then(|(map, source)| innermost_item(&map, &source, tree, target))
+    else {
+        return Resolver::for_file(tree);
+    };
+    Resolver::new(tree, type_params, item)
+}
+
+/// The innermost item whose declaration range contains `target`.
+fn innermost_item(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &ItemTree,
+    target: TextRange,
+) -> Option<ItemId> {
+    fn walk(
+        map: &AstIdMap,
+        source: &SourceFile,
+        tree: &ItemTree,
+        id: ItemId,
+        target: TextRange,
+        best: &mut Option<(TextRange, ItemId)>,
+    ) {
+        if let Some(range) = ranges::item_range(map, source, tree, id)
+            && range.contains_range(target)
+            && best.is_none_or(|(best_range, _)| range.len() < best_range.len())
+        {
+            *best = Some((range, id));
+        }
+        for &child in tree.data(id).body() {
+            walk(map, source, tree, child, target, best);
+        }
+    }
+    let mut best = None;
+    for &top in &tree.top {
+        walk(map, source, tree, top, target, &mut best);
+    }
+    best.map(|(_, id)| id)
 }
 
 /// The checked resolution of `name` against `scope`'s classpath

@@ -138,3 +138,83 @@ class Body {
 ",
     )])
 );
+
+// JLS §9.6.4.5: the annotation that suppresses a warning is the *symbol*
+// `java.lang.SuppressWarnings`, not a spelling of its name — the name is
+// resolved like any other type name ([§6.5.5.1]), so a type of that name
+// declared in the compilation unit, or imported from another package, is a
+// different annotation that names nothing. javac still reports both raw
+// parameter types:
+// ```text
+// Own.java:9: warning: [rawtypes] found raw type: List
+// Imported.java:6: warning: [rawtypes] found raw type: List
+// ```
+snapshot!(
+    same_named_annotation_does_not_suppress,
+    check_class_diagnostics(&[
+        (
+            "/src/com/example/Own.java",
+            "\
+package com.example;
+
+import java.util.List;
+
+@interface SuppressWarnings {
+    String[] value();
+}
+
+class Own {
+    @SuppressWarnings(\"rawtypes\")
+    void m(List xs) {
+    }
+}
+",
+        ),
+        (
+            "/src/com/other/SuppressWarnings.java",
+            "\
+package com.other;
+
+public @interface SuppressWarnings {
+    String[] value();
+}
+",
+        ),
+        (
+            "/src/com/example/Imported.java",
+            "\
+package com.example;
+
+import java.util.List;
+
+import com.other.SuppressWarnings;
+
+class Imported {
+    @SuppressWarnings(\"rawtypes\")
+    void m(List xs) {
+    }
+}
+",
+        ),
+    ])
+);
+
+// JLS §9.6.4.5: the fully qualified spelling names the same annotation, so it
+// suppresses exactly as the simple name does. javac reports nothing.
+snapshot!(
+    fully_qualified_annotation_suppresses,
+    check_class_diagnostics(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    @java.lang.SuppressWarnings(\"rawtypes\")
+    void m(List xs) {
+    }
+}
+",
+    )])
+);
