@@ -12,7 +12,7 @@
 use rowan::TextRange;
 use syntax::stub::TypeRef;
 
-use crate::body::Literal;
+use crate::body::{ExprId, Literal};
 use crate::name::Name;
 
 /// A reference type name occurring within a [`SpannedTypeRef`], with its
@@ -80,9 +80,16 @@ pub enum AnnotationValue {
     Annotation(Box<AnnotationRef>),
     /// An array initializer `{ v1, v2 }` ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6)).
     Array(Vec<AnnotationValue>),
-    /// An element value that is not a constant literal — a unary or binary
-    /// expression, a conditional, a parenthesized expression. Kept as its raw
-    /// source text.
+    /// An element value that is not one of the literal forms above — a unary,
+    /// binary, conditional, parenthesized, cast or `null` expression — as an
+    /// expression of the file's arena ([JLS §9.7.1] makes the value a
+    /// `ConditionalExpression`, [§15]).
+    Expr(ExprId),
+    /// An element value whose expression arena is unavailable, kept as its raw
+    /// source text. The single remaining producer is the annotation of a
+    /// *written type* ([§9.7.4]): type lowering walks a `TYPE` node with no
+    /// owning declaration, so there is no expression arena to lower the value
+    /// into — and the element-value checks do not walk those annotations.
     Unresolved { text: String },
 }
 

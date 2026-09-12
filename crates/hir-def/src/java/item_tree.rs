@@ -443,6 +443,7 @@ impl ItemAnnotationRef {
                             .map(|value| convert_annotation_value(value, nested, map))
                             .collect(),
                     ),
+                    AnnotationValue::Expr(expr) => ItemAnnotationValue::Expr(expr),
                     AnnotationValue::Unresolved { text } => {
                         ItemAnnotationValue::Unresolved { text }
                     }
@@ -494,9 +495,14 @@ pub enum ItemAnnotationValue {
     Annotation(Box<ItemAnnotationRef>),
     /// An array initializer `{ v1, v2 }` ([§10.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-10.6)).
     Array(Vec<ItemAnnotationValue>),
-    /// An element value that is not a constant literal — a unary or binary
-    /// expression, a conditional, a parenthesized expression. Kept as its raw
-    /// source text.
+    /// An element value that is not one of the literal forms above — a unary,
+    /// binary, conditional, parenthesized, cast or `null` expression — as an
+    /// expression of the file's body tree ([JLS §9.7.1]: the value is a
+    /// `ConditionalExpression`).
+    Expr(hir_expand::body::ExprId),
+    /// An element value whose expression arena is unavailable, kept as its raw
+    /// source text — the annotation of a *written type* ([§9.7.4]), which the
+    /// element-value checks do not walk.
     Unresolved { text: String },
 }
 
@@ -525,6 +531,7 @@ fn convert_annotation_value(
                 .map(|value| convert_annotation_value(value, nested, map))
                 .collect(),
         ),
+        AnnotationValue::Expr(expr) => ItemAnnotationValue::Expr(expr),
         AnnotationValue::Unresolved { text } => ItemAnnotationValue::Unresolved { text },
     }
 }

@@ -2527,9 +2527,33 @@ pub fn check_annotations(files: &[(&str, &str)]) -> String {
     render_annotations(&db, files)
 }
 
+/// The source a rendered annotation value reads its *expression* form back
+/// from: a value that is not one of the literal forms is lowered as an
+/// expression of the file's body tree ([`ItemAnnotationValue::Expr`]), whose
+/// source text is the value exactly as written.
+struct AnnotationSource<'a> {
+    text: &'a str,
+    bodies: &'a hir_expand::body::BodyTree,
+}
+
+impl AnnotationSource<'_> {
+    /// The source text of the expression `expr` spans.
+    fn expr_text(&self, expr: hir_expand::body::ExprId) -> String {
+        self.bodies
+            .expr_range(expr)
+            .and_then(|range| {
+                let start = u32::from(range.start()) as usize;
+                let end = u32::from(range.end()) as usize;
+                self.text.get(start..end)
+            })
+            .unwrap_or_default()
+            .to_owned()
+    }
+}
+
 fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     use hir_def::java::item_tree::{ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemTypeRef};
-    fn render_arg(value: &ItemAnnotationValue) -> String {
+    fn render_arg(src: &AnnotationSource<'_>, value: &ItemAnnotationValue) -> String {
         use hir_expand::body::Literal;
         match value {
             ItemAnnotationValue::Literal(Literal::Int(i)) => format!("{i}"),
@@ -2551,15 +2575,20 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                     .unwrap_or_else(|| "<error>".to_owned());
                 format!("{name}.class")
             }
-            ItemAnnotationValue::Annotation(inner) => render_annotation(inner),
+            ItemAnnotationValue::Annotation(inner) => render_annotation(src, inner),
             ItemAnnotationValue::Array(values) => format!(
                 "{{{}}}",
-                values.iter().map(render_arg).collect::<Vec<_>>().join(", ")
+                values
+                    .iter()
+                    .map(|v| render_arg(src, v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
+            ItemAnnotationValue::Expr(expr) => src.expr_text(*expr),
             ItemAnnotationValue::Unresolved { text } => text.clone(),
         }
     }
-    fn render_annotation(annotation: &ItemAnnotationRef) -> String {
+    fn render_annotation(src: &AnnotationSource<'_>, annotation: &ItemAnnotationRef) -> String {
         let name = annotation.name.as_str();
         if annotation.args.is_empty() {
             format!("@{name}")
@@ -2567,21 +2596,24 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
             let args = annotation
                 .args
                 .iter()
-                .map(|arg| format!("{} = {}", arg.name.as_str(), render_arg(&arg.value)))
+                .map(|arg| format!("{} = {}", arg.name.as_str(), render_arg(src, &arg.value)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("@{name}({args})")
         }
     }
-    fn render_annotations_vec(annotations: &[ItemAnnotationRef]) -> String {
+    fn render_annotations_vec(
+        src: &AnnotationSource<'_>,
+        annotations: &[ItemAnnotationRef],
+    ) -> String {
         annotations
             .iter()
-            .map(render_annotation)
+            .map(|a| render_annotation(src, a))
             .collect::<Vec<_>>()
             .join(" ")
     }
-    fn render_type_annotations(ty: &ItemTypeRef) -> String {
-        render_annotations_vec(&ty.type_use_annotations)
+    fn render_type_annotations(src: &AnnotationSource<'_>, ty: &ItemTypeRef) -> String {
+        render_annotations_vec(&src, &ty.type_use_annotations)
     }
 
     let mut lines = files
@@ -2591,6 +2623,11 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
     for (i, (_, text)) in files.iter().enumerate() {
         let file_id = FileId::from_raw((i + 1) as u32);
         let tree = hir::file_item_tree(db, file_id);
+        let bodies = hir::file_body_tree(db, file_id);
+        let src = AnnotationSource {
+            text,
+            bodies: &bodies,
+        };
         for (_id, data) in all_items(&tree) {
             let header = match data {
                 ItemData::Class(d) => format!("class {}", d.name.as_str()),
@@ -2609,37 +2646,37 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
             lines.push(header);
             match data {
                 ItemData::Class(d) | ItemData::Interface(d) => {
-                    let decl = render_annotations_vec(&d.annotations);
+                    let decl = render_annotations_vec(&src, &d.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                     for param in &d.type_params {
-                        let anns = render_annotations_vec(&param.annotations);
+                        let anns = render_annotations_vec(&src, &param.annotations);
                         if !anns.is_empty() {
                             lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
                         }
                     }
                 }
                 ItemData::Enum(d) => {
-                    let decl = render_annotations_vec(&d.annotations);
+                    let decl = render_annotations_vec(&src, &d.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                 }
                 ItemData::Record(d) => {
-                    let decl = render_annotations_vec(&d.annotations);
+                    let decl = render_annotations_vec(&src, &d.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                     for param in &d.type_params {
-                        let anns = render_annotations_vec(&param.annotations);
+                        let anns = render_annotations_vec(&src, &param.annotations);
                         if !anns.is_empty() {
                             lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
                         }
                     }
                     for component in &d.components {
-                        let anns = render_annotations_vec(&component.annotations);
-                        let type_anns = render_type_annotations(&component.ty);
+                        let anns = render_annotations_vec(&src, &component.annotations);
+                        let type_anns = render_type_annotations(&src, &component.ty);
                         let extra = [anns, type_anns]
                             .iter()
                             .filter(|s| !s.is_empty())
@@ -2652,24 +2689,24 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                     }
                 }
                 ItemData::Annotation(d) => {
-                    let decl = render_annotations_vec(&d.annotations);
+                    let decl = render_annotations_vec(&src, &d.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                 }
                 ItemData::Module(d) => {
-                    let decl = render_annotations_vec(&d.annotations);
+                    let decl = render_annotations_vec(&src, &d.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                 }
                 ItemData::Method(m) => {
-                    let decl = render_annotations_vec(&m.annotations);
+                    let decl = render_annotations_vec(&src, &m.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
                     for param in &m.sig.type_params {
-                        let anns = render_annotations_vec(&param.annotations);
+                        let anns = render_annotations_vec(&src, &param.annotations);
                         if !anns.is_empty() {
                             lines.push(format!("  type-param {}: {anns}", param.name.as_str()));
                         }
@@ -2678,7 +2715,7 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                         .sig
                         .params
                         .iter()
-                        .map(|p| render_type_annotations(&p.ty))
+                        .map(|p| render_type_annotations(&src, &p.ty))
                         .filter(|s| !s.is_empty())
                         .collect::<Vec<_>>()
                         .join(" ");
@@ -2686,18 +2723,18 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
                         lines.push(format!("  param types: {type_anns}"));
                     }
                     if let Some(ret) = &m.sig.ret {
-                        let ret_anns = render_type_annotations(ret);
+                        let ret_anns = render_type_annotations(&src, ret);
                         if !ret_anns.is_empty() {
                             lines.push(format!("  return type: {ret_anns}"));
                         }
                     }
                 }
                 ItemData::Field(f) => {
-                    let decl = render_annotations_vec(&f.annotations);
+                    let decl = render_annotations_vec(&src, &f.annotations);
                     if !decl.is_empty() {
                         lines.push(format!("  annotations: {decl}"));
                     }
-                    let type_anns = render_type_annotations(&f.ty);
+                    let type_anns = render_type_annotations(&src, &f.ty);
                     if !type_anns.is_empty() {
                         lines.push(format!("  type: {type_anns}"));
                     }

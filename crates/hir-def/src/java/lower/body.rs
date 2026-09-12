@@ -408,7 +408,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                     // §9.7.4: the loop variable's declaration annotations —
                     // the same `{VariableModifier}` prefix as any local
                     // ([§14.14.2]).
-                    let annotations = modifier_annotations(node);
+                    let annotations = modifier_annotations(ctx, owner, node);
                     alloc_local(
                         ctx,
                         Local {
@@ -530,7 +530,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
     // `{VariableModifier}` prefix (`@Ann int x`), the same modifier list that
     // may carry `final`; they annotate the *declaration*, and the type-use
     // annotations of the written type are separate.
-    let annotations = modifier_annotations(&decl);
+    let annotations = modifier_annotations(ctx, owner, &decl);
     for declarator in &declarators {
         let name = first_identifier(declarator).unwrap_or_else(missing_name);
         let local = alloc_local(
@@ -602,15 +602,16 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                         .first()
                         .cloned()
                         .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error));
+                    // §9.7.4: the exception parameter's annotation
+                    // modifiers (`catch (@Ann E e)`), which precede
+                    // the catch type.
+                    let annotations = modifier_annotations(ctx, owner, &p);
                     let param = alloc_local(
                         ctx,
                         Local {
                             name,
                             ty: Some(ty),
-                            // §9.7.4: the exception parameter's annotation
-                            // modifiers (`catch (@Ann E e)`), which precede
-                            // the catch type.
-                            annotations: modifier_annotations(&p),
+                            annotations,
                             is_final: false,
                         },
                         p.text_range(),
@@ -684,6 +685,10 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
             .unwrap_or_default();
         for declarator in declarators {
             let name = first_identifier(&declarator).unwrap_or_else(missing_name);
+            // §9.7.4: the resource declaration's annotation modifiers
+            // (`try (@Ann R r = ...)`), the same `{VariableModifier}` prefix
+            // as any local.
+            let annotations = modifier_annotations(ctx, owner, &decl);
             let local = alloc_local(
                 ctx,
                 Local {
@@ -697,10 +702,7 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                                 .unwrap_or(SpannedTypeRef::synthetic(TypeRef::Error)),
                         )
                     },
-                    // §9.7.4: the resource declaration's annotation
-                    // modifiers (`try (@Ann R r = ...)`), the same
-                    // `{VariableModifier}` prefix as any local.
-                    annotations: modifier_annotations(&decl),
+                    annotations,
                     // §14.20.3: a resource variable is implicitly `final` —
                     // it is never assigned after initialization.
                     is_final: true,
@@ -770,7 +772,7 @@ fn switch_arms(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Ve
                 } else if is_pattern_kind(sub.kind()) {
                     // §14.30.2/§14.30.3: a `case Foo f ->`, `case
                     // Point(int x, int y) ->` or `case _ ->` label.
-                    labels.push(SwitchLabel::Pattern(pattern(ctx, &sub)));
+                    labels.push(SwitchLabel::Pattern(pattern(ctx, owner, &sub)));
                     seen = true;
                 }
             }
@@ -1020,7 +1022,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let pattern = node
                 .children()
                 .find(|c| is_pattern_kind(c.kind()))
-                .map(|c| pattern(ctx, &c));
+                .map(|c| pattern(ctx, owner, &c));
             let ty = node
                 .children()
                 .find(|c| c.kind() == TYPE)
@@ -1651,7 +1653,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
             .map(|token| token.text_range())
             .unwrap_or_else(|| c.text_range())
     }
-    fn param_of(c: &SyntaxNode<Lang>) -> LambdaParam {
+    fn param_of(ctx: &mut LowerCtx, owner: ItemId, c: &SyntaxNode<Lang>) -> LambdaParam {
         let name = first_identifier(c).unwrap_or_else(missing_name);
         let range = name_range(c);
         // §15.27.1: a normal parameter specifier is `{VariableModifier}
@@ -1670,7 +1672,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
         };
         // §9.7.4: the annotation modifiers of a normal lambda parameter
         // (`(@Ann int v) -> ...`); a concise parameter carries none.
-        let annotations = modifier_annotations(c);
+        let annotations = modifier_annotations(ctx, owner, c);
         LambdaParam {
             name,
             ty,
@@ -1711,7 +1713,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
                 FORMAL_PARAMETERS => {
                     for p in c.children() {
                         if p.kind() == FORMAL_PARAMETER || p.kind() == SPREAD_PARAMETER {
-                            params.push(param_of(&p));
+                            params.push(param_of(ctx, owner, &p));
                         }
                     }
                 }
@@ -1734,7 +1736,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
 
 /// Lowers a `TYPE_PATTERN`, `RECORD_PATTERN` or `MATCH_ALL_PATTERN` node into
 /// the pattern arena ([JLS §14.30](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.30)).
-fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
+fn pattern(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> PatternId {
     use J::*;
     let data = match node.kind() {
         TYPE_PATTERN => {
@@ -1748,7 +1750,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
             // pattern type (`o instanceof @Ann Foo f`) are the binding's
             // declaration annotations ([§9.7.4]: the type pattern is a
             // `LocalVariableDeclaration`).
-            let annotations = modifier_annotations(node);
+            let annotations = modifier_annotations(ctx, owner, node);
             let binding = node
                 .children_with_tokens()
                 .filter_map(|e| e.as_token().cloned())
@@ -1780,7 +1782,7 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
             let components = node
                 .children()
                 .filter(|c| is_pattern_kind(c.kind()))
-                .map(|c| pattern(ctx, &c))
+                .map(|c| pattern(ctx, owner, &c))
                 .collect();
             PatternData::Record(RecordPattern { ty, components })
         }

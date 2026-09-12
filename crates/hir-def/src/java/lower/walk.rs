@@ -147,7 +147,7 @@ fn lower_member(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
 
 fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(ctx.map, node);
     let super_class = clause_item_types(ctx.map, node, J::EXTENDS_CLAUSE)
         .into_iter()
@@ -155,10 +155,13 @@ fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let interfaces = clause_item_types(ctx.map, node, J::IMPLEMENTS_CLAUSE);
     let permits = clause_item_types(ctx.map, node, J::PERMITS_CLAUSE);
     let body = body_members(ctx, node, J::CLASS_BODY);
-    ctx.alloc(ItemData::Class(ClassData {
+    // The item is allocated before its annotations so the element-value
+    // expressions of their pairs have an owning item to lower into; the
+    // annotations are then patched in.
+    let id = ctx.alloc(ItemData::Class(ClassData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         super_class,
         interfaces,
         permits,
@@ -168,20 +171,26 @@ fn lower_class(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
             .map
             .ast_id(&node_ptr(node))
             .expect("every CLASS_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Class(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("class")
+    };
+    data.annotations = annotations;
+    id
 }
 
 fn lower_interface(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(ctx.map, node);
     let interfaces = clause_item_types(ctx.map, node, J::INTERFACE_EXTENDS_CLAUSE);
     let permits = clause_item_types(ctx.map, node, J::PERMITS_CLAUSE);
     let body = body_members(ctx, node, J::INTERFACE_BODY);
-    ctx.alloc(ItemData::Interface(ClassData {
+    let id = ctx.alloc(ItemData::Interface(ClassData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         super_class: None,
         interfaces,
         permits,
@@ -191,46 +200,47 @@ fn lower_interface(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
             .map
             .ast_id(&node_ptr(node))
             .expect("every INTERFACE_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Interface(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("interface")
+    };
+    data.annotations = annotations;
+    id
 }
 
 fn lower_enum(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let interfaces = clause_item_types(ctx.map, node, J::IMPLEMENTS_CLAUSE);
     let body = node
         .children()
         .find(|child| is(child, J::ENUM_BODY))
         .map(|body| enum_body_members(ctx, &body))
         .unwrap_or_default();
-    ctx.alloc(ItemData::Enum(EnumData {
+    let id = ctx.alloc(ItemData::Enum(EnumData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         interfaces,
         body,
         ast: ctx
             .map
             .ast_id(&node_ptr(node))
             .expect("every ENUM_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Enum(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("enum")
+    };
+    data.annotations = annotations;
+    id
 }
 
 fn lower_record(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let type_params = child_type_params(ctx.map, node);
-    let components = node
-        .children()
-        .find(|child| is(child, J::FORMAL_PARAMETERS))
-        .map(|params| {
-            params
-                .children()
-                .filter(|child| is(child, J::FORMAL_PARAMETER) || is(child, J::SPREAD_PARAMETER))
-                .map(|child| component_from(&child, ctx.map))
-                .collect()
-        })
-        .unwrap_or_default();
     let interfaces = clause_item_types(ctx.map, node, J::IMPLEMENTS_CLAUSE);
     let permits = clause_item_types(ctx.map, node, J::PERMITS_CLAUSE);
     // The component list `(int x, int y)` and the declaration header ranges
@@ -238,11 +248,11 @@ fn lower_record(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     // [`crate::java::ranges::record_components_range`] /
     // [`crate::java::ranges::record_header_range`].
     let body = body_members(ctx, node, J::RECORD_BODY);
-    ctx.alloc(ItemData::Record(RecordData {
+    let id = ctx.alloc(ItemData::Record(RecordData {
         name,
         modifiers,
-        annotations,
-        components,
+        annotations: Vec::new(),
+        components: Vec::new(),
         interfaces,
         permits,
         type_params,
@@ -251,28 +261,55 @@ fn lower_record(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
             .map
             .ast_id(&node_ptr(node))
             .expect("every RECORD_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    // §9.6.4.1: a record component is a declaration of its own (`RECORD_COMPONENT`
+    // is one of Table 9.7-1's element types), so its annotations are lowered
+    // with the record as their owner.
+    let components = node
+        .children()
+        .find(|child| is(child, J::FORMAL_PARAMETERS))
+        .map(|params| {
+            params
+                .children()
+                .filter(|child| is(child, J::FORMAL_PARAMETER) || is(child, J::SPREAD_PARAMETER))
+                .map(|child| component_from(ctx, id, &child))
+                .collect()
+        })
+        .unwrap_or_default();
+    let ItemData::Record(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("record")
+    };
+    data.annotations = annotations;
+    data.components = components;
+    id
 }
 
 fn lower_annotation_type(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = decl_type_identifier(node);
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let body = body_members(ctx, node, J::ANNOTATION_TYPE_BODY);
-    ctx.alloc(ItemData::Annotation(AnnotationData {
+    let id = ctx.alloc(ItemData::Annotation(AnnotationData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         body,
         ast: ctx
             .map
             .ast_id(&node_ptr(node))
             .expect("every ANNOTATION_TYPE_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Annotation(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("annotation type")
+    };
+    data.annotations = annotations;
+    id
 }
 
 fn lower_method(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let name = decl_identifier(node)?;
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let ret = if token_is_direct(node, J::VOID_KW) {
         Some(ItemTypeRef::synthetic(TypeRef::Primitive(
             PrimitiveType::Void,
@@ -282,18 +319,17 @@ fn lower_method(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
             .find(|child| is(child, J::TYPE))
             .map(|child| ItemTypeRef::from_spanned(type_from(&child), &child, ctx.map))
     };
-    let sig = Signature {
-        type_params: child_type_params(ctx.map, node),
-        params: formal_params(ctx.map, node),
-        ret,
-        throws: clause_item_types(ctx.map, node, J::THROWS_CLAUSE),
-    };
     let block = node.children().find(|child| is(child, J::BLOCK));
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
-        annotations,
-        sig,
+        annotations: Vec::new(),
+        sig: Signature {
+            type_params: child_type_params(ctx.map, node),
+            params: Vec::new(),
+            ret,
+            throws: clause_item_types(ctx.map, node, J::THROWS_CLAUSE),
+        },
         extra: MethodExtra::Java(MethodExtraJava {
             is_constructor: false,
             is_compact_constructor: false,
@@ -305,6 +341,16 @@ fn lower_method(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
             .ast_id(&node_ptr(node))
             .expect("every METHOD_DECL is indexed"),
     }));
+    // The declaration's own annotations and its formal parameters' are lowered
+    // with the method as their owner, so the element-value expressions of their
+    // pairs land in the file's arena behind it.
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let params = formal_params(ctx, id, node);
+    let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("method");
+    };
+    data.annotations = annotations;
+    data.sig.params = params;
     if let Some(block) = block {
         let params = node
             .children()
@@ -325,27 +371,22 @@ fn lower_constructor(
     compact: bool,
 ) -> Option<ItemId> {
     let name = decl_identifier(node)?;
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
-    let sig = Signature {
-        type_params: child_type_params(ctx.map, node),
-        params: if compact {
-            Vec::new()
-        } else {
-            formal_params(ctx.map, node)
-        },
-        ret: None,
-        throws: if compact {
-            Vec::new()
-        } else {
-            clause_item_types(ctx.map, node, J::THROWS_CLAUSE)
-        },
-    };
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let block = node.children().find(|child| is(child, J::BLOCK));
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
-        annotations,
-        sig,
+        annotations: Vec::new(),
+        sig: Signature {
+            type_params: child_type_params(ctx.map, node),
+            params: Vec::new(),
+            ret: None,
+            throws: if compact {
+                Vec::new()
+            } else {
+                clause_item_types(ctx.map, node, J::THROWS_CLAUSE)
+            },
+        },
         extra: MethodExtra::Java(MethodExtraJava {
             is_constructor: true,
             is_compact_constructor: compact,
@@ -357,6 +398,17 @@ fn lower_constructor(
             .ast_id(&node_ptr(node))
             .expect("every CONSTRUCTOR_DECL/COMPACT_CONSTRUCTOR_DECL is indexed"),
     }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let params = if compact {
+        Vec::new()
+    } else {
+        formal_params(ctx, id, node)
+    };
+    let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("constructor");
+    };
+    data.annotations = annotations;
+    data.sig.params = params;
     if let Some(block) = block {
         let params = if compact {
             None
@@ -376,7 +428,7 @@ fn lower_constructor(
 
 fn lower_annotation_element(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemId> {
     let name = decl_identifier(node)?;
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let ret = node
         .children()
         .find(|child| is(child, J::TYPE))
@@ -384,7 +436,7 @@ fn lower_annotation_element(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> 
     let id = ctx.alloc(ItemData::Method(MethodData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         sig: Signature {
             type_params: Vec::new(),
             params: Vec::new(),
@@ -402,6 +454,11 @@ fn lower_annotation_element(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> 
             .ast_id(&node_ptr(node))
             .expect("every ANNOTATION_TYPE_ELEMENT_DECL is indexed"),
     }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Method(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("annotation element");
+    };
+    data.annotations = annotations;
     if let Some(value_node) = body::find_expression_child(node)
         && let Some(expr_id) = body::lower_expr(ctx, id, &value_node)
     {
@@ -415,13 +472,17 @@ fn lower_annotation_element(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> 
 }
 
 fn lower_field_decl(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<ItemId> {
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let ty = node
         .children()
         .find(|child| is(child, J::TYPE))
         .map(|child| ItemTypeRef::from_spanned(type_from(&child), &child, ctx.map));
     let Some(ty) = ty else { return Vec::new() };
     let mut ids = Vec::new();
+    // The declaration's annotations are shared by every declarator
+    // (`@Ann int a = 1, b = 2;`) and lowered once, owned by the first one that
+    // allocates an item.
+    let mut shared_annotations: Option<Vec<ItemAnnotationRef>> = None;
     for declarator in node
         .children()
         .filter(|child| is(child, J::VARIABLE_DECLARATOR_LIST))
@@ -449,7 +510,7 @@ fn lower_field_decl(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Item
         let field_id = ctx.alloc(ItemData::Field(FieldData {
             name,
             modifiers,
-            annotations: annotations.clone(),
+            annotations: Vec::new(),
             ty,
             has_initializer,
             initializer_expr: None,
@@ -458,6 +519,15 @@ fn lower_field_decl(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Item
                 .ast_id(&node_ptr(&declarator))
                 .expect("every VARIABLE_DECLARATOR is indexed"),
         }));
+        if !annotation_nodes.is_empty() && shared_annotations.is_none() {
+            shared_annotations = Some(annotations_from_nodes(ctx, field_id, &annotation_nodes));
+        }
+        if let Some(annotations) = &shared_annotations {
+            let ItemData::Field(data) = ctx.tree.items.get_mut(field_id.0) else {
+                unreachable!("field");
+            };
+            data.annotations = annotations.clone();
+        }
         if let Some(expr_node) = expr_slot
             && let Some(expr_id) = body::lower_expr(ctx, field_id, &expr_node)
         {
@@ -532,7 +602,7 @@ fn lower_module(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         .unwrap_or_else(missing_name);
     // §9.7: the module declaration's annotations live in its leading modifier
     // list (`@Ann module com.example {}`).
-    let (modifiers, annotations) = child_modifiers_and_annotations(ctx.map, node);
+    let (modifiers, annotation_nodes) = child_modifiers_and_annotations(node);
     let is_open = node.children_with_tokens().next().is_some_and(|element| {
         element
             .as_token()
@@ -562,10 +632,10 @@ fn lower_module(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
         }
     }
 
-    ctx.alloc(ItemData::Module(ModuleData {
+    let id = ctx.alloc(ItemData::Module(ModuleData {
         name,
         modifiers,
-        annotations,
+        annotations: Vec::new(),
         is_open,
         requires,
         exports,
@@ -576,7 +646,13 @@ fn lower_module(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
             .map
             .ast_id(&node_ptr(node))
             .expect("every MODULE_DECL is indexed"),
-    }))
+    }));
+    let annotations = annotations_from_nodes(ctx, id, &annotation_nodes);
+    let ItemData::Module(data) = ctx.tree.items.get_mut(id.0) else {
+        unreachable!("module")
+    };
+    data.annotations = annotations;
+    id
 }
 
 fn requires_from(directive: &SyntaxNode<Lang>, map: &AstIdMap) -> ModuleRequires {
@@ -737,12 +813,13 @@ fn token_is_direct(node: &SyntaxNode<Lang>, kind: J) -> bool {
 }
 
 /// The first `MODIFIER_LIST` child, split into its syntax modifiers
-/// ([`JavaModifiers`]) and its declared annotation references ([JLS §9.7]),
-/// which are decoupled from the modifier flags.
+/// ([`JavaModifiers`]) and its annotation syntax nodes ([JLS §9.7]), which are
+/// decoupled from the modifier flags. The nodes are lowered with the
+/// declaration they annotate ([`annotations_from_nodes`]), which the caller
+/// allocates first.
 fn child_modifiers_and_annotations(
-    map: &AstIdMap,
     node: &SyntaxNode<Lang>,
-) -> (JavaModifiers, Vec<ItemAnnotationRef>) {
+) -> (JavaModifiers, Vec<SyntaxNode<Lang>>) {
     node.children()
         .find(|child| is(child, J::MODIFIER_LIST))
         .map(|mods| {
@@ -768,10 +845,35 @@ fn child_modifiers_and_annotations(
                     i += 1;
                 }
             }
-            let annotations = item_annotations_from(&mods, map);
+            let annotations = annotation_nodes(&mods);
             (modifiers, annotations)
         })
         .unwrap_or_default()
+}
+
+/// The `ANNOTATION`/`MARKER_ANNOTATION` children of a `MODIFIER_LIST`, in
+/// source order.
+fn annotation_nodes(mods: &SyntaxNode<Lang>) -> Vec<SyntaxNode<Lang>> {
+    mods.children()
+        .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
+        .collect()
+}
+
+/// The annotation references of the declaration's modifier lists, lowered with
+/// the declaration `owner` they annotate: the element-value expressions of
+/// their pairs land in the file's expression arena, owned by `owner`.
+fn annotations_from_nodes(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    nodes: &[SyntaxNode<Lang>],
+) -> Vec<ItemAnnotationRef> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            annotation_ref(ctx, owner, node)
+                .map(|ranged| ItemAnnotationRef::from_spanned(ranged, node, ctx.map))
+        })
+        .collect()
 }
 
 /// The reference name (`NameRef`) of an `ANNOTATION`/`MARKER_ANNOTATION`
@@ -786,22 +888,63 @@ pub(crate) fn annotation_name_ref(annotation: &SyntaxNode<Lang>) -> Option<NameR
 }
 
 /// The annotation of an `ANNOTATION`/`MARKER_ANNOTATION` syntax node with its
-/// element-value arguments ([JLS §9.7.1]).
-fn annotation_ref(annotation: &SyntaxNode<Lang>) -> Option<AnnotationRef> {
+/// element-value arguments ([JLS §9.7.1]), lowered with the declaration
+/// `owner` it annotates — the value expressions land in the file's expression
+/// arena, owned by `owner`.
+fn annotation_ref(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    annotation: &SyntaxNode<Lang>,
+) -> Option<AnnotationRef> {
+    annotation_ref_impl(Some(ctx), Some(owner), annotation)
+}
+
+/// The annotation of an `ANNOTATION`/`MARKER_ANNOTATION` syntax node lowered
+/// *without* an expression arena — the annotation of a written type
+/// ([§9.7.4]), whose values stay their raw source text
+/// ([`AnnotationValue::Unresolved`]).
+fn annotation_ref_text(annotation: &SyntaxNode<Lang>) -> Option<AnnotationRef> {
+    annotation_ref_impl(None, None, annotation)
+}
+
+/// The shared lowering of [`annotation_ref`] and [`annotation_ref_text`]:
+/// `ctx`/`owner` carry the arena an element value lowers into, or are both
+/// `None` for a value that has none.
+fn annotation_ref_impl(
+    mut ctx: Option<&mut LowerCtx<'_>>,
+    owner: Option<ItemId>,
+    annotation: &SyntaxNode<Lang>,
+) -> Option<AnnotationRef> {
     let name = annotation_name_ref(annotation)?;
     let args = annotation
         .children()
         .find(|child| is(child, J::ANNOTATION_ARGUMENT_LIST))
-        .map(|list| annotation_args_from(&list))
+        .map(|list| annotation_args_from(ctx.as_deref_mut(), owner, &list))
         .unwrap_or_default();
     Some(AnnotationRef { name, args })
+}
+
+/// The expression arena and owning item an annotation's element values are
+/// lowered into, when there is one ([`annotation_ref_impl`]).
+fn value_arena<'a, 'b>(
+    ctx: &'a mut Option<&mut LowerCtx<'b>>,
+    owner: Option<ItemId>,
+) -> Option<(&'a mut LowerCtx<'b>, ItemId)> {
+    match (ctx.as_deref_mut(), owner) {
+        (Some(ctx), Some(owner)) => Some((ctx, owner)),
+        _ => None,
+    }
 }
 
 /// The element-value pairs of an `ANNOTATION_ARGUMENT_LIST` node
 /// ([JLS §9.7.1]): either the single-argument form `(v)` — whose element name
 /// is implicitly `value` — or the named-pairs form `(k = v, ...)`, in source
 /// order.
-pub(crate) fn annotation_args_from(list: &SyntaxNode<Lang>) -> Vec<AnnotationArg> {
+pub(crate) fn annotation_args_from(
+    mut ctx: Option<&mut LowerCtx<'_>>,
+    owner: Option<ItemId>,
+    list: &SyntaxNode<Lang>,
+) -> Vec<AnnotationArg> {
     let mut out = Vec::new();
     for child in list.children() {
         if is(&child, J::ELEMENT_VALUE_PAIR) {
@@ -812,12 +955,12 @@ pub(crate) fn annotation_args_from(list: &SyntaxNode<Lang>) -> Vec<AnnotationArg
             if let Some((value, range)) = child
                 .children()
                 .find(is_element_value)
-                .and_then(|node| annotation_value_from(&node))
+                .and_then(|node| annotation_value_from(ctx.as_deref_mut(), owner, &node))
             {
                 out.push(AnnotationArg { name, value, range });
             }
         } else if is_element_value(&child)
-            && let Some((value, range)) = annotation_value_from(&child)
+            && let Some((value, range)) = annotation_value_from(ctx.as_deref_mut(), owner, &child)
         {
             // `(v)` — the implicit `value` element ([§9.7.1]).
             out.push(AnnotationArg {
@@ -858,36 +1001,48 @@ fn expr_node_kind(kind: J) -> bool {
 
 /// Parses one annotation element value ([JLS §9.7.1]) into its structured
 /// [`AnnotationValue`]; `None` when the node carries no value (a missing or
-/// unparsed child).
+/// unparsed child). `ctx`/`owner` are the arena and owning item the value's
+/// expression form lowers into, or both `None` for the annotation of a
+/// written type ([`annotation_ref_text`]).
 pub(crate) fn annotation_value_from(
+    mut ctx: Option<&mut LowerCtx<'_>>,
+    owner: Option<ItemId>,
     node: &SyntaxNode<Lang>,
 ) -> Option<(AnnotationValue, TextRange)> {
     let range = node.text_range();
     let value = match node.kind() {
         // A nested annotation `@Foo(...)`.
-        J::ANNOTATION | J::MARKER_ANNOTATION => {
-            AnnotationValue::Annotation(Box::new(annotation_ref(node)?))
-        }
+        J::ANNOTATION | J::MARKER_ANNOTATION => AnnotationValue::Annotation(Box::new(
+            annotation_ref_impl(ctx.as_deref_mut(), owner, node)?,
+        )),
         // An array initializer `{ v1, v2 }` ([§10.6]).
         J::ARRAY_INITIALIZER => AnnotationValue::Array(
             node.children()
                 .filter(is_element_value)
-                .filter_map(|child| annotation_value_from(&child).map(|(v, _)| v))
+                .filter_map(|child| {
+                    annotation_value_from(ctx.as_deref_mut(), owner, &child).map(|(v, _)| v)
+                })
                 .collect(),
         ),
         // A class literal `Foo.class` ([§15.8.2]).
         J::CLASS_LITERAL => AnnotationValue::ClassLit(class_literal_type(node)),
-        // A literal — or, for an identifier token, a bare enum constant whose
-        // declaring type comes from the element ([§9.7.1]).
+        // A literal — or, for an identifier token, a bare name whose declaring
+        // type comes from the element ([§9.7.1]).
         J::LITERAL => match body::literal(node) {
             ExprData::Literal(lit) => AnnotationValue::Literal(lit),
             ExprData::Var(name) => AnnotationValue::EnumConstant {
                 qualifier: None,
                 member: name,
             },
-            _ => return None,
+            // `null`, `this`, `super` — an expression value without a literal
+            // form.
+            _ => match value_arena(&mut ctx, owner) {
+                Some((ctx, owner)) => AnnotationValue::Expr(body::lower_expr(ctx, owner, node)?),
+                None => return None,
+            },
         },
-        // `Type.CONSTANT` — an enum constant ([§8.9.1]).
+        // `Type.NAME` — a bare enum constant or a qualified name
+        // ([§6.5.6.2], [§8.9.1]); both resolve as a name in the type layer.
         J::FIELD_ACCESS => {
             let member = first_token(node, J::IDENTIFIER)
                 .map(|token| Name::new(token.text()))
@@ -895,15 +1050,19 @@ pub(crate) fn annotation_value_from(
             let qualifier = qualified_receiver_text(node);
             AnnotationValue::EnumConstant { qualifier, member }
         }
-        // Any other constant expression (unary/binary/conditional/cast): kept
-        // as its raw source text.
-        _ => {
-            let text = node.text().to_string();
-            if text.is_empty() {
-                return None;
+        // Any other element value — an arithmetic, conditional, cast or
+        // parenthesized expression ([§15]) — lowered into the arena, or kept
+        // as its raw source text when there is no arena.
+        _ => match value_arena(&mut ctx, owner) {
+            Some((ctx, owner)) => AnnotationValue::Expr(body::lower_expr(ctx, owner, node)?),
+            None => {
+                let text = node.text().to_string();
+                if text.is_empty() {
+                    return None;
+                }
+                AnnotationValue::Unresolved { text }
             }
-            AnnotationValue::Unresolved { text }
-        }
+        },
     };
     Some((value, range))
 }
@@ -996,7 +1155,7 @@ fn type_annotation_refs(node: &SyntaxNode<Lang>) -> Vec<AnnotationRef> {
         }
         for annotation in child.descendants() {
             if matches!(annotation.kind(), J::ANNOTATION | J::MARKER_ANNOTATION)
-                && let Some(name) = annotation_ref(&annotation)
+                && let Some(name) = annotation_ref_text(&annotation)
             {
                 out.push(name);
             }
@@ -1041,25 +1200,25 @@ fn type_param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> TypeParam {
     }
 }
 
-fn formal_params(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Vec<Param> {
+fn formal_params(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Vec<Param> {
     node.children()
         .find(|child| is(child, J::FORMAL_PARAMETERS))
         .map(|params| {
             params
                 .children()
                 .filter(|child| is(child, J::FORMAL_PARAMETER) || is(child, J::SPREAD_PARAMETER))
-                .map(|child| param_from(map, &child))
+                .map(|child| param_from(ctx, owner, &child))
                 .collect()
         })
         .unwrap_or_default()
 }
 
-fn param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Param {
+fn param_from(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) -> Param {
     let varargs = is(node, J::SPREAD_PARAMETER);
     let mut ty = node
         .children()
         .find(|child| is(child, J::TYPE))
-        .map(|child| ItemTypeRef::from_spanned(type_from(&child), &child, map))
+        .map(|child| ItemTypeRef::from_spanned(type_from(&child), &child, ctx.map))
         .unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error));
     if let Some(dims) = node.children().find(|child| is(child, J::DIMENSIONS)) {
         ty = wrap_dims(ty, &dims);
@@ -1072,7 +1231,7 @@ fn param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Param {
     // from the `TYPE` node, which does not contain them.
     for trailing in trailing_modifier_lists(node) {
         ty.type_use_annotations
-            .extend(item_annotations_from(&trailing, map));
+            .extend(item_annotations_from_text(&trailing, ctx.map));
     }
     let name = first_token(node, J::IDENTIFIER)
         .map(|token| Name::new(token.text()))
@@ -1083,7 +1242,7 @@ fn param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Param {
     // reference above.
     let annotations = declaration_modifier_lists(node)
         .iter()
-        .flat_map(|mods| item_annotations_from(mods, map))
+        .flat_map(|mods| item_annotations_from(ctx, owner, mods))
         .collect();
     Param {
         name,
@@ -1093,14 +1252,18 @@ fn param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Param {
     }
 }
 
-fn component_from(node: &SyntaxNode<Lang>, map: &AstIdMap) -> RecordComponent {
+fn component_from(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> RecordComponent {
     let name = first_token(node, J::IDENTIFIER)
         .map(|token| Name::new(token.text()))
         .unwrap_or_else(missing_name);
     let ty_node = node.children().find(|child| is(child, J::TYPE));
     let ty = ty_node
         .as_ref()
-        .map(|child| ItemTypeRef::from_spanned(type_from(child), child, map))
+        .map(|child| ItemTypeRef::from_spanned(type_from(child), child, ctx.map))
         .unwrap_or_else(|| ItemTypeRef::synthetic(TypeRef::Error));
     let varargs = node.children_with_tokens().any(|element| match element {
         NodeOrToken::Token(token) => token.kind() == J::ELLIPSIS,
@@ -1111,11 +1274,12 @@ fn component_from(node: &SyntaxNode<Lang>, map: &AstIdMap) -> RecordComponent {
     let annotations = node
         .children()
         .find(|child| is(child, J::MODIFIER_LIST))
-        .map(|mods| item_annotations_from(&mods, map))
+        .map(|mods| item_annotations_from(ctx, owner, &mods))
         .unwrap_or_default();
     RecordComponent {
         name,
-        ast: map
+        ast: ctx
+            .map
             .ast_id(&node_ptr(node))
             .expect("every record component FORMAL_PARAMETER is indexed"),
         ty,
@@ -1124,13 +1288,31 @@ fn component_from(node: &SyntaxNode<Lang>, map: &AstIdMap) -> RecordComponent {
     }
 }
 
-/// The annotation references of a `MODIFIER_LIST` node, in order, converted
-/// to their range-free item form.
-fn item_annotations_from(mods: &SyntaxNode<Lang>, map: &AstIdMap) -> Vec<ItemAnnotationRef> {
+/// The annotation references of a `MODIFIER_LIST` node, in order, lowered with
+/// the declaration `owner` they annotate and converted to their range-free
+/// item form.
+fn item_annotations_from(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    mods: &SyntaxNode<Lang>,
+) -> Vec<ItemAnnotationRef> {
     mods.children()
         .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
         .filter_map(|annotation| {
-            annotation_ref(&annotation)
+            annotation_ref(ctx, owner, &annotation)
+                .map(|ranged| ItemAnnotationRef::from_spanned(ranged, &annotation, ctx.map))
+        })
+        .collect()
+}
+
+/// The annotation references of a `MODIFIER_LIST` node whose values belong to
+/// a *written type* and therefore have no expression arena
+/// ([`annotation_ref_text`]).
+fn item_annotations_from_text(mods: &SyntaxNode<Lang>, map: &AstIdMap) -> Vec<ItemAnnotationRef> {
+    mods.children()
+        .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
+        .filter_map(|annotation| {
+            annotation_ref_text(&annotation)
                 .map(|ranged| ItemAnnotationRef::from_spanned(ranged, &annotation, map))
         })
         .collect()
@@ -1173,14 +1355,17 @@ fn declared_type_start(node: &SyntaxNode<Lang>) -> Option<TextSize> {
         .map(|ty| ty.text_range().start())
 }
 
-/// The annotations of [`trailing_modifier_lists`], with their source ranges.
+/// The annotations of [`trailing_modifier_lists`], with their source ranges —
+/// variable-arity modifier lists, whose annotations belong to the parameter's
+/// *array type* ([§8.4.1]) and therefore to a written type rather than to a
+/// declaration.
 pub(crate) fn type_annotations_after_type(node: &SyntaxNode<Lang>) -> Vec<AnnotationRef> {
     trailing_modifier_lists(node)
         .iter()
         .flat_map(|mods| {
             mods.children()
                 .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
-                .filter_map(|annotation| annotation_ref(&annotation))
+                .filter_map(|annotation| annotation_ref_text(&annotation))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -1189,18 +1374,23 @@ pub(crate) fn type_annotations_after_type(node: &SyntaxNode<Lang>) -> Vec<Annota
 /// The annotations of a variable declaration's own modifier lists
 /// ([`declaration_modifier_lists`]), with their source ranges — its
 /// *declaration* annotations ([JLS §9.7.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.4)),
-/// in source order. A method or constructor's formal parameter carries its
+/// in source order, lowered with the declaration `owner` whose body declares
+/// the variable. A method or constructor's formal parameter carries its
 /// annotations in the item tree instead ([`Param::annotations`]); the
 /// body-side variable declarations (locals, resources, enhanced-for
 /// variables, exception parameters, pattern variables and lambda parameters)
 /// carry them in the body IR.
-pub(crate) fn modifier_annotations(node: &SyntaxNode<Lang>) -> Vec<AnnotationRef> {
+pub(crate) fn modifier_annotations(
+    ctx: &mut LowerCtx<'_>,
+    owner: ItemId,
+    node: &SyntaxNode<Lang>,
+) -> Vec<AnnotationRef> {
     declaration_modifier_lists(node)
         .iter()
         .flat_map(|mods| {
             mods.children()
                 .filter(|child| matches!(child.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))
-                .filter_map(|annotation| annotation_ref(&annotation))
+                .filter_map(|annotation| annotation_ref(ctx, owner, &annotation))
                 .collect::<Vec<_>>()
         })
         .collect()

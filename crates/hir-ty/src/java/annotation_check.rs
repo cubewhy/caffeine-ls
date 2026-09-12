@@ -1433,6 +1433,9 @@ fn check_single_value_assignable(
         // text gives nothing to compare — the syntax layer already holds the
         // failing parse.
         V::Unresolved { .. } => {}
+        // An element value lowered as an expression — the §15.29 verdict of
+        // its expression tree is [`crate::java::annotation_value`]'s.
+        V::Expr(_) => {}
         // Unreachable: [`check_value_assignable`] routes array values before
         // delegating a single value here.
         V::Array(_) => {}
@@ -1559,6 +1562,7 @@ fn check_single_value_assignable_ranged(
             check_annotation_elements_ranged(db, resolver, scope, inner, out);
         }
         V::Unresolved { .. } => {}
+        V::Expr(_) => {}
         V::Array(_) => {}
     }
 }

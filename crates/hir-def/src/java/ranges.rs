@@ -409,7 +409,7 @@ pub fn annotation_arg_value_range(
         };
         let Some(value) = value else { continue };
         // `annotation_args_from` skips a value that fails to parse.
-        if annotation_value_from(&value).is_none() {
+        if annotation_value_from(None, None, &value).is_none() {
             continue;
         }
         if seen == arg_idx {
