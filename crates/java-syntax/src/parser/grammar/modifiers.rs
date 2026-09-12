@@ -70,20 +70,24 @@ pub fn annotation(p: &mut Parser) {
 }
 
 fn annotation_argument_list(p: &mut Parser) {
-    // (k = v, a = b) or (v)
+    // (k = v, a = b) or (v) or () — the list is optional
+    // ([JLS §9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1):
+    // `NormalAnnotation: @ TypeName ( [ElementValuePairList] )`).
     let m = p.start();
 
     p.expect(L_PAREN);
 
-    if p.nth(1) == Some(EQUAL) {
-        element_value_pair(p);
-
-        while p.eat(COMMA) {
+    if !p.at(R_PAREN) {
+        if p.nth(1) == Some(EQUAL) {
             element_value_pair(p);
+
+            while p.eat(COMMA) {
+                element_value_pair(p);
+            }
+        } else {
+            // single argument annotation
+            element_value(p);
         }
-    } else {
-        // single argument annotation
-        element_value(p);
     }
 
     p.expect(R_PAREN);

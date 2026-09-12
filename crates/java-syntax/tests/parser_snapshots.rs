@@ -49,6 +49,10 @@ parser_snapshot!(
 );
 
 parser_snapshot!(parse_annotation_type_decl, r#"@interface A {}"#);
+
+// §9.7.1: `NormalAnnotation: @ TypeName ( [ElementValuePairList] )` — the
+// pair list is optional, so `@Ann()` is a normal annotation with no pairs.
+parser_snapshot!(parse_annotation_empty_argument_list, r#"@Ann() class A {}"#);
 parser_snapshot!(
     parse_annotation_type_member_like,
     r#"@interface A { int value(); }"#
