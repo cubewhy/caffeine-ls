@@ -60,6 +60,3 @@ triomphe = "0.1.15"
 unicode-general-category = "1.1.0"
 walkdir = "2.5.0"
 zip = "8.6.0"
-
-[profile.release]
-debug = true
