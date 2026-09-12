@@ -88,7 +88,7 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     // field, an overload-selected method or constructor, a method reference.
     let recorded = recorded_reference(db, file, offset);
     if !recorded.is_empty() {
-        return targets(db, file, recorded);
+        return targets(db, recorded);
     }
 
     let bodies = hir::file_body_tree(db, file);
@@ -102,8 +102,8 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
         };
         // §6.4/[§15.27.2]: a lambda parameter shadows every enclosing local of
         // the same name throughout its body, so it is looked up first.
-        if let Some(resolution) = lambda_param_resolution(&bodies, offset, &name) {
-            return targets(db, file, vec![resolution]);
+        if let Some(resolution) = lambda_param_resolution(file, &bodies, offset, &name) {
+            return targets(db, vec![resolution]);
         }
         if let Some(local) = resolve_local(&bodies, name.as_str(), offset) {
             return vec![NavigationTarget {
@@ -114,7 +114,7 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
         }
         let resolution = switch_label_resolution(db, file, offset, &name, expr);
         if !resolution.is_empty() {
-            return targets(db, file, resolution);
+            return targets(db, resolution);
         }
     }
 
@@ -124,9 +124,9 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     // re-runs the request (see [`pending_library_sources`]).
     let declaration = declaration_reference(db, file, offset);
     if !declaration.is_empty() {
-        return targets(db, file, declaration);
+        return targets(db, declaration);
     }
-    targets(db, file, resolve_at(db, file, offset))
+    targets(db, resolve_at(db, file, offset))
 }
 
 /// The resolutions of a *declaration-side* reference: the type reference or
@@ -168,7 +168,22 @@ fn declaration_type_ref_targets(
     {
         for (name, range) in hir_ty::item_type_references(db, file, item) {
             if range.is_some_and(|range| range.contains(offset)) {
-                return type_resolution(db, file, Some(item), &name);
+                let resolved = type_resolution(db, file, Some(item), &name);
+                if !resolved.is_empty() {
+                    return resolved;
+                }
+                // §4.4/[§6.5.5.1]: a type parameter is a declaration of its own
+                // — the `T` of `class Box<T>` or of `<T> T id(T v)` — so a
+                // written type *variable* denotes that parameter, not a class
+                // of the same spelling.
+                let Some(param) = hir_ty::type_param_declaration(db, file, item, &name) else {
+                    return Vec::new();
+                };
+                return vec![Resolution::Variable {
+                    file: param.file,
+                    range: param.range,
+                    name: name.simple_name().to_owned(),
+                }];
             }
         }
     }
@@ -229,7 +244,7 @@ fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Reso
 /// declarator range. `LibraryMember` (hover's merged-signature path) and
 /// `Pending` have no target — a pending one is materialized and the request
 /// re-run instead.
-fn targets(db: &RootDatabase, file: FileId, resolutions: Vec<Resolution>) -> Vec<NavigationTarget> {
+fn targets(db: &RootDatabase, resolutions: Vec<Resolution>) -> Vec<NavigationTarget> {
     resolutions
         .into_iter()
         .filter_map(|resolution| match resolution {
@@ -238,7 +253,9 @@ fn targets(db: &RootDatabase, file: FileId, resolutions: Vec<Resolution>) -> Vec
                 item,
                 name,
             } => decl_target(db, decl_file, item, &name),
-            Resolution::Variable { range, name } => Some(NavigationTarget { file, range, name }),
+            Resolution::Variable { file, range, name } => {
+                Some(NavigationTarget { file, range, name })
+            }
             Resolution::LibraryMember {
                 decl:
                     hir::LibrarySourceDecl::Loaded {
@@ -276,6 +293,7 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
             return match member {
                 hir_ty::ResolvedMember::Local(local) => match bodies.local_range(*local) {
                     Some(range) => vec![Resolution::Variable {
+                        file,
                         range,
                         name: bodies.local(*local).name.as_str().to_owned(),
                     }],
@@ -393,12 +411,18 @@ fn member_or_owner(
 /// The body IR keeps a lambda parameter as a name/range pair
 /// ([`hir_expand::body::LambdaParam`]) rather than a local, so no inference
 /// resolution exists for it.
-fn lambda_param_resolution(bodies: &BodyTree, offset: TextSize, name: &Name) -> Option<Resolution> {
+fn lambda_param_resolution(
+    file: FileId,
+    bodies: &BodyTree,
+    offset: TextSize,
+    name: &Name,
+) -> Option<Resolution> {
     for expr in exprs_at(bodies, offset) {
         if let ExprData::Lambda { params, .. } = bodies.expr(expr)
             && let Some(param) = params.iter().find(|param| &param.name == name)
         {
             return Some(Resolution::Variable {
+                file,
                 range: param.range,
                 name: name.as_str().to_owned(),
             });
@@ -535,10 +559,14 @@ enum Resolution {
         item: ItemId,
         name: String,
     },
-    /// A declaration the body IR carries without an item — a local variable, a
-    /// parameter, a pattern binding or a lambda parameter — at its declarator
-    /// range.
-    Variable { range: TextRange, name: String },
+    /// A declaration carried without an item of its own — a local variable, a
+    /// parameter, a pattern binding, a lambda parameter or a type parameter —
+    /// at its declarator (or name) range.
+    Variable {
+        file: FileId,
+        range: TextRange,
+        name: String,
+    },
     /// A resolved library member: everything the signature renderer needs plus
     /// where its declaring source is, if it is loaded.
     LibraryMember {
@@ -1184,9 +1212,9 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
                 Some(source_file),
             );
         }
-        // A declaration has no merged signature of its own; a `Variable` is
-        // not a classpath resolution at all (the recorded table is the only
-        // path that produces one).
+        // A declaration has no merged signature of its own, and a `Variable`
+        // (a local, a lambda parameter, a type parameter) is not a library
+        // reference: `resolve_at` never produces one.
         Some(Resolution::Decl { .. }) | Some(Resolution::Variable { .. }) | None => {}
     }
 

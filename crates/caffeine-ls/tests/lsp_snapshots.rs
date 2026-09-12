@@ -741,9 +741,16 @@ import com.example.Base;
 import static com.example.Helper.of;
 import static com.example.Helper.sum;
 
-class Use extends Base {
+class Use<R> extends Base {
     @Marker
     int marked;
+
+    R value;
+
+    <T> T id(T v) {
+        T copy = v;
+        return copy;
+    }
 
     void run(Base b, Base other, java.util.List<Base> list) {
         count = b.count;
@@ -930,6 +937,20 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         ("elem.count", 0),
         "/src/com/example/Use.java",
         "elem",
+    ),
+    // §4.4/§6.4.1: a written type variable names the parameter that declares it
+    // — the class's own, and a method's own.
+    (
+        "/src/com/example/Use.java",
+        ("R value", 0),
+        "/src/com/example/Use.java",
+        "<R>",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("T copy", 0),
+        "/src/com/example/Use.java",
+        "<T>",
     ),
 ];
 

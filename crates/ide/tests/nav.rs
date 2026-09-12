@@ -4,10 +4,10 @@
 use triomphe::Arc;
 
 use hir::{Classpath, ProjectGraphData, SourceSetId, set_project_graph};
-use ide::{Analysis, AnalysisHost};
+use ide::{Analysis, AnalysisHost, NavigationTarget};
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId};
 use insta::assert_snapshot;
-use rowan::TextSize;
+use rowan::{TextRange, TextSize};
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
 fn main_source_set(project: u32) -> SourceSetId {
@@ -378,6 +378,21 @@ class Sub extends Base {
         int missing = nope + 1;
     }
 }
+
+class Generic<K, V extends K> {
+    K first;
+
+    <K> K same(K v) {
+        K copy = v;
+        return copy;
+    }
+}
+
+class Outer<T> {
+    class Inner {
+        T value;
+    }
+}
 "#;
 
 /// The body and member references of [`MANY_SRC`]: the needle locates the
@@ -471,31 +486,103 @@ const MANY_DECL_GOTO: &[(&str, usize, &str, &str)] = &[
     ("Base.STATIC", 0, "Base", "class Base"),
 ];
 
-/// The declaration-side references of [`MANY_SRC`] that name no declaration: a
-/// type variable ([§4.4]) is not a declaration.
-const MANY_DECL_NONE: &[(&str, usize)] = &[("T copy", 0)];
-
 #[test]
 fn goto_declaration_reference_matrix() {
     let fixture = test_file(MANY_SRC);
     for &(needle, occurrence, name, declaration) in MANY_DECL_GOTO {
         assert_goto_covers(&fixture, needle, occurrence, name, declaration);
     }
-    for &(needle, occurrence) in MANY_DECL_NONE {
-        assert_eq!(
-            goto_slices(&fixture, needle, occurrence),
-            Vec::<&str>::new(),
-            "case {needle:?}#{occurrence}"
-        );
-    }
-    let mut cases: Vec<(&str, usize)> = MANY_DECL_GOTO
+    let cases: Vec<(&str, usize)> = MANY_DECL_GOTO
         .iter()
         .map(|&(needle, occurrence, ..)| (needle, occurrence))
         .collect();
-    cases.extend(MANY_DECL_NONE.iter().copied());
     assert_snapshot!(
         "goto_declaration_reference_matrix",
         render_nav_many(&fixture, &cases)
+    );
+}
+
+// -- type parameters ([JLS §4.4]) ---------------------------------------------------
+// A written type variable denotes the *parameter* that declares it — the
+// narrowest declaration of the name ([§6.4.1]), never a class of the same
+// spelling.
+
+#[test]
+fn goto_type_parameter_reference() {
+    let fixture = test_file(MANY_SRC);
+
+    // A class's own parameter, read as a field's declared type and as another
+    // parameter's bound.
+    assert_type_param(&fixture, "K first", 0, "class Generic<K, V extends K>", "K");
+    assert_type_param(&fixture, "K>", 0, "class Generic<K, V extends K>", "K");
+
+    // A method's own parameter — its return type and a local's declared type.
+    assert_type_param(&fixture, "T id(T v)", 0, "<T> T id", "T");
+    assert_type_param(&fixture, "T copy", 0, "<T> T id", "T");
+
+    // §6.4.1: the method's `K` shadows the class's, so both the parameter type
+    // and the body's read name the *method's* declaration.
+    assert_type_param(&fixture, "K same", 0, "<K> K same", "K");
+    assert_type_param(&fixture, "K copy", 0, "<K> K same", "K");
+
+    // §6.3: an enclosing class's parameter is in scope inside a nested
+    // declaration, so the inner field's type names the *outer* class's `T`.
+    assert_type_param(&fixture, "T value", 0, "class Outer<T>", "T");
+
+    assert_snapshot!(
+        "goto_type_parameter_reference",
+        render_nav_many(
+            &fixture,
+            &[
+                ("K first", 0),
+                ("K>", 0),
+                ("T id(T v)", 0),
+                ("T copy", 0),
+                ("K same", 0),
+                ("K copy", 0),
+                ("T value", 0),
+            ]
+        )
+    );
+}
+
+/// The single navigation target of the reference at `needle`'s `occurrence`-th
+/// occurrence.
+fn goto_target(fixture: &Fixture, needle: &str, occurrence: usize) -> NavigationTarget {
+    let offset = fixture.offset_start(needle, occurrence);
+    let mut targets = fixture
+        .analysis()
+        .goto_definition(fixture.file, offset)
+        .unwrap();
+    assert_eq!(
+        targets.len(),
+        1,
+        "case {needle:?}#{occurrence}: {targets:?}"
+    );
+    targets.pop().unwrap()
+}
+
+/// Asserts that the reference at `needle` resolves to the type parameter `name`
+/// declared in the parameter list `list` — the exact `name` token inside that
+/// list, so a same-named parameter of another declaration cannot satisfy it.
+fn assert_type_param(fixture: &Fixture, needle: &str, occurrence: usize, list: &str, name: &str) {
+    let target = goto_target(fixture, needle, occurrence);
+    assert_eq!(target.name, name, "case {needle:?}#{occurrence}");
+    let list_at = fixture
+        .text
+        .find(list)
+        .unwrap_or_else(|| panic!("the parameter list {list:?} is not in the fixture"));
+    let name_at = list_at
+        + fixture.text[list_at..]
+            .find(name)
+            .unwrap_or_else(|| panic!("{name:?} is not in {list:?}"));
+    let expected = TextRange::new(
+        TextSize::new(name_at as u32),
+        TextSize::new((name_at + name.len()) as u32),
+    );
+    assert_eq!(
+        target.range, expected,
+        "case {needle:?}#{occurrence} must name the parameter in {list:?}"
     );
 }
 
