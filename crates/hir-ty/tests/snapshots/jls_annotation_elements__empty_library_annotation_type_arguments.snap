@@ -10,4 +10,4 @@ import java.lang.annotation.Documented;
 @Documented(nope = 1)
 @interface Ann {}
 
-@4:19: unknown-annotation-member: No annotation member named 'nope'
+@4:19: unresolved-annotation-member: No annotation member named 'nope'

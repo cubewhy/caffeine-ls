@@ -15,4 +15,4 @@ class Anns {
 }
 
 @7:5: missing-annotation-element: 'value' missing but required
-@7:15: unknown-annotation-member: No annotation member named 'foo'
+@7:15: unresolved-annotation-member: No annotation member named 'foo'

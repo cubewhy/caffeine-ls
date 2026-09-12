@@ -679,10 +679,10 @@ fn check_annotation_elements_ranged(
     // §9.7.1: the same missing-element rule as [`check_annotation_elements`],
     // over the body path's spanned annotation — its name already carries the
     // range the report is anchored at.
-    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name.name)
-    else {
+    let Some(annotation_type) = annotation_type(db, scope, resolver, &annotation.name.name) else {
         return;
     };
+    let elements = &annotation_type.elements;
     let missing: Vec<Name> = elements
         .iter()
         .filter(|element| !element.has_default)
@@ -710,10 +710,12 @@ fn check_annotation_elements_ranged(
             continue;
         }
         let Some(element) = elements.iter().find(|element| element.name == arg.name) else {
-            out.push(DeclDiagnostic::UnknownAnnotationMember {
-                name: arg.name.clone(),
-                range: Some(arg.range),
-            });
+            out.push(no_such_element(
+                cx,
+                &annotation_type.ty,
+                &arg.name,
+                Some(arg.range),
+            ));
             continue;
         };
         check_value_commensurate_ranged(cx, &arg.value, &element.ty, arg.range, out);
@@ -1216,9 +1218,10 @@ fn check_annotation_elements(
     // marker annotation (`@Ann`) is the degenerate case of no pairs at all, so
     // the elements are resolved before the pairs are walked. The report is
     // anchored at the annotation's *name*, where IntelliJ anchors it.
-    let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name) else {
+    let Some(annotation_type) = annotation_type(db, scope, resolver, &annotation.name) else {
         return;
     };
+    let elements = &annotation_type.elements;
     let missing: Vec<Name> = elements
         .iter()
         .filter(|element| !element.has_default)
@@ -1253,12 +1256,8 @@ fn check_annotation_elements(
             continue;
         }
         let Some(element) = elements.iter().find(|element| element.name == arg.name) else {
-            // §9.7.1: the pair names an element the annotation type does not
-            // declare.
-            out.push(DeclDiagnostic::UnknownAnnotationMember {
-                name: arg.name.clone(),
-                range,
-            });
+            // §9.7.1: the pair names no element the annotation type declares.
+            out.push(no_such_element(cx, &annotation_type.ty, &arg.name, range));
             continue;
         };
         check_value_commensurate(
@@ -1787,20 +1786,30 @@ struct AnnotationElement {
     has_default: bool,
 }
 
-/// The elements of the annotation type `name` ([§9.6.1]), in declaration
-/// order: each is an abstract method of the annotation declaration whose
-/// return type ([§8.4.5]) is the element's declared type. `None` when `name`
-/// does not resolve to an annotation type (nothing to check).
-fn annotation_type_elements(
+/// The resolved annotation type of one annotation occurrence: the `Ty` of the
+/// annotation interface — what the pair reports probe for a member method —
+/// and its elements ([§9.6.1]).
+struct AnnotationType {
+    ty: Ty,
+    elements: Vec<AnnotationElement>,
+}
+
+/// The annotation type `name` resolves to, with its elements ([§9.6.1]) in
+/// declaration order: each is an abstract method of the annotation
+/// declaration whose return type ([§8.4.5]) is the element's declared type.
+/// `None` when `name` does not resolve to an annotation type (nothing to
+/// check).
+fn annotation_type(
     db: &dyn TyDatabase,
     scope: &hir::ResolutionScope,
     resolver: &Resolver,
     name: &Name,
-) -> Option<Vec<AnnotationElement>> {
+) -> Option<AnnotationType> {
     let fqn = candidate_fqns(resolver, name)
         .into_iter()
         .find(|candidate| hir::fqn_resolve(db, scope, candidate.as_str()).is_some())?;
     let fqn = fqn.as_str();
+    let ty = Ty::reference(db, fqn, Vec::new());
     match hir::fqn_resolve(db, scope, fqn)? {
         hir::Resolved::Source(source) => {
             let source_tree = hir::file_item_tree(db, source.file);
@@ -1837,7 +1846,7 @@ fn annotation_type_elements(
                     });
                 }
             }
-            Some(out)
+            Some(AnnotationType { ty, elements: out })
         }
         hir::Resolved::Library(resolved) => {
             let record = hir::class_record(db, &resolved)?;
@@ -1859,8 +1868,9 @@ fn annotation_type_elements(
             // partial one. An element-free annotation interface therefore has
             // nothing that could be missing, while every element-value pair of
             // a normal annotation of it is an error ([§9.7.1]).
-            Some(
-                class
+            Some(AnnotationType {
+                ty,
+                elements: class
                     .methods
                     .iter()
                     .map(|method| AnnotationElement {
@@ -1871,9 +1881,49 @@ fn annotation_type_elements(
                         has_default: method.default_value.is_some(),
                     })
                     .collect(),
-            )
+            })
         }
     }
+}
+
+/// The report for a pair that names no element of the annotation interface
+/// ([§9.7.1]): javac reports a name that resolved to a member *method* the
+/// annotation interface does not own — `java.lang.Object.toString`, inherited
+/// by every annotation type — as `no annotation member named`
+/// ([`DeclDiagnostic::UnknownAnnotationMember`]), while a name that resolved
+/// to nothing at all is the failed resolution of the name itself
+/// ([`DeclDiagnostic::UnresolvedAnnotationMember`],
+/// `compiler.err.cant.resolve.location.args`).
+fn no_such_element(
+    cx: &ValueCtx<'_>,
+    annotation_ty: &Ty,
+    name: &Name,
+    range: Option<rowan::TextRange>,
+) -> DeclDiagnostic {
+    if names_member_method(cx, annotation_ty, name) {
+        DeclDiagnostic::UnknownAnnotationMember {
+            name: name.clone(),
+            range,
+        }
+    } else {
+        DeclDiagnostic::UnresolvedAnnotationMember {
+            name: name.clone(),
+            range,
+        }
+    }
+}
+
+/// Whether `name` is the name of some member *method* of the annotation
+/// interface `annotation_ty` ([JLS §9.2]: its own and every inherited member
+/// method). This is javac's dispatch between the two reports of a pair that
+/// names no element — `sym.kind == MTH && sym.owner != thisAnnotationType.tsym`
+/// in `Annotate.attributeAnnotationNameValuePair`, which holds exactly for the
+/// members another type owns, `Object`'s public ones above all.
+fn names_member_method(cx: &ValueCtx<'_>, annotation_ty: &Ty, name: &Name) -> bool {
+    let ctx = crate::java::method::access_context(cx.db, cx.file, cx.item);
+    crate::java::method::all_methods(cx.db, cx.scope, annotation_ty, &ctx)
+        .iter()
+        .any(|method| method.name.as_str() == name.as_str())
 }
 
 /// Resolves an annotation name to its `@Target` element-type constant names.

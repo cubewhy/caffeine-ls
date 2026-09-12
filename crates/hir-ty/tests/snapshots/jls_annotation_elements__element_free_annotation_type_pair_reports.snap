@@ -6,10 +6,12 @@ FILE /src/com/example/Anns.java:
 package com.example;
 
 class Anns {
-    @Override("")
+    @Override(target = "")
+    @Override(toString = "")
     public String toString() {
         return "";
     }
 }
 
-@3:14: unresolved-annotation-member: No annotation member named 'value'
+@3:23: unresolved-annotation-member: No annotation member named 'target'
+@4:25: unknown-annotation-member: No annotation member named 'toString'

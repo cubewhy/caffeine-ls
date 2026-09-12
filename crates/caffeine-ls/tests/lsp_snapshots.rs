@@ -2420,6 +2420,11 @@ class Anns {
     @Val(i = field, c = (String.class), e = ME)
     void bad() {}
 }
+
+class Sample implements Runnable {
+    @Override(target = \"\")
+    public void run() {}
+}
 ",
         )
         .unwrap();
@@ -2458,6 +2463,13 @@ class Anns {
             "compiler.err.enum.annotation.must.be.enum.constant",
             "Attribute value must be an enum constant",
         ),
+        // §9.6.1/§9.7.1: `java.lang.Override` declares no elements, so a pair
+        // on it names nothing — javac's failed resolution of the name, at the
+        // value.
+        (
+            "compiler.err.cant.resolve.location.args",
+            "No annotation member named 'target'",
+        ),
     ] {
         assert!(
             items.iter().any(|item| {
@@ -2470,8 +2482,8 @@ class Anns {
     }
     assert_eq!(
         items.len(),
-        4,
-        "exactly the four element diagnostics are expected: {items:?}"
+        5,
+        "exactly the five element diagnostics are expected: {items:?}"
     );
 
     insta::assert_json_snapshot!("annotation_element_diagnostics", items);

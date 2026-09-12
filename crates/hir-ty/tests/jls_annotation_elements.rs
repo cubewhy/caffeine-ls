@@ -825,6 +825,38 @@ class Anns {
     insta::assert_snapshot!("library_classfile_values", out);
 }
 
+// -- red: the two reports of a pair that names no element ([§9.7.1]) -----------
+
+#[test]
+fn element_free_annotation_type_pair_reports() {
+    // The real JDK's `java.lang.Override` declares no elements ([§9.6.1]) and
+    // inherits `java.lang.Object`'s members — exactly the split between javac's
+    // two reports for a pair that names no element: `target` names no member of
+    // the annotation interface at all, so the *name* fails to resolve
+    // (`compiler.err.cant.resolve.location.args`), while `toString` does name a
+    // member — one owned by `Object`, not an element of the annotation
+    // interface — which javac reports as `no annotation member named`
+    // (`compiler.err.no.annotation.member`). IntelliJ's sentence is the same
+    // for both.
+    let Some(out) = crate::common::check_class_diagnostics_real_jdk(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+class Anns {
+    @Override(target = \"\")
+    @Override(toString = \"\")
+    public String toString() {
+        return \"\";
+    }
+}
+",
+    )]) else {
+        return;
+    };
+    insta::assert_snapshot!("element_free_annotation_type_pair_reports", out);
+}
+
 // -- red/green: values written with unicode escapes ([§3.3]) -------------------
 
 snapshot!(

@@ -66,5 +66,21 @@ expression: items
     "code": "compiler.err.enum.annotation.must.be.enum.constant",
     "source": "caffeine-ls",
     "message": "Attribute value must be an enum constant"
+  },
+  {
+    "range": {
+      "start": {
+        "line": 26,
+        "character": 23
+      },
+      "end": {
+        "line": 26,
+        "character": 25
+      }
+    },
+    "severity": 1,
+    "code": "compiler.err.cant.resolve.location.args",
+    "source": "caffeine-ls",
+    "message": "No annotation member named 'target'"
   }
 ]

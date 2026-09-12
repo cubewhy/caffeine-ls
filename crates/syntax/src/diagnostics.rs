@@ -225,8 +225,17 @@ pub enum JavaDiagnosticCode {
     /// `compiler.err.annotation.type.not.applicable`.
     AnnotatedVar,
     /// §9.7.1: an annotation element-value pair names an element the annotation
-    /// type does not declare.
+    /// type does not declare, and the name names one of its member *methods*
+    /// ([§9.2]) — inherited from another type, `java.lang.Object.toString`
+    /// above all. javac: `compiler.err.no.annotation.member`.
     UnknownAnnotationMember,
+    /// §9.7.1/[§6.5.5.1]: an annotation element-value pair names no member of
+    /// the annotation interface at all, so the name does not resolve — javac
+    /// reports the failed resolution of the name,
+    /// `compiler.err.cant.resolve.location.args` (`cannot find symbol …
+    /// kindname.method, {name}, …`), where a name that *is* a member of another
+    /// type carries [`UnknownAnnotationMember`](Self::UnknownAnnotationMember).
+    UnresolvedAnnotationMember,
     /// §9.7.1: the same annotation element is given a value twice.
     DuplicateAnnotationMemberValue,
     /// §9.7.1/[§5.2]: an annotation element value is not assignable to its
@@ -596,6 +605,7 @@ impl JavaDiagnosticCode {
             }
             AnnotatedVar => Some("compiler.err.annotation.type.not.applicable"),
             UnknownAnnotationMember => Some("compiler.err.no.annotation.member"),
+            UnresolvedAnnotationMember => Some("compiler.err.cant.resolve.location.args"),
             DuplicateAnnotationMemberValue => {
                 Some("compiler.err.duplicate.annotation.member.value")
             }
@@ -770,6 +780,7 @@ impl JavaDiagnosticCode {
             }
             JavaDiagnosticCode::AnnotatedVar => "annotated-var",
             JavaDiagnosticCode::UnknownAnnotationMember => "unknown-annotation-member",
+            JavaDiagnosticCode::UnresolvedAnnotationMember => "unresolved-annotation-member",
             JavaDiagnosticCode::DuplicateAnnotationMemberValue => {
                 "duplicate-annotation-member-value"
             }

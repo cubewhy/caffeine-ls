@@ -80,6 +80,9 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         DeclDiagnostic::UnknownAnnotationMember { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationMember)
         }
+        DeclDiagnostic::UnresolvedAnnotationMember { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::UnresolvedAnnotationMember)
+        }
         DeclDiagnostic::DuplicateAnnotationMemberValue { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::DuplicateAnnotationMemberValue)
         }
@@ -349,6 +352,12 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
         }
         DeclDiagnostic::AnnotatedVar { .. } => "'var' type may not be annotated".to_owned(),
         DeclDiagnostic::UnknownAnnotationMember { name, .. } => {
+            format!("No annotation member named '{}'", name.as_str())
+        }
+        // IntelliJ reports one message for the whole "there is no such
+        // element" rule; javac's two keys ([`JavaDiagnosticCode`]) are its
+        // two resolution phases, not two sentences.
+        DeclDiagnostic::UnresolvedAnnotationMember { name, .. } => {
             format!("No annotation member named '{}'", name.as_str())
         }
         DeclDiagnostic::DuplicateAnnotationMemberValue { name, .. } => {

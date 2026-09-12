@@ -12,4 +12,4 @@ class Anns {
     }
 }
 
-@3:23: unknown-annotation-member: No annotation member named 'target'
+@3:23: unresolved-annotation-member: No annotation member named 'target'

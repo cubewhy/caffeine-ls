@@ -226,9 +226,26 @@ pub enum DeclDiagnostic {
         range: Option<rowan::TextRange>,
     },
     /// §9.7.1: an annotation element-value pair names an element the annotation
-    /// type does not declare — javac's `no annotation member named {name}`.
-    /// `range` is the source range of the offending value expression.
+    /// type does not declare, but the name *did* resolve to a member of the
+    /// annotation interface ([§9.2]) — a method inherited from another type,
+    /// `java.lang.Object.toString` above all. javac reports this sub-case as
+    /// `no annotation member named {name}`
+    /// (`compiler.err.no.annotation.member`). `range` is the source range of
+    /// the offending value expression.
     UnknownAnnotationMember {
+        name: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.1/[§6.5.5.1]: an annotation element-value pair names no member of
+    /// the annotation interface at all, so the *name* does not resolve — javac
+    /// reports the failed resolution of the name,
+    /// `compiler.err.cant.resolve.location.args`
+    /// (`cannot find symbol … kindname.method, {name}, …`), not
+    /// [`UnknownAnnotationMember`](Self::UnknownAnnotationMember), whose key it
+    /// prints only for a name owned by another type
+    /// (`Annotate.attributeAnnotationNameValuePair`). `range` is the value, the
+    /// position the client underlines for both.
+    UnresolvedAnnotationMember {
         name: Name,
         range: Option<rowan::TextRange>,
     },
@@ -752,6 +769,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::AnnotationNotApplicableToType { .. }
             | DeclDiagnostic::AnnotatedVar { .. }
             | DeclDiagnostic::UnknownAnnotationMember { .. }
+            | DeclDiagnostic::UnresolvedAnnotationMember { .. }
             | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
             | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
             | DeclDiagnostic::UnknownAnnotationElementConstant { .. }
@@ -813,6 +831,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::UnknownAnnotationMember {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::UnresolvedAnnotationMember {
                 range: name_range, ..
             }
             | DeclDiagnostic::DuplicateAnnotationMemberValue {
