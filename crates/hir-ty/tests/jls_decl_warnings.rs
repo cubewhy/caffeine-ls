@@ -218,3 +218,25 @@ class Body {
 ",
     )])
 );
+
+// JLS §9.6.4.5/[§3.3]: the key a `@SuppressWarnings` names is the string
+// literal's *value* — the lexer keeps a token's text as written, so a key
+// spelled `"\u0072awtypes"` names `rawtypes` exactly as the plain spelling
+// does. javac reports nothing.
+snapshot!(
+    rawtypes_key_spelled_with_unicode_escape,
+    check_class_diagnostics(&[(
+        "/src/com/example/Body.java",
+        "\
+package com.example;
+
+import java.util.List;
+
+class Body {
+    @SuppressWarnings(\"\\u0072awtypes\")
+    void m(List xs) {
+    }
+}
+",
+    )])
+);

@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface ByteAnn {
+    byte b();
+}
+
+@interface CharAnn {
+    char c();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+@ByteAnn(b = '\u007f')
+@ByteAnn(b = '\u00ff')
+@CharAnn(c = '\u0061')
+@StringAnn(s = "\u0041")
+@StringAnn(s = "\u005Cn")
+class Anns {}
+
+@15:13: annotation-element-type-mismatch: Incompatible types. Found: 'char', required: 'byte'

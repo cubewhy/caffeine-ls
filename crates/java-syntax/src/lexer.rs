@@ -621,7 +621,7 @@ impl<'a> Lexer<'a> {
         }
 
         let text = self.reader.current_token_lexeme();
-        let token_type = match text {
+        let token_type = match text.as_ref() {
             "package" => SyntaxKind::PACKAGE_KW,
             "import" => SyntaxKind::IMPORT_KW,
             "class" => SyntaxKind::CLASS_KW,

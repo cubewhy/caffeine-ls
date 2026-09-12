@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::char;
 
 use rowan::{TextRange, TextSize};
@@ -24,6 +25,28 @@ enum ScanResult {
     /// The logical character is `\` (1 raw byte); the error is recorded only
     /// when `advance()` actually consumes it.
     InvalidEscape(usize),
+}
+
+/// The characters `text` denotes, with [JLS §3.3]'s Unicode escapes
+/// translated — the character stream [`SourceReader`] walks, and the
+/// translation the lexer tokenizes by.
+///
+/// The lexer keeps every token's *text* as written in the source, so a
+/// consumer that needs a literal's value (or an identifier's name) out of that
+/// text re-reads it through here rather than re-implementing the escape.
+///
+/// [JLS §3.3]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.3
+pub fn translate_unicode_escapes(text: &str) -> Cow<'_, str> {
+    // A source without a backslash carries no escape.
+    if !text.as_bytes().contains(&b'\\') {
+        return Cow::Borrowed(text);
+    }
+    let mut reader = SourceReader::new(text);
+    let mut out = String::with_capacity(text.len());
+    while !reader.is_at_end() {
+        out.push(reader.advance());
+    }
+    Cow::Owned(out)
 }
 
 pub struct SourceReader<'a> {
@@ -64,46 +87,14 @@ impl<'a> SourceReader<'a> {
         &self.source[self.start..self.current]
     }
 
-    pub fn current_token_lexeme(&self) -> &'a str {
-        let mut has_escapes = false;
-        let mut i = self.start;
-
-        while i < self.current {
-            match self.scan_at(i) {
-                ScanResult::Char(c, len) => {
-                    if len > c.len_utf8() {
-                        has_escapes = true;
-                        break;
-                    }
-                    i += len;
-                }
-                ScanResult::InvalidEscape(_) => {
-                    has_escapes = true;
-                    break;
-                }
-            }
-        }
-
-        if !has_escapes {
-            return &self.source[self.start..self.current];
-        }
-
-        let mut result = String::new();
-        let mut i = self.start;
-        while i < self.current {
-            match self.scan_at(i) {
-                ScanResult::Char(c, len) => {
-                    result.push(c);
-                    i += len;
-                }
-                ScanResult::InvalidEscape(_) => {
-                    result.push('\\');
-                    i += 1;
-                }
-            }
-        }
-
-        Box::leak(result.into_boxed_str())
+    /// The token's lexeme with [JLS §3.3]'s Unicode escapes translated — what
+    /// the *token* means, as opposed to [`Self::current_token_lexeme_raw`],
+    /// which is what the source says. Borrowed unless the token carries an
+    /// escape.
+    ///
+    /// [JLS §3.3]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.3
+    pub fn current_token_lexeme(&self) -> Cow<'a, str> {
+        translate_unicode_escapes(&self.source[self.start..self.current])
     }
 
     pub fn is_at_end(&self) -> bool {
@@ -351,6 +342,30 @@ mod tests {
         reader.advance(); // 'e'
         reader.advance(); // 't'
         assert_eq!(reader.current_token_lexeme_raw(), "let");
+    }
+
+    #[test]
+    fn test_translate_unicode_escapes() {
+        // Text without an escape is borrowed as it stands.
+        assert!(matches!(
+            translate_unicode_escapes("plain"),
+            Cow::Borrowed("plain")
+        ));
+        // `\u`+ four hex digits is one character, whatever the digits spell.
+        assert_eq!(translate_unicode_escapes(r"\u0041"), "A");
+        assert_eq!(translate_unicode_escapes(r"\uuuu0061"), "a");
+        // §3.3's even-backslash rule: the `u` after `\\` is not an escape —
+        // the characters stay as written — while the `\u0042` after it does
+        // translate.
+        assert_eq!(translate_unicode_escapes(r"\\u0041\u0042"), r"\\u0041B");
+        assert_eq!(translate_unicode_escapes(r"\\\u0041"), r"\\A");
+        // A surrogate pair is one character; a lone half is not an escape, so
+        // the characters stay as written.
+        assert_eq!(translate_unicode_escapes(r"\uD83D\uDE00"), "\u{1F600}");
+        assert_eq!(translate_unicode_escapes(r"\uD83D"), r"\uD83D");
+        // Exactly four digits: a fifth is an ordinary character.
+        assert_eq!(translate_unicode_escapes(r"\u00411"), "A1");
+        assert_eq!(translate_unicode_escapes(r"\uZZZZ"), r"\uZZZZ");
     }
 
     #[test]

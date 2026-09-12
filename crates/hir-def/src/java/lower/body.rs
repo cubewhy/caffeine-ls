@@ -12,7 +12,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use java_syntax::{Lang, SyntaxKind as J};
+use java_syntax::{Lang, SyntaxKind as J, translate_unicode_escapes};
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange};
 use stacksafe::stacksafe;
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
@@ -1212,13 +1212,15 @@ pub(super) fn literal(node: &SyntaxNode<Lang>) -> ExprData {
 }
 
 /// Decodes the scalar value of a character literal ([JLS §3.10.4]): the single
-/// character between the quotes, with the escape sequences resolved. A
-/// malformed literal yields NUL so typing stays well-formed.
+/// character between the quotes, read through [§3.3]'s Unicode-escape
+/// translation with the EscapeSequences resolved. A malformed literal yields
+/// NUL so typing stays well-formed.
 fn unescape_char(text: &str) -> char {
     let inner = text
         .strip_prefix('\'')
         .and_then(|t| t.strip_suffix('\''))
         .unwrap_or(text);
+    let inner = translate_unicode_escapes(inner);
     let mut chars = inner.chars().peekable();
     let Some(first) = chars.next() else {
         return '\0';
@@ -1235,10 +1237,11 @@ fn unescape_char(text: &str) -> char {
 
 /// Appends the decoded value of the escape whose `\` was already consumed and
 /// whose escape character is `escaped` ([JLS §3.10.4]/[§3.10.6]
-/// EscapeSequence), consuming further characters for the octal forms.
-/// Unicode escapes never reach this layer — the lexer translates them before
-/// tokenizing ([§3.3]). A trailing lone `\` (a text-block line continuation
-/// whose line terminator was already split off) produces nothing.
+/// EscapeSequence), consuming further characters for the octal forms. The
+/// characters come from [`translate_unicode_escapes`], which applies [§3.3]'s
+/// translation first — in the spec's order, so a backslash a `\u005C` produced
+/// opens an EscapeSequence here. A trailing lone `\` (a text-block line
+/// continuation whose line terminator was already split off) produces nothing.
 fn push_escape(out: &mut String, escaped: char, chars: &mut Peekable<Chars<'_>>) {
     match escaped {
         'b' => out.push('\u{0008}'),
@@ -1274,8 +1277,12 @@ fn push_escape(out: &mut String, escaped: char, chars: &mut Peekable<Chars<'_>>)
 }
 
 /// Decodes the escapes of one literal content line into `out` ([§3.10.4],
-/// [§3.10.5], [§3.10.6]).
+/// [§3.10.5], [§3.10.6]): the characters are read through [§3.3]'s
+/// Unicode-escape translation the lexer tokenizes by, and the EscapeSequences
+/// on them resolved — the spec's order, in which a backslash a `\u005C`
+/// produced *does* open an escape.
 fn decode_line(out: &mut String, line: &str) {
+    let line = translate_unicode_escapes(line);
     let mut chars = line.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {

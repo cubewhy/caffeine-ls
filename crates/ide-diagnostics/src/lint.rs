@@ -48,7 +48,7 @@ use hir_ty::java::resolve::NameResolution;
 use rowan::{SyntaxNode, TextRange};
 use rustc_hash::FxHashSet;
 use syntax::SourceFile;
-use syntax::java::{Lang, SyntaxKind as J};
+use syntax::java::{Lang, SyntaxKind as J, translate_unicode_escapes};
 use triomphe::Arc;
 use vfs::FileId;
 
@@ -217,8 +217,10 @@ fn suppress_keys(
             .filter_map(|element| element.into_token())
             .filter(|token| token.kind() == J::STRING_LITERAL)
         {
-            if let Some(key) = literal
-                .text()
+            // The key is the literal's *value*: the token text is the source
+            // as written, so a `"\u0075nchecked"` names `unchecked` ([§3.3]).
+            let text = translate_unicode_escapes(literal.text());
+            if let Some(key) = text
                 .strip_prefix('"')
                 .and_then(|inner| inner.strip_suffix('"'))
                 .and_then(LintKey::from_str)

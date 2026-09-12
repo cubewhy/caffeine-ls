@@ -712,3 +712,39 @@ class Anns {
     };
     insta::assert_snapshot!("library_classfile_values", out);
 }
+
+// -- red/green: values written with unicode escapes ([§3.3]) -------------------
+
+snapshot!(
+    unicode_escape_values,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface ByteAnn {
+    byte b();
+}
+
+@interface CharAnn {
+    char c();
+}
+
+@interface StringAnn {
+    String s();
+}
+
+@ByteAnn(b = '\\u007f')
+@ByteAnn(b = '\\u00ff')
+@CharAnn(c = '\\u0061')
+@StringAnn(s = \"\\u0041\")
+@StringAnn(s = \"\\u005Cn\")
+class Anns {}
+",
+    )])
+);
+// §3.3/[§15.29]/[§5.2]: a literal's value is read through the Unicode-escape
+// translation the lexer tokenizes by, so `'\u007f'` is the character 127 —
+// which narrows to `byte` — while `'\u00ff'` is 255, which does not; javac
+// reports exactly the second. The strings are constant expressions either way,
+// the newline a `'\u005C'` + `n` spells included.
