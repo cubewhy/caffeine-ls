@@ -1354,6 +1354,61 @@ fn check_class(
         }
     }
 
+    // §8.8.7: a constructor body that contains no explicit constructor
+    // invocation "implicitly begins with a superclass constructor invocation
+    // `super();`, an implicit invocation of the constructor of the direct
+    // superclass that takes no arguments". A real invocation, so §15.12.2.2
+    // requires that constructor to exist and be applicable (access: §6.6).
+    // javac reports `constructor {S} in class {S} cannot be applied to given
+    // types; ... found: no arguments` at the constructor body; the report here
+    // is IntelliJ's `There is no default constructor available in '{S}'` and
+    // reuses the identity of the synthesized-constructor report above. A
+    // declared constructor is checked whether or not the class is abstract:
+    // javac reports it for an abstract class's own constructors too.
+    if let ItemData::Class(class) = tree.data(item)
+        && let Some(super_ref) = &class.super_class
+    {
+        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+        let super_owner = super_ty
+            .as_reference(db)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| class.name.clone());
+        let bodies = hir::file_body_tree(db, file);
+        for child in &class.body {
+            let ItemData::Method(method) = tree.data(*child) else {
+                continue;
+            };
+            if !method.is_constructor() {
+                continue;
+            }
+            let Some(body_id) = method.body() else {
+                continue;
+            };
+            // §8.8.7: an explicit constructor invocation removes the implicit
+            // `super()` — `this(...)` delegates to another constructor of the
+            // class and `super(...)` names the superclass constructor itself.
+            let delegates = bodies.body(body_id).stmts.iter().any(|&stmt| {
+                matches!(
+                    bodies.stmt(stmt),
+                    hir_expand::body::StmtData::Expr(expr)
+                        if matches!(bodies.expr(*expr), hir_expand::body::ExprData::CtorCall { .. })
+                )
+            });
+            if delegates {
+                continue;
+            }
+            // The implicit `super()` cannot be applied when the superclass
+            // offers no accessible no-argument constructor.
+            if has_no_accessible_no_arg_ctor(db, scope, &super_ty, &ctx) == Some(true) {
+                out.push(DeclDiagnostic::NoDefaultConstructor {
+                    class: class.name.clone(),
+                    super_owner: super_owner.clone(),
+                    range: item_name_range(db, file, tree, *child),
+                });
+            }
+        }
+    }
+
     // §8.1.1.1: a non-abstract class — a class without the `abstract`
     // modifier, a record [§8.10] or an enum [§8.9] — must implement every
     // abstract method it inherits (or declares itself) with a concrete method

@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class NeedsArg {
+    NeedsArg(int x) {}
+}
+
+class Sub extends NeedsArg {
+    Sub() {
+    }
+}
+
+@7:4: no-default-constructor: There is no default constructor available in 'NeedsArg'

@@ -65,6 +65,84 @@ class Sub extends PrivateBase {}
 // Red: the superclass's only constructor is `private`, so the implicit
 // `super()` cannot reach it.
 
+// -- §8.8.7: the implicit super() of a *declared* constructor -----------------
+
+snapshot!(
+    declared_ctor_no_no_arg_super,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class NeedsArg {
+    NeedsArg(int x) {}
+}
+
+class Sub extends NeedsArg {
+    Sub() {
+    }
+}
+",
+    )])
+);
+// Red: `Sub()` contains no explicit constructor invocation, so its body begins
+// with the implicit `super()` — which cannot call `NeedsArg()`. The report is
+// anchored at the constructor's own name ([§8.8.7]).
+
+snapshot!(
+    declared_ctor_abstract_class,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class NeedsArg {
+    NeedsArg(int x) {}
+}
+
+abstract class Sub extends NeedsArg {
+    Sub() {
+    }
+}
+",
+    )])
+);
+// Red: unlike the *synthesized* default constructor — javac checks that one
+// only at the first concrete descendant — a declared constructor's implicit
+// `super()` is checked in an abstract class as well.
+
+snapshot!(
+    declared_ctor_delegates,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class NeedsArg {
+    NeedsArg() {}
+    NeedsArg(int x) {}
+}
+
+class Sub extends NeedsArg {
+    Sub(int x) {
+        super(x);
+    }
+    Sub() {
+        this(1);
+    }
+}
+
+class Chain extends NeedsArg {
+    Chain() {
+        super();
+    }
+}
+",
+    )])
+);
+// Green: an explicit `super(x)` and a `this(1)` delegation both replace the
+// implicit invocation, and `Chain`'s implicit `super()` finds `NeedsArg()`.
+
 // -- §8.8.7.1: recursive constructor invocation ------------------------------
 
 snapshot!(

@@ -1,0 +1,26 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class NeedsArg {
+    NeedsArg() {}
+    NeedsArg(int x) {}
+}
+
+class Sub extends NeedsArg {
+    Sub(int x) {
+        super(x);
+    }
+    Sub() {
+        this(1);
+    }
+}
+
+class Chain extends NeedsArg {
+    Chain() {
+        super();
+    }
+}
