@@ -1,0 +1,32 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+expression: out
+---
+FILE /src/com/example/Support.java:
+package com.example;
+
+public class Support {
+    public static final int answer = 42;
+
+    public static class Nested {}
+
+    public static int helper() {
+        return 1;
+    }
+}
+
+FILE /src/com/example/Imports.java:
+package com.example;
+
+import static com.example.Support.answer;
+import static com.example.Support.Nested;
+import static com.example.Support.helper;
+import static java.lang.Math.max;
+import static java.util.Collections.emptyList;
+
+class Imports {
+    Nested nested;
+    int a = answer;
+    int b = helper() + max(1, 2);
+    Object list = emptyList();
+}

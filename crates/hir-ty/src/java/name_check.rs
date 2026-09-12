@@ -31,9 +31,11 @@ use crate::{
     java::decl_check::DeclDiagnostic,
     java::deprecation::{self, DeprecatedReference},
     java::diagnostics::DiagLocation,
+    java::method::{InvocationContext, member_set, pick_field},
     java::range_ctx::range_ctx,
     java::release_api,
     java::resolve::{NameResolution, Resolver, item_data, resolve_name_checked, resolve_type_ref},
+    java::ty::Ty,
 };
 use hir_def::java::ranges;
 
@@ -665,6 +667,42 @@ pub(crate) fn import_diagnostics(
         }
     }
 
+    // §7.5.4: the prefix of a single-static import must name a *type*, and the
+    // imported name must be one of its static members (a nested type, a static
+    // field or a static method). javac: `package x does not exist` /
+    // `cannot find symbol`; the message is IntelliJ's `Cannot resolve symbol 'x'`
+    // and the range is the failing segment (the segment javac's caret names).
+    for import in tree
+        .imports
+        .iter()
+        .filter(|import| import.is_static && !import.is_asterisk)
+    {
+        let text = import.name.as_str();
+        let Some((owner, member)) = text.rsplit_once('.') else {
+            // `import static member;` — a type of the unnamed package; nothing
+            // observable to check.
+            continue;
+        };
+        let segments = ranges::import_segments(map, source, import);
+        let owner_last = segments.iter().rev().nth(1).map(|(_, range)| *range);
+        if !matches!(
+            resolve_name_checked(db, scope, &Resolver::for_file(tree), &Name::new(owner)),
+            NameResolution::Resolved(_)
+        ) {
+            out.push(DeclDiagnostic::UnresolvedStaticImport {
+                name: Name::new(owner),
+                range: owner_last,
+            });
+            continue;
+        }
+        if !static_member_exists(db, scope, tree, owner, member) {
+            out.push(DeclDiagnostic::UnresolvedStaticImport {
+                name: import.name.clone(),
+                range: segments.last().map(|(_, range)| *range),
+            });
+        }
+    }
+
     // §7.5.4: a static single import names one member of the type its prefix
     // names (`import static pkg.Type.member;`). JEP 247: both the type and the
     // member resolve against the runtime JDK here, so a member the release's
@@ -789,6 +827,39 @@ pub(crate) fn import_diagnostics(
         }
     }
     out
+}
+
+/// §7.5.4: whether `owner` declares the static member `member` — a nested
+/// type, a static field or a static method (`import static pkg.Type.member;`).
+/// The member may be *inherited* from a superclass or superinterface of
+/// `owner`: §7.5.4 admits a member "of" the named type, which includes the
+/// inherited ones, so the probes below search the whole member set.
+fn static_member_exists(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    tree: &ItemTree,
+    owner: &str,
+    member: &str,
+) -> bool {
+    // A nested type: `import static java.util.Map.Entry;`.
+    let nested = Name::new(&format!("{owner}.{member}"));
+    if matches!(
+        resolve_name_checked(db, scope, &Resolver::for_file(tree), &nested),
+        NameResolution::Resolved(_)
+    ) {
+        return true;
+    }
+    // A static field or method: the probe sites of body inference
+    // ([`crate::java::infer::expr::InferCtx::static_import_field`]), with the
+    // access control of the import's own compilation unit (§6.6.1).
+    let receiver = Ty::reference(db, owner, Vec::new());
+    let access = InvocationContext::for_import(tree.package.as_ref().map(|p| p.as_str()));
+    if pick_field(db, scope, &receiver, member, &access).is_some_and(|field| field.is_static) {
+        return true;
+    }
+    member_set(db, scope, &receiver, member, &access)
+        .iter()
+        .any(|method| method.is_static)
 }
 
 /// The type references *owned by a body* ([JLS §14], [§15]): the declared

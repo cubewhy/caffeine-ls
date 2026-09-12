@@ -10,7 +10,10 @@
 //! - the *package* of `import pkg.*;` must exist ([§7.5.2]) — javac rejects
 //!   `import java.*;` with `package java does not exist`;
 //! - the *declaring type* of `import static pkg.Type.*;` must exist
-//!   ([§7.5.4], [§7.5.2]).
+//!   ([§7.5.4], [§7.5.2]);
+//! - the *owner* of a single-static import (`import static pkg.Type.member;`)
+//!   must be a type — not a package — and must declare the imported member
+//!   ([§7.5.4]).
 
 #[macro_use]
 mod common;
@@ -206,3 +209,97 @@ class Body {
 // Green: the only *accessible* `Frame` is the public `tree.analysis.Frame`; the
 // package-private `org.objectweb.asm.Frame` (same simple name) is not a
 // candidate, so the simple name resolves unambiguously ([§7.5.2]).
+
+// -- §7.5.4: a single-static import imports a member of a *type* ---------------
+
+snapshot!(
+    static_import_owner_is_package,
+    check_class_diagnostics(&[
+        (
+            "/src/org/objectweb/asm/ClassWriter.java",
+            "\
+package org.objectweb.asm;
+
+public class ClassWriter {}
+",
+        ),
+        (
+            "/src/com/example/Main.java",
+            "\
+package com.example;
+
+import static org.objectweb.asm.ClassWriter;
+
+class Main {
+    ClassWriter writer;
+}
+",
+        ),
+    ])
+);
+// The prefix `org.objectweb.asm` is a *package*, not a type, so the import is
+// invalid: the owner segment is reported (javac's caret is that token:
+// `package org.objectweb does not exist`, `static import only from classes and
+// interfaces`) and the imported name binds nothing, so the field's use of
+// `ClassWriter` stays unresolved ([§7.5.4], [§6.5.5.1]).
+
+snapshot!(
+    static_import_missing_member,
+    check_class_diagnostics(&[(
+        "/src/com/example/Imports.java",
+        "\
+package com.example;
+
+import static java.util.Collections.nope;
+
+class Imports {}
+",
+    )])
+);
+// The owner `java.util.Collections` is a type, but it declares no static member
+// `nope` — javac reports `cannot find symbol` at the member name ([§7.5.4]).
+
+snapshot!(
+    static_import_member_kinds,
+    check_class_diagnostics(&[
+        (
+            "/src/com/example/Support.java",
+            "\
+package com.example;
+
+public class Support {
+    public static final int answer = 42;
+
+    public static class Nested {}
+
+    public static int helper() {
+        return 1;
+    }
+}
+",
+        ),
+        (
+            "/src/com/example/Imports.java",
+            "\
+package com.example;
+
+import static com.example.Support.answer;
+import static com.example.Support.Nested;
+import static com.example.Support.helper;
+import static java.lang.Math.max;
+import static java.util.Collections.emptyList;
+
+class Imports {
+    Nested nested;
+    int a = answer;
+    int b = helper() + max(1, 2);
+    Object list = emptyList();
+}
+",
+        ),
+    ])
+);
+// Green: §7.5.4 admits three member kinds — a static field, a nested type and a
+// static method — from a source class (the field, the nested type and the
+// method are ordinary members of a type) and from the JDK fixture
+// (`java.lang.Math.max`, `java.util.Collections.emptyList`).

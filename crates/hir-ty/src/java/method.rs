@@ -157,6 +157,23 @@ impl InvocationContext {
         }
     }
 
+    /// The access-control context of an import declaration
+    /// ([§7.5.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.5.4)):
+    /// an import appears at compilation-unit level, so the site has the unit's
+    /// package ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1))
+    /// and neither an enclosing class nor a superclass — the unnamed package is
+    /// `""`, as in [`InvocationContext::external`]. A static import naming a
+    /// package member the unit's own package declares is therefore valid, and
+    /// the mode is a static access ([§15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1)).
+    pub fn for_import(package: Option<&str>) -> Self {
+        Self {
+            mode: InvocationMode::Static,
+            enclosing_class: None,
+            package: Some(package.unwrap_or_default().to_owned()),
+            subclass_of: None,
+        }
+    }
+
     /// The invocation context of the same access site with the invocation mode
     /// ([JLS §15.12.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12.1))
     /// of the call set to `mode`.

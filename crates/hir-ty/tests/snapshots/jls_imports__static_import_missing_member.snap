@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+expression: out
+---
+FILE /src/com/example/Imports.java:
+package com.example;
+
+import static java.util.Collections.nope;
+
+class Imports {}
+
+@2:36: unresolved-static-import: Cannot resolve symbol 'nope'

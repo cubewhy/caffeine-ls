@@ -1023,9 +1023,24 @@ pub fn resolve_name_checked(
             }
             continue;
         }
-        // §7.5.4: a single-static import may name a nested type; only counts
-        // when the imported name actually denotes one.
+        // §7.5.4: a single-static import names a member of a *type*:
+        // `import static p.Type.Member` puts `Member` in scope only when `p.Type`
+        // denotes a type. The prefix of `import static org.objectweb.asm.ClassWriter;`
+        // is the package `org.objectweb.asm`, so the import is invalid and
+        // `ClassWriter` must stay unresolved at every use. javac:
+        // `compiler.err.doesnt.exist` / `.static.imp.only.classes.and.interfaces`.
         if *step == CandidateStep::StaticImportType {
+            let Some((owner, _)) = candidate.as_str().rsplit_once('.') else {
+                continue;
+            };
+            // The owner is a strictly shorter written name than the candidate,
+            // so this recursion is well founded.
+            if !matches!(
+                resolve_name_checked(db, scope, resolver, &Name::new(owner)),
+                NameResolution::Resolved(_)
+            ) {
+                continue;
+            }
             if hir::fqn_resolve(db, scope, candidate.as_str()).is_some() {
                 return NameResolution::Resolved(candidate.clone());
             }

@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_imports.rs
+expression: out
+---
+FILE /src/org/objectweb/asm/ClassWriter.java:
+package org.objectweb.asm;
+
+public class ClassWriter {}
+
+FILE /src/com/example/Main.java:
+package com.example;
+
+import static org.objectweb.asm.ClassWriter;
+
+class Main {
+    ClassWriter writer;
+}
+
+@5:4: cannot-resolve-type: Cannot resolve symbol 'ClassWriter'
+@2:28: unresolved-static-import: Cannot resolve symbol 'asm'
