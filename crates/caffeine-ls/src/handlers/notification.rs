@@ -47,6 +47,37 @@ pub fn on_did_open(
 ) -> anyhow::Result<()> {
     tracing::info!("didOpen {}", params.text_document.uri);
 
+    // A library view: the client's copy came from this server's content
+    // provider, and the file is read-only third-party code the server owns. The
+    // view is *not* given back to the database from here — the client's copy
+    // (possibly stale, if the view was pruned since) must never replace the text
+    // the server wrote; only the version is tracked, so a diagnostics pull
+    // reports the one the editor shows and an empty workspace-symbol query knows
+    // the file is open.
+    if let Some(path) = state.view_vfs_path(&params.text_document.uri) {
+        if state.vfs.read().0.file_id(&path).is_none() {
+            tracing::debug!(
+                %path,
+                "a library view was opened for a file this server no longer holds"
+            );
+            return Ok(());
+        }
+        if state
+            .mem_docs
+            .insert(
+                path.clone(),
+                DocumentData::new(
+                    params.text_document.version,
+                    params.text_document.text.into_bytes(),
+                ),
+            )
+            .is_err()
+        {
+            tracing::error!("duplicate DidOpenTextDocument: {}", path);
+        }
+        return Ok(());
+    }
+
     if let Ok(path) = from_proto::vfs_path(&params.text_document.uri) {
         let already_exists = state
             .mem_docs
@@ -81,6 +112,14 @@ pub(crate) fn on_did_change(
         "didChange {}",
         params.text_document.text_document_identifier.uri
     );
+
+    // A library view is read-only: the editor cannot edit a document it only
+    // renders, and the server is the authority on its text. A change that
+    // arrives anyway (a client quirk, a stale tab) must not reach the database.
+    if let Some(path) = state.view_vfs_path(&params.text_document.text_document_identifier.uri) {
+        tracing::debug!(%path, "ignoring a change to a read-only library view");
+        return Ok(());
+    }
 
     if let Ok(path) = from_proto::vfs_path(&params.text_document.text_document_identifier.uri) {
         let Some(DocumentData { version, data }) = state.mem_docs.get_mut(&path) else {
@@ -126,6 +165,18 @@ pub fn on_did_close(
     params: DidCloseTextDocumentParams,
 ) -> anyhow::Result<()> {
     tracing::info!("didClose {}", params.text_document.uri);
+
+    // Closing a view's tab says nothing about the file: it stays materialized,
+    // so navigating back (or re-opening the tab) answers from the database
+    // instead of decompiling again. The on-disk cache is not watched by the
+    // loader either, so there is nothing to invalidate.
+    if let Some(path) = state.view_vfs_path(&params.text_document.uri) {
+        if state.mem_docs.remove(&path).is_err() {
+            tracing::error!("orphan DidCloseTextDocument: {}", path);
+        }
+        return Ok(());
+    }
+
     if let Ok(path) = from_proto::vfs_path(&params.text_document.uri) {
         if state.mem_docs.remove(&path).is_err() {
             tracing::error!("orphan DidCloseTextDocument: {}", path);

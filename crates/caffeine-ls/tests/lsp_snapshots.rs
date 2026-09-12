@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use lsp_test::{LspHarness, lsp_fixture};
@@ -2199,8 +2200,6 @@ exit 0
 /// system.
 #[test]
 fn library_source_definition_materializes_and_navigates() {
-    use std::os::unix::fs::PermissionsExt;
-
     let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
 
     let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    public void greet(int count) {}\n}\n";
@@ -2211,59 +2210,11 @@ fn library_source_definition_materializes_and_navigates() {
     let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
     let app_path = "/src/main/java/app/App.java";
 
-    let shim_dir = tempfile::tempdir().unwrap();
-    let shim = shim_dir.path().join("gradle");
-    std::fs::write(
-        &shim,
-        r#"#!/bin/sh
-echo "WORKSPACE_MODEL_BEGIN"
-echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[{"type":"jar","path":"'$PWD'/lib/foo.jar","origin":"flat-file"}],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
-echo "WORKSPACE_MODEL_END"
-exit 0
-"#,
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&shim, perms).unwrap();
+    // The shim build system and a decompiler whose JVM records every run: a
+    // library that ships sources must never reach it.
+    let decompiler = Decompiler::new(foo_source);
 
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this test.
-    unsafe {
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", shim_dir.path().display(), path_var),
-        );
-    }
-
-    // A decompiler is configured — and its JVM fails loudly if it is ever run —
-    // so the test proves the *source* path wins: a library that ships sources
-    // must never reach the decompiler.
-    let jdk = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(jdk.path().join("bin")).unwrap();
-    let decompiler_runs = jdk.path().join("runs.log");
-    let java = jdk.path().join("bin/java");
-    std::fs::write(
-        &java,
-        format!(
-            "#!/bin/sh\necho run >> {}\nexit 1\n",
-            decompiler_runs.display()
-        ),
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&java).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&java, perms).unwrap();
-    let jars = tempfile::tempdir().unwrap();
-    let cfr = jars.path().join("cfr.jar");
-    std::fs::write(&cfr, b"not a jar; the fake java never reads it").unwrap();
-
-    let mut config = default_client_config();
-    config["java_home"] = json!(jdk.path());
-    config["decompiler"] = json!("cfr");
-    config["decompiler_jars"] = json!({ "cfr": &cfr });
-
-    let lsp = create_lsp_with_config(config, |root| {
+    let lsp = create_lsp_with_config(decompiler.config(), |root| {
         std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
         std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
         std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
@@ -2465,11 +2416,159 @@ exit 0
     );
 
     // Every navigation above resolved into an attached source archive, so the
-    // decompiler — whose JVM fails if it is ever started — was never consulted.
-    assert!(
-        !decompiler_runs.exists(),
+    // decompiler was never consulted: its JVM never started.
+    assert_eq!(
+        decompiler.jvm_runs(),
+        0,
         "a library with sources must never be decompiled"
     );
+}
+
+/// The source of the class the shared decompiler fixture's jar declares and
+/// the fake decompiler reproduces.
+const FOO_SOURCE: &str =
+    "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
+
+/// The workspace file that references it.
+const APP_SOURCE: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n}\n";
+
+/// The workspace-relative path of that file.
+const APP_PATH: &str = "/src/main/java/app/App.java";
+
+/// The fixture the three decompiler tests share: a shim build system, a
+/// dependency jar **with no attached sources**, and a fake JDK whose `bin/java`
+/// writes the Java a real decompiler would have produced — and records every
+/// run, so a test can prove a JVM was started exactly as often as it should
+/// have been.
+///
+/// The jar file itself is never read (the server only checks that it exists),
+/// and the fake `bin/java` finds its output directory the way the real tools are
+/// handed one: as `--outputdir <dir>`, else as the last argument.
+///
+/// The temp dirs must outlive the harness the fixture configures.
+struct Decompiler {
+    /// The fake JDK: `bin/java` is the stand-in for a decompiler, and the run
+    /// log the proof of whether it was started.
+    jdk: tempfile::TempDir,
+    /// The jar the configuration points the backend at. Never read, but the
+    /// server requires it to exist.
+    _jars: tempfile::TempDir,
+    /// The shim build system `PATH` points at.
+    _shim: tempfile::TempDir,
+    cfr: PathBuf,
+    runs: PathBuf,
+}
+
+impl Decompiler {
+    fn new(foo_source: &str) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+
+        let jdk = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(jdk.path().join("bin")).unwrap();
+        let produced = jdk.path().join("Foo.java");
+        std::fs::write(&produced, foo_source).unwrap();
+        let runs = jdk.path().join("runs.log");
+        let java = jdk.path().join("bin/java");
+        std::fs::write(
+            &java,
+            format!(
+                r#"#!/bin/sh
+echo run >> {runs}
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--outputdir" ]; then out="$arg"; fi
+  prev="$arg"
+  last="$arg"
+done
+if [ -z "$out" ]; then out="$last"; fi
+mkdir -p "$out/com/example"
+cp {produced} "$out/com/example/Foo.java"
+"#,
+                runs = runs.display(),
+                produced = produced.display(),
+            ),
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&java).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&java, perms).unwrap();
+
+        let jars = tempfile::tempdir().unwrap();
+        let cfr = jars.path().join("cfr.jar");
+        std::fs::write(&cfr, b"not a jar; the fake java never reads it").unwrap();
+
+        let shim = tempfile::tempdir().unwrap();
+        let shim_file = shim.path().join("gradle");
+        std::fs::write(
+            &shim_file,
+            r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[{"type":"jar","path":"'$PWD'/lib/foo.jar","origin":"flat-file"}],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&shim_file).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&shim_file, perms).unwrap();
+
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: env mutation is serialized by ENV_LOCK, which every caller
+        // holds for the duration of the test.
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{}", shim.path().display(), path_var));
+        }
+
+        Self {
+            jdk,
+            _jars: jars,
+            _shim: shim,
+            cfr,
+            runs,
+        }
+    }
+
+    /// The client configuration that selects the fake decompiler and the fake
+    /// JDK it runs on.
+    fn config(&self) -> serde_json::Value {
+        let mut config = default_client_config();
+        config["java_home"] = json!(self.jdk.path());
+        config["decompiler"] = json!("cfr");
+        config["decompiler_jars"] = json!({ "cfr": &self.cfr });
+        config
+    }
+
+    /// Writes the workspace of a test: an app file and the jar beside it. No
+    /// `lib/foo-sources.jar` is written — that is what makes the class
+    /// decompilable in the first place.
+    fn setup_workspace(&self, root: &std::path::Path, app_source: &str) {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+        std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
+        lsp_test::classfile::build_jar(
+            &root.join("lib/foo.jar"),
+            &[(
+                "com/example/Foo.class",
+                lsp_test::classfile::class_bytes(
+                    "com/example/Foo",
+                    "java/lang/Object",
+                    &[],
+                    &[("greet", 1)],
+                ),
+            )],
+        )
+        .unwrap();
+    }
+
+    /// How many times the fake decompiler's JVM has been started.
+    fn jvm_runs(&self) -> usize {
+        std::fs::read_to_string(&self.runs)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
 }
 
 /// A dependency jar with **no** sources at all: `textDocument/definition` on a
@@ -2483,121 +2582,23 @@ exit 0
 /// is never read (the server only checks that it exists).
 #[test]
 fn decompiled_library_definition_materializes_and_navigates() {
-    use std::os::unix::fs::PermissionsExt;
-
     let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
 
-    let foo_source =
-        "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n}\n";
-    let app_path = "/src/main/java/app/App.java";
+    let decompiler = Decompiler::new(FOO_SOURCE);
+    let lsp = create_lsp_with_config(decompiler.config(), |root| {
+        decompiler.setup_workspace(root, APP_SOURCE);
+    });
+    let jvm_runs = || decompiler.jvm_runs();
 
-    // The "JDK": a `bin/java` that finds its output directory — CFR is handed
-    // `--outputdir <dir>`, anything else the destination as the last argument —
-    // and writes the Java the decompiler would have produced.
-    let jdk = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(jdk.path().join("bin")).unwrap();
-    let produced = jdk.path().join("Foo.java");
-    std::fs::write(&produced, foo_source).unwrap();
-    let runs = jdk.path().join("runs.log");
-    let java = jdk.path().join("bin/java");
-    std::fs::write(
-        &java,
-        format!(
-            r#"#!/bin/sh
-echo run >> {runs}
-out=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--outputdir" ]; then out="$arg"; fi
-  prev="$arg"
-  last="$arg"
-done
-if [ -z "$out" ]; then out="$last"; fi
-mkdir -p "$out/com/example"
-cp {produced} "$out/com/example/Foo.java"
-"#,
-            runs = runs.display(),
-            produced = produced.display(),
-        ),
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&java).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&java, perms).unwrap();
-
-    let jars = tempfile::tempdir().unwrap();
-    let cfr = jars.path().join("cfr.jar");
-    std::fs::write(&cfr, b"not a jar; the fake java never reads it").unwrap();
-
-    let shim_dir = tempfile::tempdir().unwrap();
-    let shim = shim_dir.path().join("gradle");
-    std::fs::write(
-        &shim,
-        r#"#!/bin/sh
-echo "WORKSPACE_MODEL_BEGIN"
-echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[{"type":"jar","path":"'$PWD'/lib/foo.jar","origin":"flat-file"}],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
-echo "WORKSPACE_MODEL_END"
-exit 0
-"#,
-    )
-    .unwrap();
-    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&shim, perms).unwrap();
-
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this test.
-    unsafe {
-        std::env::set_var(
-            "PATH",
-            format!("{}:{}", shim_dir.path().display(), path_var),
-        );
-    }
-
-    let lsp = create_lsp_with_config(
-        json!({
-            "java_home": jdk.path(),
-            "decompiler": "cfr",
-            "decompiler_jars": { "cfr": &cfr },
-        }),
-        |root| {
-            std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
-            std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
-            std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
-            // No `lib/foo-sources.jar`: the class has no declaration to read.
-            lsp_test::classfile::build_jar(
-                &root.join("lib/foo.jar"),
-                &[(
-                    "com/example/Foo.class",
-                    lsp_test::classfile::class_bytes(
-                        "com/example/Foo",
-                        "java/lang/Object",
-                        &[],
-                        &[("greet", 1)],
-                    ),
-                )],
-            )
-            .unwrap();
-        },
-    );
-
-    let jvm_runs = || {
-        std::fs::read_to_string(&runs)
-            .unwrap_or_default()
-            .lines()
-            .count()
-    };
-
-    lsp.open_document(app_path);
+    lsp.open_document(APP_PATH);
     lsp.wait_until_workspace_is_loaded();
     assert_eq!(jvm_runs(), 0, "loading the workspace decompiles nothing");
 
     let params = json!({
-        "textDocument": { "uri": lsp.uri(app_path) },
+        "textDocument": { "uri": lsp.uri(APP_PATH) },
         "position": {
-            "line": position_of(app_source, "com.example.Foo()").0,
-            "character": position_of(app_source, "com.example.Foo()").1,
+            "line": position_of(APP_SOURCE, "com.example.Foo()").0,
+            "character": position_of(APP_SOURCE, "com.example.Foo()").1,
         },
     });
     let response = lsp.request("textDocument/definition", params.clone());
@@ -2621,7 +2622,7 @@ exit 0
     assert!(path.is_file(), "{}", path.display());
     assert_definition_name(
         &locations[0]["range"],
-        foo_source,
+        FOO_SOURCE,
         "public class Foo",
         "Foo",
     );
@@ -2652,6 +2653,235 @@ exit 0
         Some(0),
         "decompiled library files report no diagnostics: {report:?}"
     );
+}
+
+/// A client that serves library views itself: with `library_uri_scheme`
+/// configured, a definition never answers the cache path the view was
+/// materialized at but a `<scheme>://` URI built from the view layout, and
+/// `caffeine_ls/libraryFileContent` hands back that view's text. The URI is
+/// client input on the way back in, so one naming a backend this server does
+/// not have — or a `file://` URI of the very file — is refused rather than
+/// answered with an empty document.
+#[test]
+fn library_view_uri_scheme_is_served_to_the_client() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let decompiler = Decompiler::new(FOO_SOURCE);
+    let mut config = decompiler.config();
+    config["library_uri_scheme"] = json!("caffeine-ls");
+    let lsp = create_lsp_with_config(config, |root| {
+        decompiler.setup_workspace(root, APP_SOURCE);
+    });
+
+    lsp.open_document(APP_PATH);
+    lsp.wait_until_workspace_is_loaded();
+
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(APP_PATH) },
+            "position": {
+                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
+                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+            },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    assert_definition_name(
+        &locations[0]["range"],
+        FOO_SOURCE,
+        "public class Foo",
+        "Foo",
+    );
+
+    // `caffeine-ls://<library-hex>/decompiled/cfr/com/example/Foo.java`: the view
+    // is named by its library and its path inside the view, never by the cache
+    // directory the server happens to keep it in.
+    let uri = locations[0]["uri"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected a URI, got: {:?}", locations[0]["uri"]));
+    let (library, view) = uri
+        .strip_prefix("caffeine-ls://")
+        .and_then(|rest| rest.split_once('/'))
+        .unwrap_or_else(|| panic!("expected a caffeine-ls URI, got {uri}"));
+    assert_eq!(view, "decompiled/cfr/com/example/Foo.java", "{uri}");
+    assert_eq!(library.len(), 16, "a library id in hex: {uri}");
+    assert!(
+        library
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+        "a library id in lowercase hex: {uri}"
+    );
+
+    // The content provider reads the view through the request, so the client
+    // needs no access to the cache directory.
+    let content = lsp.request("caffeine_ls/libraryFileContent", json!({ "uri": uri }));
+    assert_eq!(content["content"].as_str(), Some(FOO_SOURCE));
+
+    // A backend this server does not serve, and a plain `file://` URI of the
+    // very file the view holds, are both refused.
+    for bad in [
+        format!("caffeine-ls://{library}/decompiled/jd/com/example/Foo.java"),
+        format!("caffeine-ls://{library}/classes/com/example/Foo.java"),
+        lsp.uri("/src/main/java/app/App.java").to_string(),
+    ] {
+        let err = lsp
+            .request_raw("caffeine_ls/libraryFileContent", json!({ "uri": bad }))
+            .expect_err("a URI that names no served view is an error");
+        assert!(err.message.contains("not a library view"), "{bad}: {err:?}");
+    }
+
+    // A path that tries to climb out of the cache is refused too: the URI
+    // parser folds the `..` segments away, and what is left names no view.
+    let climbing = format!("caffeine-ls://{library}/decompiled/cfr/../../../../etc/passwd");
+    let err = lsp
+        .request_raw("caffeine_ls/libraryFileContent", json!({ "uri": climbing }))
+        .expect_err("a path out of the cache is an error");
+    assert!(
+        err.message.contains("not a library view") || err.message.contains("failed to read"),
+        "{err:?}"
+    );
+
+    // The JVM ran exactly once: the definition deferred, the content request
+    // served the materialized view.
+    assert_eq!(decompiler.jvm_runs(), 1);
+}
+
+/// The client attaches to the view scheme just like to a workspace file (the
+/// extension's `documentSelector` lists it), so a decompiled tab is a document
+/// the server answers *about*: symbols, navigation and hover inside it, and a
+/// diagnostics pull that stays empty — a library view is third-party code
+/// nobody in the editor can fix. The view is read-only for the same reason: a
+/// change that reaches the server anyway never reaches the database, and
+/// closing the tab does not throw the materialized file away.
+#[test]
+fn library_view_document_supports_ide_features() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let decompiler = Decompiler::new(FOO_SOURCE);
+    let mut config = decompiler.config();
+    config["library_uri_scheme"] = json!("caffeine-ls");
+    let lsp = create_lsp_with_config(config, |root| {
+        decompiler.setup_workspace(root, APP_SOURCE);
+    });
+
+    lsp.open_document(APP_PATH);
+    lsp.wait_until_workspace_is_loaded();
+
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(APP_PATH) },
+            "position": {
+                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
+                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+            },
+        }),
+    );
+    let view: lsp_types::Uri = serde_json::from_value(response[0]["uri"].clone()).unwrap();
+
+    // The editor opens the view with exactly the text the provider served.
+    let content = lsp.request("caffeine_ls/libraryFileContent", json!({ "uri": view }));
+    assert_eq!(content["content"].as_str(), Some(FOO_SOURCE));
+    lsp.open_uri(&view, "java", FOO_SOURCE);
+
+    // -- the outline of the view.
+    let symbols = lsp.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": view } }),
+    );
+    let names: Vec<&str> = symbols
+        .as_array()
+        .unwrap_or_else(|| panic!("expected document symbols, got {symbols:?}"))
+        .iter()
+        .filter_map(|symbol| symbol["name"].as_str())
+        .collect();
+    assert!(names.contains(&"Foo"), "{symbols:?}");
+
+    // -- navigation inside the view: the declaration's own name answers with
+    // the declaration, in the view itself.
+    let at = FOO_SOURCE.find("public class Foo").unwrap() + "public class ".len();
+    let before = &FOO_SOURCE[..at];
+    let params = json!({
+        "textDocument": { "uri": view },
+        "position": {
+            "line": before.matches('\n').count() as u32,
+            "character": before.rfind('\n').map_or(0, |i| before[i + 1..].len()) as u32,
+        },
+    });
+    let inside = lsp.request("textDocument/definition", params.clone());
+    let locations = inside
+        .as_array()
+        .unwrap_or_else(|| panic!("expected a location inside the view, got {inside:?}"));
+    assert_eq!(locations.len(), 1, "{inside:?}");
+    assert_eq!(
+        locations[0]["uri"], response[0]["uri"],
+        "the declaration is in the view it was asked from"
+    );
+
+    // -- hover inside the view renders the declaration it falls on.
+    let hover = lsp.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": view },
+            "position": params["position"].clone(),
+        }),
+    );
+    let hover_value = hover["contents"]["value"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected hover contents, got {hover:?}"));
+    assert!(hover_value.contains("class Foo"), "{hover_value:?}");
+
+    // -- a library view reports no diagnostics, so the client's Problems stay
+    // empty for third-party code.
+    let report = lsp.request(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": view } }),
+    );
+    assert_eq!(
+        report["items"].as_array().map(Vec::len),
+        Some(0),
+        "{report:?}"
+    );
+
+    // -- read-only: an edit that reaches the server anyway is ignored, so the
+    // database still holds the server's text and a pull stays empty.
+    lsp.change_uri(
+        &view,
+        1,
+        "package com.example;\npublic class Foo { this is not java }\n",
+    );
+    let report = lsp.request(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": view } }),
+    );
+    assert_eq!(
+        report["items"].as_array().map(Vec::len),
+        Some(0),
+        "a view never reports a diagnostic about an edit nobody can make: {report:?}"
+    );
+    let after_edit = lsp.request("textDocument/definition", params);
+    assert_eq!(
+        after_edit, inside,
+        "the view's text is the server's, not the one the client sent"
+    );
+
+    // -- closing the tab keeps the materialized file: navigating back answers
+    // without starting a second JVM.
+    lsp.close_uri(&view);
+    let reopened = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(APP_PATH) },
+            "position": {
+                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
+                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+            },
+        }),
+    );
+    assert_eq!(reopened, response);
+    assert_eq!(decompiler.jvm_runs(), 1);
 }
 
 /// A document no configured source root covers — a scratch file, or a file

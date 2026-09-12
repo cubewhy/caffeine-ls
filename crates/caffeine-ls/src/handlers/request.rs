@@ -249,3 +249,59 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
         range: None,
     }))
 }
+
+/// `caffeine_ls/libraryFileContent`: the content provider a client reads a
+/// library view through, instead of reaching into the server's cache directory
+/// (whose path it does not know and whose layout is the server's business).
+pub struct LibraryFileContent;
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct LibraryFileContentParams {
+    /// A `caffeine-ls://` URI the server handed out in a definition, hover or
+    /// symbol result.
+    pub uri: Uri,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct LibraryFileContentResult {
+    /// The file's text. A library view is always Java source — materialized
+    /// from an archive or produced by a decompiler.
+    pub content: String,
+}
+
+impl Request for LibraryFileContent {
+    type Params = LibraryFileContentParams;
+    type Result = LibraryFileContentResult;
+    const METHOD: LspRequestMethod<'static> =
+        LspRequestMethod::Custom("caffeine_ls/libraryFileContent");
+    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ClientToServer;
+}
+
+/// Reads a library view out of the cache. The URI is client input, so it is
+/// validated like any other: a scheme, view or library this server does not
+/// serve, or a `..` on the way out of the cache, is an error. A missing file is
+/// one too — the view was pruned, and the client shows that as a document
+/// saying so.
+pub fn on_library_file_content(
+    state: GlobalStateSnapshot,
+    params: LibraryFileContentParams,
+) -> anyhow::Result<LibraryFileContentResult> {
+    tracing::info!(uri = ?params.uri, "request library file content");
+
+    let Some(scheme) = state.config.library_uri_scheme() else {
+        anyhow::bail!("no library view scheme is configured");
+    };
+    let Some(path) = crate::library_view::view_path(
+        &state.config.get_cache_dir(),
+        scheme,
+        &params.uri,
+        crate::decompiler::is_backend,
+    ) else {
+        anyhow::bail!("{} is not a library view this server serves", params.uri);
+    };
+
+    let target: &std::path::Path = path.as_ref();
+    let content = std::fs::read_to_string(target)
+        .map_err(|err| anyhow::anyhow!("failed to read {path}: {err}"))?;
+    Ok(LibraryFileContentResult { content })
+}

@@ -499,6 +499,51 @@ impl LspHarness {
             .unwrap_or_else(|_| panic!("server closed the connection before {method}"));
     }
 
+    /// Sends `textDocument/didOpen` for a URI that is not a workspace file — a
+    /// document the server serves itself (a library view over a custom scheme),
+    /// opened in the editor with `text` the client obtained out of band.
+    pub fn open_uri(&self, uri: &Uri, language_id: &'static str, text: &str) -> Uri {
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: language_id.into(),
+                version: 0,
+                text: text.to_owned(),
+            },
+        };
+        let json_params =
+            serde_json::to_value(params).expect("Failed to serialize DidOpenTextDocumentParams");
+        self.notify("textDocument/didOpen", json_params);
+        uri.clone()
+    }
+
+    /// Sends `textDocument/didChange` for `uri` with the whole document
+    /// replaced, mirroring an editor edit.
+    pub fn change_uri(&self, uri: &Uri, version: i32, text: &str) {
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier::new(
+                version,
+                TextDocumentIdentifier { uri: uri.clone() },
+            ),
+            content_changes: vec![
+                lsp_types::TextDocumentContentChangeWholeDocument::new(text.to_owned()).into(),
+            ],
+        };
+        let json_params =
+            serde_json::to_value(params).expect("Failed to serialize DidChangeTextDocumentParams");
+        self.notify("textDocument/didChange", json_params);
+    }
+
+    /// Sends `textDocument/didClose` for any URI.
+    pub fn close_uri(&self, uri: &Uri) {
+        let params = DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+        };
+        let json_params =
+            serde_json::to_value(params).expect("Failed to serialize DidCloseTextDocumentParams");
+        self.notify("textDocument/didClose", json_params);
+    }
+
     pub fn open_document(&self, relative_path: &str) -> Uri {
         let path = self
             .workspace_root

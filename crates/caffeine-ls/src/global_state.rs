@@ -19,6 +19,7 @@ use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use vfs::{AbsPathBuf, FileId, VfsPath};
 
 use crate::config::Config;
+use crate::library_view;
 
 pub enum BackgroundTaskEvent {
     ProbeWorkspace {
@@ -456,6 +457,13 @@ impl GlobalState {
         }
     }
 
+    /// The vfs path a *library view* URI names, `None` for every other URI. The
+    /// notification handlers need the same resolution the request handlers get
+    /// from [`GlobalStateSnapshot::url_to_file_id`], without a snapshot.
+    pub(crate) fn view_vfs_path(&self, uri: &Uri) -> Option<VfsPath> {
+        Some(VfsPath::from(library_view_path(&self.config, uri)?))
+    }
+
     /// Re-runs async requests that were cancelled by a pending salsa write, on
     /// a fresh snapshot that observes the change just applied to the database.
     /// Called from the main loop after `process_changes`.
@@ -499,6 +507,12 @@ impl GlobalStateSnapshot {
 
     /// Returns `None` if the file was excluded.
     pub(crate) fn url_to_file_id(&self, url: &Uri) -> anyhow::Result<Option<FileId>> {
+        // A library view has no path the client could resolve on its own: the
+        // view scheme is what names it on the way in, exactly as
+        // [`Self::file_id_to_url`] spells it on the way out.
+        if let Some(path) = library_view_path(&self.config, url) {
+            return vfs_path_to_file_id(&self.vfs_read(), &VfsPath::from(path));
+        }
         url_to_file_id(&self.vfs_read(), url)
     }
 
@@ -509,6 +523,18 @@ impl GlobalStateSnapshot {
         let path = path
             .as_path()
             .ok_or_else(|| anyhow::format_err!("file has no absolute path: {file_id:?}"))?;
+        // A materialized library file is an implementation detail of this
+        // server: when the client serves library views itself, it is named by
+        // its view — `<scheme>://<library>/…/<rel>` — and never by the cache
+        // path it happens to live at. Only a client that configured a scheme
+        // pays for the layout lookup.
+        if let Some(scheme) = self.config.library_uri_scheme()
+            && let Some((view, library, rel)) =
+                library_view::relative_to_view(&self.config.get_cache_dir(), path)
+            && let Some(uri) = library_view::uri(scheme, &view, &library, &rel)
+        {
+            return Ok(uri);
+        }
         Ok(crate::lsp::to_proto::url(path))
     }
 
@@ -555,6 +581,21 @@ impl GlobalStateSnapshot {
 pub(crate) fn url_to_file_id(vfs: &vfs::Vfs, url: &Uri) -> anyhow::Result<Option<FileId>> {
     let path = from_proto::vfs_path(url)?;
     vfs_path_to_file_id(vfs, &path)
+}
+
+/// The cache path a *library view* URI names: `None` when the client configured
+/// no view scheme, or when the URI is not one of this server's views (another
+/// scheme, an unknown backend, a `..` out of the cache). The one place both the
+/// request snapshot and the notification handlers resolve a view from, so a
+/// document the client opened is the same file a definition answers with.
+fn library_view_path(config: &Config, uri: &Uri) -> Option<AbsPathBuf> {
+    let scheme = config.library_uri_scheme()?;
+    library_view::view_path(
+        &config.get_cache_dir(),
+        scheme,
+        uri,
+        crate::decompiler::is_backend,
+    )
 }
 
 /// Returns `None` if the file was excluded or is no longer known to the vfs

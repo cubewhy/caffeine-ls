@@ -288,8 +288,14 @@ mod tests {
 
         // A file of the decompiled view of a backend nobody registered.
         assert!(servable("caffeine-ls://0123456789abcdef/decompiled/jd/1.java").is_none());
-        // A segment that would climb out of the cache directory.
+        // A path that tries to climb out of the cache directory: the URI parser
+        // folds dot segments away before `view_path` sees them (for `..` and
+        // for `%2e%2e` alike), and what is left names no view. `view_path`
+        // refuses a literal `..` on top of that, because a URI is
+        // client-supplied input and the parsing rules above are not this
+        // module's to rely on.
         assert!(servable("caffeine-ls://0123456789abcdef/source/../../etc/passwd").is_none());
+        assert!(servable("caffeine-ls://0123456789abcdef/source/%2e%2e/etc/passwd").is_none());
         // Another client's scheme, or this one without a library.
         assert!(servable("file://0123456789abcdef/source/com/example/Foo.java").is_none());
         assert!(servable("caffeine-ls:///source/com/example/Foo.java").is_none());
