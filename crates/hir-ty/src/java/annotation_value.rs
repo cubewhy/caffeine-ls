@@ -502,28 +502,36 @@ fn conditional_kind(
 
 // --- names ([§6.5.6], [§4.12.4]) --------------------------------------------
 
-/// The verdict of a name element value ([§6.5.6.1], [§6.5.6.2], [§7.5.4]): the
-/// name is resolved to a field and [§4.12.4] decides whether the field is a
-/// *constant variable*.
+/// The declaration a name element value denotes ([§6.5.6.1], [§6.5.6.2],
+/// [§7.5.4]) — the lookup half of [`name_verdict`], shared with the
+/// declaration navigation the IDE performs on a pair's value.
 ///
 /// A simple name (`qualifier` is `None`) is looked up in every class-like
 /// declaration enclosing the value's item, innermost first, and then in the
 /// declaring type of every static import that could bind it ([§7.5.4]). A
 /// qualified name's qualifier must denote a type ([§6.5.6.2]); when it does
-/// not, the value is not a qualified name at all ([`NameKind::NotQualified`]).
+/// not, the value is not a qualified name at all ([`NameTarget::NotQualified`]).
 /// Field lookup is access-checked ([§6.6]), so a name that denotes no
-/// accessible field is [`NameKind::Unresolved`] — the caller reports `Cannot
-/// resolve symbol`.
+/// accessible field is [`NameTarget::Unresolved`].
 ///
 /// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
 /// [§6.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6
-/// [§4.12.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4
-fn name_verdict(
+pub(crate) enum NameTarget {
+    /// The field the name denotes.
+    Field(FieldData),
+    /// The qualifier is not a type name — `this`, `super` or a variable — so
+    /// the qualified form is not a qualified name of [§6.5.6.2]. Never
+    /// returned for a simple name.
+    NotQualified,
+    /// The name denotes no *accessible* field.
+    Unresolved,
+}
+
+pub(crate) fn name_target(
     cx: &ValueCtx<'_>,
     qualifier: Option<&Name>,
     member: &Name,
-    visited: &mut FxHashSet<(FileId, ItemId)>,
-) -> NameKind {
+) -> NameTarget {
     let db = cx.db;
     let ctx = access_context(db, cx.file, cx.item);
     let Some(qualifier) = qualifier else {
@@ -542,26 +550,48 @@ fn name_verdict(
         for fqn in candidates {
             let receiver = Ty::reference(db, fqn, Vec::new());
             if let Some(field) = pick_field(db, cx.scope, &receiver, member.as_str(), &ctx) {
-                return NameKind::Field(field_kind(cx, &field, visited));
+                return NameTarget::Field(field);
             }
         }
-        return NameKind::Unresolved;
+        return NameTarget::Unresolved;
     };
     // §6.5.6.2: `TypeName.Identifier` — the qualifier must denote a type.
     let Some(receiver) = type_of_name(cx, qualifier) else {
-        return NameKind::NotQualified;
+        return NameTarget::NotQualified;
     };
     match pick_field(db, cx.scope, &receiver, member.as_str(), &ctx) {
-        // §6.5.6.2: the member a *type name* qualifies must be `static` — a
-        // type denotes no instance to read one from, as javac's
-        // `non-static variable x cannot be referenced from a static context`
-        // reports. The value is no constant variable then, so the caller's
-        // constant-expression rule reports it.
-        Some(field) if !field.is_static => {
-            NameKind::Field(ConstKind::NotConstant { ty: Some(field.ty) })
+        Some(field) => NameTarget::Field(field),
+        None => NameTarget::Unresolved,
+    }
+}
+
+/// The verdict of a name element value ([§6.5.6.1], [§6.5.6.2], [§7.5.4]): the
+/// name is resolved to a field and [§4.12.4] decides whether the field is a
+/// *constant variable*.
+///
+/// [§6.5.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6
+/// [§6.6]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6
+/// [§4.12.4]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12.4
+fn name_verdict(
+    cx: &ValueCtx<'_>,
+    qualifier: Option<&Name>,
+    member: &Name,
+    visited: &mut FxHashSet<(FileId, ItemId)>,
+) -> NameKind {
+    match name_target(cx, qualifier, member) {
+        NameTarget::Field(field) => {
+            // §6.5.6.2: the member a *type name* qualifies must be `static` — a
+            // type denotes no instance to read one from, as javac's
+            // `non-static variable x cannot be referenced from a static context`
+            // reports. The value is no constant variable then, so the caller's
+            // constant-expression rule reports it.
+            if qualifier.is_some() && !field.is_static {
+                return NameKind::Field(ConstKind::NotConstant { ty: Some(field.ty) });
+            }
+            NameKind::Field(field_kind(cx, &field, visited))
         }
-        Some(field) => NameKind::Field(field_kind(cx, &field, visited)),
-        None => NameKind::Unresolved,
+        NameTarget::NotQualified => NameKind::NotQualified,
+        NameTarget::Unresolved => NameKind::Unresolved,
     }
 }
 

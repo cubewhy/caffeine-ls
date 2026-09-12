@@ -372,6 +372,18 @@ pub fn type_ref_range(
     node_of(map, source, tyref.node).map(|node| node.text_range())
 }
 
+/// The source range of an annotation's whole syntax node — the
+/// `ANNOTATION`/`MARKER_ANNOTATION` the item tree anchored
+/// ([`ItemAnnotationRef::node`]), which contains its name and every
+/// element-value pair in its argument list.
+pub fn annotation_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    annotation: &ItemAnnotationRef,
+) -> Option<TextRange> {
+    node_of(map, source, annotation.node).map(|node| node.text_range())
+}
+
 /// The source range of an annotation's (possibly qualified) name — the first
 /// `QUALIFIED_NAME` descendant of its syntax node (mirror of
 /// `annotation_name_ref`).

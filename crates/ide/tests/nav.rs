@@ -565,6 +565,186 @@ fn goto_declaration_reference_matrix() {
     );
 }
 
+// -- annotation element-value pairs ([JLS §9.7.1]) ----------------------------------
+// A pair's name denotes the annotation interface's element ([§9.6.1]); a name
+// inside its value denotes what the same name denotes in the scope of the
+// declaration that carries the annotation ([§6.5.5.1]): a class literal's
+// type ([§15.8.2]), a nested annotation's interface ([§9.7.1]), or a field
+// ([§6.5.6]). The fixture is javac-valid, and every target below is a
+// declaration of the file (the source set's classpath is empty).
+
+const ANNOTATION_SRC: &str = r#"package com.example;
+
+import static com.example.Ann.FLAG;
+import static com.example.Mode.FAST;
+
+enum Mode {
+    FAST,
+    SLOW
+}
+
+@interface Inner {
+    String value();
+}
+
+@interface Nums {
+    int MAX = 9;
+}
+
+@interface Ann {
+    int FLAG = 1;
+
+    String name();
+
+    int count() default 0;
+
+    Class<?> type();
+
+    Mode mode();
+
+    Inner inner();
+
+    int[] nums();
+
+    Mode[] modes();
+
+    Nums nums2();
+}
+
+class Consts {
+    static final int CONST = 7;
+}
+
+@Ann(
+    name = "x",
+    count = FLAG,
+    type = Holder.class,
+    mode = FAST,
+    inner = @Inner(value = "y"),
+    nums = { 1, Consts.CONST, 2 * 3 },
+    modes = { Mode.SLOW, Mode.FAST },
+    nums2 = @Nums()
+)
+class Holder {
+    static final int LOCAL = 7;
+
+    @Ann(
+        name = "f",
+        count = LOCAL,
+        type = Holder.class,
+        mode = Mode.FAST,
+        inner = @Inner(value = "q"),
+        nums = { LOCAL },
+        modes = { Mode.FAST },
+        nums2 = @Nums()
+    )
+    int field;
+
+    @Ann(
+        name = "z",
+        count = LOCAL,
+        type = Holder.class,
+        mode = Mode.FAST,
+        inner = @Inner(value = "w"),
+        nums = { LOCAL },
+        modes = { Mode.FAST },
+        nums2 = @Nums()
+    )
+    void annotated() {
+        @Ann(
+            name = "v",
+            count = LOCAL,
+            type = Holder.class,
+            mode = Mode.FAST,
+            inner = @Inner(value = "u"),
+            nums = { LOCAL },
+            modes = { Mode.FAST },
+            nums2 = @Nums()
+        )
+        int local = 0;
+    }
+}
+"#;
+
+/// The references of [`ANNOTATION_SRC`]'s element-value pairs: the needle
+/// locates the reference (at its `occurrence`-th occurrence), `declaration` is
+/// a needle inside the declaration it resolves to, and `name` is that
+/// declaration's own name.
+const ANNOTATION_GOTO: &[(&str, usize, &str, &str)] = &[
+    // §9.6.1: a pair's name denotes the annotation interface's element — the
+    // method the interface declares under it. The class, the member and the
+    // body annotation are all covered (the last two carry their values in the
+    // expression arena, not in the item tree).
+    ("name = \"x\"", 0, "String name();", "name"),
+    ("count = FLAG", 0, "int count() default 0;", "count"),
+    ("type = Holder.class", 0, "Class<?> type();", "type"),
+    ("mode = FAST", 0, "Mode mode();", "mode"),
+    ("inner = @Inner", 0, "Inner inner();", "inner"),
+    ("nums = { 1", 0, "int[] nums();", "nums"),
+    ("modes = { Mode.SLOW", 0, "Mode[] modes();", "modes"),
+    ("nums2 = @Nums", 0, "Nums nums2();", "nums2"),
+    ("count = LOCAL", 1, "int count() default 0;", "count"),
+    ("name = \"f\"", 0, "String name();", "name"),
+    // A nested annotation's own pairs are read the same way ([§9.7.1]).
+    ("value = \"y\"", 0, "String value();", "value"),
+    ("value = \"q\"", 0, "String value();", "value"),
+    ("value = \"u\"", 0, "String value();", "value"),
+    // §6.5.6.1/§7.5.4: a simple name reads a field of the item's own class, or
+    // the member a static import puts in scope.
+    ("LOCAL }", 0, "static final int LOCAL = 7;", "LOCAL"),
+    ("FLAG,", 0, "int FLAG = 1;", "FLAG"),
+    ("FAST,", 0, "FAST,", "FAST"),
+    // §6.5.6.2: a qualified name reads a static field of the type its
+    // qualifier denotes — and the qualifier itself is a type reference.
+    ("Consts.CONST", 0, "class Consts", "Consts"),
+    ("CONST,", 0, "static final int CONST = 7;", "CONST"),
+    ("Mode.SLOW", 0, "enum Mode", "Mode"),
+    ("SLOW,", 0, "SLOW", "SLOW"),
+    // §15.8.2: a class literal names its type.
+    ("Holder.class", 0, "class Holder", "Holder"),
+    // §9.7.1: a nested annotation names its annotation interface.
+    ("Inner(value", 0, "@interface Inner", "Inner"),
+    ("Nums()", 0, "@interface Nums", "Nums"),
+];
+
+/// The references of [`ANNOTATION_SRC`]'s pairs that name no declaration: a
+/// value that is a literal.
+const ANNOTATION_NONE: &[(&str, usize)] = &[("\"x\"", 0), ("2 * 3", 0)];
+
+/// The pair's name is read through the lexer's Unicode translation ([JLS
+/// §3.3]): `\u006eame` writes the element `name`, so the raw text of the
+/// token names no declaration of its own.
+#[test]
+fn goto_annotation_pair_name_through_unicode_escape() {
+    let fixture = test_file(
+        "package com.example;\n\n@interface Ann { String name(); }\n\n@Ann(\\u006eame = \"x\")\nclass C {}\n",
+    );
+    assert_targets_name(&fixture, "\\u006eame", 0, "String name();", "name");
+}
+
+#[test]
+fn goto_annotation_element_pair_matrix() {
+    let fixture = test_file(ANNOTATION_SRC);
+    for &(needle, occurrence, declaration, name) in ANNOTATION_GOTO {
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
+    }
+    for &(needle, occurrence) in ANNOTATION_NONE {
+        assert!(
+            goto_targets(&fixture, needle, occurrence).is_empty(),
+            "case {needle:?}#{occurrence}"
+        );
+    }
+    let mut cases: Vec<(&str, usize)> = ANNOTATION_GOTO
+        .iter()
+        .map(|&(needle, occurrence, ..)| (needle, occurrence))
+        .collect();
+    cases.extend(ANNOTATION_NONE.iter().copied());
+    assert_snapshot!(
+        "goto_annotation_element_pair_matrix",
+        render_nav_many(&fixture, &cases)
+    );
+}
+
 // -- type parameters ([JLS §4.4]) ---------------------------------------------------
 // A written type variable denotes the *parameter* that declares it — the
 // narrowest declaration of the name ([§6.4.1]), never a class of the same

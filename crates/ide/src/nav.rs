@@ -31,6 +31,14 @@
 //! `import` — resolves the written name in the scope of the declaration that
 //! carries it ([§6.5.5.1], [§7.5]).
 //!
+//! An annotation's *element-value pairs* ([§9.7.1]) are their own kind: a
+//! pair's name denotes the annotation interface's element ([§9.6.1]), and a
+//! name inside its value denotes what the same name denotes in the carrying
+//! declaration's scope — a class literal's type ([§15.8.2]), a nested
+//! annotation's interface, or a field ([§6.5.6]). The lowering keeps those
+//! values as structured forms rather than expressions, so
+//! [`annotation_reference`] reads them from the syntax tree.
+//!
 //! Only a reference the type layer did not resolve falls back to the
 //! name-based classpath walk ([`resolve_at`]): a body whose inference recorded
 //! nothing, an overload probe that produced no candidate, a type variable.
@@ -192,6 +200,14 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
     if !declaration.is_empty() {
         return targets(db, declaration);
     }
+    // §9.7.1: an annotation's element-value pairs — the pair's name (the
+    // annotation interface's element) and the names inside its value — are
+    // not part of the declaration-side enumeration above, and only their
+    // literal forms are lowered into the expression arena.
+    let annotation = annotation_reference(db, file, offset);
+    if !annotation.is_empty() {
+        return targets(db, annotation);
+    }
     let resolved = resolve_at(db, file, offset);
     if !resolved.is_empty() {
         return targets(db, resolved);
@@ -319,6 +335,30 @@ fn declaration_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> V
         return declared;
     }
     import_targets(db, file, offset)
+}
+
+/// The declarations an annotation's element-value pair at `offset` denotes
+/// ([JLS §9.7.1]): the element method of the pair's name, or the declaration
+/// a name inside its value reads — a class literal's or nested annotation's
+/// type ([§15.8.2], [§9.7.1]), an enum constant or constant variable
+/// ([§6.5.6]).
+fn annotation_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    match hir_ty::annotation_target(db, file, offset) {
+        Some(hir_ty::AnnotationTarget::Element(method)) => member_resolution(
+            db,
+            file,
+            &hir_ty::ResolvedMember::Method(method),
+            Reference::Member,
+        ),
+        Some(hir_ty::AnnotationTarget::Field(field)) => member_resolution(
+            db,
+            file,
+            &hir_ty::ResolvedMember::Field(field),
+            Reference::Member,
+        ),
+        Some(hir_ty::AnnotationTarget::Type(fqn)) => class_resolution(db, file, &fqn),
+        None => Vec::new(),
+    }
 }
 
 /// The declarations the type reference at `offset` denotes: the reference whose
@@ -811,6 +851,7 @@ pub fn pending_library_files(
     for resolution in recorded_reference(db, file, offset)
         .into_iter()
         .chain(declaration_reference(db, file, offset))
+        .chain(annotation_reference(db, file, offset))
         .chain(resolve_at(db, file, offset))
     {
         let pending = match resolution {

@@ -96,6 +96,7 @@ pub mod kotlin;
 pub use java::db::TyDatabase;
 // `DiagnosticCode` lives in the shared `syntax` crate; re-export it here so
 // the hir-ty API can keep naming it directly.
+pub use java::annotation_nav::{AnnotationTarget, annotation_target};
 pub use java::decl_check::{DeclDiagnostic, class_diagnostics, module_diagnostics};
 pub use java::diagnostics::{DiagLocation, TypeError};
 pub use java::infer::{BodyTypes, ResolvedMember, body_types};

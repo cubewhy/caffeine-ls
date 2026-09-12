@@ -310,7 +310,7 @@ fn is_object_method_override(name: &Name) -> bool {
 }
 
 /// The declaration annotations of an item, in source order.
-fn declaration_annotations(data: &ItemData) -> Vec<&ItemAnnotationRef> {
+pub(crate) fn declaration_annotations(data: &ItemData) -> Vec<&ItemAnnotationRef> {
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => d.annotations.iter().collect(),
         ItemData::Enum(d) => d.annotations.iter().collect(),
@@ -325,7 +325,7 @@ fn declaration_annotations(data: &ItemData) -> Vec<&ItemAnnotationRef> {
 
 /// The type references of an item's *declaration* ([JLS §9.7.4]): the types
 /// that carry type-use annotations.
-fn declaration_type_refs(data: &ItemData) -> Vec<&ItemTypeRef> {
+pub(crate) fn declaration_type_refs(data: &ItemData) -> Vec<&ItemTypeRef> {
     let mut out = Vec::new();
     match data {
         ItemData::Class(d) | ItemData::Interface(d) => {

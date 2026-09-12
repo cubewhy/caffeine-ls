@@ -1,0 +1,104 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture, &cases)"
+---
+--- goto @"name = \"x\""#0 ---
+name @257..261
+--- hover ---
+class Holder
+--- goto @"count = FLAG"#0 ---
+count @274..279
+--- hover ---
+class Holder
+--- goto @"type = Holder.class"#0 ---
+type @307..311
+--- hover ---
+class Holder
+--- goto @"mode = FAST"#0 ---
+mode @325..329
+--- hover ---
+class Holder
+--- goto @"inner = @Inner"#0 ---
+inner @344..349
+--- hover ---
+class Holder
+--- goto @"nums = { 1"#0 ---
+nums @364..368
+--- hover ---
+class Holder
+--- goto @"modes = { Mode.SLOW"#0 ---
+modes @384..389
+--- hover ---
+class Holder
+--- goto @"nums2 = @Nums"#0 ---
+nums2 @403..408
+--- hover ---
+class Holder
+--- goto @"count = LOCAL"#1 ---
+count @274..279
+--- hover ---
+annotated(): void
+--- goto @"name = \"f\""#0 ---
+name @257..261
+--- hover ---
+class Holder
+--- goto @"value = \"y\""#0 ---
+value @160..165
+--- hover ---
+class Holder
+--- goto @"value = \"q\""#0 ---
+value @160..165
+--- hover ---
+class Holder
+--- goto @"value = \"u\""#0 ---
+value @160..165
+--- hover ---
+annotated(): void
+--- goto @"LOCAL }"#0 ---
+LOCAL @715..720
+--- hover ---
+class Holder
+--- goto @"FLAG,"#0 ---
+FLAG @235..239
+--- hover ---
+class Holder
+--- goto @"FAST,"#0 ---
+FAST @112..116
+--- hover ---
+FAST
+--- goto @"Consts.CONST"#0 ---
+Consts @421..427
+--- hover ---
+class Holder
+--- goto @"CONST,"#0 ---
+CONST @451..456
+--- hover ---
+class Holder
+--- goto @"Mode.SLOW"#0 ---
+Mode @101..105
+--- hover ---
+class Holder
+--- goto @"SLOW,"#0 ---
+SLOW @122..126
+--- hover ---
+class Holder
+--- goto @"Holder.class"#0 ---
+Holder @685..691
+--- hover ---
+class Holder
+--- goto @"Inner(value"#0 ---
+Inner @141..146
+--- hover ---
+class Holder
+--- goto @"Nums()"#0 ---
+Nums @183..187
+--- hover ---
+class Holder
+--- goto @"\"x\""#0 ---
+
+--- hover ---
+class Holder
+--- goto @"2 * 3"#0 ---
+
+--- hover ---
+class Holder

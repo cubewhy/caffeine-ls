@@ -11,6 +11,7 @@
 //! without touching this namespace.
 
 pub mod annotation_check;
+pub mod annotation_nav;
 pub mod annotation_value;
 pub mod const_eval;
 pub mod db;
