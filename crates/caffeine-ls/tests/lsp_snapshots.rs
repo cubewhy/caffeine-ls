@@ -1888,3 +1888,120 @@ fn java_file_names(root: &std::path::Path) -> Vec<String> {
     names.sort();
     names
 }
+
+/// The JDK's `src.zip` end to end: a `String` type reference and a member
+/// inherited from `Object` both navigate into the platform sources, the JDK
+/// 9+ `<module>/` prefix is stripped from the materialized path, and only the
+/// files those two references touched are ever written out — the archive's
+/// ~25k compilation units stay inside `src.zip`.
+///
+/// Requires a JDK with `lib/src.zip` (or `src.zip`); skipped otherwise.
+#[test]
+fn jdk_sources_are_materialized_and_navigable() {
+    let java_home = std::env::var("JAVA_HOME").ok().filter(|home| {
+        let home = std::path::Path::new(home);
+        home.join("lib/src.zip").is_file() || home.join("src.zip").is_file()
+    });
+    let Some(java_home) = java_home else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no src.zip");
+        return;
+    };
+
+    let source = "package app;\n\nclass App {\n    String created() {\n        return new String(\"abc\");\n    }\n\n    Class<?> member() {\n        return \"abc\".getClass();\n    }\n}\n";
+    let path = "/src/app/App.java";
+
+    // No build system in the temp workspace: the plain path registers the
+    // configured JDK as the SDK, whose `lib/modules` and `lib/src.zip` are the
+    // platform library and its sources.
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
+        std::fs::create_dir_all(root.join("src/app")).unwrap();
+        std::fs::write(root.join("src/app/App.java"), source).unwrap();
+    });
+
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let cache_sources = lsp.cache_dir().join("sources").join("v1");
+
+    // -- a type reference: the class report may need `String.java`, whose entry
+    // in the archive is `<module>/java/lang/String.java`.
+    let (line, character) = position_of(source, "new String(\"abc\")");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let string_path = uri.to_file_path().expect("a file URI");
+    assert!(
+        string_path.starts_with(&cache_sources),
+        "expected a path under {}, got {}",
+        cache_sources.display(),
+        string_path.display()
+    );
+    assert!(
+        string_path.ends_with("java/lang/String.java"),
+        "unexpected path: {}",
+        string_path.display()
+    );
+    assert!(
+        !string_path.to_string_lossy().contains("java.base"),
+        "the module prefix must be stripped: {}",
+        string_path.display()
+    );
+    let string_source = std::fs::read_to_string(&string_path).expect("the source was written");
+    assert_range_covers(
+        locations[0]["range"].clone(),
+        &string_source,
+        "public final class String",
+    );
+
+    // -- a member declared only on `Object`: the walk descends `String`'s
+    // hierarchy on the real jimage-backed stubs.
+    let (line, character) = position_of(source, "\"abc\".getClass()");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let object_path = uri.to_file_path().expect("a file URI");
+    assert!(
+        object_path.ends_with("java/lang/Object.java"),
+        "`getClass` is declared by `Object`: {}",
+        object_path.display()
+    );
+    let object_source = std::fs::read_to_string(&object_path).expect("the source was written");
+    // The target is the `getClass` *declaration* in `Object`, not the class.
+    assert_range_covers(
+        locations[0]["range"].clone(),
+        &object_source,
+        "public final native Class<?> getClass()",
+    );
+
+    // Only the files those two references touched are on disk: `String.java`,
+    // `Object.java` and the supertypes the one-round walk collected — not the
+    // archive's tens of thousands of compilation units.
+    let materialized = java_file_names(&cache_sources);
+    assert!(
+        materialized.contains(&"String.java".to_string()),
+        "{materialized:?}"
+    );
+    assert!(
+        materialized.contains(&"Object.java".to_string()),
+        "{materialized:?}"
+    );
+    assert!(
+        materialized.len() <= 16,
+        "expected only the touched files, got {}: {materialized:?}",
+        materialized.len()
+    );
+}
