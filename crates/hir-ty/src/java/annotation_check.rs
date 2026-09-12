@@ -45,7 +45,7 @@ use hir_def::java::item_tree::{
     ItemAnnotationRef, ItemAnnotationValue, ItemData, ItemId, ItemTree, ItemTypeRef,
 };
 use hir_expand::{
-    body::{BodyTree, ExprId, Literal, LocalId, PatternId, StmtId},
+    body::{BodyTree, ExprId, LocalId, PatternId, StmtId},
     name::Name,
     span::{AnnotationValue, SpannedTypeRef},
 };
@@ -54,6 +54,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
+use crate::java::annotation_value::{self, ValueCtx};
 use crate::java::db::TyDatabase;
 use crate::java::decl_check::{DeclDiagnostic, SafeVarargsRejection};
 use crate::java::range_ctx::range_ctx;
@@ -118,13 +119,21 @@ pub(crate) fn annotation_diagnostics(
         let data = tree.data(id);
         // The annotation names resolve like any type name in the item's scope
         // ([JLS §6.5.5.1]); the resolver is built once per item and shared by
-        // the declaration and type-use checks of its annotations.
+        // the declaration and type-use checks of its annotations. The element
+        // values of those annotations were lowered with this item as their
+        // owner, so the same context serves their §15.29 checks.
         let resolver = Resolver::new(tree, type_params, id);
+        let cx = ValueCtx {
+            db,
+            file,
+            item: id,
+            scope,
+            resolver: &resolver,
+            bodies,
+        };
         // §9.6.4.1: the declaration annotations of the item itself.
         for annotation in declaration_annotations(data) {
-            check_declaration_annotation(
-                db, file, id, &resolver, scope, data, annotation, map, source, out,
-            );
+            check_declaration_annotation(&cx, data, annotation, map, source, out);
         }
         // §9.6.4.1/[§9.7.4]: the annotations of a record's *components* have
         // element type `RECORD_COMPONENT` (Table 9.7-1); like a field, a
@@ -133,9 +142,7 @@ pub(crate) fn annotation_diagnostics(
             for component in &record.components {
                 for annotation in &component.annotations {
                     check_target(
-                        db,
-                        &resolver,
-                        scope,
+                        &cx,
                         &["RECORD_COMPONENT"],
                         true,
                         annotation,
@@ -155,17 +162,7 @@ pub(crate) fn annotation_diagnostics(
         if let ItemData::Method(method) = data {
             for param in &method.sig.params {
                 for annotation in &param.annotations {
-                    check_variable_annotation(
-                        db,
-                        &resolver,
-                        scope,
-                        annotation,
-                        "PARAMETER",
-                        true,
-                        map,
-                        source,
-                        out,
-                    );
+                    check_variable_annotation(&cx, annotation, "PARAMETER", true, map, source, out);
                 }
             }
         }
@@ -176,7 +173,7 @@ pub(crate) fn annotation_diagnostics(
         // qualified-segment annotation — so the annotation must be applicable
         // in type contexts ([§9.6.4.1]).
         for tyref in declaration_type_refs(data) {
-            check_type_use_item(db, &resolver, scope, tyref, map, source, out);
+            check_type_use_item(&cx, tyref, map, source, out);
         }
         // The body-side annotations: the declaration annotations of every
         // variable the body declares (locals, enhanced-for variables,
@@ -185,8 +182,7 @@ pub(crate) fn annotation_diagnostics(
         // (casts, `new`, `instanceof`, class literals, method-reference type
         // names, lambda parameter types and local variable types).
         if let Some(body) = body_of(tree, id) {
-            let body_data = bodies.bodies.get(body.0);
-            check_body_annotations(db, &resolver, bodies, scope, body_data, out);
+            check_body_annotations(&cx, bodies.bodies.get(body.0), out);
         }
         for &child in data.body() {
             walk(
@@ -265,14 +261,12 @@ fn check_safe_varargs(
 /// `Object`'s public methods ([§9.8]) and `default`/`static` members, which are
 /// not abstract. javac: `Unexpected @FunctionalInterface annotation`.
 fn check_functional_interface(
-    db: &dyn TyDatabase,
-    scope: &hir::ResolutionScope,
-    file: FileId,
-    item: ItemId,
+    cx: &ValueCtx<'_>,
     data: &ItemData,
     annotation_range: Option<rowan::TextRange>,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let (db, file, item, scope) = (cx.db, cx.file, cx.item, cx.scope);
     let ItemData::Interface(_) = data else {
         out.push(DeclDiagnostic::NotAFunctionalInterfaceAnnotation {
             range: annotation_range,
@@ -383,13 +377,8 @@ fn body_of(tree: &ItemTree, id: ItemId) -> Option<hir_expand::body::BodyId> {
 
 /// Checks the declaration annotations of one item against its element type
 /// ([JLS §9.6.4.1]).
-#[allow(clippy::too_many_arguments)]
 fn check_declaration_annotation(
-    db: &dyn TyDatabase,
-    file: FileId,
-    item: ItemId,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     data: &ItemData,
     annotation: &ItemAnnotationRef,
     map: &hir_expand::ast_id_map::AstIdMap,
@@ -405,7 +394,7 @@ fn check_declaration_annotation(
         check_safe_varargs(data, annotation_range, out);
     }
     if annotation.name.as_str() == "FunctionalInterface" {
-        check_functional_interface(db, scope, file, item, data, annotation_range, out);
+        check_functional_interface(cx, data, annotation_range, out);
     }
     let Some(element_type) = element_type_of(data) else {
         return;
@@ -419,9 +408,7 @@ fn check_declaration_annotation(
     };
     let has_annotatable_type = has_annotatable_type(data);
     check_target(
-        db,
-        resolver,
-        scope,
+        cx,
         element_types,
         has_annotatable_type,
         annotation,
@@ -437,9 +424,7 @@ fn check_declaration_annotation(
 /// a declaration with an annotatable type — contains `TYPE_USE`, in which case
 /// the annotation is a *type annotation* on that type.
 fn check_target(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     element_types: &[&'static str],
     has_annotatable_type: bool,
     annotation: &ItemAnnotationRef,
@@ -447,9 +432,10 @@ fn check_target(
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let (db, resolver, scope) = (cx.db, cx.resolver, cx.scope);
     // §9.7.1: the element-value arguments are checked against the annotation
     // type's elements regardless of whether the target check passes.
-    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
+    check_annotation_elements(cx, annotation, map, source, out);
     let Some(targets) = resolve_annotation_type(db, resolver, scope, &annotation.name) else {
         // An unresolvable annotation type (or one without `@Target`) has no
         // target to enforce: empty `@Target` is applicable to every
@@ -555,11 +541,8 @@ fn type_context_applicable(
 /// The variable-declaration applicability check over an *item* annotation —
 /// a method's or constructor's formal parameter
 /// ([`hir_def::java::item_tree::Param::annotations`]).
-#[allow(clippy::too_many_arguments)]
 fn check_variable_annotation(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &ItemAnnotationRef,
     element_type: &'static str,
     has_written_type: bool,
@@ -569,11 +552,11 @@ fn check_variable_annotation(
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
-    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
+    check_annotation_elements(cx, annotation, map, source, out);
     check_variable_target(
-        db,
-        resolver,
-        scope,
+        cx.db,
+        cx.resolver,
+        cx.scope,
         &annotation.name,
         ranges::annotation_name_range(map, source, annotation),
         element_type,
@@ -587,9 +570,7 @@ fn check_variable_annotation(
 /// exception parameter, pattern binding or lambda parameter), whose ranges
 /// are still carried.
 fn check_variable_annotation_ranged(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &hir_expand::span::AnnotationRef,
     element_type: &'static str,
     has_written_type: bool,
@@ -597,11 +578,11 @@ fn check_variable_annotation_ranged(
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
-    check_annotation_elements_ranged(db, resolver, scope, annotation, out);
+    check_annotation_elements_ranged(cx, annotation, out);
     check_variable_target(
-        db,
-        resolver,
-        scope,
+        cx.db,
+        cx.resolver,
+        cx.scope,
         &annotation.name.name,
         annotation.name.range,
         element_type,
@@ -634,16 +615,14 @@ fn has_annotatable_type(data: &ItemData) -> bool {
 /// Checks the type-use annotations of one *item* type reference
 /// ([JLS §9.7.4], [§9.6.4.1]) — the declaration-side, range-free form.
 fn check_type_use_item(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     tyref: &ItemTypeRef,
     map: &hir_expand::ast_id_map::AstIdMap,
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     for annotation in &tyref.type_use_annotations {
-        check_type_use_annotation(db, resolver, scope, annotation, map, source, out);
+        check_type_use_annotation(cx, annotation, map, source, out);
     }
 }
 
@@ -651,9 +630,7 @@ fn check_type_use_item(
 /// type context requires an annotation applicable in type contexts, i.e. one
 /// whose `@Target` contains `TYPE_USE` ([§9.6.4.1], [§9.7.4]).
 fn check_type_use_annotation(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &ItemAnnotationRef,
     map: &hir_expand::ast_id_map::AstIdMap,
     source: &syntax::SourceFile,
@@ -661,8 +638,8 @@ fn check_type_use_annotation(
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
-    check_annotation_elements(db, resolver, scope, annotation, map, source, out);
-    if !type_context_applicable(db, resolver, scope, &annotation.name) {
+    check_annotation_elements(cx, annotation, map, source, out);
+    if !type_context_applicable(cx.db, cx.resolver, cx.scope, &annotation.name) {
         out.push(DeclDiagnostic::AnnotationNotApplicableToType {
             name: annotation.name.clone(),
             range: ranges::annotation_name_range(map, source, annotation),
@@ -673,16 +650,14 @@ fn check_type_use_annotation(
 /// The shared type-use applicability check over a *span* (`&AnnotationRef`,
 /// the body path — its ranges are still carried).
 fn check_type_use_annotation_ranged(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &hir_expand::span::AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     // §9.7.1: the element-value arguments are checked regardless of whether
     // the target check passes.
-    check_annotation_elements_ranged(db, resolver, scope, annotation, out);
-    if !type_context_applicable(db, resolver, scope, &annotation.name.name) {
+    check_annotation_elements_ranged(cx, annotation, out);
+    if !type_context_applicable(cx.db, cx.resolver, cx.scope, &annotation.name.name) {
         out.push(DeclDiagnostic::AnnotationNotApplicableToType {
             name: annotation.name.name.clone(),
             range: annotation.name.range,
@@ -693,12 +668,11 @@ fn check_type_use_annotation_ranged(
 /// The §9.7.1 element-value argument check over a *span* (the body path). The
 /// item path runs [`check_annotation_elements`].
 fn check_annotation_elements_ranged(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &hir_expand::span::AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let (db, scope, resolver) = (cx.db, cx.scope, cx.resolver);
     // §9.7.1: the same missing-element rule as [`check_annotation_elements`],
     // over the body path's spanned annotation — its name already carries the
     // range the report is anchored at.
@@ -739,7 +713,7 @@ fn check_annotation_elements_ranged(
             });
             continue;
         };
-        check_value_assignable_ranged(db, resolver, scope, &arg.value, &element.ty, arg.range, out);
+        check_value_commensurate_ranged(cx, &arg.value, &element.ty, arg.range, out);
     }
 }
 
@@ -766,10 +740,7 @@ fn check_annotation_elements_ranged(
 /// annotation name's source range — is the unit checked, and a body is the
 /// unit it is checked in.
 struct BodyAnnotations<'a> {
-    db: &'a dyn TyDatabase,
-    resolver: &'a Resolver,
-    scope: &'a hir::ResolutionScope,
-    bodies: &'a BodyTree,
+    cx: &'a ValueCtx<'a>,
     /// The source ranges of the annotation occurrences already checked.
     checked: FxHashSet<rowan::TextRange>,
 }
@@ -787,19 +758,17 @@ struct BodyAnnotations<'a> {
 /// ([`hir_def::java::item_tree::Param::annotations`]) and their types are
 /// declaration type references, so the item walk covers both (checking them
 /// again here would report every one of them twice).
+///
+/// The context is the *body owner's*: the body's variable declarations were
+/// lowered with the owning item, so their element values carry the same owner
+/// as the item's own annotations.
 fn check_body_annotations(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    bodies: &BodyTree,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     body: &hir_expand::body::Body,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     let mut walk = BodyAnnotations {
-        db,
-        resolver,
-        scope,
-        bodies,
+        cx,
         checked: FxHashSet::default(),
     };
     for &stmt in &body.stmts {
@@ -821,7 +790,7 @@ impl BodyAnnotations<'_> {
         element_type: &'static str,
         out: &mut Vec<DeclDiagnostic>,
     ) {
-        let binding = self.bodies.local(local);
+        let binding = self.cx.bodies.local(local);
         let has_written_type = binding.ty.is_some();
         for annotation in &binding.annotations {
             self.annotation(annotation, element_type, has_written_type, out);
@@ -839,15 +808,7 @@ impl BodyAnnotations<'_> {
         if !self.mark_checked(annotation.name.range) {
             return;
         }
-        check_variable_annotation_ranged(
-            self.db,
-            self.resolver,
-            self.scope,
-            annotation,
-            element_type,
-            has_written_type,
-            out,
-        );
+        check_variable_annotation_ranged(self.cx, annotation, element_type, has_written_type, out);
     }
 
     /// Checks the type annotations of one written type, each occurrence once
@@ -857,7 +818,7 @@ impl BodyAnnotations<'_> {
             if !self.mark_checked(annotation.name.range) {
                 continue;
             }
-            check_type_use_annotation_ranged(self.db, self.resolver, self.scope, annotation, out);
+            check_type_use_annotation_ranged(self.cx, annotation, out);
         }
     }
 
@@ -875,12 +836,12 @@ impl BodyAnnotations<'_> {
     /// checking each type reference and each declaration annotation.
     fn stmt(&mut self, stmt: StmtId, out: &mut Vec<DeclDiagnostic>) {
         use hir_expand::body::{StmtData as S, SwitchLabel as L};
-        match self.bodies.stmt(stmt).clone() {
+        match self.cx.bodies.stmt(stmt).clone() {
             S::Decl { local, initializer } => {
                 // §9.7.4/[§9.6.4.1]: a local variable declaration's annotation
                 // modifiers (`@Ann int x = ...`), element type `LOCAL_VARIABLE`.
                 self.binding(local, "LOCAL_VARIABLE", out);
-                let binding = self.bodies.local(local);
+                let binding = self.cx.bodies.local(local);
                 if let Some(ty) = &binding.ty {
                     self.type_use(ty, out);
                 }
@@ -944,7 +905,7 @@ impl BodyAnnotations<'_> {
                 // §14.14.2: the loop variable is a local variable declaration
                 // ([§9.6.4.1]: element type `LOCAL_VARIABLE`).
                 self.binding(var, "LOCAL_VARIABLE", out);
-                if let Some(ty) = &self.bodies.local(var).ty {
+                if let Some(ty) = &self.cx.bodies.local(var).ty {
                     self.type_use(ty, out);
                 }
                 self.expr(iterable, out);
@@ -993,7 +954,7 @@ impl BodyAnnotations<'_> {
                     // §9.6.4.1: a resource variable is a local variable
                     // declaration ([§14.20.3]).
                     self.binding(resource.local, "LOCAL_VARIABLE", out);
-                    if let Some(ty) = &self.bodies.local(resource.local).ty {
+                    if let Some(ty) = &self.cx.bodies.local(resource.local).ty {
                         self.type_use(ty, out);
                     }
                     if let Some(initializer) = resource.initializer {
@@ -1028,7 +989,7 @@ impl BodyAnnotations<'_> {
     /// its children ([JLS §9.7.4] type-use contexts).
     fn expr(&mut self, expr: ExprId, out: &mut Vec<DeclDiagnostic>) {
         use hir_expand::body::{ExprData as E, LambdaBody as L, SwitchLabel as SL};
-        match self.bodies.expr(expr).clone() {
+        match self.cx.bodies.expr(expr).clone() {
             E::Cast { ty, expr: inner } => {
                 self.type_use(&ty, out);
                 self.expr(inner, out);
@@ -1208,7 +1169,7 @@ impl BodyAnnotations<'_> {
     /// its components bind.
     fn pattern(&mut self, pattern: PatternId, out: &mut Vec<DeclDiagnostic>) {
         use hir_expand::body::{PatternData as P, TypePattern as TP};
-        match self.bodies.pattern(pattern).clone() {
+        match self.cx.bodies.pattern(pattern).clone() {
             P::Type(TP { ty, binding }) => {
                 self.type_use(&ty, out);
                 // §14.30.1/[§9.6.4.1]: a type pattern is a local variable
@@ -1234,19 +1195,19 @@ impl BodyAnnotations<'_> {
 /// Checks the element-value arguments of one annotation against the elements
 /// of its type ([JLS §9.7.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.7.1)):
 /// each `name = value` pair must name a declared element exactly once
-/// ([§9.6.1]), and the value must be assignable to the element's declared
-/// type ([§5.2]). An annotation type that cannot be resolved (or is not an
-/// annotation) has nothing to check — an unknown annotation is reported by
-/// the name-resolution check.
+/// ([§9.6.1]), a normal annotation must give every element without a default
+/// value a pair ([§9.7.1]), and the value must be *commensurate* with the
+/// element's declared type ([§9.7.1], [§5.2], [§15.29]). An annotation type
+/// that cannot be resolved (or is not an annotation) has nothing to check — an
+/// unknown annotation is reported by the name-resolution check.
 fn check_annotation_elements(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+    cx: &ValueCtx<'_>,
     annotation: &ItemAnnotationRef,
     map: &hir_expand::ast_id_map::AstIdMap,
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let (db, scope, resolver) = (cx.db, cx.scope, cx.resolver);
     // §9.7.1: a normal annotation must contain an element-value pair for every
     // element of its annotation interface except those with default values. A
     // marker annotation (`@Ann`) is the degenerate case of no pairs at all, so
@@ -1297,10 +1258,8 @@ fn check_annotation_elements(
             });
             continue;
         };
-        check_value_assignable(
-            db,
-            resolver,
-            scope,
+        check_value_commensurate(
+            cx,
             &arg.value,
             &element.ty,
             range.unwrap_or_default(),
@@ -1312,12 +1271,10 @@ fn check_annotation_elements(
 }
 
 /// Checks one annotation element value against the element's declared type
-/// ([JLS §9.7.1], [§5.2]). `range` is the source range of the value, where
-/// the mismatch is reported.
-fn check_value_assignable(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+/// ([JLS §9.7.1], [§5.2]). `range` is the source range of the value, where the
+/// mismatch is reported.
+fn check_value_commensurate(
+    cx: &ValueCtx<'_>,
     value: &ItemAnnotationValue,
     element_ty: &Ty,
     range: rowan::TextRange,
@@ -1325,6 +1282,7 @@ fn check_value_assignable(
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let db = cx.db;
     match value {
         // An array initializer ([§10.6]) is checked element-wise against the
         // component type; an initializer where the element is not an array is
@@ -1332,9 +1290,7 @@ fn check_value_assignable(
         ItemAnnotationValue::Array(values) => match element_ty.kind(db) {
             TyKind::Array(component) => {
                 for v in values {
-                    check_value_assignable(
-                        db, resolver, scope, v, component, range, map, source, out,
-                    );
+                    check_value_commensurate(cx, v, component, range, map, source, out);
                 }
             }
             _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
@@ -1351,20 +1307,24 @@ fn check_value_assignable(
                 TyKind::Array(component) => component,
                 _ => element_ty,
             };
-            check_single_value_assignable(
-                db, resolver, scope, value, target, range, map, source, out,
-            );
+            check_single_value_commensurate(cx, value, target, range, map, source, out);
         }
     }
 }
 
-/// The §9.7.1 single-value checks of [`check_value_assignable`], against the
+/// The §9.7.1 single-value checks of [`check_value_commensurate`], against the
 /// effective target type `target` (the component type of an array-typed
 /// element, or the element type itself).
-fn check_single_value_assignable(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+///
+/// Commensurability is checked in javac's order: the value's type must be
+/// *assignable* to the element's ([§5.2], with the constant narrowing of an
+/// integral constant), and only then must it be of the form the element's type
+/// prescribes — a class literal ([§15.8.2]) for `Class`, an enum constant
+/// ([§8.9.1]) for an enum, a constant expression ([§15.29]) for a primitive or
+/// `String`, and never `null`. A value that trips several of the conjuncts
+/// reports exactly one diagnostic: the first one below.
+fn check_single_value_commensurate(
+    cx: &ValueCtx<'_>,
     value: &ItemAnnotationValue,
     target: &Ty,
     range: rowan::TextRange,
@@ -1373,124 +1333,223 @@ fn check_single_value_assignable(
     out: &mut Vec<DeclDiagnostic>,
 ) {
     use hir_def::java::item_tree::ItemAnnotationValue as V;
-    match value {
-        // A literal carries its primitive or `String` type ([§15.28]).
-        V::Literal(lit) => {
-            let value_ty = literal_ty(db, lit);
-            // §5.2: an `int` constant narrows to `byte`/`short`/`char` when
-            // its value fits; a value that does not fit is already rejected
-            // by the assignment check below.
-            if let (Literal::Int(v), TyKind::Primitive(p)) = (lit, target.kind(db))
-                && narrows_to(*v, *p).is_some_and(|fits| fits)
-            {
-                return;
-            }
-            if !is_assignable(db, scope, &value_ty, target) {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: value_ty,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
+    let (db, scope) = (cx.db, cx.scope);
+    // A nested annotation values the annotation type it names ([§9.7.1]), and
+    // its own argument list is checked recursively.
+    if let V::Annotation(inner) = value {
+        if let Some(inner_ty) = resolve_name_ty(db, scope, cx.resolver, &inner.name)
+            && !is_assignable(db, scope, &inner_ty, target)
+        {
+            out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: inner_ty,
+                expected: *target,
+                range: Some(range),
+            });
         }
-        // An enum constant values its own enum type ([§8.9.1], [§15.8.1]).
-        // A bare `CONST` infers its declaring type from the element's type
-        // ([§9.7.1]); a qualified `E.CONST` names `E` explicitly.
+        check_annotation_elements(cx, inner, map, source, out);
+        return;
+    }
+    // §6.5.6.1/§6.5.6.2/[§7.5.4]: a name is resolved as a *variable* — a bare
+    // `CONSTANT` or a qualified `Type.CONSTANT` whose qualifier is not an enum
+    // type — and [§4.12.4] decides whether it is a constant variable. A name
+    // that denotes no accessible field keeps the `cannot resolve symbol`
+    // report.
+    let kind = match value {
         V::EnumConstant { qualifier, member } => {
-            if let Some(qualifier) = qualifier {
-                let Some(enum_ty) = resolve_name_ty(db, scope, resolver, qualifier) else {
+            match annotation_value::name_kind(cx, qualifier.as_ref(), member) {
+                annotation_value::NameKind::Field(kind) => kind,
+                annotation_value::NameKind::NotQualified => {
+                    annotation_value::ConstKind::NotConstant { ty: None }
+                }
+                annotation_value::NameKind::Unresolved => {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
                     return;
-                };
-                if let Some(constants) = enum_constants(db, scope, &enum_ty)
-                    && !constants.iter().any(|c| c == member.as_str())
-                {
-                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                        member: member.clone(),
-                        range: Some(range),
-                    });
                 }
-                if !is_assignable(db, scope, &enum_ty, target) {
-                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                        found: enum_ty,
-                        expected: *target,
-                        range: Some(range),
-                    });
-                }
-            } else if let Some(constants) = enum_constants(db, scope, target) {
-                // §9.7.1: the bare constant's declaring type is the element's
-                // type, which must be an enum declaring the constant.
-                if !constants.iter().any(|c| c == member.as_str()) {
-                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                        member: member.clone(),
-                        range: Some(range),
-                    });
-                }
-            } else {
-                // The element's type is not an enum, so the bare constant has
-                // no declaring type to resolve against ([§9.7.1]).
-                out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                    member: member.clone(),
-                    range: Some(range),
-                });
             }
         }
-        // A class literal `Foo.class` values `Class` ([§15.8.2]).
-        V::ClassLit(_) => {
-            let class = Ty::reference(db, "java.lang.Class", Vec::new());
-            if !is_assignable(db, scope, &class, target) {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: class,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
+        _ => annotation_value::value_kind(cx, value),
+    };
+    // §5.2/§15.29: the value's type must be assignable to the element's —
+    // including the constant narrowing of an integral constant into a
+    // `byte`/`short`/`char` target.
+    if let Some(value_ty) = kind.ty().cloned()
+        && !value_assignable(cx, &kind, &value_ty, target)
+    {
+        out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+            found: value_ty,
+            expected: *target,
+            range: Some(range),
+        });
+        return;
+    }
+    // §9.7.1: "`v` is not `null`". A `null` that reached here is assignable,
+    // so the element's type is a reference type: an enum element rejects it as
+    // javac's `enum.annotation.must.be.enum.constant` does, an
+    // annotation-typed element as the ordinary type mismatch with the null
+    // type as `found`, and a `Class`, array or `String` element falls through
+    // to its own rule below.
+    if is_null_value(cx.bodies, value) {
+        if enum_constants(db, scope, target).is_some() {
+            out.push(DeclDiagnostic::AnnotationElementNotEnumConstant { range: Some(range) });
+            return;
         }
-        // A nested annotation values the annotation type it names
-        // ([§9.7.1]); its own argument list is checked recursively.
-        V::Annotation(inner) => {
-            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name)
-                && !is_assignable(db, scope, &inner_ty, target)
-            {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: inner_ty,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
-            check_annotation_elements(db, resolver, scope, inner, map, source, out);
+        if !annotation_value::is_class(target, db) && !annotation_value::is_string(target, db) {
+            out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: Ty::null(db),
+                expected: *target,
+                range: Some(range),
+            });
+            return;
         }
-        // A non-constant element value (a unary/binary/conditional
-        // expression) carries no standalone type; javac rejects it (an
-        // annotation element value must be a §15.28 constant) but the raw
-        // text gives nothing to compare — the syntax layer already holds the
-        // failing parse.
-        V::Unresolved { .. } => {}
-        // An element value lowered as an expression — the §15.29 verdict of
-        // its expression tree is [`crate::java::annotation_value`]'s.
-        V::Expr(_) => {}
-        // Unreachable: [`check_value_assignable`] routes array values before
-        // delegating a single value here.
-        V::Array(_) => {}
+    }
+    // §9.7.1: a `Class`-typed element takes a class literal itself
+    // ([§15.8.2]) — a parenthesized class literal is not one, nor is a
+    // `Class`-valued constant variable.
+    if annotation_value::is_class(target, db) {
+        if !is_class_literal(value) {
+            out.push(DeclDiagnostic::AnnotationElementNotClassLiteral { range: Some(range) });
+        }
+        return;
+    }
+    // §9.7.1/§8.9.1: an enum-typed element takes an enum constant.
+    if enum_constants(db, scope, target).is_some() {
+        if !is_enum_constant_form(cx, value, target) {
+            out.push(DeclDiagnostic::AnnotationElementNotEnumConstant { range: Some(range) });
+        }
+        return;
+    }
+    // §9.7.1/§15.29: a primitive- or `String`-typed element takes a constant
+    // expression.
+    // §9.7.1/§15.29: a primitive- or `String`-typed element takes a constant
+    // expression. Only a value this layer *decided* is not one is reported:
+    // [`annotation_value::ConstKind::Unknown`] — a value of a written type, an
+    // unreadable library constant — is possibly constant and stays silent.
+    if annotation_value::is_primitive_or_string(target, db)
+        && matches!(kind, annotation_value::ConstKind::NotConstant { .. })
+    {
+        out.push(DeclDiagnostic::NonConstantAnnotationElement { range: Some(range) });
     }
 }
 
-/// The `check_value_assignable` twin over a *span* (`&AnnotationValue`, the
-/// body path — a classfile or body-side annotation whose value carries its
-/// range).
-fn check_value_assignable_ranged(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+/// Whether the value's type `value_ty` is assignable to `target` ([§5.2]),
+/// with the constant narrowing of an integral constant that fits the
+/// narrower integral target.
+fn value_assignable(
+    cx: &ValueCtx<'_>,
+    kind: &annotation_value::ConstKind,
+    value_ty: &Ty,
+    target: &Ty,
+) -> bool {
+    let db = cx.db;
+    // §5.2: a constant of type `byte`, `short`, `char` or `int` narrows to
+    // `byte`, `short` or `char` when its value fits; one that does not fit is
+    // rejected by the assignment check below.
+    if let (Some(value), TyKind::Primitive(primitive)) = (kind.narrowing_value(db), target.kind(db))
+        && narrows_to(value, *primitive).is_some_and(|fits| fits)
+    {
+        return true;
+    }
+    is_assignable(db, cx.scope, value_ty, target)
+}
+
+/// Whether the value *is* a class literal ([§15.8.2]), parentheses and all: a
+/// parenthesized class literal is an expression, not the class literal
+/// [§9.7.1] requires.
+fn is_class_literal(value: &ItemAnnotationValue) -> bool {
+    matches!(value, ItemAnnotationValue::ClassLit(_))
+}
+
+/// Whether the value is the `null` literal, looking through parentheses
+/// ([§3.10.8]).
+fn is_null_value(bodies: &BodyTree, value: &ItemAnnotationValue) -> bool {
+    let ItemAnnotationValue::Expr(expr) = value else {
+        return false;
+    };
+    is_null_expr(bodies, *expr)
+}
+
+fn is_null_expr(bodies: &BodyTree, expr: ExprId) -> bool {
+    match bodies.expr(expr) {
+        hir_expand::body::ExprData::Null => true,
+        hir_expand::body::ExprData::Paren(inner) => is_null_expr(bodies, *inner),
+        _ => false,
+    }
+}
+
+/// Whether the value is the *enum-constant form* of §9.7.1 — a bare constant
+/// whose declaring type is the element's own enum type, or a qualified
+/// `Type.CONSTANT` naming a constant of the enum — looking through
+/// parentheses as IntelliJ's `skipParenthesizedExprDown` does.
+fn is_enum_constant_form(cx: &ValueCtx<'_>, value: &ItemAnnotationValue, target: &Ty) -> bool {
+    let db = cx.db;
+    let Some((qualifier, member)) = value_name(cx.bodies, value) else {
+        return false;
+    };
+    // A bare constant's declaring type is the element's own type ([§9.7.1]);
+    // a qualified one names its enum explicitly ([§6.5.6.2]).
+    let owner = match qualifier {
+        Some(qualifier) => resolve_name_ty(db, cx.scope, cx.resolver, &qualifier),
+        None => Some(target.clone()),
+    };
+    owner.is_some_and(|owner| {
+        enum_constants(db, cx.scope, &owner)
+            .is_some_and(|constants| constants.iter().any(|c| c == member.as_str()))
+    })
+}
+
+/// The name a value *is*, when it is one — a bare `CONSTANT` or a qualified
+/// `Type.CONSTANT` — looking through parentheses. `None` for every other
+/// value, and for a member access whose receiver is not a plain name.
+fn value_name(bodies: &BodyTree, value: &ItemAnnotationValue) -> Option<(Option<Name>, Name)> {
+    match value {
+        ItemAnnotationValue::EnumConstant { qualifier, member } => {
+            Some((qualifier.clone(), member.clone()))
+        }
+        ItemAnnotationValue::Expr(expr) => value_name_expr(bodies, *expr),
+        _ => None,
+    }
+}
+
+fn value_name_expr(bodies: &BodyTree, expr: ExprId) -> Option<(Option<Name>, Name)> {
+    use hir_expand::body::ExprData as E;
+    match bodies.expr(expr) {
+        E::Paren(inner) => value_name_expr(bodies, *inner),
+        E::Var(name) => Some((None, name.clone())),
+        E::NamePath(name) => Some(match annotation_value::qualified_parts(name) {
+            Some((qualifier, member)) => (Some(qualifier), member),
+            None => (None, name.clone()),
+        }),
+        E::FieldAccess {
+            target: Some(receiver),
+            name,
+        } => match bodies.expr(*receiver) {
+            E::Var(qualifier) | E::NamePath(qualifier) => {
+                Some((Some(qualifier.clone()), name.clone()))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The `check_value_commensurate` twin over a *span* (`&AnnotationValue`, the
+/// body path — a body-side annotation whose value carries its range).
+fn check_value_commensurate_ranged(
+    cx: &ValueCtx<'_>,
     value: &AnnotationValue,
     element_ty: &Ty,
     range: rowan::TextRange,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    let db = cx.db;
     match value {
         AnnotationValue::Array(values) => match element_ty.kind(db) {
             TyKind::Array(component) => {
                 for v in values {
-                    check_value_assignable_ranged(db, resolver, scope, v, component, range, out);
+                    check_value_commensurate_ranged(cx, v, component, range, out);
                 }
             }
             _ => out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
@@ -1504,116 +1563,140 @@ fn check_value_assignable_ranged(
                 TyKind::Array(component) => component,
                 _ => element_ty,
             };
-            check_single_value_assignable_ranged(db, resolver, scope, value, target, range, out);
+            check_single_value_commensurate_ranged(cx, value, target, range, out);
         }
     }
 }
 
-/// The `check_single_value_assignable` twin over a *span* (see
-/// [`check_value_assignable_ranged`]).
-fn check_single_value_assignable_ranged(
-    db: &dyn TyDatabase,
-    resolver: &Resolver,
-    scope: &hir::ResolutionScope,
+/// The `check_single_value_commensurate` twin over a *span* (see
+/// [`check_value_commensurate_ranged`]).
+fn check_single_value_commensurate_ranged(
+    cx: &ValueCtx<'_>,
     value: &AnnotationValue,
     target: &Ty,
     range: rowan::TextRange,
     out: &mut Vec<DeclDiagnostic>,
 ) {
     use hir_expand::span::AnnotationValue as V;
-    match value {
-        V::Literal(lit) => {
-            let value_ty = literal_ty(db, lit);
-            if let (Literal::Int(v), TyKind::Primitive(p)) = (lit, target.kind(db))
-                && narrows_to(*v, *p).is_some_and(|fits| fits)
-            {
-                return;
-            }
-            if !is_assignable(db, scope, &value_ty, target) {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: value_ty,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
+    let (db, scope) = (cx.db, cx.scope);
+    if let V::Annotation(inner) = value {
+        if let Some(inner_ty) = resolve_name_ty(db, scope, cx.resolver, &inner.name.name)
+            && !is_assignable(db, scope, &inner_ty, target)
+        {
+            out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: inner_ty,
+                expected: *target,
+                range: Some(range),
+            });
         }
+        check_annotation_elements_ranged(cx, inner, out);
+        return;
+    }
+    let kind = match value {
         V::EnumConstant { qualifier, member } => {
-            if let Some(qualifier) = qualifier {
-                let Some(enum_ty) = resolve_name_ty(db, scope, resolver, qualifier) else {
+            match annotation_value::name_kind(cx, qualifier.as_ref(), member) {
+                annotation_value::NameKind::Field(kind) => kind,
+                annotation_value::NameKind::NotQualified => {
+                    annotation_value::ConstKind::NotConstant { ty: None }
+                }
+                annotation_value::NameKind::Unresolved => {
+                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
+                        member: member.clone(),
+                        range: Some(range),
+                    });
                     return;
-                };
-                if let Some(constants) = enum_constants(db, scope, &enum_ty)
-                    && !constants.iter().any(|c| c == member.as_str())
-                {
-                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                        member: member.clone(),
-                        range: Some(range),
-                    });
                 }
-                if !is_assignable(db, scope, &enum_ty, target) {
-                    out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                        found: enum_ty,
-                        expected: *target,
-                        range: Some(range),
-                    });
-                }
-            } else if let Some(constants) = enum_constants(db, scope, target) {
-                if !constants.iter().any(|c| c == member.as_str()) {
-                    out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                        member: member.clone(),
-                        range: Some(range),
-                    });
-                }
-            } else {
-                out.push(DeclDiagnostic::UnknownAnnotationElementConstant {
-                    member: member.clone(),
-                    range: Some(range),
-                });
             }
         }
-        V::ClassLit(_) => {
-            let class = Ty::reference(db, "java.lang.Class", Vec::new());
-            if !is_assignable(db, scope, &class, target) {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: class,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
+        _ => annotation_value::ranged_value_kind(cx, value),
+    };
+    if let Some(value_ty) = kind.ty().cloned()
+        && !value_assignable(cx, &kind, &value_ty, target)
+    {
+        out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+            found: value_ty,
+            expected: *target,
+            range: Some(range),
+        });
+        return;
+    }
+    if is_null_value_ranged(cx.bodies, value) {
+        if enum_constants(db, scope, target).is_some() {
+            out.push(DeclDiagnostic::AnnotationElementNotEnumConstant { range: Some(range) });
+            return;
         }
-        V::Annotation(inner) => {
-            if let Some(inner_ty) = resolve_name_ty(db, scope, resolver, &inner.name.name)
-                && !is_assignable(db, scope, &inner_ty, target)
-            {
-                out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
-                    found: inner_ty,
-                    expected: *target,
-                    range: Some(range),
-                });
-            }
-            check_annotation_elements_ranged(db, resolver, scope, inner, out);
+        if !annotation_value::is_class(target, db) && !annotation_value::is_string(target, db) {
+            out.push(DeclDiagnostic::AnnotationElementTypeMismatch {
+                found: Ty::null(db),
+                expected: *target,
+                range: Some(range),
+            });
+            return;
         }
-        V::Unresolved { .. } => {}
-        V::Expr(_) => {}
-        V::Array(_) => {}
+    }
+    if annotation_value::is_class(target, db) {
+        if !matches!(value, V::ClassLit(_)) {
+            out.push(DeclDiagnostic::AnnotationElementNotClassLiteral { range: Some(range) });
+        }
+        return;
+    }
+    if enum_constants(db, scope, target).is_some() {
+        if !is_enum_constant_form_ranged(cx, value, target) {
+            out.push(DeclDiagnostic::AnnotationElementNotEnumConstant { range: Some(range) });
+        }
+        return;
+    }
+    // §9.7.1/§15.29: a primitive- or `String`-typed element takes a constant
+    // expression. Only a value this layer *decided* is not one is reported:
+    // [`annotation_value::ConstKind::Unknown`] — a value of a written type, an
+    // unreadable library constant — is possibly constant and stays silent.
+    if annotation_value::is_primitive_or_string(target, db)
+        && matches!(kind, annotation_value::ConstKind::NotConstant { .. })
+    {
+        out.push(DeclDiagnostic::NonConstantAnnotationElement { range: Some(range) });
     }
 }
 
-/// The [`Ty`] of an annotation element literal ([JLS §15.28]).
-fn literal_ty(db: &dyn TyDatabase, lit: &Literal) -> Ty {
-    match lit {
-        Literal::Int(_) => Ty::primitive(db, PrimitiveType::Int),
-        Literal::Long(_) => Ty::primitive(db, PrimitiveType::Long),
-        Literal::Float => Ty::primitive(db, PrimitiveType::Float),
-        Literal::Double => Ty::primitive(db, PrimitiveType::Double),
-        Literal::Boolean(_) => Ty::primitive(db, PrimitiveType::Boolean),
-        Literal::Char(_) => Ty::primitive(db, PrimitiveType::Char),
-        Literal::Str(_) => Ty::reference(db, "java.lang.String", Vec::new()),
+/// The [`is_null_value`] twin over a *span* value.
+fn is_null_value_ranged(bodies: &BodyTree, value: &AnnotationValue) -> bool {
+    let AnnotationValue::Expr(expr) = value else {
+        return false;
+    };
+    is_null_expr(bodies, *expr)
+}
+
+/// The [`is_enum_constant_form`] twin over a *span* value.
+fn is_enum_constant_form_ranged(cx: &ValueCtx<'_>, value: &AnnotationValue, target: &Ty) -> bool {
+    let db = cx.db;
+    let Some((qualifier, member)) = value_name_ranged(cx.bodies, value) else {
+        return false;
+    };
+    let owner = match qualifier {
+        Some(qualifier) => resolve_name_ty(db, cx.scope, cx.resolver, &qualifier),
+        None => Some(target.clone()),
+    };
+    owner.is_some_and(|owner| {
+        enum_constants(db, cx.scope, &owner)
+            .is_some_and(|constants| constants.iter().any(|c| c == member.as_str()))
+    })
+}
+
+/// The [`value_name`] twin over a *span* value.
+fn value_name_ranged(bodies: &BodyTree, value: &AnnotationValue) -> Option<(Option<Name>, Name)> {
+    match value {
+        AnnotationValue::EnumConstant { qualifier, member } => {
+            Some((qualifier.clone(), member.clone()))
+        }
+        AnnotationValue::Expr(expr) => value_name_expr(bodies, *expr),
+        _ => None,
     }
 }
 
-/// Whether an `int` literal's value fits a narrower primitive target by the
-/// §5.2 constant narrowing; `None` for targets that never narrow from `int`.
+/// Whether an integral constant's value [§5.2]'s narrowing conversion fits a
+/// narrower integral target; `None` for targets that never narrow from an
+/// integral constant.
+///
+/// [§5.2]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.2
 fn narrows_to(value: i64, target: PrimitiveType) -> Option<bool> {
     let (lo, hi) = match target {
         PrimitiveType::Byte => (-128, 127),

@@ -67,7 +67,7 @@ impl Const {
 /// Wrapping addition, subtraction or multiplication at the promoted width
 /// ([§15.18.2]): an `int` operation wraps at 32 bits even though both
 /// operands travel sign-extended as `i64` here.
-fn wrap_arith(l: i64, r: i64, long: bool, op: ArithOp) -> i64 {
+pub(crate) fn wrap_arith(l: i64, r: i64, long: bool, op: ArithOp) -> i64 {
     if long {
         match op {
             ArithOp::Add => l.wrapping_add(r),
@@ -85,7 +85,7 @@ fn wrap_arith(l: i64, r: i64, long: bool, op: ArithOp) -> i64 {
     }
 }
 
-enum ArithOp {
+pub(crate) enum ArithOp {
     Add,
     Sub,
     Mul,
@@ -94,7 +94,7 @@ enum ArithOp {
 /// Wrapping division or remainder at the promoted width; `None` for a zero
 /// divisor, which makes the expression non-constant ([§15.28] — javac
 /// reports "division by zero" and the type layer owns that error).
-fn wrap_divrem(l: i64, r: i64, long: bool, rem: bool) -> Option<i64> {
+pub(crate) fn wrap_divrem(l: i64, r: i64, long: bool, rem: bool) -> Option<i64> {
     if r == 0 {
         return None;
     }
@@ -117,13 +117,13 @@ fn wrap_divrem(l: i64, r: i64, long: bool, rem: bool) -> Option<i64> {
 
 /// The shift distance mask ([§15.19]): `& 0x1f` for an `int` shift,
 /// `& 0x3f` for a `long` shift.
-fn shift_mask(long: bool) -> i64 {
+pub(crate) fn shift_mask(long: bool) -> i64 {
     if long { 0x3f } else { 0x1f }
 }
 
 /// Unsigned right shift at the left operand's width ([§15.19]): `>>>` on an
 /// `int` shifts the 32-bit pattern and zero-fills within those 32 bits.
-fn wrap_ushr(l: i64, dist: i64, long: bool) -> i64 {
+pub(crate) fn wrap_ushr(l: i64, dist: i64, long: bool) -> i64 {
     if long {
         ((l as u64) >> (dist & shift_mask(true))) as i64
     } else {

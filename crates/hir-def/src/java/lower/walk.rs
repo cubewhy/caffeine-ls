@@ -974,29 +974,13 @@ pub(crate) fn annotation_args_from(
 }
 
 /// Whether `node` is an annotation element value ([JLS §9.7.1]): a nested
-/// annotation, an array initializer, or a constant expression.
+/// annotation, or an expression — the grammar makes an element value a
+/// `ConditionalExpression` ([§9.7.1]), so *any* expression may appear here,
+/// including the array initializer `{ v1, v2 }` ([§10.6]). Whether the
+/// expression is one §9.7.1 *admits* (a constant, a class literal, an enum
+/// constant, a nested annotation) is decided by the element-value checks.
 pub(crate) fn is_element_value(node: &SyntaxNode<Lang>) -> bool {
-    matches!(
-        node.kind(),
-        J::ANNOTATION | J::MARKER_ANNOTATION | J::ARRAY_INITIALIZER | J::LITERAL
-    ) || expr_node_kind(node.kind())
-}
-
-/// The node kinds an annotation element value (a constant expression,
-/// [§15.28]) may take beyond the direct literal forms.
-fn expr_node_kind(kind: J) -> bool {
-    matches!(
-        kind,
-        J::FIELD_ACCESS
-            | J::CLASS_LITERAL
-            | J::PREFIX_EXPR
-            | J::UNARY_EXPR
-            | J::BINARY_EXPR
-            | J::COND_EXPR
-            | J::PAREN_EXPR
-            | J::PARENTHESIZED_EXPR
-            | J::CAST_EXPR
-    )
+    matches!(node.kind(), J::ANNOTATION | J::MARKER_ANNOTATION) || body::is_expr_kind(node.kind())
 }
 
 /// Parses one annotation element value ([JLS §9.7.1]) into its structured
@@ -1036,10 +1020,7 @@ pub(crate) fn annotation_value_from(
             },
             // `null`, `this`, `super` — an expression value without a literal
             // form.
-            _ => match value_arena(&mut ctx, owner) {
-                Some((ctx, owner)) => AnnotationValue::Expr(body::lower_expr(ctx, owner, node)?),
-                None => return None,
-            },
+            _ => annotation_expr_value(ctx.as_deref_mut(), owner, node)?,
         },
         // `Type.NAME` — a bare enum constant or a qualified name
         // ([§6.5.6.2], [§8.9.1]); both resolve as a name in the type layer.
@@ -1050,26 +1031,48 @@ pub(crate) fn annotation_value_from(
             let qualifier = qualified_receiver_text(node);
             AnnotationValue::EnumConstant { qualifier, member }
         }
-        // Any other element value — an arithmetic, conditional, cast or
-        // parenthesized expression ([§15]) — lowered into the arena, or kept
-        // as its raw source text when there is no arena.
-        _ => match value_arena(&mut ctx, owner) {
-            Some((ctx, owner)) => AnnotationValue::Expr(body::lower_expr(ctx, owner, node)?),
-            None => {
-                let text = node.text().to_string();
-                if text.is_empty() {
-                    return None;
-                }
-                AnnotationValue::Unresolved { text }
-            }
-        },
+        // Any other expression ([§15]) — an arithmetic, conditional, cast or
+        // parenthesized one, a method call, a `new`, ... — which §9.7.1 admits
+        // only when it is a constant expression, a class literal, an enum
+        // constant or a nested annotation.
+        _ => annotation_expr_value(ctx.as_deref_mut(), owner, node)?,
     };
     Some((value, range))
 }
 
-/// The qualified receiver text of a `FIELD_ACCESS` (`Foo` in `Foo.BAR`).
+/// The lowering of an element value that is not one of the literal forms above
+/// ([§15]): as an expression of the file's arena when there is one, as its raw
+/// source text when there is not ([`annotation_ref_text`]). `None` for a node
+/// that carries no value at all — and the predicate is the *same* on both
+/// paths, so the argument lists they produce stay index-aligned
+/// ([`crate::java::ranges::annotation_arg_value_range`] replays the walk).
+fn annotation_expr_value(
+    mut ctx: Option<&mut LowerCtx<'_>>,
+    owner: Option<ItemId>,
+    node: &SyntaxNode<Lang>,
+) -> Option<AnnotationValue> {
+    if node.text_range().is_empty() {
+        return None;
+    }
+    Some(match value_arena(&mut ctx, owner) {
+        Some((ctx, owner)) => AnnotationValue::Expr(body::lower_expr(ctx, owner, node)?),
+        None => AnnotationValue::Unresolved {
+            text: node.text().to_string(),
+        },
+    })
+}
+
+/// The qualified receiver text of a `FIELD_ACCESS` (`Foo` in `Foo.BAR`), when
+/// the receiver is itself a name — an identifier node or a nested
+/// `FIELD_ACCESS` (`A.B` in `A.B.C.V`). Any other receiver (`foo().bar`,
+/// `new X().y`, an array access) denotes no type, so the access it qualifies
+/// is not the qualified name of
+/// [§6.5.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.5.6.2)
+/// the caller's name resolution expects.
 fn qualified_receiver_text(node: &SyntaxNode<Lang>) -> Option<Name> {
-    let receiver = node.children().find(is_element_value)?;
+    let receiver = node
+        .children()
+        .find(|child| matches!(child.kind(), J::LITERAL | J::FIELD_ACCESS))?;
     let text = receiver.text().to_string();
     (!text.is_empty()).then(|| Name::new(&text))
 }
