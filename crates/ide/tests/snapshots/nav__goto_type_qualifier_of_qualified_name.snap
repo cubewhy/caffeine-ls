@@ -1,0 +1,24 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"Main.FIELD\", 0), (\"Flag.ON\", 0), (\"FIELD;\", 0), (\"ON;\", 0),\n(\"shadow.FIELD\", 0),])"
+---
+--- goto @"Main.FIELD"#0 ---
+Main @59..63
+--- hover ---
+com.example.String
+--- goto @"Flag.ON"#0 ---
+Flag @27..31
+--- hover ---
+com.example.Flag
+--- goto @"FIELD;"#0 ---
+FIELD @90..95
+--- hover ---
+com.example.String
+--- goto @"ON;"#0 ---
+ON @38..40
+--- hover ---
+com.example.Flag
+--- goto @"shadow.FIELD"#0 ---
+shadow @135..141
+--- hover ---
+com.example.Main

@@ -1124,8 +1124,20 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                     },
                 ),
             },
-            // A statically imported member ([JLS §7.5.4]): `import static
-            // pkg.Type.MEMBER` (or `.*`) puts the member itself in scope.
+            // A simple name. [JLS §6.5.2] reclassifies a contextually
+            // ambiguous name: an expression name — a local, parameter or field
+            // in scope — first, a type name otherwise, and a package name
+            // last. A local or a field of the name is already answered from
+            // the recorded table ([`recorded_reference`]), and a statically
+            // imported member ([§7.5.4]) is an expression name whose declaring
+            // type has to be probed here.
+            //
+            // The type-name step is what answers the *qualifier* of a
+            // qualified name: a bare leading segment lowers to a `Var` (a
+            // `LITERAL` identifier), never to a `NamePath` — `Main` in
+            // `Main.field`, `System` in `System.out` — and inference records
+            // the *member* the qualified access names on the enclosing
+            // `FieldAccess`/`MethodCall`, not the type the qualifier denotes.
             ExprData::Var(name) => {
                 let resolver = hir_ty::Resolver::for_file(&tree);
                 let mut found = Vec::new();
@@ -1152,15 +1164,24 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                 }
                 if !found.is_empty() {
                     found
-                } else {
+                } else if !pending.is_empty() {
+                    // An unloaded owner may still declare the member, an
+                    // expression name that would win over a type of the same
+                    // name; materialize it and decide on the re-run.
                     pending.into_iter().map(Resolution::Pending).collect()
+                } else {
+                    // §6.5.2/§6.5.5.1: with no expression name in scope, the
+                    // name is reclassified as a type name when one is in scope.
+                    // A package name (and a type variable) resolves to no
+                    // declaration, so it stays unanswered.
+                    type_resolution(db, file, item, &name)
                 }
             }
             // A qualified name in expression position: `Outer.Inner`,
-            // `Type.field`. [JLS §6.5.2] reclassifies an ambiguous name as a
-            // type first and only then as an expression name, so the whole
-            // text is tried as a type reference before its last segment is
-            // read as a member of the class its prefix denotes.
+            // `Type.field`. [JLS §6.5.2] reclassifies a qualified ambiguous
+            // name through its prefix, so the whole text is tried as a type
+            // reference first, and its last segment is then read as a member
+            // of the class its prefix denotes.
             ExprData::NamePath(name) => {
                 let as_type = type_resolution(db, file, item, &name);
                 if !as_type.is_empty() {

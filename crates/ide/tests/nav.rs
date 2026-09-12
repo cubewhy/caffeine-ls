@@ -361,6 +361,65 @@ fn hover_over_dollar_field_declaration() {
     );
 }
 
+// -- the type qualifier of a qualified name ([JLS §6.5.2]) --------------------------
+// An ambiguous name is reclassified — an expression name in scope first, a
+// type name otherwise, a package name last ([§6.5.2]). Inference records the
+// *member* a qualified access names on the enclosing access expression, so the
+// bare leading segment is reached only by the classpath walk: `Main` of
+// `Main.FIELD` names the class, while the access's own last segment names the
+// member. A variable's name obscures a type of the same name ([§6.4.2]), and
+// the expression name wins.
+
+const QUALIFIER_SRC: &str = r#"package com.example;
+
+enum Flag {
+    ON,
+    OFF
+}
+
+class Main {
+    static final String FIELD = "";
+}
+
+class Use {
+    void run(Main shadow, Flag flag) {
+        String a = Main.FIELD;
+        String b = shadow.FIELD;
+        Flag on = Flag.ON;
+    }
+}
+"#;
+
+#[test]
+fn goto_type_qualifier_of_qualified_name() {
+    let fixture = test_file(QUALIFIER_SRC);
+
+    // §6.5.2: the leading `Main`/`Flag` is no expression name, so it is a type
+    // name — the class/enum declaration, not the member the access reads.
+    assert_targets_name(&fixture, "Main.FIELD", 0, "class Main", "Main");
+    assert_targets_name(&fixture, "Flag.ON", 0, "enum Flag", "Flag");
+    // The access's own last segment still names the member.
+    assert_targets_name(&fixture, "FIELD;", 0, "static final String FIELD", "FIELD");
+    assert_targets_name(&fixture, "ON;", 0, "ON,", "ON");
+    // §6.4.2/§6.5.2: a variable's name obscures a type of the same name, and
+    // the expression name wins.
+    assert_targets_name(&fixture, "shadow.FIELD", 0, "Main shadow", "shadow");
+
+    assert_snapshot!(
+        "goto_type_qualifier_of_qualified_name",
+        render_nav_many(
+            &fixture,
+            &[
+                ("Main.FIELD", 0),
+                ("Flag.ON", 0),
+                ("FIELD;", 0),
+                ("ON;", 0),
+                ("shadow.FIELD", 0),
+            ]
+        )
+    );
+}
+
 // -- a single-file matrix of references and the declarations they denote -------------
 // The fixture's source set has an empty classpath, so only same-file names
 // resolve: every target below is a declaration of this file.

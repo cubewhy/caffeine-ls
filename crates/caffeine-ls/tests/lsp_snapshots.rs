@@ -1834,6 +1834,17 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         "STATIC",
         "STATIC",
     ),
+    // §6.5.2: the *qualifier* of a qualified name is an ambiguous name
+    // reclassified with an expression name first and a type name otherwise —
+    // `Base` is no variable, so `Base.STATIC` reads it as the class, not the
+    // field the access names.
+    (
+        "/src/com/example/Use.java",
+        ("Base.STATIC", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+        "Base",
+    ),
     // §7.5.4: a static import names the member its last segment writes, and the
     // call site names the same declaration.
     (
@@ -4482,7 +4493,7 @@ fn jdk_sources_are_materialized_and_navigable() {
         return;
     };
 
-    let source = "package app;\n\nimport java.util.ArrayList;\n\nclass App {\n    String created() {\n        return new String(\"abc\");\n    }\n\n    ArrayList<String> list() {\n        return new ArrayList<String>(new ArrayList<>());\n    }\n\n    Class<?> member() {\n        return \"abc\".getClass();\n    }\n}\n";
+    let source = "package app;\n\nimport java.util.ArrayList;\n\nclass App {\n    String created() {\n        return new String(\"abc\");\n    }\n\n    ArrayList<String> list() {\n        return new ArrayList<String>(new ArrayList<>());\n    }\n\n    Class<?> member() {\n        return \"abc\".getClass();\n    }\n\n    void out() {\n        System.out.println(\"hello\");\n    }\n}\n";
     let path = "/src/app/App.java";
 
     // No build system in the temp workspace: the plain path registers the
@@ -4618,6 +4629,35 @@ fn jdk_sources_are_materialized_and_navigable() {
         &object_source,
         "public final native Class<?> getClass()",
         "getClass",
+    );
+
+    // -- §6.5.2: the qualifier `System` of `System.out` is an ambiguous name
+    // that no expression name shadows, so it is reclassified as a type name
+    // and answers the class's declaration in `java/lang/System.java` — not the
+    // `out` member the access names and not the enclosing `println` call.
+    let (line, character) = position_of(source, "System.out");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let system_path = uri.to_file_path().expect("a file URI");
+    assert!(
+        system_path.ends_with("java/lang/System.java"),
+        "the qualifier denotes the class `System`: {}",
+        system_path.display()
+    );
+    let system_source = std::fs::read_to_string(&system_path).expect("the source was written");
+    assert_definition_name(
+        &locations[0]["range"],
+        &system_source,
+        "public final class System",
+        "System",
     );
 
     // Only the files those two references touched are on disk: `String.java`,
