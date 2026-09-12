@@ -1,0 +1,25 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Valid.java:
+package com.example;
+
+interface A {
+}
+
+interface B extends A {
+}
+
+interface C extends A, java.io.Serializable {
+}
+
+enum E implements A {
+    X
+}
+
+record R() implements A {
+}
+
+class Impl implements A, B, java.io.Serializable, java.lang.Cloneable {
+}

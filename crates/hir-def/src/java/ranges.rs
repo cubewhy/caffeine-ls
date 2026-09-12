@@ -360,6 +360,18 @@ pub fn type_ref_occurrences(
         .collect()
 }
 
+/// The source range of a declaration-side type reference as written: the whole
+/// `TYPE` node, so a qualified name (`java.util.ArrayList`) and a type-use
+/// annotation (`@A Ex`) are inside it — the range javac's caret covers for a
+/// reference-position diagnostic.
+pub fn type_ref_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tyref: &ItemTypeRef,
+) -> Option<TextRange> {
+    node_of(map, source, tyref.node).map(|node| node.text_range())
+}
+
 /// The source range of an annotation's (possibly qualified) name — the first
 /// `QUALIFIED_NAME` descendant of its syntax node (mirror of
 /// `annotation_name_ref`).

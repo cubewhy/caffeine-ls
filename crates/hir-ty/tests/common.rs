@@ -866,6 +866,31 @@ pub fn class_with_methods_access_sig(
     }
 }
 
+/// Like [`class_with_methods_access_sig`], but for a real JDK *interface*
+/// whose abstract methods carry `ACC_PUBLIC | ACC_ABSTRACT` ([JLS §9.4]):
+/// `ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT` ([JVMS §4.1]).
+pub fn interface_with_methods_access_sig(
+    fqn: &'static str,
+    interfaces: &'static [&'static str],
+    methods: &'static [(&'static str, &'static str)],
+    method_sigs: &'static [&'static str],
+    method_access: &'static [u16],
+    sig: Option<&'static str>,
+) -> ClassSpec<'static> {
+    ClassSpec {
+        access: 0x0601, // ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT
+        ..class_with_methods_access_sig(
+            fqn,
+            None,
+            interfaces,
+            methods,
+            method_sigs,
+            method_access,
+            sig,
+        )
+    }
+}
+
 /// Like [`class_with_methods`], with explicit per-method access flags
 /// (parallel to `methods`).
 pub fn class_with_methods_access(
@@ -1092,18 +1117,16 @@ pub fn jdk_classes() -> Vec<ClassSpec<'static>> {
         // ACC_PUBLIC | ACC_ABSTRACT ([JLS §9.4]), so `Closeable.close`
         // redeclaring `AutoCloseable.close` makes both override-equivalent
         // abstracts ([§9.4.1.2]) — one SAM.
-        class_with_methods_access_sig(
+        interface_with_methods_access_sig(
             "java/lang/AutoCloseable",
-            None,
             &[],
             &[("close", "()V")],
             &[""],
             &[0x0411],
             None,
         ),
-        class_with_methods_access_sig(
+        interface_with_methods_access_sig(
             "java/io/Closeable",
-            None,
             &["java/lang/AutoCloseable"],
             &[("close", "()V")],
             &[""],

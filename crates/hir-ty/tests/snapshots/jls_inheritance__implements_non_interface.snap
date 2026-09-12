@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Main.java:
+package com.example;
+
+public class Main implements Example {
+}
+
+class Example {
+}
+
+@2:29: interface-expected-here: Interface expected here

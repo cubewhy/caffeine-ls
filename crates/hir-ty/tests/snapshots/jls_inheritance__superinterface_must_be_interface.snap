@@ -1,0 +1,27 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Kinds.java:
+package com.example;
+
+class Base {
+}
+
+interface Iface extends Base {
+}
+
+enum Colour implements Base {
+    RED
+}
+
+record Point() implements Base {
+}
+
+class Impl implements Base, Iface {
+}
+
+@5:24: interface-expected-here: Interface expected here
+@8:23: interface-expected-here: Interface expected here
+@12:26: interface-expected-here: Interface expected here
+@15:22: interface-expected-here: Interface expected here

@@ -1,0 +1,11 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Missing.java:
+package com.example;
+
+class Impl implements Missing {
+}
+
+@2:22: cannot-resolve-type: Cannot resolve symbol 'Missing'

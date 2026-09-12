@@ -385,6 +385,19 @@ pub(crate) fn class_like_and_final(
     }
 }
 
+/// Whether the named reference type is an interface or annotation type — the
+/// supertype kind [JLS §8.1.5]/[§9.1.3] require of every type named by an
+/// `implements` clause or by an interface's `extends` clause. `None` when the
+/// name does not resolve to a reference type (or resolves to nothing), so
+/// callers stay permissive there.
+pub(crate) fn is_interface_type(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<bool> {
+    class_like_and_final(db, scope, ty).map(|(class_like, _)| !class_like)
+}
+
 /// Whether `sub` is a subtype of `sup`
 /// ([JLS §4.10](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.10)).
 pub fn is_subtype(db: &dyn TyDatabase, scope: &hir::ResolutionScope, sub: &Ty, sup: &Ty) -> bool {

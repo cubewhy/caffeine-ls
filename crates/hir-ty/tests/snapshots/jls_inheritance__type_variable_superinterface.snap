@@ -1,0 +1,12 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/TypeVar.java:
+package com.example;
+
+class Base {
+}
+
+class Impl<T extends Base> implements T {
+}

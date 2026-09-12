@@ -1,0 +1,21 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Qualified.java:
+package com.example;
+
+class Outer {
+    static class Inner {
+    }
+}
+
+class UsesJdk implements java.util.ArrayList {
+}
+
+class UsesNested implements Outer.Inner {
+}
+
+@7:25: raw-type-use: Raw use of parameterized class 'ArrayList'
+@7:25: interface-expected-here: Interface expected here
+@10:28: interface-expected-here: Interface expected here

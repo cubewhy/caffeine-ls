@@ -98,6 +98,9 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         DeclDiagnostic::CannotInheritFromFinalClass { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::CannotInheritFromFinalClass)
         }
+        DeclDiagnostic::InterfaceExpectedHere { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::InterfaceExpectedHere)
+        }
         DeclDiagnostic::CannotOverrideFinalMethod { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::CannotOverrideFinalMethod)
         }
@@ -359,6 +362,7 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
         DeclDiagnostic::CannotInheritFromFinalClass { super_owner, .. } => {
             format!("Cannot inherit from '{}'", super_owner.simple_name())
         }
+        DeclDiagnostic::InterfaceExpectedHere { .. } => "Interface expected here".to_owned(),
         DeclDiagnostic::CannotOverrideFinalMethod {
             method,
             super_owner,

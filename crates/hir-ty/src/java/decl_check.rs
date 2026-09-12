@@ -56,6 +56,19 @@ fn first_type_ref_range(
         .and_then(|(_, range)| range)
 }
 
+/// The source range of a declaration type reference as written — the whole
+/// `TYPE` node, so qualifiers and type-use annotations are covered
+/// ([`hir_def::java::ranges::type_ref_range`]).
+fn type_ref_range(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    tyref: &ItemTypeRef,
+) -> Option<rowan::TextRange> {
+    let (map, source) = range_ctx(db, file, tree.language)?;
+    hir_def::java::ranges::type_ref_range(map, &source, tyref)
+}
+
 /// A declaration-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclDiagnostic {
@@ -280,6 +293,12 @@ pub enum DeclDiagnostic {
         super_owner: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §8.1.5/[§9.1.3]: a type named by an `implements` clause (of a class,
+    /// enum or record) or by an interface's `extends` clause is not an
+    /// interface. javac: `interface expected here`; the message is IntelliJ's
+    /// `Interface expected here`. `range` spans the written type reference
+    /// (qualified name and type-use annotations included).
+    InterfaceExpectedHere { range: Option<rowan::TextRange> },
     /// §8.4.3.3: a declaration of a method with the same signature as a
     /// `final` method inherited from a superclass or superinterface — a final
     /// method can neither be overridden (instance) nor hidden (static). javac
@@ -705,6 +724,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::ConstructorNameMismatch { .. }
             | DeclDiagnostic::IllegalModifierCombination { .. }
             | DeclDiagnostic::CannotInheritFromFinalClass { .. }
+            | DeclDiagnostic::InterfaceExpectedHere { .. }
             | DeclDiagnostic::UnimplementedAbstractMethod { .. }
             | DeclDiagnostic::CyclicInheritance { .. }
             | DeclDiagnostic::NoDefaultConstructor { .. }
@@ -800,6 +820,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::CannotInheritFromFinalClass {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::InterfaceExpectedHere {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::UnimplementedAbstractMethod {
@@ -1282,6 +1305,38 @@ fn check_class(
             out.push(DeclDiagnostic::CannotInheritFromFinalClass {
                 super_owner: fqn,
                 range: first_type_ref_range(db, file, tree, super_ref),
+            });
+        }
+    }
+
+    // §8.1.5/[§9.1.3]: each *InterfaceType* named by the `implements` clause of
+    // a class declaration — a normal class, an enum ([§8.9]) or a record
+    // ([§8.10]), all of which are class declarations ([§8.1]) — and each one
+    // named by an interface declaration's `extends` clause must name an
+    // interface, or a compile-time error occurs. Reported once per offending
+    // reference, at the written type (IntelliJ: `Interface expected here`;
+    // javac: `interface expected here`). `is_interface_type` yields `None` for
+    // a reference it cannot classify — an unresolved name (`CannotResolveType`
+    // already reports it) or a type variable (javac reports that with its own
+    // `compiler.err.type.found.req`) — so only a *resolved* class-like type is
+    // reported. The rest of the sentence (*accessible* interface, javac
+    // `compiler.err.not.def.public.cant.access`), the duplicate-superinterface
+    // rule of §8.1.5 (`compiler.err.repeated.interface`) and §8.1.4's
+    // class-required rule for a class's `extends` clause
+    // (`compiler.err.no.intf.expected.here`) are separate rules with their own
+    // codes and stay unchanged.
+    let superinterfaces: &[ItemTypeRef] = match tree.data(item) {
+        ItemData::Class(data) | ItemData::Interface(data) => &data.interfaces,
+        ItemData::Enum(data) => &data.interfaces,
+        ItemData::Record(data) => &data.interfaces,
+        _ => &[],
+    };
+    for interface_ref in superinterfaces {
+        let interface_ty =
+            crate::java::resolve::resolve_type_ref(db, scope, &resolver, interface_ref);
+        if subtyping::is_interface_type(db, scope, &interface_ty) == Some(false) {
+            out.push(DeclDiagnostic::InterfaceExpectedHere {
+                range: type_ref_range(db, file, tree, interface_ref),
             });
         }
     }

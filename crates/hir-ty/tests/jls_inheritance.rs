@@ -7,7 +7,9 @@
 //! cannot be overridden or hidden ([§8.4.3.3]), an override or implementation
 //! may not assign weaker access privileges ([§8.4.8.3]), a non-abstract class
 //! must implement every inherited abstract method ([§8.1.1.1]), no class may
-//! cycle in its inheritance chain ([§8.1.4], [§9.1.3]), and no declaration
+//! cycle in its inheritance chain ([§8.1.4], [§9.1.3]), every type named by an
+//! `implements` clause or an interface's `extends` clause must be an interface
+//! ([§8.1.5], [§9.1.3]), and no declaration
 //! may combine modifiers the JLS forbids ([§8.1.1], [§8.4.3]). Red cases
 //! render the diagnostics the declaration checker must report; green cases
 //! confirm legal declarations pass without diagnostics.
@@ -407,6 +409,137 @@ interface Z extends X {}
     )])
 );
 // Red: an interface-extends cycle ([§9.1.3]).
+
+// -- red: an implements clause must name an interface ([§8.1.5]) ----------------
+
+snapshot!(
+    implements_non_interface,
+    check_class_diagnostics(&[(
+        "/src/com/example/Main.java",
+        "\
+package com.example;
+
+public class Main implements Example {
+}
+
+class Example {
+}
+",
+    )])
+);
+
+// -- red: every clause that names a superinterface ([§8.1.5], [§9.1.3]) --------
+
+snapshot!(
+    superinterface_must_be_interface,
+    check_class_diagnostics(&[(
+        "/src/com/example/Kinds.java",
+        "\
+package com.example;
+
+class Base {
+}
+
+interface Iface extends Base {
+}
+
+enum Colour implements Base {
+    RED
+}
+
+record Point() implements Base {
+}
+
+class Impl implements Base, Iface {
+}
+",
+    )])
+);
+
+// -- red: the range covers the written type, qualifiers included ([§8.1.5]) ----
+
+snapshot!(
+    qualified_superinterfaces,
+    check_class_diagnostics(&[(
+        "/src/com/example/Qualified.java",
+        "\
+package com.example;
+
+class Outer {
+    static class Inner {
+    }
+}
+
+class UsesJdk implements java.util.ArrayList {
+}
+
+class UsesNested implements Outer.Inner {
+}
+",
+    )])
+);
+
+// -- green: interfaces, including inherited repeats and library interfaces ------
+
+snapshot!(
+    valid_superinterfaces,
+    check_class_diagnostics(&[(
+        "/src/com/example/Valid.java",
+        "\
+package com.example;
+
+interface A {
+}
+
+interface B extends A {
+}
+
+interface C extends A, java.io.Serializable {
+}
+
+enum E implements A {
+    X
+}
+
+record R() implements A {
+}
+
+class Impl implements A, B, java.io.Serializable, java.lang.Cloneable {
+}
+",
+    )])
+);
+
+// -- boundary: an unresolved name and a type variable are not classified -------
+
+snapshot!(
+    unresolved_superinterface,
+    check_class_diagnostics(&[(
+        "/src/com/example/Missing.java",
+        "\
+package com.example;
+
+class Impl implements Missing {
+}
+",
+    )])
+);
+
+snapshot!(
+    type_variable_superinterface,
+    check_class_diagnostics(&[(
+        "/src/com/example/TypeVar.java",
+        "\
+package com.example;
+
+class Base {
+}
+
+class Impl<T extends Base> implements T {
+}
+",
+    )])
+);
 
 // -- red: illegal modifier combinations ([§8.1.1], [§8.4.3]) -----------------
 
