@@ -1,4 +1,5 @@
 use crossbeam_channel::Sender;
+use ide::LibraryId;
 use ide_db::base_db::salsa::Cancelled;
 use lsp_server::{Notification, Request};
 use serde::de::DeserializeOwned;
@@ -29,7 +30,7 @@ impl std::error::Error for DeferForLibrarySources {}
 /// One source file to read out of a library archive and load.
 #[derive(Debug)]
 pub(crate) struct LibrarySourceFile {
-    pub library: hir::LibraryId,
+    pub library: LibraryId,
     pub archive: AbsPathBuf,
     pub entry: Arc<str>,
     pub path: AbsPathBuf,

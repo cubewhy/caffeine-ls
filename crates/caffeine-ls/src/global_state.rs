@@ -12,8 +12,7 @@ use std::time::Instant;
 use triomphe::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use hir::enable_persistent_stub_cache;
-use ide::{Analysis, AnalysisHost, Cancellable};
+use ide::{Analysis, AnalysisHost, Cancellable, LibraryId, LibrarySources};
 use lsp_server::{ErrorCode, Response};
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
@@ -37,7 +36,7 @@ pub enum BackgroundTaskEvent {
         root: AbsPathBuf,
         graph: WorkspaceGraph,
         /// Library → the materialized source roots the driver prepared.
-        sources: FxHashMap<hir::LibraryId, hir::LibrarySources>,
+        sources: FxHashMap<LibraryId, LibrarySources>,
     },
     SyncFailed {
         message: String,
@@ -97,13 +96,13 @@ pub(crate) struct Handle<H, C> {
 }
 
 /// The kind of each registered source root, in `SourceRootId` order — the same
-/// order `FileChange::apply` assigns ids in, so `partition_source_roots` can
+/// order `Change::apply` assigns ids in, so `partition_source_roots` can
 /// tag each partitioned `FileSet` with its owner.
 pub(crate) enum SourceRootKind {
     /// A build-system source root of an owning source set.
     SourceSet,
     /// A read-only root holding a library's materialized sources.
-    Library(hir::LibraryId),
+    Library(LibraryId),
 }
 
 pub(crate) type ReqHandler = fn(&mut GlobalState, lsp_server::Response);
@@ -232,7 +231,7 @@ impl GlobalState {
         };
 
         let analysis_host = AnalysisHost::new();
-        if enable_persistent_stub_cache(analysis_host.raw_database(), &config.get_cache_dir()) {
+        if analysis_host.enable_persistent_stub_cache(&config.get_cache_dir()) {
             tracing::debug!("persistent stub cache enabled");
         }
 

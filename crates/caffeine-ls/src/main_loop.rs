@@ -1,5 +1,4 @@
 use std::{
-    panic::AssertUnwindSafe,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -7,8 +6,11 @@ use std::{
 
 use camino::{Utf8Path, Utf8PathBuf};
 use crossbeam_channel::Receiver;
-use hir::{Classpath, ClasspathEntry as HirClasspathEntry, LibraryInfo, LibraryKind, SourceSetId};
-use ide_db::base_db::{FileChange, SourceRoot, SourceRootId, salsa::Cancelled};
+use ide::{
+    Change, Classpath, ClasspathEntry as GraphClasspathEntry, LibraryId, LibraryInfo, LibraryKind,
+    LibrarySources, ProjectGraphData, SourceSetId,
+};
+use ide_db::base_db::{SourceRoot, SourceRootId};
 use lsp_server::{Connection, ErrorCode, Notification, Request};
 use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError, SyncPhase, SyncProgress};
@@ -34,7 +36,7 @@ const OPEN_BUILD_TOOL_LOG_ACTION: &str = "Open Build Tool Log";
 
 /// One registered source root, in `SourceRootId` order. Workspace roots come
 /// first (sorted by path), library source roots follow (sorted by library id),
-/// so the id `FileChange::apply` assigns to each root is this vector's index.
+/// so the id `Change::apply` assigns to each root is this vector's index.
 enum RootEntry {
     Workspace {
         path: AbsPathBuf,
@@ -43,7 +45,7 @@ enum RootEntry {
     },
     Library {
         path: AbsPathBuf,
-        library: hir::LibraryId,
+        library: LibraryId,
     },
 }
 
@@ -684,7 +686,7 @@ impl GlobalState {
         &mut self,
         graph: project_model::WorkspaceGraph,
         root: AbsPathBuf,
-        sources: FxHashMap<hir::LibraryId, hir::LibrarySources>,
+        sources: FxHashMap<LibraryId, LibrarySources>,
     ) {
         tracing::info!(?root, "Applying workspace source roots and loader config");
 
@@ -696,7 +698,7 @@ impl GlobalState {
         // diagnostic can anchor on the exact base the build tool resolved
         // ([JLS §7.2.1]). This order is shared by the vfs partition and the
         // `ProjectGraph` maps, so the `SourceRootId(i)` assigned by
-        // `FileChange::apply` (vector order) lines up with `entries[i]`.
+        // `Change::apply` (vector order) lines up with `entries[i]`.
         let mut source_sets: Vec<SourceSetId> = Vec::new();
         let mut workspace_entries: Vec<(AbsPathBuf, SourceSetId, bool)> = Vec::new();
         let mut seen: FxHashSet<SourceSetId> = FxHashSet::default();
@@ -734,7 +736,7 @@ impl GlobalState {
 
         // Library roots follow the workspace roots, sorted by library id, so
         // the mapping from `SourceRootId` to owner stays deterministic.
-        let mut library_entries: Vec<(AbsPathBuf, hir::LibraryId)> = sources
+        let mut library_entries: Vec<(AbsPathBuf, LibraryId)> = sources
             .iter()
             .map(|(library, sources)| (sources.root.clone(), *library))
             .collect();
@@ -820,7 +822,7 @@ impl GlobalState {
 
         let roots = self.partition_source_roots();
 
-        let library_source_roots: FxHashMap<SourceRootId, hir::LibraryId> = self
+        let library_source_roots: FxHashMap<SourceRootId, LibraryId> = self
             .source_root_kinds
             .iter()
             .enumerate()
@@ -845,13 +847,11 @@ impl GlobalState {
                     .insert(SourceRootId(idx as u32), path.clone());
             }
         }
-        let db = self.analysis_host.raw_database_mut();
-        hir::set_project_graph(db, project_graph);
-
-        // Applying roots must happen after the ProjectGraph registration so
-        // the per-source-root SourceRootIds match `source_root_to_source_set`
-        // and `source_root_dirs`.
-        let mut change = FileChange::default();
+        // The graph and the roots go in as one change: `Change::apply` writes
+        // the graph first, so the `SourceRootId`s it maps are the ones this
+        // same change assigns to `roots` (vector order).
+        let mut change = Change::default();
+        change.set_project_graph(project_graph);
         change.set_roots(roots);
         self.analysis_host.apply_change(change);
 
@@ -866,10 +866,10 @@ impl GlobalState {
         &self,
         graph: &project_model::WorkspaceGraph,
         source_set_ids: &[SourceSetId],
-        sources: &FxHashMap<hir::LibraryId, hir::LibrarySources>,
-        library_source_roots: &FxHashMap<SourceRootId, hir::LibraryId>,
-    ) -> hir::ProjectGraphData {
-        let mut data = hir::ProjectGraphData::default();
+        sources: &FxHashMap<LibraryId, LibrarySources>,
+        library_source_roots: &FxHashMap<SourceRootId, LibraryId>,
+    ) -> ProjectGraphData {
+        let mut data = ProjectGraphData::default();
 
         // SDK → the concrete jimage/rt.jar library id.
         let mut sdk_library: FxHashMap<project_model::SdkId, project_model::LibraryId> =
@@ -928,17 +928,17 @@ impl GlobalState {
                         project_id,
                         source_set: kind,
                     } => {
-                        entries.push(HirClasspathEntry::SourceSet(SourceSetId {
+                        entries.push(GraphClasspathEntry::SourceSet(SourceSetId {
                             project: *project_id,
                             kind: kind.clone(),
                         }));
                     }
                     ClasspathEntry::External(lib_id) => {
-                        entries.push(HirClasspathEntry::Library(*lib_id));
+                        entries.push(GraphClasspathEntry::Library(*lib_id));
                     }
                     ClasspathEntry::Sdk(sdk_id) => {
                         if let Some(&id) = sdk_library.get(sdk_id) {
-                            entries.push(HirClasspathEntry::Library(id));
+                            entries.push(GraphClasspathEntry::Library(id));
                         }
                     }
                 }
@@ -948,7 +948,7 @@ impl GlobalState {
             // ([JLS §7.3]); a build tool reports them as an explicit SDK
             // entry, plain workspaces fall back to the configured JDK.
             for jdk in &data.jdk_libraries {
-                let entry = HirClasspathEntry::Library(*jdk);
+                let entry = GraphClasspathEntry::Library(*jdk);
                 if !entries.contains(&entry) {
                     entries.push(entry);
                 }
@@ -971,8 +971,7 @@ impl GlobalState {
     /// Warms the stub indexes of every registered library up on a background
     /// thread so the first type query does not pay the full JDK parse cost.
     fn warmup_libraries(&mut self, root: &AbsPathBuf) {
-        let db = self.analysis_host.raw_database();
-        let ids: Vec<hir::LibraryId> = hir::registered_libraries(db);
+        let ids: Vec<LibraryId> = self.analysis_host.snapshot().registered_libraries();
         if ids.is_empty() {
             return;
         }
@@ -999,11 +998,7 @@ impl GlobalState {
             let snapshot = snapshot.clone();
 
             self.thread_pool.execute(move || {
-                let db = snapshot.raw_database();
-
-                let _ = Cancelled::catch(AssertUnwindSafe(|| {
-                    hir::warmup_library(db, id);
-                }));
+                let _ = snapshot.warmup_library(id);
 
                 let done = done_count.fetch_add(1, Ordering::SeqCst) + 1;
                 let percentage = (done as f64 / total as f64 * 100.0) as u32;
@@ -1021,7 +1016,7 @@ impl GlobalState {
                 if done == total {
                     // All libraries are indexed: now is a safe point to drop
                     // cache entries of libraries no project uses anymore.
-                    hir::prune_stub_cache(db);
+                    snapshot.prune_stub_cache();
 
                     task_sender
                         .send(BackgroundTaskEvent::Progress(ProgressEvent {
@@ -1177,7 +1172,7 @@ impl GlobalState {
     }
 
     fn process_changes(&mut self) {
-        let mut change = FileChange::default();
+        let mut change = Change::default();
 
         // Whether any change added or removed a file from the workspace: only
         // then must the source roots (and the `file → root` salsa inputs) be

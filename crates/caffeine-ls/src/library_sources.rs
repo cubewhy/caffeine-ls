@@ -3,8 +3,8 @@
 //! A library's sources are never extracted wholesale and never loaded eagerly:
 //! a JDK `src.zip` holds ~25k compilation units (~250 MB of text), so keeping
 //! them resident — or even on disk — is the cost this design refuses to pay.
-//! Each library's archive is indexed once by `hir` (entry names only), and an
-//! individual file is read out of the archive, written under
+//! Each library's archive is indexed once by the analysis layer (entry names
+//! only), and an individual file is read out of the archive, written under
 //! `<cache_dir>/sources/v1/<library-id-hex>/`, and loaded into the
 //! VFS/database **only when a request resolves into it**.
 //!
@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hir::{LibraryId, LibraryKind, LibrarySources};
+use ide::{LibraryId, LibraryKind, LibrarySources};
 use project_model::{SdkData, WorkspaceGraph};
 use rustc_hash::FxHashMap;
 use vfs::AbsPathBuf;
@@ -133,7 +133,7 @@ pub(crate) fn prepare_roots(
 
 /// Removes the previously materialized files of libraries that are no longer
 /// on the classpath. A failure to remove is logged, not fatal — mirrors
-/// `hir::prune_stub_cache`.
+/// `ide::Analysis::prune_stub_cache`.
 fn prune_roots(base: &Path, live: &FxHashMap<LibraryId, LibrarySources>) {
     let Ok(entries) = fs::read_dir(base) else {
         return;

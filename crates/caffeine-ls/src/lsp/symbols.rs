@@ -25,8 +25,8 @@ use super::to_proto;
 /// Maps an HIR symbol kind to the closest LSP [`SymbolKind`]. Records and
 /// annotation types have no direct LSP kind; they map to `Struct` and
 /// `Interface` respectively.
-pub(crate) fn symbol_kind(kind: hir::SourceSymbolKind) -> SymbolKind {
-    use hir::SourceSymbolKind as Kind;
+pub(crate) fn symbol_kind(kind: ide::SourceSymbolKind) -> SymbolKind {
+    use ide::SourceSymbolKind as Kind;
     match kind {
         Kind::Class => SymbolKind::Class,
         Kind::Interface => SymbolKind::Interface,
@@ -79,7 +79,7 @@ pub(crate) fn nest_document_symbols(
     let index: FxHashMap<&str, usize> = symbols
         .iter()
         .enumerate()
-        .filter(|(_, symbol)| symbol.kind != hir::SourceSymbolKind::Package)
+        .filter(|(_, symbol)| symbol.kind != ide::SourceSymbolKind::Package)
         .map(|(idx, symbol)| (symbol.name.as_str(), idx))
         .collect();
 

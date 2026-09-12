@@ -38,7 +38,6 @@ triomphe.workspace = true
 walkdir.workspace = true
 zip.workspace = true
 
-hir.workspace = true
 ide.workspace = true
 ide-db.workspace = true
 project-model.workspace = true
