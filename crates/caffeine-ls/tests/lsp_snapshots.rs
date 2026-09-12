@@ -2540,6 +2540,18 @@ exit 0
         config
     }
 
+    /// The same configuration, but with the fake JDK configured as the
+    /// *bootstrap* JDK and no project JDK at all: the decompiler must run on the
+    /// bootstrap one, and nothing else may be looked for.
+    fn bootstrap_config(&self) -> serde_json::Value {
+        let mut config = default_client_config();
+        config["java_home"] = json!(std::env::temp_dir().join("caffeine-ls-test-no-jdk"));
+        config["bootstrap_java_home"] = json!(self.jdk.path());
+        config["decompiler"] = json!("cfr");
+        config["decompiler_jars"] = json!({ "cfr": &self.cfr });
+        config
+    }
+
     /// Writes the workspace of a test: an app file and the jar beside it. No
     /// `lib/foo-sources.jar` is written — that is what makes the class
     /// decompilable in the first place.
@@ -2652,6 +2664,55 @@ fn decompiled_library_definition_materializes_and_navigates() {
         report["items"].as_array().map(Vec::len),
         Some(0),
         "decompiled library files report no diagnostics: {report:?}"
+    );
+}
+
+/// The decompiler runs on the *bootstrap* JDK when the client configures one,
+/// independently of the JDK the project compiles against: the fixture's fake JDK
+/// is reachable only as `bootstrap_java_home` (the project `java_home` does not
+/// exist), so the decompile can only have happened through it.
+#[test]
+fn the_bootstrap_jdk_runs_the_decompiler() {
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let decompiler = Decompiler::new(FOO_SOURCE);
+    let lsp = create_lsp_with_config(decompiler.bootstrap_config(), |root| {
+        decompiler.setup_workspace(root, APP_SOURCE);
+    });
+
+    lsp.open_document(APP_PATH);
+    lsp.wait_until_workspace_is_loaded();
+
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(APP_PATH) },
+            "position": {
+                "line": position_of(APP_SOURCE, "com.example.Foo()").0,
+                "character": position_of(APP_SOURCE, "com.example.Foo()").1,
+            },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let path = uri.to_file_path().expect("a file URI");
+    assert!(
+        path.ends_with("com/example/Foo.java"),
+        "the class is declared by `Foo`: {}",
+        path.display()
+    );
+    assert_definition_name(
+        &locations[0]["range"],
+        FOO_SOURCE,
+        "public class Foo",
+        "Foo",
+    );
+    assert_eq!(
+        decompiler.jvm_runs(),
+        1,
+        "the bootstrap JDK's java is the one that ran"
     );
 }
 

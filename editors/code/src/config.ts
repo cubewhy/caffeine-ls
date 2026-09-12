@@ -10,6 +10,13 @@ export const JDK_STATE_KEY = "caffeine_ls.project.java_home";
 export interface ClientConfig {
   cache_dir: string;
   java_home: string | null;
+  /**
+   * JDK home whose `bin/java` runs the decompiler — a newer JVM than the project
+   * compiles against is often needed by the decompiler itself. `null` (the
+   * default) falls back to `java_home`; a path without `bin/java` falls back
+   * server-side as well.
+   */
+  bootstrap_java_home: string | null;
   download_sources: boolean;
   /**
    * Decompiler backend the server runs on library classes that ship no sources:
@@ -45,9 +52,17 @@ export function getClientConfig(context: ExtensionContext): ClientConfig {
     .getConfiguration("caffeine_ls")
     .get<string>("decompiler", "vineflower");
 
+  // An empty setting means "use the project JDK": the server falls back itself,
+  // so an unusable path is its decision to report, not ours to guess at.
+  const bootstrapJdk = vscode.workspace
+    .getConfiguration("caffeine_ls")
+    .get<string>("bootstrapJdk", "")
+    .trim();
+
   return {
     cache_dir: cacheDir,
     java_home: javaHome,
+    bootstrap_java_home: bootstrapJdk.length > 0 ? bootstrapJdk : null,
     download_sources: downloadSources,
     decompiler,
     decompiler_jars: Object.fromEntries(

@@ -141,6 +141,11 @@ export function activate(context: ExtensionContext) {
       if (event.affectsConfiguration("caffeine_ls.decompiler")) {
         notifyLspConfigUpdate(client, getClientConfig(context));
       }
+      if (event.affectsConfiguration("caffeine_ls.bootstrapJdk")) {
+        // Only the JVM that runs the decompiler changes, so nothing is re-synced:
+        // the newly configured JDK is used by the next decompile.
+        notifyLspConfigUpdate(client, getClientConfig(context));
+      }
       if (event.affectsConfiguration("caffeine_ls.logLevel")) {
         const choice = "Restart";
         window

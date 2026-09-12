@@ -1,4 +1,7 @@
-use std::{env, fmt, path::PathBuf};
+use std::{
+    env, fmt,
+    path::{Path, PathBuf},
+};
 
 use directories::ProjectDirs;
 use ide_db::line_index::WideEncoding;
@@ -145,17 +148,31 @@ impl Config {
         Some((crate::decompiler::backend(&id)?, jar))
     }
 
-    /// The JVM the decompiler is run with: the configured SDK's `bin/java` when
-    /// the client set one (or the environment did) and it exists, else whatever
-    /// `java` resolves to on `PATH`.
+    /// The JVM the decompiler is run with: the configured bootstrap JDK when it
+    /// is usable, else the project JDK's `bin/java`, else whatever `java`
+    /// resolves to on `PATH`.
+    ///
+    /// The decompiler is not part of the project and may need a newer JVM than
+    /// the project compiles against (a tool that reads the newest classfiles
+    /// runs on the newest JVM), which is what the bootstrap JDK is for. A
+    /// configured bootstrap JDK without a `bin/java` is a misconfiguration, not
+    /// a reason to fail a navigation: the project JDK is used instead.
     pub fn decompiler_java(&self) -> PathBuf {
-        if let Some(home) = self.get_java_home() {
-            let executable = home
-                .join("bin")
-                .join(if cfg!(windows) { "java.exe" } else { "java" });
-            if executable.is_file() {
-                return executable;
+        if let Some(home) = &self
+            .client_config
+            .as_ref()
+            .and_then(|config| config.bootstrap_java_home.as_ref())
+        {
+            match jdk_java(home) {
+                Some(java) => return java,
+                None => tracing::debug!(
+                    home = %home.display(),
+                    "the configured bootstrap JDK has no bin/java; falling back to the project JDK"
+                ),
             }
+        }
+        if let Some(java) = self.get_java_home().as_deref().and_then(jdk_java) {
+            return java;
         }
         PathBuf::from("java")
     }
@@ -213,11 +230,28 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
     }
 }
 
+/// The `java` executable of a JDK home, whether or not it exists — the one place
+/// the layout of a JDK is spelled out.
+fn jdk_java_path(home: &Path) -> PathBuf {
+    home.join("bin")
+        .join(if cfg!(windows) { "java.exe" } else { "java" })
+}
+
+/// The `java` executable of a JDK home, `None` when the home has none.
+fn jdk_java(home: &Path) -> Option<PathBuf> {
+    let executable = jdk_java_path(home);
+    executable.is_file().then_some(executable)
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 #[serde(default)]
 pub struct ClientConfig {
     pub cache_dir: Option<PathBuf>,
     pub java_home: Option<PathBuf>,
+    /// JDK home whose `bin/java` runs the decompiler, e.g. a newer JVM than the
+    /// project compiles against. Absent or unusable falls back to `java_home`.
+    #[serde(default)]
+    pub bootstrap_java_home: Option<PathBuf>,
     /// Let the build-system sync download dependency sources.
     #[serde(default, alias = "downloadSources")]
     pub download_sources: bool,
@@ -268,6 +302,7 @@ impl fmt::Display for ConfigErrors {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     /// A configuration built the way the server builds one: from the client's
     /// initialization options.
@@ -326,6 +361,46 @@ mod tests {
             assert_eq!(config.decompiler_spec(), None, "{client_config}");
             assert!(config.decompiler().is_none(), "{client_config}");
         }
+    }
+
+    /// A JDK home with a `bin/java` in it, as a real install has.
+    fn fake_jdk(dir: &tempfile::TempDir, name: &str) -> PathBuf {
+        let home = dir.path().join(name);
+        fs::create_dir_all(home.join("bin")).unwrap();
+        fs::write(jdk_java_path(&home), "#!/bin/sh\n").unwrap();
+        home
+    }
+
+    #[test]
+    fn the_decompiler_runs_on_the_bootstrap_jdk_then_the_project_jdk() {
+        let dir = tempfile::tempdir().unwrap();
+        let bootstrap = fake_jdk(&dir, "bootstrap");
+        let project = fake_jdk(&dir, "project");
+
+        // Both configured: the decompiler gets the bootstrap JDK.
+        let config = with_client_config(serde_json::json!({
+            "java_home": project,
+            "bootstrap_java_home": bootstrap,
+        }));
+        assert_eq!(config.decompiler_java(), jdk_java_path(&bootstrap));
+
+        // No bootstrap JDK: the project JDK runs it.
+        let config = with_client_config(serde_json::json!({ "java_home": project }));
+        assert_eq!(config.decompiler_java(), jdk_java_path(&project));
+
+        // A bootstrap JDK that has no `bin/java` is a misconfiguration, not a
+        // failed navigation: the project JDK is used instead.
+        let config = with_client_config(serde_json::json!({
+            "java_home": project,
+            "bootstrap_java_home": dir.path().join("not-a-jdk"),
+        }));
+        assert_eq!(config.decompiler_java(), jdk_java_path(&project));
+
+        // Neither: whatever `java` the server's own environment resolves.
+        let config = with_client_config(serde_json::json!({
+            "java_home": dir.path().join("not-a-jdk"),
+        }));
+        assert_eq!(config.decompiler_java(), PathBuf::from("java"));
     }
 
     #[test]

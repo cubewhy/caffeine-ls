@@ -74,6 +74,11 @@
           "default": false,
           "markdownDescription": "Let the build system download dependency sources (`-sources.jar`) so go-to-definition can open library sources. Changing it re-syncs the workspace."
         },
+        "caffeine_ls.bootstrapJdk": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to a JDK home (containing `bin/java`) used to run the decompiler. Leave empty to use the project JDK. A newer JVM than the project compiles against is often needed by the decompiler itself. Views already materialized are left as they are."
+        },
         "caffeine_ls.decompiler": {
           "type": "string",
           "enum": ["cfr", "vineflower", "none"],
