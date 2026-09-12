@@ -6,7 +6,7 @@
 //! lowered into the per-file body tree ([`crate::lower::java::body`]) and the
 //! source ranges of every declaration are kept.
 
-use java_syntax::{Lang, SyntaxKind as J};
+use java_syntax::{Lang, SyntaxKind as J, translate_unicode_escapes};
 use rowan::{NodeOrToken, SyntaxNode, SyntaxToken, TextRange, TextSize};
 use syntax::stub::{PrimitiveType, TypeBound, TypeRef};
 
@@ -75,7 +75,7 @@ fn lower_import(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) {
     });
 
     ctx.tree.imports.push(crate::java::item_tree::ImportItem {
-        name: Name::new(name_text),
+        name: source_name(name_text),
         is_static,
         is_asterisk,
         path: ctx
@@ -493,7 +493,7 @@ fn lower_field_decl(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Vec<Item
             .children_with_tokens()
             .filter_map(|element| element.as_token().cloned())
             .find(|token| token_is(token, J::IDENTIFIER))
-            .map(|token| Name::new(token.text()))
+            .map(|token| source_name(token.text()))
         else {
             continue;
         };
@@ -546,7 +546,7 @@ fn enum_body_members(ctx: &mut LowerCtx<'_>, body: &SyntaxNode<Lang>) -> Vec<Ite
     for child in body.children() {
         if is(&child, J::ENUM_CONSTANT) {
             let name = first_token(&child, J::IDENTIFIER)
-                .map(|token| Name::new(token.text()))
+                .map(|token| source_name(token.text()))
                 .unwrap_or_else(missing_name);
             let constant_id = ctx.alloc(ItemData::EnumConstant(EnumConstantData {
                 name,
@@ -598,7 +598,7 @@ fn body_members(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>, body_kind: J) -
 
 fn lower_module(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> ItemId {
     let name = qualified_name_child(node)
-        .map(|child| Name::new(&trimmed_text(&child)))
+        .map(|child| source_name(&trimmed_text(&child)))
         .unwrap_or_else(missing_name);
     // §9.7: the module declaration's annotations live in its leading modifier
     // list (`@Ann module com.example {}`).
@@ -687,7 +687,7 @@ fn package_exports_from(directive: &SyntaxNode<Lang>, map: &AstIdMap) -> ModuleE
     let names: Vec<Name> = directive
         .children()
         .filter(|child| is(child, J::QUALIFIED_NAME))
-        .map(|child| Name::new(&trimmed_text(&child)))
+        .map(|child| source_name(&trimmed_text(&child)))
         .collect();
     let package = names.first().cloned().unwrap_or_else(missing_name);
     let to = names.into_iter().skip(1).collect();
@@ -724,14 +724,14 @@ pub(crate) fn qualified_name_child(node: &SyntaxNode<Lang>) -> Option<SyntaxNode
 
 /// The lowered name of a single fully qualified *type* name child.
 pub(crate) fn qualified_name_text(node: &SyntaxNode<Lang>) -> Option<Name> {
-    qualified_name_child(node).map(|child| Name::new(&trimmed_text(&child)))
+    qualified_name_child(node).map(|child| source_name(&trimmed_text(&child)))
 }
 
 /// A range-free `ItemTypeRef::Reference` over a qualified-name syntax node
 /// (a module directive's service or implementation type), carrying the node's
 /// id.
 fn qualified_name_item_ref(node: &SyntaxNode<Lang>, map: &AstIdMap) -> ItemTypeRef {
-    let name = Name::new(&trimmed_text(node));
+    let name = source_name(&trimmed_text(node));
     ItemTypeRef {
         ty: TypeRef::Reference {
             name: name.clone(),
@@ -759,6 +759,19 @@ pub(crate) fn token_text(token: &SyntaxToken<Lang>, text: &str) -> bool {
     token.text() == text
 }
 
+/// The [`Name`] a piece of *source text* denotes ([JLS §3.3]): the lexer reads
+/// a Unicode escape to tokenize but keeps every token's text as written, so a
+/// name built from that text is the *translation* of it — `int my\u005Fvar;`
+/// declares `my_var`, and `@A(\u0078 = 1)` is a pair naming the element `x`.
+///
+/// Every name this layer takes out of the syntax tree goes through here; a
+/// string a translation already produced must not be translated again.
+///
+/// [JLS §3.3]: https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.3
+pub(crate) fn source_name(text: &str) -> Name {
+    Name::new(&translate_unicode_escapes(text))
+}
+
 pub(crate) fn trimmed_text(node: &SyntaxNode<Lang>) -> String {
     node.text().to_string().trim().to_owned()
 }
@@ -780,7 +793,7 @@ fn decl_type_identifier(node: &SyntaxNode<Lang>) -> Name {
             && token.kind() == J::IDENTIFIER
             && !matches!(token.text(), "record" | "sealed" | "non-sealed" | "permits")
         {
-            return Name::new(token.text());
+            return source_name(token.text());
         }
     }
     missing_name()
@@ -791,7 +804,7 @@ fn decl_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
         if let Some(token) = element.as_token()
             && token.kind() == J::IDENTIFIER
         {
-            return Some(Name::new(token.text()));
+            return Some(source_name(token.text()));
         }
     }
     None
@@ -884,7 +897,7 @@ pub(crate) fn annotation_name_ref(annotation: &SyntaxNode<Lang>) -> Option<NameR
     annotation
         .descendants()
         .find(|d| d.kind() == J::QUALIFIED_NAME)
-        .map(|name| NameRef::new(Name::new(&name.text().to_string()), name.text_range()))
+        .map(|name| NameRef::new(source_name(&name.text().to_string()), name.text_range()))
 }
 
 /// The annotation of an `ANNOTATION`/`MARKER_ANNOTATION` syntax node with its
@@ -950,7 +963,7 @@ pub(crate) fn annotation_args_from(
         if is(&child, J::ELEMENT_VALUE_PAIR) {
             // `key = value`: the element name is the identifier before `=`.
             let name = first_token(&child, J::IDENTIFIER)
-                .map(|token| Name::new(token.text()))
+                .map(|token| source_name(token.text()))
                 .unwrap_or_else(missing_name);
             if let Some((value, range)) = child
                 .children()
@@ -1026,7 +1039,7 @@ pub(crate) fn annotation_value_from(
         // ([§6.5.6.2], [§8.9.1]); both resolve as a name in the type layer.
         J::FIELD_ACCESS => {
             let member = first_token(node, J::IDENTIFIER)
-                .map(|token| Name::new(token.text()))
+                .map(|token| source_name(token.text()))
                 .unwrap_or_else(missing_name);
             let qualifier = qualified_receiver_text(node);
             AnnotationValue::EnumConstant { qualifier, member }
@@ -1074,7 +1087,7 @@ fn qualified_receiver_text(node: &SyntaxNode<Lang>) -> Option<Name> {
         .children()
         .find(|child| matches!(child.kind(), J::LITERAL | J::FIELD_ACCESS))?;
     let text = receiver.text().to_string();
-    (!text.is_empty()).then(|| Name::new(&text))
+    (!text.is_empty()).then(|| source_name(&text))
 }
 
 /// The type of a class literal `Foo.class` / `Foo.Bar.class` ([§15.8.2]) as a
@@ -1132,10 +1145,10 @@ fn class_literal_type(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
         .unwrap_or_else(|| node.text_range());
     SpannedTypeRef {
         ty: TypeRef::Reference {
-            name: Name::new(&name),
+            name: source_name(&name),
             generic_args: Vec::new(),
         },
-        refs: vec![NameRef::new(Name::new(&name), range)],
+        refs: vec![NameRef::new(source_name(&name), range)],
         type_use_annotations: Vec::new(),
     }
 }
@@ -1183,7 +1196,7 @@ fn type_params_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> Vec<TypeParam> {
 
 fn type_param_from(map: &AstIdMap, node: &SyntaxNode<Lang>) -> TypeParam {
     let name = first_token(node, J::IDENTIFIER)
-        .map(|token| Name::new(token.text()))
+        .map(|token| source_name(token.text()))
         .unwrap_or_else(missing_name);
     let bounds = node
         .children()
@@ -1237,7 +1250,7 @@ fn param_from(ctx: &mut LowerCtx<'_>, owner: ItemId, node: &SyntaxNode<Lang>) ->
             .extend(item_annotations_from_text(&trailing, ctx.map));
     }
     let name = first_token(node, J::IDENTIFIER)
-        .map(|token| Name::new(token.text()))
+        .map(|token| source_name(token.text()))
         .unwrap_or_else(missing_name);
     // §9.7.4: the annotation modifiers of a formal parameter declaration
     // (`void m(@A int p)`) are its own modifier lists, like a field's; the
@@ -1261,7 +1274,7 @@ fn component_from(
     node: &SyntaxNode<Lang>,
 ) -> RecordComponent {
     let name = first_token(node, J::IDENTIFIER)
-        .map(|token| Name::new(token.text()))
+        .map(|token| source_name(token.text()))
         .unwrap_or_else(missing_name);
     let ty_node = node.children().find(|child| is(child, J::TYPE));
     let ty = ty_node
@@ -1530,7 +1543,7 @@ pub(crate) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     let mut refs = Vec::with_capacity(1 + type_use_annotations.len() + generic_args.len());
     if let Some(start) = name_start {
         refs.push(NameRef::new(
-            Name::new(&name.clone()),
+            source_name(&name),
             TextRange::new(start, name_end),
         ));
     }
@@ -1544,7 +1557,7 @@ pub(crate) fn type_from(node: &SyntaxNode<Lang>) -> SpannedTypeRef {
     }
 
     let ty = TypeRef::Reference {
-        name: Name::new(&name),
+        name: source_name(&name),
         generic_args: generic_args.into_iter().map(|spanned| spanned.ty).collect(),
     };
     let mut ty = ty;

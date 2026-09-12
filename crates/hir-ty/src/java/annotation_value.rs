@@ -552,6 +552,14 @@ fn name_verdict(
         return NameKind::NotQualified;
     };
     match pick_field(db, cx.scope, &receiver, member.as_str(), &ctx) {
+        // §6.5.6.2: the member a *type name* qualifies must be `static` — a
+        // type denotes no instance to read one from, as javac's
+        // `non-static variable x cannot be referenced from a static context`
+        // reports. The value is no constant variable then, so the caller's
+        // constant-expression rule reports it.
+        Some(field) if !field.is_static => {
+            NameKind::Field(ConstKind::NotConstant { ty: Some(field.ty) })
+        }
         Some(field) => NameKind::Field(field_kind(cx, &field, visited)),
         None => NameKind::Unresolved,
     }

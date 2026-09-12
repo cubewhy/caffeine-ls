@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_annotation_elements.rs
+expression: out
+---
+FILE /src/com/example/Anns.java:
+package com.example;
+
+@interface Anno {
+    int \u0078();
+    String v\u0061lue() default "";
+}
+
+class Anns {
+    static final int my\u005Fvar = 1;
+
+    @Anno(\u0078 = my\u005Fvar)
+    @Anno(x = my_var, value = "v")
+    void run() {}
+}

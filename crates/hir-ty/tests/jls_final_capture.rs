@@ -321,6 +321,28 @@ class Dup {
 // Red: `q` is declared twice in one method scope, and the nested block's `r`
 // shadows the enclosing method's `r` — both already defined (§6.4).
 
+// §3.3/[§6.4]: an identifier's name is the Unicode-escape *translation* of its
+// source text — the lexer reads the escape to tokenize but keeps every token's
+// text as written — so `a\u0031` is the field `a1` and `m\u0065th` the method
+// `meth`. javac reports both as already defined.
+snapshot!(
+    duplicate_identifier_spelled_with_unicode_escapes,
+    check_class_diagnostics(&[(
+        "/src/com/example/Dup.java",
+        "\
+package com.example;
+
+class Dup {
+    int a\\u0031;
+    int a1;
+
+    void m\\u0065th() {}
+    void meth() {}
+}
+",
+    )])
+);
+
 // -- §6.4: lambda parameters may not shadow an enclosing declaration ---------
 // A lambda parameter ([§15.27.1]) is in scope throughout its body ([§6.3])
 // and may not re-declare a name already in scope: an enclosing lambda

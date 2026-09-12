@@ -26,8 +26,8 @@ use crate::java::item_tree::{
     ItemTypeRef, MethodData, ModuleExports, ModuleRequires, PackageDeclNode, RecordComponent,
 };
 use crate::java::lower::walk::{
-    annotation_name_ref, annotation_value_from, first_token, is, is_element_value, trimmed_text,
-    type_from,
+    annotation_name_ref, annotation_value_from, first_token, is, is_element_value, source_name,
+    trimmed_text, type_from,
 };
 
 /// The Java root node of `source`; `None` for a non-Java file.
@@ -339,7 +339,7 @@ pub fn type_ref_occurrences(
     let node = node_of(map, source, tyref.node);
     let mut occurrences: Vec<(Name, Option<TextRange>)> = match &node {
         Some(node) if node.kind() == J::QUALIFIED_NAME => {
-            vec![(Name::new(&trimmed_text(node)), Some(node.text_range()))]
+            vec![(source_name(&trimmed_text(node)), Some(node.text_range()))]
         }
         Some(node) => type_from(node)
             .refs

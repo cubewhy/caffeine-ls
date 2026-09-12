@@ -32,8 +32,8 @@ use crate::java::item_tree::ItemId;
 use crate::java::lower::LowerCtx;
 
 use super::walk::{
-    declaration_modifier_lists, modifier_annotations, token_is, token_text, trimmed_text,
-    type_annotations_after_type, type_from,
+    declaration_modifier_lists, modifier_annotations, source_name, token_is, token_text,
+    trimmed_text, type_annotations_after_type, type_from,
 };
 
 /// Lowers the `BLOCK` of a method or constructor as a [`Body`], binding the
@@ -263,7 +263,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 first
             };
             StmtData::LocalClass {
-                name: Name::new(&name),
+                name: source_name(&name),
             }
         }
         EXPRESSION_STMT => StmtData::Expr(first_expr(ctx, owner, node)),
@@ -388,7 +388,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                         .or_else(|| first_identifier_token(node));
                     let name = name_token
                         .as_ref()
-                        .map(|token| Name::new(token.text()))
+                        .map(|token| source_name(token.text()))
                         .unwrap_or_else(missing_name);
                     let range = var
                         .as_ref()
@@ -436,7 +436,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 .children_with_tokens()
                 .filter_map(|e| e.as_token().cloned())
                 .find(|t| token_is(t, J::IDENTIFIER))
-                .map(|t| LabelId(ctx.bodies.labels.alloc(Label(Name::new(t.text())))))
+                .map(|t| LabelId(ctx.bodies.labels.alloc(Label(source_name(t.text())))))
                 .unwrap_or_else(|| alloc_label_missing(ctx));
             ctx.labels.push((ctx.bodies.label(label).0.clone(), label));
             let stmt = node
@@ -453,7 +453,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                 .filter_map(|e| e.as_token().cloned())
                 .find(|t| token_is(t, J::IDENTIFIER))
                 .map(|t| {
-                    let name = Name::new(t.text());
+                    let name = source_name(t.text());
                     ctx.labels
                         .iter()
                         .rev()
@@ -1133,7 +1133,7 @@ fn expr_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Expr
             let (scrutinee, arms) = switch_parts(ctx, owner, node);
             ExprData::Switch { scrutinee, arms }
         }
-        QUALIFIED_NAME => ExprData::NamePath(Name::new(&trimmed_text(node))),
+        QUALIFIED_NAME => ExprData::NamePath(source_name(&trimmed_text(node))),
         _ => {
             // A bare identifier name reference.
             if let Some(name) = first_identifier(node) {
@@ -1204,7 +1204,7 @@ pub(super) fn literal(node: &SyntaxNode<Lang>) -> ExprData {
             ExprData::Literal(Literal::Boolean(token.kind() == J::TRUE_LITERAL))
         }
         J::NULL_LITERAL => ExprData::Null,
-        J::IDENTIFIER | J::UNDERSCORE => ExprData::Var(Name::new(token.text())),
+        J::IDENTIFIER | J::UNDERSCORE => ExprData::Var(source_name(token.text())),
         J::THIS_KW => ExprData::This { qualifier: None },
         J::SUPER_KW => ExprData::Super { qualifier: None },
         _ => ExprData::Missing,
@@ -1530,12 +1530,12 @@ fn new_expr(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprD
                 if let Some(q) = qual
                     && name.as_str() != "<missing>"
                 {
-                    refs.push(NameRef::new(Name::new(&name), q.text_range()));
+                    refs.push(NameRef::new(source_name(&name), q.text_range()));
                 }
                 refs.extend(generic_args.iter().flat_map(|arg| arg.refs.iter().cloned()));
                 SpannedTypeRef::new(
                     TypeRef::Reference {
-                        name: Name::new(&name),
+                        name: source_name(&name),
                         generic_args: generic_args.into_iter().map(|spanned| spanned.ty).collect(),
                     },
                     refs,
@@ -1693,7 +1693,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
                 rowan::NodeOrToken::Token(token) => {
                     if token_is(&token, J::IDENTIFIER) || token_is(&token, J::UNDERSCORE) {
                         out.push(LambdaParam {
-                            name: Name::new(token.text()),
+                            name: source_name(token.text()),
                             ty: None,
                             annotations: Vec::new(),
                             range: token.text_range(),
@@ -1709,7 +1709,7 @@ fn lambda(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> ExprDat
             rowan::NodeOrToken::Token(token) => {
                 if token.kind() == IDENTIFIER || token.kind() == UNDERSCORE {
                     params.push(LambdaParam {
-                        name: Name::new(token.text()),
+                        name: source_name(token.text()),
                         ty: None,
                         annotations: Vec::new(),
                         range: token.text_range(),
@@ -1766,7 +1766,7 @@ fn pattern(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Patter
                     alloc_local(
                         ctx,
                         Local {
-                            name: Name::new(t.text()),
+                            name: source_name(t.text()),
                             ty: Some(ty.clone()),
                             annotations: annotations.clone(),
                             is_final: false,
@@ -1846,7 +1846,7 @@ fn first_stmt_or_block(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang
 }
 
 fn first_identifier(node: &SyntaxNode<Lang>) -> Option<Name> {
-    first_identifier_token(node).map(|t| Name::new(t.text()))
+    first_identifier_token(node).map(|t| source_name(t.text()))
 }
 
 /// The first IDENTIFIER token of the node, in source order.
@@ -1898,14 +1898,14 @@ fn join_identifier_token(node: &SyntaxNode<Lang>) -> Option<Name> {
         .filter_map(|e| e.as_token().cloned())
         .filter(|t| token_is(t, J::IDENTIFIER))
         .last()
-        .map(|t| Name::new(t.text()))
+        .map(|t| source_name(t.text()))
 }
 
 /// The qualified name from the identifiers of a subtree, dot-joined.
 fn join_identifiers(node: &SyntaxNode<Lang>) -> Name {
     let mut parts = Vec::new();
     collect_identifiers(node, &mut parts);
-    Name::new(&parts.join("."))
+    source_name(&parts.join("."))
 }
 
 /// The source range spanning the identifier tokens of `node` — the qualified

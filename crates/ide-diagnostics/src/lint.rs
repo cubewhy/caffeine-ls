@@ -272,7 +272,9 @@ fn is_suppress_warnings(
     file_id: FileId,
     name_node: &SyntaxNode<Lang>,
 ) -> bool {
-    let name = Name::new(name_node.text().to_string().trim());
+    let name = Name::new(&translate_unicode_escapes(
+        name_node.text().to_string().trim(),
+    ));
     matches!(
         hir_ty::java::resolve::resolve_written_name(db, file_id, name_node, &name),
         NameResolution::Resolved(resolved) if resolved.as_str() == SUPPRESS_WARNINGS

@@ -641,6 +641,35 @@ class Anns {
 // variable) and `null` are not. An `int` value is not assignable to the enum
 // element at all, so it is a type mismatch.
 
+// -- green: names written with unicode escapes ([§3.3]) -------------------------
+
+snapshot!(
+    unicode_escaped_names,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Anno {
+    int \\u0078();
+    String v\\u0061lue() default \"\";
+}
+
+class Anns {
+    static final int my\\u005Fvar = 1;
+
+    @Anno(\\u0078 = my\\u005Fvar)
+    @Anno(x = my_var, value = \"v\")
+    void run() {}
+}
+",
+    )])
+);
+// §3.3/[§9.7.1]/[§6.5.6.1]: the names a pair and an element are keyed by are
+// the *translated* source text — `\u0078` names the element `x`, and
+// `my\u005Fvar` is the constant variable `my_var` — so the escaped and the
+// plain spellings name the same things and nothing is reported.
+
 // -- red: a JDK annotation's element without a default -------------------------
 
 snapshot!(

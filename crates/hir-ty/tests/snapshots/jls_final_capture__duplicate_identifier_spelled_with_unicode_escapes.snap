@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_final_capture.rs
+expression: out
+---
+FILE /src/com/example/Dup.java:
+package com.example;
+
+class Dup {
+    int a\u0031;
+    int a1;
+
+    void m\u0065th() {}
+    void meth() {}
+}
+
+@4:8: duplicate-declaration: Variable 'a1' is already defined in the scope
+method meth: duplicate-method: @7:9Method 'meth()' is already defined

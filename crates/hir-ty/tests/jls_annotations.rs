@@ -84,6 +84,33 @@ record Rec(@Deprecated @SuppressWarnings(\"x\") List<String> items) {}
 // The annotations on the record declaration and its components resolve
 // against the JDK fixture ([JLS §8.10.1], [§9.7]).
 
+// §3.3/[§6.5.5.1]: an annotation name resolves from the *translated* source
+// text. `@\\u004cocal` is the same-package `Local` — its single-argument form
+// names the implicit `value` element — and `@java.lang.\\u0046unctionalInterface`
+// is the JDK's, whose well-formedness check ([§9.6.4.9]) accepts a one-method
+// interface. javac resolves both, and reports nothing.
+snapshot!(
+    escaped_annotation_name,
+    check_class_diagnostics(&[(
+        "/src/com/example/Anns.java",
+        "\
+package com.example;
+
+@interface Local {
+    String value();
+}
+
+@\\u004cocal(\"x\")
+class Anns {}
+
+@java.lang.\\u0046unctionalInterface
+interface Workable {
+    void work();
+}
+",
+    )])
+);
+
 // -- red: an unknown annotation name on a declaration ----------------------------
 
 snapshot!(
