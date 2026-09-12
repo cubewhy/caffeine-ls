@@ -21,7 +21,12 @@ String normalizePath(def file) {
     }
 }
 
-List<Map<String, Object>> extractRichClasspath(def project, String configName) {
+// Set by the driver (`-Dcaffeine.ls.downloadSources=true`) when the client
+// opted into downloading dependency sources. Read once; the export task
+// resolves each dependency's `-sources.jar` classifier when it is on.
+def downloadSources = System.getProperty('caffeine.ls.downloadSources') == 'true'
+
+List<Map<String, Object>> extractRichClasspath(def project, String configName, boolean downloadSources) {
     def config = project.configurations.findByName(configName)
     if (config == null || (config.hasProperty('canBeResolved') && !config.canBeResolved)) {
         debugLog("    [WARN] Configuration '${configName}' missing or unresolvable.")
@@ -48,11 +53,18 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
                 ]
             } else if (filePath && filePath.endsWith('.jar')) {
                 def origin = (id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier) ? 'coordinate' : 'flat-file'
-                entries << [
+                def entry = [
                     type: 'jar',
                     path: filePath,
-                    origin: origin
+                    origin: origin,
+                    sources: null
                 ]
+                if (origin == 'coordinate') {
+                    entry.group = id.group
+                    entry.artifact = id.module
+                    entry.version = id.version
+                }
+                entries << entry
             }
         }
         if (!entries.isEmpty()) {
@@ -78,11 +90,18 @@ List<Map<String, Object>> extractRichClasspath(def project, String configName) {
                 ]
             } else if (filePath && filePath.endsWith('.jar')) {
                 def origin = (id instanceof org.gradle.api.artifacts.component.ModuleComponentIdentifier) ? 'coordinate' : 'flat-file'
-                entries << [
+                def entry = [
                     type: 'jar',
                     path: filePath,
-                    origin: origin
+                    origin: origin,
+                    sources: null
                 ]
+                if (origin == 'coordinate') {
+                    entry.group = id.group
+                    entry.artifact = id.module
+                    entry.version = id.version
+                }
+                entries << entry
             }
         }
         debugLog("    [SUCCESS] Resolved '${configName}' via Legacy Lenient Configuration: ${entries.size()} entries")
@@ -136,14 +155,46 @@ gradle.projectsEvaluated {
                     resourcesSource = (mainRes + testRes).unique()
                 } catch (Throwable ignored) {}
 
-                def compileCp = extractRichClasspath(project, 'compileClasspath')
+                def compileCp = extractRichClasspath(project, 'compileClasspath', downloadSources)
                 if (compileCp.isEmpty()) {
-                    compileCp = extractRichClasspath(project, 'compile')
+                    compileCp = extractRichClasspath(project, 'compile', downloadSources)
                 }
 
-                def testCp = extractRichClasspath(project, 'testCompileClasspath')
+                def testCp = extractRichClasspath(project, 'testCompileClasspath', downloadSources)
                 if (testCp.isEmpty()) {
-                    testCp = extractRichClasspath(project, 'testCompile')
+                    testCp = extractRichClasspath(project, 'testCompile', downloadSources)
+                }
+
+                // Resolve each coordinate's `-sources.jar` once per project,
+                // over the union of both classpaths, and write the result back
+                // into the very maps that are serialized below. Every lookup is
+                // guarded, so a component without published sources, a Gradle
+                // that rejects the notation or an offline repository leaves
+                // `sources` null and the export still succeeds.
+                Map<String, String> sourcesByComponent = [:]
+                if (downloadSources) {
+                    (compileCp + testCp).each { entry ->
+                        if (entry.type != 'jar' || entry.origin != 'coordinate') return
+                        def key = "${entry.group}:${entry.artifact}:${entry.version}"
+                        if (sourcesByComponent.containsKey(key)) return
+                        try {
+                            // Documented legacy notation `group:name:version:classifier`.
+                            def cfg = project.configurations.detachedConfiguration(
+                                project.dependencies.create("${key}:sources"))
+                            def files = cfg.files
+                            sourcesByComponent[key] = files.isEmpty() ? null : normalizePath(files.iterator().next())
+                        } catch (Throwable ignored) {
+                            debugLog("    [INFO] no sources for ${key}")
+                            sourcesByComponent[key] = null
+                        }
+                    }
+                    [compileCp, testCp].each { list ->
+                        list.each { entry ->
+                            if (entry.type == 'jar' && entry.origin == 'coordinate') {
+                                entry.sources = sourcesByComponent["${entry.group}:${entry.artifact}:${entry.version}"]
+                            }
+                        }
+                    }
                 }
 
                 def allGenerated = []

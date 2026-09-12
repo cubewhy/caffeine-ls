@@ -68,6 +68,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Start the language server with the `--wait-dbg` flag. The server blocks on startup until a debugger attaches (debug builds only). You'll be notified with the server's PID and can turn the option off from there. Requires restart to take effect."
+        },
+        "caffeine_ls.downloadSources": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Let the build system download dependency sources (`-sources.jar`) so go-to-definition can open library sources. Changing it re-syncs the workspace."
         }
       }
     }

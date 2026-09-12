@@ -30,16 +30,25 @@ impl BuildSystem for GradleBuildSystem {
         &self,
         workspace_root: &Path,
         java_home: &Path,
+        options: &crate::SyncOptions,
         log_file: Option<&Path>,
         on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
-        self.sync_with_progress(workspace_root, java_home, log_file, on_output, &mut |_| {})
+        self.sync_with_progress(
+            workspace_root,
+            java_home,
+            options,
+            log_file,
+            on_output,
+            &mut |_| {},
+        )
     }
 
     fn sync_with_progress(
         &self,
         workspace_root: &Path,
         java_home: &Path,
+        options: &crate::SyncOptions,
         log_file: Option<&Path>,
         on_output: &mut (dyn FnMut(String) + Send),
         on_progress: &mut (dyn FnMut(crate::SyncProgress) + Send),
@@ -47,6 +56,7 @@ impl BuildSystem for GradleBuildSystem {
         let gradle_json = runner::import_gradle_workspace(
             workspace_root,
             java_home,
+            options,
             log_file,
             on_output,
             on_progress,

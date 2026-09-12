@@ -16,6 +16,7 @@ use vfs::AbsPathBuf;
 pub fn import_gradle_workspace(
     workspace_root: &Path,
     java_home: &Path,
+    options: &crate::SyncOptions,
     log_file: Option<&Path>,
     on_output: &mut (dyn FnMut(String) + Send),
     on_progress: &mut (dyn FnMut(SyncProgress) + Send),
@@ -72,6 +73,12 @@ pub fn import_gradle_workspace(
         .arg("--init-script")
         .arg(init_script.path())
         .arg("exportWorkspaceModel");
+
+    // Only when the option is on: the init script reads this at the top and
+    // resolves each dependency's `-sources.jar` classifier in the export task.
+    if options.download_sources {
+        command.arg("-Dcaffeine.ls.downloadSources=true");
+    }
 
     // Let the line parser derive structured progress events; the raw lines
     // still flow to `on_output` for the build tool log.
@@ -246,13 +253,28 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
                             });
                         }
                     }
-                    GradleClasspathEntry::Jar { path, origin } => {
+                    GradleClasspathEntry::Jar {
+                        path,
+                        origin,
+                        sources,
+                        ..
+                    } => {
                         if path.extension().is_some_and(|ext| ext == "jar") {
                             let lib_id =
                                 *jar_to_library_id.entry(path.clone()).or_insert_with(|| {
                                     crate::LibraryId::from_file_path(&path)
                                         .expect("failed to hash jar path")
                                 });
+
+                            // A stale or absent sources path is dropped rather
+                            // than registered.
+                            if let Some(sources) = sources
+                                && sources.is_file()
+                            {
+                                graph
+                                    .library_sources
+                                    .insert(lib_id, AbsPathBuf::assert_utf8(sources));
+                            }
 
                             let abs_jar_path = AbsPathBuf::assert_utf8(path);
                             let library = if origin == "coordinate" {

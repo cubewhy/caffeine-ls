@@ -36,9 +36,13 @@ impl BuildSystem for IdeaBuildSystem {
         &self,
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
+        options: &crate::SyncOptions,
         _log_file: Option<&std::path::Path>,
         _on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
+        // `.iml` module descriptors carry no dependency-source attachment,
+        // so the option has nothing to act on.
+        let _ = options;
         tracing::info!(
             "Starting semantic sync for IntelliJ IDEA project layout at: {}",
             workspace_root.display()

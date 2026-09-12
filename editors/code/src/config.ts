@@ -10,6 +10,7 @@ export const JDK_STATE_KEY = "caffeine_ls.project.java_home";
 export interface ClientConfig {
   cache_dir: string;
   java_home: string | null;
+  download_sources: boolean;
 }
 
 /**
@@ -23,9 +24,14 @@ export function getClientConfig(context: ExtensionContext): ClientConfig {
 
   const javaHome = context.workspaceState.get<string>(JDK_STATE_KEY) || null;
 
+  const downloadSources = vscode.workspace
+    .getConfiguration("caffeine_ls")
+    .get<boolean>("downloadSources", false);
+
   return {
     cache_dir: cacheDir,
     java_home: javaHome,
+    download_sources: downloadSources,
   };
 }
 

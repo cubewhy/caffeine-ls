@@ -22,9 +22,13 @@ impl BuildSystem for EclipseBuildSystem {
         &self,
         workspace_root: &std::path::Path,
         java_home: &std::path::Path,
+        options: &crate::SyncOptions,
         _log_file: Option<&std::path::Path>,
         _on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
+        // Eclipse's `.classpath` descriptors carry no dependency-source
+        // attachment, so the option has nothing to act on.
+        let _ = options;
         tracing::info!(
             "Starting workspace sync for Eclipse project at: {}",
             workspace_root.display()

@@ -338,6 +338,10 @@ impl GlobalState {
                     .support_logging()
                     .then(|| self.build_tool_log_path(&root, system));
 
+                let options = project_model::SyncOptions {
+                    download_sources: self.config.download_sources(),
+                };
+
                 self.thread_pool.execute(move || {
                     let system_name = system.name();
 
@@ -417,6 +421,7 @@ impl GlobalState {
                     let sync_result = system.get_executor().sync_with_progress(
                         root.as_ref(),
                         &java_home,
+                        &options,
                         log_file.as_deref(),
                         &mut on_output,
                         &mut on_progress,

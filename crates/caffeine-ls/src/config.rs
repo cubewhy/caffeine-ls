@@ -101,6 +101,13 @@ impl Config {
         rayon::current_num_threads()
     }
 
+    /// Whether the build-system sync may download dependency sources.
+    pub fn download_sources(&self) -> bool {
+        self.client_config
+            .as_ref()
+            .is_some_and(|c| c.download_sources)
+    }
+
     pub fn negotiated_encoding(&self) -> PositionEncoding {
         let supported_encodings = self
             .client_capabilities
@@ -140,6 +147,9 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 pub struct ClientConfig {
     pub cache_dir: Option<PathBuf>,
     pub java_home: Option<PathBuf>,
+    /// Let the build-system sync download dependency sources.
+    #[serde(default, alias = "downloadSources")]
+    pub download_sources: bool,
 }
 
 #[derive(Debug, Default)]

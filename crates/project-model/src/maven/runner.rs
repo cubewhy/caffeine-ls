@@ -15,6 +15,7 @@ use vfs::AbsPathBuf;
 pub fn import_maven_workspace(
     workspace_root: &Path,
     java_exec: &Path,
+    options: &crate::SyncOptions,
     log_file: Option<&Path>,
     on_output: &mut (dyn FnMut(String) + Send),
     on_progress: &mut (dyn FnMut(SyncProgress) + Send),
@@ -48,7 +49,17 @@ pub fn import_maven_workspace(
             .current_dir(workspace_root)
             .arg("-s")
             .arg(&settings_file)
-            .args(args)
+            .args(args);
+        // Fetch each dependency's `-sources.jar` beside its artifact in the
+        // local repository, before the export goal runs, so the driver's
+        // sibling probe finds them. A missing sources artifact is a Maven
+        // warning, not a failure.
+        if options.download_sources {
+            command
+                .arg("org.apache.maven.plugins:maven-dependency-plugin:3.6.1:sources")
+                .arg("-Dmdep.includeScope=test");
+        }
+        command
             .arg(&goal)
             .arg("-DskipTests=true")
             .arg("-Dmaven.test.skip=false");

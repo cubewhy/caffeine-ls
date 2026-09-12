@@ -265,6 +265,15 @@ impl fmt::Display for SyncError {
 
 impl std::error::Error for SyncError {}
 
+/// Options the driver passes into a build-system sync.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SyncOptions {
+    /// Whether the sync may download dependency sources (`-sources.jar`)
+    /// from remote repositories. `false` restricts discovery to archives
+    /// already on disk.
+    pub download_sources: bool,
+}
+
 /// Represents a tool that can resolve the workspace structure.
 pub trait BuildSystem: Send + Sync {
     /// The name of the build system (e.g., "Gradle", "Maven")
@@ -285,10 +294,18 @@ pub trait BuildSystem: Send + Sync {
         &self,
         workspace_root: &Path,
         java_home: &Path,
+        options: &SyncOptions,
         log_file: Option<&Path>,
         on_output: &mut (dyn FnMut(String) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
-        self.sync_with_progress(workspace_root, java_home, log_file, on_output, &mut |_| {})
+        self.sync_with_progress(
+            workspace_root,
+            java_home,
+            options,
+            log_file,
+            on_output,
+            &mut |_| {},
+        )
     }
 
     /// Executes the tool like [`Self::sync`], additionally reporting structured
@@ -299,12 +316,13 @@ pub trait BuildSystem: Send + Sync {
         &self,
         workspace_root: &Path,
         java_home: &Path,
+        options: &SyncOptions,
         log_file: Option<&Path>,
         on_output: &mut (dyn FnMut(String) + Send),
         on_progress: &mut (dyn FnMut(SyncProgress) + Send),
     ) -> anyhow::Result<WorkspaceGraph> {
         let _ = on_progress;
-        self.sync(workspace_root, java_home, log_file, on_output)
+        self.sync(workspace_root, java_home, options, log_file, on_output)
     }
 
     fn system_type(&self) -> BuildSystemType;

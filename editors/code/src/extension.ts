@@ -8,7 +8,11 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { getClientConfig, selectProjectJdkAction } from "./config";
+import {
+  getClientConfig,
+  notifyLspConfigUpdate,
+  selectProjectJdkAction,
+} from "./config";
 
 let client: LanguageClient;
 let currentServerPid: number | undefined;
@@ -101,6 +105,9 @@ export function activate(context: ExtensionContext) {
 
   context.subscriptions.push(
     workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("caffeine_ls.downloadSources")) {
+        notifyLspConfigUpdate(client, getClientConfig(context));
+      }
       if (event.affectsConfiguration("caffeine_ls.logLevel")) {
         const choice = "Restart";
         window

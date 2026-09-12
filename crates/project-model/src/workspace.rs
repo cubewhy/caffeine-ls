@@ -253,6 +253,10 @@ pub struct WorkspaceGraph {
     pub sdks: FxHashMap<SdkId, Arc<SdkData>>,
     pub library_paths: FxHashMap<LibraryId, Library>,
 
+    /// Library → the source archive (`-sources.jar` / `src.zip`) the build
+    /// system located for it. Absent for libraries with no sources attached.
+    pub library_sources: FxHashMap<LibraryId, AbsPathBuf>,
+
     /// Maps a specific source root directory (including generated sources)
     /// directly to its owning Project and specific SourceSet.
     /// This avoids the ambiguity caused by blindly traversing parent directories.

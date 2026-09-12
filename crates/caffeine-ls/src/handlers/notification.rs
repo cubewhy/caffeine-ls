@@ -253,10 +253,11 @@ pub fn on_did_change_configuration(
     if config_changed {
         let old_java_home = old_config.get_java_home();
         let new_java_home = new_config.get_java_home();
+        let sources_changed = old_config.download_sources() != new_config.download_sources();
 
         state.config = Arc::new(new_config);
 
-        if old_java_home != new_java_home {
+        if old_java_home != new_java_home || sources_changed {
             tracing::info!("Critical configuration updated. Re-probing project models.");
             state.trigger_workspace_probe();
         }

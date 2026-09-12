@@ -10,6 +10,14 @@ pub enum GradleClasspathEntry {
     Jar {
         path: PathBuf,
         origin: String, // 'coordinate' or 'flat-file'
+        #[serde(default)]
+        sources: Option<PathBuf>,
+        #[serde(default)]
+        group: Option<String>,
+        #[serde(default)]
+        artifact: Option<String>,
+        #[serde(default)]
+        version: Option<String>,
     },
 }
 
