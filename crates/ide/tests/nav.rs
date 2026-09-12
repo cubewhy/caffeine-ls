@@ -474,7 +474,10 @@ const MANY_MEMBER_GOTO: &[(&str, usize, &str, &str)] = &[
     // not the first same-named declaration of the file and not one picked by
     // arity alone.
     ("method(1);", 0, "void method(int n) {}", "method"),
-    ("super.method(1)", 0, "void method(int n) {}", "method"),
+    // The `method(1)` of `super.method(1)`: the invocation selects the
+    // superclass's declaration. (The offset on the `super` keyword itself
+    // names the superclass — see [`goto_this_and_super`].)
+    ("method(1)", 1, "void method(int n) {}", "method"),
     ("method(1L)", 0, "void method(long n) {}", "method"),
     ("pick(1L)", 0, "void pick(long n) {}", "pick"),
     // A static field and the enum constants.
@@ -604,6 +607,109 @@ fn goto_type_parameter_reference() {
             ]
         )
     );
+}
+
+// -- `this`/`super` keywords and explicit constructor invocations ---------------
+// A `this` keyword names the enclosing class and a `super` keyword the direct
+// superclass ([JLS §15.8.3], [§15.8.4]) — the *type* the keyword denotes, not
+// the field or method the enclosing `this.f`/`super.m()` reads, whose own
+// resolution lies in a different declaration. `this(...)` and `super(...)` are
+// explicit constructor invocations ([§8.8.7.1]): like a class instance
+// creation, they name the constructor they selected.
+
+const KEYWORD_SRC: &str = r#"package com.example;
+
+class Base {
+    int count;
+
+    Base() {}
+
+    Base(int n) {}
+}
+
+class Sub extends Base {
+    Sub() {
+        this(0);
+    }
+
+    Sub(int n) {
+        super(n);
+    }
+
+    Base source() {
+        int a = this.count;
+        int b = super.count;
+        return this;
+    }
+}
+
+class Outer {
+    class Inner {
+        Outer outer() {
+            return Outer.this;
+        }
+    }
+}
+
+interface Greeter {
+    default String greet() {
+        return "hi";
+    }
+}
+
+class Greet implements Greeter {
+    String run() {
+        return Greeter.super.greet();
+    }
+}
+
+class Empty {
+}
+
+class Thin extends Empty {
+    Thin() {
+        super();
+    }
+}
+"#;
+
+/// The keyword and constructor-delegation references of [`KEYWORD_SRC`], in the
+/// shape of [`assert_targets_name`].
+const KEYWORD_GOTO: &[(&str, usize, &str, &str)] = &[
+    // §8.8.7.1: the delegated constructor, selected by its parameter list.
+    ("this(0)", 0, "Sub(int n)", "Sub"),
+    ("super(n)", 0, "Base(int n)", "Base"),
+    // A superclass that declares no constructor of its own has none to point
+    // at: the delegation names the class, as an instance creation does.
+    ("super();", 0, "class Empty", "Empty"),
+    // §15.8.3/§15.8.4: the keyword denotes the enclosing class and its direct
+    // superclass, never the field the access reads.
+    ("this.count", 0, "class Sub", "Sub"),
+    ("super.count", 0, "class Base", "Base"),
+    // A bare `this` — the second `this;` is the keyword of `Outer.this`.
+    ("this;", 0, "class Sub", "Sub"),
+    ("this;", 1, "class Outer", "Outer"),
+    // §15.11.2: a qualified keyword names the class or interface it writes.
+    ("Outer.this", 0, "class Outer", "Outer"),
+    ("Greeter.super", 0, "interface Greeter", "Greeter"),
+];
+
+#[test]
+fn goto_this_and_super() {
+    let fixture = test_file(KEYWORD_SRC);
+    for &(needle, occurrence, declaration, name) in KEYWORD_GOTO {
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
+    }
+
+    // The `super` of a qualified-super invocation is answered by the interface
+    // it writes, not by the default method the invocation names.
+    assert_targets_name(&fixture, "super.greet", 0, "interface Greeter", "Greeter");
+
+    let cases: Vec<(&str, usize)> = KEYWORD_GOTO
+        .iter()
+        .map(|&(needle, occurrence, ..)| (needle, occurrence))
+        .collect();
+    assert_snapshot!("goto_this_and_super", render_nav_many(&fixture, &cases));
 }
 
 // -- a variable's target covers its own name ----------------------------------------

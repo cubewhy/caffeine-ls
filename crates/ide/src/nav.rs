@@ -15,8 +15,18 @@
 //! the classfile calls `<init>`
 //! ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
 //! and the class writes under its own name — and the class itself when the
-//! class declares no constructor of its own. A
-//! *declaration-side* reference — an `extends`/`implements` clause, a field or
+//! class declares no constructor of its own. An explicit constructor
+//! invocation ([§8.8.7.1]) — `this(...)` and `super(...)` — is the same
+//! selection: the constructor of the enclosing class, or of its direct
+//! superclass, that it delegates to.
+//!
+//! A `this` or `super` *keyword* ([§15.8.3], [§15.8.4]) names no member but a
+//! type: the enclosing class, the direct superclass ([§8.1.4]) — never the
+//! member an enclosing `super.m()`/`this.f` reads, whose recorded resolution
+//! lies in a different declaration — or, qualified, the class or interface a
+//! `TypeName.this`/`TypeName.super` writes ([§15.11.2]).
+//!
+//! A *declaration-side* reference — an `extends`/`implements` clause, a field or
 //! parameter or return type, a `throws`, a generic argument, an annotation, an
 //! `import` — resolves the written name in the scope of the declaration that
 //! carries it ([§6.5.5.1], [§7.5]).
@@ -128,6 +138,14 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
 
 /// The Java declarations the reference at `offset` resolves to ([JLS §6.5]).
 fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
+    // §15.8.3/§15.8.4: a `this`/`super` keyword names a type, not a member —
+    // and it is written *inside* the receiver of the enclosing `this.f` or
+    // `super.m()` when it is not a receiver of its own, so the recorded
+    // resolution of that member access is not its answer.
+    if let Some(keyword) = keyword_target(db, file, offset) {
+        return targets(db, keyword);
+    }
+
     // §15.12: the type layer resolved this reference exactly — a local, a
     // field, an overload-selected method or constructor, a method reference.
     let recorded = recorded_reference(db, file, offset);
@@ -490,6 +508,7 @@ fn names_a_reference(bodies: &BodyTree, expr: ExprId) -> bool {
             | ExprData::FieldAccess { .. }
             | ExprData::MethodCall { .. }
             | ExprData::New { .. }
+            | ExprData::CtorCall { .. }
             | ExprData::ClassLit(_)
             | ExprData::InstanceOf { .. }
             | ExprData::NamePath(_)
@@ -503,15 +522,16 @@ enum Reference {
     /// Any other reference the table carries: a field access, an invocation, a
     /// method reference.
     Member,
-    /// A class instance creation ([JLS §15.9]): `new C(...)` resolves to the
-    /// constructor it selected.
-    ClassInstanceCreation,
+    /// A constructor selection ([JLS §15.9], [§8.8.7.1]): a class instance
+    /// creation `new C(...)`, or an explicit constructor invocation
+    /// `this(...)`/`super(...)`, resolves to the constructor it selected.
+    Constructor,
 }
 
 /// The reference the navigable expression at `expr` is.
 fn reference_at(bodies: &BodyTree, expr: ExprId) -> Reference {
     match bodies.expr(expr) {
-        ExprData::New { .. } => Reference::ClassInstanceCreation,
+        ExprData::New { .. } | ExprData::CtorCall { .. } => Reference::Constructor,
         _ => Reference::Member,
     }
 }
@@ -528,11 +548,11 @@ fn is_constructor_decl(db: &RootDatabase, file: FileId, item: ItemId) -> bool {
 }
 
 /// The kind of member a recorded *method* resolution is looked up with: a
-/// class instance creation resolves a constructor, every other reference the
+/// constructor selection resolves a constructor, every other reference the
 /// method itself.
 fn member_use_kind(reference: Reference) -> Use {
     match reference {
-        Reference::ClassInstanceCreation => Use::Constructor,
+        Reference::Constructor => Use::Constructor,
         Reference::Member => Use::Method,
     }
 }
@@ -542,7 +562,7 @@ fn member_use_kind(reference: Reference) -> Use {
 /// ([JVMS §4.6]), which is no declaration's name and has to be read back as
 /// the class the owner names.
 fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String {
-    if reference != Reference::ClassInstanceCreation || method.name != "<init>" {
+    if reference != Reference::Constructor || method.name != "<init>" {
         return method.name.clone();
     }
     // A library owner is spelled with binary names ([JVMS §4.2]): nesting is
@@ -556,8 +576,8 @@ fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String
 }
 
 /// The declaration a recorded body resolution names, through the classpath
-/// (mirrors [`members_of_owner`]). A class instance creation ([§15.9]) is
-/// looked up as the constructor it resolved to instead.
+/// (mirrors [`members_of_owner`]). A constructor selection ([§15.9],
+/// [§8.8.7.1]) is looked up as the constructor it resolved to instead.
 fn member_resolution(
     db: &RootDatabase,
     file: FileId,
@@ -575,15 +595,15 @@ fn member_resolution(
             // parameter types name one declaration, where the count alone
             // would answer the first overload of that arity.
             Params::Types(&method.params),
-            // Only a *constructor declaration* answers a creation: the
-            // recorded item of an inference fallback (a method named like the
-            // class) is not one, so the lookup below finds the constructor —
-            // or the class, when it declares none.
+            // Only a *constructor declaration* answers a constructor
+            // selection: the recorded item of an inference fallback (a method
+            // named like the class) is not one, so the lookup below finds the
+            // constructor — or the class, when it declares none.
             method
                 .owner_file
                 .zip(method.decl_item)
                 .filter(|(decl_file, item)| {
-                    reference != Reference::ClassInstanceCreation
+                    reference != Reference::Constructor
                         || is_constructor_decl(db, *decl_file, *item)
                 }),
             method.owner.clone(),
@@ -881,6 +901,68 @@ enum Resolution {
     Pending(LibraryFileRef),
 }
 
+/// The class a `this` or `super` *keyword* at `offset` denotes
+/// ([JLS §15.8.3]/[§15.8.4]): the enclosing class for a bare `this`, the
+/// direct superclass for a bare `super` ([§8.1.4]), and the class or interface
+/// a qualified `TypeName.this`/`TypeName.super` writes ([§15.11.2]).
+///
+/// `None` when the innermost expression at the offset is no such keyword. An
+/// explicit constructor invocation is lowered to [`ExprData::CtorCall`], not
+/// to a keyword expression, so `this(args)`/`super(args)` are answered from the
+/// recorded table like a class instance creation.
+///
+/// The step runs before the recorded table is read for a reason: a keyword
+/// written as a receiver — `super.m()`, `this.f` — lies inside the range of
+/// the member access, whose recorded resolution names the *member*, not the
+/// class the keyword denotes. `Some` with no resolution when the keyword names
+/// nothing: a qualifier that resolves to no type, a class whose superclass is
+/// not on the classpath.
+fn keyword_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<Vec<Resolution>> {
+    let bodies = hir::file_body_tree(db, file);
+    let expr = exprs_at(&bodies, offset).into_iter().next()?;
+    let (qualifier, keyword) = match bodies.expr(expr) {
+        ExprData::This { qualifier } => (qualifier, Keyword::This),
+        ExprData::Super { qualifier } => (qualifier, Keyword::Super),
+        _ => return None,
+    };
+    let tree = hir::file_item_tree(db, file);
+    // §6.5.5.1: a qualified keyword's `TypeName` is resolved in the scope of
+    // the declaration whose body writes it, like any written type name.
+    if let Some(qualifier) = qualifier {
+        let item = body_items_at(db, file, &tree, offset).first().copied();
+        return Some(type_ref_name(qualifier).map_or_else(Vec::new, |name| {
+            type_resolution(db, file, item, &Name::new(&name))
+        }));
+    }
+    let symbols = hir::file_symbols(db, file);
+    let Some(enclosing) = enclosing_class_fqn(db, file, &tree, &symbols, offset) else {
+        return Some(Vec::new());
+    };
+    let class = match keyword {
+        Keyword::This => enclosing,
+        // §8.1.4/§4.10.2: the *direct* superclass is the first supertype of a
+        // class. (`super` is not written in an interface, whose supertypes are
+        // its superinterfaces.)
+        Keyword::Super => {
+            let scope = hir_ty::scope_for_file(db, file);
+            let supertypes =
+                hir_ty::supertypes(db, &scope, &Ty::reference(db, enclosing, Vec::new()));
+            let Some((fqn, _)) = supertypes.first().and_then(|ty| ty.as_reference(db)) else {
+                return Some(Vec::new());
+            };
+            fqn.clone()
+        }
+    };
+    Some(class_resolution(db, file, &class))
+}
+
+/// The keyword a bare or qualified `this`/`super` expression is written as.
+#[derive(Debug, Clone, Copy)]
+enum Keyword {
+    This,
+    Super,
+}
+
 /// The classpath resolutions of the innermost navigable expression at
 /// `offset`, innermost first: the first expression with a resolution wins.
 fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
@@ -1030,7 +1112,21 @@ fn enclosing_class_receiver(
     symbols: &[hir::SourceSymbol],
     offset: TextSize,
 ) -> Option<Ty> {
-    let fqn = symbols
+    enclosing_class_fqn(db, file, tree, symbols, offset)
+        .map(|fqn| Ty::reference(db, fqn, Vec::new()))
+}
+
+/// The fully qualified name of the innermost class-like declaration whose
+/// range contains `offset` — the class a bare `this` is an instance of, and
+/// whose direct superclass a bare `super` names.
+fn enclosing_class_fqn(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    symbols: &[hir::SourceSymbol],
+    offset: TextSize,
+) -> Option<Name> {
+    symbols
         .iter()
         .filter(|symbol| {
             matches!(
@@ -1049,8 +1145,7 @@ fn enclosing_class_receiver(
             let range = item_range(db, file, tree, symbol.item).unwrap_or_default();
             range.end() - range.start()
         })
-        .and_then(|symbol| hir::source_class_fqn(db, file, symbol.item))?;
-    Some(Ty::reference(db, fqn, Vec::new()))
+        .and_then(|symbol| hir::source_class_fqn(db, file, symbol.item))
 }
 
 /// The resolution of a member of `receiver`, walking the receiver's own class

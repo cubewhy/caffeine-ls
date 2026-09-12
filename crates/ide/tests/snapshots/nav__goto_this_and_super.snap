@@ -1,0 +1,40 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture, &cases)"
+---
+--- goto @"this(0)"#0 ---
+Sub @153..156
+--- hover ---
+void
+--- goto @"super(n)"#0 ---
+Base @70..74
+--- hover ---
+void
+--- goto @"super();"#0 ---
+Empty @588..593
+--- hover ---
+void
+--- goto @"this.count"#0 ---
+Sub @94..97
+--- hover ---
+com.example.Sub
+--- goto @"super.count"#0 ---
+Base @28..32
+--- hover ---
+int
+--- goto @"this;"#0 ---
+Sub @94..97
+--- hover ---
+com.example.Sub
+--- goto @"this;"#1 ---
+Outer @304..309
+--- hover ---
+com.example.Outer
+--- goto @"Outer.this"#0 ---
+Outer @304..309
+--- hover ---
+com.example.Outer
+--- goto @"Greeter.super"#0 ---
+Greeter @414..421
+--- hover ---
+com.example.String

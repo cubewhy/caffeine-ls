@@ -698,6 +698,10 @@ public class Base {
 
     public Base self;
 
+    public Base() {}
+
+    public Base(int n) {}
+
     public void method(int n) {}
 
     public void method(long n) {}
@@ -752,6 +756,14 @@ import static com.example.Helper.of;
 import static com.example.Helper.sum;
 
 class Use<R> extends Base {
+    Use() {
+        this(0);
+    }
+
+    Use(int n) {
+        super(n);
+    }
+
     @Marker
     int marked;
 
@@ -766,6 +778,7 @@ class Use<R> extends Base {
         count = b.count;
         method(1);
         super.method(1);
+        this.count = 1;
         b.method(1L);
         int s = Base.STATIC;
         E e = E.FIRST;
@@ -840,6 +853,40 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         "/src/com/example/Sub.java",
         "Sub(int",
         "Sub",
+    ),
+    // §8.8.7.1: an explicit constructor invocation `this(...)`/`super(...)`
+    // names the constructor it delegates to, selected by its parameter list
+    // exactly as a class instance creation's is.
+    (
+        "/src/com/example/Use.java",
+        ("this(0)", 0),
+        "/src/com/example/Use.java",
+        "Use(int n)",
+        "Use",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("super(n)", 0),
+        "/src/com/example/Base.java",
+        "Base(int n)",
+        "Base",
+    ),
+    // §15.8.3/§15.8.4: a `this` keyword names the enclosing class and a
+    // `super` keyword the direct superclass — never the field or method the
+    // access reads.
+    (
+        "/src/com/example/Use.java",
+        ("this.count", 0),
+        "/src/com/example/Use.java",
+        "class Use",
+        "Use",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("super.method", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+        "Base",
     ),
     // §6.5.6.1: a field of the implicit `this`, and of an explicit receiver.
     (
@@ -2189,7 +2236,9 @@ exit 0
 /// the archive, loads them into the database, and answers with the real source
 /// location — a classfile stub alone has no file and no range. A class instance
 /// creation does the same for the constructor it selects ([§15.9]), whose
-/// declaration the classfile names `<init>`.
+/// declaration the classfile names `<init>`, and so do an explicit `super(...)`
+/// delegation ([§8.8.7.1]) and a bare `super` keyword ([§15.8.4]) against a
+/// superclass only the jar declares.
 ///
 /// The fixture's `Foo extends Base`, both declared by the jar, so the first
 /// member request walks two owners that are not loaded yet and reads both files
@@ -2205,9 +2254,8 @@ fn library_source_definition_materializes_and_navigates() {
     let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    public void greet(int count) {}\n}\n";
     let base_source =
         "package com.example;\n\npublic class Base {\n    public void hello(int n) {}\n}\n";
-    let widget_source =
-        "package com.example;\n\npublic class Widget {\n    public Widget(int size) {}\n}\n";
-    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
+    let widget_source = "package com.example;\n\npublic class Widget {\n    public int size;\n\n    public Widget(int size) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n\nclass Sub extends com.example.Widget {\n    Sub() {\n        super(1);\n    }\n\n    int read() {\n        return super.size;\n    }\n}\n";
     let app_path = "/src/main/java/app/App.java";
 
     // The shim build system and a decompiler whose JVM records every run: a
@@ -2247,7 +2295,7 @@ fn library_source_definition_materializes_and_navigates() {
                     lsp_test::classfile::class_bytes(
                         "com/example/Widget",
                         "java/lang/Object",
-                        &[],
+                        &["size"],
                         &[("<init>", 1)],
                     ),
                 ),
@@ -2402,6 +2450,82 @@ fn library_source_definition_materializes_and_navigates() {
             "Widget.java".to_string()
         ],
         "the creation materialized exactly its constructor's declaring file"
+    );
+
+    // -- §8.8.7.1: an explicit `super(...)` delegation names the superclass
+    // constructor it invokes. The superclass ships only classfiles here, so the
+    // classfile's `<init>(int)` is read back as the constructor the source
+    // declares under `Widget`'s own name — and that declaration is quoted out
+    // of the archive, not the class.
+    let (line, character) = position_of(app_source, "super(1)");
+    let delegation_response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(app_path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let delegation_locations = delegation_response
+        .as_array()
+        .expect("definition locations");
+    assert_eq!(
+        delegation_locations.len(),
+        1,
+        "got: {delegation_response:?}"
+    );
+    let delegation_uri: lsp_types::Uri =
+        serde_json::from_value(delegation_locations[0]["uri"].clone()).unwrap();
+    assert!(
+        delegation_uri
+            .to_file_path()
+            .unwrap()
+            .ends_with("com/example/Widget.java"),
+        "the delegated constructor is declared by `Widget`: {delegation_uri:?}"
+    );
+    assert_definition_name(
+        &delegation_locations[0]["range"],
+        widget_source,
+        "public Widget(int size)",
+        "Widget",
+    );
+    assert_eq!(
+        java_file_names(&cache_sources),
+        vec![
+            "Base.java".to_string(),
+            "Foo.java".to_string(),
+            "Widget.java".to_string()
+        ],
+        "the delegation materializes the same declaring file the creation did"
+    );
+
+    // -- §15.8.4: a bare `super` keyword names the direct superclass, even when
+    // only its classfile is on the classpath: the field the enclosing
+    // `super.size` reads is a different declaration, and the class it belongs
+    // to is quoted out of the source archive.
+    let super_position = start_of(app_source, "super.size", 0);
+    let super_response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(app_path) },
+            "position": super_position,
+        }),
+    );
+    let super_locations = super_response.as_array().expect("definition locations");
+    assert_eq!(super_locations.len(), 1, "got: {super_response:?}");
+    let super_uri: lsp_types::Uri =
+        serde_json::from_value(super_locations[0]["uri"].clone()).unwrap();
+    assert!(
+        super_uri
+            .to_file_path()
+            .unwrap()
+            .ends_with("com/example/Widget.java"),
+        "the superclass is declared by `Widget`: {super_uri:?}"
+    );
+    assert_definition_name(
+        &super_locations[0]["range"],
+        widget_source,
+        "class Widget",
+        "Widget",
     );
 
     // A library source file is read-only third-party code: its report is empty.

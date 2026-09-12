@@ -22,7 +22,7 @@ com.example.Base
 method @300..306
 --- hover ---
 void
---- goto @"super.method(1)"#0 ---
+--- goto @"method(1)"#1 ---
 method @300..306
 --- hover ---
 void
