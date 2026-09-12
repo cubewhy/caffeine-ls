@@ -26,6 +26,11 @@ use crate::{
     stubs::{DiskClassOrModuleRecord, StubStringTable},
 };
 
+/// Classes of one archive are parsed in chunks of this size: the parallel
+/// phase is otherwise uncancellable, and a query that holds a database
+/// snapshot blocks the writer until it can unwind.
+const PARSE_CHUNK: usize = 256;
+
 /// A single parsed declaration, with its fully qualified name.
 pub struct StubRecord {
     pub fqn: String,
@@ -79,18 +84,24 @@ pub fn parse_jar(
     drop(zip);
 
     let failed = AtomicUsize::new(0);
-    let records: Vec<StubRecord> = class_bytes
-        .into_par_iter()
-        .filter_map(
-            |bytes| match ClassParser::new(interner).parse_cafebabe(&bytes) {
+    let mut records: Vec<StubRecord> = Vec::with_capacity(class_bytes.len());
+    // The parallel phase is chunked so a pending write cancels it at a bounded
+    // point instead of waiting out the whole parse: a query holding a database
+    // snapshot blocks the writer until it unwinds, and a jar of generated
+    // classfiles can take seconds. The closure does not capture the check —
+    // only the outer loop calls it, from the thread that owns the snapshot.
+    for chunk in class_bytes.chunks(PARSE_CHUNK) {
+        cancel_check();
+        records.par_extend(chunk.into_par_iter().filter_map(|bytes| {
+            match ClassParser::new(interner).parse_cafebabe(bytes) {
                 Ok(stub) => Some(StubRecord::new(interner, stub)),
                 Err(_) => {
                     failed.fetch_add(1, Ordering::Relaxed);
                     None
                 }
-            },
-        )
-        .collect();
+            }
+        }));
+    }
     let failed = failed.load(Ordering::Relaxed);
     if failed > 0 {
         tracing::warn!(%failed, archive = %archive, "failed to parse class files");
@@ -133,9 +144,13 @@ pub fn parse_jimage(
         .context("failed to list jimage resources")?;
 
     let failed = AtomicUsize::new(0);
-    let records: Vec<StubRecord> = names
-        .into_par_iter()
-        .filter_map(|resource| {
+    let mut records: Vec<StubRecord> = Vec::with_capacity(names.len());
+    // Chunked for the same reason as [`parse_jar`]: the whole JDK image is tens
+    // of thousands of classes, and a query that holds a snapshot must be able
+    // to unwind at a bounded point when a write is waiting on it.
+    for chunk in names.chunks(PARSE_CHUNK) {
+        cancel_check();
+        records.par_extend(chunk.into_par_iter().filter_map(|resource| {
             let (module, path) = resource.get_full_name();
             if !path.ends_with(".class") {
                 return None;
@@ -155,9 +170,8 @@ pub fn parse_jimage(
                     None
                 }
             }
-        })
-        .collect();
-    cancel_check();
+        }));
+    }
     let failed = failed.load(Ordering::Relaxed);
     if failed > 0 {
         tracing::warn!(%failed, archive = %archive, "failed to parse class files");

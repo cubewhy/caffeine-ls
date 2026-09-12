@@ -1314,8 +1314,14 @@ impl GlobalState {
 
     /// Warms the stub indexes of every registered library up on a background
     /// thread so the first type query does not pay the full JDK parse cost.
+    ///
+    /// The work deliberately runs through [`ide::LibraryWarmup`] instead of a
+    /// database snapshot: a snapshot clone held for the length of an archive
+    /// parse blocks the main loop's next write — and with it every request —
+    /// until the parse finishes, which on a workspace reload means the JDK
+    /// image (seconds) and the whole server frozen behind it.
     fn warmup_libraries(&mut self, root: &AbsPathBuf) {
-        let ids: Vec<LibraryId> = self.analysis_host.snapshot().registered_libraries();
+        let ids: Vec<LibraryId> = self.analysis_host.registered_libraries();
         if ids.is_empty() {
             return;
         }
@@ -1331,18 +1337,21 @@ impl GlobalState {
         });
 
         let task_sender = self.task_sender.clone();
-        let snapshot = self.analysis_host.snapshot();
+        let warmup = self.analysis_host.library_warmup();
+        // The live set of the graph this pass warms; captured once, so the
+        // per-task closures share it instead of cloning the set each.
+        let live: Arc<FxHashSet<LibraryId>> = Arc::new(ids.iter().copied().collect());
         let done_count = Arc::new(AtomicUsize::new(0));
 
         for &id in ids.iter() {
             let task_sender = task_sender.clone();
             let token = token.clone();
             let done_count = Arc::clone(&done_count);
-
-            let snapshot = snapshot.clone();
+            let warmup = warmup.clone();
+            let live = Arc::clone(&live);
 
             self.thread_pool.execute(move || {
-                let _ = snapshot.warmup_library(id);
+                warmup.warm(id);
 
                 let done = done_count.fetch_add(1, Ordering::SeqCst) + 1;
                 let percentage = (done as f64 / total as f64 * 100.0) as u32;
@@ -1360,7 +1369,7 @@ impl GlobalState {
                 if done == total {
                     // All libraries are indexed: now is a safe point to drop
                     // cache entries of libraries no project uses anymore.
-                    snapshot.prune_stub_cache();
+                    warmup.prune(&live);
 
                     task_sender
                         .send(BackgroundTaskEvent::Progress(ProgressEvent {

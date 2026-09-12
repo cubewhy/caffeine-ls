@@ -61,12 +61,53 @@ impl AnalysisHost {
         hir::enable_persistent_stub_cache(&self.db, cache_dir)
     }
 
+    /// The registered libraries (those reachable from some source set), in
+    /// unspecified order. Empty before the first workspace load. Reads the
+    /// host database directly, without a snapshot: the caller needs the ids
+    /// only to hand out to [`Self::library_warmup`].
+    pub fn registered_libraries(&self) -> Vec<LibraryId> {
+        hir::registered_libraries(&self.db)
+    }
+
+    /// A cloneable handle to the session's library-index state, for background
+    /// warmup that must not hold a database snapshot. Warming one archive can
+    /// take seconds (a JDK image), and a snapshot clone held for that long
+    /// blocks the next write — and with it the server's main loop.
+    pub fn library_warmup(&self) -> LibraryWarmup {
+        LibraryWarmup {
+            state: self.db.shared_hir_state(),
+        }
+    }
+
     pub fn raw_database(&self) -> &RootDatabase {
         &self.db
     }
 
     pub fn raw_database_mut(&mut self) -> &mut RootDatabase {
         &mut self.db
+    }
+}
+
+/// Background warmup of the library stub index that holds no database
+/// snapshot, so a long archive parse cannot block the server's next write.
+#[derive(Clone)]
+pub struct LibraryWarmup {
+    state: Arc<hir::HirState>,
+}
+
+impl LibraryWarmup {
+    /// Builds the tier-1 stub index of `id` on the calling thread, storing it
+    /// in the session cache so the first query that resolves into the library
+    /// does not pay the archive parse. A library a reload has already dropped
+    /// is skipped.
+    pub fn warm(&self, id: LibraryId) {
+        hir::warmup_library(&self.state, id);
+    }
+
+    /// Drops persistent stub-cache entries of libraries `live` does not name.
+    /// Called once a warmup pass finished.
+    pub fn prune(&self, live: &FxHashSet<LibraryId>) {
+        hir::prune_stub_cache(&self.state, live);
     }
 }
 
@@ -266,24 +307,5 @@ impl Analysis {
         offset: rowan::TextSize,
     ) -> Cancellable<Option<HoverInfo>> {
         self.with_db(|db| nav::hover(db, file_id, offset))
-    }
-
-    /// The registered libraries (those reachable from some source set), in
-    /// unspecified order. Empty before the first workspace load.
-    pub fn registered_libraries(&self) -> Vec<LibraryId> {
-        hir::registered_libraries(&self.db)
-    }
-
-    /// Builds the stub index of one library on the calling thread, so the
-    /// first query that resolves into it does not pay the archive parse.
-    /// `Err(Cancelled)` when a write landed while it ran.
-    pub fn warmup_library(&self, id: LibraryId) -> Cancellable<()> {
-        self.with_db(|db| hir::warmup_library(db, id))
-    }
-
-    /// Drops the persistent stub-cache entries of libraries the current
-    /// project graph no longer registers. Called once a warmup pass finished.
-    pub fn prune_stub_cache(&self) {
-        hir::prune_stub_cache(&self.db)
     }
 }

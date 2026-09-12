@@ -18,7 +18,7 @@ use base_db::{
     FileText, SourceDatabase, SourceRootId, SourceRootInput,
     salsa::{self, Setter as _},
 };
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use dashmap::DashMap;
 use hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::name::Name;
@@ -103,6 +103,28 @@ pub struct LibraryState {
     kind: LibraryKind,
     archive: Utf8PathBuf,
     index: Mutex<Option<Arc<LibraryIndex>>>,
+}
+
+/// The registration data of a registered library, cloned out of the map so the
+/// caller can load the archive without the map guard in hand.
+///
+/// The guard matters: `set_project_graph` takes every `DashMap` shard's write
+/// lock on a reload, so a shard read guard held across an archive parse stalls
+/// the main loop — and with it every request — for as long as the parse takes.
+/// Building a JDK image index takes seconds.
+fn registered_library(state: &HirState, id: LibraryId) -> Option<(LibraryKind, Utf8PathBuf)> {
+    state
+        .libraries
+        .get(&id)
+        .map(|library| (library.kind, library.archive.clone()))
+}
+
+/// A library's index if it has already been built, cloned out of the map.
+fn cached_index(state: &HirState, id: LibraryId) -> Option<Arc<LibraryIndex>> {
+    state
+        .libraries
+        .get(&id)
+        .and_then(|library| library.index.lock().clone())
 }
 
 /// Session-wide shared state of the stub index: the symbol interner, the
@@ -321,18 +343,10 @@ fn library_name_index_query(
     id: LibraryId,
 ) -> Arc<NameIndex> {
     let state = db.hir_state();
-    let library = state
-        .libraries
-        .get(&id)
+    let (kind, archive) = registered_library(state, id)
         .unwrap_or_else(|| panic!("library {id:?} is not registered; this is a bug"));
     let cancel_check = || db.unwind_if_revision_cancelled();
-    let index = ensure_loaded(
-        id,
-        library.value(),
-        &state.interner,
-        &state.stub_store,
-        &cancel_check,
-    );
+    let index = ensure_loaded(id, kind, &archive, state, &cancel_check);
     Arc::clone(&index.names)
 }
 
@@ -343,39 +357,43 @@ pub fn library_name_index(db: &dyn HirDatabase, id: LibraryId) -> Arc<NameIndex>
     library_name_index_query(db, project_graph, id).clone()
 }
 
+/// Loads a library's index, or parses the archive when it is not cached.
+///
+/// Called with the library's registration data by value, never with a map
+/// guard: the parse runs for as long as the archive takes to read (seconds for
+/// a JDK image), and a guard held across it blocks a concurrent
+/// `set_project_graph` — the workspace reload — on the map's write lock.
 fn ensure_loaded(
     id: LibraryId,
-    library: &LibraryState,
-    interner: &ThreadedRodeo,
-    store: &StubStore,
+    kind: LibraryKind,
+    archive: &Utf8Path,
+    state: &HirState,
     cancel_check: &dyn Fn(),
 ) -> Arc<LibraryIndex> {
-    {
-        let guard = library.index.lock();
-        if let Some(index) = guard.as_ref() {
-            return index.clone();
-        }
+    if let Some(index) = cached_index(state, id) {
+        return index;
     }
 
     let index = match loader::load_or_build(
         id,
-        library.kind,
-        &library.archive,
-        interner,
+        kind,
+        archive,
+        &state.interner,
         cancel_check,
-        store,
+        &state.stub_store,
     ) {
         Ok(index) => Arc::new(index),
         Err(err) => {
             tracing::error!(library = %id, "failed to index library: {err:#}");
-            Arc::new(LibraryIndex::empty(
-                id,
-                library.kind,
-                library.archive.clone(),
-            ))
+            Arc::new(LibraryIndex::empty(id, kind, archive.to_owned()))
         }
     };
-    *library.index.lock() = Some(index.clone());
+    // The library may have been dropped from the map by a reload while the
+    // archive was parsed; the index is then simply not stored and the next
+    // registered library of the same id (a new graph) builds its own.
+    if let Some(library) = state.libraries.get(&id) {
+        *library.index.lock() = Some(Arc::clone(&index));
+    }
     index
 }
 
@@ -384,18 +402,15 @@ fn ensure_loaded(
 /// result is stored in the per-library cache; a subsequent salsa query sees
 /// it and returns without re-parsing. Errors are logged and the empty index
 /// is cached so the failure is not re-attempted on every query.
-pub fn warmup_library(db: &dyn HirDatabase, id: LibraryId) {
-    let state = db.hir_state();
-    let Some(library) = state.libraries.get(&id) else {
+///
+/// Takes the session state, not a database snapshot: a snapshot held for the
+/// length of the parse blocks the main loop's next write, and with it every
+/// request, until the parse finishes.
+pub fn warmup_library(state: &HirState, id: LibraryId) {
+    let Some((kind, archive)) = registered_library(state, id) else {
         return;
     };
-    ensure_loaded(
-        id,
-        library.value(),
-        &state.interner,
-        &state.stub_store,
-        &|| {},
-    );
+    ensure_loaded(id, kind, &archive, state, &|| {});
 }
 
 /// Enables the persistent LMDB stub cache for this session, pointing it at
@@ -410,12 +425,11 @@ pub fn enable_persistent_stub_cache(db: &dyn HirDatabase, cache_dir: &Path) -> b
     true
 }
 
-/// Prunes stub-cache entries of unregistered libraries that have gone stale,
-/// freeing space for current projects. Intended to run once after library
-/// warmup completes.
-pub fn prune_stub_cache(db: &dyn HirDatabase) {
-    let live: FxHashSet<LibraryId> = registered_libraries(db).into_iter().collect();
-    let pruned = db.hir_state().stub_store.prune_stale(&live);
+/// Prunes stub-cache entries whose library is not in `live` and has gone
+/// stale, freeing space for current projects. Intended to run once after
+/// library warmup completes.
+pub fn prune_stub_cache(state: &HirState, live: &FxHashSet<LibraryId>) {
+    let pruned = state.stub_store.prune_stale(live);
     if pruned > 0 {
         tracing::info!(pruned, "pruned stale stub cache entries");
     }
@@ -423,9 +437,7 @@ pub fn prune_stub_cache(db: &dyn HirDatabase) {
 
 fn library_index(db: &dyn HirDatabase, id: LibraryId) -> Option<Arc<LibraryIndex>> {
     library_name_index(db, id);
-    let state = db.hir_state();
-    let library = state.libraries.get(&id)?;
-    library.value().index.lock().clone()
+    cached_index(db.hir_state(), id)
 }
 
 /// The archive a registered library was loaded from, `None` when the library

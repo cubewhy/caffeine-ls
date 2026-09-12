@@ -29,11 +29,10 @@ static SETUP: LazyLock<()> = LazyLock::new(|| {
 /// Client config for the snapshot tests.
 ///
 /// `java_home` points at a path that cannot exist, so the server registers no
-/// SDK and skips the platform (jimage) stub index: that index runs on the
-/// server's task pool while holding a database snapshot, which blocks the main
-/// loop's next write — and therefore every request issued before it finishes —
-/// for as long as the parse takes. Tests that need platform classes pass their
-/// own config (see `test_release_api_diagnostic`). The path must be absolute:
+/// SDK and skips the platform (jimage) stub index: parsing a whole JDK image
+/// on every test costs seconds and the tests that do not resolve platform
+/// classes never need it. Tests that need them pass their own config (see
+/// `test_release_api_diagnostic`). The path must be absolute:
 /// `AbsPathBuf::assert_utf8` panics otherwise.
 fn default_client_config() -> serde_json::Value {
     json!({ "java_home": std::env::temp_dir().join("caffeine-ls-test-no-jdk") })
@@ -490,6 +489,156 @@ exit 0
             .any(|m| m.contains("Downloading") && m.contains("KiB")),
         "expected a Downloading-phase message with a byte size, got: {messages:?}"
     );
+}
+
+/// A workspace reload must not stall behind a library index build. The warmup
+/// parses every registered archive on the task pool, and a JDK image takes
+/// seconds; if that warmup held a database snapshot — or a guard on the
+/// per-library registry, which `set_project_graph` needs a write lock on — the
+/// reload's own next write would block the main loop, and with it every
+/// notification, until the parse finished.
+///
+/// The library archive is a FIFO, so the parse blocks until this test releases
+/// it: the window is deterministic instead of a race against a real parse. The
+/// observable is a second build-configuration change, which the server must
+/// still answer while the first warmup is stuck.
+#[test]
+fn workspace_reload_is_not_blocked_by_a_library_index_build() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+classpath='[]'
+if [ -f "$PWD/with-lib" ]; then
+    classpath='[{"type":"jar","path":"'$PWD'/lib/blocking.jar","origin":"flat-file"}]'
+fi
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":'"$classpath"',"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    // `get_java_home` needs a directory that exists; the shim reports it as
+    // the project SDK, and it holds no `lib/modules`, so no platform library
+    // is registered.
+    let java_home = env!("CARGO_MANIFEST_DIR").to_string();
+    struct EnvGuard(Option<std::ffi::OsString>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: env mutation is serialized by ENV_LOCK, which outlives
+            // this guard (it is declared first, so it drops last).
+            unsafe {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("JAVA_HOME", previous),
+                    None => std::env::remove_var("JAVA_HOME"),
+                }
+            }
+        }
+    }
+    let java_home_before = std::env::var_os("JAVA_HOME");
+    // SAFETY: env mutation is serialized by ENV_LOCK.
+    unsafe {
+        std::env::set_var("JAVA_HOME", &java_home);
+    }
+    let _guard = EnvGuard(java_home_before);
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: env mutation is serialized by ENV_LOCK.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let app = "/src/main/java/app/App.java";
+    let lsp = create_lsp_with_setup(|root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+        std::fs::write(
+            root.join("src/main/java/app/App.java"),
+            "package app;\n\npublic class App {}\n",
+        )
+        .unwrap();
+    });
+
+    lsp.open_document(app);
+    lsp.wait_until_workspace_is_loaded();
+
+    // The next sync reports a classpath jar whose parse blocks in `open()`.
+    std::fs::write(lsp.workspace_root.path().join("with-lib"), "").unwrap();
+    let fifo = lsp.workspace_root.path().join("lib/blocking.jar");
+    std::fs::create_dir_all(fifo.parent().unwrap()).unwrap();
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("failed to run mkfifo");
+    assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+    lsp.did_change_watched_files("/build.gradle", FileChangeType::Changed);
+
+    // The reload's warmup is now stuck on the FIFO.
+    lsp.wait_for_notifications("$/progress", Duration::from_secs(30), |notifications| {
+        notifications
+            .iter()
+            .filter_map(progress_event)
+            .any(|(token, kind)| token.starts_with("index-") && kind == "begin")
+    });
+
+    // A write on the main loop while the warmup is stuck must not block behind
+    // it.
+    lsp.change_document_incremental(
+        app,
+        Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 0,
+            },
+        },
+        "// touched\n",
+    );
+
+    // How many syncs have already begun (the initial load and the reload this
+    // test triggered). A second build-configuration change below must start
+    // one more.
+    let baseline = lsp
+        .wait_for_notifications("$/progress", Duration::from_secs(1), |_| true)
+        .iter()
+        .filter_map(progress_event)
+        .filter(|(token, kind)| token.starts_with("sync-") && kind == "begin")
+        .count();
+
+    // The second build-configuration change must still be answered: the server
+    // reports the new sync's progress only if the main loop is free.
+    lsp.did_change_watched_files("/build.gradle", FileChangeType::Changed);
+    lsp.wait_for_notifications("$/progress", Duration::from_secs(20), |notifications| {
+        notifications
+            .iter()
+            .filter_map(progress_event)
+            .filter(|(token, kind)| token.starts_with("sync-") && kind == "begin")
+            .count()
+            > baseline
+    });
+
+    // Release the parse so the task pool can shut down.
+    std::thread::spawn(move || {
+        let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+    });
 }
 
 #[test]

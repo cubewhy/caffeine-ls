@@ -121,7 +121,7 @@ pub(crate) fn prepare_roots(
 
 /// Removes the materialized files of libraries that are no longer on the
 /// classpath, under a view's base directory. A failure to remove is logged, not
-/// fatal — mirrors `ide::Analysis::prune_stub_cache`.
+/// fatal — mirrors `ide::LibraryWarmup::prune`.
 pub(crate) fn prune_roots(base: &Path, live: &FxHashSet<LibraryId>) {
     let Ok(entries) = fs::read_dir(base) else {
         return;

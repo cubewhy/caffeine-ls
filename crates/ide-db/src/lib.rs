@@ -54,6 +54,15 @@ impl RootDatabase {
             .flat_map(|id| self.files.source_root(id).source_root(self).iter())
             .collect()
     }
+
+    /// A clone of the session-wide HIR state — the symbol interner, the
+    /// per-library index cache and the persistent stub cache — for background
+    /// work that must not hold a database snapshot: a snapshot clone blocks
+    /// the next write until it is dropped, so warming a library (seconds for a
+    /// JDK image) through one would stall the whole server.
+    pub fn shared_hir_state(&self) -> Arc<HirState> {
+        Arc::clone(&self.hir_state)
+    }
 }
 
 #[salsa::db]
