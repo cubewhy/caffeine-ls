@@ -5,6 +5,7 @@ pub mod ct_sym;
 pub mod db;
 pub mod index;
 pub mod jvm;
+pub mod lib_source;
 pub mod lmdb_store;
 pub mod loader;
 pub mod modules;
@@ -27,13 +28,19 @@ pub use db::{
     super_types, warmup_library,
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
+pub use lib_source::{
+    LibrarySourceDecl, library_source_decl, library_source_entry, library_source_for_file,
+    library_source_path, library_sources,
+};
 pub use modules::{
     ModuleCtx, ModuleDescriptor, ModuleGraph, WorkspaceModuleGraph, is_package_exported,
     is_package_visible, is_package_visible_from_unnamed, module_ctx_for_scope, module_descriptor,
     module_for_class, module_graph, module_graph_for_source_set, modules_for_package,
     readable_modules, required_modules,
 };
-pub use project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId};
+pub use project::{
+    Classpath, ClasspathEntry, LibraryInfo, LibrarySources, ProjectGraphData, SourceSetId,
+};
 pub use project_model::{JavaLanguageLevel, ProjectId, SourceSetKind};
 pub use stubs::{
     AnnotationSig, AnnotationValue, ClassKind, ClassOrModuleRecord, ClassOrModuleStub, ClassRecord,

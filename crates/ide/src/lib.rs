@@ -232,6 +232,19 @@ impl Analysis {
         self.with_db(|db| nav::definition(db, file_id, offset))
     }
 
+    /// The library source files the reference at `offset` resolves into but
+    /// which are not loaded into the database yet. The LSP layer reads each one
+    /// out of its archive and re-runs the request; the retried
+    /// [`Self::goto_definition`]/[`Self::hover`] then answers with the real
+    /// source location.
+    pub fn pending_library_sources(
+        &self,
+        file_id: FileId,
+        offset: rowan::TextSize,
+    ) -> Cancellable<Vec<nav::LibrarySourceRef>> {
+        self.with_db(|db| nav::pending_library_sources(db, file_id, offset))
+    }
+
     /// The hover at `offset` — the type of the expression or the signature of
     /// the declaration, or `None` when nothing is there. Serves the LSP
     /// `textDocument/hover` request.

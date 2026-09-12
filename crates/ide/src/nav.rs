@@ -10,14 +10,22 @@
 //! serves the LSP `textDocument/definition` and `textDocument/hover`
 //! requests; it deliberately stays name-based rather than running the full
 //! type-directed resolution of [§15.12].
+//!
+//! When the file-local walk finds nothing, the reference is resolved through
+//! the classpath instead: a type or member reference that denotes a library
+//! declaration resolves to the *library's source file*, which the LSP layer
+//! materializes on demand. A library declaration whose source is not loaded
+//! yet is reported as pending rather than being answered.
 
 use rowan::{TextRange, TextSize};
-use vfs::FileId;
+use triomphe::Arc;
+use vfs::{AbsPathBuf, FileId};
 
 use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     arena::ArenaId,
     body::{BodyTree, ExprData, ExprId, LocalId},
+    name::Name,
 };
 
 use crate::RootDatabase;
@@ -52,9 +60,9 @@ pub struct HoverInfo {
 
 /// The declarations the reference at `offset` resolves to ([JLS §6.5]) — a
 /// local variable use to its declaration, a field/method/type reference to
-/// every same-named source declaration of the file. The offset may fall on
-/// an argument or operand, so the innermost *navigable* enclosing expression
-/// governs (innermost first).
+/// every same-named source declaration of the file, or — when the file-local
+/// walk finds nothing — the classpath declaration the reference actually
+/// denotes.
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
     let bodies = hir::file_body_tree(db, file);
     for expr_id in exprs_at(&bodies, offset) {
@@ -107,7 +115,190 @@ pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Navi
             return targets;
         }
     }
+
+    // No same-file declaration: the reference may denote a classpath
+    // declaration. A library one that is not materialized yet cannot be
+    // answered here — the LSP layer reads it into the database and re-runs the
+    // request (see [`pending_library_sources`]).
+    resolve_at(db, file, offset)
+        .into_iter()
+        .filter_map(|resolution| match resolution {
+            Resolution::Decl { file, item, name } => decl_target(db, file, item, &name),
+            Resolution::LibraryMember {
+                decl: hir::LibrarySourceDecl::Loaded { file, item },
+                name,
+                ..
+            } => decl_target(db, file, item, &name),
+            Resolution::LibraryMember { .. } | Resolution::Pending(_) => None,
+        })
+        .collect()
+}
+
+/// The library source files a reference resolves into but which are not loaded
+/// into the database yet, in resolution order. The LSP layer reads each
+/// `entry` out of `archive` into `path` and re-runs the request.
+pub fn pending_library_sources(
+    db: &RootDatabase,
+    file: FileId,
+    offset: TextSize,
+) -> Vec<LibrarySourceRef> {
+    resolve_at(db, file, offset)
+        .into_iter()
+        .filter_map(|resolution| match resolution {
+            Resolution::Pending(source) => Some(source),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A library source file a reference resolves into but which is not loaded
+/// into the database yet: the LSP layer reads `entry` out of `archive` into
+/// `path` and re-runs the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibrarySourceRef {
+    pub library: hir::LibraryId,
+    pub archive: AbsPathBuf,
+    pub entry: Arc<str>,
+    pub path: AbsPathBuf,
+}
+
+/// What the reference at an offset resolves to through the classpath.
+enum Resolution {
+    /// A declaration in the database: a workspace or already-loaded library
+    /// declaration.
+    Decl {
+        file: FileId,
+        item: ItemId,
+        name: String,
+    },
+    /// A resolved library member: everything the signature renderer needs plus
+    /// where its declaring source is, if it is loaded.
+    LibraryMember {
+        library: hir::LibraryId,
+        owner_fqn: Name,
+        name: String,
+        use_kind: Use,
+        arity: Option<usize>,
+        decl: hir::LibrarySourceDecl,
+    },
+    /// A library source entry that has to be materialized before the reference
+    /// can be answered.
+    Pending(LibrarySourceRef),
+}
+
+/// The classpath resolutions of the innermost navigable expression at
+/// `offset`, innermost first: the first expression with a resolution wins.
+fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
+    let bodies = hir::file_body_tree(db, file);
+    let tree = hir::file_item_tree(db, file);
+    let symbols = hir::file_symbols(db, file);
+    let item = body_items_at(db, file, &tree, &symbols, offset)
+        .first()
+        .copied();
+
+    for expr_id in exprs_at(&bodies, offset) {
+        let resolution = match bodies.expr(expr_id).clone() {
+            ExprData::New { ty, .. } | ExprData::ClassLit(ty) => type_ref_name(&ty)
+                .map_or_else(Vec::new, |name| {
+                    type_resolution(db, file, item, &Name::new(&name))
+                }),
+            ExprData::InstanceOf { ty, .. } => ty
+                .as_ref()
+                .and_then(|t| type_ref_name(t))
+                .map_or_else(Vec::new, |name| {
+                    type_resolution(db, file, item, &Name::new(&name))
+                }),
+            ExprData::NamePath(name) => type_resolution(db, file, item, &name),
+            _ => Vec::new(),
+        };
+        if !resolution.is_empty() {
+            return resolution;
+        }
+    }
     Vec::new()
+}
+
+/// The classpath resolution of the type name written at `item` in `file`.
+fn type_resolution(
+    db: &RootDatabase,
+    file: FileId,
+    item: Option<ItemId>,
+    name: &Name,
+) -> Vec<Resolution> {
+    // §7.4.3: a name that exists on the classpath but is not visible from the
+    // file's module still denotes that class — navigation is not a compile
+    // check.
+    let fqn = match hir_ty::resolve_type_name_at(db, file, item, name) {
+        hir_ty::NameResolution::Resolved(fqn) | hir_ty::NameResolution::NotAccessible(fqn) => fqn,
+        hir_ty::NameResolution::TypeVar
+        | hir_ty::NameResolution::Ambiguous(_)
+        | hir_ty::NameResolution::Unresolved => return Vec::new(),
+    };
+    class_resolution(db, file, &fqn)
+}
+
+/// The resolution of the canonical class name `fqn` in `file`'s scope.
+fn class_resolution(db: &RootDatabase, file: FileId, fqn: &Name) -> Vec<Resolution> {
+    let scope = hir_ty::scope_for_file(db, file);
+    let Some(resolved) = hir::fqn_resolve(db, &scope, fqn.as_str()) else {
+        return Vec::new();
+    };
+    match &resolved {
+        hir::Resolved::Source(class) => vec![Resolution::Decl {
+            file: class.file,
+            item: class.item,
+            name: fqn.simple_name().to_owned(),
+        }],
+        hir::Resolved::Library(class) => {
+            let library_fqn = resolved.fqn(db);
+            library_class_resolution(db, class.library, library_fqn.as_name())
+        }
+    }
+}
+
+/// The resolution of a class known to live in `library`.
+fn library_class_resolution(
+    db: &RootDatabase,
+    library: hir::LibraryId,
+    fqn: &Name,
+) -> Vec<Resolution> {
+    match hir::library_source_decl(db, library, fqn.as_str()) {
+        Some(hir::LibrarySourceDecl::Loaded { file, item }) => vec![Resolution::Decl {
+            file,
+            item,
+            name: fqn.simple_name().to_owned(),
+        }],
+        Some(hir::LibrarySourceDecl::Pending { entry, path }) => {
+            let Some(archive) = hir::library_sources(db, library).map(|sources| sources.archive)
+            else {
+                return Vec::new();
+            };
+            vec![Resolution::Pending(LibrarySourceRef {
+                library,
+                archive,
+                entry,
+                path,
+            })]
+        }
+        None => Vec::new(),
+    }
+}
+
+/// A navigation target for one resolved declaration: its name range inside
+/// `decl_file`.
+fn decl_target(
+    db: &RootDatabase,
+    decl_file: FileId,
+    item: ItemId,
+    name: &str,
+) -> Option<NavigationTarget> {
+    let tree = hir::file_item_tree(db, decl_file);
+    let range = item_range(db, decl_file, &tree, item)?;
+    Some(NavigationTarget {
+        file: decl_file,
+        range,
+        name: Name::new(name).simple_name().to_owned(),
+    })
 }
 
 /// The local of `name` in scope at `offset` ([JLS §6.3], [§6.4]): a

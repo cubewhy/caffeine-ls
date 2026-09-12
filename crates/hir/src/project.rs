@@ -74,6 +74,14 @@ impl LibraryInfo {
     }
 }
 
+/// A library's attached sources: the archive they live in and the directory
+/// materialized files are written to (and loaded from).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibrarySources {
+    pub archive: AbsPathBuf,
+    pub root: AbsPathBuf,
+}
+
 /// The DB-facing project model: everything the resolver needs about the
 /// workspace. See [`crate::db::ProjectGraph`] for the salsa input.
 #[derive(Debug, Clone, Default)]
@@ -96,6 +104,12 @@ pub struct ProjectGraphData {
     /// [JEP 247](https://openjdk.org/jeps/247)). Absent entries mean
     /// "unknown": the release-view check runs for no file of that source set.
     pub releases: FxHashMap<SourceSetId, u8>,
+    /// Library → its attached sources, for libraries whose sources the driver
+    /// located and prepared.
+    pub library_sources: FxHashMap<LibraryId, LibrarySources>,
+    /// library source root → the library whose sources it holds. The root is
+    /// registered like a workspace root but holds read-only third-party code.
+    pub library_source_roots: FxHashMap<base_db::SourceRootId, LibraryId>,
 }
 
 #[cfg(test)]

@@ -1668,3 +1668,167 @@ exit 0
 
     insta::assert_json_snapshot!("deprecation_diagnostics", items);
 }
+
+/// A dependency jar beside its sibling `-sources.jar`: `textDocument/definition`
+/// on a type the jar declares materializes the one source file it needs out of
+/// the archive, loads it into the database, and answers with the real source
+/// location — a classfile stub alone has no file and no range.
+///
+/// The model JSON reports the jar as a `flat-file` origin, so the sources are
+/// found by the sibling probe (`<stem>-sources.jar`) and not by the build
+/// system.
+#[test]
+fn library_source_definition_materializes_and_navigates() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let foo_source =
+        "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n}\n";
+    let app_path = "/src/main/java/app/App.java";
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[{"type":"jar","path":"'$PWD'/lib/foo.jar","origin":"flat-file"}],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this test.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+        std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
+        lsp_test::classfile::build_jar(
+            &root.join("lib/foo.jar"),
+            &[(
+                "com/example/Foo.class",
+                lsp_test::classfile::class_bytes("com/example/Foo", &[], &[("greet", 1)]),
+            )],
+        )
+        .unwrap();
+        lsp_test::classfile::build_jar(
+            &root.join("lib/foo-sources.jar"),
+            &[("com/example/Foo.java", foo_source.as_bytes().to_vec())],
+        )
+        .unwrap();
+    });
+
+    lsp.open_document(app_path);
+    lsp.wait_until_workspace_is_loaded();
+
+    let (line, character) = position_of(app_source, "com.example.Foo()");
+    let params = json!({
+        "textDocument": { "uri": lsp.uri(app_path) },
+        "position": { "line": line, "character": character },
+    });
+
+    // The request defers, the server materializes the file and re-runs the
+    // request, so this one call returns the final answer.
+    let response = lsp.request("textDocument/definition", params.clone());
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let materialized_path = uri.to_file_path().expect("a file URI");
+    let cache_sources = lsp.cache_dir().join("sources").join("v1");
+    assert!(
+        materialized_path.starts_with(&cache_sources),
+        "expected a path under {}, got {}",
+        cache_sources.display(),
+        materialized_path.display()
+    );
+    assert!(
+        materialized_path.ends_with("com/example/Foo.java"),
+        "unexpected path: {}",
+        materialized_path.display()
+    );
+    assert!(
+        materialized_path.is_file(),
+        "the materialized source must exist on disk: {}",
+        materialized_path.display()
+    );
+    assert_range_covers(locations[0]["range"].clone(), foo_source, "class Foo");
+
+    // Only the one file the reference needed is on disk.
+    let materialized = java_file_names(&cache_sources);
+    assert_eq!(
+        materialized,
+        vec!["Foo.java".to_string()],
+        "only the navigated file is materialized"
+    );
+
+    // The second request answers from the loaded file — the deferred path runs
+    // once per source file, not once per request.
+    let second = lsp.request("textDocument/definition", params);
+    assert_eq!(
+        second, response,
+        "the second request answers from the loaded file"
+    );
+    assert_eq!(
+        java_file_names(&cache_sources),
+        materialized,
+        "re-asking materializes nothing new"
+    );
+
+    // A library source file is read-only third-party code: its report is empty.
+    let report = lsp.request(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": locations[0]["uri"].clone() } }),
+    );
+    assert_eq!(
+        report["items"].as_array().map(Vec::len),
+        Some(0),
+        "library sources report no diagnostics: {report:?}"
+    );
+}
+
+/// Asserts that an LSP range covers `needle` inside `text`.
+fn assert_range_covers(range: serde_json::Value, text: &str, needle: &str) {
+    let (line, character) = position_of(text, needle);
+    let start = &range["start"];
+    let end = &range["end"];
+    let start = (
+        start["line"].as_u64().unwrap(),
+        start["character"].as_u64().unwrap(),
+    );
+    let end = (
+        end["line"].as_u64().unwrap(),
+        end["character"].as_u64().unwrap(),
+    );
+    let needle = (line as u64, character as u64);
+    assert!(
+        start <= needle && needle <= end,
+        "range {start:?}..{end:?} must cover `{needle:?}`"
+    );
+}
+
+/// The names of every materialized `.java` file under `root`, sorted.
+fn java_file_names(root: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = walkdir::WalkDir::new(root)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "java"))
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .collect();
+    names.sort();
+    names
+}

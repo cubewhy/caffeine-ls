@@ -345,6 +345,13 @@ pub fn file_diagnostics(db: &dyn hir_ty::TyDatabase, file_id: FileId) -> Arc<[Di
 #[tracing::instrument(skip_all, level = "debug")]
 pub(crate) fn file_report_query(db: &dyn hir_ty::TyDatabase, file: FileText) -> Arc<[Diagnostic]> {
     let file_id = *file.file_id(db);
+    // A library source file is read-only third-party code: neither its syntax
+    // nor its type diagnostics are the user's to fix. The tracked
+    // file→source-root read inside `library_source_for_file` also keeps this
+    // answer re-deriving once the workspace graph exists.
+    if hir::library_source_for_file(db, file_id).is_some() {
+        return Arc::from(Vec::new());
+    }
     let mut sink = DiagnosticSink::new();
     collect_syntax(&mut sink, db, file_id);
     for diagnostic in file_diagnostics_query(db, file).iter() {

@@ -32,6 +32,7 @@ use std::{
 };
 use tempfile::TempDir;
 
+pub mod classfile;
 pub mod fixture;
 pub mod macros;
 
@@ -481,6 +482,12 @@ impl LspHarness {
             .path()
             .join(relative_path.trim_start_matches('/'));
         Uri::from_file_path(path).expect("Failed to convert path to URI")
+    }
+
+    /// The server's cache directory (the `cache_dir` this client advertises),
+    /// where materialized library sources land.
+    pub fn cache_dir(&self) -> &std::path::Path {
+        self.cache_dir.path()
     }
 
     fn notify(&self, method: &str, params: serde_json::Value) {

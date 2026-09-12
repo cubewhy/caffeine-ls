@@ -1176,6 +1176,7 @@ dependencies = [
  "ide-db",
  "ide-diagnostics",
  "insta",
+ "lsp-test",
  "parking_lot",
  "project-model",
  "ra_ap_vfs",
@@ -1183,6 +1184,7 @@ dependencies = [
  "rowan",
  "rustc-hash 2.1.2",
  "syntax",
+ "tempfile",
  "triomphe",
 ]
 
@@ -1595,6 +1597,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "zip",
 ]
 
 [[package]]

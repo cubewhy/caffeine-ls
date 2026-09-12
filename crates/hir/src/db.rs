@@ -31,7 +31,9 @@ use crate::{
     index::{ClassEntry, LibraryIndex, NameIndex},
     lmdb_store::{self, StubStore},
     loader,
-    project::{Classpath, ClasspathEntry, LibraryInfo, ProjectGraphData, SourceSetId},
+    project::{
+        Classpath, ClasspathEntry, LibraryInfo, LibrarySources, ProjectGraphData, SourceSetId,
+    },
     stubs::{ClassOrModuleRecord, ClassOrModuleStub, Symbol, TypeParameter, TypeRef},
     symbol_index::{SourceSymbol, SourceSymbolIndex, SourceSymbolKind, SourceSymbolRef},
 };
@@ -80,6 +82,12 @@ pub struct ProjectGraph {
     /// that source set.
     #[returns(ref)]
     pub releases: FxHashMap<SourceSetId, u8>,
+    /// Library → its attached sources. Read by the lazy source index.
+    #[returns(ref)]
+    pub library_sources: FxHashMap<LibraryId, LibrarySources>,
+    /// library source root → the library whose sources it holds.
+    #[returns(ref)]
+    pub library_source_roots: FxHashMap<SourceRootId, LibraryId>,
 }
 
 /// Per-library state: registration data plus the lazily built index.
@@ -170,6 +178,8 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         jdk_libraries,
         language_levels,
         releases,
+        library_sources,
+        library_source_roots,
     } = data;
     match ProjectGraph::try_get(db) {
         Some(graph) => {
@@ -182,6 +192,8 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
             graph.set_jdk_libraries(db).to(jdk_libraries);
             graph.set_language_levels(db).to(language_levels);
             graph.set_releases(db).to(releases);
+            graph.set_library_sources(db).to(library_sources);
+            graph.set_library_source_roots(db).to(library_source_roots);
         }
         None => {
             ProjectGraph::new(
@@ -193,6 +205,8 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 jdk_libraries,
                 language_levels,
                 releases,
+                library_sources,
+                library_source_roots,
             );
         }
     }

@@ -1,6 +1,7 @@
 use crate::{
     diagnostics,
     global_state::GlobalStateSnapshot,
+    handlers::dispatch::{DeferForLibrarySources, LibrarySourceFile},
     lsp::{symbols, to_proto},
 };
 
@@ -169,6 +170,11 @@ pub fn on_workspace_symbol_resolve(
 
 /// The declaration(s) a reference at a position resolves to, as LSP
 /// locations ([JLS §6.5]).
+///
+/// A reference that resolves into a library whose source file is not loaded
+/// yet defers: the handler returns [`DeferForLibrarySources`], the main loop
+/// materializes the files and re-runs the request, and the retried call — now
+/// with the sources loaded — returns the real location.
 pub fn on_goto_definition(
     state: GlobalStateSnapshot,
     params: DefinitionParams,
@@ -183,6 +189,20 @@ pub fn on_goto_definition(
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let targets = state.analysis.goto_definition(file_id, offset)?;
     if targets.is_empty() {
+        let files: Vec<LibrarySourceFile> = state
+            .analysis
+            .pending_library_sources(file_id, offset)?
+            .into_iter()
+            .map(|source| LibrarySourceFile {
+                library: source.library,
+                archive: source.archive,
+                entry: source.entry,
+                path: source.path,
+            })
+            .collect();
+        if !files.is_empty() {
+            return Err(DeferForLibrarySources(files).into());
+        }
         return Ok(None);
     }
 

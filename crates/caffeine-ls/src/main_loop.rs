@@ -5,7 +5,7 @@ use std::{
     time::Instant,
 };
 
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use crossbeam_channel::Receiver;
 use hir::{Classpath, ClasspathEntry as HirClasspathEntry, LibraryInfo, LibraryKind, SourceSetId};
 use ide_db::base_db::{FileChange, SourceRoot, SourceRootId, salsa::Cancelled};
@@ -14,20 +14,46 @@ use lsp_types::*;
 use project_model::{ClasspathEntry, SyncError, SyncPhase, SyncProgress};
 use rustc_hash::{FxHashMap, FxHashSet};
 use triomphe::Arc;
-use vfs::AbsPathBuf;
+use vfs::{AbsPathBuf, VfsPath};
 
 use crate::{
     GlobalState,
     config::Config,
-    global_state::{BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState},
+    global_state::{
+        BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState, SourceRootKind,
+    },
     handlers::{
         self,
         dispatch::{NotificationDispatcher, RequestDispatcher},
     },
+    library_sources,
     line_index::LineEndings,
 };
 
 const OPEN_BUILD_TOOL_LOG_ACTION: &str = "Open Build Tool Log";
+
+/// One registered source root, in `SourceRootId` order. Workspace roots come
+/// first (sorted by path), library source roots follow (sorted by library id),
+/// so the id `FileChange::apply` assigns to each root is this vector's index.
+enum RootEntry {
+    Workspace {
+        path: AbsPathBuf,
+        source_set: SourceSetId,
+        generated: bool,
+    },
+    Library {
+        path: AbsPathBuf,
+        library: hir::LibraryId,
+    },
+}
+
+impl RootEntry {
+    fn path(&self) -> &AbsPathBuf {
+        match self {
+            RootEntry::Workspace { path, .. } | RootEntry::Library { path, .. } => path,
+        }
+    }
+}
 
 /// Percentage ranges assigned to each sync phase. Together they always span
 /// 0..=99; the sync completes by reporting 100% explicitly once the workspace
@@ -342,6 +368,8 @@ impl GlobalState {
                     download_sources: self.config.download_sources(),
                 };
 
+                let cache_dir = self.config.get_cache_dir();
+
                 self.thread_pool.execute(move || {
                     let system_name = system.name();
 
@@ -435,8 +463,20 @@ impl GlobalState {
                             if let Some(log_file) = &log_file {
                                 let _ = std::fs::remove_file(log_file);
                             }
+
+                            // Locate each library's source archive and create
+                            // its materialization root. On the worker, so the
+                            // main loop does no directory work.
+                            let archives = library_sources::collect_archives(&graph);
+                            let sources = library_sources::prepare_roots(&cache_dir, &archives);
+                            report_prepared_sources(&task_sender, &progress_token, sources.len());
+
                             task_sender
-                                .send(BackgroundTaskEvent::WorkspaceLoaded { graph, root })
+                                .send(BackgroundTaskEvent::WorkspaceLoaded {
+                                    graph,
+                                    root,
+                                    sources,
+                                })
                                 .ok();
                         }
                         Err(err) => {
@@ -478,10 +518,69 @@ impl GlobalState {
                 });
             }
 
-            BackgroundTaskEvent::WorkspaceLoaded { graph, root } => {
+            BackgroundTaskEvent::WorkspaceLoaded {
+                graph,
+                root,
+                sources,
+            } => {
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
 
-                self.apply_loaded_graph(graph, root);
+                self.apply_loaded_graph(graph, root, sources);
+            }
+
+            BackgroundTaskEvent::LoadLibrarySources { files, retry } => {
+                let cache_root = self.config.get_cache_dir();
+                for file in files {
+                    let vfs_path = VfsPath::from(file.path.clone());
+                    // Idempotent: a file an earlier round already loaded is
+                    // left alone.
+                    if self.vfs.read().0.file_id(&vfs_path).is_some() {
+                        continue;
+                    }
+                    let bytes =
+                        match library_sources::read_entry(file.archive.as_ref(), &file.entry) {
+                            Ok(bytes) => bytes,
+                            Err(err) => {
+                                tracing::warn!(
+                                    library = %file.library,
+                                    entry = %file.entry,
+                                    "failed to read library source: {err:#}"
+                                );
+                                continue;
+                            }
+                        };
+                    let root = library_sources::root_dir(&cache_root, file.library);
+                    let target: &Utf8Path = file.path.as_ref();
+                    let Some(relative) = target.strip_prefix(&root).ok() else {
+                        tracing::warn!(
+                            path = %file.path,
+                            "materialized source lies outside its library cache root"
+                        );
+                        continue;
+                    };
+                    if let Err(err) = library_sources::materialize(&root, relative.as_str(), &bytes)
+                    {
+                        tracing::warn!(
+                            path = %file.path,
+                            "failed to materialize library source: {err:#}"
+                        );
+                        continue;
+                    }
+                    // The client owns `mem_docs`; a materialized library
+                    // source is vfs-only.
+                    self.vfs.write().0.set_file_contents(vfs_path, Some(bytes));
+                }
+
+                // The request's cancellation token stays registered: the
+                // retried run must still observe `$/cancelRequest`. The loop's
+                // `process_changes` then `run_pending_requests` sequence makes
+                // the writes visible to the retried snapshot.
+                let (id, run) = retry;
+                tracing::debug!(
+                    ?id,
+                    "library sources materialized; queuing deferred request"
+                );
+                self.pending_requests.push(run);
             }
 
             BackgroundTaskEvent::SyncFailed { message, log_file } => {
@@ -559,10 +658,16 @@ impl GlobalState {
                 // through, so it uses the same env-fallback-aware getter the
                 // build-system path does — otherwise a `JAVA_HOME` set only
                 // in the environment registers no SDK and resolution of every
-                // platform class degrades silently.
+                // platform class degrades silently. It is applied synchronously:
+                // a request racing initialization must see a fully populated
+                // database, and unlike the build-system path there is no sync
+                // progress token to hold the client until the load lands.
                 let graph =
                     project_model::WorkspaceGraph::plain(root.clone(), self.config.get_java_home());
-                self.apply_loaded_graph(graph, root);
+                let archives = library_sources::collect_archives(&graph);
+                let sources =
+                    library_sources::prepare_roots(&self.config.get_cache_dir(), &archives);
+                self.apply_loaded_graph(graph, root, sources);
             }
         }
     }
@@ -570,7 +675,17 @@ impl GlobalState {
     /// Turns a loaded [`project_model::WorkspaceGraph`] into database source
     /// roots and configures the vfs loader with the source roots declared by
     /// the build system.
-    fn apply_loaded_graph(&mut self, graph: project_model::WorkspaceGraph, root: AbsPathBuf) {
+    ///
+    /// `sources` holds the prepared roots of every library whose sources the
+    /// driver located; they become read-only roots and are deliberately *not*
+    /// loaded by the vfs loader, so their files come into the database one at a
+    /// time, on the request that resolves into them.
+    fn apply_loaded_graph(
+        &mut self,
+        graph: project_model::WorkspaceGraph,
+        root: AbsPathBuf,
+        sources: FxHashMap<hir::LibraryId, hir::LibrarySources>,
+    ) {
         tracing::info!(?root, "Applying workspace source roots and loader config");
 
         // Collect every build-system source root with its owning source set,
@@ -583,7 +698,7 @@ impl GlobalState {
         // `ProjectGraph` maps, so the `SourceRootId(i)` assigned by
         // `FileChange::apply` (vector order) lines up with `entries[i]`.
         let mut source_sets: Vec<SourceSetId> = Vec::new();
-        let mut entries: Vec<(AbsPathBuf, SourceSetId, bool)> = Vec::new();
+        let mut workspace_entries: Vec<(AbsPathBuf, SourceSetId, bool)> = Vec::new();
         let mut seen: FxHashSet<SourceSetId> = FxHashSet::default();
         let mut seen_roots: FxHashSet<AbsPathBuf> = FxHashSet::default();
         for project in graph.projects.values() {
@@ -602,12 +717,12 @@ impl GlobalState {
                 // without gitignore filtering (see below).
                 for root in &source_set.source_roots {
                     if seen_roots.insert(root.clone()) {
-                        entries.push((root.clone(), id.clone(), false));
+                        workspace_entries.push((root.clone(), id.clone(), false));
                     }
                 }
                 for generated in &source_set.generated_source_roots {
                     if seen_roots.insert(generated.clone()) {
-                        entries.push((generated.clone(), id.clone(), true));
+                        workspace_entries.push((generated.clone(), id.clone(), true));
                     }
                 }
             }
@@ -615,44 +730,72 @@ impl GlobalState {
         source_sets.sort();
         source_sets.dedup();
         // Deterministic across reloads: order by source root path.
-        entries.sort_by_key(|(root, _, _)| root.clone());
+        workspace_entries.sort_by_key(|(root, _, _)| root.clone());
+
+        // Library roots follow the workspace roots, sorted by library id, so
+        // the mapping from `SourceRootId` to owner stays deterministic.
+        let mut library_entries: Vec<(AbsPathBuf, hir::LibraryId)> = sources
+            .iter()
+            .map(|(library, sources)| (sources.root.clone(), *library))
+            .collect();
+        library_entries.sort_by_key(|(_, library)| library.to_string());
+
+        let mut entries: Vec<RootEntry> =
+            Vec::with_capacity(workspace_entries.len() + library_entries.len());
+        for (path, source_set, generated) in workspace_entries {
+            entries.push(RootEntry::Workspace {
+                path,
+                source_set,
+                generated,
+            });
+        }
+        for (path, library) in library_entries {
+            entries.push(RootEntry::Library { path, library });
+        }
 
         // One FileSet per source root, so each root becomes its own
         // `SourceRoot` and `file → SourceRootId → (SourceSetId, base dir)` is
         // a pure salsa lookup.
         let mut builder = vfs::file_set::FileSetConfig::builder();
-        for (root, _, _) in &entries {
-            builder.add_file_set(vec![vfs::VfsPath::from(root.clone())]);
+        for entry in &entries {
+            builder.add_file_set(vec![vfs::VfsPath::from(entry.path().clone())]);
         }
         let file_set_config = builder.build();
 
-        // Load and watch the source roots declared by the build system,
-        // skipping paths that gitignore rules exclude.
+        // Load and watch the *workspace* source roots, skipping paths that
+        // gitignore rules exclude. A library source root is deliberately absent
+        // from `load` (and therefore from `watch`): that is what keeps the
+        // sources out of memory until a request materializes one.
         self.vfs_config_version += 1;
         let mut matchers = Vec::new();
         let loader_entries: Vec<vfs::loader::Entry> = entries
             .iter()
-            .map(|(source_root, _, is_generated)| {
+            .filter_map(|entry| {
+                let RootEntry::Workspace {
+                    path, generated, ..
+                } = entry
+                else {
+                    return None;
+                };
                 // A generated root lives under a gitignored directory
                 // (`target/`) yet holds real compile inputs ([JLS-adjacent]:
                 // annotation-processor and grammar-generator output is part
                 // of the compilation), so ignore rules do not apply to it.
-                let mut builder = ignore::WalkBuilder::new(source_root);
-                builder.standard_filters(!is_generated).require_git(false);
-                if !is_generated && let Some(matcher) = builder.build_matchers().into_iter().next()
-                {
-                    matchers.push((source_root.clone(), matcher));
+                let mut builder = ignore::WalkBuilder::new(path);
+                builder.standard_filters(!generated).require_git(false);
+                if !generated && let Some(matcher) = builder.build_matchers().into_iter().next() {
+                    matchers.push((path.clone(), matcher));
                 }
 
-                vfs::loader::Entry::Directories(vfs::loader::Directories {
+                Some(vfs::loader::Entry::Directories(vfs::loader::Directories {
                     extensions: vec!["java".into(), "kt".into(), "kts".into()],
-                    include: vec![source_root.clone()],
-                    exclude: if *is_generated {
+                    include: vec![path.clone()],
+                    exclude: if *generated {
                         Vec::new()
                     } else {
-                        collect_ignored_paths(source_root)
+                        collect_ignored_paths(path)
                     },
-                })
+                }))
             })
             .collect();
         let watch = (0..loader_entries.len()).collect();
@@ -665,15 +808,42 @@ impl GlobalState {
 
         self.file_set_config = Some(file_set_config);
 
+        // The root kinds must be stored before `partition_source_roots`, which
+        // tags every partitioned `FileSet` with its owner.
+        self.source_root_kinds = entries
+            .iter()
+            .map(|entry| match entry {
+                RootEntry::Workspace { .. } => SourceRootKind::SourceSet,
+                RootEntry::Library { library, .. } => SourceRootKind::Library(*library),
+            })
+            .collect();
+
         let roots = self.partition_source_roots();
-        let mut project_graph = self.build_project_graph(&graph, &source_sets);
-        for (idx, (root, source_set, _)) in entries.iter().enumerate() {
-            project_graph
-                .source_root_to_source_set
-                .insert(SourceRootId(idx as u32), source_set.clone());
-            project_graph
-                .source_root_dirs
-                .insert(SourceRootId(idx as u32), root.clone());
+
+        let library_source_roots: FxHashMap<SourceRootId, hir::LibraryId> = self
+            .source_root_kinds
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, kind)| match kind {
+                SourceRootKind::Library(library) => Some((SourceRootId(idx as u32), *library)),
+                SourceRootKind::SourceSet => None,
+            })
+            .collect();
+
+        let mut project_graph =
+            self.build_project_graph(&graph, &source_sets, &sources, &library_source_roots);
+        for (idx, entry) in entries.iter().enumerate() {
+            if let RootEntry::Workspace {
+                path, source_set, ..
+            } = entry
+            {
+                project_graph
+                    .source_root_to_source_set
+                    .insert(SourceRootId(idx as u32), source_set.clone());
+                project_graph
+                    .source_root_dirs
+                    .insert(SourceRootId(idx as u32), path.clone());
+            }
         }
         let db = self.analysis_host.raw_database_mut();
         hir::set_project_graph(db, project_graph);
@@ -696,6 +866,8 @@ impl GlobalState {
         &self,
         graph: &project_model::WorkspaceGraph,
         source_set_ids: &[SourceSetId],
+        sources: &FxHashMap<hir::LibraryId, hir::LibrarySources>,
+        library_source_roots: &FxHashMap<SourceRootId, hir::LibraryId>,
     ) -> hir::ProjectGraphData {
         let mut data = hir::ProjectGraphData::default();
 
@@ -707,31 +879,16 @@ impl GlobalState {
         // `lib/rt.jar`, then the pre-JDK-9 layout (`jre/lib/rt.jar`), which is
         // where a JDK 8 install keeps its platform classes.
         for sdk in graph.sdks.values() {
-            let candidates = [
-                (
-                    sdk.home_path.join("lib").join("modules"),
-                    LibraryKind::Jimage,
-                ),
-                (sdk.home_path.join("lib").join("rt.jar"), LibraryKind::Jar),
-                (
-                    sdk.home_path.join("jre").join("lib").join("rt.jar"),
-                    LibraryKind::Jar,
-                ),
-            ];
-            let Some((path, kind)) = candidates.into_iter().find(|(path, _)| {
-                std::fs::metadata(std::path::Path::new(path.as_path().as_str())).is_ok()
-            }) else {
+            let Some((id, kind, path)) = library_sources::sdk_class_archive(sdk) else {
                 continue;
             };
-            if let Ok(id) = project_model::LibraryId::from_file_path(path.as_path().as_ref()) {
-                data.libraries
-                    .entry(id)
-                    .or_insert_with(|| LibraryInfo::new(kind, path.clone()));
-                if !data.jdk_libraries.contains(&id) {
-                    data.jdk_libraries.push(id);
-                }
-                sdk_library.insert(sdk.id, id);
+            data.libraries
+                .entry(id)
+                .or_insert_with(|| LibraryInfo::new(kind, path));
+            if !data.jdk_libraries.contains(&id) {
+                data.jdk_libraries.push(id);
             }
+            sdk_library.insert(sdk.id, id);
         }
 
         // Classpath jars referenced by any source set.
@@ -802,6 +959,11 @@ impl GlobalState {
                 triomphe::Arc::new(Classpath { entries }),
             );
         }
+
+        // The library sources the driver prepared, and the source roots they
+        // materialize into. Both maps are empty when no library has sources.
+        data.library_sources = sources.clone();
+        data.library_source_roots = library_source_roots.clone();
 
         data
     }
@@ -876,7 +1038,9 @@ impl GlobalState {
     }
 
     /// Rebuilds the database source roots by partitioning the current vfs with
-    /// [`Self::file_set_config`].
+    /// [`Self::file_set_config`]. Each partitioned `FileSet` is tagged with the
+    /// kind recorded in [`GlobalState::source_root_kinds`], so a library's
+    /// materialized sources become a read-only `SourceRoot`.
     fn partition_source_roots(&self) -> Vec<SourceRoot> {
         let file_set_config = match &self.file_set_config {
             Some(config) => config,
@@ -887,7 +1051,14 @@ impl GlobalState {
         let mut file_sets = file_set_config.partition(&vfs.0);
         // The last set is the catch-all for files outside any source root.
         file_sets.pop();
-        file_sets.into_iter().map(SourceRoot::new).collect()
+        file_sets
+            .into_iter()
+            .zip(self.source_root_kinds.iter())
+            .map(|(file_set, kind)| match kind {
+                SourceRootKind::SourceSet => SourceRoot::new(file_set),
+                SourceRootKind::Library(_) => SourceRoot::library(file_set),
+            })
+            .collect()
     }
 
     fn handle_vfs_task(&mut self, task: vfs::loader::Message) {
@@ -1051,6 +1222,35 @@ impl GlobalState {
 
         self.analysis_host.apply_change(change);
     }
+}
+
+/// Reports the library-source preparation as a single Begin/End pair on the
+/// sync's token (just ended, so this is a fresh cycle): the work is one `mkdir`
+/// per library plus a prune of dead roots, so a per-library report would be
+/// noise.
+fn report_prepared_sources(
+    task_sender: &crossbeam_channel::Sender<BackgroundTaskEvent>,
+    token: &str,
+    prepared: usize,
+) {
+    task_sender
+        .send(BackgroundTaskEvent::Progress(ProgressEvent {
+            token: token.to_owned(),
+            title: "Indexing library sources".to_string(),
+            message: None,
+            percentage: None,
+            state: ProgressState::Begin,
+        }))
+        .ok();
+    task_sender
+        .send(BackgroundTaskEvent::Progress(ProgressEvent {
+            token: token.to_owned(),
+            title: String::new(),
+            message: Some(format!("Prepared {prepared} source archives")),
+            percentage: None,
+            state: ProgressState::End,
+        }))
+        .ok();
 }
 
 /// Returns the paths under `root` that gitignore (and hidden-file) rules

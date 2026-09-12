@@ -43,12 +43,14 @@ impl RootDatabase {
     }
 
     /// Every file of every registered source root, excluding the fallback
-    /// catch-all root that pre-workspace documents attach to. This is the
+    /// catch-all root that pre-workspace documents attach to, and the
+    /// read-only roots holding library sources. This is the
     /// `workspace/diagnostic` file set.
     pub fn source_files(&self) -> Vec<FileId> {
         self.files
             .source_root_ids()
             .filter(|&id| id != FALLBACK_SOURCE_ROOT)
+            .filter(|&id| !self.files.source_root(id).source_root(self).is_library())
             .flat_map(|id| self.files.source_root(id).source_root(self).iter())
             .collect()
     }

@@ -2,11 +2,38 @@ use crossbeam_channel::Sender;
 use ide_db::base_db::salsa::Cancelled;
 use lsp_server::{Notification, Request};
 use serde::de::DeserializeOwned;
+use triomphe::Arc;
+use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
     global_state::{BackgroundTaskEvent, GlobalStateSnapshot, PendingRequest},
 };
+
+/// Returned by a request handler that needs library source files in the
+/// database before it can answer. The main loop materializes and loads them,
+/// then re-runs the request on a fresh snapshot — the same path a pending-write
+/// cancellation takes. Only handlers whose LSP result is `Option`-shaped
+/// (definition, hover) may return it: the guarded retry answers `null`.
+#[derive(Debug)]
+pub(crate) struct DeferForLibrarySources(pub Vec<LibrarySourceFile>);
+
+impl std::fmt::Display for DeferForLibrarySources {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "deferring for {} library source files", self.0.len())
+    }
+}
+
+impl std::error::Error for DeferForLibrarySources {}
+
+/// One source file to read out of a library archive and load.
+#[derive(Debug)]
+pub(crate) struct LibrarySourceFile {
+    pub library: hir::LibraryId,
+    pub archive: AbsPathBuf,
+    pub entry: Arc<str>,
+    pub path: AbsPathBuf,
+}
 
 pub(crate) struct RequestDispatcher<'a> {
     pub(crate) req: Option<Request>,
@@ -115,7 +142,7 @@ fn run_and_report<R>(
     R::Params: Send + Clone + 'static,
     R::Result: serde::Serialize + Send + 'static,
 {
-    let run = retry_closure::<R>(task_sender.clone(), id, worker, params);
+    let run = retry_closure::<R>(task_sender.clone(), id, worker, params, true);
     run(snapshot);
 }
 
@@ -126,11 +153,17 @@ fn run_and_report<R>(
 /// client-cancelled run ([`ClientCancelled`]) reports
 /// [`BackgroundTaskEvent::AsyncRequestAborted`]; the main loop already replied
 /// `RequestCancelled`, so no re-queue happens.
+///
+/// A handler that returns [`DeferForLibrarySources`] hands its files to the
+/// main loop ([`BackgroundTaskEvent::LoadLibrarySources`]) and is re-run with
+/// `allow_defer == false`: the retried run must not defer again, so a failed
+/// materialization answers `null` instead of looping.
 fn retry_closure<R>(
     task_sender: Sender<BackgroundTaskEvent>,
     id: lsp_server::RequestId,
     worker: fn(GlobalStateSnapshot, R::Params) -> anyhow::Result<R::Result>,
     params: R::Params,
+    allow_defer: bool,
 ) -> PendingRequest
 where
     R: lsp_types::Request,
@@ -154,7 +187,13 @@ where
                     Some(Cancelled::PendingWrite)
                 ) =>
             {
-                let run = retry_closure::<R>(task_sender.clone(), retry_id, worker, retry_params);
+                let run = retry_closure::<R>(
+                    task_sender.clone(),
+                    retry_id,
+                    worker,
+                    retry_params,
+                    allow_defer,
+                );
                 let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestRetry { id, run });
             }
             Err(err)
@@ -183,10 +222,40 @@ where
                 });
             }
             Err(err) => {
-                let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
-                    id,
-                    result: Err(err),
-                });
+                // A handler that needs library source files in the database
+                // before it can answer: hand them to the main loop, which
+                // materializes and loads them and then re-runs the request.
+                match err.downcast::<DeferForLibrarySources>() {
+                    Ok(defer) => {
+                        if allow_defer {
+                            let run = retry_closure::<R>(
+                                task_sender.clone(),
+                                retry_id,
+                                worker,
+                                retry_params,
+                                false,
+                            );
+                            let _ = task_sender.send(BackgroundTaskEvent::LoadLibrarySources {
+                                files: defer.0,
+                                retry: (id, run),
+                            });
+                        } else {
+                            // This is the guarded retry: a materialization
+                            // failure degrades to "no result" rather than
+                            // looping.
+                            let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
+                                id,
+                                result: Ok(serde_json::Value::Null),
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        let _ = task_sender.send(BackgroundTaskEvent::AsyncRequestCompleted {
+                            id,
+                            result: Err(err),
+                        });
+                    }
+                }
             }
         }
     })
@@ -281,7 +350,7 @@ mod tests {
         let (tx, rx) = unbounded();
         let id = RequestId::from(1);
 
-        let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), flaky_worker, ());
+        let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), flaky_worker, (), true);
         run(snapshot());
 
         // The cancelled attempt must hand the request back to the main loop
@@ -326,7 +395,7 @@ mod tests {
         let snapshot = snapshot();
         snapshot.cancelled.cancel();
 
-        let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), cancelling_worker, ());
+        let run = retry_closure::<FakeRequest>(tx.clone(), id.clone(), cancelling_worker, (), true);
         run(snapshot);
 
         // The abort must be reported as such — never re-queued, never

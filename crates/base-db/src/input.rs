@@ -6,11 +6,32 @@ pub struct SourceRootId(pub u32);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceRoot {
     file_set: FileSet,
+    /// A read-only root a library's materialized sources land in. Its files
+    /// are analyzed on demand (navigation) but are not workspace code: they
+    /// are excluded from the workspace diagnostic file set.
+    library: bool,
 }
 
 impl SourceRoot {
     pub fn new(file_set: FileSet) -> SourceRoot {
-        SourceRoot { file_set }
+        SourceRoot {
+            file_set,
+            library: false,
+        }
+    }
+
+    /// A root holding a library's materialized sources: read-only third-party
+    /// code, excluded from the workspace file set.
+    pub fn library(file_set: FileSet) -> SourceRoot {
+        SourceRoot {
+            file_set,
+            library: true,
+        }
+    }
+
+    /// Whether this root holds a library's sources rather than workspace code.
+    pub fn is_library(&self) -> bool {
+        self.library
     }
 
     pub fn path_for_file(&self, file: &FileId) -> Option<&VfsPath> {

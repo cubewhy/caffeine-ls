@@ -36,6 +36,8 @@ pub enum BackgroundTaskEvent {
     WorkspaceLoaded {
         root: AbsPathBuf,
         graph: WorkspaceGraph,
+        /// Library → the materialized source roots the driver prepared.
+        sources: FxHashMap<hir::LibraryId, hir::LibrarySources>,
     },
     SyncFailed {
         message: String,
@@ -61,6 +63,14 @@ pub enum BackgroundTaskEvent {
     AsyncRequestAborted {
         id: lsp_server::RequestId,
     },
+    /// A request handler needs library source files in the database before it
+    /// can answer: the main loop reads each file out of its archive into the
+    /// cache, loads it into the vfs, and re-runs the request on a fresh
+    /// snapshot (see `handlers::dispatch::DeferForLibrarySources`).
+    LoadLibrarySources {
+        files: Vec<crate::handlers::dispatch::LibrarySourceFile>,
+        retry: (lsp_server::RequestId, PendingRequest),
+    },
     NotifyUser {
         typ: lsp_types::MessageType,
         message: String,
@@ -84,6 +94,16 @@ pub enum ProgressState {
 pub(crate) struct Handle<H, C> {
     pub(crate) handle: H,
     pub(crate) receiver: C,
+}
+
+/// The kind of each registered source root, in `SourceRootId` order — the same
+/// order `FileChange::apply` assigns ids in, so `partition_source_roots` can
+/// tag each partitioned `FileSet` with its owner.
+pub(crate) enum SourceRootKind {
+    /// A build-system source root of an owning source set.
+    SourceSet,
+    /// A read-only root holding a library's materialized sources.
+    Library(hir::LibraryId),
 }
 
 pub(crate) type ReqHandler = fn(&mut GlobalState, lsp_server::Response);
@@ -191,6 +211,8 @@ pub struct GlobalState {
     pub(crate) progress_tokens: FxHashMap<String, ProgressTokenState>,
     /// Partitions the vfs into source roots. `None` until a workspace has been loaded.
     pub(crate) file_set_config: Option<vfs::file_set::FileSetConfig>,
+    /// The kind of each registered source root, in `SourceRootId` order.
+    pub(crate) source_root_kinds: Vec<SourceRootKind>,
     /// Gitignore-aware matchers for the loaded source roots, used to filter
     /// out ignored files delivered by the loader.
     pub(crate) source_root_matchers: Vec<(AbsPathBuf, ignore::IncrementalIgnore)>,
@@ -239,6 +261,7 @@ impl GlobalState {
             scan_config_version: None,
             progress_tokens: FxHashMap::default(),
             file_set_config: None,
+            source_root_kinds: Vec::new(),
             source_root_matchers: Vec::new(),
         }
     }

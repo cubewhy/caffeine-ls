@@ -799,6 +799,28 @@ pub fn resolve_written_name(
     resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
 }
 
+/// The checked resolution of the type name `name` written inside `item` of
+/// `file` ([JLS §6.5.5.1]), using the resolver the item itself would use — or
+/// the compilation unit's own resolver when the reference is not inside a
+/// body-carrying item ([`Resolver::for_file`]) — and the file's scope (which
+/// for a loaded library source file is its own library).
+pub fn resolve_type_name_at(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: Option<ItemId>,
+    name: &Name,
+) -> NameResolution {
+    let tree = hir::file_item_tree(db, file);
+    let resolver = match item {
+        Some(item) => {
+            let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
+            Resolver::new(&tree, &type_params, item)
+        }
+        None => Resolver::for_file(&tree),
+    };
+    resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
+}
+
 /// The resolver in force at the declaration owning `node`: the innermost item
 /// whose source range contains it, or the compilation unit's own context
 /// ([`Resolver::for_file`]) when no item does.
@@ -1173,13 +1195,22 @@ pub fn type_argument_arity_mismatch(
     }
 }
 
-/// The resolution scope of a source file: its source set, or the JDK
-/// built-ins when the file is not mapped to a source root.
+/// The resolution scope of a source file: its source set, its own library when
+/// it is a loaded library source file, or the JDK built-ins when the file is
+/// not mapped to any root.
 pub fn scope_for_file(db: &dyn TyDatabase, file_id: FileId) -> hir::ResolutionScope {
-    match hir::source_set_for_file(db, file_id) {
-        Some(source_set) => hir::ResolutionScope::SourceSet(source_set),
-        None => hir::ResolutionScope::JdkBuiltins,
+    if let Some(source_set) = hir::source_set_for_file(db, file_id) {
+        return hir::ResolutionScope::SourceSet(source_set);
     }
+    // A loaded library source file resolves against its own library's classes,
+    // then the platform built-ins. `Classpath` scope does not imply the latter,
+    // hence the explicit extension.
+    if let Some(library) = hir::library_source_for_file(db, file_id) {
+        let mut libraries = vec![library];
+        libraries.extend(hir::jdk_builtin_libraries(db));
+        return hir::ResolutionScope::Classpath(libraries);
+    }
+    hir::ResolutionScope::JdkBuiltins
 }
 
 /// Whether `fqn` names a *generic class* — one declaring type parameters

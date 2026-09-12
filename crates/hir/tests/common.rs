@@ -34,6 +34,20 @@ pub struct Root {
     pub classpath: Vec<ClasspathEntry>,
 }
 
+/// A library source archive and the root its files are materialized into.
+///
+/// `entries` are the names as stored in the archive (`entry` names keep a JDK
+/// module prefix when one is given); `materialized` lists the entries to write
+/// and load into the source root now, so a test can observe both the `Pending`
+/// and the `Loaded` state of the same archive.
+pub struct LibrarySourcesFixture {
+    pub library: LibraryId,
+    pub archive: camino::Utf8PathBuf,
+    pub root: camino::Utf8PathBuf,
+    pub entries: Vec<(&'static str, &'static str)>,
+    pub materialized: Vec<&'static str>,
+}
+
 /// Minimal salsa database implementing [`HirDatabase`] plus the source
 /// database plumbing (mirrors the `#[cfg(test)]` database in
 /// `hir/src/project.rs`).
@@ -182,6 +196,18 @@ impl hir_def::db::DefDatabase for TestDatabase {}
 /// `source_root_to_source_set` map), every source set gets its ordered
 /// classpath, and `libraries` are registered in the project graph.
 pub fn build(roots: &[Root], libraries: &[(LibraryId, LibraryInfo)]) -> TestDatabase {
+    build_with_library_sources(roots, &[], libraries)
+}
+
+/// Builds a database from fixture roots plus library source archives: each
+/// library's archive is written with its `entries`, only the `materialized`
+/// entries are loaded into a read-only root registered under the library id,
+/// and the library's sources are recorded in the project graph.
+pub fn build_with_library_sources(
+    roots: &[Root],
+    sources: &[LibrarySourcesFixture],
+    libraries: &[(LibraryId, LibraryInfo)],
+) -> TestDatabase {
     let mut db = TestDatabase::new();
     let mut change = FileChange::default();
     let mut all_roots = Vec::new();
@@ -208,6 +234,45 @@ pub fn build(roots: &[Root], libraries: &[(LibraryId, LibraryInfo)]) -> TestData
             }),
         );
     }
+
+    // Library source roots follow the workspace roots, so their `SourceRootId`s
+    // are `roots.len()..`.
+    for (offset, fixture) in sources.iter().enumerate() {
+        let archive_entries: Vec<(&str, Vec<u8>)> = fixture
+            .entries
+            .iter()
+            .map(|(name, text)| (*name, text.as_bytes().to_vec()))
+            .collect();
+        build_zip(&fixture.archive, &archive_entries);
+
+        let mut file_set = FileSet::default();
+        for (index, (name, text)) in fixture.entries.iter().enumerate() {
+            if !fixture.materialized.contains(name) {
+                continue;
+            }
+            // A high id range keeps the library files clear of the workspace
+            // fixtures' explicit small ids.
+            let file_id = FileId::from_raw(1000 + (offset * 100 + index) as u32);
+            let path = fixture.root.join(entry_relative_path(name));
+            file_set.insert(
+                file_id,
+                VfsPath::from(AbsPathBuf::assert_utf8(path.into_std_path_buf())),
+            );
+            change.change_file(file_id, Some((*text).to_owned()));
+        }
+        all_roots.push(SourceRoot::library(file_set));
+
+        let root_id = SourceRootId((roots.len() + offset) as u32);
+        data.library_source_roots.insert(root_id, fixture.library);
+        data.library_sources.insert(
+            fixture.library,
+            hir::LibrarySources {
+                archive: abs_path(&fixture.archive),
+                root: abs_path(&fixture.root),
+            },
+        );
+    }
+
     change.set_roots(all_roots);
     change.apply(&mut db);
     set_project_graph(&mut db, data);
@@ -295,6 +360,31 @@ pub fn build_jar(path: &camino::Utf8Path, fqn: &str) {
     let options = SimpleFileOptions::default();
     zip.start_file(format!("{fqn}.class"), options).unwrap();
     zip.write_all(&class_bytes(fqn)).unwrap();
+    zip.finish().unwrap();
+}
+
+/// The path an archive entry materializes at below the source root: the module
+/// segment of a JDK 9+ `src.zip` entry (`<module>/<package path>/X.java`) is
+/// dropped, which is exactly the rule `hir::lib_source` applies.
+fn entry_relative_path(entry: &str) -> &str {
+    match entry.split_once('/') {
+        Some((head, rest)) if head.contains('.') => rest,
+        _ => entry,
+    }
+}
+
+/// Builds a zip archive at `path` holding each `(entry_name, bytes)` pair.
+pub fn build_zip(path: &camino::Utf8Path, entries: &[(&str, Vec<u8>)]) {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let file = File::create(path.as_std_path()).unwrap();
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+    for (name, bytes) in entries {
+        zip.start_file(*name, options).unwrap();
+        zip.write_all(bytes).unwrap();
+    }
     zip.finish().unwrap();
 }
 
