@@ -203,8 +203,10 @@ fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Reso
                 .join(".")
         };
         // `import static Type.member;` — the last segment is the member, the
-        // segments before it name its (possibly nested) declaring type.
-        if import.is_static && index + 1 == segments.len() {
+        // segments before it name its (possibly nested) declaring type. A
+        // malformed `import static member;` names no owner and resolves to
+        // nothing.
+        if import.is_static && index + 1 == segments.len() && index > 0 {
             let owner = Name::new(&written(index - 1));
             let member = import.name.simple_name();
             for use_kind in [Use::Field, Use::Method] {
