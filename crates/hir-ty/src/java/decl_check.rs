@@ -256,6 +256,34 @@ pub enum DeclDiagnostic {
         member: Name,
         range: Option<rowan::TextRange>,
     },
+    /// §9.7.1: a normal annotation must contain an element-value pair for
+    /// every element of its annotation interface except those with a default
+    /// value. javac: `annotation @X is missing a default value for the element
+    /// 'y'` (`compiler.err.annotation.missing.default.value`); IntelliJ:
+    /// `'x' missing but required` — for several elements, `'x', 'y' missing but
+    /// required`. `names` are the elements without a pair, in declaration
+    /// order; `range` is the annotation's *name*, where IntelliJ anchors the
+    /// report.
+    MissingAnnotationElement {
+        names: Vec<Name>,
+        range: Option<rowan::TextRange>,
+    },
+    /// §9.7.1: an element value for a primitive- or `String`-typed element must
+    /// be a constant expression ([§15.29]). javac: `element value must be a
+    /// constant expression` (`compiler.err.attribute.value.must.be.constant`);
+    /// IntelliJ: `Attribute value must be constant`. `range` is the value.
+    NonConstantAnnotationElement { range: Option<rowan::TextRange> },
+    /// §9.7.1: an element value for a `Class`-typed element must be a class
+    /// literal ([§15.8.2]). javac: `element value must be a class literal`
+    /// (`compiler.err.annotation.value.must.be.class.literal`); IntelliJ:
+    /// `Attribute value must be a class literal`. `range` is the value — a
+    /// parenthesized class literal is not one, parentheses included.
+    AnnotationElementNotClassLiteral { range: Option<rowan::TextRange> },
+    /// §9.7.1: an element value for an enum-typed element must be an enum
+    /// constant ([§8.9.1]). javac: `annotation value must be an enum constant`
+    /// (`compiler.err.enum.annotation.must.be.enum.constant`); IntelliJ:
+    /// `Attribute value must be an enum constant`. `range` is the value.
+    AnnotationElementNotEnumConstant { range: Option<rowan::TextRange> },
     /// §8.8 ([§8.10.4] for records): the `SimpleTypeName` in a constructor
     /// declaration must be the simple name of the class that contains it, or a
     /// compile-time error occurs. javac reports such a declaration as
@@ -727,6 +755,10 @@ impl DeclDiagnostic {
             | DeclDiagnostic::DuplicateAnnotationMemberValue { .. }
             | DeclDiagnostic::AnnotationElementTypeMismatch { .. }
             | DeclDiagnostic::UnknownAnnotationElementConstant { .. }
+            | DeclDiagnostic::MissingAnnotationElement { .. }
+            | DeclDiagnostic::NonConstantAnnotationElement { .. }
+            | DeclDiagnostic::AnnotationElementNotClassLiteral { .. }
+            | DeclDiagnostic::AnnotationElementNotEnumConstant { .. }
             | DeclDiagnostic::ConstructorNameMismatch { .. }
             | DeclDiagnostic::IllegalModifierCombination { .. }
             | DeclDiagnostic::CannotInheritFromFinalClass { .. }
@@ -790,6 +822,18 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::UnknownAnnotationElementConstant {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::MissingAnnotationElement {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::NonConstantAnnotationElement {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AnnotationElementNotClassLiteral {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::AnnotationElementNotEnumConstant {
                 range: name_range, ..
             }
             | DeclDiagnostic::ConstructorNameMismatch {

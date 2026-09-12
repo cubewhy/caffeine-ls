@@ -89,6 +89,18 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         DeclDiagnostic::UnknownAnnotationElementConstant { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::UnknownAnnotationElementConstant)
         }
+        DeclDiagnostic::MissingAnnotationElement { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::MissingAnnotationElement)
+        }
+        DeclDiagnostic::NonConstantAnnotationElement { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::NonConstantAnnotationElement)
+        }
+        DeclDiagnostic::AnnotationElementNotClassLiteral { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::AnnotationElementNotClassLiteral)
+        }
+        DeclDiagnostic::AnnotationElementNotEnumConstant { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::AnnotationElementNotEnumConstant)
+        }
         DeclDiagnostic::ConstructorNameMismatch { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::ConstructorNameMismatch)
         }
@@ -351,6 +363,23 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
         ),
         DeclDiagnostic::UnknownAnnotationElementConstant { member, .. } => {
             format!("Cannot resolve symbol '{}'", member.simple_name())
+        }
+        DeclDiagnostic::MissingAnnotationElement { names, .. } => format!(
+            "{} missing but required",
+            names
+                .iter()
+                .map(|name| format!("'{}'", name.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        DeclDiagnostic::NonConstantAnnotationElement { .. } => {
+            "Attribute value must be constant".to_owned()
+        }
+        DeclDiagnostic::AnnotationElementNotClassLiteral { .. } => {
+            "Attribute value must be a class literal".to_owned()
+        }
+        DeclDiagnostic::AnnotationElementNotEnumConstant { .. } => {
+            "Attribute value must be an enum constant".to_owned()
         }
         DeclDiagnostic::ConstructorNameMismatch { name, class, .. } => {
             format!(

@@ -51,7 +51,7 @@ class Anns extends Base {
     @Deprecated
     int legacy;
 
-    @Local
+    @Local(\"x\")
     void local() {}
 
     @java.lang.Deprecated
@@ -64,7 +64,8 @@ class Anns extends Base {
 // `@Deprecated`/`@SuppressWarnings`/`@FunctionalInterface` resolve against
 // the JDK fixture; the same-package `@interface Local` is in scope by its own
 // package; the qualified `@java.lang.Deprecated` resolves as a fully
-// qualified name ([JLS §6.5.5.2]). Nothing is reported.
+// qualified name ([JLS §6.5.5.2]). The single-argument form `@Local("x")`
+// names the implicit `value` element (§9.7.1). Nothing is reported.
 
 snapshot!(
     valid_record_component,

@@ -1,6 +1,5 @@
 ---
 source: crates/hir-ty/tests/jls_annotations.rs
-assertion_line: 21
 expression: out
 ---
 FILE /src/com/example/Anns.java:
@@ -32,7 +31,7 @@ class Anns extends Base {
     @Deprecated
     int legacy;
 
-    @Local
+    @Local("x")
     void local() {}
 
     @java.lang.Deprecated

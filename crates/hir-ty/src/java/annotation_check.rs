@@ -699,13 +699,28 @@ fn check_annotation_elements_ranged(
     annotation: &hir_expand::span::AnnotationRef,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    if annotation.args.is_empty() {
-        return;
-    }
+    // §9.7.1: the same missing-element rule as [`check_annotation_elements`],
+    // over the body path's spanned annotation — its name already carries the
+    // range the report is anchored at.
     let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name.name)
     else {
         return;
     };
+    let missing: Vec<Name> = elements
+        .iter()
+        .filter(|element| !element.has_default)
+        .filter(|element| !annotation.args.iter().any(|arg| arg.name == element.name))
+        .map(|element| element.name.clone())
+        .collect();
+    if !missing.is_empty() {
+        out.push(DeclDiagnostic::MissingAnnotationElement {
+            names: missing,
+            range: annotation.name.range,
+        });
+    }
+    if annotation.args.is_empty() {
+        return;
+    }
     for (idx, arg) in annotation.args.iter().enumerate() {
         if annotation.args[..idx]
             .iter()
@@ -1232,12 +1247,29 @@ fn check_annotation_elements(
     source: &syntax::SourceFile,
     out: &mut Vec<DeclDiagnostic>,
 ) {
-    if annotation.args.is_empty() {
-        return;
-    }
+    // §9.7.1: a normal annotation must contain an element-value pair for every
+    // element of its annotation interface except those with default values. A
+    // marker annotation (`@Ann`) is the degenerate case of no pairs at all, so
+    // the elements are resolved before the pairs are walked. The report is
+    // anchored at the annotation's *name*, where IntelliJ anchors it.
     let Some(elements) = annotation_type_elements(db, scope, resolver, &annotation.name) else {
         return;
     };
+    let missing: Vec<Name> = elements
+        .iter()
+        .filter(|element| !element.has_default)
+        .filter(|element| !annotation.args.iter().any(|arg| arg.name == element.name))
+        .map(|element| element.name.clone())
+        .collect();
+    if !missing.is_empty() {
+        out.push(DeclDiagnostic::MissingAnnotationElement {
+            names: missing,
+            range: ranges::annotation_name_range(map, source, annotation),
+        });
+    }
+    if annotation.args.is_empty() {
+        return;
+    }
     for (idx, arg) in annotation.args.iter().enumerate() {
         // The value's source range (where the mismatch is reported) is
         // re-derived from the annotation's syntax node; a value that cannot
@@ -1662,6 +1694,11 @@ fn enum_constants(
 struct AnnotationElement {
     name: Name,
     ty: Ty,
+    /// Whether the element declares a default value
+    /// ([§9.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6.1)):
+    /// a normal annotation must give a pair for every element that does *not*
+    /// ([§9.7.1]).
+    has_default: bool,
 }
 
 /// The elements of the annotation type `name` ([§9.6.1]), in declaration
@@ -1690,14 +1727,27 @@ fn annotation_type_elements(
             let file_scope = crate::java::resolve::scope_for_file(db, source.file);
             let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
             let resolver = Resolver::new(&source_tree, type_params, source.item);
+            // §9.6.1/§9.7.1: whether an element declares a default is read
+            // from the *annotation type's own* source — not from the lowered
+            // default expression, which a default written as a nested
+            // annotation (or any non-expression element value) does not
+            // produce.
+            let default_ctx = range_ctx(db, source.file, source_tree.language);
             let mut out = Vec::new();
             for &child in source_tree.data(source.item).body() {
                 if let ItemData::Method(method) = source_tree.data(child)
                     && let Some(ret) = &method.sig.ret
                 {
+                    let has_default = default_ctx
+                        .as_ref()
+                        .and_then(|(map, source)| {
+                            ranges::method_default_value_range(map, source, method)
+                        })
+                        .is_some();
                     out.push(AnnotationElement {
                         name: method.name.clone(),
                         ty: resolve_type_ref(db, &file_scope, &resolver, &ret.ty),
+                        has_default,
                     });
                 }
             }
@@ -1730,6 +1780,9 @@ fn annotation_type_elements(
                     .map(|method| AnnotationElement {
                         name: Name::new(db.hir_state().interner.resolve(&method.name)),
                         ty: ty_from_library(db, &method.return_type),
+                        // §9.7.1: a classfile element's default is its
+                        // `AnnotationDefault` attribute ([JVMS §4.7.22]).
+                        has_default: method.default_value.is_some(),
                     })
                     .collect(),
             )

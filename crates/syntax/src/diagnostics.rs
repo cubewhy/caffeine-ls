@@ -235,6 +235,22 @@ pub enum JavaDiagnosticCode {
     /// §9.7.1/[§8.9]: an enum-constant element value names a constant that the
     /// element's (enum) type does not declare.
     UnknownAnnotationElementConstant,
+    /// §9.7.1: an annotation is missing an element-value pair for an element
+    /// without a default value. javac:
+    /// `compiler.err.annotation.missing.default.value`.
+    MissingAnnotationElement,
+    /// §9.7.1/[§15.29]: an element value for a primitive- or `String`-typed
+    /// element is not a constant expression. javac:
+    /// `compiler.err.attribute.value.must.be.constant`.
+    NonConstantAnnotationElement,
+    /// §9.7.1/[§15.8.2]: an element value for a `Class`-typed element is not a
+    /// class literal. javac:
+    /// `compiler.err.annotation.value.must.be.class.literal`.
+    AnnotationElementNotClassLiteral,
+    /// §9.7.1/[§8.9.1]: an element value for an enum-typed element is not an
+    /// enum constant. javac:
+    /// `compiler.err.enum.annotation.must.be.enum.constant`.
+    AnnotationElementNotEnumConstant,
     /// §8.8: a constructor declaration's name is not the simple name of the
     /// class that contains it. javac reports `invalid method declaration;
     /// return type required` ([JLS §8.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8)):
@@ -585,6 +601,14 @@ impl JavaDiagnosticCode {
             }
             AnnotationElementTypeMismatch => Some("compiler.err.prob.found.req"),
             UnknownAnnotationElementConstant => Some("compiler.err.cant.resolve.location"),
+            MissingAnnotationElement => Some("compiler.err.annotation.missing.default.value"),
+            NonConstantAnnotationElement => Some("compiler.err.attribute.value.must.be.constant"),
+            AnnotationElementNotClassLiteral => {
+                Some("compiler.err.annotation.value.must.be.class.literal")
+            }
+            AnnotationElementNotEnumConstant => {
+                Some("compiler.err.enum.annotation.must.be.enum.constant")
+            }
             ConstructorNameMismatch => Some("compiler.err.invalid.meth.decl.ret.type.req"),
             IllegalModifierCombination => Some("compiler.err.illegal.combination.of.modifiers"),
             CannotInheritFromFinalClass => Some("compiler.err.cant.inherit.from.final"),
@@ -752,6 +776,14 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::AnnotationElementTypeMismatch => "annotation-element-type-mismatch",
             JavaDiagnosticCode::UnknownAnnotationElementConstant => {
                 "unknown-annotation-element-constant"
+            }
+            JavaDiagnosticCode::MissingAnnotationElement => "missing-annotation-element",
+            JavaDiagnosticCode::NonConstantAnnotationElement => "non-constant-annotation-element",
+            JavaDiagnosticCode::AnnotationElementNotClassLiteral => {
+                "annotation-element-not-class-literal"
+            }
+            JavaDiagnosticCode::AnnotationElementNotEnumConstant => {
+                "annotation-element-not-enum-constant"
             }
             JavaDiagnosticCode::ConstructorNameMismatch => "constructor-name-mismatch",
             JavaDiagnosticCode::IllegalModifierCombination => "illegal-combination-of-modifiers",
