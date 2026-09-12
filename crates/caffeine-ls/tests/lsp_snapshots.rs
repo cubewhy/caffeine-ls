@@ -675,6 +675,48 @@ class Nav {
     insta::assert_json_snapshot!("goto_definition_field_read", normalized);
 }
 
+/// A Kotlin file has no HIR yet: the definition request answers `null` from the
+/// documented placeholder rather than walking the empty item tree the Kotlin
+/// lowering leaves behind, and the server keeps serving the file.
+#[test]
+fn kotlin_definition_answers_null() {
+    let lsp = create_lsp();
+    let path = "/src/Main.kt";
+    let text = "fun main() {\n    println(\"hi\")\n}\n";
+    lsp.write_file(path, text);
+    lsp.open_document(path);
+
+    let (line, character) = position_of(text, "println");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    assert!(
+        response.is_null(),
+        "a Kotlin definition request answers null: {response:?}"
+    );
+
+    // The request neither materialized a library source nor left the file in a
+    // state the next request trips over.
+    let pending = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": 0, "character": 0 },
+        }),
+    );
+    assert!(pending.is_null(), "got: {pending:?}");
+
+    let symbols = lsp.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": lsp.uri(path) } }),
+    );
+    assert!(symbols.is_array(), "got: {symbols:?}");
+}
+
 #[test]
 fn test_hover() {
     let lsp = create_lsp();

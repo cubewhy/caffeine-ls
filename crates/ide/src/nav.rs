@@ -41,6 +41,8 @@ use hir_ty::Ty;
 use crate::RootDatabase;
 use ide_db::base_db::{self, LanguageKind};
 
+mod kotlin;
+
 /// The source range of a declaration item, resolved on demand from the file's
 /// parse (the item tree carries no offsets).
 fn item_range(db: &RootDatabase, file: FileId, tree: &ItemTree, item: ItemId) -> Option<TextRange> {
@@ -68,9 +70,16 @@ pub struct HoverInfo {
     pub value: String,
 }
 
-/// The declarations the reference at `offset` resolves to ([JLS §6.5]).
+/// The declarations the reference at `offset` resolves to ([JLS §6.5] in a Java
+/// file, nothing at all in a Kotlin one).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
-    java_definition(db, file, offset)
+    match hir::file_item_tree(db, file).language {
+        LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::definition(db, file, offset),
+        // `Unknown` is a file with no source root yet (opened before the
+        // workspace loaded) or a non-JVM file; it lowers to an empty item tree,
+        // so the Java path finds nothing.
+        _ => java_definition(db, file, offset),
+    }
 }
 
 /// The Java declarations the reference at `offset` resolves to ([JLS §6.5]).
@@ -478,6 +487,12 @@ pub fn pending_library_sources(
     file: FileId,
     offset: TextSize,
 ) -> Vec<LibrarySourceRef> {
+    if matches!(
+        hir::file_item_tree(db, file).language,
+        LanguageKind::Kotlin | LanguageKind::KotlinScript
+    ) {
+        return kotlin::pending_library_sources(db, file, offset);
+    }
     // The recorded resolution names the declaring source; a declaration-side
     // reference names its own; and the classpath walk names every unloaded
     // owner along a member's hierarchy, so a hover — which still resolves
