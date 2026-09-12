@@ -88,6 +88,14 @@ pub struct ProjectGraph {
     /// library source root → the library whose sources it holds.
     #[returns(ref)]
     pub library_source_roots: FxHashMap<SourceRootId, LibraryId>,
+    /// Library → the root its decompiled output materializes into. Read by the
+    /// decompiled-declaration lookup, and empty when no decompiler is
+    /// configured.
+    #[returns(ref)]
+    pub library_decompiled: FxHashMap<LibraryId, AbsPathBuf>,
+    /// decompiled root → the library whose decompiled output it holds.
+    #[returns(ref)]
+    pub library_decompiled_roots: FxHashMap<SourceRootId, LibraryId>,
 }
 
 /// Per-library state: registration data plus the lazily built index.
@@ -180,6 +188,8 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
         releases,
         library_sources,
         library_source_roots,
+        library_decompiled,
+        library_decompiled_roots,
     } = data;
     match ProjectGraph::try_get(db) {
         Some(graph) => {
@@ -194,6 +204,10 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
             graph.set_releases(db).to(releases);
             graph.set_library_sources(db).to(library_sources);
             graph.set_library_source_roots(db).to(library_source_roots);
+            graph.set_library_decompiled(db).to(library_decompiled);
+            graph
+                .set_library_decompiled_roots(db)
+                .to(library_decompiled_roots);
         }
         None => {
             ProjectGraph::new(
@@ -207,6 +221,8 @@ pub fn set_project_graph(db: &mut dyn HirDatabase, data: ProjectGraphData) {
                 releases,
                 library_sources,
                 library_source_roots,
+                library_decompiled,
+                library_decompiled_roots,
             );
         }
     }

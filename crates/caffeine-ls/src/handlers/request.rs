@@ -1,10 +1,11 @@
 use crate::{
     diagnostics,
     global_state::GlobalStateSnapshot,
-    handlers::dispatch::{DeferForLibrarySources, LibrarySourceFile},
+    handlers::dispatch::DeferForLibraryFiles,
     lsp::{symbols, to_proto},
 };
 
+use ide::LibraryFileRef;
 use lsp_types::*;
 use rustc_hash::FxHashMap;
 use vfs::FileId;
@@ -171,10 +172,11 @@ pub fn on_workspace_symbol_resolve(
 /// The declaration(s) a reference at a position resolves to, as LSP
 /// locations ([JLS §6.5]).
 ///
-/// A reference that resolves into a library whose source file is not loaded
-/// yet defers: the handler returns [`DeferForLibrarySources`], the main loop
-/// materializes the files and re-runs the request, and the retried call — now
-/// with the sources loaded — returns the real location.
+/// A reference that resolves into a library whose declaring file is not loaded
+/// yet defers: the handler returns [`DeferForLibraryFiles`], the main loop
+/// materializes (and, for a library without sources, decompiles) the files and
+/// re-runs the request, and the retried call — now with the files loaded —
+/// returns the real location.
 pub fn on_goto_definition(
     state: GlobalStateSnapshot,
     params: DefinitionParams,
@@ -189,19 +191,9 @@ pub fn on_goto_definition(
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let targets = state.analysis.goto_definition(file_id, offset)?;
     if targets.is_empty() {
-        let files: Vec<LibrarySourceFile> = state
-            .analysis
-            .pending_library_sources(file_id, offset)?
-            .into_iter()
-            .map(|source| LibrarySourceFile {
-                library: source.library,
-                archive: source.archive,
-                entry: source.entry,
-                path: source.path,
-            })
-            .collect();
+        let files = state.analysis.pending_library_files(file_id, offset)?;
         if !files.is_empty() {
-            return Err(DeferForLibrarySources(files).into());
+            return Err(DeferForLibraryFiles(files).into());
         }
         return Ok(None);
     }
@@ -224,7 +216,9 @@ pub fn on_goto_definition(
 /// A library member whose declaring source is not loaded yet defers, exactly
 /// like [`on_goto_definition`]: the source carries the parameter names the
 /// merged signature needs, so answering before it is loaded would show the
-/// bytecode-only rendering instead.
+/// bytecode-only rendering instead. A class a *decompiler* would have to
+/// produce is deliberately not deferred to — see [`LibraryFileRef::Decompile`] —
+/// so only source refs are handed to the main loop here.
 pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let pos = params.text_document_position_params;
     tracing::info!(uri = ?pos.text_document.uri, "request hover");
@@ -236,19 +230,14 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let info = state.analysis.hover(file_id, offset)?;
     let Some(info) = info else {
-        let files: Vec<LibrarySourceFile> = state
+        let files: Vec<LibraryFileRef> = state
             .analysis
-            .pending_library_sources(file_id, offset)?
+            .pending_library_files(file_id, offset)?
             .into_iter()
-            .map(|source| LibrarySourceFile {
-                library: source.library,
-                archive: source.archive,
-                entry: source.entry,
-                path: source.path,
-            })
+            .filter(|file| matches!(file, LibraryFileRef::Source { .. }))
             .collect();
         if !files.is_empty() {
-            return Err(DeferForLibrarySources(files).into());
+            return Err(DeferForLibraryFiles(files).into());
         }
         return Ok(None);
     };

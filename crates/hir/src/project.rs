@@ -110,6 +110,11 @@ pub struct ProjectGraphData {
     /// library source root → the library whose sources it holds. The root is
     /// registered like a workspace root but holds read-only third-party code.
     pub library_source_roots: FxHashMap<base_db::SourceRootId, LibraryId>,
+    /// Library → the root its decompiled output materializes into. Empty when
+    /// no decompiler is configured, which is what makes decompilation off.
+    pub library_decompiled: FxHashMap<LibraryId, AbsPathBuf>,
+    /// decompiled root → the library whose decompiled output it holds.
+    pub library_decompiled_roots: FxHashMap<base_db::SourceRootId, LibraryId>,
 }
 
 #[cfg(test)]

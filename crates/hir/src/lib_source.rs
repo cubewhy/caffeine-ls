@@ -12,7 +12,10 @@
 //! The merge is one-directional: the classfile stub stays the source of truth
 //! for resolution, typing and flags. Sources contribute exactly the
 //! *location* of a declaration ([`library_source_decl`]) and, through the
-//! loaded file, its parameter names.
+//! loaded file, its parameter names. A library that ships no archive
+//! contributes no location at all — unless a decompiler is configured for it,
+//! in which case the class's decompiled output is that location instead (see
+//! [`LibrarySourceDecl::Decompiled`]).
 
 use std::fs::File;
 
@@ -173,7 +176,7 @@ pub fn library_source_path(
     Some(sources.root.join(relative_entry(entry)))
 }
 
-/// Where a library class is declared in the library's sources.
+/// Where a library class is declared in a view of its library.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LibrarySourceDecl {
     /// The declaring file is loaded into the database; `item` is the
@@ -182,20 +185,36 @@ pub enum LibrarySourceDecl {
     /// The archive entry that still has to be materialized (and loaded) before
     /// the declaration can be answered.
     Pending { entry: Arc<str>, path: AbsPathBuf },
+    /// The class has no source at all; its declaring view is what the
+    /// decompiler produces for `class`, which has to be run before the
+    /// declaration can be answered.
+    Decompiled { class: Arc<str>, path: AbsPathBuf },
 }
 
-/// Where the library class `fqn` is declared in its library's sources.
+/// Where the library class `fqn` is declared.
 ///
-/// `None` when the library is unknown, has no sources, the entry name does not
-/// match a prefix of `fqn`, or the materialized file — though present in the
-/// source root — declares no class-like symbol of that name (an anonymous
-/// class's `pkg.Outer$1` landing on `pkg/Outer.java` is not a declaration of
-/// `pkg.Outer$1`).
+/// Sources win over decompilation, structurally: the source lookup runs first
+/// and its answer is returned as it is, so a library that ships sources never
+/// pays for a JVM start.
+///
+/// `None` when the library is unknown, has neither sources nor a decompiler,
+/// the entry name does not match a prefix of `fqn`, or the materialized file —
+/// though present in the source root — declares no class-like symbol of that
+/// name (an anonymous class's `pkg.Outer$1` landing on `pkg/Outer.java` is not
+/// a declaration of `pkg.Outer$1`).
 pub fn library_source_decl(
     db: &dyn HirDatabase,
     library: LibraryId,
     fqn: &str,
 ) -> Option<LibrarySourceDecl> {
+    if let Some(decl) = source_decl(db, library, fqn) {
+        return Some(decl);
+    }
+    decompiled_decl(db, library, fqn)
+}
+
+/// Where the library class `fqn` is declared in its library's source archive.
+fn source_decl(db: &dyn HirDatabase, library: LibraryId, fqn: &str) -> Option<LibrarySourceDecl> {
     let sources = library_sources(db, library)?;
     let index = library_source_index(db, library)?;
     let root_id = library_source_root(db, library)?;
@@ -226,6 +245,38 @@ pub fn library_source_decl(
     }
 }
 
+/// Where the library class `fqn` is declared in the library's decompiled
+/// output, which materializes one file per compilation unit at the path the
+/// class's *outermost* enclosing class names.
+///
+/// `None` when no decompiler is configured for the library (the feature
+/// switch), or when the produced file — already loaded — declares no class-like
+/// symbol of that name: a backend may drop a nested type, and answering the
+/// outer class would jump to a location that does not declare the reference.
+fn decompiled_decl(
+    db: &dyn HirDatabase,
+    library: LibraryId,
+    fqn: &str,
+) -> Option<LibrarySourceDecl> {
+    let graph = ProjectGraph::try_get(db)?;
+    let root = graph.library_decompiled(db).get(&library)?.clone();
+    // `Resolved::fqn` hands out binary names ([JVMS §4.2]), and a nested type
+    // is produced together with the outermost class that encloses it.
+    let outer = fqn.split('$').next().unwrap_or(fqn);
+    let path = root.join(format!("{}.java", outer.replace('.', "/")));
+
+    let root_id = library_decompiled_root(db, library)?;
+    let source_root = db.source_root(root_id).source_root(db);
+    let Some(&file) = source_root.file_for_path(&VfsPath::from(path.clone())) else {
+        return Some(LibrarySourceDecl::Decompiled {
+            class: Arc::from(outer),
+            path,
+        });
+    };
+    class_symbol(db, file, &fqn.replace('$', "."))
+        .map(|item| LibrarySourceDecl::Loaded { file, item })
+}
+
 /// The class-like symbol of `file` whose canonical name is `fqn`.
 fn class_symbol(db: &dyn HirDatabase, file: FileId, fqn: &str) -> Option<ItemId> {
     file_symbols(db, file)
@@ -244,7 +295,8 @@ fn class_symbol(db: &dyn HirDatabase, file: FileId, fqn: &str) -> Option<ItemId>
         .map(|symbol| symbol.item)
 }
 
-/// The library whose sources are held by the source root `file` belongs to.
+/// The library whose view holds the file of the source root `file` belongs to —
+/// its sources, or its decompiled output.
 ///
 /// Reads the file→source-root input *before* consulting the project graph, for
 /// the reason documented on [`crate::db::source_set_for_file`]: a query
@@ -252,7 +304,11 @@ fn class_symbol(db: &dyn HirDatabase, file: FileId, fqn: &str) -> Option<ItemId>
 pub fn library_source_for_file(db: &dyn HirDatabase, file: FileId) -> Option<LibraryId> {
     let root_id = db.source_root_for_file(file)?;
     let graph = ProjectGraph::try_get(db)?;
-    graph.library_source_roots(db).get(&root_id).copied()
+    graph
+        .library_source_roots(db)
+        .get(&root_id)
+        .or_else(|| graph.library_decompiled_roots(db).get(&root_id))
+        .copied()
 }
 
 /// The source root id holding `library`'s sources.
@@ -260,6 +316,15 @@ fn library_source_root(db: &dyn HirDatabase, library: LibraryId) -> Option<Sourc
     let graph = ProjectGraph::try_get(db)?;
     graph
         .library_source_roots(db)
+        .iter()
+        .find_map(|(root, owner)| (*owner == library).then_some(*root))
+}
+
+/// The source root id holding `library`'s decompiled output.
+fn library_decompiled_root(db: &dyn HirDatabase, library: LibraryId) -> Option<SourceRootId> {
+    let graph = ProjectGraph::try_get(db)?;
+    graph
+        .library_decompiled_roots(db)
         .iter()
         .find_map(|(root, owner)| (*owner == library).then_some(*root))
 }

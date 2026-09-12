@@ -2,8 +2,10 @@ pub mod cli;
 pub mod config;
 pub mod flags;
 
+pub(crate) mod decompiler;
 pub(crate) mod handlers;
 pub(crate) mod library_sources;
+pub(crate) mod library_view;
 pub(crate) mod line_index;
 pub(crate) mod mem_docs;
 pub(crate) mod task_pool;

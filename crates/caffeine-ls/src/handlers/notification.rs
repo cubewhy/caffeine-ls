@@ -254,10 +254,13 @@ pub fn on_did_change_configuration(
         let old_java_home = old_config.get_java_home();
         let new_java_home = new_config.get_java_home();
         let sources_changed = old_config.download_sources() != new_config.download_sources();
+        // Switching backends (or pointing one at another jar) invalidates every
+        // decompiled file, so the roots and the classpath have to be rebuilt.
+        let decompiler_changed = old_config.decompiler_spec() != new_config.decompiler_spec();
 
         state.config = Arc::new(new_config);
 
-        if old_java_home != new_java_home || sources_changed {
+        if old_java_home != new_java_home || sources_changed || decompiler_changed {
             tracing::info!("Critical configuration updated. Re-probing project models.");
             state.trigger_workspace_probe();
         }

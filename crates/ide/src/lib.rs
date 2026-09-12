@@ -26,7 +26,7 @@ pub mod symbols;
 pub mod workspace;
 
 pub use change::Change;
-pub use nav::{HoverInfo, NavigationTarget};
+pub use nav::{HoverInfo, LibraryFileRef, NavigationTarget};
 pub use symbols::{DocumentSymbol, WorkspaceSymbolSummary};
 pub use workspace::WorkspaceReport;
 
@@ -244,17 +244,17 @@ impl Analysis {
         self.with_db(|db| nav::definition(db, file_id, offset))
     }
 
-    /// The library source files the reference at `offset` resolves into but
-    /// which are not loaded into the database yet. The LSP layer reads each one
-    /// out of its archive and re-runs the request; the retried
-    /// [`Self::goto_definition`]/[`Self::hover`] then answers with the real
-    /// source location.
-    pub fn pending_library_sources(
+    /// The library files the reference at `offset` resolves into but which are
+    /// not loaded into the database yet — an archive entry to read, or a class
+    /// to decompile. The LSP layer materializes each one and re-runs the
+    /// request; the retried [`Self::goto_definition`]/[`Self::hover`] then
+    /// answers with the real source location.
+    pub fn pending_library_files(
         &self,
         file_id: FileId,
         offset: rowan::TextSize,
-    ) -> Cancellable<Vec<nav::LibrarySourceRef>> {
-        self.with_db(|db| nav::pending_library_sources(db, file_id, offset))
+    ) -> Cancellable<Vec<nav::LibraryFileRef>> {
+        self.with_db(|db| nav::pending_library_files(db, file_id, offset))
     }
 
     /// The hover at `offset` — the type of the expression or the signature of

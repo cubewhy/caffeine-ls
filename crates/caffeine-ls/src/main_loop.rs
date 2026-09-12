@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
@@ -21,22 +21,62 @@ use vfs::{AbsPathBuf, VfsPath};
 use crate::{
     GlobalState,
     config::Config,
+    decompiler,
     global_state::{
-        BackgroundTaskEvent, OutgoingRequest, ProgressEvent, ProgressState, SourceRootKind,
+        BackgroundTaskEvent, OutgoingRequest, PendingRequest, ProgressEvent, ProgressState,
+        SourceRootKind,
     },
     handlers::{
         self,
         dispatch::{NotificationDispatcher, RequestDispatcher},
     },
     library_sources,
+    library_view::{self, LibraryView},
     line_index::LineEndings,
 };
 
 const OPEN_BUILD_TOOL_LOG_ACTION: &str = "Open Build Tool Log";
 
+/// The largest classpath a decompiler is handed. CFR takes the whole list in
+/// one `--extraclasspath` argument, and a command line that long is past what a
+/// process can be started with on every platform; the *content* of the list is
+/// only a readability hint for the decompiled output, so beyond the budget the
+/// class's own archive alone is used.
+const MAX_DECOMPILER_CLASSPATH: usize = 16_000;
+
+/// The classpath a decompiler is given for a class declared in `archive`: that
+/// archive first, then every other classpath jar, each once and in a
+/// deterministic order. A JDK 9+ `lib/modules` is a jimage — neither backend
+/// reads one — so only jars are passed.
+fn decompiler_classpath(archive: &Path, jars: &[PathBuf]) -> Vec<PathBuf> {
+    let mut externals = Vec::with_capacity(jars.len());
+    externals.push(archive.to_path_buf());
+    externals.extend(jars.iter().filter(|jar| jar.as_path() != archive).cloned());
+    if externals.is_empty() {
+        return externals;
+    }
+    // What `join_paths` would produce, without building it: the paths plus one
+    // separator between each pair.
+    let joined: usize = externals
+        .iter()
+        .map(|path| path.as_os_str().as_encoded_bytes().len())
+        .sum::<usize>()
+        + externals.len().saturating_sub(1);
+    if joined > MAX_DECOMPILER_CLASSPATH {
+        tracing::debug!(
+            bytes = joined,
+            libraries = externals.len(),
+            "decompiler classpath exceeds the budget; falling back to the class's own archive"
+        );
+        externals.truncate(1);
+    }
+    externals
+}
+
 /// One registered source root, in `SourceRootId` order. Workspace roots come
 /// first (sorted by path), library source roots follow (sorted by library id),
-/// so the id `Change::apply` assigns to each root is this vector's index.
+/// then decompiled library roots (also sorted by library id), so the id
+/// `Change::apply` assigns to each root is this vector's index.
 enum RootEntry {
     Workspace {
         path: AbsPathBuf,
@@ -47,12 +87,18 @@ enum RootEntry {
         path: AbsPathBuf,
         library: LibraryId,
     },
+    DecompiledLibrary {
+        path: AbsPathBuf,
+        library: LibraryId,
+    },
 }
 
 impl RootEntry {
     fn path(&self) -> &AbsPathBuf {
         match self {
-            RootEntry::Workspace { path, .. } | RootEntry::Library { path, .. } => path,
+            RootEntry::Workspace { path, .. }
+            | RootEntry::Library { path, .. }
+            | RootEntry::DecompiledLibrary { path, .. } => path,
         }
     }
 }
@@ -384,6 +430,12 @@ impl GlobalState {
                 };
 
                 let cache_dir = self.config.get_cache_dir();
+                // Resolved before the spawn: the worker cannot borrow the
+                // configuration, and the backend's id is all it needs.
+                let decompiler_backend = self
+                    .config
+                    .decompiler()
+                    .map(|(backend, _jar)| backend.id().to_owned());
 
                 self.thread_pool.execute(move || {
                     let system_name = system.name();
@@ -480,10 +532,20 @@ impl GlobalState {
                             }
 
                             // Locate each library's source archive and create
-                            // its materialization root. On the worker, so the
-                            // main loop does no directory work.
+                            // its materialization root, and create the
+                            // decompiled-output roots when a decompiler is
+                            // configured. On the worker, so the main loop does
+                            // no directory work.
                             let archives = library_sources::collect_archives(&graph);
                             let sources = library_sources::prepare_roots(&cache_dir, &archives);
+                            let decompiled = match &decompiler_backend {
+                                Some(backend) => decompiler::prepare_roots(
+                                    &cache_dir,
+                                    backend,
+                                    &decompiler::decompilable_libraries(&graph),
+                                ),
+                                None => FxHashMap::default(),
+                            };
                             report_prepared_sources(&task_sender, &progress_token, sources.len());
 
                             task_sender
@@ -491,6 +553,7 @@ impl GlobalState {
                                     graph,
                                     root,
                                     sources,
+                                    decompiled,
                                 })
                                 .ok();
                         }
@@ -537,38 +600,51 @@ impl GlobalState {
                 graph,
                 root,
                 sources,
+                decompiled,
             } => {
                 tracing::info!("Project configuration graph successfully loaded: {graph:#?}");
 
-                self.apply_loaded_graph(graph, root, sources);
+                self.apply_loaded_graph(graph, root, sources, decompiled);
             }
 
-            BackgroundTaskEvent::LoadLibrarySources { files, retry } => {
+            BackgroundTaskEvent::LoadLibraryFiles { files, retry } => {
                 let cache_root = self.config.get_cache_dir();
+                let mut pending_decompiles = Vec::new();
                 for file in files {
-                    let vfs_path = VfsPath::from(file.path.clone());
+                    let (library, archive, entry, path) = match file {
+                        ide::LibraryFileRef::Source {
+                            library,
+                            archive,
+                            entry,
+                            path,
+                        } => (library, archive, entry, path),
+                        decompile => {
+                            pending_decompiles.push(decompile);
+                            continue;
+                        }
+                    };
+                    let vfs_path = VfsPath::from(path.clone());
                     // Idempotent: a file an earlier round already loaded is
                     // left alone.
                     if self.vfs.read().0.file_id(&vfs_path).is_some() {
                         continue;
                     }
-                    let bytes =
-                        match library_sources::read_entry(file.archive.as_ref(), &file.entry) {
-                            Ok(bytes) => bytes,
-                            Err(err) => {
-                                tracing::warn!(
-                                    library = %file.library,
-                                    entry = %file.entry,
-                                    "failed to read library source: {err:#}"
-                                );
-                                continue;
-                            }
-                        };
-                    let root = library_sources::root_dir(&cache_root, file.library);
-                    let target: &Utf8Path = file.path.as_ref();
+                    let bytes = match library_sources::read_entry(archive.as_ref(), &entry) {
+                        Ok(bytes) => bytes,
+                        Err(err) => {
+                            tracing::warn!(
+                                library = %library,
+                                entry = %entry,
+                                "failed to read library source: {err:#}"
+                            );
+                            continue;
+                        }
+                    };
+                    let root = library_view::root_dir(&cache_root, &LibraryView::Source, library);
+                    let target: &Utf8Path = path.as_ref();
                     let Some(relative) = target.strip_prefix(&root).ok() else {
                         tracing::warn!(
-                            path = %file.path,
+                            path = %path,
                             "materialized source lies outside its library cache root"
                         );
                         continue;
@@ -576,7 +652,7 @@ impl GlobalState {
                     if let Err(err) = library_sources::materialize(&root, relative.as_str(), &bytes)
                     {
                         tracing::warn!(
-                            path = %file.path,
+                            path = %path,
                             "failed to materialize library source: {err:#}"
                         );
                         continue;
@@ -586,15 +662,42 @@ impl GlobalState {
                     self.vfs.write().0.set_file_contents(vfs_path, Some(bytes));
                 }
 
-                // The request's cancellation token stays registered: the
-                // retried run must still observe `$/cancelRequest`. The loop's
-                // `process_changes` then `run_pending_requests` sequence makes
-                // the writes visible to the retried snapshot.
+                if pending_decompiles.is_empty() {
+                    // The request's cancellation token stays registered: the
+                    // retried run must still observe `$/cancelRequest`. The
+                    // loop's `process_changes` then `run_pending_requests`
+                    // sequence makes the writes visible to the retried
+                    // snapshot.
+                    let (id, run) = retry;
+                    tracing::debug!(
+                        ?id,
+                        "library sources materialized; queuing deferred request"
+                    );
+                    self.pending_requests.push(run);
+                } else {
+                    self.decompile_library_files(pending_decompiles, retry);
+                }
+            }
+
+            BackgroundTaskEvent::LibraryDecompiled {
+                files,
+                failed,
+                retry,
+            } => {
+                if !failed.is_empty() {
+                    self.report_decompiler_failures(&failed);
+                }
+                for (path, contents) in files {
+                    // The client owns `mem_docs`; a decompiled library file is
+                    // vfs-only, exactly like a materialized source.
+                    self.vfs.write().0.set_file_contents(path, Some(contents));
+                }
+
+                // One push per event, after the writes: the decompiled files
+                // lie in the source root now, so the retried request finds the
+                // declarations it was looking for.
                 let (id, run) = retry;
-                tracing::debug!(
-                    ?id,
-                    "library sources materialized; queuing deferred request"
-                );
+                tracing::debug!(?id, "library files decompiled; queuing deferred request");
                 self.pending_requests.push(run);
             }
 
@@ -632,6 +735,156 @@ impl GlobalState {
             }
             BackgroundTaskEvent::NotifyUser { typ, message } => self.show_message(typ, message),
         }
+    }
+
+    /// Decompiles the classes the deferred request asked for, on the pool: a
+    /// JVM start costs 1-2 s and the main loop must keep answering while it
+    /// runs. The produced text is materialized under the view root and handed
+    /// back as [`BackgroundTaskEvent::LibraryDecompiled`], which pushes the
+    /// retry once the files are in the vfs.
+    fn decompile_library_files(
+        &mut self,
+        files: Vec<ide::LibraryFileRef>,
+        retry: (lsp_server::RequestId, PendingRequest),
+    ) {
+        let Some((backend, jar)) = self.config.decompiler() else {
+            // The configuration named a backend when the roots were created but
+            // names none now. Nothing can be produced; the retried request
+            // answers `null` rather than looping.
+            tracing::warn!("a library decompile was requested with no decompiler configured");
+            self.pending_requests.push(retry.1);
+            return;
+        };
+        if self.library_archives.is_empty() {
+            tracing::warn!("a library decompile was requested before a workspace was loaded");
+            self.pending_requests.push(retry.1);
+            return;
+        }
+
+        let cache_dir = self.config.get_cache_dir();
+        let java = self.config.decompiler_java();
+        // The classpath is one list for the whole batch: the class's own
+        // archive plus every other jar, so a type the class references renders
+        // under its real name instead of `<unknown>`.
+        let jars: Vec<PathBuf> = {
+            let mut jars: Vec<PathBuf> = self
+                .library_archives
+                .values()
+                .filter(|library| library.kind == LibraryKind::Jar)
+                .map(|library| {
+                    let path: &Path = library.path.as_ref();
+                    path.to_path_buf()
+                })
+                .collect();
+            jars.sort();
+            jars.dedup();
+            jars
+        };
+        let archives = self.library_archives.clone();
+        let task_sender = self.task_sender.clone();
+
+        self.thread_pool.execute(move || {
+            let view = LibraryView::Decompiled {
+                backend: backend.id().to_owned(),
+            };
+            let mut produced = Vec::new();
+            let mut failed = Vec::new();
+            for file in files {
+                let ide::LibraryFileRef::Decompile {
+                    library,
+                    class,
+                    path,
+                } = file
+                else {
+                    continue;
+                };
+                let Some(info) = archives.get(&library) else {
+                    failed.push((
+                        library,
+                        class,
+                        format!("library {library} is not registered"),
+                    ));
+                    continue;
+                };
+                let archive: &Path = info.path.as_ref();
+                let target: &Utf8Path = path.as_ref();
+                // A file an earlier session produced is reused as it is: the
+                // root is keyed by backend and library id, so nothing under it
+                // can be stale, and a JVM start is not worth repeating.
+                if !target.is_file() {
+                    let externals = decompiler_classpath(archive, &jars);
+                    match decompiler::decompile(
+                        backend, &java, &jar, archive, info.kind, &class, &externals,
+                    ) {
+                        Ok(text) => {
+                            let root = library_view::root_dir(&cache_dir, &view, library);
+                            let Some(relative) = target.strip_prefix(&root).ok() else {
+                                failed.push((
+                                    library,
+                                    class,
+                                    format!("{target} lies outside its view root"),
+                                ));
+                                continue;
+                            };
+                            if let Err(err) = library_sources::materialize(
+                                &root,
+                                relative.as_str(),
+                                text.as_bytes(),
+                            ) {
+                                failed.push((
+                                    library,
+                                    class,
+                                    format!("failed to write {relative}: {err:#}"),
+                                ));
+                                continue;
+                            }
+                        }
+                        Err(err) => {
+                            failed.push((library, class, format!("{err:#}")));
+                            continue;
+                        }
+                    }
+                }
+                match std::fs::read(target) {
+                    Ok(contents) => produced.push((VfsPath::from(path), contents)),
+                    Err(err) => {
+                        failed.push((library, class, format!("failed to read {target}: {err}")))
+                    }
+                }
+            }
+            task_sender
+                .send(BackgroundTaskEvent::LibraryDecompiled {
+                    files: produced,
+                    failed,
+                    retry,
+                })
+                .ok();
+        });
+    }
+
+    /// Warns about the classes the decompiler could not produce. The first
+    /// failure of the session also reaches the user: a broken JDK or jar fails
+    /// every navigation, and one toast is a diagnosis where one per navigation
+    /// is noise.
+    fn report_decompiler_failures(&mut self, failed: &[(LibraryId, Arc<str>, String)]) {
+        for (library, class, error) in failed {
+            tracing::warn!(%library, class = %class, "decompiling the library class failed: {error}");
+        }
+        if self.decompiler_error_reported {
+            return;
+        }
+        let Some((_, class, error)) = failed.first() else {
+            return;
+        };
+        self.decompiler_error_reported = true;
+        let backend = self
+            .config
+            .decompiler()
+            .map_or("decompiler", |(backend, _)| backend.id());
+        self.show_message(
+            MessageType::Warning,
+            format!("caffeine-ls: the {backend} decompiler failed for {class}: {error}"),
+        );
     }
 
     /// Entry point to kick off initialization/probing workflows.
@@ -679,10 +932,21 @@ impl GlobalState {
                 // progress token to hold the client until the load lands.
                 let graph =
                     project_model::WorkspaceGraph::plain(root.clone(), self.config.get_java_home());
+                let cache_dir = self.config.get_cache_dir();
                 let archives = library_sources::collect_archives(&graph);
-                let sources =
-                    library_sources::prepare_roots(&self.config.get_cache_dir(), &archives);
-                self.apply_loaded_graph(graph, root, sources);
+                let sources = library_sources::prepare_roots(&cache_dir, &archives);
+                // Decompilation is off — an empty map — unless a backend and
+                // its jar are configured; that map is the whole feature switch
+                // the analysis layer reads.
+                let decompiled = match self.config.decompiler() {
+                    Some((backend, _jar)) => decompiler::prepare_roots(
+                        &cache_dir,
+                        backend.id(),
+                        &decompiler::decompilable_libraries(&graph),
+                    ),
+                    None => FxHashMap::default(),
+                };
+                self.apply_loaded_graph(graph, root, sources, decompiled);
             }
         }
     }
@@ -695,11 +959,18 @@ impl GlobalState {
     /// driver located; they become read-only roots and are deliberately *not*
     /// loaded by the vfs loader, so their files come into the database one at a
     /// time, on the request that resolves into them.
+    ///
+    /// `decompiled` holds the decompiled-output root of every library the
+    /// configured decompiler can be asked about, which become read-only roots
+    /// of their own — the files are produced on demand exactly like library
+    /// sources are read on demand. It is empty when no decompiler is
+    /// configured.
     fn apply_loaded_graph(
         &mut self,
         graph: project_model::WorkspaceGraph,
         root: AbsPathBuf,
         sources: FxHashMap<LibraryId, LibrarySources>,
+        decompiled: FxHashMap<LibraryId, AbsPathBuf>,
     ) {
         tracing::info!(?root, "Applying workspace source roots and loader config");
 
@@ -748,15 +1019,22 @@ impl GlobalState {
         workspace_entries.sort_by_key(|(root, _, _)| root.clone());
 
         // Library roots follow the workspace roots, sorted by library id, so
-        // the mapping from `SourceRootId` to owner stays deterministic.
+        // the mapping from `SourceRootId` to owner stays deterministic. Source
+        // views come before decompiled ones for the same reason.
         let mut library_entries: Vec<(AbsPathBuf, LibraryId)> = sources
             .iter()
             .map(|(library, sources)| (sources.root.clone(), *library))
             .collect();
         library_entries.sort_by_key(|(_, library)| library.to_string());
+        let mut decompiled_entries: Vec<(AbsPathBuf, LibraryId)> = decompiled
+            .iter()
+            .map(|(library, root)| (root.clone(), *library))
+            .collect();
+        decompiled_entries.sort_by_key(|(_, library)| library.to_string());
 
-        let mut entries: Vec<RootEntry> =
-            Vec::with_capacity(workspace_entries.len() + library_entries.len());
+        let mut entries: Vec<RootEntry> = Vec::with_capacity(
+            workspace_entries.len() + library_entries.len() + decompiled_entries.len(),
+        );
         for (path, source_set, generated) in workspace_entries {
             entries.push(RootEntry::Workspace {
                 path,
@@ -766,6 +1044,9 @@ impl GlobalState {
         }
         for (path, library) in library_entries {
             entries.push(RootEntry::Library { path, library });
+        }
+        for (path, library) in decompiled_entries {
+            entries.push(RootEntry::DecompiledLibrary { path, library });
         }
 
         // One FileSet per source root, so each root becomes its own
@@ -830,6 +1111,9 @@ impl GlobalState {
             .map(|entry| match entry {
                 RootEntry::Workspace { .. } => SourceRootKind::SourceSet,
                 RootEntry::Library { library, .. } => SourceRootKind::Library(*library),
+                RootEntry::DecompiledLibrary { library, .. } => {
+                    SourceRootKind::DecompiledLibrary(*library)
+                }
             })
             .collect();
 
@@ -841,12 +1125,32 @@ impl GlobalState {
             .enumerate()
             .filter_map(|(idx, kind)| match kind {
                 SourceRootKind::Library(library) => Some((SourceRootId(idx as u32), *library)),
-                SourceRootKind::SourceSet => None,
+                SourceRootKind::SourceSet | SourceRootKind::DecompiledLibrary(_) => None,
+            })
+            .collect();
+        let library_decompiled_roots: FxHashMap<SourceRootId, LibraryId> = self
+            .source_root_kinds
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, kind)| match kind {
+                SourceRootKind::DecompiledLibrary(library) => {
+                    Some((SourceRootId(idx as u32), *library))
+                }
+                SourceRootKind::SourceSet | SourceRootKind::Library(_) => None,
             })
             .collect();
 
-        let mut project_graph =
-            self.build_project_graph(&graph, &source_sets, &sources, &library_source_roots);
+        let mut project_graph = self.build_project_graph(
+            &graph,
+            &source_sets,
+            &sources,
+            &library_source_roots,
+            &decompiled,
+            &library_decompiled_roots,
+        );
+        // The classfile archives of the loaded workspace, which a decompile
+        // reads a class's bytes out of and hands the backend as a classpath.
+        self.library_archives = project_graph.libraries.clone();
         for (idx, entry) in entries.iter().enumerate() {
             if let RootEntry::Workspace {
                 path, source_set, ..
@@ -900,6 +1204,8 @@ impl GlobalState {
         source_set_ids: &[SourceSetId],
         sources: &FxHashMap<LibraryId, LibrarySources>,
         library_source_roots: &FxHashMap<SourceRootId, LibraryId>,
+        decompiled: &FxHashMap<LibraryId, AbsPathBuf>,
+        library_decompiled_roots: &FxHashMap<SourceRootId, LibraryId>,
     ) -> ProjectGraphData {
         let mut data = ProjectGraphData::default();
 
@@ -996,6 +1302,11 @@ impl GlobalState {
         // materialize into. Both maps are empty when no library has sources.
         data.library_sources = sources.clone();
         data.library_source_roots = library_source_roots.clone();
+        // The decompiled-output roots, likewise empty when no decompiler is
+        // configured — which is what turns the fallback in
+        // `hir::library_source_decl` off.
+        data.library_decompiled = decompiled.clone();
+        data.library_decompiled_roots = library_decompiled_roots.clone();
 
         data
     }
@@ -1089,7 +1400,9 @@ impl GlobalState {
             .zip(self.source_root_kinds.iter())
             .map(|(file_set, kind)| match kind {
                 SourceRootKind::SourceSet => SourceRoot::new(file_set),
-                SourceRootKind::Library(_) => SourceRoot::library(file_set),
+                SourceRootKind::Library(_) | SourceRootKind::DecompiledLibrary(_) => {
+                    SourceRoot::library(file_set)
+                }
             })
             .collect();
         if let Some(detached) = detached {

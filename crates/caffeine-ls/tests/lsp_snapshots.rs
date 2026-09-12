@@ -2236,7 +2236,34 @@ exit 0
         );
     }
 
-    let lsp = create_lsp_with_config(default_client_config(), |root| {
+    // A decompiler is configured — and its JVM fails loudly if it is ever run —
+    // so the test proves the *source* path wins: a library that ships sources
+    // must never reach the decompiler.
+    let jdk = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(jdk.path().join("bin")).unwrap();
+    let decompiler_runs = jdk.path().join("runs.log");
+    let java = jdk.path().join("bin/java");
+    std::fs::write(
+        &java,
+        format!(
+            "#!/bin/sh\necho run >> {}\nexit 1\n",
+            decompiler_runs.display()
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&java).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&java, perms).unwrap();
+    let jars = tempfile::tempdir().unwrap();
+    let cfr = jars.path().join("cfr.jar");
+    std::fs::write(&cfr, b"not a jar; the fake java never reads it").unwrap();
+
+    let mut config = default_client_config();
+    config["java_home"] = json!(jdk.path());
+    config["decompiler"] = json!("cfr");
+    config["decompiler_jars"] = json!({ "cfr": &cfr });
+
+    let lsp = create_lsp_with_config(config, |root| {
         std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
         std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
         std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
@@ -2435,6 +2462,195 @@ exit 0
         report["items"].as_array().map(Vec::len),
         Some(0),
         "library sources report no diagnostics: {report:?}"
+    );
+
+    // Every navigation above resolved into an attached source archive, so the
+    // decompiler — whose JVM fails if it is ever started — was never consulted.
+    assert!(
+        !decompiler_runs.exists(),
+        "a library with sources must never be decompiled"
+    );
+}
+
+/// A dependency jar with **no** sources at all: `textDocument/definition` on a
+/// class it declares has nothing to read, so the server decompiles the class on
+/// demand — off the main loop, since a JVM start costs seconds — materializes
+/// the Java under the decompiled view root, and answers with that location.
+///
+/// The fake JDK's `bin/java` stands in for the decompiler: it writes the Java
+/// the real tool would have produced and appends a line to a run log, so the
+/// second request can be proven not to start a second JVM. The jar file itself
+/// is never read (the server only checks that it exists).
+#[test]
+fn decompiled_library_definition_materializes_and_navigates() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let foo_source =
+        "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n}\n";
+    let app_path = "/src/main/java/app/App.java";
+
+    // The "JDK": a `bin/java` that finds its output directory — CFR is handed
+    // `--outputdir <dir>`, anything else the destination as the last argument —
+    // and writes the Java the decompiler would have produced.
+    let jdk = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(jdk.path().join("bin")).unwrap();
+    let produced = jdk.path().join("Foo.java");
+    std::fs::write(&produced, foo_source).unwrap();
+    let runs = jdk.path().join("runs.log");
+    let java = jdk.path().join("bin/java");
+    std::fs::write(
+        &java,
+        format!(
+            r#"#!/bin/sh
+echo run >> {runs}
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--outputdir" ]; then out="$arg"; fi
+  prev="$arg"
+  last="$arg"
+done
+if [ -z "$out" ]; then out="$last"; fi
+mkdir -p "$out/com/example"
+cp {produced} "$out/com/example/Foo.java"
+"#,
+            runs = runs.display(),
+            produced = produced.display(),
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&java).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&java, perms).unwrap();
+
+    let jars = tempfile::tempdir().unwrap();
+    let cfr = jars.path().join("cfr.jar");
+    std::fs::write(&cfr, b"not a jar; the fake java never reads it").unwrap();
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{"workspace_name":"demo","projects":[{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[{"type":"jar","path":"'$PWD'/lib/foo.jar","origin":"flat-file"}],"test_classpath":[],"java_language_version":"21","java_home":"'$JAVA_HOME'"}]}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#,
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this test.
+    unsafe {
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+
+    let lsp = create_lsp_with_config(
+        json!({
+            "java_home": jdk.path(),
+            "decompiler": "cfr",
+            "decompiler_jars": { "cfr": &cfr },
+        }),
+        |root| {
+            std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+            std::fs::create_dir_all(root.join("src/main/java/app")).unwrap();
+            std::fs::write(root.join("src/main/java/app/App.java"), app_source).unwrap();
+            // No `lib/foo-sources.jar`: the class has no declaration to read.
+            lsp_test::classfile::build_jar(
+                &root.join("lib/foo.jar"),
+                &[(
+                    "com/example/Foo.class",
+                    lsp_test::classfile::class_bytes(
+                        "com/example/Foo",
+                        "java/lang/Object",
+                        &[],
+                        &[("greet", 1)],
+                    ),
+                )],
+            )
+            .unwrap();
+        },
+    );
+
+    let jvm_runs = || {
+        std::fs::read_to_string(&runs)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+
+    lsp.open_document(app_path);
+    lsp.wait_until_workspace_is_loaded();
+    assert_eq!(jvm_runs(), 0, "loading the workspace decompiles nothing");
+
+    let params = json!({
+        "textDocument": { "uri": lsp.uri(app_path) },
+        "position": {
+            "line": position_of(app_source, "com.example.Foo()").0,
+            "character": position_of(app_source, "com.example.Foo()").1,
+        },
+    });
+    let response = lsp.request("textDocument/definition", params.clone());
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let path = uri.to_file_path().expect("a file URI");
+    let cache_decompiled = lsp.cache_dir().join("decompile").join("v1").join("cfr");
+    assert!(
+        path.starts_with(&cache_decompiled),
+        "expected a path under {}, got {}",
+        cache_decompiled.display(),
+        path.display()
+    );
+    assert!(
+        path.ends_with("com/example/Foo.java"),
+        "the class is declared by `Foo`: {}",
+        path.display()
+    );
+    assert!(path.is_file(), "{}", path.display());
+    assert_definition_name(
+        &locations[0]["range"],
+        foo_source,
+        "public class Foo",
+        "Foo",
+    );
+    assert_eq!(
+        java_file_names(&cache_decompiled),
+        vec!["Foo.java".to_string()],
+        "exactly the class that was asked for was decompiled"
+    );
+    assert_eq!(jvm_runs(), 1, "one decompile, one JVM start");
+
+    // The decompiled file is loaded now, so the second request answers from the
+    // database: no second ref, no second JVM.
+    let second = lsp.request("textDocument/definition", params);
+    assert_eq!(
+        second, response,
+        "the deferred path runs once per class, not once per request"
+    );
+    assert_eq!(jvm_runs(), 1, "the materialized file is reused");
+
+    // A decompiled library file is read-only third-party code: its report is
+    // empty, exactly like a materialized source.
+    let report = lsp.request(
+        "textDocument/diagnostic",
+        json!({ "textDocument": { "uri": locations[0]["uri"].clone() } }),
+    );
+    assert_eq!(
+        report["items"].as_array().map(Vec::len),
+        Some(0),
+        "decompiled library files report no diagnostics: {report:?}"
     );
 }
 

@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use ide::{
-    Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, LibraryId, LibraryInfo, LibraryKind,
-    LibrarySources, ProjectGraphData, SourceSetId,
+    Analysis, AnalysisHost, Change, Classpath, ClasspathEntry, LibraryFileRef, LibraryId,
+    LibraryInfo, LibraryKind, LibrarySources, ProjectGraphData, SourceSetId,
 };
 use ide_db::base_db::{SourceRoot, SourceRootId};
 use lsp_test::classfile::{
@@ -385,11 +385,14 @@ fn library_without_sources_yields_no_target() {
 
     let pending = fixture
         .analysis()
-        .pending_library_sources(fixture.app, fixture.offset("new com.example.Foo()"))
+        .pending_library_files(fixture.app, fixture.offset("new com.example.Foo()"))
         .unwrap();
     assert_eq!(pending.len(), 1, "expected one pending source: {pending:?}");
-    assert!(pending[0].path.as_str().ends_with("com/example/Foo.java"));
-    assert!(pending[0].archive.as_str().ends_with("deps-sources.jar"));
+    let LibraryFileRef::Source { archive, path, .. } = &pending[0] else {
+        panic!("expected a pending source, got {:?}", pending[0]);
+    };
+    assert!(path.as_str().ends_with("com/example/Foo.java"));
+    assert!(archive.as_str().ends_with("deps-sources.jar"));
 }
 
 #[test]
@@ -459,9 +462,9 @@ fn unloaded_hierarchy_reports_every_owner_in_one_round() {
 
     let pending = fixture
         .analysis()
-        .pending_library_sources(fixture.app, fixture.offset("child.greet(1)"))
+        .pending_library_files(fixture.app, fixture.offset("child.greet(1)"))
         .unwrap();
-    let entries: Vec<&str> = pending.iter().map(|source| source.entry.as_ref()).collect();
+    let entries: Vec<&str> = pending.iter().map(pending_source_entry).collect();
     assert_eq!(pending.len(), 2, "expected both owners, got {pending:?}");
     assert!(entries.contains(&"com/example/Greeter.java"), "{entries:?}");
     assert!(entries.contains(&"com/example/Root.java"), "{entries:?}");
@@ -487,15 +490,18 @@ fn recorded_member_and_type_reference_agree_on_one_pending_source() {
 
     let pending = fixture
         .analysis()
-        .pending_library_sources(fixture.app, offset)
+        .pending_library_files(fixture.app, offset)
         .unwrap();
     assert_eq!(
         pending.len(),
         1,
         "expected one deduplicated pending source: {pending:?}"
     );
-    assert!(pending[0].path.as_str().ends_with("com/example/Foo.java"));
-    assert!(pending[0].archive.as_str().ends_with("deps-sources.jar"));
+    let LibraryFileRef::Source { archive, path, .. } = &pending[0] else {
+        panic!("expected a pending source, got {:?}", pending[0]);
+    };
+    assert!(path.as_str().ends_with("com/example/Foo.java"));
+    assert!(archive.as_str().ends_with("deps-sources.jar"));
 }
 
 #[test]
@@ -520,9 +526,9 @@ fn hover_on_an_unloaded_member_reports_the_pending_source() {
 
     let pending = fixture
         .analysis()
-        .pending_library_sources(fixture.app, fixture.offset("f.greet(1)"))
+        .pending_library_files(fixture.app, fixture.offset("f.greet(1)"))
         .unwrap();
-    let entries: Vec<&str> = pending.iter().map(|source| source.entry.as_ref()).collect();
+    let entries: Vec<&str> = pending.iter().map(pending_source_entry).collect();
     assert!(
         entries.contains(&"com/example/Foo.java"),
         "the declaring source must be pending: {entries:?}"
@@ -539,4 +545,15 @@ fn parameters_with_no_source_name_fall_back_to_an_index() {
         fixture.hover("p.combine(1, 2)").as_deref(),
         Some("void combine(int first, int arg1)")
     );
+}
+
+/// The archive entry of a pending file the load has to read. A decompile ref is
+/// not a source entry and fails the test that asked for one.
+fn pending_source_entry(file: &LibraryFileRef) -> &str {
+    match file {
+        LibraryFileRef::Source { entry, .. } => entry.as_ref(),
+        LibraryFileRef::Decompile { class, .. } => {
+            panic!("expected a pending source entry, got a decompile of {class}")
+        }
+    }
 }

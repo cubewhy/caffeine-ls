@@ -17,7 +17,7 @@
 use rowan::TextSize;
 use vfs::FileId;
 
-use super::{LibrarySourceRef, NavigationTarget, RootDatabase};
+use super::{LibraryFileRef, NavigationTarget, RootDatabase};
 
 /// The declarations the reference at `offset` resolves to in a Kotlin file.
 /// Nothing does: see the module documentation.
@@ -29,12 +29,12 @@ pub(super) fn definition(
     Vec::new()
 }
 
-/// The library sources a Kotlin reference would need. Nothing resolves, so
+/// The library files a Kotlin reference would need. Nothing resolves, so
 /// nothing has to be materialized.
-pub(super) fn pending_library_sources(
+pub(super) fn pending_library_files(
     _db: &RootDatabase,
     _file: FileId,
     _offset: TextSize,
-) -> Vec<LibrarySourceRef> {
+) -> Vec<LibraryFileRef> {
     Vec::new()
 }

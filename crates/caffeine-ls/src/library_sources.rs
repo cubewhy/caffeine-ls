@@ -15,18 +15,16 @@
 use std::{
     fs::{self, File},
     io::Read,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use ide::{LibraryId, LibraryKind, LibrarySources};
 use project_model::{SdkData, WorkspaceGraph};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use vfs::AbsPathBuf;
 use zip::ZipArchive;
 
-/// Version of the on-disk source cache layout. Bumping it invalidates every
-/// previously materialized file (a directory per version).
-pub(crate) const SOURCE_FORMAT_VERSION: u32 = 1;
+use crate::library_view::{self, LibraryView};
 
 /// The SDK's platform class archive: `lib/modules` (jimage), then the legacy
 /// `lib/rt.jar`, then the pre-JDK-9 `jre/lib/rt.jar`, first existing wins —
@@ -93,15 +91,6 @@ pub(crate) fn collect_archives(graph: &WorkspaceGraph) -> FxHashMap<LibraryId, A
     out
 }
 
-/// The cache directory a library's materialized sources live in:
-/// `<cache_dir>/sources/v{SOURCE_FORMAT_VERSION}/<library-id-hex>/`.
-pub(crate) fn root_dir(cache_dir: &Path, library: LibraryId) -> PathBuf {
-    cache_dir
-        .join("sources")
-        .join(format!("v{SOURCE_FORMAT_VERSION}"))
-        .join(library.to_string())
-}
-
 /// Creates a materialization root per library with sources (empty directories:
 /// a library whose sources are never read costs one directory) and deletes the
 /// directories of libraries no longer on the classpath.
@@ -109,12 +98,10 @@ pub(crate) fn prepare_roots(
     cache_dir: &Path,
     archives: &FxHashMap<LibraryId, AbsPathBuf>,
 ) -> FxHashMap<LibraryId, LibrarySources> {
-    let base = cache_dir
-        .join("sources")
-        .join(format!("v{SOURCE_FORMAT_VERSION}"));
+    let view = LibraryView::Source;
     let mut out: FxHashMap<LibraryId, LibrarySources> = FxHashMap::default();
     for (id, archive) in archives {
-        let root = root_dir(cache_dir, *id);
+        let root = library_view::root_dir(cache_dir, &view, *id);
         if let Err(err) = fs::create_dir_all(&root) {
             tracing::warn!(library = %id, "failed to create library source root: {err}");
             continue;
@@ -127,14 +114,15 @@ pub(crate) fn prepare_roots(
             },
         );
     }
-    prune_roots(&base, &out);
+    let live: FxHashSet<LibraryId> = out.keys().copied().collect();
+    prune_roots(&library_view::view_base(cache_dir, &view), &live);
     out
 }
 
-/// Removes the previously materialized files of libraries that are no longer
-/// on the classpath. A failure to remove is logged, not fatal — mirrors
-/// `ide::Analysis::prune_stub_cache`.
-fn prune_roots(base: &Path, live: &FxHashMap<LibraryId, LibrarySources>) {
+/// Removes the materialized files of libraries that are no longer on the
+/// classpath, under a view's base directory. A failure to remove is logged, not
+/// fatal — mirrors `ide::Analysis::prune_stub_cache`.
+pub(crate) fn prune_roots(base: &Path, live: &FxHashSet<LibraryId>) {
     let Ok(entries) = fs::read_dir(base) else {
         return;
     };
@@ -143,7 +131,7 @@ fn prune_roots(base: &Path, live: &FxHashMap<LibraryId, LibrarySources>) {
         let Some(name) = name.to_str() else {
             continue;
         };
-        let is_live = live.keys().any(|id| id.to_string() == name);
+        let is_live = live.iter().any(|id| id.to_string() == name);
         if !is_live && let Err(err) = fs::remove_dir_all(entry.path()) {
             tracing::warn!(
                 dir = %entry.path().display(),

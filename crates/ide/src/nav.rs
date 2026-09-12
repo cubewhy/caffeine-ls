@@ -37,7 +37,9 @@
 //!
 //! When a reference resolves into a library declaration whose source is not
 //! loaded yet, it is reported as pending rather than being answered: the LSP
-//! layer reads the archive entry into the database and re-runs the request.
+//! layer reads the archive entry — or decompiles the class, when the library
+//! ships no sources at all ([`LibraryFileRef`]) — into the database and re-runs
+//! the request.
 
 use std::collections::VecDeque;
 
@@ -165,8 +167,9 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
 
     // No recorded resolution: the reference is resolved through the classpath
     // by name and arity. A library declaration that is not materialized yet
-    // cannot be answered here — the LSP layer reads it into the database and
-    // re-runs the request (see [`pending_library_sources`]).
+    // cannot be answered here — the LSP layer loads it (reads the archive entry,
+    // or decompiles the class) and re-runs the request (see
+    // [`pending_library_files`]).
     let declaration = declaration_reference(db, file, offset);
     if !declaration.is_empty() {
         return targets(db, declaration);
@@ -623,7 +626,7 @@ fn member_resolution(
             decl: hir::LibrarySourceDecl::Pending { entry, path },
             ..
         } => match hir::library_sources(db, library) {
-            Some(sources) => vec![Resolution::Pending(LibrarySourceRef {
+            Some(sources) => vec![Resolution::Pending(LibraryFileRef::Source {
                 library,
                 archive: sources.archive,
                 entry,
@@ -631,6 +634,15 @@ fn member_resolution(
             })],
             None => Vec::new(),
         },
+        OwnerLookup::Library {
+            library,
+            decl: hir::LibrarySourceDecl::Decompiled { class, path },
+            ..
+        } => vec![Resolution::Pending(LibraryFileRef::Decompile {
+            library,
+            class,
+            path,
+        })],
         OwnerLookup::Unresolved => Vec::new(),
     }
 }
@@ -754,24 +766,26 @@ fn switch_scrutinee_of(bodies: &BodyTree, offset: TextSize, label: ExprId) -> Op
     candidates.first().map(|(_, scrutinee)| *scrutinee)
 }
 
-/// The library source files a reference resolves into but which are not loaded
-/// into the database yet, in resolution order. The LSP layer reads each
-/// `entry` out of `archive` into `path` and re-runs the request.
-pub fn pending_library_sources(
+/// The library files a reference resolves into but which are not loaded into
+/// the database yet, in resolution order. The LSP layer reads each one — an
+/// archive entry out of its archive, or a class through the decompiler — into
+/// `path` and re-runs the request.
+pub fn pending_library_files(
     db: &RootDatabase,
     file: FileId,
     offset: TextSize,
-) -> Vec<LibrarySourceRef> {
+) -> Vec<LibraryFileRef> {
     if matches!(
         hir::file_item_tree(db, file).language,
         LanguageKind::Kotlin | LanguageKind::KotlinScript
     ) {
-        return kotlin::pending_library_sources(db, file, offset);
+        return kotlin::pending_library_files(db, file, offset);
     }
     // The recorded resolution names the declaring source; a declaration-side
     // reference names its own; and the classpath walk names every unloaded
     // owner along a member's hierarchy, so a hover — which still resolves
     // through [`resolve_at`] — materializes everything it needs in one round.
+    // One load per file: the walk reaches the same owner from several types.
     let mut seen: FxHashSet<(hir::LibraryId, Arc<str>)> = FxHashSet::default();
     let mut out = Vec::new();
     for resolution in recorded_reference(db, file, offset)
@@ -779,24 +793,59 @@ pub fn pending_library_sources(
         .chain(declaration_reference(db, file, offset))
         .chain(resolve_at(db, file, offset))
     {
-        if let Resolution::Pending(source) = resolution
-            && seen.insert((source.library, source.entry.clone()))
-        {
-            out.push(source);
+        let pending = match resolution {
+            Resolution::Pending(pending) => pending,
+            // A member the classfile stub declares on a *sourceless* owner:
+            // hover renders its signature without the source, but a location
+            // needs the decompiled file, so the ref is collected here.
+            Resolution::LibraryMember {
+                library,
+                decl: hir::LibrarySourceDecl::Decompiled { class, path },
+                ..
+            } => LibraryFileRef::Decompile {
+                library,
+                class,
+                path,
+            },
+            _ => continue,
+        };
+        if seen.insert(pending.load_key()) {
+            out.push(pending);
         }
     }
     out
 }
 
-/// A library source file a reference resolves into but which is not loaded
-/// into the database yet: the LSP layer reads `entry` out of `archive` into
+/// A library file a reference resolves into but which is not loaded into the
+/// database yet: either the archive entry holding a class's sources, or the
+/// class a decompiler has to produce a view of. The LSP layer materializes
 /// `path` and re-runs the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LibrarySourceRef {
-    pub library: hir::LibraryId,
-    pub archive: AbsPathBuf,
-    pub entry: Arc<str>,
-    pub path: AbsPathBuf,
+pub enum LibraryFileRef {
+    /// An entry to read out of the archive.
+    Source {
+        library: hir::LibraryId,
+        archive: AbsPathBuf,
+        entry: Arc<str>,
+        path: AbsPathBuf,
+    },
+    /// A class to decompile into `path`.
+    Decompile {
+        library: hir::LibraryId,
+        class: Arc<str>,
+        path: AbsPathBuf,
+    },
+}
+
+impl LibraryFileRef {
+    /// What makes two refs the same load: the library plus the archive entry,
+    /// or the class to decompile.
+    fn load_key(&self) -> (hir::LibraryId, Arc<str>) {
+        match self {
+            LibraryFileRef::Source { library, entry, .. } => (*library, Arc::clone(entry)),
+            LibraryFileRef::Decompile { library, class, .. } => (*library, Arc::clone(class)),
+        }
+    }
 }
 
 /// What the reference at an offset resolves to through the classpath.
@@ -827,9 +876,9 @@ enum Resolution {
         arity: Option<usize>,
         decl: hir::LibrarySourceDecl,
     },
-    /// A library source entry that has to be materialized before the reference
-    /// can be answered.
-    Pending(LibrarySourceRef),
+    /// A library file that has to be materialized before the reference can be
+    /// answered: an archive entry to read, or a class to decompile.
+    Pending(LibraryFileRef),
 }
 
 /// The classpath resolutions of the innermost navigable expression at
@@ -1025,7 +1074,7 @@ fn member_in_hierarchy(
     let scope = hir_ty::scope_for_file(db, file);
     let mut queue = VecDeque::from([receiver]);
     let mut seen: FxHashSet<Name> = FxHashSet::default();
-    let mut pending: Vec<LibrarySourceRef> = Vec::new();
+    let mut pending: Vec<LibraryFileRef> = Vec::new();
     while let Some(ty) = queue.pop_front() {
         // A primitive or array receiver has no reference type to search.
         let Some((fqn, _)) = ty.as_reference(db) else {
@@ -1063,7 +1112,7 @@ enum OwnerLookup {
 /// The declared member named `name` of one owner class.
 enum MemberLookup {
     Found(Resolution),
-    PendingSource(LibrarySourceRef),
+    PendingSource(LibraryFileRef),
     Absent,
 }
 
@@ -1121,7 +1170,7 @@ fn members_of_owner(
             decl: hir::LibrarySourceDecl::Pending { entry, path },
             ..
         } => match hir::library_sources(db, library) {
-            Some(sources) => MemberLookup::PendingSource(LibrarySourceRef {
+            Some(sources) => MemberLookup::PendingSource(LibraryFileRef::Source {
                 library,
                 archive: sources.archive,
                 entry,
@@ -1129,7 +1178,69 @@ fn members_of_owner(
             }),
             None => MemberLookup::Absent,
         },
+        // The owner ships no sources at all, so its member *set* is only known
+        // once the class has been decompiled — but the classfile stub already
+        // knows which members exist and how they are typed, which is all a
+        // rendered signature needs. A member the stub declares is answered as
+        // such (hover renders it without starting a JVM) while its *location*
+        // still waits for the decompiler (goto-definition defers on the ref).
+        OwnerLookup::Library {
+            library,
+            fqn,
+            decl: hir::LibrarySourceDecl::Decompiled { class, path },
+        } => {
+            if library_declares_member(db, library, &fqn, name, use_kind, params.arity()) {
+                MemberLookup::Found(Resolution::LibraryMember {
+                    library,
+                    owner_fqn: fqn,
+                    name: name.to_owned(),
+                    use_kind,
+                    arity: params.arity(),
+                    decl: hir::LibrarySourceDecl::Decompiled { class, path },
+                })
+            } else {
+                MemberLookup::Absent
+            }
+        }
         OwnerLookup::Unresolved => MemberLookup::Absent,
+    }
+}
+
+/// Whether the classfile stub of `owner_fqn` declares the member `name` with
+/// `arity` parameters — the only way to ask a sourceless owner about its
+/// members without running a decompiler over it.
+fn library_declares_member(
+    db: &RootDatabase,
+    library: hir::LibraryId,
+    owner_fqn: &Name,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+) -> bool {
+    let Some(record) = library_owner_stub(db, library, owner_fqn) else {
+        return false;
+    };
+    let hir::ClassOrModuleStub::Class(stub) = record.as_ref() else {
+        return false;
+    };
+    let interner = &db.hir_state().interner;
+    match use_kind {
+        Use::Field => stub
+            .fields
+            .iter()
+            .any(|field| interner.resolve(&field.name) == name),
+        // §8.8/[JVMS §4.6]: a constructor is declared `<init>` in a classfile,
+        // whatever the source calls it.
+        Use::Method | Use::Constructor => {
+            let classfile_name = match use_kind {
+                Use::Constructor => "<init>",
+                _ => name,
+            };
+            stub.methods.iter().any(|method| {
+                interner.resolve(&method.name) == classfile_name
+                    && arity.is_none_or(|arity| method.params.len() == arity)
+            })
+        }
     }
 }
 
@@ -1341,10 +1452,19 @@ fn library_class_resolution(
             else {
                 return Vec::new();
             };
-            vec![Resolution::Pending(LibrarySourceRef {
+            vec![Resolution::Pending(LibraryFileRef::Source {
                 library,
                 archive,
                 entry,
+                path,
+            })]
+        }
+        // The class ships no sources: the decompiler has to produce (and the
+        // caller materialize) its declaring view before it can be answered.
+        Some(hir::LibrarySourceDecl::Decompiled { class, path }) => {
+            vec![Resolution::Pending(LibraryFileRef::Decompile {
+                library,
+                class,
                 path,
             })]
         }
@@ -1373,6 +1493,30 @@ fn decl_target(
     })
 }
 
+/// The parsed classfile stub of the class `owner_fqn` in `library`, or `None`
+/// when the library has no such class.
+///
+/// The class index is keyed by binary names
+/// ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)),
+/// which is the spelling `Resolved::fqn` hands out for a library class.
+fn library_owner_stub(
+    db: &RootDatabase,
+    library: hir::LibraryId,
+    owner_fqn: &Name,
+) -> Option<Arc<hir::ClassOrModuleRecord>> {
+    let symbol = db.hir_state().interner.get_or_intern(owner_fqn.as_str());
+    let index = hir::library_name_index(db, library);
+    let (entry_idx, entry) = index.lookup(symbol)?;
+    hir::class_record(
+        db,
+        &hir::ResolvedClass {
+            library,
+            entry_idx,
+            entry: entry.clone(),
+        },
+    )
+}
+
 /// The rendered signature of a resolved library member: types, flags and the
 /// return type come from the classfile stub (the authority); parameter names
 /// are the classfile's `MethodParameters` names when it has them
@@ -1391,22 +1535,11 @@ fn library_member_signature(
     arity: Option<usize>,
     source_file: Option<FileId>,
 ) -> Option<HoverInfo> {
-    // The class index is keyed by binary names
-    // ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)),
-    // which is the spelling `Resolved::fqn` hands out for a library class.
-    let interner = &db.hir_state().interner;
-    let symbol = interner.get_or_intern(owner_fqn.as_str());
-    let index = hir::library_name_index(db, library);
-    let (entry_idx, entry) = index.lookup(symbol)?;
-    let resolved = hir::ResolvedClass {
-        library,
-        entry_idx,
-        entry: entry.clone(),
-    };
-    let record = hir::class_record(db, &resolved)?;
+    let record = library_owner_stub(db, library, owner_fqn)?;
     let hir::ClassOrModuleStub::Class(stub) = record.as_ref() else {
         return None;
     };
+    let interner = &db.hir_state().interner;
 
     match use_kind {
         Use::Field => {
@@ -1551,7 +1684,9 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
     // layer materializes the file and the retried hover shows the merged
     // signature — answering the expression's type (or the bytecode-only
     // rendering) here would hide the merge on the first, and most likely only,
-    // hover.
+    // hover. A *sourceless* owner has no source to wait for: the LSP layer
+    // never defers a hover for a decompile, and such a reference is either
+    // rendered from its classfile stub (see below) or answered `None`.
     match resolve_at(db, file, offset).into_iter().next() {
         Some(Resolution::Pending(_)) => return None,
         Some(Resolution::LibraryMember {
@@ -1563,7 +1698,11 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
             decl,
         }) => {
             let source_file = match decl {
-                hir::LibrarySourceDecl::Loaded { file, .. } => file,
+                hir::LibrarySourceDecl::Loaded { file, .. } => Some(file),
+                // A sourceless owner: only its parameter *names* would come out
+                // of the decompiled file, and they are not worth a JVM start on
+                // hover — the classfile stub already renders the signature.
+                hir::LibrarySourceDecl::Decompiled { .. } => None,
                 hir::LibrarySourceDecl::Pending { .. } => return None,
             };
             return library_member_signature(
@@ -1573,7 +1712,7 @@ pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverI
                 &name,
                 use_kind,
                 arity,
-                Some(source_file),
+                source_file,
             );
         }
         // A declaration has no merged signature of its own, and a `Variable`

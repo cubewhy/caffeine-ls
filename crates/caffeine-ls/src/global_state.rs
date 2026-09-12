@@ -12,7 +12,7 @@ use std::time::Instant;
 use triomphe::Arc;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ide::{Analysis, AnalysisHost, Cancellable, LibraryId, LibrarySources};
+use ide::{Analysis, AnalysisHost, Cancellable, LibraryId, LibraryInfo, LibrarySources};
 use lsp_server::{ErrorCode, Response};
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 
@@ -37,6 +37,9 @@ pub enum BackgroundTaskEvent {
         graph: WorkspaceGraph,
         /// Library → the materialized source roots the driver prepared.
         sources: FxHashMap<LibraryId, LibrarySources>,
+        /// Library → the decompiled-output root the driver prepared. Empty when
+        /// no decompiler is configured.
+        decompiled: FxHashMap<LibraryId, AbsPathBuf>,
     },
     SyncFailed {
         message: String,
@@ -62,12 +65,20 @@ pub enum BackgroundTaskEvent {
     AsyncRequestAborted {
         id: lsp_server::RequestId,
     },
-    /// A request handler needs library source files in the database before it
-    /// can answer: the main loop reads each file out of its archive into the
-    /// cache, loads it into the vfs, and re-runs the request on a fresh
-    /// snapshot (see `handlers::dispatch::DeferForLibrarySources`).
-    LoadLibrarySources {
-        files: Vec<crate::handlers::dispatch::LibrarySourceFile>,
+    /// A request handler needs library files in the database before it can
+    /// answer: the main loop reads each archive entry into the cache and
+    /// decompiles each class, loads the results into the vfs, and re-runs the
+    /// request on a fresh snapshot (see `handlers::dispatch::DeferForLibraryFiles`).
+    LoadLibraryFiles {
+        files: Vec<ide::LibraryFileRef>,
+        retry: (lsp_server::RequestId, PendingRequest),
+    },
+    /// The decompiled files the worker produced, and the per-class failures.
+    /// The retry is pushed once the files are in the vfs, exactly as the
+    /// inline source path does.
+    LibraryDecompiled {
+        files: Vec<(vfs::VfsPath, Vec<u8>)>,
+        failed: Vec<(LibraryId, Arc<str>, String)>,
         retry: (lsp_server::RequestId, PendingRequest),
     },
     NotifyUser {
@@ -103,6 +114,10 @@ pub(crate) enum SourceRootKind {
     SourceSet,
     /// A read-only root holding a library's materialized sources.
     Library(LibraryId),
+    /// A read-only root holding a library's decompiled output. Read-only for
+    /// the same reason as [`SourceRootKind::Library`]: the decompiler wrote it,
+    /// the client only reads it.
+    DecompiledLibrary(LibraryId),
 }
 
 pub(crate) type ReqHandler = fn(&mut GlobalState, lsp_server::Response);
@@ -215,6 +230,14 @@ pub struct GlobalState {
     /// Gitignore-aware matchers for the loaded source roots, used to filter
     /// out ignored files delivered by the loader.
     pub(crate) source_root_matchers: Vec<(AbsPathBuf, ignore::IncrementalIgnore)>,
+    /// The registered libraries of the loaded workspace: the classfile archive
+    /// of each, which is what a decompile reads a class's bytes out of and what
+    /// it hands the decompiler as a classpath. Empty before the first load.
+    pub(crate) library_archives: FxHashMap<LibraryId, LibraryInfo>,
+    /// Whether a decompiler failure has already been reported to the user. A
+    /// broken JDK or jar fails every navigation, and one warning is a diagnosis
+    /// where one per navigation is noise.
+    pub(crate) decompiler_error_reported: bool,
 }
 
 impl GlobalState {
@@ -262,6 +285,8 @@ impl GlobalState {
             file_set_config: None,
             source_root_kinds: Vec::new(),
             source_root_matchers: Vec::new(),
+            library_archives: FxHashMap::default(),
+            decompiler_error_reported: false,
         }
     }
 

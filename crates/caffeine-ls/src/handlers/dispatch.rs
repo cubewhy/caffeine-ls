@@ -1,40 +1,30 @@
 use crossbeam_channel::Sender;
-use ide::LibraryId;
+use ide::LibraryFileRef;
 use ide_db::base_db::salsa::Cancelled;
 use lsp_server::{Notification, Request};
 use serde::de::DeserializeOwned;
-use triomphe::Arc;
-use vfs::AbsPathBuf;
 
 use crate::{
     GlobalState,
     global_state::{BackgroundTaskEvent, GlobalStateSnapshot, PendingRequest},
 };
 
-/// Returned by a request handler that needs library source files in the
-/// database before it can answer. The main loop materializes and loads them,
-/// then re-runs the request on a fresh snapshot — the same path a pending-write
-/// cancellation takes. Only handlers whose LSP result is `Option`-shaped
-/// (definition, hover) may return it: the guarded retry answers `null`.
+/// Returned by a request handler that needs library files in the database
+/// before it can answer — archive entries to read, or classes to decompile. The
+/// main loop materializes and loads them, then re-runs the request on a fresh
+/// snapshot — the same path a pending-write cancellation takes. Only handlers
+/// whose LSP result is `Option`-shaped (definition, hover) may return it: the
+/// guarded retry answers `null`.
 #[derive(Debug)]
-pub(crate) struct DeferForLibrarySources(pub Vec<LibrarySourceFile>);
+pub(crate) struct DeferForLibraryFiles(pub Vec<LibraryFileRef>);
 
-impl std::fmt::Display for DeferForLibrarySources {
+impl std::fmt::Display for DeferForLibraryFiles {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "deferring for {} library source files", self.0.len())
+        write!(f, "deferring for {} library files", self.0.len())
     }
 }
 
-impl std::error::Error for DeferForLibrarySources {}
-
-/// One source file to read out of a library archive and load.
-#[derive(Debug)]
-pub(crate) struct LibrarySourceFile {
-    pub library: LibraryId,
-    pub archive: AbsPathBuf,
-    pub entry: Arc<str>,
-    pub path: AbsPathBuf,
-}
+impl std::error::Error for DeferForLibraryFiles {}
 
 pub(crate) struct RequestDispatcher<'a> {
     pub(crate) req: Option<Request>,
@@ -155,8 +145,8 @@ fn run_and_report<R>(
 /// [`BackgroundTaskEvent::AsyncRequestAborted`]; the main loop already replied
 /// `RequestCancelled`, so no re-queue happens.
 ///
-/// A handler that returns [`DeferForLibrarySources`] hands its files to the
-/// main loop ([`BackgroundTaskEvent::LoadLibrarySources`]) and is re-run with
+/// A handler that returns [`DeferForLibraryFiles`] hands its files to the
+/// main loop ([`BackgroundTaskEvent::LoadLibraryFiles`]) and is re-run with
 /// `allow_defer == false`: the retried run must not defer again, so a failed
 /// materialization answers `null` instead of looping.
 fn retry_closure<R>(
@@ -223,10 +213,10 @@ where
                 });
             }
             Err(err) => {
-                // A handler that needs library source files in the database
-                // before it can answer: hand them to the main loop, which
-                // materializes and loads them and then re-runs the request.
-                match err.downcast::<DeferForLibrarySources>() {
+                // A handler that needs library files in the database before it
+                // can answer: hand them to the main loop, which materializes
+                // and loads them and then re-runs the request.
+                match err.downcast::<DeferForLibraryFiles>() {
                     Ok(defer) => {
                         if allow_defer {
                             let run = retry_closure::<R>(
@@ -236,7 +226,7 @@ where
                                 retry_params,
                                 false,
                             );
-                            let _ = task_sender.send(BackgroundTaskEvent::LoadLibrarySources {
+                            let _ = task_sender.send(BackgroundTaskEvent::LoadLibraryFiles {
                                 files: defer.0,
                                 retry: (id, run),
                             });
