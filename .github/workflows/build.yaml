@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: "25"
           distribution: "temurin"
@@ -90,14 +90,22 @@ jobs:
       - name: Fetch decompiler jars
         run: cargo xtask prepare
 
-      # `cross` builds inside a container that ships no JDK, but
-      # `project-model`'s build script runs Gradle to build the Maven sidecar
-      # jar. Bind-mount the runner's Temurin JDK and give the Gradle wrapper a
-      # writable home inside the container.
+      # `cross` builds inside a container that has neither a JDK nor the
+      # runner's system paths, while `project-model`'s build script runs Gradle
+      # to build the Maven sidecar jar. The runner's JDK is a symlink farm
+      # (`.../Java_Temurin-Hotspot_jdk/<version>/x64` -> `/usr/lib/jvm/...`, and
+      # the distribution's `lib/security/cacerts` -> `/etc/ssl/certs/java`), so
+      # mounting it as-is leaves the container with a dangling trust store and
+      # every Gradle download fails with "the trustAnchors parameter must be
+      # non-empty". Copy it dereferenced so the container gets a self-contained
+      # JDK.
       - name: Build Rust binary (cross)
         if: matrix.builder == 'cross'
         run: |
-          export CROSS_CONTAINER_OPTS="-v $JAVA_HOME:$JAVA_HOME:ro -e JAVA_HOME=$JAVA_HOME -e GRADLE_USER_HOME=/tmp/gradle-home"
+          jdk="$RUNNER_TEMP/jdk"
+          cp -rL "$JAVA_HOME" "$jdk"
+          chmod -R a+rX "$jdk"
+          export CROSS_CONTAINER_OPTS="-v $jdk:$jdk:ro -e JAVA_HOME=$jdk -e GRADLE_USER_HOME=/tmp/gradle-home"
           cross build --release --target ${{ matrix.target }}
 
       - name: Build Rust binary (cargo-xwin)
