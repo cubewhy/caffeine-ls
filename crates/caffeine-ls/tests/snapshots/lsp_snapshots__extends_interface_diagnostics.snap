@@ -1,0 +1,26 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "resultId": "4d1235c6c5a2eae7",
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 30
+        },
+        "end": {
+          "line": 2,
+          "character": 37
+        }
+      },
+      "severity": 1,
+      "code": "compiler.err.no.intf.expected.here",
+      "source": "caffeine-ls",
+      "message": "No interface expected here"
+    }
+  ],
+  "kind": "full"
+}

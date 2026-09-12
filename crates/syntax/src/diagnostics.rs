@@ -257,6 +257,11 @@ pub enum JavaDiagnosticCode {
     /// `extends` clause is not an interface. javac: `interface expected here`;
     /// the message is IntelliJ's `Interface expected here`.
     InterfaceExpectedHere,
+    /// §8.1.4: a type named by a class declaration's `extends` clause is an
+    /// interface, not a class — an interface can never be a superclass. javac:
+    /// `no interface expected here`; the message is IntelliJ's `No interface
+    /// expected here` (`class.extends.interface`).
+    NoInterfaceExpectedHere,
     /// §8.4.3.3: a declaration of a method with the same signature as a
     /// `final` method inherited from a superclass or superinterface — a final
     /// method can neither be overridden (instance) nor hidden (static). javac:
@@ -584,6 +589,7 @@ impl JavaDiagnosticCode {
             IllegalModifierCombination => Some("compiler.err.illegal.combination.of.modifiers"),
             CannotInheritFromFinalClass => Some("compiler.err.cant.inherit.from.final"),
             InterfaceExpectedHere => Some("compiler.err.intf.expected.here"),
+            NoInterfaceExpectedHere => Some("compiler.err.no.intf.expected.here"),
             CannotOverrideFinalMethod => Some("compiler.err.override.meth"),
             WeakerAccessPrivileges => Some("compiler.err.override.weaker.access"),
             StaticInstanceClash => Some("compiler.err.override.static"),
@@ -751,6 +757,7 @@ impl JavaDiagnosticCode {
             JavaDiagnosticCode::IllegalModifierCombination => "illegal-combination-of-modifiers",
             JavaDiagnosticCode::CannotInheritFromFinalClass => "cannot-inherit-from-final-class",
             JavaDiagnosticCode::InterfaceExpectedHere => "interface-expected-here",
+            JavaDiagnosticCode::NoInterfaceExpectedHere => "no-interface-expected-here",
             JavaDiagnosticCode::CannotOverrideFinalMethod => "cannot-override-final-method",
             JavaDiagnosticCode::WeakerAccessPrivileges => "weaker-access-privileges",
             JavaDiagnosticCode::StaticInstanceClash => "static-instance-clash",

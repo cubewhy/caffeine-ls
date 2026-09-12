@@ -9,7 +9,8 @@
 //! must implement every inherited abstract method ([§8.1.1.1]), no class may
 //! cycle in its inheritance chain ([§8.1.4], [§9.1.3]), every type named by an
 //! `implements` clause or an interface's `extends` clause must be an interface
-//! ([§8.1.5], [§9.1.3]), and no declaration
+//! ([§8.1.5], [§9.1.3]), a class's `extends` clause must name a class
+//! ([§8.1.4]), and no declaration
 //! may combine modifiers the JLS forbids ([§8.1.1], [§8.4.3]). Red cases
 //! render the diagnostics the declaration checker must report; green cases
 //! confirm legal declarations pass without diagnostics.
@@ -536,6 +537,91 @@ class Base {
 }
 
 class Impl<T extends Base> implements T {
+}
+",
+    )])
+);
+
+// -- red: an extends clause must name a class ([§8.1.4]) ---------------------
+
+snapshot!(
+    extends_interface,
+    check_class_diagnostics(&[(
+        "/src/com/example/Main.java",
+        "\
+package com.example;
+
+public class Main extends Example {
+}
+
+class WithCtor extends Example {
+    WithCtor() {
+    }
+}
+
+interface Example {
+}
+",
+    )])
+);
+
+// -- red: the range covers the written type, qualifiers included ([§8.1.4]) ---
+
+snapshot!(
+    extends_interface_qualified,
+    check_class_diagnostics(&[(
+        "/src/com/example/Qualified.java",
+        "\
+package com.example;
+
+class Outer {
+    interface Inner {
+    }
+}
+
+class UsesJdk extends java.io.Serializable {
+}
+
+class UsesNested extends Outer.Inner {
+}
+",
+    )])
+);
+
+// -- green: a class extends a class ([§8.1.4]) -------------------------------
+
+snapshot!(
+    extends_class,
+    check_class_diagnostics(&[(
+        "/src/com/example/Plain.java",
+        "\
+package com.example;
+
+class Base {
+}
+
+class Plain extends Base {
+}
+
+class Impl extends Base implements java.io.Serializable {
+}
+",
+    )])
+);
+
+// -- boundary: an unresolved name and a type variable are not classified ------
+
+snapshot!(
+    extends_unresolved_and_type_variable,
+    check_class_diagnostics(&[(
+        "/src/com/example/Boundary.java",
+        "\
+package com.example;
+
+class Missing extends Absent {
+}
+
+class TypeVar<T> extends T {
 }
 ",
     )])

@@ -299,6 +299,12 @@ pub enum DeclDiagnostic {
     /// `Interface expected here`. `range` spans the written type reference
     /// (qualified name and type-use annotations included).
     InterfaceExpectedHere { range: Option<rowan::TextRange> },
+    /// §8.1.4: a type named by a class declaration's `extends` clause is an
+    /// interface, not a class — an interface can never be a superclass. javac:
+    /// `no interface expected here`; the message is IntelliJ's `No interface
+    /// expected here`. `range` spans the written type reference (qualified
+    /// name and type-use annotations included).
+    NoInterfaceExpectedHere { range: Option<rowan::TextRange> },
     /// §8.4.3.3: a declaration of a method with the same signature as a
     /// `final` method inherited from a superclass or superinterface — a final
     /// method can neither be overridden (instance) nor hidden (static). javac
@@ -725,6 +731,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::IllegalModifierCombination { .. }
             | DeclDiagnostic::CannotInheritFromFinalClass { .. }
             | DeclDiagnostic::InterfaceExpectedHere { .. }
+            | DeclDiagnostic::NoInterfaceExpectedHere { .. }
             | DeclDiagnostic::UnimplementedAbstractMethod { .. }
             | DeclDiagnostic::CyclicInheritance { .. }
             | DeclDiagnostic::NoDefaultConstructor { .. }
@@ -823,6 +830,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             }
             | DeclDiagnostic::InterfaceExpectedHere {
+                range: name_range, ..
+            }
+            | DeclDiagnostic::NoInterfaceExpectedHere {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::UnimplementedAbstractMethod {
@@ -1307,6 +1317,18 @@ fn check_class(
                 range: first_type_ref_range(db, file, tree, super_ref),
             });
         }
+        // §8.1.4: a class declaration's `extends` clause must name a *class* —
+        // an interface (or annotation type) is never a superclass, so naming
+        // one is a compile-time error (javac: `no interface expected here`;
+        // IntelliJ: `No interface expected here`), reported at the written type
+        // reference. `is_interface_type` yields `None` for a reference it
+        // cannot classify — an unresolved name or a type variable — so only a
+        // *resolved* interface is reported.
+        if subtyping::is_interface_type(db, scope, &super_ty) == Some(true) {
+            out.push(DeclDiagnostic::NoInterfaceExpectedHere {
+                range: type_ref_range(db, file, tree, super_ref),
+            });
+        }
     }
 
     // §8.1.5/[§9.1.3]: each *InterfaceType* named by the `implements` clause of
@@ -1378,6 +1400,11 @@ fn check_class(
             &resolver,
             super_ref,
         )
+        // §8.1.4: a superclass that names an interface is not a class — the
+        // class-required check reports the `extends` clause, and an interface
+        // declares no constructors, so the implicit `super()` has nothing to
+        // resolve and the construction diagnostics stay silent.
+        && subtyping::is_interface_type(db, scope, &super_ty) != Some(true)
     {
         let super_owner = super_ty
             .as_reference(db)
@@ -1438,8 +1465,13 @@ fn check_class(
     // javac reports it for an abstract class's own constructors too.
     if let ItemData::Class(class) = tree.data(item)
         && let Some(super_ref) = &class.super_class
+        && let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref)
+        // §8.1.4: a superclass that names an interface is not a class — the
+        // class-required check reports the `extends` clause, and an interface
+        // declares no constructors, so neither the implicit `super()` nor its
+        // checked exceptions have anything to resolve here.
+        && subtyping::is_interface_type(db, scope, &super_ty) != Some(true)
     {
-        let super_ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
         let super_owner = super_ty
             .as_reference(db)
             .map(|(name, _)| name.clone())

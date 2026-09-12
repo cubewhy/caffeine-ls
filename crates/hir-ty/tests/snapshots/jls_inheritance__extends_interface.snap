@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Main.java:
+package com.example;
+
+public class Main extends Example {
+}
+
+class WithCtor extends Example {
+    WithCtor() {
+    }
+}
+
+interface Example {
+}
+
+@2:26: no-interface-expected-here: No interface expected here
+@5:23: no-interface-expected-here: No interface expected here

@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Plain.java:
+package com.example;
+
+class Base {
+}
+
+class Plain extends Base {
+}
+
+class Impl extends Base implements java.io.Serializable {
+}

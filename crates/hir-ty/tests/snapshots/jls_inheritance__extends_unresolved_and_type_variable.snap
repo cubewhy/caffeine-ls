@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Boundary.java:
+package com.example;
+
+class Missing extends Absent {
+}
+
+class TypeVar<T> extends T {
+}
+
+@2:22: cannot-resolve-type: Cannot resolve symbol 'Absent'

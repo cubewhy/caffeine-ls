@@ -230,6 +230,33 @@ lsp_test!(
 );
 
 lsp_test!(
+    test_extends_interface_diagnostics,
+    r#"
+    //- /src/com/example/Example.java
+    package com.example;
+
+    public interface Example {
+    }
+
+    //- /src/com/example/Main.java
+    package com.example;
+
+    public class Main extends Example {
+    }
+    "#,
+    |lsp| {
+        // Both files must be in the source-set graph before the superclass is
+        // resolved; a pull issued first would report the unloaded-workspace
+        // view instead.
+        lsp.wait_until_workspace_is_loaded();
+        lsp.open_document("/src/com/example/Main.java");
+        let diagnostics = lsp.pull_document_diagnostics("/src/com/example/Main.java");
+
+        insta::assert_json_snapshot!("extends_interface_diagnostics", diagnostics);
+    }
+);
+
+lsp_test!(
     test_kotlin_syntax_diagnostics,
     r#"
     //- /src/Main.kt

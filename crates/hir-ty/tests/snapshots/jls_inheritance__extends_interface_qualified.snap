@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_inheritance.rs
+expression: out
+---
+FILE /src/com/example/Qualified.java:
+package com.example;
+
+class Outer {
+    interface Inner {
+    }
+}
+
+class UsesJdk extends java.io.Serializable {
+}
+
+class UsesNested extends Outer.Inner {
+}
+
+@7:22: no-interface-expected-here: No interface expected here
+@10:25: no-interface-expected-here: No interface expected here
