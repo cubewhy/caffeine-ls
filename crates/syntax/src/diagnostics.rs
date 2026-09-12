@@ -335,6 +335,10 @@ pub enum JavaDiagnosticCode {
     /// that is not the first statement of the constructor body. javac: `call
     /// to {this|super} must be first statement in constructor`.
     ConstructorCallNotFirst,
+    /// §8.8.7: a constructor body contains at most one explicit constructor
+    /// invocation, so a second `this(...)`/`super(...)` statement is
+    /// redundant. javac: `redundant explicit constructor invocation`.
+    RedundantConstructorCall,
     /// §8.8.7.1: a reference to `this`, `super` or an instance member of the
     /// class being constructed before the supertype constructor has been
     /// called. javac: `cannot reference {x} before supertype constructor has
@@ -597,6 +601,7 @@ impl JavaDiagnosticCode {
             NoDefaultConstructor => Some("compiler.err.implicit.super.constructor.undefined"),
             RecursiveConstructorInvocation => Some("compiler.err.recursive.ctor.invocation"),
             ConstructorCallNotFirst => Some("compiler.err.call.to.super.must.be.first.stmt"),
+            RedundantConstructorCall => Some("compiler.err.redundant.superclass.init"),
             CannotReferenceBeforeSuper => Some("compiler.err.cant.ref.before.ctor.called"),
             CannotAssignToFinalVariable => Some("compiler.err.cant.assign.val.to.var"),
             FinalFieldNotInitialized => Some("compiler.err.var.might.not.have.been.initialized"),
@@ -766,6 +771,7 @@ impl JavaDiagnosticCode {
                 "recursive-constructor-invocation"
             }
             JavaDiagnosticCode::ConstructorCallNotFirst => "constructor-call-not-first",
+            JavaDiagnosticCode::RedundantConstructorCall => "redundant-constructor-call",
             JavaDiagnosticCode::CannotReferenceBeforeSuper => "cannot-reference-before-super",
             JavaDiagnosticCode::CannotAssignToFinalVariable => "cannot-assign-to-final-variable",
             JavaDiagnosticCode::FinalFieldNotInitialized => "final-field-not-initialized",

@@ -324,6 +324,14 @@ pub enum TypeError {
     /// that is not the first statement of the constructor body. javac: `call
     /// to {this|super} must be first statement in constructor`.
     ConstructorCallNotFirst { expr: ExprId },
+    /// §8.8.7: the *ConstructorBody* grammar admits at most one
+    /// `ConstructorInvocation` — "a constructor body contains at most one
+    /// constructor invocation" — so the second and every later
+    /// `this(...)`/`super(...)` statement is redundant (§8.8.7.1 defines the
+    /// invocation forms). javac: `redundant explicit constructor invocation`;
+    /// the message is IntelliJ's `Only one explicit constructor call allowed in
+    /// constructor`. Reported at the redundant call.
+    RedundantConstructorCall { expr: ExprId },
     /// §8.8.7.1: a reference to `this`, `super` or an instance member of the
     /// class being constructed — a bare `this`/`super`, `this.x`, `super.x`,
     /// a simple-name instance field read or write, an unqualified instance
@@ -522,6 +530,7 @@ impl TypeError {
             IllegalAccess { expr, .. } => DiagLocation::Expr(*expr),
             RecursiveConstructorInvocation { expr }
             | ConstructorCallNotFirst { expr }
+            | RedundantConstructorCall { expr }
             | CannotReferenceBeforeSuper { expr, .. }
             | CannotAssignToFinalVariable { expr, .. }
             | VariableMustBeEffectivelyFinal { expr, .. } => DiagLocation::Expr(*expr),
@@ -604,6 +613,7 @@ impl TypeError {
             | TypeError::IllegalAccess { expr, .. }
             | TypeError::RecursiveConstructorInvocation { expr }
             | TypeError::ConstructorCallNotFirst { expr }
+            | TypeError::RedundantConstructorCall { expr }
             | TypeError::CannotReferenceBeforeSuper { expr, .. }
             | TypeError::CannotAssignToFinalVariable { expr, .. }
             | TypeError::VariableMustBeEffectivelyFinal { expr, .. }

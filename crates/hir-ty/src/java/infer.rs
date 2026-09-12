@@ -292,6 +292,24 @@ pub(crate) fn body_types_impl(
                         {
                             ctx.report(TypeError::ConstructorCallNotFirst { expr: *expr });
                         }
+                        // §8.8.7: the body may contain at most one explicit
+                        // constructor invocation. Only top-level statements
+                        // count, as in javac's own scan (`Check.checkFirstConstructorStat`
+                        // remembers one call at statement depth); a nested
+                        // invocation is the separate §8.8.7.1 placement rule,
+                        // which this analyzer does not implement.
+                        if let Some(first) = first_call {
+                            for &stmt in stmts.iter().skip(first + 1) {
+                                if let hir_expand::body::StmtData::Expr(expr) = bodies.stmt(stmt)
+                                    && matches!(
+                                        bodies.expr(*expr),
+                                        hir_expand::body::ExprData::CtorCall { .. }
+                                    )
+                                {
+                                    ctx.report(TypeError::RedundantConstructorCall { expr: *expr });
+                                }
+                            }
+                        }
                     }
                     ctx.infer_block_statements(&stmts);
                     // §11.2: the body must discharge its checked exceptions.

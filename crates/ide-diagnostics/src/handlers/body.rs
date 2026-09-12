@@ -78,6 +78,9 @@ pub fn code(diag: &TypeError) -> DiagnosticCode {
             DiagnosticCode::Java(RecursiveConstructorInvocation)
         }
         TypeError::ConstructorCallNotFirst { .. } => DiagnosticCode::Java(ConstructorCallNotFirst),
+        TypeError::RedundantConstructorCall { .. } => {
+            DiagnosticCode::Java(RedundantConstructorCall)
+        }
         TypeError::CannotReferenceBeforeSuper { .. } => {
             DiagnosticCode::Java(CannotReferenceBeforeSuper)
         }
@@ -366,6 +369,9 @@ pub fn message(db: &dyn TyDatabase, diag: &TypeError, bodies: &BodyTree) -> Stri
         RecursiveConstructorInvocation { .. } => "Recursive constructor invocation".to_owned(),
         ConstructorCallNotFirst { .. } => {
             "Constructor call must be the first statement in a constructor".to_owned()
+        }
+        RedundantConstructorCall { .. } => {
+            "Only one explicit constructor call allowed in constructor".to_owned()
         }
         CannotReferenceBeforeSuper { name, .. } => format!(
             "Cannot reference '{}' before supertype constructor has been called",

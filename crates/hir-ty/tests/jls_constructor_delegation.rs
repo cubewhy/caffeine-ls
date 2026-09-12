@@ -6,7 +6,9 @@
 //! §8.8.7); a `this(...)` delegation cycle never reaches the supertype
 //! constructor (`RecursiveConstructorInvocation`, §8.8.7.1); an explicit
 //! constructor invocation must be the first statement (`ConstructorCallNotFirst`,
-//! §8.8.7.1); and no `this`/`super`/instance-member reference may precede the
+//! §8.8.7.1); a constructor body contains at most one invocation, so a second
+//! `this(...)`/`super(...)` is `RedundantConstructorCall` (§8.8.7); and no
+//! `this`/`super`/instance-member reference may precede the
 //! supertype call (`CannotReferenceBeforeSuper`, §8.8.7.1). Red cases render
 //! the diagnostics; green cases confirm legal constructors pass cleanly.
 
@@ -218,6 +220,61 @@ class Sub extends Base {
 );
 // Green: an explicit `super()`/`super(arg)` as the first statement, and a body
 // with no explicit call (the implicit `super()`) are all fine.
+
+// -- §8.8.7: a constructor body contains at most one invocation ----------------
+
+snapshot!(
+    redundant_ctor_call,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class Base {
+    Base(String s) {}
+}
+
+class Sub extends Base {
+    Sub() {
+        super(\"s\");
+        this(1);
+    }
+    Sub(int x) {
+        super(\"s\");
+    }
+}
+",
+    )])
+);
+// Red: `Sub()` invokes `super("s")` and then `this(1)`; the second invocation
+// is the redundant one, reported at its own call expression ([§8.8.7]).
+
+snapshot!(
+    three_ctor_calls,
+    check_body_diagnostic_spans(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+class Base {
+    Base(String s) {}
+}
+
+class Sub extends Base {
+    Sub() {
+        super(\"s\");
+        this(1);
+        super(\"s\");
+    }
+    Sub(int x) {
+        super(\"s\");
+    }
+}
+",
+    )])
+);
+// Red: *every* invocation after the first is reported, in statement order
+// (javac reports each of them too).
 
 // -- §8.8.7.1: no this / instance references before the supertype call --------
 

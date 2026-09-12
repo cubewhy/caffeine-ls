@@ -1,0 +1,23 @@
+---
+source: crates/hir-ty/tests/jls_constructor_delegation.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+class Base {
+    Base(String s) {}
+}
+
+class Sub extends Base {
+    Sub() {
+        super("s");
+        this(1);
+    }
+    Sub(int x) {
+        super("s");
+    }
+}
+
+method Sub(): <init>
+  @9:8..9:15 'this(1)': redundant-constructor-call: Only one explicit constructor call allowed in constructor
