@@ -6,7 +6,12 @@
 //! invocation, a constructor call, a method reference — is answered from the
 //! resolution the type layer recorded while inferring the body
 //! ([`hir_ty::BodyTypes::resolved`]): the exact declaration the reference
-//! denotes, overload selection ([JLS §15.12]) included. A
+//! denotes, overload selection ([JLS §15.12]) included. A class instance
+//! creation ([§15.9]) names the *constructor* it selected — the declaration
+//! the classfile calls `<init>`
+//! ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
+//! and the class writes under its own name — and the class itself when the
+//! class declares no constructor of its own. A
 //! *declaration-side* reference — an `extends`/`implements` clause, a field or
 //! parameter or return type, a `throws`, a generic argument, an annotation, an
 //! `import` — resolves the written name in the scope of the declaration that
@@ -432,6 +437,11 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
         if !names_a_reference(&bodies, expr) {
             continue;
         }
+        // §15.9: the resolution of a class instance creation is the
+        // *constructor* it selected — a member the classfile names `<init>`
+        // ([JVMS §4.6]) and the class declares under its own name, never a
+        // method that happens to carry that name.
+        let reference = reference_at(&bodies, expr);
         for &item in &items {
             let Some(types) = hir_ty::body_types(db, file, item) else {
                 continue;
@@ -448,7 +458,7 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
                     }],
                     None => Vec::new(),
                 },
-                member => member_resolution(db, file, member),
+                member => member_resolution(db, file, member, reference),
             };
         }
         return Vec::new();
@@ -472,22 +482,95 @@ fn names_a_reference(bodies: &BodyTree, expr: ExprId) -> bool {
     )
 }
 
+/// The reference a recorded resolution was recorded for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reference {
+    /// Any other reference the table carries: a field access, an invocation, a
+    /// method reference.
+    Member,
+    /// A class instance creation ([JLS §15.9]): `new C(...)` resolves to the
+    /// constructor it selected.
+    ClassInstanceCreation,
+}
+
+/// The reference the navigable expression at `expr` is.
+fn reference_at(bodies: &BodyTree, expr: ExprId) -> Reference {
+    match bodies.expr(expr) {
+        ExprData::New { .. } => Reference::ClassInstanceCreation,
+        _ => Reference::Member,
+    }
+}
+
+/// Whether the item is a constructor *declaration* ([JLS §8.8]). A class may
+/// declare a method carrying its own name (`void C(int)`, legal with the
+/// required return type), so being named like the class does not make a
+/// declaration a constructor.
+fn is_constructor_decl(db: &RootDatabase, file: FileId, item: ItemId) -> bool {
+    matches!(
+        hir::file_item_tree(db, file).data(item),
+        ItemData::Method(method) if method.is_constructor()
+    )
+}
+
+/// The kind of member a recorded *method* resolution is looked up with: a
+/// class instance creation resolves a constructor, every other reference the
+/// method itself.
+fn member_use_kind(reference: Reference) -> Use {
+    match reference {
+        Reference::ClassInstanceCreation => Use::Constructor,
+        Reference::Member => Use::Method,
+    }
+}
+
+/// The name the resolved member is *declared* under. A source constructor is
+/// declared under the class's own simple name; a classfile one under `<init>`
+/// ([JVMS §4.6]), which is no declaration's name and has to be read back as
+/// the class the owner names.
+fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String {
+    if reference != Reference::ClassInstanceCreation || method.name != "<init>" {
+        return method.name.clone();
+    }
+    // A library owner is spelled with binary names ([JVMS §4.2]): nesting is
+    // `$` there and `.` in the source declaration, the same normalization
+    // [`hir::library_source_decl`] applies before it looks a type up in its
+    // archive. `$` stays an ordinary identifier character in a source name
+    // ([JLS §3.8]), which is why the rewrite only touches a classfile name.
+    Name::new(&method.owner.replace('$', "."))
+        .simple_name()
+        .to_owned()
+}
+
 /// The declaration a recorded body resolution names, through the classpath
-/// (mirrors [`members_of_owner`]).
+/// (mirrors [`members_of_owner`]). A class instance creation ([§15.9]) is
+/// looked up as the constructor it resolved to instead.
 fn member_resolution(
     db: &RootDatabase,
     file: FileId,
     member: &hir_ty::ResolvedMember,
+    reference: Reference,
 ) -> Vec<Resolution> {
     // The member's *declaration* form: the declaring class FQN, the parameter
     // count of a method, and the workspace item when the declaration is a
     // source one (a library member carries no file and no item).
     let (name, use_kind, arity, source_decl, owner) = match member {
         hir_ty::ResolvedMember::Method(method) => (
-            method.name.clone(),
-            Use::Method,
+            member_decl_name(method, reference),
+            member_use_kind(reference),
+            // §15.9/[§15.12.2]: the constructor a creation selects is the one
+            // whose parameter list accepted the arguments — the same
+            // parameter count the invocation was resolved with.
             Some(method.params.len()),
-            method.owner_file.zip(method.decl_item),
+            // Only a *constructor declaration* answers a creation: the
+            // recorded item of an inference fallback (a method named like the
+            // class) is not one, so the lookup below finds the constructor —
+            // or the class, when it declares none.
+            method
+                .owner_file
+                .zip(method.decl_item)
+                .filter(|(decl_file, item)| {
+                    reference != Reference::ClassInstanceCreation
+                        || is_constructor_decl(db, *decl_file, *item)
+                }),
             method.owner.clone(),
         ),
         hir_ty::ResolvedMember::Field(field) => (
@@ -614,7 +697,12 @@ fn switch_label_resolution(
     let Some(field) = hir_ty::pick_field(db, &scope, &selector, name.as_str(), &access) else {
         return Vec::new();
     };
-    member_resolution(db, file, &hir_ty::ResolvedMember::Field(field))
+    member_resolution(
+        db,
+        file,
+        &hir_ty::ResolvedMember::Field(field),
+        Reference::Member,
+    )
 }
 
 /// The scrutinee of the innermost switch containing `offset` whose labels
@@ -1082,6 +1170,16 @@ fn member_item(
                     hir::SourceSymbolKind::Field | hir::SourceSymbolKind::EnumConstant
                 ),
                 Use::Method => symbol.kind == hir::SourceSymbolKind::Method,
+                // §8.8: a constructor is a method of its class by name and
+                // parameter list, but no other declaration is one — `void C()`
+                // in `class C` is a method that carries the class's name.
+                Use::Constructor => {
+                    symbol.kind == hir::SourceSymbolKind::Method
+                        && matches!(
+                            tree.data(symbol.item),
+                            ItemData::Method(method) if method.is_constructor()
+                        )
+                }
             };
             kind_matches && symbol.name.simple_name() == name
         })
@@ -1219,35 +1317,6 @@ fn library_member_signature(
     };
 
     match use_kind {
-        Use::Method => {
-            let method = stub.methods.iter().find(|method| {
-                interner.resolve(&method.name) == name
-                    && arity.is_none_or(|arity| method.params.len() == arity)
-            })?;
-            let param_count = method.params.len();
-            let return_ty = hir_ty::ty_from_library(db, &method.return_type);
-            let return_type = return_ty.display(db).to_string();
-            let params: Vec<String> = method
-                .params
-                .iter()
-                .enumerate()
-                .map(|(index, param)| {
-                    let param_ty = hir_ty::ty_from_library(db, &param.param_type);
-                    let ty = param_ty.display(db);
-                    let name = param
-                        .name
-                        .map(|symbol| interner.resolve(&symbol).to_owned())
-                        .or_else(|| {
-                            source_parameter_name(db, source_file, name, param_count, index)
-                        })
-                        .unwrap_or_else(|| format!("arg{index}"));
-                    format!("{ty} {name}")
-                })
-                .collect();
-            Some(HoverInfo {
-                value: format!("{return_type} {name}({})", params.join(", ")),
-            })
-        }
         Use::Field => {
             let field = stub
                 .fields
@@ -1259,10 +1328,58 @@ fn library_member_signature(
                 value: format!("{ty} {name}"),
             })
         }
+        Use::Method | Use::Constructor => {
+            // §8.8/[JVMS §4.6]: a constructor's signature carries no return
+            // type and is rendered under the class's own name, while the
+            // classfile declares it as `<init>`.
+            let classfile_name = match use_kind {
+                Use::Constructor => "<init>",
+                _ => name,
+            };
+            let method = stub.methods.iter().find(|method| {
+                interner.resolve(&method.name) == classfile_name
+                    && arity.is_none_or(|arity| method.params.len() == arity)
+            })?;
+            let param_count = method.params.len();
+            let head = match use_kind {
+                Use::Constructor => String::new(),
+                _ => {
+                    let return_ty = hir_ty::ty_from_library(db, &method.return_type);
+                    format!("{} ", return_ty.display(db))
+                }
+            };
+            let params: Vec<String> = method
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    let param_ty = hir_ty::ty_from_library(db, &param.param_type);
+                    let ty = param_ty.display(db);
+                    let name = param
+                        .name
+                        .map(|symbol| interner.resolve(&symbol).to_owned())
+                        .or_else(|| {
+                            source_parameter_name(
+                                db,
+                                source_file,
+                                name,
+                                param_count,
+                                index,
+                                use_kind,
+                            )
+                        })
+                        .unwrap_or_else(|| format!("arg{index}"));
+                    format!("{ty} {name}")
+                })
+                .collect();
+            Some(HoverInfo {
+                value: format!("{head}{name}({})", params.join(", ")),
+            })
+        }
     }
 }
 
-/// The declared name of parameter `index` of the method `name` in the loaded
+/// The declared name of parameter `index` of the member `name` in the loaded
 /// library source file, when that declaration has the same parameter count.
 fn source_parameter_name(
     db: &RootDatabase,
@@ -1270,10 +1387,11 @@ fn source_parameter_name(
     name: &str,
     param_count: usize,
     index: usize,
+    use_kind: Use,
 ) -> Option<String> {
     let file = source_file?;
     let tree = hir::file_item_tree(db, file);
-    let item = member_item(db, file, &tree, name, Use::Method, Some(param_count))?;
+    let item = member_item(db, file, &tree, name, use_kind, Some(param_count))?;
     match tree.data(item) {
         ItemData::Method(method) => method
             .sig
@@ -1505,6 +1623,12 @@ fn render_symbol_decl(
 enum Use {
     Field,
     Method,
+    /// A constructor declaration ([JLS §8.8]): written under the class's own
+    /// simple name in source and under `<init>` in a classfile
+    /// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)),
+    /// so a lookup has to distinguish it from a method that carries the
+    /// class's name.
+    Constructor,
 }
 
 /// The parameter count of the method declaration `item`, from the item tree.

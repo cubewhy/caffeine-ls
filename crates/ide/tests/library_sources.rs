@@ -25,9 +25,16 @@ const OVERLOAD_SRC: &str = "package com.example;\n\npublic class Overload {\n   
 /// source and falls back to an index name for the second parameter.
 const PAIR_SRC: &str =
     "package com.example;\n\npublic class Pair {\n    public void combine(int first) {}\n}\n";
+/// The classfile of `Widget` declares `<init>(int)`; the source declares that
+/// same constructor under the class's own name. A class instance creation has
+/// to answer with that declaration — not with the class the classfile's
+/// `<init>` belongs to — while the implicit `<init>()V` `class_bytes` always
+/// emits names no source declaration.
+const WIDGET_SRC: &str =
+    "package com.example;\n\npublic class Widget {\n    public Widget(int size) {}\n}\n";
 const WORKSPACE_FOO_SRC: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
+const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
 
 /// The classpath jar's source archive entries, in a fixed order so the file id
 /// of a library source is `1000 + index`.
@@ -38,6 +45,7 @@ const LIB_SOURCES: &[(&str, &str)] = &[
     ("com/example/Root.java", ROOT_SRC),
     ("com/example/Overload.java", OVERLOAD_SRC),
     ("com/example/Pair.java", PAIR_SRC),
+    ("com/example/Widget.java", WIDGET_SRC),
 ];
 
 /// The file id the library fixture assigns to `entry`.
@@ -116,6 +124,17 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
                 "java/lang/Object",
                 &[],
                 &[("combine", 2)],
+            ),
+        ),
+        // `class_bytes` always emits the default `<init>()V`; the explicit
+        // `<init>(int)` is the constructor the source declares.
+        (
+            "com/example/Widget.class".to_owned(),
+            class_bytes(
+                "com/example/Widget",
+                "java/lang/Object",
+                &[],
+                &[("<init>", 1)],
             ),
         ),
     ];
@@ -229,6 +248,22 @@ fn target_text<'a>(text: &'a str, target: &ide::NavigationTarget) -> &'a str {
     &text[u32::from(target.range.start()) as usize..u32::from(target.range.end()) as usize]
 }
 
+/// The range of the `name` identifier in the declaration `declaration` of
+/// `text` — the identifier a definition at that declaration must cover.
+fn declared_name_range(text: &str, declaration: &str, name: &str) -> rowan::TextRange {
+    let at = text
+        .find(declaration)
+        .unwrap_or_else(|| panic!("the declaration {declaration:?} is not in the fixture"));
+    let at = at
+        + text[at..]
+            .find(name)
+            .unwrap_or_else(|| panic!("{name:?} is not in {declaration:?}"));
+    rowan::TextRange::new(
+        TextSize::new(at as u32),
+        TextSize::new((at + name.len()) as u32),
+    )
+}
+
 #[test]
 fn type_reference_resolves_into_library_sources() {
     let fixture = fixture(&["com/example/Foo.java"], false);
@@ -242,11 +277,33 @@ fn type_reference_resolves_into_library_sources() {
         "the definition is the class's own name: {:?}",
         targets[0].range
     );
+    // §8.8.9: the classfile's implicit `<init>()V` is the constructor this
+    // creation resolves to, and it has no source declaration of its own — the
+    // class is the answer, and the classfile's name for it is not.
+    assert_eq!(targets[0].name, "Foo");
 
     // A class literal is a type reference too.
     let targets = fixture.definition("com.example.Foo.class");
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].file, lib_file("com/example/Foo.java"));
+}
+
+/// §15.9: a class instance creation names the constructor it selected — the
+/// declaration the class writes its own name at, not the class the classfile's
+/// `<init>` belongs to.
+#[test]
+fn constructor_creation_resolves_to_the_library_constructor() {
+    let fixture = fixture(&["com/example/Widget.java"], false);
+
+    let targets = fixture.definition("new com.example.Widget");
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
+    assert_eq!(targets[0].file, lib_file("com/example/Widget.java"));
+    assert_eq!(targets[0].name, "Widget");
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(WIDGET_SRC, "public Widget(int size)", "Widget"),
+        "the definition is the constructor's own name, not the class's"
+    );
 }
 
 #[test]

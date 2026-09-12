@@ -136,6 +136,107 @@ class Nav {
 }
 "#;
 
+// -- class instance creation ([JLS §15.9]) ------------------------------------------
+// `new C(...)` names the *constructor* the creation selected: the declaration
+// the classfile calls `<init>` and the class writes under its own name. A
+// class that declares no constructor of its own keeps the class as its
+// definition — there is no declaration to point at — and a *method* carrying
+// the class's name is not a constructor, so `void Alt(int)` never answers
+// `new Alt(1)`.
+
+const NEW_SRC: &str = r#"package com.example;
+
+class Alt {
+    void Alt(int n) {}
+
+    Alt(long n) {}
+
+    Alt make() {
+        return new Alt(1);
+    }
+}
+
+class Two {
+    Two(int n) {}
+
+    Two(long n) {}
+
+    static Two make() {
+        return new Two(1L);
+    }
+
+    static Two other() {
+        return new Two(1);
+    }
+}
+
+class Plain {
+    Plain make() {
+        return new Plain();
+    }
+}
+
+record Pair(int left, int right) {
+    Pair {
+    }
+
+    static Pair make() {
+        return new Pair(1, 2);
+    }
+}
+"#;
+
+/// The class instance creations of [`NEW_SRC`], in the shape of
+/// [`assert_targets_name`]: the creation selects the constructor by its
+/// parameter list ([§15.12.2]), and a record's canonical constructor is the
+/// compact declaration ([§8.10.4]).
+const NEW_GOTO: &[(&str, usize, &str, &str)] = &[
+    // The only applicable constructor, not the same-named method that takes
+    // the argument's own type.
+    ("new Alt(1)", 0, "Alt(long n)", "Alt"),
+    // The constructor the argument's type selects, not the first constructor
+    // of the same arity.
+    ("new Two(1L)", 0, "Two(long n)", "Two"),
+    ("new Two(1)", 0, "Two(int n)", "Two"),
+    // The compact canonical constructor of a record, declared under the
+    // record's own name.
+    ("new Pair(1, 2)", 0, "Pair {\n", "Pair"),
+];
+
+/// A creation whose class resolves to nothing: the name denotes no
+/// declaration, so the offset answers nothing.
+const NEW_EMPTY_SRC: &str = r#"package com.example;
+
+class Client {
+    Object make() {
+        return new Nope();
+    }
+}
+"#;
+
+#[test]
+fn goto_class_instance_creation() {
+    let fixture = test_file(NEW_SRC);
+    for &(needle, occurrence, declaration, name) in NEW_GOTO {
+        assert_targets_name(&fixture, needle, occurrence, declaration, name);
+    }
+
+    // A class with no constructor declaration of its own has no constructor to
+    // point at: the creation names the class.
+    assert_targets_name(&fixture, "new Plain()", 0, "class Plain", "Plain");
+
+    assert!(goto_targets(&test_file(NEW_EMPTY_SRC), "new Nope()", 0).is_empty());
+
+    let cases: Vec<(&str, usize)> = NEW_GOTO
+        .iter()
+        .map(|&(needle, occurrence, ..)| (needle, occurrence))
+        .collect();
+    assert_snapshot!(
+        "goto_class_instance_creation",
+        render_nav_many(&fixture, &cases)
+    );
+}
+
 #[test]
 fn goto_local_use() {
     let fixture = test_file(SRC);

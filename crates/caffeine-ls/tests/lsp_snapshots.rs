@@ -2186,7 +2186,9 @@ exit 0
 /// A dependency jar beside its sibling `-sources.jar`: `textDocument/definition`
 /// on a member the jar declares materializes the source files it needs out of
 /// the archive, loads them into the database, and answers with the real source
-/// location — a classfile stub alone has no file and no range.
+/// location — a classfile stub alone has no file and no range. A class instance
+/// creation does the same for the constructor it selects ([§15.9]), whose
+/// declaration the classfile names `<init>`.
 ///
 /// The fixture's `Foo extends Base`, both declared by the jar, so the first
 /// member request walks two owners that are not loaded yet and reads both files
@@ -2204,7 +2206,9 @@ fn library_source_definition_materializes_and_navigates() {
     let foo_source = "package com.example;\n\npublic class Foo extends Base {\n    public void greet(int count) {}\n}\n";
     let base_source =
         "package com.example;\n\npublic class Base {\n    public void hello(int n) {}\n}\n";
-    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
+    let widget_source =
+        "package com.example;\n\npublic class Widget {\n    public Widget(int size) {}\n}\n";
+    let app_source = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Foo f) {\n        f.greet(1);\n    }\n}\n";
     let app_path = "/src/main/java/app/App.java";
 
     let shim_dir = tempfile::tempdir().unwrap();
@@ -2257,6 +2261,18 @@ exit 0
                         &[("hello", 1)],
                     ),
                 ),
+                // The classfile's `<init>(int)` is the constructor the source
+                // declares under `Widget`; the implicit `<init>()V` every
+                // classfile carries has no declaration to point at.
+                (
+                    "com/example/Widget.class",
+                    lsp_test::classfile::class_bytes(
+                        "com/example/Widget",
+                        "java/lang/Object",
+                        &[],
+                        &[("<init>", 1)],
+                    ),
+                ),
             ],
         )
         .unwrap();
@@ -2265,6 +2281,7 @@ exit 0
             &[
                 ("com/example/Foo.java", foo_source.as_bytes().to_vec()),
                 ("com/example/Base.java", base_source.as_bytes().to_vec()),
+                ("com/example/Widget.java", widget_source.as_bytes().to_vec()),
             ],
         )
         .unwrap();
@@ -2362,6 +2379,51 @@ exit 0
         java_file_names(&cache_sources),
         materialized,
         "re-asking materializes nothing new"
+    );
+
+    // -- §15.9: a class instance creation names the constructor it selected.
+    // The classfile declares it `<init>(int)` ([JVMS §4.6]); the source
+    // declares the same constructor under the class's own name, so the answer
+    // is that declaration — not the class, and not the implicit `<init>()V`.
+    let (line, character) = position_of(app_source, "com.example.Widget(1)");
+    let constructor_response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(app_path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let constructor_locations = constructor_response
+        .as_array()
+        .expect("definition locations");
+    assert_eq!(
+        constructor_locations.len(),
+        1,
+        "got: {constructor_response:?}"
+    );
+    let constructor_uri: lsp_types::Uri =
+        serde_json::from_value(constructor_locations[0]["uri"].clone()).unwrap();
+    assert!(
+        constructor_uri
+            .to_file_path()
+            .unwrap()
+            .ends_with("com/example/Widget.java"),
+        "the constructor is declared by `Widget`: {constructor_uri:?}"
+    );
+    assert_definition_name(
+        &constructor_locations[0]["range"],
+        widget_source,
+        "public Widget(int size)",
+        "Widget",
+    );
+    assert_eq!(
+        java_file_names(&cache_sources),
+        vec![
+            "Base.java".to_string(),
+            "Foo.java".to_string(),
+            "Widget.java".to_string()
+        ],
+        "the creation materialized exactly its constructor's declaring file"
     );
 
     // A library source file is read-only third-party code: its report is empty.
@@ -2515,9 +2577,9 @@ fn java_file_names(root: &std::path::Path) -> Vec<String> {
     names
 }
 
-/// The JDK's `src.zip` end to end: a `String` type reference and a member
-/// inherited from `Object` both navigate into the platform sources, the JDK
-/// 9+ `<module>/` prefix is stripped from the materialized path, and only the
+/// The JDK's `src.zip` end to end: a `String` creation and a member inherited
+/// from `Object` both navigate into the platform sources, the JDK 9+
+/// `<module>/` prefix is stripped from the materialized path, and only the
 /// files those two references touched are ever written out — the archive's
 /// ~25k compilation units stay inside `src.zip`.
 ///
@@ -2549,8 +2611,9 @@ fn jdk_sources_are_materialized_and_navigable() {
 
     let cache_sources = lsp.cache_dir().join("sources").join("v1");
 
-    // -- a type reference: the class report may need `String.java`, whose entry
-    // in the archive is `<module>/java/lang/String.java`.
+    // -- §15.9: a class instance creation names the constructor it selected,
+    // whose declaring file is `java/lang/String.java` — an entry the archive
+    // stores as `<module>/java/lang/String.java`.
     let (line, character) = position_of(source, "new String(\"abc\")");
     let response = lsp.request(
         "textDocument/definition",
@@ -2583,7 +2646,7 @@ fn jdk_sources_are_materialized_and_navigable() {
     assert_definition_name(
         &locations[0]["range"],
         &string_source,
-        "public final class String",
+        "public String(String original)",
         "String",
     );
 
