@@ -164,6 +164,45 @@ lsp_test!(
 );
 
 lsp_test!(
+    test_constructor_and_static_import_diagnostics,
+    r#"
+    //- /src/com/example/Example.java
+    package com.example;
+
+    public class Example {
+        public Example(int x) {}
+    }
+
+    //- /src/com/example/Main.java
+    package com.example;
+
+    import static org.objectweb.asm.ClassWriter;
+
+    public class Main extends Example {
+        ClassWriter writer;
+
+        public Main(int a) {
+            super(1);
+            this(2, 3);
+        }
+
+        public Main(int a, int b) {
+        }
+    }
+    "#,
+    |lsp| {
+        // Both files must be in the source-set graph before the subclass's
+        // superclass and the static import are resolved; a pull issued first
+        // would report the unloaded-workspace view instead.
+        lsp.wait_until_workspace_is_loaded();
+        lsp.open_document("/src/com/example/Main.java");
+        let diagnostics = lsp.pull_document_diagnostics("/src/com/example/Main.java");
+
+        insta::assert_json_snapshot!("constructor_and_static_import_diagnostics", diagnostics);
+    }
+);
+
+lsp_test!(
     test_kotlin_syntax_diagnostics,
     r#"
     //- /src/Main.kt

@@ -1,0 +1,74 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: diagnostics
+---
+{
+  "resultId": "e43306179e8375d3",
+  "items": [
+    {
+      "range": {
+        "start": {
+          "line": 9,
+          "character": 12
+        },
+        "end": {
+          "line": 9,
+          "character": 22
+        }
+      },
+      "severity": 1,
+      "code": "compiler.err.redundant.superclass.init",
+      "source": "caffeine-ls",
+      "message": "Only one explicit constructor call allowed in constructor"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 5,
+          "character": 8
+        },
+        "end": {
+          "line": 5,
+          "character": 19
+        }
+      },
+      "severity": 1,
+      "code": "compiler.err.cant.resolve.location",
+      "source": "caffeine-ls",
+      "message": "Cannot resolve symbol 'ClassWriter'"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 2,
+          "character": 32
+        },
+        "end": {
+          "line": 2,
+          "character": 35
+        }
+      },
+      "severity": 1,
+      "code": "compiler.err.cant.resolve.location",
+      "source": "caffeine-ls",
+      "message": "Cannot resolve symbol 'asm'"
+    },
+    {
+      "range": {
+        "start": {
+          "line": 12,
+          "character": 15
+        },
+        "end": {
+          "line": 12,
+          "character": 19
+        }
+      },
+      "severity": 1,
+      "code": "compiler.err.implicit.super.constructor.undefined",
+      "source": "caffeine-ls",
+      "message": "There is no default constructor available in 'Example'"
+    }
+  ],
+  "kind": "full"
+}
