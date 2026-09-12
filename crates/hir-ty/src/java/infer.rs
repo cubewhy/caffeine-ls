@@ -68,7 +68,7 @@ use crate::{
     java::const_eval::Const,
     java::db::{TyDatabase, type_params_map_query},
     java::diagnostics::TypeError,
-    java::method::{InvocationContext, access_context},
+    java::method::{FieldData, InvocationContext, MethodData, access_context},
     java::range_ctx::range_ctx,
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
     java::ty::Ty,
@@ -87,6 +87,24 @@ pub struct BodyTypes {
     pub diagnostics: Vec<TypeError>,
     /// error.
     pub field_touched: FxHashSet<String>,
+    /// The declaration every reference of the body resolved to, keyed by the
+    /// reference expression it was inferred at ([`ResolvedMember`]). A
+    /// reference reached only by a speculative overload probe has no entry —
+    /// see [`InferCtx::record_member`].
+    pub resolved: FxHashMap<ExprId, ResolvedMember>,
+}
+
+/// The declaration a body reference resolves to, as recorded by inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedMember {
+    /// A local variable, parameter, pattern binding or catch/for-each variable.
+    Local(LocalId),
+    /// The method, constructor or annotation element an invocation or a method
+    /// reference names — the *declaration* form, not the instantiated
+    /// invocation.
+    Method(MethodData),
+    /// The field, enum constant or record component a read or write names.
+    Field(FieldData),
 }
 
 /// body (a declaration without statements) or is not a body-carrying item.
@@ -186,6 +204,7 @@ pub(crate) fn body_types_impl(
         lambda_depth: 0,
         types: FxHashMap::default(),
         locals: FxHashMap::default(),
+        resolved: FxHashMap::default(),
         diagnostics: Vec::new(),
         scopes: vec![FxHashMap::default()],
         lambda_params: Vec::new(),
@@ -472,6 +491,7 @@ pub(crate) fn body_types_impl(
         locals: ctx.locals,
         diagnostics: ctx.diagnostics,
         field_touched: ctx.flow.field_touched,
+        resolved: ctx.resolved,
     })
 }
 
@@ -597,6 +617,10 @@ struct InferCtx<'a> {
     lambda_depth: usize,
     types: FxHashMap<ExprId, Ty>,
     locals: FxHashMap<LocalId, Ty>,
+    /// The declaration every reference of the body resolved to, keyed by the
+    /// reference expression ([`ResolvedMember`]); the read side is
+    /// [`BodyTypes::resolved`].
+    resolved: FxHashMap<ExprId, ResolvedMember>,
     /// [`Ty::error`]; the diagnostics layer collects them per file.
     diagnostics: Vec<TypeError>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.

@@ -33,7 +33,7 @@ use crate::{
     java::diagnostics::DiagLocation,
     java::range_ctx::range_ctx,
     java::release_api,
-    java::resolve::{NameResolution, Resolver, resolve_name_checked, resolve_type_ref},
+    java::resolve::{NameResolution, Resolver, item_data, resolve_name_checked, resolve_type_ref},
 };
 use hir_def::java::ranges;
 
@@ -346,6 +346,69 @@ fn item_annotation_refs(data: &ItemData) -> Vec<&ItemAnnotationRef> {
         }
         ItemData::Field(d) => annotations(&d.annotations, &mut out),
         ItemData::EnumConstant(_) | ItemData::StaticInit(_) | ItemData::InstanceInit(_) => {}
+    }
+    out
+}
+
+/// Every reference name the item carries, with its source range: the
+/// declaration-side type references and annotation names of the item itself —
+/// and, for a body-carrying item, the type references of its body, or of its
+/// initializer expression forest for a body-less item (a field initializer,
+/// enum constant arguments, an annotation element default). In declaration
+/// order; a name repeated in the source occurs once per occurrence (`List<T>`
+/// yields `List` and `T`).
+pub fn item_type_references(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: ItemId,
+) -> Vec<(Name, Option<TextRange>)> {
+    let tree = hir::file_item_tree(db, file);
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for tyref in item_type_refs(tree.data(item)) {
+        out.extend(ranges::type_ref_occurrences(map, &source, tyref));
+    }
+    for annotation in item_annotation_refs(tree.data(item)) {
+        out.push((
+            annotation.name.clone(),
+            ranges::annotation_name_range(map, &source, annotation),
+        ));
+    }
+    let bodies = hir::file_body_tree(db, file);
+    let body_refs = match item_data(&tree, item) {
+        Some(ItemData::Method(method)) => match method.body() {
+            Some(body) => body_type_refs(&bodies, body),
+            None => method
+                .default_expr()
+                .map_or_else(Vec::new, |expr| expr_forest_type_refs(&bodies, &[expr])),
+        },
+        Some(ItemData::StaticInit(init)) => init
+            .body
+            .map_or_else(Vec::new, |body| body_type_refs(&bodies, body)),
+        Some(ItemData::InstanceInit(init)) => init
+            .body
+            .map_or_else(Vec::new, |body| body_type_refs(&bodies, body)),
+        Some(ItemData::Field(field)) => field
+            .initializer_expr
+            .map_or_else(Vec::new, |expr| expr_forest_type_refs(&bodies, &[expr])),
+        Some(ItemData::EnumConstant(constant)) => {
+            if constant.argument_exprs.is_empty() {
+                Vec::new()
+            } else {
+                expr_forest_type_refs(&bodies, &constant.argument_exprs)
+            }
+        }
+        _ => Vec::new(),
+    };
+    for (_, spanned) in body_refs {
+        out.extend(
+            spanned
+                .refs
+                .into_iter()
+                .map(|reference| (reference.name, reference.range)),
+        );
     }
     out
 }

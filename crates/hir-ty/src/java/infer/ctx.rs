@@ -15,7 +15,7 @@ use crate::java::{
     ty::{Ty, TyKind, boxed_type, capture_conversion, unboxed_primitive},
 };
 
-use super::{Flow, InferCtx};
+use super::{Flow, InferCtx, ResolvedMember};
 
 impl InferCtx<'_> {
     pub(super) fn error(&self) -> Ty {
@@ -230,6 +230,16 @@ impl InferCtx<'_> {
             } => true,
             ExprData::Conditional { .. } => true,
             _ => false,
+        }
+    }
+
+    /// Records the declaration the reference at `expr` resolved to
+    /// ([`BodyTypes::resolved`]). A speculative overload probe resolves against
+    /// a candidate the invocation may never select, so nothing is recorded
+    /// while [`Self::probing`] is set.
+    pub(super) fn record_member(&mut self, expr: ExprId, member: ResolvedMember) {
+        if !self.probing {
+            self.resolved.insert(expr, member);
         }
     }
 

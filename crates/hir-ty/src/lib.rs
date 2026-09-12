@@ -98,7 +98,7 @@ pub use java::db::TyDatabase;
 // the hir-ty API can keep naming it directly.
 pub use java::decl_check::{DeclDiagnostic, class_diagnostics, module_diagnostics};
 pub use java::diagnostics::{DiagLocation, TypeError};
-pub use java::infer::{BodyTypes, body_types};
+pub use java::infer::{BodyTypes, ResolvedMember, body_types};
 pub use java::inference::least_upper_bound;
 pub use java::level_check::level_diagnostics;
 pub use java::method::all_methods as all_methods_for_test;
@@ -107,6 +107,7 @@ pub use java::method::{
     MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
     pick_method, single_abstract_method,
 };
+pub use java::name_check::item_type_references;
 pub use java::release_api::ReleaseApi;
 pub use java::resolve::scope_for_file as scope_for_test;
 pub use java::resolve::{

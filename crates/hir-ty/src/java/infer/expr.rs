@@ -18,7 +18,7 @@ use crate::java::{
     ty::{Ty, TyKind, boxed_type},
 };
 
-use super::{FinalFieldWrite, Flow, InferCtx, poly::*};
+use super::{FinalFieldWrite, Flow, InferCtx, ResolvedMember, poly::*};
 
 impl InferCtx<'_> {
     #[stacksafe]
@@ -710,6 +710,7 @@ impl InferCtx<'_> {
             }
         }
         if let Some(local) = self.lookup_local(&name) {
+            self.record_member(expr, ResolvedMember::Local(local));
             // §8.3.1.2/[§16]: writing a `final` local that is not *blank*
             // (a parameter, a catch/foreach/resource variable, or one with an
             // initializer) is an error; a blank final may still be assigned
@@ -744,11 +745,13 @@ impl InferCtx<'_> {
         // §7.5.4: a simple name may name a statically imported member — a
         // static field read through its declaring type.
         if let Some(field) = self.static_import_field(name.as_str()) {
+            self.record_member(expr, ResolvedMember::Field(field.clone()));
             self.check_release_api_field(expr, &field);
             self.check_deprecated_field(expr, &field);
             return field.ty;
         }
         if let Some(field) = self.pick_field_of_chain(name.as_str()) {
+            self.record_member(expr, ResolvedMember::Field(field.clone()));
             self.check_release_api_field(expr, &field);
             self.check_deprecated_field(expr, &field);
             // §8.3.3: a simple-name read of a same-class field declared
@@ -837,11 +840,13 @@ impl InferCtx<'_> {
         };
         if prefix.is_empty() {
             if let Some(field) = self.static_import_field(last) {
+                self.record_member(expr, ResolvedMember::Field(field.clone()));
                 self.check_release_api_field(expr, &field);
                 self.check_deprecated_field(expr, &field);
                 return field.ty;
             }
             if let Some(field) = self.pick_field_of_chain(last) {
+                self.record_member(expr, ResolvedMember::Field(field.clone()));
                 self.check_release_api_field(expr, &field);
                 self.check_deprecated_field(expr, &field);
                 // §15.11/[§8.1.3]: a simple-name read of an instance field of
@@ -871,6 +876,7 @@ impl InferCtx<'_> {
             return self.error();
         };
         if let Some(field) = pick_field(self.db, &self.scope, &prefix_ty, last, &self.access) {
+            self.record_member(expr, ResolvedMember::Field(field.clone()));
             self.check_release_api_field(expr, &field);
             self.check_deprecated_field(expr, &field);
             return field.ty;
@@ -990,6 +996,7 @@ impl InferCtx<'_> {
                     self.error()
                 }
                 Some(field) => {
+                    self.record_member(expr, ResolvedMember::Field(field.clone()));
                     self.check_release_api_field(expr, &field);
                     self.check_deprecated_field(expr, &field);
                     field.ty
@@ -1028,6 +1035,7 @@ impl InferCtx<'_> {
         }
         match pick_field(self.db, &self.scope, &receiver, name.as_str(), &self.access) {
             Some(field) => {
+                self.record_member(expr, ResolvedMember::Field(field.clone()));
                 self.check_release_api_field(expr, &field);
                 self.check_deprecated_field(expr, &field);
                 // §8.3.1.2/[§16]: writing a `final` field is legal only as the

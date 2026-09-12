@@ -123,7 +123,7 @@ impl InferCtx<'_> {
         target: Option<Ty>,
         ctx: &InvocationContext,
         explicit_type_args: Option<Vec<Ty>>,
-    ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
+    ) -> Option<(MethodData, MethodData, Vec<(ExprId, usize)>)> {
         let members = member_set(self.db, &self.scope, receiver_ty, name.as_str(), ctx);
         for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
             if let Some(chosen) = self.choose_candidate(
@@ -159,7 +159,7 @@ impl InferCtx<'_> {
         varargs: bool,
         target: Option<Ty>,
         explicit_type_args: Option<Vec<Ty>>,
-    ) -> Option<(MethodData, Vec<(ExprId, usize)>)> {
+    ) -> Option<(MethodData, MethodData, Vec<(ExprId, usize)>)> {
         let mut applicable: Vec<ApplicableCandidate> = Vec::new();
         for member in members {
             let mut inference = Inference::new();
@@ -199,8 +199,8 @@ impl InferCtx<'_> {
         let index = applicable
             .iter()
             .position(|(_, invocation, _)| *invocation == chosen)?;
-        let (_, invocation, deferred) = applicable.remove(index);
-        Some((invocation, deferred))
+        let (candidate, invocation, deferred) = applicable.remove(index);
+        Some((candidate, invocation, deferred))
     }
     /// resolved formals are collected in `deferred`.
     #[allow(clippy::too_many_arguments)]

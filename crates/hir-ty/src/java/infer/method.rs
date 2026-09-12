@@ -20,7 +20,7 @@ use crate::java::{
 };
 
 use super::{
-    InferCtx, body_in_flight, body_types,
+    InferCtx, ResolvedMember, body_in_flight, body_types,
     context::find_method_item,
     poly::{ArgInfo, ArgKind, reinfer_poly_standalone},
 };
@@ -79,7 +79,8 @@ impl InferCtx<'_> {
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
-            Some((method, deferred)) => {
+            Some((candidate, method, deferred)) => {
+                self.record_member(expr, ResolvedMember::Method(candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
                 self.reinfer_deferred(&method, &deferred);
@@ -336,7 +337,8 @@ impl InferCtx<'_> {
             &access,
             explicit_type_args,
         ) {
-            Some((method, deferred)) => {
+            Some((candidate, method, deferred)) => {
+                self.record_member(expr, ResolvedMember::Method(candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
                 // §15.12.3/[§15.8.4]: `super.m(...)` invokes the method *as

@@ -15,7 +15,7 @@ use crate::java::{
     ty::{Ty, TyData, TyKind, TypeVarScope},
 };
 
-use super::{InferCtx, poly::ArgInfo};
+use super::{InferCtx, ResolvedMember, poly::ArgInfo};
 
 impl InferCtx<'_> {
     /// class, library constructors are `<init>`.
@@ -182,7 +182,7 @@ impl InferCtx<'_> {
         } else {
             access
         };
-        if let Some((method, deferred)) = self.resolve_call(
+        if let Some((candidate, method, deferred)) = self.resolve_call(
             &class_ty,
             &Name::new(&constructor_name),
             &arg_kinds,
@@ -190,6 +190,7 @@ impl InferCtx<'_> {
             &access,
             None,
         ) {
+            self.record_member(expr, ResolvedMember::Method(candidate));
             self.check_release_api_method(expr, &method);
             self.check_deprecated_method(expr, &method);
             self.warn_unchecked_invocation(expr, &method);

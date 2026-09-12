@@ -17,7 +17,7 @@ use crate::java::{
     ty::{Ty, TyKind},
 };
 
-use super::{InferCtx, poly::MethodRefKind};
+use super::{InferCtx, ResolvedMember, poly::MethodRefKind};
 
 impl InferCtx<'_> {
     /// The type of a lambda expression ([JLS §15.27.2]): the target
@@ -761,6 +761,7 @@ impl InferCtx<'_> {
         // with — so a reference to a name that resolves only to inapplicable
         // overloads does not silently type against the first declaration.
         if let Some(method) = self.method_ref_candidate(qualifier, type_name, name, sam_params) {
+            self.record_member(expr, ResolvedMember::Method(method.clone()));
             // The reference's own expression, so the report underlines the
             // reference rather than the whole lambda.
             self.check_release_api_method(expr, &method);
