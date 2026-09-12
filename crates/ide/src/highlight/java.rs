@@ -12,10 +12,11 @@
 //!   from the item tree and the body IR.
 //!
 //! The passes run in a fixed order and a later one overrides an earlier one at
-//! the same range: the lexical layer first, then names ([`names`]), declarations
+//! same range: the lexical layer first, then names ([`names`]), declarations
 //! ([`declarations`]), type references ([`type_refs`]), annotation names
-//! ([`annotation_names`]), the variables of every body ([`body_locals`]), the
-//! resolved body references ([`references`]) and finally the two fallbacks — the
+//! ([`annotation_names`]) and their element-value pairs ([`element_values`]),
+//! the variables of every body ([`body_locals`]), the resolved body references
+//! ([`references`]) and finally the two fallbacks — the
 //! unclassified references of a body ([`unresolved_references`]) and the
 //! declarations the HIR does not lower ([`unspecified_declarations`]) — which
 //! only fill ranges nothing has classified.
@@ -30,8 +31,8 @@ use hir::hir_def::java::ranges;
 use hir_expand::ast_id_map::AstIdMap;
 use hir_expand::body::{BodyTree, ExprData, ExprId, LocalId, PostfixOp, UnaryOp};
 use hir_expand::name::Name;
-use hir_ty::ResolvedMember;
-use rowan::SyntaxNode;
+use hir_ty::{AnnotationTarget, ResolvedMember};
+use rowan::{SyntaxNode, SyntaxToken, TextRange};
 use rustc_hash::FxHashSet;
 use syntax::SourceFile;
 use syntax::java::{Lang, SyntaxKind as J};
@@ -63,6 +64,7 @@ pub(super) fn highlight(db: &RootDatabase, file_id: FileId, source: &SourceFile)
     declarations(&tree, map, source, &mut out);
     type_refs(db, file_id, &tree, &mut out);
     annotation_names(db, file_id, &tree, &mut out);
+    element_values(db, file_id, root, &mut out);
     body_locals(&bodies, &params, &mut out);
     references(db, file_id, &tree, &bodies, &params, &writes, &mut out);
     unresolved_references(&bodies, &mut out);
@@ -388,6 +390,164 @@ fn annotation_names(db: &RootDatabase, file_id: FileId, tree: &ItemTree, out: &m
             }
         }
     }
+}
+
+/// The names written inside an annotation's element-value pairs ([JLS §9.7.1]):
+/// each pair's element name and every name its value writes.
+///
+/// The pairs are read from the syntax tree, not from the item tree or the body
+/// arena: the lowering keeps an enum constant, a class literal, a nested
+/// annotation and an array initializer ([§10.6]) out of the expression arena,
+/// and the annotations of a written type have no arena at all — one walk
+/// therefore covers a declaration's annotation, a type-use annotation and an
+/// annotation inside a body alike ([`hir_ty::annotation_target`] reads the same
+/// tree).
+///
+/// A pair's name is the element of the annotation interface it declares
+/// ([§9.6.1]) — a method, exactly as the declaration pass colors it — so the
+/// grammar alone fixes its tag. A name inside a value is resolved: a class
+/// literal names its type ([§15.8.2]), an enum constant or constant variable
+/// reads a field ([§6.5.6]), and an annotation's own name names its interface
+/// ([§9.7.1]), which is a `decorator`.
+fn element_values(
+    db: &RootDatabase,
+    file_id: FileId,
+    root: &SyntaxNode<Lang>,
+    out: &mut Highlights,
+) {
+    for annotation in root
+        .descendants()
+        .filter(|node| is_annotation(node.kind()))
+        // A nested annotation is reached through the value that writes it;
+        // only the outermost annotations start a walk.
+        .filter(|node| !has_annotation_ancestor(node))
+    {
+        walk_annotation(db, file_id, &annotation, out);
+    }
+}
+
+/// Whether `kind` opens an annotation — a marker (`@Foo`) or a normal one
+/// (`@Foo(...)`) ([JLS §9.7]).
+fn is_annotation(kind: J) -> bool {
+    matches!(kind, J::ANNOTATION | J::MARKER_ANNOTATION)
+}
+
+/// Whether `node` is written inside another annotation — the shape of a nested
+/// annotation value ([JLS §9.7.1]).
+fn has_annotation_ancestor(node: &SyntaxNode<Lang>) -> bool {
+    node.ancestors()
+        .skip(1)
+        .any(|ancestor| is_annotation(ancestor.kind()))
+}
+
+/// The name and the element-value pairs of `annotation` ([JLS §9.7.1]).
+fn walk_annotation(
+    db: &RootDatabase,
+    file_id: FileId,
+    annotation: &SyntaxNode<Lang>,
+    out: &mut Highlights,
+) {
+    // §9.7.1: an annotation is written `@ TypeName (...)` and its name denotes
+    // the annotation interface — a `decorator` like the declaration-side names
+    // [`annotation_names`] tags, and the tag a type-use annotation's name takes
+    // over the `type` [`type_refs`] gives it.
+    if let Some(name) = annotation
+        .children()
+        .find(|child| child.kind() == J::QUALIFIED_NAME)
+    {
+        insert(out, name.text_range(), HlTag::Decorator, HlMods::empty());
+    }
+    let Some(list) = annotation
+        .children()
+        .find(|child| child.kind() == J::ANNOTATION_ARGUMENT_LIST)
+    else {
+        return;
+    };
+    for child in list.children() {
+        if child.kind() == J::ELEMENT_VALUE_PAIR {
+            // §9.7.1 writes a pair as `Identifier = ElementValue`; the
+            // identifier is the pair's name and, by §9.6.1, an element of the
+            // annotation interface — a method, like its declaration.
+            if let Some(name) = child
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == J::IDENTIFIER)
+            {
+                insert(out, name.text_range(), HlTag::Method, HlMods::empty());
+            }
+            // The pair's node children are its value (`mode = Mode.FAST`,
+            // `nums = { 1 }`, `inner = @Inner`).
+            if let Some(value) = child.children().next() {
+                walk_value(db, file_id, &value, out);
+            }
+        } else {
+            // The single-element form `(v)` ([§9.7.1]) writes the value alone.
+            walk_value(db, file_id, &child, out);
+        }
+    }
+}
+
+/// The names a value writes ([JLS §9.7.1]): a nested annotation is walked as an
+/// annotation, an array initializer ([§10.6]) holds more values, and every
+/// other value is an expression whose identifiers [`hir_ty::annotation_target`]
+/// resolves — a class literal's type ([§15.8.2]), an enum constant or a
+/// constant variable ([§6.5.6]).
+fn walk_value(db: &RootDatabase, file_id: FileId, value: &SyntaxNode<Lang>, out: &mut Highlights) {
+    match value.kind() {
+        J::ANNOTATION | J::MARKER_ANNOTATION => walk_annotation(db, file_id, value, out),
+        J::ARRAY_INITIALIZER => {
+            for child in value.children() {
+                walk_value(db, file_id, &child, out);
+            }
+        }
+        _ => {
+            for token in value
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| token.kind() == J::IDENTIFIER)
+            {
+                // An annotation written inside the value (`@Outer(@Inner ...)`
+                // on a written type) names its interface too; a name in an
+                // annotation is not a value name.
+                if let Some(range) = annotation_name_range(&token) {
+                    insert(out, range, HlTag::Decorator, HlMods::empty());
+                    continue;
+                }
+                let Some(target) =
+                    hir_ty::annotation_target(db, file_id, token.text_range().start())
+                else {
+                    continue;
+                };
+                let (tag, mods) = match target {
+                    AnnotationTarget::Element(_) => (HlTag::Method, HlMods::empty()),
+                    AnnotationTarget::Type(_) => (HlTag::Type, HlMods::empty()),
+                    AnnotationTarget::Field(field) => {
+                        let mut mods = HlMods::empty();
+                        if field.is_static {
+                            mods |= HlMods::STATIC;
+                        }
+                        if field.is_final {
+                            mods |= HlMods::READONLY;
+                        }
+                        (HlTag::Property, mods)
+                    }
+                };
+                insert(out, token.text_range(), tag, mods);
+            }
+        }
+    }
+}
+
+/// The range of the annotation name the identifier `token` is written in — the
+/// `QUALIFIED_NAME` a [`J::ANNOTATION`]/[`J::MARKER_ANNOTATION`] names itself by
+/// ([JLS §9.7.1]) — or `None` for every other identifier.
+fn annotation_name_range(token: &SyntaxToken<Lang>) -> Option<TextRange> {
+    let name = token.parent()?;
+    if name.kind() != J::QUALIFIED_NAME {
+        return None;
+    }
+    let annotation = name.parent()?;
+    is_annotation(annotation.kind()).then(|| name.text_range())
 }
 
 /// The variables a body declares — parameters, locals, catch and for-each

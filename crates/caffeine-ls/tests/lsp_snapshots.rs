@@ -1033,16 +1033,23 @@ const JAVA_SEMANTIC_TOKENS: &str = r#"package com.example;
 
 import java.util.List;
 
+enum Kind { ALPHA, BETA }
+
 /** A doc comment. */
+@Tag(
+    value = "x",
+    kind = Kind.ALPHA,
+    type = Sample.class,
+    nums = {1, 2},
+    inner = @Tag("y")
+)
 public class Sample<T extends Number> implements Marker {
     private static final String NAME = "sample";
     private int count = 0;
 
-    enum Kind { ALPHA, BETA }
-
     record Pair(int left, int right) { }
 
-    @Deprecated
+    @Deprecated(since = "1")
     public <U> U pick(List<U> values, int index) {
         int local = index + 1;
         for (U value : values) {
@@ -1054,6 +1061,7 @@ public class Sample<T extends Number> implements Marker {
         return values.get(local);
     }
 
+    @SuppressWarnings(NAME)
     void caller() {
         var s = new Sample<Integer>();
         s.count = 3;
@@ -1062,6 +1070,18 @@ public class Sample<T extends Number> implements Marker {
            comment */
         Runnable r = () -> { int inner = 1; };
     }
+}
+
+@interface Tag {
+    String value();
+
+    Kind kind();
+
+    Class<?> type();
+
+    int[] nums();
+
+    Tag inner();
 }
 
 interface Marker {
@@ -1179,6 +1199,22 @@ fn test_java_semantic_tokens() {
             // signature it declares them in.
             "type U",
             "decorator Deprecated",
+            // Annotation element-value pairs ([JLS §9.7.1]): a pair's name is
+            // the interface element it writes ([§9.6.1]), and the names of its
+            // value are what the same names denote in the scope of the
+            // annotated declaration — a class literal's type ([§15.8.2]), an
+            // enum constant or constant variable read ([§6.5.6]) and a nested
+            // annotation's interface ([§9.7.1]).
+            "method value",
+            "method since",
+            "method kind",
+            "method type",
+            "method nums",
+            "method inner",
+            "decorator Tag",
+            "type Kind",
+            "property+readonly+static ALPHA",
+            "property+readonly+static NAME",
             // Body declarations.
             "parameter+declaration values",
             "parameter+declaration index",
