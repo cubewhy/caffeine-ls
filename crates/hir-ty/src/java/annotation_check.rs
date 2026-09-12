@@ -1492,7 +1492,7 @@ fn is_enum_constant_form(cx: &ValueCtx<'_>, value: &ItemAnnotationValue, target:
     // a qualified one names its enum explicitly ([§6.5.6.2]).
     let owner = match qualifier {
         Some(qualifier) => resolve_name_ty(db, cx.scope, cx.resolver, &qualifier),
-        None => Some(target.clone()),
+        None => Some(*target),
     };
     owner.is_some_and(|owner| {
         enum_constants(db, cx.scope, &owner)
@@ -1673,7 +1673,7 @@ fn is_enum_constant_form_ranged(cx: &ValueCtx<'_>, value: &AnnotationValue, targ
     };
     let owner = match qualifier {
         Some(qualifier) => resolve_name_ty(db, cx.scope, cx.resolver, &qualifier),
-        None => Some(target.clone()),
+        None => Some(*target),
     };
     owner.is_some_and(|owner| {
         enum_constants(db, cx.scope, &owner)

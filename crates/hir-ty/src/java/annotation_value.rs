@@ -274,7 +274,7 @@ fn expr_kind(
                         if ty.as_ref().is_some_and(|ty| is_boolean(ty, cx.db)) =>
                     {
                         ConstKind::Constant {
-                            ty: ty.clone(),
+                            ty: *ty,
                             int: int.map(|value| (value == 0) as i64),
                         }
                     }
@@ -568,9 +568,7 @@ fn field_kind(
     visited: &mut FxHashSet<(FileId, ItemId)>,
 ) -> ConstKind {
     let db = cx.db;
-    let not_constant = ConstKind::NotConstant {
-        ty: Some(field.ty.clone()),
-    };
+    let not_constant = ConstKind::NotConstant { ty: Some(field.ty) };
     if !field.is_final || !is_constant_variable_type(&field.ty, db) {
         return not_constant;
     }
@@ -579,7 +577,7 @@ fn field_kind(
         // a constant variable ([§4.12.4]) of its own declared type.
         FieldValue::Constant(value) => ConstKind::Constant {
             int: value.and_then(|value| narrowing_value(&field.ty, db, value)),
-            ty: Some(field.ty.clone()),
+            ty: Some(field.ty),
         },
         FieldValue::Unreadable => not_constant,
     }
@@ -859,7 +857,7 @@ fn unary_numeric_promotion(db: &dyn TyDatabase, ty: &Ty) -> Ty {
         TyKind::Primitive(PrimitiveType::Byte | PrimitiveType::Short | PrimitiveType::Char) => {
             Ty::primitive(db, PrimitiveType::Int)
         }
-        _ => ty.clone(),
+        _ => *ty,
     }
 }
 

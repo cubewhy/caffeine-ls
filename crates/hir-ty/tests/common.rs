@@ -2623,7 +2623,7 @@ fn render_annotations(db: &TestDatabase, files: &[(&str, &str)]) -> String {
             .join(" ")
     }
     fn render_type_annotations(src: &AnnotationSource<'_>, ty: &ItemTypeRef) -> String {
-        render_annotations_vec(&src, &ty.type_use_annotations)
+        render_annotations_vec(src, &ty.type_use_annotations)
     }
 
     let mut lines = files

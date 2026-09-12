@@ -911,7 +911,7 @@ fn annotation_ref_text(annotation: &SyntaxNode<Lang>) -> Option<AnnotationRef> {
 /// `ctx`/`owner` carry the arena an element value lowers into, or are both
 /// `None` for a value that has none.
 fn annotation_ref_impl(
-    mut ctx: Option<&mut LowerCtx<'_>>,
+    ctx: Option<&mut LowerCtx<'_>>,
     owner: Option<ItemId>,
     annotation: &SyntaxNode<Lang>,
 ) -> Option<AnnotationRef> {
@@ -919,7 +919,7 @@ fn annotation_ref_impl(
     let args = annotation
         .children()
         .find(|child| is(child, J::ANNOTATION_ARGUMENT_LIST))
-        .map(|list| annotation_args_from(ctx.as_deref_mut(), owner, &list))
+        .map(|list| annotation_args_from(ctx, owner, &list))
         .unwrap_or_default();
     Some(AnnotationRef { name, args })
 }
@@ -1020,7 +1020,7 @@ pub(crate) fn annotation_value_from(
             },
             // `null`, `this`, `super` — an expression value without a literal
             // form.
-            _ => annotation_expr_value(ctx.as_deref_mut(), owner, node)?,
+            _ => annotation_expr_value(ctx, owner, node)?,
         },
         // `Type.NAME` — a bare enum constant or a qualified name
         // ([§6.5.6.2], [§8.9.1]); both resolve as a name in the type layer.
@@ -1035,7 +1035,7 @@ pub(crate) fn annotation_value_from(
         // parenthesized one, a method call, a `new`, ... — which §9.7.1 admits
         // only when it is a constant expression, a class literal, an enum
         // constant or a nested annotation.
-        _ => annotation_expr_value(ctx.as_deref_mut(), owner, node)?,
+        _ => annotation_expr_value(ctx, owner, node)?,
     };
     Some((value, range))
 }
