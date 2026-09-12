@@ -5,6 +5,10 @@ pub enum Cli {
     Prepare {
         #[arg(value_enum)]
         target: Option<PrepareTarget>,
+
+        /// Re-download the jars even when they are already present.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Parse source tree

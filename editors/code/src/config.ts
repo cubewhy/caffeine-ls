@@ -11,6 +11,19 @@ export interface ClientConfig {
   cache_dir: string;
   java_home: string | null;
   download_sources: boolean;
+  /**
+   * Decompiler backend the server runs on library classes that ship no sources:
+   * `"vineflower"` (the default), `"cfr"` or `"none"`.
+   */
+  decompiler: string;
+  /**
+   * Backend id to the absolute path of the jar that implements it. Only jars that
+   * exist on disk are sent, so an installation without them simply leaves the
+   * corresponding backend disabled on the server.
+   */
+  decompiler_jars: Record<string, string>;
+  /** URI scheme the server serves read-only library views over. */
+  library_uri_scheme: string;
 }
 
 /**
@@ -28,10 +41,26 @@ export function getClientConfig(context: ExtensionContext): ClientConfig {
     .getConfiguration("caffeine_ls")
     .get<boolean>("downloadSources", false);
 
+  const decompiler = vscode.workspace
+    .getConfiguration("caffeine_ls")
+    .get<string>("decompiler", "vineflower");
+
   return {
     cache_dir: cacheDir,
     java_home: javaHome,
     download_sources: downloadSources,
+    decompiler,
+    decompiler_jars: Object.fromEntries(
+      ["cfr", "vineflower"]
+        .map((id): [string, string] => [
+          id,
+          context.asAbsolutePath(
+            path.join("resources", "decompilers", `${id}.jar`),
+          ),
+        ])
+        .filter(([, jarPath]) => fs.existsSync(jarPath)),
+    ),
+    library_uri_scheme: "caffeine-ls",
   };
 }
 

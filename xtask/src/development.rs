@@ -38,6 +38,14 @@ pub fn run_vscode(code_exec: Option<&str>, cargo_options: Vec<String>) -> anyhow
     let target_bin = bin_dir.join(&binary_name);
     sh.copy_file(source_bin, target_bin)?;
 
+    // The dev flow must work offline, so a missing network only means that library
+    // decompilation stays disabled instead of aborting the launch.
+    if let Err(e) = crate::prepare::prepare(None, false) {
+        eprintln!(
+            "warning: could not fetch the decompiler jars ({e:#}); library decompilation will stay disabled"
+        );
+    }
+
     sh.change_dir(&extension_dir);
 
     let pnpm = which::which("pnpm").context("No pnpm installation found in PATH")?;

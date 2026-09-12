@@ -49,6 +49,9 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
 
+      - name: Fetch decompiler jars
+        run: cargo xtask prepare
+
       - name: Build Rust binary
         run: cargo build --release --target ${{ matrix.target }}
 

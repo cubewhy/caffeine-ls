@@ -73,6 +73,12 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Let the build system download dependency sources (`-sources.jar`) so go-to-definition can open library sources. Changing it re-syncs the workspace."
+        },
+        "caffeine_ls.decompiler": {
+          "type": "string",
+          "enum": ["cfr", "vineflower", "none"],
+          "default": "vineflower",
+          "markdownDescription": "Decompiler used to show library classes that ship no sources. `none` disables it. Changing it re-syncs the workspace."
         }
       }
     }

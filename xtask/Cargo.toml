@@ -14,3 +14,7 @@ indicatif = { workspace = true }
 java-syntax = { workspace = true }
 rayon = { workspace = true }
 walkdir = { workspace = true }
+ureq = "3.4.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

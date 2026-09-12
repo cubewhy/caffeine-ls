@@ -14,6 +14,9 @@ import {
   selectProjectJdkAction,
 } from "./config";
 
+/** URI scheme the server serves read-only library views over. */
+const LIBRARY_SCHEME = "caffeine-ls";
+
 let client: LanguageClient;
 let currentServerPid: number | undefined;
 
@@ -54,6 +57,13 @@ export function activate(context: ExtensionContext) {
     documentSelector: [
       { scheme: "file", language: "java" },
       { scheme: "file", language: "kotlin" },
+      // A library class that ships no sources opens a read-only Java view the
+      // server serves over its own scheme; the *same* server answers for it, so
+      // navigation, hover, symbols and diagnostics work inside the view exactly
+      // as in a workspace file (a view is third-party code the server reports no
+      // diagnostics for, so its Problems stay empty rather than collecting
+      // flags about code nobody can fix).
+      { scheme: LIBRARY_SCHEME, language: "java" },
     ],
     initializationOptions: initialConfig,
     synchronize: {
@@ -71,6 +81,26 @@ export function activate(context: ExtensionContext) {
     "Caffeine LS",
     serverOptions,
     clientOptions,
+  );
+
+  // The server answers go-to-definition for a library class that ships no sources with a
+  // `caffeine-ls://` URI pointing at its cached view (real source or decompiled output).
+  // Text documents over that scheme are read-only for the client and have no filesystem
+  // counterpart to read, so this provider fetching the content from the server is what
+  // makes the resulting editors readable at all. Every URI maps back to the file the
+  // server materialized, so a failed read is the server's own error and is left to
+  // surface as one — never replaced with a stand-in document, which would be analysed
+  // as Java and reported as problems.
+  context.subscriptions.push(
+    workspace.registerTextDocumentContentProvider(LIBRARY_SCHEME, {
+      async provideTextDocumentContent(uri) {
+        const res = await client.sendRequest(
+          "caffeine_ls/libraryFileContent",
+          { uri: uri.toString() },
+        );
+        return (res as { content: string } | null)?.content ?? "";
+      },
+    }),
   );
 
   context.subscriptions.push(
@@ -106,6 +136,9 @@ export function activate(context: ExtensionContext) {
   context.subscriptions.push(
     workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("caffeine_ls.downloadSources")) {
+        notifyLspConfigUpdate(client, getClientConfig(context));
+      }
+      if (event.affectsConfiguration("caffeine_ls.decompiler")) {
         notifyLspConfigUpdate(client, getClientConfig(context));
       }
       if (event.affectsConfiguration("caffeine_ls.logLevel")) {

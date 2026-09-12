@@ -16,8 +16,11 @@ fn main() {
     let args = Cli::parse();
 
     match args {
-        Cli::Prepare { target } => {
-            prepare::prepare(target);
+        Cli::Prepare { target, force } => {
+            if let Err(e) = prepare::prepare(target, force) {
+                eprintln!("An error has occurred: {e:#}");
+                process::exit(2);
+            }
         }
         Cli::Parse { lang, file } => {
             let Some(lang) = lang.or_else(|| {
