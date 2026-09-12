@@ -9,7 +9,9 @@ use ide::{
     LibrarySources, ProjectGraphData, SourceSetId,
 };
 use ide_db::base_db::{SourceRoot, SourceRootId};
-use lsp_test::classfile::{build_jar, class_bytes};
+use lsp_test::classfile::{
+    ACC_PUBLIC, ACC_VARARGS, build_jar, class_bytes, class_bytes_with_methods,
+};
 use rowan::TextSize;
 use vfs::{AbsPathBuf, FileId, VfsPath, file_set::FileSet};
 
@@ -25,6 +27,10 @@ const OVERLOAD_SRC: &str = "package com.example;\n\npublic class Overload {\n   
 /// source and falls back to an index name for the second parameter.
 const PAIR_SRC: &str =
     "package com.example;\n\npublic class Pair {\n    public void combine(int first) {}\n}\n";
+/// Members of one name and parameter *count*, told apart only by their
+/// parameter types — each `int` form declared first, so a lookup that knows no
+/// more than the arity answers it for every one-argument reference.
+const LOADER_SRC: &str = "package com.example;\n\npublic class Loader {\n    public Loader(int size) {}\n\n    public Loader(Root root) {}\n\n    public void load(int size) {}\n\n    public void load(Root root) {}\n\n    public void add(int size) {}\n\n    public void add(Root... roots) {}\n}\n";
 /// The classfile of `Widget` declares `<init>(int)`; the source declares that
 /// same constructor under the class's own name. A class instance creation has
 /// to answer with that declaration — not with the class the classfile's
@@ -34,7 +40,7 @@ const WIDGET_SRC: &str =
     "package com.example;\n\npublic class Widget {\n    public Widget(int size) {}\n}\n";
 const WORKSPACE_FOO_SRC: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
+const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    Object loader() {\n        return new com.example.Loader(new com.example.Root());\n    }\n\n    void use(com.example.Loader loader) {\n        loader.load(new com.example.Root());\n        loader.add(new com.example.Root());\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
 
 /// The classpath jar's source archive entries, in a fixed order so the file id
 /// of a library source is `1000 + index`.
@@ -46,6 +52,7 @@ const LIB_SOURCES: &[(&str, &str)] = &[
     ("com/example/Overload.java", OVERLOAD_SRC),
     ("com/example/Pair.java", PAIR_SRC),
     ("com/example/Widget.java", WIDGET_SRC),
+    ("com/example/Loader.java", LOADER_SRC),
 ];
 
 /// The file id the library fixture assigns to `entry`.
@@ -135,6 +142,25 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
                 "java/lang/Object",
                 &[],
                 &[("<init>", 1)],
+            ),
+        ),
+        // One-parameter constructors and methods distinguished only by the
+        // descriptor, plus a variable-arity method: its signature erases to
+        // the array `Root[]`, which is what the classfile carries.
+        (
+            "com/example/Loader.class".to_owned(),
+            class_bytes_with_methods(
+                "com/example/Loader",
+                "java/lang/Object",
+                &[],
+                &[
+                    ("<init>", "(I)V", ACC_PUBLIC),
+                    ("<init>", "(Lcom/example/Root;)V", ACC_PUBLIC),
+                    ("load", "(I)V", ACC_PUBLIC),
+                    ("load", "(Lcom/example/Root;)V", ACC_PUBLIC),
+                    ("add", "(I)V", ACC_PUBLIC),
+                    ("add", "([Lcom/example/Root;)V", ACC_PUBLIC | ACC_VARARGS),
+                ],
             ),
         ),
     ];
@@ -303,6 +329,49 @@ fn constructor_creation_resolves_to_the_library_constructor() {
         targets[0].range,
         declared_name_range(WIDGET_SRC, "public Widget(int size)", "Widget"),
         "the definition is the constructor's own name, not the class's"
+    );
+}
+
+/// §15.12.2.2/[§8.4.2]: two constructors of one parameter *count* are told
+/// apart by their parameter types — the erasure the classfile declares and the
+/// declaration the source writes — so the creation names the constructor its
+/// argument selected, never the first of that arity.
+#[test]
+fn constructor_overloads_of_one_arity_resolve_by_type() {
+    let fixture = fixture(&["com/example/Loader.java", "com/example/Root.java"], false);
+
+    let targets = fixture.definition("new com.example.Loader");
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
+    assert_eq!(targets[0].file, lib_file("com/example/Loader.java"));
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(LOADER_SRC, "public Loader(Root root)", "Loader"),
+        "the constructor the argument's type selects, not the one of its arity"
+    );
+}
+
+/// §15.12.2.2: the same for a method invocation, and for a variable-arity
+/// declaration — whose signature erases to the array the classfile declares
+/// ([§8.4.1]) while the source writes the `...` form.
+#[test]
+fn method_overloads_of_one_arity_resolve_by_type() {
+    let fixture = fixture(&["com/example/Loader.java", "com/example/Root.java"], false);
+
+    let targets = fixture.definition("loader.load");
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
+    assert_eq!(targets[0].file, lib_file("com/example/Loader.java"));
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(LOADER_SRC, "public void load(Root root)", "load"),
+        "the overload the argument's type selects, not the one of its arity"
+    );
+
+    let targets = fixture.definition("loader.add");
+    assert_eq!(targets.len(), 1, "expected one target, got {targets:?}");
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(LOADER_SRC, "public void add(Root... roots)", "add"),
+        "the variable-arity overload's own declaration"
     );
 }
 

@@ -2595,7 +2595,7 @@ fn jdk_sources_are_materialized_and_navigable() {
         return;
     };
 
-    let source = "package app;\n\nclass App {\n    String created() {\n        return new String(\"abc\");\n    }\n\n    Class<?> member() {\n        return \"abc\".getClass();\n    }\n}\n";
+    let source = "package app;\n\nimport java.util.ArrayList;\n\nclass App {\n    String created() {\n        return new String(\"abc\");\n    }\n\n    ArrayList<String> list() {\n        return new ArrayList<String>(new ArrayList<>());\n    }\n\n    Class<?> member() {\n        return \"abc\".getClass();\n    }\n}\n";
     let path = "/src/app/App.java";
 
     // No build system in the temp workspace: the plain path registers the
@@ -2648,6 +2648,38 @@ fn jdk_sources_are_materialized_and_navigable() {
         &string_source,
         "public String(String original)",
         "String",
+    );
+
+    // -- §15.12.2.2/[§8.4.2]: two constructors of one parameter *count* are
+    // told apart by their parameter types, which the classfile descriptor and
+    // the source declaration agree on. `new ArrayList<>(new ArrayList<>())`
+    // names `ArrayList(Collection<? extends E>)` — the constructor the
+    // argument's type selects — not the `ArrayList(int initialCapacity)` that
+    // shares its arity and is declared first.
+    let (line, character) = position_of(source, "new ArrayList<String>");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let arraylist_path = uri.to_file_path().expect("a file URI");
+    assert!(
+        arraylist_path.ends_with("java/util/ArrayList.java"),
+        "the constructor is declared by `ArrayList`: {}",
+        arraylist_path.display()
+    );
+    let arraylist_source =
+        std::fs::read_to_string(&arraylist_path).expect("the source was written");
+    assert_definition_name(
+        &locations[0]["range"],
+        &arraylist_source,
+        "public ArrayList(Collection<? extends E> c)",
+        "ArrayList",
     );
 
     // -- a self-reference *inside* the materialized class: the parameter type

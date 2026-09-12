@@ -6,7 +6,11 @@
 //! invocation, a constructor call, a method reference — is answered from the
 //! resolution the type layer recorded while inferring the body
 //! ([`hir_ty::BodyTypes::resolved`]): the exact declaration the reference
-//! denotes, overload selection ([JLS §15.12]) included. A class instance
+//! denotes, overload selection ([JLS §15.12]) included. A declaration outside
+//! the workspace has no item of its own to quote, so it is found by the
+//! parameter types the resolution selected, compared *erased* ([§4.6]): no two
+//! members of one class share an erasure ([§8.4.2]), and the classfile writes
+//! the same erasure the declaration does. A class instance
 //! creation ([§15.9]) names the *constructor* it selected — the declaration
 //! the classfile calls `<init>`
 //! ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6))
@@ -379,7 +383,15 @@ fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Reso
             let owner = Name::new(&written(index - 1));
             let member = import.name.simple_name();
             for use_kind in [Use::Field, Use::Method] {
-                match member_of_named_owner(db, file, None, &owner, &member, use_kind, None) {
+                match member_of_named_owner(
+                    db,
+                    file,
+                    None,
+                    &owner,
+                    &member,
+                    use_kind,
+                    Params::Unknown,
+                ) {
                     MemberLookup::Found(resolution) => return vec![resolution],
                     MemberLookup::PendingSource(source) => {
                         return vec![Resolution::Pending(source)];
@@ -552,14 +564,14 @@ fn member_resolution(
     // The member's *declaration* form: the declaring class FQN, the parameter
     // count of a method, and the workspace item when the declaration is a
     // source one (a library member carries no file and no item).
-    let (name, use_kind, arity, source_decl, owner) = match member {
+    let (name, use_kind, params, source_decl, owner) = match member {
         hir_ty::ResolvedMember::Method(method) => (
             member_decl_name(method, reference),
             member_use_kind(reference),
-            // §15.9/[§15.12.2]: the constructor a creation selects is the one
-            // whose parameter list accepted the arguments — the same
-            // parameter count the invocation was resolved with.
-            Some(method.params.len()),
+            // §15.12.2.2: the member the invocation resolved to — its
+            // parameter types name one declaration, where the count alone
+            // would answer the first overload of that arity.
+            Params::Types(&method.params),
             // Only a *constructor declaration* answers a creation: the
             // recorded item of an inference fallback (a method named like the
             // class) is not one, so the lookup below finds the constructor —
@@ -576,7 +588,7 @@ fn member_resolution(
         hir_ty::ResolvedMember::Field(field) => (
             field.name.clone(),
             Use::Field,
-            None,
+            Params::Unknown,
             field.owner_file.zip(field.decl_item),
             field.owner.clone(),
         ),
@@ -594,7 +606,7 @@ fn member_resolution(
     // by.
     match owner_lookup(db, file, &owner) {
         OwnerLookup::Source(class) => vec![Resolution::Decl {
-            item: member_or_owner(db, class.file, class.item, &name, use_kind, arity),
+            item: member_or_owner(db, class.file, class.item, &name, use_kind, params),
             file: class.file,
             name,
         }],
@@ -602,7 +614,7 @@ fn member_resolution(
             decl: hir::LibrarySourceDecl::Loaded { file, item },
             ..
         } => vec![Resolution::Decl {
-            item: member_or_owner(db, file, item, &name, use_kind, arity),
+            item: member_or_owner(db, file, item, &name, use_kind, params),
             file,
             name,
         }],
@@ -632,10 +644,10 @@ fn member_or_owner(
     owner_item: ItemId,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> ItemId {
     let tree = hir::file_item_tree(db, decl_file);
-    member_item(db, decl_file, &tree, name, use_kind, arity).unwrap_or(owner_item)
+    member_item(db, decl_file, &tree, name, use_kind, params).unwrap_or(owner_item)
 }
 
 /// The lambda parameter the `Var` at `expr` names: the innermost enclosing
@@ -849,27 +861,36 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                 args,
                 ..
             } => {
-                let arity = Some(args.len());
+                let params = Params::Count(args.len());
                 match receiver {
                     Some(receiver) => receiver_ty(db, file, &items, receiver)
                         .map_or_else(Vec::new, |ty| {
-                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, arity)
+                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
                         }),
                     None => enclosing_class_receiver(db, file, &tree, &symbols, offset)
                         .map_or_else(Vec::new, |ty| {
-                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, arity)
+                            member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
                         }),
                 }
             }
             // A field access, with an implicit receiver when `target` is empty.
             ExprData::FieldAccess { target, name } => match target {
                 Some(target) => receiver_ty(db, file, &items, target).map_or_else(Vec::new, |ty| {
-                    member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, None)
+                    member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, Params::Unknown)
                 }),
-                None => enclosing_class_receiver(db, file, &tree, &symbols, offset)
-                    .map_or_else(Vec::new, |ty| {
-                        member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, None)
-                    }),
+                None => enclosing_class_receiver(db, file, &tree, &symbols, offset).map_or_else(
+                    Vec::new,
+                    |ty| {
+                        member_in_hierarchy(
+                            db,
+                            file,
+                            ty,
+                            name.as_str(),
+                            Use::Field,
+                            Params::Unknown,
+                        )
+                    },
+                ),
             },
             // A statically imported member ([JLS §7.5.4]): `import static
             // pkg.Type.MEMBER` (or `.*`) puts the member itself in scope.
@@ -878,7 +899,15 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                 let mut found = Vec::new();
                 let mut pending = Vec::new();
                 for (owner, member) in resolver.static_import_owners(name.as_str()) {
-                    match member_of_named_owner(db, file, item, &owner, &member, Use::Field, None) {
+                    match member_of_named_owner(
+                        db,
+                        file,
+                        item,
+                        &owner,
+                        &member,
+                        Use::Field,
+                        Params::Unknown,
+                    ) {
                         MemberLookup::Found(resolution) => {
                             found = vec![resolution];
                             break;
@@ -914,7 +943,7 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                                 &Name::new(prefix),
                                 member,
                                 Use::Field,
-                                None,
+                                Params::Unknown,
                             ) {
                                 MemberLookup::Found(resolution) => vec![resolution],
                                 MemberLookup::PendingSource(source) => {
@@ -991,7 +1020,7 @@ fn member_in_hierarchy(
     receiver: Ty,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> Vec<Resolution> {
     let scope = hir_ty::scope_for_file(db, file);
     let mut queue = VecDeque::from([receiver]);
@@ -1005,7 +1034,7 @@ fn member_in_hierarchy(
         if !seen.insert(fqn.clone()) {
             continue;
         }
-        match members_of_owner(db, file, fqn.as_str(), name, use_kind, arity) {
+        match members_of_owner(db, file, fqn.as_str(), name, use_kind, params) {
             MemberLookup::Found(resolution) => return vec![resolution],
             MemberLookup::PendingSource(source) => pending.push(source),
             MemberLookup::Absent => {}
@@ -1046,13 +1075,13 @@ fn members_of_owner(
     owner_fqn: &str,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> MemberLookup {
     match owner_lookup(db, file, owner_fqn) {
         OwnerLookup::Source(class) => {
             let owner_file = class.file;
             let tree = hir::file_item_tree(db, owner_file);
-            match member_item(db, owner_file, &tree, name, use_kind, arity) {
+            match member_item(db, owner_file, &tree, name, use_kind, params) {
                 Some(item) => MemberLookup::Found(Resolution::Decl {
                     file: owner_file,
                     item,
@@ -1070,13 +1099,13 @@ fn members_of_owner(
             },
         } => {
             let tree = hir::file_item_tree(db, decl_file);
-            match member_item(db, decl_file, &tree, name, use_kind, arity) {
+            match member_item(db, decl_file, &tree, name, use_kind, params) {
                 Some(item) => MemberLookup::Found(Resolution::LibraryMember {
                     library,
                     owner_fqn: fqn,
                     name: name.to_owned(),
                     use_kind,
-                    arity,
+                    arity: params.arity(),
                     decl: hir::LibrarySourceDecl::Loaded {
                         file: decl_file,
                         item,
@@ -1113,7 +1142,7 @@ fn member_of_named_owner(
     owner_name: &Name,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> MemberLookup {
     let fqn = match hir_ty::resolve_type_name_at(db, file, item, owner_name) {
         hir_ty::NameResolution::Resolved(fqn) | hir_ty::NameResolution::NotAccessible(fqn) => fqn,
@@ -1121,7 +1150,7 @@ fn member_of_named_owner(
         | hir_ty::NameResolution::Ambiguous(_)
         | hir_ty::NameResolution::Unresolved => return MemberLookup::Absent,
     };
-    members_of_owner(db, file, fqn.as_str(), name, use_kind, arity)
+    members_of_owner(db, file, fqn.as_str(), name, use_kind, params)
 }
 
 /// The class `owner_fqn` denotes in `file`'s scope, and where its source is.
@@ -1149,16 +1178,47 @@ fn owner_lookup(db: &RootDatabase, file: FileId, owner_fqn: &str) -> OwnerLookup
     }
 }
 
-/// The symbol of the member `name` declared in `file`, preferring the one that
-/// takes `arity` parameters and falling back to a name-only match — mirroring
-/// the file-local `member_targets` shape.
+/// What a member lookup knows about the parameter list of the declaration it
+/// is looking for.
+#[derive(Debug, Clone, Copy)]
+enum Params<'a> {
+    /// Nothing: any declaration carrying the name answers — a field access, or
+    /// a walk that has no reference to read.
+    Unknown,
+    /// The *count* of the invocation's arguments ([§15.12.1]): the first
+    /// declaration taking that many parameters answers.
+    Count(usize),
+    /// The parameter types the resolution selected
+    /// ([`hir_ty::MethodData::params`]): the declaration whose parameter types
+    /// are these, erased ([JLS §4.6]), answers. Two members of one class cannot
+    /// share an erasure ([§8.4.2]), so this names a single declaration where
+    /// the count alone answers the first overload of that arity —
+    /// `new ArrayList<>(c)` is `ArrayList(Collection)`, never the
+    /// `ArrayList(int)` of the same arity.
+    Types(&'a [Ty]),
+}
+
+impl Params<'_> {
+    /// The parameter count to match, when the types are not known.
+    fn arity(&self) -> Option<usize> {
+        match self {
+            Params::Unknown => None,
+            Params::Count(count) => Some(*count),
+            Params::Types(types) => Some(types.len()),
+        }
+    }
+}
+
+/// The symbol of the member `name` declared in `file`, preferring the
+/// declaration `params` selects and falling back to a name-only match —
+/// mirroring the file-local `member_targets` shape.
 fn member_item(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
     name: &str,
     use_kind: Use,
-    arity: Option<usize>,
+    params: Params<'_>,
 ) -> Option<ItemId> {
     let symbols = hir::file_symbols(db, file);
     let candidates: Vec<&hir::SourceSymbol> = symbols
@@ -1184,14 +1244,46 @@ fn member_item(
             kind_matches && symbol.name.simple_name() == name
         })
         .collect();
-    let by_arity = arity.and_then(|arity| {
+    let by_types = match params {
+        Params::Types(expected) => candidates
+            .iter()
+            .find(|symbol| declares_params(db, file, symbol.item, expected)),
+        Params::Unknown | Params::Count(_) => None,
+    };
+    let by_arity = params.arity().and_then(|arity| {
         candidates
             .iter()
             .find(|symbol| parameter_count(tree, symbol.item) == Some(arity))
     });
-    by_arity
+    by_types
+        .or(by_arity)
         .or_else(|| candidates.first())
         .map(|symbol| symbol.item)
+}
+
+/// Whether the declaration at `item` takes exactly the parameter types
+/// `expected` — compared *erased* ([JLS §4.6]), because the resolution holds
+/// the declaring type's arguments substituted where the declaration writes its
+/// own type parameters.
+fn declares_params(db: &RootDatabase, file: FileId, item: ItemId, expected: &[Ty]) -> bool {
+    let mut declared = hir_ty::method_params(db, file, item);
+    if declared.len() != expected.len() {
+        return false;
+    }
+    // §8.4.1: a variable-arity parameter resolves to its *element* type, while
+    // the resolution recorded the array type its signature erases to.
+    let tree = hir::file_item_tree(db, file);
+    let varargs = matches!(
+        tree.data(item),
+        ItemData::Method(method) if method.sig.params.last().is_some_and(|param| param.varargs)
+    );
+    if varargs && let Some(last) = declared.last_mut() {
+        *last = Ty::array(db, *last);
+    }
+    declared
+        .iter()
+        .zip(expected)
+        .all(|(declared, expected)| declared.erasure(db) == expected.erasure(db))
 }
 
 /// The classpath resolution of the type name written at `item` in `file`.
@@ -1391,7 +1483,7 @@ fn source_parameter_name(
 ) -> Option<String> {
     let file = source_file?;
     let tree = hir::file_item_tree(db, file);
-    let item = member_item(db, file, &tree, name, use_kind, Some(param_count))?;
+    let item = member_item(db, file, &tree, name, use_kind, Params::Count(param_count))?;
     match tree.data(item) {
         ItemData::Method(method) => method
             .sig

@@ -9,6 +9,13 @@ use std::{io::Write as _, path::Path};
 
 use zip::write::{SimpleFileOptions, ZipWriter};
 
+/// `ACC_PUBLIC`, the access flag every fixture member carries
+/// ([JVMS §4.1](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.1)).
+pub const ACC_PUBLIC: u16 = 0x0001;
+/// `ACC_VARARGS`, the flag that makes a classfile member variable-arity
+/// ([JVMS §4.6](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.6)).
+pub const ACC_VARARGS: u16 = 0x0080;
+
 /// Hand-encodes a public class `fqn` (slash-separated, e.g. `com/example/Foo`)
 /// extending `super_fqn`, with a default constructor, the given `public int`
 /// fields and `public void` methods (each `(name, parameter count)` of `int`
@@ -22,6 +29,27 @@ pub fn class_bytes(
     super_fqn: &str,
     fields: &[&str],
     methods: &[(&str, usize)],
+) -> Vec<u8> {
+    let methods: Vec<(&str, String)> = methods
+        .iter()
+        .map(|(name, arity)| (*name, format!("({})V", "I".repeat(*arity))))
+        .collect();
+    let methods: Vec<(&str, &str, u16)> = methods
+        .iter()
+        .map(|(name, descriptor)| (*name, descriptor.as_str(), ACC_PUBLIC))
+        .collect();
+    class_bytes_with_methods(fqn, super_fqn, fields, &methods)
+}
+
+/// [`class_bytes`] with each method written out as `(name, descriptor, access
+/// flags)` — the form a fixture needs when two members of one name and
+/// parameter count are told apart by their parameter *types* rather than their
+/// count, or when a member is variable-arity ([JVMS §4.6]).
+pub fn class_bytes_with_methods(
+    fqn: &str,
+    super_fqn: &str,
+    fields: &[&str],
+    methods: &[(&str, &str, u16)],
 ) -> Vec<u8> {
     /// Appends a `CONSTANT_Utf8` entry, returning its constant-pool index.
     fn utf8(entries: &mut Vec<Vec<u8>>, value: &str) -> u16 {
@@ -56,13 +84,12 @@ pub fn class_bytes(
             (name, descriptor)
         })
         .collect();
-    let method_indices: Vec<(u16, u16)> = methods
+    let method_indices: Vec<(u16, u16, u16)> = methods
         .iter()
-        .map(|(name, arity)| {
-            let descriptor = format!("({})V", "I".repeat(*arity));
+        .map(|(name, descriptor, flags)| {
             let name = utf8(&mut entries, name);
-            let descriptor = utf8(&mut entries, &descriptor);
-            (name, descriptor)
+            let descriptor = utf8(&mut entries, descriptor);
+            (name, descriptor, *flags)
         })
         .collect();
 
@@ -90,10 +117,10 @@ pub fn class_bytes(
 
     let method_count = method_indices.len() + 1;
     bytes.extend_from_slice(&(method_count as u16).to_be_bytes());
-    for (name, descriptor) in
-        std::iter::once(&(init_name, init_descriptor)).chain(method_indices.iter())
+    for (name, descriptor, flags) in
+        std::iter::once(&(init_name, init_descriptor, ACC_PUBLIC)).chain(method_indices.iter())
     {
-        bytes.extend_from_slice(&0x0001u16.to_be_bytes()); // ACC_PUBLIC
+        bytes.extend_from_slice(&flags.to_be_bytes());
         bytes.extend_from_slice(&name.to_be_bytes());
         bytes.extend_from_slice(&descriptor.to_be_bytes());
         bytes.extend_from_slice(&0u16.to_be_bytes()); // attributes
