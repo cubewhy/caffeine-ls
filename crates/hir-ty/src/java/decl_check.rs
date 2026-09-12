@@ -421,6 +421,18 @@ pub enum DeclDiagnostic {
         thrown: Ty,
         range: Option<rowan::TextRange>,
     },
+    /// §11.2.2 (with §8.8.7): a declared constructor whose body contains no
+    /// explicit constructor invocation implicitly calls `super()` before every
+    /// statement, so a checked exception the superclass's no-argument
+    /// constructor declares can neither be caught by a `try` in the body nor
+    /// left discharged by anything but the constructor's own `throws` clause.
+    /// javac: `unreported exception {E}; must be caught or declared to be
+    /// thrown`; the message here is IntelliJ's `Unhandled exception: {E}`.
+    /// `thrown` is the offending checked type, `range` the constructor's name.
+    CtorUnreportedException {
+        thrown: Ty,
+        range: Option<rowan::TextRange>,
+    },
     /// §8.1.1.1: a non-abstract class (or record, or enum) inherits an
     /// abstract method and does not implement it with a concrete method of
     /// the same signature. javac reports `{C} is not abstract and does not
@@ -662,6 +674,7 @@ impl DeclDiagnostic {
             | DeclDiagnostic::AbstractOrNativeMethodWithBody { method, .. }
             | DeclDiagnostic::NameClashSameErasure { method, .. } => method.as_str(),
             DeclDiagnostic::DefaultCtorUnreportedException { .. }
+            | DeclDiagnostic::CtorUnreportedException { .. }
             | DeclDiagnostic::EnumCtorSuperCall { .. }
             | DeclDiagnostic::RecordCtorParamNameMismatch { .. }
             | DeclDiagnostic::EnumMemberBeforeConstants { .. }
@@ -796,6 +809,9 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::NoDefaultConstructor {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::CtorUnreportedException {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::RecursiveConstructorInvocation {
@@ -1384,27 +1400,62 @@ fn check_class(
             let Some(body_id) = method.body() else {
                 continue;
             };
-            // §8.8.7: an explicit constructor invocation removes the implicit
+            // §8.8.7: an explicit constructor invocation replaces the implicit
             // `super()` — `this(...)` delegates to another constructor of the
             // class and `super(...)` names the superclass constructor itself.
-            let delegates = bodies.body(body_id).stmts.iter().any(|&stmt| {
-                matches!(
-                    bodies.stmt(stmt),
-                    hir_expand::body::StmtData::Expr(expr)
-                        if matches!(bodies.expr(*expr), hir_expand::body::ExprData::CtorCall { .. })
-                )
-            });
-            if delegates {
+            if body_has_ctor_call(&bodies, body_id) {
                 continue;
             }
             // The implicit `super()` cannot be applied when the superclass
-            // offers no accessible no-argument constructor.
+            // offers no accessible no-argument constructor; that is the
+            // whole report for this constructor.
             if has_no_accessible_no_arg_ctor(db, scope, &super_ty, &ctx) == Some(true) {
                 out.push(DeclDiagnostic::NoDefaultConstructor {
                     class: class.name.clone(),
                     super_owner: super_owner.clone(),
                     range: item_name_range(db, file, tree, *child),
                 });
+                continue;
+            }
+            // §8.8.7/[§11.2.2]: the accessible no-argument superclass
+            // constructor the implicit `super()` resolves to declares its
+            // checked exceptions; the body cannot catch them (the implicit
+            // invocation precedes every statement), so only the constructor's
+            // own `throws` clause can discharge them. A constructor that
+            // cannot resolve its superclass stays silent — the missing type
+            // reports itself (see `has_no_accessible_no_arg_ctor`).
+            let Some(super_fqn) = super_ty
+                .as_reference(db)
+                .map(|(name, _)| name.as_str().to_owned())
+            else {
+                continue;
+            };
+            let declared: Vec<Ty> = method
+                .sig
+                .throws
+                .iter()
+                .map(|ex| crate::java::resolve::resolve_type_ref(db, scope, &resolver, ex))
+                .collect();
+            let range = item_name_range(db, file, tree, *child);
+            for thrown in method::member_set(
+                db,
+                scope,
+                &super_ty,
+                &fqn_ctor_name(db, scope, &super_fqn),
+                &ctx,
+            )
+            .iter()
+            .find(|ctor| ctor.params.is_empty())
+            .map(|ctor| ctor.throws.clone())
+            .unwrap_or_default()
+            {
+                if is_checked(db, scope, &thrown)
+                    && !declared
+                        .iter()
+                        .any(|target| subtyping::is_assignable(db, scope, &thrown, target))
+                {
+                    out.push(DeclDiagnostic::CtorUnreportedException { thrown, range });
+                }
             }
         }
     }
@@ -2261,6 +2312,233 @@ fn has_no_accessible_no_arg_ctor(
         .iter()
         .any(|method| method.params.is_empty());
     Some(!has_no_arg)
+}
+
+/// §8.8.7: whether the constructor body `body_id` contains an explicit
+/// constructor invocation `this(...)`/`super(...)` — the *ConstructorBody*
+/// rule is that a body either *has* one (and it must then be the first
+/// statement, [§8.8.7.1]) or has none, in which case it implicitly begins with
+/// `super();`. A body that begins with something else and mentions one further
+/// down is a placement error ([§8.8.7.1]) — javac reports only
+/// `constructor calls not allowed here` for it (`javac: compiler.err.ctor.calls.not.allowed.here`)
+/// and adds *no* implicit `super()`, so the search covers the whole statement
+/// forest rather than just the top-level statements. Blocks, branches, loops,
+/// switches, `try` clauses and lambda bodies are walked.
+fn body_has_ctor_call(bodies: &BodyTree, body_id: hir_expand::body::BodyId) -> bool {
+    use hir_expand::body::{ExprData, StmtData};
+    let mut found = false;
+    fn walk_stmt(bodies: &BodyTree, stmt: hir_expand::body::StmtId, found: &mut bool) {
+        if *found {
+            return;
+        }
+        match bodies.stmt(stmt) {
+            StmtData::Empty | StmtData::Break(_) | StmtData::Continue(_) => {}
+            // A `this(...)`/`super(...)` invocation is an expression statement;
+            // any other expression form is walked for completeness (a nested
+            // invocation is invalid Java but still lowers).
+            StmtData::Expr(expr) => walk_expr(bodies, *expr, found),
+            StmtData::Decl { initializer, .. } => {
+                if let Some(init) = initializer {
+                    walk_expr(bodies, *init, found);
+                }
+            }
+            StmtData::Block(inner) | StmtData::DeclGroup(inner) => {
+                for s in inner {
+                    walk_stmt(bodies, *s, found);
+                }
+            }
+            StmtData::Labeled { stmt: s, .. } => walk_stmt(bodies, *s, found),
+            StmtData::If {
+                cond, then, els, ..
+            } => {
+                walk_expr(bodies, *cond, found);
+                walk_stmt(bodies, *then, found);
+                if let Some(els) = els {
+                    walk_stmt(bodies, *els, found);
+                }
+            }
+            StmtData::While { cond, body } => {
+                walk_expr(bodies, *cond, found);
+                walk_stmt(bodies, *body, found);
+            }
+            StmtData::DoWhile { body, cond } => {
+                walk_stmt(bodies, *body, found);
+                walk_expr(bodies, *cond, found);
+            }
+            StmtData::For {
+                init,
+                cond,
+                step,
+                body,
+            } => {
+                for s in init {
+                    walk_stmt(bodies, *s, found);
+                }
+                if let Some(cond) = cond {
+                    walk_expr(bodies, *cond, found);
+                }
+                for e in step {
+                    walk_expr(bodies, *e, found);
+                }
+                walk_stmt(bodies, *body, found);
+            }
+            StmtData::ForEach { iterable, body, .. } => {
+                walk_expr(bodies, *iterable, found);
+                walk_stmt(bodies, *body, found);
+            }
+            StmtData::Switch {
+                scrutinee, arms, ..
+            } => {
+                walk_expr(bodies, *scrutinee, found);
+                for arm in arms {
+                    for label in &arm.labels {
+                        if let hir_expand::body::SwitchLabel::Expr(e) = label {
+                            walk_expr(bodies, *e, found);
+                        }
+                    }
+                    for s in &arm.body {
+                        walk_stmt(bodies, *s, found);
+                    }
+                }
+            }
+            StmtData::Return(ret) => {
+                if let Some(ret) = ret {
+                    walk_expr(bodies, *ret, found);
+                }
+            }
+            StmtData::Throw(expr) | StmtData::Yield(expr) => walk_expr(bodies, *expr, found),
+            StmtData::Synchronized { expr, body } => {
+                walk_expr(bodies, *expr, found);
+                walk_stmt(bodies, *body, found);
+            }
+            StmtData::Try {
+                resources,
+                body,
+                catches,
+                finally,
+            } => {
+                for r in resources {
+                    if let Some(init) = r.initializer {
+                        walk_expr(bodies, init, found);
+                    }
+                }
+                walk_stmt(bodies, *body, found);
+                for c in catches {
+                    walk_stmt(bodies, c.body, found);
+                }
+                if let Some(finally) = finally {
+                    walk_stmt(bodies, *finally, found);
+                }
+            }
+            StmtData::Assert { cond, msg } => {
+                walk_expr(bodies, *cond, found);
+                if let Some(msg) = msg {
+                    walk_expr(bodies, *msg, found);
+                }
+            }
+            // A local class's own constructor bodies are separate bodies of
+            // the file, not part of this one.
+            StmtData::LocalClass { .. } | StmtData::Missing => {}
+        }
+    }
+    fn walk_expr(bodies: &BodyTree, expr: hir_expand::body::ExprId, found: &mut bool) {
+        if *found {
+            return;
+        }
+        match bodies.expr(expr) {
+            ExprData::CtorCall { .. } => *found = true,
+            ExprData::Literal(_)
+            | ExprData::Null
+            | ExprData::This { .. }
+            | ExprData::Super { .. }
+            | ExprData::ClassLit(_)
+            | ExprData::Var(_)
+            | ExprData::NamePath(_)
+            | ExprData::Missing => {}
+            ExprData::Template { args } | ExprData::ArrayInit(args) => {
+                for e in args {
+                    walk_expr(bodies, *e, found);
+                }
+            }
+            ExprData::FieldAccess { target, .. } => {
+                if let Some(target) = target {
+                    walk_expr(bodies, *target, found);
+                }
+            }
+            ExprData::ArrayAccess { array, index } => {
+                walk_expr(bodies, *array, found);
+                walk_expr(bodies, *index, found);
+            }
+            ExprData::MethodCall { receiver, args, .. } => {
+                if let Some(receiver) = receiver {
+                    walk_expr(bodies, *receiver, found);
+                }
+                for arg in args {
+                    walk_expr(bodies, *arg, found);
+                }
+            }
+            ExprData::New { args, receiver, .. } => {
+                for arg in args {
+                    walk_expr(bodies, *arg, found);
+                }
+                if let Some(receiver) = receiver {
+                    walk_expr(bodies, *receiver, found);
+                }
+            }
+            ExprData::NewArray {
+                dims, initializer, ..
+            } => {
+                for dim in dims {
+                    walk_expr(bodies, *dim, found);
+                }
+                if let Some(elems) = initializer {
+                    for elem in elems {
+                        walk_expr(bodies, *elem, found);
+                    }
+                }
+            }
+            ExprData::Unary { expr: inner, .. }
+            | ExprData::Postfix { expr: inner, .. }
+            | ExprData::Cast { expr: inner, .. }
+            | ExprData::Paren(inner) => walk_expr(bodies, *inner, found),
+            ExprData::Binary { lhs, rhs, .. } | ExprData::Assign { lhs, rhs, .. } => {
+                walk_expr(bodies, *lhs, found);
+                walk_expr(bodies, *rhs, found);
+            }
+            ExprData::InstanceOf { expr: inner, .. } => walk_expr(bodies, *inner, found),
+            ExprData::Conditional { cond, then, els } => {
+                walk_expr(bodies, *cond, found);
+                walk_expr(bodies, *then, found);
+                walk_expr(bodies, *els, found);
+            }
+            ExprData::Lambda { body, .. } => match body {
+                hir_expand::body::LambdaBody::Expr(inner) => walk_expr(bodies, *inner, found),
+                hir_expand::body::LambdaBody::Block(stmt) => walk_stmt(bodies, *stmt, found),
+            },
+            ExprData::MethodRef { qualifier, .. } => {
+                if let Some(qualifier) = qualifier {
+                    walk_expr(bodies, *qualifier, found);
+                }
+            }
+            ExprData::Switch { scrutinee, arms } => {
+                walk_expr(bodies, *scrutinee, found);
+                for arm in arms {
+                    for label in &arm.labels {
+                        if let hir_expand::body::SwitchLabel::Expr(e) = label {
+                            walk_expr(bodies, *e, found);
+                        }
+                    }
+                    for s in &arm.body {
+                        walk_stmt(bodies, *s, found);
+                    }
+                }
+            }
+        }
+    }
+    for &stmt in &bodies.body(body_id).stmts {
+        walk_stmt(bodies, stmt, &mut found);
+    }
+    found
 }
 
 /// §8.9.1: whether the abstract method `method` of the enum `item` is

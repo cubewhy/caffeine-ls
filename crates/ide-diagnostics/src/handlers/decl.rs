@@ -125,6 +125,9 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         DeclDiagnostic::DefaultCtorUnreportedException { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::DefaultCtorUnreportedException)
         }
+        DeclDiagnostic::CtorUnreportedException { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::UnreportedException)
+        }
         DeclDiagnostic::EnumCtorSuperCall { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::EnumCtorSuperCall)
         }
@@ -457,6 +460,9 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
                 thrown.display_simple(db),
                 super_owner.simple_name()
             )
+        }
+        DeclDiagnostic::CtorUnreportedException { thrown, .. } => {
+            format!("Unhandled exception: {}", thrown.display_simple(db))
         }
         DeclDiagnostic::EnumCtorSuperCall { .. } => {
             "Call to 'super' is not allowed in an enum constructor".to_owned()

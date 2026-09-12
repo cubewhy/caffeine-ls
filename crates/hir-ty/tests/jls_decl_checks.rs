@@ -881,6 +881,113 @@ class NE2 extends NE {}
 // constructor throws only an unchecked `RuntimeException`; `ABE3` is abstract
 // (no instantiation required); `NE2`'s super constructor throws nothing.
 
+// -- §11.2.2: the implicit super() of a *declared* constructor throws ---------
+// A declared constructor whose body contains no explicit constructor
+// invocation implicitly begins with `super()`, so the checked exceptions that
+// superclass constructor declares are liabilities the body cannot catch (the
+// implicit invocation precedes every statement). The constructor's own
+// `throws` clause — or one of its supertypes — discharges them.
+
+snapshot!(
+    declared_ctor_throws_liability,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {
+    F6() {
+    }
+}
+",
+    )])
+);
+// Red: `F6()` leaves the implicit `super()`'s `IOException` unreported.
+
+snapshot!(
+    declared_ctor_throws_liability_abstract,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+abstract class F6 extends F5 {
+    F6() {
+    }
+}
+",
+    )])
+);
+// Red: the liability is a property of the declared constructor itself, so an
+// abstract class's own constructor reports it too.
+
+snapshot!(
+    declared_ctor_throws_declared,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {
+    F6() throws IOException {
+    }
+}
+
+class F7 extends F5 {
+    F7() throws Exception {
+    }
+}
+",
+    )])
+);
+// Green: `F6()` declares the very type and `F7()` a supertype of it.
+
+snapshot!(
+    declared_ctor_explicit_delegation,
+    check_class_diagnostics(&[(
+        "/src/com/example/Ctors.java",
+        "\
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {
+    F6() throws IOException {
+        super();
+    }
+    F6(int x) {
+        this();
+    }
+}
+",
+    )])
+);
+// Green: an explicit `super()` or `this(...)` *replaces* the implicit one, so
+// its liability is the body-level one of §11.2 — here discharged by `F6()`'s
+// own `throws` clause.
+
 // -- §9.6.4.4: @Override on a static method -----------------------------------
 // A static method never overrides — it hides ([§8.4.8.2]) — so `@Override`
 // on it is always an error, with javac's dedicated wording

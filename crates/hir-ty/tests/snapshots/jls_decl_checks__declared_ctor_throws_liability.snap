@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Ctors.java:
+package com.example;
+
+import java.io.IOException;
+
+class F5 {
+    F5() throws IOException {}
+}
+
+class F6 extends F5 {
+    F6() {
+    }
+}
+
+@9:4: unreported-exception: Unhandled exception: IOException
