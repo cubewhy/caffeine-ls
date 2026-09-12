@@ -776,6 +776,143 @@ class Nav {
     insta::assert_json_snapshot!("goto_definition_field_read", normalized);
 }
 
+/// The workspace of [`test_goto_definition_annotation_pairs`]: an annotation
+/// interface with an element of every value kind the pairs below use, and a
+/// use site for each.
+const ANNOTATION_LSP_FILES: &[(&str, &str)] = &[(
+    "/src/com/example/Anns.java",
+    r#"package com.example;
+
+import static com.example.Ann.FLAG;
+import static com.example.Mode.FAST;
+
+enum Mode {
+    FAST,
+    SLOW
+}
+
+@interface Inner {
+    String value();
+}
+
+@interface Nums {}
+
+@interface Ann {
+    int FLAG = 1;
+
+    String name();
+
+    int count() default 0;
+
+    Class<?> type();
+
+    Mode mode();
+
+    Inner inner();
+
+    int[] nums();
+
+    Nums nums2();
+}
+
+class Consts {
+    static final int CONST = 7;
+}
+
+@Ann(
+    name = "x",
+    count = FLAG,
+    type = Consts.class,
+    mode = FAST,
+    inner = @Inner(value = "y"),
+    nums = { Consts.CONST },
+    nums2 = @Nums()
+)
+class Annotated {
+    static final int LOCAL = 7;
+
+    @Ann(
+        name = "z",
+        count = LOCAL,
+        type = Annotated.class,
+        mode = Mode.SLOW,
+        inner = @Inner(value = "w"),
+        nums = { LOCAL },
+        nums2 = @Nums()
+    )
+    void annotated() {}
+}
+"#,
+)];
+
+/// §9.7.1 end to end over stdio: goto-definition inside an annotation's
+/// element-value pairs — the pair's name (the annotation interface's element,
+/// [§9.6.1]), a class literal's type ([§15.8.2]), a nested annotation's
+/// interface, an enum constant, a static import's member and a constant
+/// variable of the item's own class ([§6.5.6]) — each answered with the one
+/// location it denotes. The workspace has no build system and no JDK, so every
+/// target is one of the fixture's own files.
+#[test]
+fn test_goto_definition_annotation_pairs() {
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        for (path, text) in ANNOTATION_LSP_FILES {
+            let path = root.join(path.trim_start_matches('/'));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    });
+    let path = "/src/com/example/Anns.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+    let text = ANNOTATION_LSP_FILES[0].1;
+
+    let cases: &[(&str, usize)] = &[
+        // §9.6.1: a pair's name denotes the annotation interface's element.
+        ("name = \"x\"", 0),
+        ("count = FLAG", 0),
+        ("type = Consts.class", 0),
+        ("mode = FAST", 0),
+        ("inner = @Inner", 0),
+        ("nums2 = @Nums", 0),
+        ("count = LOCAL", 0),
+        ("mode = Mode.SLOW", 0),
+        // §9.7.1: a nested annotation's own pair.
+        ("value = \"y\"", 0),
+        // §6.5.6.1/§7.5.4: a simple name reads a field of the item's own
+        // class, or the member a static import puts in scope.
+        ("LOCAL }", 0),
+        ("FLAG,", 0),
+        ("FAST,", 1),
+        // §6.5.6.2: a qualified name reads a static field of the type its
+        // qualifier denotes.
+        ("CONST }", 0),
+        ("Mode.SLOW", 0),
+        ("SLOW,", 0),
+        // §15.8.2/§9.7.1: a class literal's and a nested annotation's type.
+        ("Consts.class", 0),
+        ("Inner(value", 0),
+        ("Nums()", 0),
+        // A value that is a literal names nothing.
+        ("\"x\"", 0),
+    ];
+
+    let mut observed = Vec::new();
+    for &(needle, occurrence) in cases {
+        let position = start_of(text, needle, occurrence);
+        let response = lsp.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": lsp.uri(path) },
+                "position": position,
+            }),
+        );
+        observed.push(json!({ "at": needle, "definition": response }));
+    }
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let normalized = normalize_uris(serde_json::Value::Array(observed), &workspace_root);
+    insta::assert_json_snapshot!("goto_definition_annotation_pairs", normalized);
+}
+
 /// The workspace of [`definition_matrix_over_a_workspace`], written below
 /// `src/com/example/`: a base class with two overloads and a static field, a
 /// subclass, a static-import helper, an annotation type and an enum.
@@ -2200,6 +2337,117 @@ exit 0
     );
 
     insta::assert_json_snapshot!("release_api_diagnostic", diagnostics);
+}
+
+/// Goto-definition on an element of a *library* annotation end to end: the
+/// element of a pair a workspace file writes is declared by
+/// `java.lang.Deprecated`, whose source the server reads out of the JDK's
+/// `src.zip` on demand (the pair's name names the interface's element method,
+/// [JLS §9.6.1], [§9.7.1]). Requires a real JDK (`JAVA_HOME`), like the
+/// deprecation test: the platform stub index is what makes
+/// `java.lang.Deprecated` resolvable.
+#[test]
+fn test_goto_definition_library_annotation_element() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _env = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+
+    let java_home = std::env::var("JAVA_HOME")
+        .ok()
+        .filter(|p| std::path::Path::new(p).join("lib/modules").is_file());
+    let Some(java_home) = java_home else {
+        eprintln!("skipping: JAVA_HOME is unset or ships no lib/modules");
+        return;
+    };
+
+    let shim_dir = tempfile::tempdir().unwrap();
+    let shim = shim_dir.path().join("gradle");
+    std::fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+echo "WORKSPACE_MODEL_BEGIN"
+echo '{{"workspace_name":"demo","projects":[{{"path":":","name":"demo","project_dir":"'$PWD'","source_roots":["'$PWD'/src/main/java"],"test_roots":[],"resource_roots":[],"generated_roots":[],"compile_classpath":[],"test_classpath":[],"java_release":21,"java_language_version":"21","java_home":"{java_home}"}}]}}'
+echo "WORKSPACE_MODEL_END"
+exit 0
+"#
+        ),
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(&shim).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&shim, perms).unwrap();
+
+    // SAFETY: env mutation is serialized by ENV_LOCK, which outlives this guard
+    // (it is declared first, so it drops last).
+    let java_home_before = std::env::var_os("JAVA_HOME");
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("JAVA_HOME", &java_home);
+        std::env::set_var(
+            "PATH",
+            format!("{}:{}", shim_dir.path().display(), path_var),
+        );
+    }
+    struct EnvGuard(Option<std::ffi::OsString>);
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: as above.
+            unsafe {
+                match self.0.take() {
+                    Some(previous) => std::env::set_var("JAVA_HOME", previous),
+                    None => std::env::remove_var("JAVA_HOME"),
+                }
+            }
+        }
+    }
+    let _guard = EnvGuard(java_home_before);
+
+    const MAIN: &str =
+        "package demo;\n\nclass Main {\n    @Deprecated(since = \"21\")\n    void f() {}\n}\n";
+    let lsp = create_lsp_with_config(json!({ "java_home": java_home }), |root| {
+        std::fs::write(root.join("build.gradle"), "plugins { id 'java' }").unwrap();
+        std::fs::create_dir_all(root.join("src/main/java/demo")).unwrap();
+        std::fs::write(root.join("src/main/java/demo/Main.java"), MAIN).unwrap();
+    });
+
+    let path = "/src/main/java/demo/Main.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+
+    // The pair's name names the element `java.lang.Deprecated` declares under
+    // it; the first request defers while the JDK source is read out of the
+    // archive, and the retry answers with the element's own name.
+    let (line, character) = position_of(MAIN, "since");
+    let response = lsp.request(
+        "textDocument/definition",
+        json!({
+            "textDocument": { "uri": lsp.uri(path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let locations = response.as_array().expect("definition locations");
+    assert_eq!(locations.len(), 1, "got: {response:?}");
+
+    let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+    let target = uri.to_file_path().expect("a file URI");
+    assert!(
+        target.ends_with("java/lang/Deprecated.java"),
+        "the element is declared by `java.lang.Deprecated`: {}",
+        target.display()
+    );
+    // The location is the element's own name token: `since`, and not the
+    // `Deprecated` declaration the same request could have answered with.
+    let range = &locations[0]["range"];
+    assert_eq!(
+        range["end"]["line"], range["start"]["line"],
+        "the element name is one token: {range:?}"
+    );
+    assert_eq!(
+        range["end"]["character"].as_u64().unwrap() - range["start"]["character"].as_u64().unwrap(),
+        "since".len() as u64,
+        "the range must cover the element's name: {range:?}"
+    );
 }
 
 /// The deprecation warnings of
