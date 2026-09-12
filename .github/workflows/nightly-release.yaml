@@ -1,0 +1,113 @@
+name: Nightly Release
+
+# Publishes a rolling `nightly-release` prerelease carrying the extension
+# packages built from the tip of `master`. The tag doubles as the record of the
+# last published nightly: a day without new commits publishes nothing.
+on:
+  schedule:
+    # A few minutes past 04:00 UTC, off the hour to avoid the busiest
+    # scheduling slot.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.diff.outputs.publish }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # The `nightly-release` tag and the history to compare it with.
+          fetch-depth: 0
+
+      - name: Check for new commits since the last nightly
+        id: diff
+        run: |
+          head_sha=$(git rev-parse HEAD)
+          if git rev-parse --quiet --verify refs/tags/nightly-release >/dev/null; then
+            last_sha=$(git rev-list -n 1 nightly-release)
+          else
+            last_sha=""
+          fi
+
+          if [ "$last_sha" = "$head_sha" ]; then
+            echo "nightly-release already points at $head_sha, nothing to publish"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            commits=$(git rev-list --count "${last_sha:+$last_sha..}HEAD")
+            echo "publishing $head_sha ($commits commit(s) since ${last_sha:-the first nightly})"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  package:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yaml
+
+  publish:
+    needs: [check, package]
+    if: needs.check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download VSIX artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: vsix-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+
+          {
+            echo "Nightly build of \`$(git rev-parse --short "$sha")\` on $(date -u +%Y-%m-%d)."
+            echo
+            if git tag --list nightly-release | grep -q .; then
+              echo "Commits since the previous nightly:"
+              git log --pretty=format:'- %h %s' --no-merges "nightly-release..$sha"
+            else
+              echo "First nightly build."
+            fi
+            echo
+          } > notes.md
+
+          # The tag is rolling, so both it and the release are recreated at the
+          # commit that was just built. Deleting first also covers a tag left
+          # behind without a release.
+          gh release delete nightly-release --yes --cleanup-tag || true
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly-release" >/dev/null || true
+
+          # `--target` only creates the tag when it is absent, so a leftover tag
+          # would silently publish a release for an older commit and keep the
+          # nightly loop stuck on it.
+          if git ls-remote --exit-code --tags origin nightly-release >/dev/null 2>&1; then
+            echo "::error::refs/tags/nightly-release still exists after deletion; refusing to publish"
+            exit 1
+          fi
+
+          gh release create nightly-release dist/*.vsix \
+            --target "$sha" \
+            --prerelease \
+            --title "Nightly $(date -u +%Y-%m-%d)" \
+            --notes-file notes.md
