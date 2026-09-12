@@ -105,6 +105,14 @@ pub enum ResolvedMember {
     Method(MethodData),
     /// The field, enum constant or record component a read or write names.
     Field(FieldData),
+    /// The method declarations an invocation denotes when it selected none of
+    /// them: the applicable candidates of a tie ([JLS §15.12.2.5]), or every
+    /// declaration of the name when no candidate was applicable ([§15.12.2]).
+    /// The invocation is a compile-time error either way, but the reference
+    /// still *names* these declarations — navigation is not a compile check —
+    /// so it answers with each of them rather than with none. A reference to a
+    /// name nothing declares carries no entry.
+    Unresolved(Vec<MethodData>),
 }
 
 /// body (a declaration without statements) or is not a body-carrying item.

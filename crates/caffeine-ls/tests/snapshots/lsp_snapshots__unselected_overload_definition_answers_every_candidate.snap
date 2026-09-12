@@ -1,0 +1,174 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: normalized
+---
+[
+  {
+    "at": "m(1, 1);",
+    "definition": [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 9
+          },
+          "end": {
+            "line": 3,
+            "character": 10
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 5,
+            "character": 9
+          },
+          "end": {
+            "line": 5,
+            "character": 10
+          }
+        }
+      }
+    ]
+  },
+  {
+    "at": "m(1, 1L)",
+    "definition": [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 9
+          },
+          "end": {
+            "line": 3,
+            "character": 10
+          }
+        }
+      }
+    ]
+  },
+  {
+    "at": "m(\"a\", \"b\")",
+    "definition": [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 9
+          },
+          "end": {
+            "line": 3,
+            "character": 10
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 5,
+            "character": 9
+          },
+          "end": {
+            "line": 5,
+            "character": 10
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 7,
+            "character": 9
+          },
+          "end": {
+            "line": 7,
+            "character": 10
+          }
+        }
+      }
+    ]
+  },
+  {
+    "at": "m();",
+    "definition": [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 3,
+            "character": 9
+          },
+          "end": {
+            "line": 3,
+            "character": 10
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 5,
+            "character": 9
+          },
+          "end": {
+            "line": 5,
+            "character": 10
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 7,
+            "character": 9
+          },
+          "end": {
+            "line": 7,
+            "character": 10
+          }
+        }
+      }
+    ]
+  },
+  {
+    "at": "foo();",
+    "definition": [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 9,
+            "character": 16
+          },
+          "end": {
+            "line": 9,
+            "character": 19
+          }
+        }
+      },
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Overloads.java",
+        "range": {
+          "start": {
+            "line": 11,
+            "character": 16
+          },
+          "end": {
+            "line": 11,
+            "character": 19
+          }
+        }
+      }
+    ]
+  }
+]

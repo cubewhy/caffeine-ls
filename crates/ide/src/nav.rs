@@ -22,6 +22,15 @@
 //! selection: the constructor of the enclosing class, or of its direct
 //! superclass, that it delegates to.
 //!
+//! The recorded selection answers with *several* declarations when the type
+//! layer selected none of them: an invocation whose applicable overloads are
+//! tied ([§15.12.2.5]), or one no overload is applicable to ([§15.12.2]),
+//! denotes every declaration of the name the member set found
+//! ([`hir_ty::ResolvedMember::Unresolved`]), and navigation answers each of
+//! them — the same way an unresolved *type* name still denotes the class it
+//! writes ([§7.4.3]), because navigation is not a compile check. A name
+//! nothing declares stays unanswered.
+//!
 //! A `this` or `super` *keyword* ([§15.8.3], [§15.8.4]) names no member but a
 //! type: the enclosing class, the direct superclass ([§8.1.4]) — never the
 //! member an enclosing `super.m()`/`this.f` reads, whose recorded resolution
@@ -620,52 +629,84 @@ fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String
         .to_owned()
 }
 
-/// The declaration a recorded body resolution names, through the classpath
+/// The declarations a recorded body resolution names, through the classpath
 /// (mirrors [`members_of_owner`]). A constructor selection ([§15.9],
-/// [§8.8.7.1]) is looked up as the constructor it resolved to instead.
+/// [§8.8.7.1]) is looked up as the constructor it resolved to instead, and an
+/// ambiguous invocation ([§15.12.2.5]) with every declaration it denotes.
 fn member_resolution(
     db: &RootDatabase,
     file: FileId,
     member: &hir_ty::ResolvedMember,
     reference: Reference,
 ) -> Vec<Resolution> {
-    // The member's *declaration* form: the declaring class FQN, the parameter
-    // count of a method, and the workspace item when the declaration is a
-    // source one (a library member carries no file and no item).
-    let (name, use_kind, params, source_decl, owner) = match member {
-        hir_ty::ResolvedMember::Method(method) => (
-            member_decl_name(method, reference),
-            member_use_kind(reference),
-            // §15.12.2.2: the member the invocation resolved to — its
-            // classfile descriptor and parameter types name one declaration,
-            // where the count alone would answer the first overload of that
-            // arity.
-            Params::Recorded {
-                types: &method.params,
-                descriptor: method.descriptor.as_ref(),
-            },
-            // Only a *constructor declaration* answers a constructor
-            // selection: the recorded item of an inference fallback (a method
-            // named like the class) is not one, so the lookup below finds the
-            // constructor — or the class, when it declares none.
-            method
-                .owner_file
-                .zip(method.decl_item)
-                .filter(|(decl_file, item)| {
-                    reference != Reference::Constructor
-                        || is_constructor_decl(db, *decl_file, *item)
-                }),
-            method.owner.clone(),
-        ),
-        hir_ty::ResolvedMember::Field(field) => (
+    match member {
+        hir_ty::ResolvedMember::Method(method) => method_resolution(db, file, method, reference),
+        hir_ty::ResolvedMember::Field(field) => declared_resolution(
+            db,
+            file,
             field.name.clone(),
             Use::Field,
             Params::Unknown,
             field.owner_file.zip(field.decl_item),
-            field.owner.clone(),
+            &field.owner,
         ),
-        hir_ty::ResolvedMember::Local(_) => return Vec::new(),
-    };
+        hir_ty::ResolvedMember::Local(_) => Vec::new(),
+        // The invocation selected no declaration — the applicable candidates
+        // tie ([§15.12.2.5]), or none is applicable ([§15.12.2]). The reference
+        // still names each of them, and navigation is not a compile check, so
+        // every one of them is a definition.
+        hir_ty::ResolvedMember::Unresolved(methods) => methods
+            .iter()
+            .flat_map(|method| method_resolution(db, file, method, reference))
+            .collect(),
+    }
+}
+
+/// The declaration a recorded method resolution names ([§15.12.2]).
+fn method_resolution(
+    db: &RootDatabase,
+    file: FileId,
+    method: &hir_ty::MethodData,
+    reference: Reference,
+) -> Vec<Resolution> {
+    declared_resolution(
+        db,
+        file,
+        member_decl_name(method, reference),
+        member_use_kind(reference),
+        // §15.12.2.2: the member the invocation resolved to — its classfile
+        // descriptor and parameter types name one declaration, where the
+        // count alone would answer the first overload of that arity.
+        Params::Recorded {
+            types: &method.params,
+            descriptor: method.descriptor.as_ref(),
+        },
+        // Only a *constructor declaration* answers a constructor selection:
+        // the recorded item of an inference fallback (a method named like the
+        // class) is not one, so the lookup below finds the constructor — or
+        // the class, when it declares none.
+        method
+            .owner_file
+            .zip(method.decl_item)
+            .filter(|(decl_file, item)| {
+                reference != Reference::Constructor || is_constructor_decl(db, *decl_file, *item)
+            }),
+        &method.owner,
+    )
+}
+
+/// The declarations the member `name` of the declaring class `owner` denotes:
+/// the declaration's own item when the resolution carries one (a source
+/// declaration), or the member of the class through the classpath otherwise.
+fn declared_resolution(
+    db: &RootDatabase,
+    file: FileId,
+    name: String,
+    use_kind: Use,
+    params: Params<'_>,
+    source_decl: Option<(FileId, ItemId)>,
+    owner: &str,
+) -> Vec<Resolution> {
     if let Some((decl_file, item)) = source_decl {
         return vec![Resolution::Decl {
             file: decl_file,
@@ -676,7 +717,7 @@ fn member_resolution(
     // A library member: `owner` is the *binary* FQN of the declaring class,
     // which is the key the classfile index and the source index are looked up
     // by.
-    match owner_lookup(db, file, &owner) {
+    match owner_lookup(db, file, owner) {
         OwnerLookup::Source(class) => vec![Resolution::Decl {
             item: member_or_owner(db, class.file, class.item, &name, use_kind, params),
             file: class.file,

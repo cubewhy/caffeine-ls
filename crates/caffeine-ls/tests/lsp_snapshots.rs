@@ -1217,13 +1217,16 @@ const DEFINITION_MATRIX: &[DefinitionRow] = &[
         "class Base",
         "Base",
     ),
-    // §8.8.9/§15.9: a class creation with no applicable constructor names the
-    // class itself; with one, the constructor declaration.
+    // §15.9/[§15.12.2]: a class creation names the constructor its argument
+    // list selects; when no constructor accepts the list it still names the
+    // constructors of the name ([§8.8.9] keeps the *class* as the definition
+    // only when the class declares no constructor of its own — the implicit
+    // one has no declaration to quote).
     (
         "/src/com/example/Use.java",
         ("new Sub()", 0),
         "/src/com/example/Sub.java",
-        "class Sub",
+        "Sub(int n)",
         "Sub",
     ),
     (
@@ -1541,6 +1544,85 @@ fn definition_matrix_over_a_workspace() {
             "{from}: {needle:?}#{occurrence} answered {response:?}"
         );
     }
+}
+
+/// The workspace of
+/// [`unselected_overload_definition_answers_every_candidate`]: one class whose
+/// overloads tie on the argument types of one call, plus calls no overload
+/// accepts — the unqualified static one mirroring a reported file.
+const AMBIGUOUS_LSP_FILES: &[(&str, &str)] = &[(
+    "/src/com/example/Overloads.java",
+    r#"package com.example;
+
+class Overloads {
+    void m(int x, double y) {}
+
+    void m(double x, int y) {}
+
+    void m(String s) {}
+
+    static void foo(int a) {}
+
+    static void foo(String a) {}
+
+    static void unqualified() {
+        foo();
+    }
+
+    void use() {
+        m(1, 1);
+        m(1, 1L);
+        m("a", "b");
+        m();
+    }
+}
+"#,
+)];
+
+/// §15.12.2 end to end over stdio: a reference whose invocation selects no
+/// declaration answers with *every* declaration of the name. The applicable
+/// overloads of `m(1, 1)` tie ([§15.12.2.5]), so only they are candidates; the
+/// argument lists no overload accepts ([§15.12.2]) — `m("a", "b")`, `m()`,
+/// `foo()` — name the whole member set, qualified or not. A list exactly one
+/// overload accepts keeps its single answer.
+#[test]
+fn unselected_overload_definition_answers_every_candidate() {
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        for (path, text) in AMBIGUOUS_LSP_FILES {
+            let path = root.join(path.trim_start_matches('/'));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    });
+    let path = "/src/com/example/Overloads.java";
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+    let text = AMBIGUOUS_LSP_FILES[0].1;
+
+    let mut observed = Vec::new();
+    for &(needle, occurrence) in &[
+        ("m(1, 1);", 0),
+        ("m(1, 1L)", 0),
+        ("m(\"a\", \"b\")", 0),
+        ("m();", 0),
+        ("foo();", 0),
+    ] {
+        let position = start_of(text, needle, occurrence);
+        let response = lsp.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": lsp.uri(path) },
+                "position": position,
+            }),
+        );
+        observed.push(json!({ "at": needle, "definition": response }));
+    }
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let normalized = normalize_uris(serde_json::Value::Array(observed), &workspace_root);
+    insta::assert_json_snapshot!(
+        "unselected_overload_definition_answers_every_candidate",
+        normalized
+    );
 }
 
 /// The fixture source of `path`.

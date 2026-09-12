@@ -31,6 +31,9 @@ const PAIR_SRC: &str =
 /// parameter types — each `int` form declared first, so a lookup that knows no
 /// more than the arity answers it for every one-argument reference.
 const LOADER_SRC: &str = "package com.example;\n\npublic class Loader {\n    public Loader(int size) {}\n\n    public Loader(Root root) {}\n\n    public void load(int size) {}\n\n    public void load(Root root) {}\n\n    public void add(int size) {}\n\n    public void add(Root... roots) {}\n}\n";
+/// Two overloads told apart by their *parameter types* with neither one most
+/// specific for `pick(1, 1)` — the invocation is ambiguous ([JLS §15.12.2.5]).
+const AMBIGUOUS_SRC: &str = "package com.example;\n\npublic class Ambiguous {\n    public void pick(int x, double y) {}\n\n    public void pick(double x, int y) {}\n}\n";
 /// The classfile of `Widget` declares `<init>(int)`; the source declares that
 /// same constructor under the class's own name. A class instance creation has
 /// to answer with that declaration — not with the class the classfile's
@@ -40,7 +43,7 @@ const WIDGET_SRC: &str =
     "package com.example;\n\npublic class Widget {\n    public Widget(int size) {}\n}\n";
 const WORKSPACE_FOO_SRC: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    Object loader() {\n        return new com.example.Loader(new com.example.Root());\n    }\n\n    void use(com.example.Loader loader) {\n        loader.load(new com.example.Root());\n        loader.add(new com.example.Root());\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
+const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    Object widget() {\n        return new com.example.Widget(1);\n    }\n\n    Object loader() {\n        return new com.example.Loader(new com.example.Root());\n    }\n\n    void use(com.example.Loader loader) {\n        loader.load(new com.example.Root());\n        loader.add(new com.example.Root());\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p, com.example.Ambiguous a) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n        a.pick(1, 1);\n    }\n}\n";
 
 /// The classpath jar's source archive entries, in a fixed order so the file id
 /// of a library source is `1000 + index`.
@@ -53,6 +56,7 @@ const LIB_SOURCES: &[(&str, &str)] = &[
     ("com/example/Pair.java", PAIR_SRC),
     ("com/example/Widget.java", WIDGET_SRC),
     ("com/example/Loader.java", LOADER_SRC),
+    ("com/example/Ambiguous.java", AMBIGUOUS_SRC),
 ];
 
 /// The file id the library fixture assigns to `entry`.
@@ -161,6 +165,17 @@ fn fixture(materialized: &[&str], workspace_foo: bool) -> Fixture {
                     ("add", "(I)V", ACC_PUBLIC),
                     ("add", "([Lcom/example/Root;)V", ACC_PUBLIC | ACC_VARARGS),
                 ],
+            ),
+        ),
+        // Two `pick` overloads with neither most specific for `(int, int)`:
+        // applicability widens each argument to the other's leading type.
+        (
+            "com/example/Ambiguous.class".to_owned(),
+            class_bytes_with_methods(
+                "com/example/Ambiguous",
+                "java/lang/Object",
+                &[],
+                &[("pick", "(ID)V", ACC_PUBLIC), ("pick", "(DI)V", ACC_PUBLIC)],
             ),
         ),
     ];
@@ -433,11 +448,12 @@ fn member_declared_on_a_supertype_resolves_there() {
     );
 }
 
-/// JLS §15.12.2: the declaration a reference resolves to is the one the
-/// invocation selected, so an argument list no overload accepts names no
-/// member at all — the lookup does not fall back to a same-named declaration.
+/// JLS §15.12.2: an argument list an overload accepts selects that declaration.
+/// One no overload accepts selects none — but the reference still *names* every
+/// declaration of the member set, and navigation answers each of them
+/// (navigation is not a compile check).
 #[test]
-fn an_invocation_with_no_applicable_overload_resolves_to_nothing() {
+fn an_invocation_with_no_applicable_overload_resolves_to_every_overload() {
     let fixture = fixture(&["com/example/Overload.java"], false);
 
     let targets = fixture.definition("o.run(1)");
@@ -449,9 +465,55 @@ fn an_invocation_with_no_applicable_overload_resolves_to_nothing() {
         "the declaration the argument's type selects"
     );
 
-    assert!(
-        fixture.definition("o.run(1, 2)").is_empty(),
-        "no `Overload` declaration takes two arguments, so the reference names none"
+    // No `Overload` declaration takes two arguments, so the invocation selects
+    // none; both `run` declarations are still the definitions of the name.
+    let targets = fixture.definition("o.run(1, 2)");
+    assert_eq!(targets.len(), 2, "expected both overloads, got {targets:?}");
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(OVERLOAD_SRC, "public void run()", "run"),
+    );
+    assert_eq!(
+        targets[1].range,
+        declared_name_range(OVERLOAD_SRC, "public void run(int n)", "run"),
+    );
+}
+
+/// JLS §15.12.2.5: an ambiguous invocation of a *library* member answers every
+/// tied overload at its library source declaration — the applicability the
+/// classpath stub cannot rank is recorded by inference, and each candidate is
+/// located by the signature it selected on the way.
+#[test]
+fn an_ambiguous_invocation_resolves_to_every_library_overload() {
+    let loaded = fixture(&["com/example/Ambiguous.java"], false);
+
+    let targets = loaded.definition("a.pick(1, 1)");
+    assert_eq!(targets.len(), 2, "expected both overloads, got {targets:?}");
+    for target in &targets {
+        assert_eq!(target.file, lib_file("com/example/Ambiguous.java"));
+    }
+    assert_eq!(
+        targets[0].range,
+        declared_name_range(AMBIGUOUS_SRC, "public void pick(int x, double y)", "pick"),
+        "both targets name the declaring overloads, in declaration order"
+    );
+    assert_eq!(
+        targets[1].range,
+        declared_name_range(AMBIGUOUS_SRC, "public void pick(double x, int y)", "pick"),
+    );
+
+    // Both candidates are declared by the same class, so an unmaterialized
+    // owner defers the request once — not once per candidate.
+    let unloaded = fixture(&[], false);
+    let pending = unloaded
+        .analysis()
+        .pending_library_files(unloaded.app, unloaded.offset("a.pick(1, 1)"))
+        .unwrap();
+    let entries: Vec<&str> = pending.iter().map(pending_source_entry).collect();
+    assert_eq!(
+        entries,
+        ["com/example/Ambiguous.java"],
+        "one load answers both candidates: {pending:?}"
     );
 }
 

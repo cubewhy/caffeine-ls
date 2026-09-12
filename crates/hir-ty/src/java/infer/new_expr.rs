@@ -15,7 +15,7 @@ use crate::java::{
     ty::{Ty, TyData, TyKind, TypeVarScope},
 };
 
-use super::{InferCtx, ResolvedMember, poly::ArgInfo};
+use super::{InferCtx, ResolvedMember, overload::CallResolution, poly::ArgInfo};
 
 impl InferCtx<'_> {
     /// class, library constructors are `<init>`.
@@ -182,7 +182,7 @@ impl InferCtx<'_> {
         } else {
             access
         };
-        if let Some((candidate, method, deferred)) = self.resolve_call(
+        match self.resolve_call(
             &class_ty,
             &Name::new(&constructor_name),
             &arg_kinds,
@@ -190,52 +190,82 @@ impl InferCtx<'_> {
             &access,
             None,
         ) {
-            self.record_member(expr, ResolvedMember::Method(candidate));
-            self.check_release_api_method(expr, &method);
-            self.check_deprecated_method(expr, &method);
-            self.warn_unchecked_invocation(expr, &method);
-            self.reinfer_deferred(&method, &deferred);
-            // §11.2.1: a class instance creation throws the checked
-            // exceptions of the chosen constructor — they join the
-            // enclosing liability exactly like a method invocation's.
-            for thrown in &method.throws {
-                if self.is_checked(thrown) {
-                    self.thrown.push((*thrown, expr));
+            CallResolution::Selected {
+                candidate,
+                invocation: method,
+                deferred,
+            } => {
+                self.record_member(expr, ResolvedMember::Method(candidate));
+                self.check_release_api_method(expr, &method);
+                self.check_deprecated_method(expr, &method);
+                self.warn_unchecked_invocation(expr, &method);
+                self.reinfer_deferred(&method, &deferred);
+                // §11.2.1: a class instance creation throws the checked
+                // exceptions of the chosen constructor — they join the
+                // enclosing liability exactly like a method invocation's.
+                for thrown in &method.throws {
+                    if self.is_checked(thrown) {
+                        self.thrown.push((*thrown, expr));
+                    }
                 }
             }
-        } else {
-            for arg in args {
-                let _ = self.infer_expr(*arg);
-            }
-            // §15.9/[§15.12.1]/[§15.12.2]: members of the name exist but none
-            // is applicable — a `cant.apply.symbol` at the `new` — or the
-            // class declares no constructor of the name at all. Non-
-            // instantiable types (interface/abstract/enum/type-var) already
-            // reported their own error; a failed/unknown class type reported
-            // the unknown type.
-            if !anonymous_body && !non_instantiable && !class_ty.is_error(self.db) {
-                let ctor = Name::new(&constructor_name);
-                let owner = Name::new(name.simple_name());
-                let members = member_set(self.db, &self.scope, &class_ty, ctor.as_str(), &access);
-                if members.is_empty() {
-                    // §8.8.9: a source class that declares *no* constructors
-                    // synthesizes its implicit no-arg default into the member
-                    // set ([`source_class_methods`]), so an empty set here
-                    // means the class declares constructors that are hidden
-                    // from this caller (a private constructor, [§6.6.1]) and
-                    // no implicit default applies — `cannot find symbol:
-                    // constructor {Foo}()` ([§15.9]). Library classes are
-                    // skipped: their member records now always surface `<init>`
-                    // when loaded ([`LibraryIndex`]), so an empty set there
-                    // means an incomplete fixture, not a missing constructor.
-                    if let Some(hir::Resolved::Source(_)) =
-                        hir::fqn_resolve(self.db, &self.scope, name.as_str())
-                    {
-                        self.report(TypeError::NoSuchConstructor { expr, name: ctor });
+            // The creation selected no constructor: the applicable ones tie, or
+            // none is applicable. Either way the reference still names the
+            // constructors the member set found — recorded so goto-definition
+            // answers each of them — and is reported as before.
+            outcome => {
+                for arg in args {
+                    let _ = self.infer_expr(*arg);
+                }
+                // §15.9/[§15.12.1]/[§15.12.2]: members of the name exist but none
+                // is applicable — a `cant.apply.symbol` at the `new` — or the
+                // class declares no constructor of the name at all. Non-
+                // instantiable types (interface/abstract/enum/type-var) already
+                // reported their own error; a failed/unknown class type reported
+                // the unknown type.
+                if !anonymous_body && !non_instantiable && !class_ty.is_error(self.db) {
+                    let ctor = Name::new(&constructor_name);
+                    let owner = Name::new(name.simple_name());
+                    let members =
+                        member_set(self.db, &self.scope, &class_ty, ctor.as_str(), &access);
+                    if members.is_empty() {
+                        // §8.8.9: a source class that declares *no* constructors
+                        // synthesizes its implicit no-arg default into the member
+                        // set ([`source_class_methods`]), so an empty set here
+                        // means the class declares constructors that are hidden
+                        // from this caller (a private constructor, [§6.6.1]) and
+                        // no implicit default applies — `cannot find symbol:
+                        // constructor {Foo}()` ([§15.9]). Library classes are
+                        // skipped: their member records now always surface `<init>`
+                        // when loaded ([`LibraryIndex`]), so an empty set there
+                        // means an incomplete fixture, not a missing constructor.
+                        if let Some(hir::Resolved::Source(_)) =
+                            hir::fqn_resolve(self.db, &self.scope, name.as_str())
+                        {
+                            self.report(TypeError::NoSuchConstructor { expr, name: ctor });
+                        }
+                    } else {
+                        let found = args.len();
+                        self.report_wrong_arity(
+                            expr,
+                            ctor,
+                            Some(owner),
+                            &members,
+                            &arg_kinds,
+                            found,
+                        );
                     }
-                } else {
-                    let found = args.len();
-                    self.report_wrong_arity(expr, ctor, Some(owner), &members, &arg_kinds, found);
+                }
+                // §15.12.2.5/[§15.12.2]: the tied candidates when there were
+                // applicable ones, every constructor of the name otherwise.
+                // The classfile stub knows a sourceless owner's constructors
+                // too, so a creation nothing applies to still names them.
+                let named = match outcome {
+                    CallResolution::Ambiguous(methods) => methods,
+                    _ => member_set(self.db, &self.scope, &class_ty, &constructor_name, &access),
+                };
+                if !named.is_empty() {
+                    self.record_member(expr, ResolvedMember::Unresolved(named));
                 }
             }
         }

@@ -979,6 +979,112 @@ fn goto_own_declaration_name() {
     );
 }
 
+// -- an invocation that selects no one overload ([JLS §15.12.2]) --------------------
+// No two members of one class share an erasure ([§8.4.2]), so a *selected*
+// signature names exactly one declaration. When the applicable candidates of an
+// invocation are tied — `m(1, 1)` against `m(int, double)` and
+// `m(double, int)` — no one of them is most specific and the invocation is
+// ambiguous: it denotes *every* applicable declaration. And when no declaration
+// is applicable at all ([§15.12.2]) — `m("a", "b")`, `m()` — the reference
+// still *names* the declarations of the member set. Goto-definition answers
+// every one of them either way: navigation is not a compile check. An overload
+// the argument types exclude is no candidate of a *tie* — only the tie is
+// narrow, the inapplicable answer is the whole name.
+
+const AMBIGUOUS_SRC: &str = r#"package com.example;
+
+class Pair {
+    Pair(int x, double y) {}
+
+    Pair(double x, int y) {}
+
+    Pair(String s) {}
+}
+
+class Nav {
+    void m(int x, double y) {}
+
+    void m(double x, int y) {}
+
+    void m(String s) {}
+
+    void use() {
+        m(1, 1);
+        m(1, 1L);
+        m("a", "b");
+        m();
+        new Pair(1, 1);
+    }
+}
+"#;
+
+#[test]
+fn goto_ambiguous_overload() {
+    let fixture = test_file(AMBIGUOUS_SRC);
+
+    // §15.12.2.5: the two numeric overloads are applicable and tied, so both
+    // are definitions of the reference — `m(String)` accepts neither argument
+    // list and is no candidate.
+    assert_targets(
+        &fixture,
+        "m(1, 1);",
+        0,
+        &[("void m(int x", "m"), ("void m(double x", "m")],
+    );
+    // The ambiguity is the *applicability* tie: `m(1, 1L)` selects
+    // `m(int, double)` alone, so one declaration is answered.
+    assert_targets(&fixture, "m(1, 1L)", 0, &[("void m(int x", "m")]);
+    // §15.12.2: no overload accepts two `String`s and none accepts zero
+    // arguments, so the invocation selects no declaration — but it names every
+    // overload of `m`, and each of them is a definition.
+    assert_targets(
+        &fixture,
+        "m(\"a\", \"b\")",
+        0,
+        &[
+            ("void m(int x", "m"),
+            ("void m(double x", "m"),
+            ("void m(String s)", "m"),
+        ],
+    );
+    assert_targets(
+        &fixture,
+        "m();",
+        0,
+        &[
+            ("void m(int x", "m"),
+            ("void m(double x", "m"),
+            ("void m(String s)", "m"),
+        ],
+    );
+
+    // §15.9/[§15.12.2.5]: the same tie among a class's constructors, answered
+    // at each constructor's own name.
+    assert_targets(
+        &fixture,
+        "new Pair(1, 1)",
+        0,
+        &[
+            ("Pair(int x, double y)", "Pair"),
+            ("Pair(double x, int y)", "Pair"),
+        ],
+    );
+
+    assert_snapshot!(
+        "goto_ambiguous_overload",
+        render_nav_many(
+            &fixture,
+            &[
+                ("m(1, 1);", 0),
+                ("m(1, 1L)", 0),
+                ("m(\"a\", \"b\")", 0),
+                ("m();", 0),
+                ("new Pair(1, 1)", 0),
+            ]
+        )
+    );
+}
+
 /// The single navigation target of the reference at `needle`'s `occurrence`-th
 /// occurrence.
 fn goto_target(fixture: &Fixture, needle: &str, occurrence: usize) -> NavigationTarget {
@@ -1004,6 +1110,40 @@ fn assert_targets_name(
 ) {
     let target = goto_target(fixture, needle, occurrence);
     assert_eq!(target.name, name, "case {needle:?}#{occurrence}");
+    let expected = declared_name_range(fixture, declaration, name);
+    assert_eq!(
+        target.range, expected,
+        "case {needle:?}#{occurrence} must name {name:?} in {declaration:?}"
+    );
+}
+
+/// Asserts that the reference at `needle`'s `occurrence`-th occurrence answers
+/// exactly the `declarations`, in order — each a `(declaration, name)` pair in
+/// the shape of [`assert_targets_name`]. The multi-target counterpart of
+/// [`assert_targets_name`], for a reference the type layer could not resolve to
+/// one declaration ([JLS §15.12.2.5]).
+fn assert_targets(
+    fixture: &Fixture,
+    needle: &str,
+    occurrence: usize,
+    declarations: &[(&str, &str)],
+) {
+    let targets = goto_targets(fixture, needle, occurrence);
+    let expected: Vec<(&str, TextRange)> = declarations
+        .iter()
+        .map(|&(declaration, name)| (name, declared_name_range(fixture, declaration, name)))
+        .collect();
+    let observed: Vec<(&str, TextRange)> = targets
+        .iter()
+        .map(|target| (target.name.as_str(), target.range))
+        .collect();
+    assert_eq!(observed, expected, "case {needle:?}#{occurrence}");
+}
+
+/// The source range of the `name` identifier inside the first occurrence of
+/// `declaration` in the fixture — the range a target naming that declaration
+/// must cover.
+fn declared_name_range(fixture: &Fixture, declaration: &str, name: &str) -> TextRange {
     let declaration_at = fixture
         .text
         .find(declaration)
@@ -1012,14 +1152,10 @@ fn assert_targets_name(
         + fixture.text[declaration_at..]
             .find(name)
             .unwrap_or_else(|| panic!("{name:?} is not in {declaration:?}"));
-    let expected = TextRange::new(
+    TextRange::new(
         TextSize::new(name_at as u32),
         TextSize::new((name_at + name.len()) as u32),
-    );
-    assert_eq!(
-        target.range, expected,
-        "case {needle:?}#{occurrence} must name {name:?} in {declaration:?}"
-    );
+    )
 }
 
 fn test_file(text: &str) -> Fixture {

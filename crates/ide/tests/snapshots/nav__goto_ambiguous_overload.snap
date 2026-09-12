@@ -1,0 +1,30 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture,\n&[(\"m(1, 1);\", 0), (\"m(1, 1L)\", 0), (\"m(\\\"a\\\", \\\"b\\\")\", 0), (\"m();\", 0),\n(\"new Pair(1, 1)\", 0),])"
+---
+--- goto @"m(1, 1);"#0 ---
+m @141..142
+m @173..174
+--- hover ---
+<error>
+--- goto @"m(1, 1L)"#0 ---
+m @141..142
+--- hover ---
+void
+--- goto @"m(\"a\", \"b\")"#0 ---
+m @141..142
+m @173..174
+m @205..206
+--- hover ---
+<error>
+--- goto @"m();"#0 ---
+m @141..142
+m @173..174
+m @205..206
+--- hover ---
+<error>
+--- goto @"new Pair(1, 1)"#0 ---
+Pair @39..43
+Pair @69..73
+--- hover ---
+com.example.Pair

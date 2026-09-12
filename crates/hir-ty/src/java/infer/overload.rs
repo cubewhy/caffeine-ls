@@ -36,6 +36,25 @@ pub(super) struct LambdaBodyInference {
     pub(super) cannot_complete_normally: bool,
 }
 
+/// The outcome of an overload resolution ([JLS §15.12.2]).
+pub(super) enum CallResolution {
+    /// The most specific applicable candidate ([§15.12.2.5]): the declaration
+    /// the invocation resolved to, its inferred invocation type, and the poly
+    /// arguments left for post-resolution re-inference.
+    Selected {
+        candidate: MethodData,
+        invocation: MethodData,
+        deferred: Vec<(ExprId, usize)>,
+    },
+    /// Several applicable candidates of which none is most specific
+    /// ([§15.12.2.5]): the invocation is *ambiguous*, and denotes every one of
+    /// them rather than none.
+    Ambiguous(Vec<MethodData>),
+    /// No candidate was applicable ([§15.12.2]): the invocation denotes
+    /// nothing.
+    None,
+}
+
 impl InferCtx<'_> {
     /// argument, inferred standalone.
     pub(super) fn arg_kinds(&mut self, args: &[ExprId]) -> Vec<ArgInfo> {
@@ -114,7 +133,14 @@ impl InferCtx<'_> {
         }
     }
 
-    /// applicable ones are ambiguous.
+    /// Resolves the invocation `name(args)` on `receiver_ty` by the
+    /// applicability phases of [JLS §15.12.2] — strict ([§15.12.2.2]), loose
+    /// ([§15.12.2.3]) and variable arity ([§15.12.2.4]) — and the
+    /// most-specific choice of [§15.12.2.5]. The candidate set is restricted
+    /// by the invocation mode and access of `ctx` ([§15.12.1], [§6.6]).
+    /// `Ambiguous` when a phase found applicable candidates none of which is
+    /// most specific and no phase selected; `None` when no method is
+    /// applicable at all.
     pub(super) fn resolve_call(
         &mut self,
         receiver_ty: &Ty,
@@ -123,10 +149,16 @@ impl InferCtx<'_> {
         target: Option<Ty>,
         ctx: &InvocationContext,
         explicit_type_args: Option<Vec<Ty>>,
-    ) -> Option<(MethodData, MethodData, Vec<(ExprId, usize)>)> {
+    ) -> CallResolution {
         let members = member_set(self.db, &self.scope, receiver_ty, name.as_str(), ctx);
+        // §15.12.2: the phases widen in applicability, so a phase that found
+        // applicable candidates may still be superseded by a later one's
+        // selection. A phase that found applicable candidates none of which is
+        // most specific ([§15.12.2.5]) leaves the first such set behind; it is
+        // the call's answer only when no phase selects.
+        let mut ambiguous = None;
         for phase in [InvocationPhase::Strict, InvocationPhase::Loose] {
-            if let Some(chosen) = self.choose_candidate(
+            match self.choose_candidate(
                 receiver_ty,
                 &members,
                 arg_kinds,
@@ -135,10 +167,14 @@ impl InferCtx<'_> {
                 target,
                 explicit_type_args.clone(),
             ) {
-                return Some(chosen);
+                selected @ CallResolution::Selected { .. } => return selected,
+                CallResolution::Ambiguous(methods) => {
+                    ambiguous.get_or_insert(methods);
+                }
+                CallResolution::None => {}
             }
         }
-        self.choose_candidate(
+        match self.choose_candidate(
             receiver_ty,
             &members,
             arg_kinds,
@@ -146,7 +182,16 @@ impl InferCtx<'_> {
             true,
             target,
             explicit_type_args,
-        )
+        ) {
+            selected @ CallResolution::Selected { .. } => selected,
+            CallResolution::Ambiguous(methods) => {
+                CallResolution::Ambiguous(ambiguous.unwrap_or(methods))
+            }
+            CallResolution::None => match ambiguous {
+                Some(methods) => CallResolution::Ambiguous(methods),
+                None => CallResolution::None,
+            },
+        }
     }
     /// candidate is probed in its own fresh inference table.
     #[allow(clippy::too_many_arguments)]
@@ -159,7 +204,7 @@ impl InferCtx<'_> {
         varargs: bool,
         target: Option<Ty>,
         explicit_type_args: Option<Vec<Ty>>,
-    ) -> Option<(MethodData, MethodData, Vec<(ExprId, usize)>)> {
+    ) -> CallResolution {
         let mut applicable: Vec<ApplicableCandidate> = Vec::new();
         for member in members {
             let mut inference = Inference::new();
@@ -185,7 +230,7 @@ impl InferCtx<'_> {
             }
         }
         if applicable.is_empty() {
-            return None;
+            return CallResolution::None;
         }
         // The most specific applicable candidate ([§15.12.2.5]); identical
         // signatures seen through overriding paths collapse to their
@@ -194,13 +239,33 @@ impl InferCtx<'_> {
             .iter()
             .map(|(candidate, invocation, _)| (candidate.clone(), invocation.clone()))
             .collect();
-        let chosen =
-            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)?;
-        let index = applicable
+        let Some(chosen) =
+            crate::java::method::choose_most_specific(self.db, &self.scope, &pairs, varargs)
+        else {
+            // §15.12.2.5: several applicable candidates of which none is most
+            // specific — the invocation is *ambiguous* and denotes every one
+            // of them. (`member_set` already collapsed the identical
+            // signatures of overriding paths, so the set is one entry per
+            // declared overload.)
+            return CallResolution::Ambiguous(
+                applicable
+                    .into_iter()
+                    .map(|(candidate, _, _)| candidate)
+                    .collect(),
+            );
+        };
+        let Some(index) = applicable
             .iter()
-            .position(|(_, invocation, _)| *invocation == chosen)?;
+            .position(|(_, invocation, _)| *invocation == chosen)
+        else {
+            return CallResolution::None;
+        };
         let (candidate, invocation, deferred) = applicable.remove(index);
-        Some((candidate, invocation, deferred))
+        CallResolution::Selected {
+            candidate,
+            invocation,
+            deferred,
+        }
     }
     /// resolved formals are collected in `deferred`.
     #[allow(clippy::too_many_arguments)]

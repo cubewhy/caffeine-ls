@@ -22,6 +22,7 @@ use crate::java::{
 use super::{
     InferCtx, ResolvedMember, body_in_flight, body_types,
     context::find_method_item,
+    overload::CallResolution,
     poly::{ArgInfo, ArgKind, reinfer_poly_standalone},
 };
 
@@ -79,7 +80,11 @@ impl InferCtx<'_> {
         let access = self.access.with_mode(mode);
         let arg_kinds = self.arg_kinds(args);
         match self.resolve_call(&receiver_ty, &name, &arg_kinds, None, &access, None) {
-            Some((candidate, method, deferred)) => {
+            CallResolution::Selected {
+                candidate,
+                invocation: method,
+                deferred,
+            } => {
                 self.record_member(expr, ResolvedMember::Method(candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
@@ -116,7 +121,12 @@ impl InferCtx<'_> {
                     }
                 }
             }
-            None => {
+            // The invocation selected no constructor: the applicable ones tie,
+            // or none is applicable. Either way the reference still names the
+            // constructors the member set found — recorded so goto-definition
+            // answers each of them — and is reported as before, the diagnosis
+            // ([`Self::report_wrong_arity`]) reading the same candidates.
+            outcome => {
                 // The concrete arguments were already inferred (and their
                 // diagnostics reported) by `arg_kinds`; only the poly
                 // arguments still need their standalone types.
@@ -133,6 +143,15 @@ impl InferCtx<'_> {
                     let name = name.clone();
                     let found = args.len();
                     self.report_wrong_arity(expr, name, Some(owner), &members, &arg_kinds, found);
+                }
+                // §15.12.2.5/[§15.12.2]: the tied candidates when there were
+                // applicable ones, every constructor of the name otherwise.
+                let named = match outcome {
+                    CallResolution::Ambiguous(methods) => methods,
+                    _ => members,
+                };
+                if !named.is_empty() {
+                    self.record_member(expr, ResolvedMember::Unresolved(named));
                 }
             }
         }
@@ -337,7 +356,11 @@ impl InferCtx<'_> {
             &access,
             explicit_type_args,
         ) {
-            Some((candidate, method, deferred)) => {
+            CallResolution::Selected {
+                candidate,
+                invocation: method,
+                deferred,
+            } => {
                 self.record_member(expr, ResolvedMember::Method(candidate));
                 self.check_release_api_method(expr, &method);
                 self.check_deprecated_method(expr, &method);
@@ -411,7 +434,12 @@ impl InferCtx<'_> {
             // independent expressions. The concrete arguments were already
             // inferred by `arg_kinds` — re-inferring them would duplicate
             // their diagnostics.
-            None => {
+            // The invocation selected no declaration: the applicable candidates
+            // tie, or none is applicable. Either way the reference still names
+            // the declarations of the member set — recorded so goto-definition
+            // answers each of them (navigation is not a compile check) — and is
+            // reported as before, the diagnosis reading the same candidates.
+            outcome => {
                 reinfer_poly_standalone(self, &arg_kinds);
                 // §15.27.3/[§18.5.2.2]: a receiver still carrying an
                 // *unresolved inference variable* — a lambda parameter typed
@@ -457,6 +485,15 @@ impl InferCtx<'_> {
                     let name = name.clone();
                     let found = args.len();
                     self.report_wrong_arity(expr, name, None, &members, &arg_kinds, found);
+                }
+                // §15.12.2.5/[§15.12.2]: the tied candidates when there were
+                // applicable ones, every declaration of the name otherwise.
+                let named = match outcome {
+                    CallResolution::Ambiguous(methods) => methods,
+                    _ => members,
+                };
+                if !named.is_empty() {
+                    self.record_member(expr, ResolvedMember::Unresolved(named));
                 }
                 self.error()
             }
