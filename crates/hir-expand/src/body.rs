@@ -107,6 +107,13 @@ pub struct BodyTree {
     /// The source range of every local (parameter or declared local), parallel
     /// to [`BodyTree::locals`].
     pub local_ranges: Vec<TextRange>,
+    /// The source range of the *name* of every local, parallel to
+    /// [`BodyTree::locals`]: the identifier the declaration's name was read
+    /// from — `b` of a `Base b` parameter, `x` of an `int x = 0` declarator,
+    /// the binding of a type pattern. A navigation target covers the variable
+    /// itself, not the declarator it was written in; for a binding with no
+    /// identifier of its own it equals [`BodyTree::local_ranges`].
+    pub local_name_ranges: Vec<TextRange>,
     /// The source range of every pattern, parallel to [`BodyTree::patterns`].
     pub pattern_ranges: Vec<TextRange>,
     /// The source range of every statement, parallel to [`BodyTree::stmts`]:
@@ -154,6 +161,12 @@ impl BodyTree {
     /// The source range of the local, when it was lowered from a syntax node.
     pub fn local_range(&self, id: LocalId) -> Option<TextRange> {
         self.local_ranges.get(id.0.0 as usize).copied()
+    }
+
+    /// The source range of the local's *name*, when it was lowered from a
+    /// syntax node. See [`BodyTree::local_name_ranges`].
+    pub fn local_name_range(&self, id: LocalId) -> Option<TextRange> {
+        self.local_name_ranges.get(id.0.0 as usize).copied()
     }
 
     pub fn pattern(&self, id: PatternId) -> &PatternData {

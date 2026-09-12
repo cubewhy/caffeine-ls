@@ -86,6 +86,7 @@ pub fn lower_source(language: LanguageKind, text: &str, map: &AstIdMap) -> Lower
     debug_assert_eq!(ctx.bodies.expr_ranges.len(), ctx.bodies.exprs.len());
     debug_assert_eq!(ctx.bodies.expr_name_ranges.len(), ctx.bodies.exprs.len());
     debug_assert_eq!(ctx.bodies.local_ranges.len(), ctx.bodies.locals.len());
+    debug_assert_eq!(ctx.bodies.local_name_ranges.len(), ctx.bodies.locals.len());
     LoweredFile {
         items: Arc::new(ctx.tree),
         bodies: Arc::new(ctx.bodies),

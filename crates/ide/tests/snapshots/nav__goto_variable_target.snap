@@ -1,0 +1,16 @@
+---
+source: crates/ide/tests/nav.rs
+expression: "render_nav_many(&fixture, &[(\"other;\", 0), (\"local + 1\", 0), (\"q.count\", 0)])"
+---
+--- goto @"other;"#0 ---
+other @684..689
+--- hover ---
+com.example.Sub
+--- goto @"local + 1"#0 ---
+local @1173..1178
+--- hover ---
+int
+--- goto @"q.count"#0 ---
+q @999..1000
+--- hover ---
+com.example.Base

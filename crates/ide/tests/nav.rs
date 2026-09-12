@@ -375,6 +375,7 @@ class Sub extends Base {
         Class<?> lit = Base.class;
         Base[] arr = new Base[1];
         int local = 0;
+        local = local + 1;
         int missing = nope + 1;
     }
 }
@@ -513,21 +514,21 @@ fn goto_type_parameter_reference() {
 
     // A class's own parameter, read as a field's declared type and as another
     // parameter's bound.
-    assert_type_param(&fixture, "K first", 0, "class Generic<K, V extends K>", "K");
-    assert_type_param(&fixture, "K>", 0, "class Generic<K, V extends K>", "K");
+    assert_targets_name(&fixture, "K first", 0, "class Generic<K, V extends K>", "K");
+    assert_targets_name(&fixture, "K>", 0, "class Generic<K, V extends K>", "K");
 
     // A method's own parameter — its return type and a local's declared type.
-    assert_type_param(&fixture, "T id(T v)", 0, "<T> T id", "T");
-    assert_type_param(&fixture, "T copy", 0, "<T> T id", "T");
+    assert_targets_name(&fixture, "T id(T v)", 0, "<T> T id", "T");
+    assert_targets_name(&fixture, "T copy", 0, "<T> T id", "T");
 
     // §6.4.1: the method's `K` shadows the class's, so both the parameter type
     // and the body's read name the *method's* declaration.
-    assert_type_param(&fixture, "K same", 0, "<K> K same", "K");
-    assert_type_param(&fixture, "K copy", 0, "<K> K same", "K");
+    assert_targets_name(&fixture, "K same", 0, "<K> K same", "K");
+    assert_targets_name(&fixture, "K copy", 0, "<K> K same", "K");
 
     // §6.3: an enclosing class's parameter is in scope inside a nested
     // declaration, so the inner field's type names the *outer* class's `T`.
-    assert_type_param(&fixture, "T value", 0, "class Outer<T>", "T");
+    assert_targets_name(&fixture, "T value", 0, "class Outer<T>", "T");
 
     assert_snapshot!(
         "goto_type_parameter_reference",
@@ -543,6 +544,29 @@ fn goto_type_parameter_reference() {
                 ("T value", 0),
             ]
         )
+    );
+}
+
+// -- a variable's target covers its own name ----------------------------------------
+// A local, a parameter, a pattern binding and a lambda parameter are
+// declarations carried without an item of their own: the target is the
+// identifier `Base other` and `int local = 0` were written around, not the
+// declarator ([JLS §6.4]).
+
+#[test]
+fn goto_variable_target_covers_the_name() {
+    let fixture = test_file(MANY_SRC);
+
+    // A parameter, read as the operand of a cast.
+    assert_targets_name(&fixture, "other;", 0, "Sub other", "other");
+    // A local, read in the statement after its declaration.
+    assert_targets_name(&fixture, "local + 1", 0, "int local = 0", "local");
+    // A lambda parameter, read in the lambda's body.
+    assert_targets_name(&fixture, "q.count", 0, "(Base q)", "q");
+
+    assert_snapshot!(
+        "goto_variable_target",
+        render_nav_many(&fixture, &[("other;", 0), ("local + 1", 0), ("q.count", 0)])
     );
 }
 
@@ -562,27 +586,34 @@ fn goto_target(fixture: &Fixture, needle: &str, occurrence: usize) -> Navigation
     targets.pop().unwrap()
 }
 
-/// Asserts that the reference at `needle` resolves to the type parameter `name`
-/// declared in the parameter list `list` — the exact `name` token inside that
-/// list, so a same-named parameter of another declaration cannot satisfy it.
-fn assert_type_param(fixture: &Fixture, needle: &str, occurrence: usize, list: &str, name: &str) {
+/// Asserts that the reference at `needle` resolves to the declaration whose
+/// *name* is the first `name` written in `declaration` — the exact identifier,
+/// not the declaration it was written in (`Base b` targets `b`, `<T> T id`
+/// targets the `T` of the list).
+fn assert_targets_name(
+    fixture: &Fixture,
+    needle: &str,
+    occurrence: usize,
+    declaration: &str,
+    name: &str,
+) {
     let target = goto_target(fixture, needle, occurrence);
     assert_eq!(target.name, name, "case {needle:?}#{occurrence}");
-    let list_at = fixture
+    let declaration_at = fixture
         .text
-        .find(list)
-        .unwrap_or_else(|| panic!("the parameter list {list:?} is not in the fixture"));
-    let name_at = list_at
-        + fixture.text[list_at..]
+        .find(declaration)
+        .unwrap_or_else(|| panic!("the declaration {declaration:?} is not in the fixture"));
+    let name_at = declaration_at
+        + fixture.text[declaration_at..]
             .find(name)
-            .unwrap_or_else(|| panic!("{name:?} is not in {list:?}"));
+            .unwrap_or_else(|| panic!("{name:?} is not in {declaration:?}"));
     let expected = TextRange::new(
         TextSize::new(name_at as u32),
         TextSize::new((name_at + name.len()) as u32),
     );
     assert_eq!(
         target.range, expected,
-        "case {needle:?}#{occurrence} must name the parameter in {list:?}"
+        "case {needle:?}#{occurrence} must name {name:?} in {declaration:?}"
     );
 }
 

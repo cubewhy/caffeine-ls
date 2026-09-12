@@ -3,11 +3,11 @@ source: crates/ide/tests/nav.rs
 expression: "render_nav_many(&fixture,\n&[(\"K first\", 0), (\"K>\", 0), (\"T id(T v)\", 0), (\"T copy\", 0), (\"K same\", 0),\n(\"K copy\", 0), (\"T value\", 0),])"
 ---
 --- goto @"K first"#0 ---
-K @1239..1240
+K @1266..1267
 --- hover ---
 class Generic
 --- goto @"K>"#0 ---
-K @1239..1240
+K @1266..1267
 --- hover ---
 class Generic
 --- goto @"T id(T v)"#0 ---
@@ -19,14 +19,14 @@ T @593..594
 --- hover ---
 id(T): T
 --- goto @"K same"#0 ---
-K @1276..1277
+K @1303..1304
 --- hover ---
 same(K): K
 --- goto @"K copy"#0 ---
-K @1276..1277
+K @1303..1304
 --- hover ---
 same(K): K
 --- goto @"T value"#0 ---
-T @1355..1356
+T @1382..1383
 --- hover ---
 class Inner

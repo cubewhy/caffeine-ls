@@ -155,6 +155,7 @@ fn local_params(ctx: &mut LowerCtx, params: &SyntaxNode<Lang>) -> Vec<LocalId> {
                     is_final: param_is_final(&child),
                 },
                 child.text_range(),
+                first_identifier_range(&child),
             )
         })
         .collect()
@@ -380,13 +381,15 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                     // ([§14.14.2]), so a `None` type marks the local for the
                     // type layer.
                     let is_var = is_var_ref(&ty);
-                    let name = node
-                        .children()
-                        .find(|c| c.kind() == J::VARIABLE_DECLARATOR)
-                        .and_then(|d| first_identifier(&d))
-                        .or_else(|| first_identifier(node))
-                        .unwrap_or_else(missing_name);
                     let var = node.children().find(|c| c.kind() == J::VARIABLE_DECLARATOR);
+                    let name_token = var
+                        .as_ref()
+                        .and_then(first_identifier_token)
+                        .or_else(|| first_identifier_token(node));
+                    let name = name_token
+                        .as_ref()
+                        .map(|token| Name::new(token.text()))
+                        .unwrap_or_else(missing_name);
                     let range = var
                         .as_ref()
                         .map_or_else(|| node.text_range(), |d| d.text_range());
@@ -415,6 +418,7 @@ fn stmt_data(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> Stmt
                             is_final,
                         },
                         range,
+                        name_token.map(|token| token.text_range()),
                     )
                 })
                 .unwrap_or_else(|| alloc_local_missing(ctx));
@@ -546,6 +550,7 @@ fn local_declaration(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>)
                 is_final,
             },
             declarator.text_range(),
+            first_identifier_range(declarator),
         );
         let initializer = declarator
             .children()
@@ -609,6 +614,7 @@ fn try_stmt(ctx: &mut LowerCtx, owner: ItemId, node: &SyntaxNode<Lang>) -> StmtD
                             is_final: false,
                         },
                         p.text_range(),
+                        first_identifier_range(&p),
                     );
                     (param, types)
                 })
@@ -700,6 +706,7 @@ fn resource_locals(ctx: &mut LowerCtx, owner: ItemId, spec: &SyntaxNode<Lang>) -
                     is_final: true,
                 },
                 declarator.text_range(),
+                first_identifier_range(&declarator),
             );
             let initializer = declarator
                 .children()
@@ -1756,6 +1763,8 @@ fn pattern(ctx: &mut LowerCtx, node: &SyntaxNode<Lang>) -> PatternId {
                             is_final: false,
                         },
                         t.text_range(),
+                        // The binding *is* the identifier: both ranges are it.
+                        Some(t.text_range()),
                     )
                 });
             PatternData::Type(TypePattern { ty, binding })
@@ -1840,6 +1849,14 @@ fn first_identifier_token(node: &SyntaxNode<Lang>) -> Option<SyntaxToken<Lang>> 
 
 fn identifier_of(node: &SyntaxNode<Lang>) -> Option<Name> {
     first_identifier(node)
+}
+
+/// The source range of the identifier [`first_identifier`] reads a declaration's
+/// name from — the local's own name, which [`alloc_local`] records as its
+/// target range (`Base b` → `b`, `int x = 0` → `x`); `None` when the
+/// declaration writes no identifier.
+fn first_identifier_range(node: &SyntaxNode<Lang>) -> Option<TextRange> {
+    first_identifier_token(node).map(|token| token.text_range())
 }
 
 /// The source range of the name identifier of an access/invocation node:
@@ -2036,8 +2053,20 @@ fn type_arguments_from(node: &SyntaxNode<Lang>) -> Vec<SpannedTypeRef> {
         .collect()
 }
 
-fn alloc_local(ctx: &mut LowerCtx, local: Local, range: TextRange) -> LocalId {
+/// Allocates a local binding lowered from a declarator: `range` is the
+/// declaration the diagnostics anchor at — the whole `Base b` parameter, the
+/// `x = 0` declarator, the `E e` catch parameter — and `name` the range of the
+/// identifier the lowered name was read from, which is the local's own target
+/// ([`BodyTree::local_name_ranges`]). `None` — a synthesized binding, or one
+/// whose name failed to parse — keeps the declaration's range.
+fn alloc_local(
+    ctx: &mut LowerCtx,
+    local: Local,
+    range: TextRange,
+    name: Option<TextRange>,
+) -> LocalId {
     ctx.bodies.local_ranges.push(range);
+    ctx.bodies.local_name_ranges.push(name.unwrap_or(range));
     LocalId(ctx.bodies.locals.alloc(local))
 }
 
@@ -2051,6 +2080,7 @@ fn alloc_local_missing(ctx: &mut LowerCtx) -> LocalId {
             is_final: false,
         },
         TextRange::default(),
+        None,
     )
 }
 

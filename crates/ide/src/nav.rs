@@ -106,11 +106,14 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
             return targets(db, vec![resolution]);
         }
         if let Some(local) = resolve_local(&bodies, name.as_str(), offset) {
-            return vec![NavigationTarget {
-                file,
-                range: bodies.local_range(local).unwrap_or_default(),
-                name: name.as_str().to_owned(),
-            }];
+            return targets(
+                db,
+                vec![Resolution::Variable {
+                    file,
+                    range: bodies.local_name_range(local).unwrap_or_default(),
+                    name: name.as_str().to_owned(),
+                }],
+            );
         }
         let resolution = switch_label_resolution(db, file, offset, &name, expr);
         if !resolution.is_empty() {
@@ -291,7 +294,7 @@ fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<
                 continue;
             };
             return match member {
-                hir_ty::ResolvedMember::Local(local) => match bodies.local_range(*local) {
+                hir_ty::ResolvedMember::Local(local) => match bodies.local_name_range(*local) {
                     Some(range) => vec![Resolution::Variable {
                         file,
                         range,
@@ -561,7 +564,8 @@ enum Resolution {
     },
     /// A declaration carried without an item of its own — a local variable, a
     /// parameter, a pattern binding, a lambda parameter or a type parameter —
-    /// at its declarator (or name) range.
+    /// at the range of its own name, not of the declaration it was written in
+    /// (`Base b` and `int x = 0` target `b` and `x`).
     Variable {
         file: FileId,
         range: TextRange,
