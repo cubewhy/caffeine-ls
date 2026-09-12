@@ -391,8 +391,9 @@ const MANY_MEMBER_GOTO: &[(&str, usize, &str)] = &[
     ("count;", 1, "count"),
     ("self = b", 0, "self"),
     ("self;", 1, "self"),
-    // §15.12.2: overload selection — the `long` overload of each name, not the
-    // first same-named declaration of the file, and not the arity-equal one.
+    // §15.12.2: overload selection — the declaration the argument types select,
+    // not the first same-named declaration of the file and not one picked by
+    // arity alone.
     ("method(1);", 0, "void method(int n) {}"),
     ("super.method(1)", 0, "void method(int n) {}"),
     ("method(1L)", 0, "void method(long n) {}"),

@@ -675,6 +675,363 @@ class Nav {
     insta::assert_json_snapshot!("goto_definition_field_read", normalized);
 }
 
+/// The workspace of [`definition_matrix_over_a_workspace`], written below
+/// `src/com/example/`: a base class with two overloads and a static field, a
+/// subclass, a static-import helper, an annotation type and an enum.
+const DEFINITION_MATRIX_FILES: &[(&str, &str)] = &[
+    (
+        "/src/com/example/Base.java",
+        r#"package com.example;
+
+public class Base {
+    public static int STATIC = 1;
+
+    public int count;
+
+    public void method(int n) {}
+
+    public void method(long n) {}
+}
+"#,
+    ),
+    (
+        "/src/com/example/Sub.java",
+        r#"package com.example;
+
+public class Sub extends Base {
+    public Sub(int n) {}
+}
+"#,
+    ),
+    (
+        "/src/com/example/Helper.java",
+        r#"package com.example;
+
+public class Helper {
+    public static Base of() {
+        return null;
+    }
+
+    public static void sum(int... xs) {}
+}
+"#,
+    ),
+    (
+        "/src/com/example/Marker.java",
+        r#"package com.example;
+
+public @interface Marker {}
+"#,
+    ),
+    (
+        "/src/com/example/E.java",
+        r#"package com.example;
+
+public enum E {
+    FIRST,
+    SECOND
+}
+"#,
+    ),
+    (
+        "/src/com/example/Use.java",
+        r#"package com.example;
+
+import com.example.Base;
+import static com.example.Helper.of;
+import static com.example.Helper.sum;
+
+class Use extends Base {
+    @Marker
+    int marked;
+
+    void run(Base b, Base other, java.util.List<Base> list) {
+        count = b.count;
+        method(1);
+        super.method(1);
+        b.method(1L);
+        int s = Base.STATIC;
+        E e = E.FIRST;
+        switch (e) {
+            case SECOND:
+                break;
+        }
+        of();
+        sum(1, 2);
+        boolean is = other instanceof Base;
+        Class<?> lit = Base.class;
+        Factory f = (Base elem) -> elem.count;
+        Base cast = (Base) other;
+        int local = 0;
+        int missing = nope + 1;
+        new Sub();
+        new Sub(1);
+    }
+
+    interface Factory {
+        int size(Base b);
+    }
+}
+"#,
+    ),
+];
+
+/// One row of [`definition_matrix_over_a_workspace`]: the file whose reference
+/// is requested, the needle locating it (the `occurrence`-th occurrence, at its
+/// first character), the file the response must name, and a needle inside that
+/// target file's source the response range must cover.
+type DefinitionRow = (
+    &'static str,
+    (&'static str, usize),
+    &'static str,
+    &'static str,
+);
+
+/// The reference → declaration matrix. Every row drives the real server over
+/// stdio and asserts the one location it answers with.
+const DEFINITION_MATRIX: &[DefinitionRow] = &[
+    // §7.5.1: a single-type import names the class it imports.
+    (
+        "/src/com/example/Use.java",
+        ("Base;", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    // §8.1.4: an `extends` clause names the superclass.
+    (
+        "/src/com/example/Sub.java",
+        ("Base {", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    // §8.8.9/§15.9: a class creation with no applicable constructor names the
+    // class itself; with one, the constructor declaration.
+    (
+        "/src/com/example/Use.java",
+        ("new Sub()", 0),
+        "/src/com/example/Sub.java",
+        "class Sub",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("new Sub(1)", 0),
+        "/src/com/example/Sub.java",
+        "Sub(int",
+    ),
+    // §6.5.6.1: a field of the implicit `this`, and of an explicit receiver.
+    (
+        "/src/com/example/Use.java",
+        ("count = b", 0),
+        "/src/com/example/Base.java",
+        "count",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("count;", 0),
+        "/src/com/example/Base.java",
+        "count",
+    ),
+    // §15.12.2: overload selection — the invoked declaration, not the first
+    // same-named one, and `super`'s declaration rather than an override.
+    (
+        "/src/com/example/Use.java",
+        ("method(1);", 0),
+        "/src/com/example/Base.java",
+        "void method(int",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("method(1)", 1),
+        "/src/com/example/Base.java",
+        "void method(int",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("method(1L)", 0),
+        "/src/com/example/Base.java",
+        "void method(long",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("STATIC", 0),
+        "/src/com/example/Base.java",
+        "STATIC",
+    ),
+    // §7.5.4: a static import names the member its last segment writes, and the
+    // call site names the same declaration.
+    (
+        "/src/com/example/Use.java",
+        ("of;", 0),
+        "/src/com/example/Helper.java",
+        "static Base of(",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("of();", 0),
+        "/src/com/example/Helper.java",
+        "static Base of(",
+    ),
+    // §15.12.2.4: a variable-arity declaration.
+    (
+        "/src/com/example/Use.java",
+        ("sum(1, 2)", 0),
+        "/src/com/example/Helper.java",
+        "void sum(int...",
+    ),
+    // §8.9.2/§14.11.1: an enum constant through its type and through a `case`
+    // label.
+    (
+        "/src/com/example/Use.java",
+        ("FIRST", 0),
+        "/src/com/example/E.java",
+        "FIRST",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("SECOND:", 0),
+        "/src/com/example/E.java",
+        "SECOND",
+    ),
+    // §9.7: an annotation name.
+    (
+        "/src/com/example/Use.java",
+        ("Marker", 0),
+        "/src/com/example/Marker.java",
+        "@interface Marker",
+    ),
+    // §6.5.5.1: declaration-side and body type references.
+    (
+        "/src/com/example/Use.java",
+        ("Base;", 1),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("Base.class", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("Base> list", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    (
+        "/src/com/example/Use.java",
+        ("Base) other", 0),
+        "/src/com/example/Base.java",
+        "class Base",
+    ),
+    // §15.27.2: a lambda parameter names its own declarator.
+    (
+        "/src/com/example/Use.java",
+        ("elem.count", 0),
+        "/src/com/example/Use.java",
+        "elem",
+    ),
+];
+
+/// The references of the matrix that name no declaration: a local's own
+/// declarator, and a name nothing declares.
+const DEFINITION_MATRIX_NONE: &[(&str, (&str, usize))] = &[
+    ("/src/com/example/Use.java", ("local = 0", 0)),
+    ("/src/com/example/Use.java", ("nope + 1", 0)),
+];
+
+/// End to end over stdio: every reference of [`DEFINITION_MATRIX`] answers with
+/// the one declaration it denotes — file and range — and the unresolvable ones
+/// answer `null`. The workspace has no build system and no JDK
+/// (`default_client_config` points `java_home` at a path that does not exist),
+/// so every target is one of the fixture's own files.
+#[test]
+fn definition_matrix_over_a_workspace() {
+    let lsp = create_lsp_with_config(default_client_config(), |root| {
+        for (path, text) in DEFINITION_MATRIX_FILES {
+            let path = root.join(path.trim_start_matches('/'));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    });
+    for (path, _) in DEFINITION_MATRIX_FILES {
+        lsp.open_document(path);
+    }
+    lsp.wait_until_workspace_is_loaded();
+
+    for &(from, (needle, occurrence), to, declaration) in DEFINITION_MATRIX {
+        let position = start_of(&source_of(from), needle, occurrence);
+        let response = lsp.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": lsp.uri(from) },
+                "position": position,
+            }),
+        );
+        let locations = response
+            .as_array()
+            .unwrap_or_else(|| panic!("{from}: {needle:?}#{occurrence} answered {response:?}"));
+        assert_eq!(
+            locations.len(),
+            1,
+            "{from}: {needle:?}#{occurrence} answered {locations:?}"
+        );
+        let uri: lsp_types::Uri = serde_json::from_value(locations[0]["uri"].clone()).unwrap();
+        let path = uri.to_file_path().expect("a file URI");
+        assert!(
+            path.ends_with(to.trim_start_matches('/')),
+            "{from}: {needle:?}#{occurrence} answered {path:?}, expected {to:?}"
+        );
+        assert_range_covers(locations[0]["range"].clone(), &source_of(to), declaration);
+    }
+
+    for &(from, (needle, occurrence)) in DEFINITION_MATRIX_NONE {
+        let position = start_of(&source_of(from), needle, occurrence);
+        let response = lsp.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": lsp.uri(from) },
+                "position": position,
+            }),
+        );
+        assert!(
+            response.is_null(),
+            "{from}: {needle:?}#{occurrence} answered {response:?}"
+        );
+    }
+}
+
+/// The fixture source of `path`.
+fn source_of(path: &str) -> String {
+    DEFINITION_MATRIX_FILES
+        .iter()
+        .find(|(name, _)| *name == path)
+        .map(|(_, text)| (*text).to_owned())
+        .unwrap_or_else(|| panic!("{path} is not a fixture file"))
+}
+
+/// The LSP position of the first character of the `occurrence`-th (0-based)
+/// occurrence of `needle` — anchored on the reference itself rather than on a
+/// preceding token.
+fn start_of(text: &str, needle: &str, occurrence: usize) -> Position {
+    let mut from = 0;
+    for _ in 0..occurrence {
+        let found = text[from..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("occurrence {occurrence} of {needle:?} not found"));
+        from += found + needle.len();
+    }
+    let index = from
+        + text[from..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("occurrence {occurrence} of {needle:?} not found"));
+    let before = &text[..index];
+    let line = before.matches('\n').count() as u32;
+    let last = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let character = before[last..].chars().count() as u32;
+    Position { line, character }
+}
+
 /// A Kotlin file has no HIR yet: the definition request answers `null` from the
 /// documented placeholder rather than walking the empty item tree the Kotlin
 /// lowering leaves behind, and the server keeps serving the file.
