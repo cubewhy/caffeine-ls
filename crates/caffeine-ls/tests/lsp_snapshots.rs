@@ -1759,6 +1759,28 @@ exit 0
     lsp.open_document(app_path);
     lsp.wait_until_workspace_is_loaded();
 
+    // -- hover first: the merged signature needs the declaring source, so the
+    // request defers, the walk collects `Foo` and its supertype `Base` in one
+    // round, both files are materialized, and the retried hover renders the
+    // signature with the source's parameter name — the hand-built classfile
+    // carries no `MethodParameters` attribute, so `count` can only come from
+    // the source.
+    let (line, character) = position_of(app_source, "f.greet(1)");
+    let hover = lsp.request(
+        "textDocument/hover",
+        json!({
+            "textDocument": { "uri": lsp.uri(app_path) },
+            "position": { "line": line, "character": character },
+        }),
+    );
+    let hover_value = hover["contents"]["value"]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected hover contents, got: {hover:?}"));
+    assert!(
+        hover_value.contains("void greet(int count)"),
+        "the merged signature must carry the source parameter name: {hover_value:?}"
+    );
+
     // -- the member call resolves the same way now that both files are loaded.
     let (line, character) = position_of(app_source, "f.greet(1)");
     let params = json!({

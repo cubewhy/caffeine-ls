@@ -24,6 +24,7 @@ use rustc_hash::FxHashSet;
 use triomphe::Arc;
 use vfs::{AbsPathBuf, FileId};
 
+use hir::JvmDatabase;
 use hir::hir_def::java::item_tree::{ItemData, ItemId, ItemTree};
 use hir_expand::{
     arena::ArenaId,
@@ -634,6 +635,107 @@ fn decl_target(
     })
 }
 
+/// The rendered signature of a resolved library member: types, flags and the
+/// return type come from the classfile stub (the authority); parameter names
+/// are the classfile's `MethodParameters` names when it has them
+/// ([JVMS §4.7.24](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.7.24))
+/// and the source declaration's names at the same index otherwise, and
+/// `arg{i}` when neither is available.
+///
+/// Renders as `ret name(T p, T p2)` for a method and `type name` for a field —
+/// the shape a Java declaration reads as, rather than a classfile descriptor.
+fn library_member_signature(
+    db: &RootDatabase,
+    library: hir::LibraryId,
+    owner_fqn: &Name,
+    name: &str,
+    use_kind: Use,
+    arity: Option<usize>,
+    source_file: Option<FileId>,
+) -> Option<HoverInfo> {
+    // The class index is keyed by binary names
+    // ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)),
+    // which is the spelling `Resolved::fqn` hands out for a library class.
+    let interner = &db.hir_state().interner;
+    let symbol = interner.get_or_intern(owner_fqn.as_str());
+    let index = hir::library_name_index(db, library);
+    let (entry_idx, entry) = index.lookup(symbol)?;
+    let resolved = hir::ResolvedClass {
+        library,
+        entry_idx,
+        entry: entry.clone(),
+    };
+    let record = hir::class_record(db, &resolved)?;
+    let hir::ClassOrModuleStub::Class(stub) = record.as_ref() else {
+        return None;
+    };
+
+    match use_kind {
+        Use::Method => {
+            let method = stub.methods.iter().find(|method| {
+                interner.resolve(&method.name) == name
+                    && arity.is_none_or(|arity| method.params.len() == arity)
+            })?;
+            let param_count = method.params.len();
+            let return_ty = hir_ty::ty_from_library(db, &method.return_type);
+            let return_type = return_ty.display(db).to_string();
+            let params: Vec<String> = method
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    let param_ty = hir_ty::ty_from_library(db, &param.param_type);
+                    let ty = param_ty.display(db);
+                    let name = param
+                        .name
+                        .map(|symbol| interner.resolve(&symbol).to_owned())
+                        .or_else(|| {
+                            source_parameter_name(db, source_file, name, param_count, index)
+                        })
+                        .unwrap_or_else(|| format!("arg{index}"));
+                    format!("{ty} {name}")
+                })
+                .collect();
+            Some(HoverInfo {
+                value: format!("{return_type} {name}({})", params.join(", ")),
+            })
+        }
+        Use::Field => {
+            let field = stub
+                .fields
+                .iter()
+                .find(|field| interner.resolve(&field.name) == name)?;
+            let field_ty = hir_ty::ty_from_library(db, &field.field_type);
+            let ty = field_ty.display(db);
+            Some(HoverInfo {
+                value: format!("{ty} {name}"),
+            })
+        }
+    }
+}
+
+/// The declared name of parameter `index` of the method `name` in the loaded
+/// library source file, when that declaration has the same parameter count.
+fn source_parameter_name(
+    db: &RootDatabase,
+    source_file: Option<FileId>,
+    name: &str,
+    param_count: usize,
+    index: usize,
+) -> Option<String> {
+    let file = source_file?;
+    let tree = hir::file_item_tree(db, file);
+    let item = member_item(db, file, &tree, name, Use::Method, Some(param_count))?;
+    match tree.data(item) {
+        ItemData::Method(method) => method
+            .sig
+            .params
+            .get(index)
+            .map(|param| param.name.as_str().to_owned()),
+        _ => None,
+    }
+}
+
 /// The local of `name` in scope at `offset` ([JLS §6.3], [§6.4]): a
 /// same-named declarator *enclosing* the reference is a shadowing inner
 /// declaration and wins over every outer one; otherwise the nearest
@@ -677,12 +779,47 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
     }
 }
 
-/// The hover at `offset`: the type of the expression or local the offset
-/// falls on, or the signature of the declaration it falls inside.
+/// The hover at `offset`: the merged signature of a resolved library member,
+/// the type of the expression or local the offset falls on, or the signature
+/// of the declaration it falls inside.
 pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
     let tree = hir::file_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
     let symbols = hir::file_symbols(db, file);
+
+    // A resolved library reference outranks everything below: its signature is
+    // what the user is asking about. When its declaring source is not loaded
+    // yet, hover answers `None` *without* consulting the fallbacks, so the LSP
+    // layer materializes the file and the retried hover shows the merged
+    // signature — answering the expression's type (or the bytecode-only
+    // rendering) here would hide the merge on the first, and most likely only,
+    // hover.
+    match resolve_at(db, file, offset).into_iter().next() {
+        Some(Resolution::Pending(_)) => return None,
+        Some(Resolution::LibraryMember {
+            library,
+            owner_fqn,
+            name,
+            use_kind,
+            arity,
+            decl,
+        }) => {
+            let source_file = match decl {
+                hir::LibrarySourceDecl::Loaded { file, .. } => file,
+                hir::LibrarySourceDecl::Pending { .. } => return None,
+            };
+            return library_member_signature(
+                db,
+                library,
+                &owner_fqn,
+                &name,
+                use_kind,
+                arity,
+                Some(source_file),
+            );
+        }
+        Some(Resolution::Decl { .. }) | None => {}
+    }
 
     // An expression's inferred type, from the enclosing body — walk the
     // innermost enclosing expressions first.

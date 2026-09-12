@@ -19,9 +19,14 @@ const GREETER_SRC: &str = "package com.example;\n\npublic class Greeter extends 
 const ROOT_SRC: &str =
     "package com.example;\n\npublic class Root {\n    public void greet(int count) {}\n}\n";
 const OVERLOAD_SRC: &str = "package com.example;\n\npublic class Overload {\n    public void run() {}\n\n    public void run(int n) {}\n}\n";
+/// The classfile of `Pair` declares `combine(int, int)`, the source only
+/// `combine(int first)`: the parameter-name merge then takes `first` from the
+/// source and falls back to an index name for the second parameter.
+const PAIR_SRC: &str =
+    "package com.example;\n\npublic class Pair {\n    public void combine(int first) {}\n}\n";
 const WORKSPACE_FOO_SRC: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int count) {}\n}\n";
-const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    void call(com.example.Child child, com.example.Overload o) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n    }\n}\n";
+const APP_SRC: &str = "package app;\n\nclass App {\n    Object make() {\n        return new com.example.Foo();\n    }\n\n    Object literal() {\n        return com.example.Foo.class;\n    }\n\n    void call(com.example.Child child, com.example.Overload o, com.example.Foo f, com.example.Pair p) {\n        child.greet(1);\n        o.run(1);\n        o.run(1, 2);\n        f.greet(1);\n        p.combine(1, 2);\n    }\n}\n";
 
 /// The classpath jar's source archive entries, in a fixed order so the file id
 /// of a library source is `1000 + index`.
@@ -31,6 +36,7 @@ const LIB_SOURCES: &[(&str, &str)] = &[
     ("com/example/Greeter.java", GREETER_SRC),
     ("com/example/Root.java", ROOT_SRC),
     ("com/example/Overload.java", OVERLOAD_SRC),
+    ("com/example/Pair.java", PAIR_SRC),
 ];
 
 /// The file id the library fixture assigns to `entry`.
@@ -207,6 +213,13 @@ impl Fixture {
             .goto_definition(self.app, self.offset(needle))
             .unwrap()
     }
+
+    fn hover(&self, needle: &str) -> Option<String> {
+        self.analysis()
+            .hover(self.app, self.offset(needle))
+            .unwrap()
+            .map(|info| info.value)
+    }
 }
 
 #[test]
@@ -323,4 +336,47 @@ fn unloaded_hierarchy_reports_every_owner_in_one_round() {
     assert_eq!(pending.len(), 2, "expected both owners, got {pending:?}");
     assert!(entries.contains(&"com/example/Greeter.java"), "{entries:?}");
     assert!(entries.contains(&"com/example/Root.java"), "{entries:?}");
+}
+
+#[test]
+fn hover_shows_the_merged_signature() {
+    let fixture = fixture(&["com/example/Foo.java"], false);
+
+    // The hand-built classfile carries no `MethodParameters` attribute, so the
+    // parameter name can only come from the source declaration.
+    assert_eq!(
+        fixture.hover("f.greet(1)").as_deref(),
+        Some("void greet(int count)")
+    );
+}
+
+#[test]
+fn hover_on_an_unloaded_member_reports_the_pending_source() {
+    let fixture = fixture(&[], false);
+
+    // Nothing can be rendered before the source is loaded; the LSP layer reads
+    // the pending files and re-runs the request.
+    assert_eq!(fixture.hover("f.greet(1)"), None);
+
+    let pending = fixture
+        .analysis()
+        .pending_library_sources(fixture.app, fixture.offset("f.greet(1)"))
+        .unwrap();
+    let entries: Vec<&str> = pending.iter().map(|source| source.entry.as_ref()).collect();
+    assert!(
+        entries.contains(&"com/example/Foo.java"),
+        "the declaring source must be pending: {entries:?}"
+    );
+}
+
+#[test]
+fn parameters_with_no_source_name_fall_back_to_an_index() {
+    let fixture = fixture(&["com/example/Pair.java"], false);
+
+    // The stub declares two parameters, the source only names one: the second
+    // has no name anywhere and renders as an index.
+    assert_eq!(
+        fixture.hover("p.combine(1, 2)").as_deref(),
+        Some("void combine(int first, int arg1)")
+    );
 }

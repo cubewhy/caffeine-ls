@@ -218,8 +218,13 @@ pub fn on_goto_definition(
     Ok(Some(DefinitionResponse::Definition(locations.into())))
 }
 
-/// The hover at a position: the type of the expression or the signature of
-/// the declaration there.
+/// The hover at a position: the merged signature of a library member, the type
+/// of the expression or the signature of the declaration there.
+///
+/// A library member whose declaring source is not loaded yet defers, exactly
+/// like [`on_goto_definition`]: the source carries the parameter names the
+/// merged signature needs, so answering before it is loaded would show the
+/// bytecode-only rendering instead.
 pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let pos = params.text_document_position_params;
     tracing::info!(uri = ?pos.text_document.uri, "request hover");
@@ -230,7 +235,24 @@ pub fn on_hover(state: GlobalStateSnapshot, params: HoverParams) -> anyhow::Resu
     let line_index = state.file_line_index(file_id)?;
     let offset = crate::lsp::from_proto::offset(&line_index, pos.position)?;
     let info = state.analysis.hover(file_id, offset)?;
-    Ok(info.map(|info| Hover {
+    let Some(info) = info else {
+        let files: Vec<LibrarySourceFile> = state
+            .analysis
+            .pending_library_sources(file_id, offset)?
+            .into_iter()
+            .map(|source| LibrarySourceFile {
+                library: source.library,
+                archive: source.archive,
+                entry: source.entry,
+                path: source.path,
+            })
+            .collect();
+        if !files.is_empty() {
+            return Err(DeferForLibrarySources(files).into());
+        }
+        return Ok(None);
+    };
+    Ok(Some(Hover {
         contents: Contents::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value: format!("```java\n{}\n```", info.value),
