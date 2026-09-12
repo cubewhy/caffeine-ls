@@ -18,6 +18,9 @@ const FOO: &str =
     "package com.example;\n\npublic class Foo {\n    public void greet(int x) {}\n}\n";
 const OUTER: &str =
     "package com.example;\n\npublic class Outer {\n    public static class Inner {}\n}\n";
+/// A *different* class whose canonical name is the dotted spelling of
+/// `Outer$Inner`: a top-level `Inner` in the package `com.example.Outer`.
+const OUTER_PACKAGE_INNER: &str = "package com.example.Outer;\n\npublic class Inner {}\n";
 const PENDING: &str =
     "package com.example;\n\npublic class Pending {\n    public static class Nested {}\n}\n";
 const STRING: &str = "package java.lang;\n\npublic final class String {}\n";
@@ -48,9 +51,14 @@ fn fixture_db() -> Fixture {
             entries: vec![
                 ("com/example/Foo.java", FOO),
                 ("com/example/Outer.java", OUTER),
+                ("com/example/Outer/Inner.java", OUTER_PACKAGE_INNER),
                 ("com/example/Pending.java", PENDING),
             ],
-            materialized: vec!["com/example/Foo.java", "com/example/Outer.java"],
+            materialized: vec![
+                "com/example/Foo.java",
+                "com/example/Outer.java",
+                "com/example/Outer/Inner.java",
+            ],
         },
         LibrarySourcesFixture {
             library: jdk,
@@ -88,8 +96,9 @@ fn declaration_is_pending_until_materialized() {
     let db = &fixture.db;
 
     // `Pending.java` is in the archive but was not materialized: the nested
-    // type resolves to the outer compilation unit, which still has to be read.
-    match library_source_decl(db, fixture.library, "com.example.Pending.Nested") {
+    // type is declared by the outer compilation unit, which still has to be
+    // read.
+    match library_source_decl(db, fixture.library, "com.example.Pending$Nested") {
         Some(LibrarySourceDecl::Pending { entry, path }) => {
             assert_eq!(&*entry, "com/example/Pending.java");
             assert_eq!(
@@ -128,9 +137,9 @@ fn nested_type_resolves_to_its_own_declaration() {
     let fixture = fixture_db();
     let db = &fixture.db;
 
-    // `Outer.Inner` lands on `Outer.java`, and the loaded file's symbol index
-    // answers with the *nested* declaration.
-    let inner = match library_source_decl(db, fixture.library, "com.example.Outer.Inner") {
+    // `Outer$Inner` — the binary name ([JVMS §4.2]) — lands on `Outer.java`,
+    // and the loaded file's symbol index answers with the *nested* declaration.
+    let inner = match library_source_decl(db, fixture.library, "com.example.Outer$Inner") {
         Some(LibrarySourceDecl::Loaded { item, .. }) => item,
         other => panic!("expected Loaded, got {other:?}"),
     };
@@ -141,13 +150,46 @@ fn nested_type_resolves_to_its_own_declaration() {
     assert_ne!(inner, outer, "the nested type has its own declaration");
 }
 
+/// JVMS §4.2/[JLS §7.6]: a nested type is declared by the compilation unit of
+/// its outermost type, named by the binary prefix before the first `$`. A
+/// *different* class whose dotted spelling matches (`com.example.Outer.Inner`,
+/// a top-level type in the package `com.example.Outer`) must not answer for
+/// `com.example.Outer$Inner`.
+#[test]
+fn nested_type_is_not_the_like_spelled_package_type() {
+    let fixture = fixture_db();
+    let db = &fixture.db;
+
+    let nested = match library_source_decl(db, fixture.library, "com.example.Outer$Inner") {
+        Some(LibrarySourceDecl::Loaded { file, .. }) => file,
+        other => panic!("expected Loaded, got {other:?}"),
+    };
+    let outer = match library_source_decl(db, fixture.library, "com.example.Outer") {
+        Some(LibrarySourceDecl::Loaded { file, .. }) => file,
+        other => panic!("expected Loaded, got {other:?}"),
+    };
+    assert_eq!(
+        nested, outer,
+        "the nested type is declared alongside its outermost type"
+    );
+
+    let package_type = match library_source_decl(db, fixture.library, "com.example.Outer.Inner") {
+        Some(LibrarySourceDecl::Loaded { file, .. }) => file,
+        other => panic!("expected Loaded, got {other:?}"),
+    };
+    assert_ne!(
+        package_type, outer,
+        "the like-spelled top-level type is declared by its own unit"
+    );
+}
+
 #[test]
 fn anonymous_class_spelling_has_no_declaration() {
     let fixture = fixture_db();
     let db = &fixture.db;
 
-    // `Outer$1` folds to `Outer.1`, which `Outer.java` does not declare — the
-    // walk continues past `Outer` and answers honestly with nothing.
+    // `Outer$1`'s outermost type is `Outer`, but `Outer.java` declares no such
+    // class-like symbol — the unit answers honestly with nothing.
     assert_eq!(
         library_source_decl(db, fixture.library, "com.example.Outer$1"),
         None

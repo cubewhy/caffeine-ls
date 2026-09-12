@@ -28,8 +28,7 @@ insta.workspace = true
 line-index.workspace = true
 rowan.workspace = true
 rustc-hash.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 triomphe.workspace = true
 vfs.workspace = true
 zip.workspace = true
-

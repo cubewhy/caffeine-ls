@@ -24,5 +24,4 @@ vfs.workspace = true
 [dev-dependencies]
 indoc.workspace = true
 insta.workspace = true
-tempfile = "3"
-
+tempfile.workspace = true

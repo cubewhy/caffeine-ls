@@ -24,4 +24,4 @@ vfs.workspace = true
 [dev-dependencies]
 insta.workspace = true
 lsp-test.workspace = true
-tempfile = "3.27.0"
+tempfile.workspace = true

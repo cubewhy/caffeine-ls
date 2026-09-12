@@ -13,8 +13,8 @@ clap = { workspace = true, features = ["derive"] }
 indicatif = { workspace = true }
 java-syntax = { workspace = true }
 rayon = { workspace = true }
-walkdir = { workspace = true }
 ureq = "3.4.1"
+walkdir = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true

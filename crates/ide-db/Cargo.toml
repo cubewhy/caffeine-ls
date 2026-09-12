@@ -18,5 +18,5 @@ vfs.workspace = true
 
 [dev-dependencies]
 camino.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 zip.workspace = true

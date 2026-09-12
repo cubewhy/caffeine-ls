@@ -33,5 +33,5 @@ zip.workspace = true
 [dev-dependencies]
 hir-def.workspace = true
 insta.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 triomphe.workspace = true

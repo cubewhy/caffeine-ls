@@ -162,11 +162,14 @@ pub enum LibrarySourceDecl {
 /// and its answer is returned as it is, so a library that ships sources never
 /// pays for a JVM start.
 ///
+/// `fqn` is the class's *binary* name ([JVMS §4.2]), so a nested type is
+/// `pkg.Outer$Inner`.
+///
 /// `None` when the library is unknown, has neither sources nor a decompiler,
-/// the entry name does not match a prefix of `fqn`, or the materialized file —
-/// though present in the source root — declares no class-like symbol of that
-/// name (an anonymous class's `pkg.Outer$1` landing on `pkg/Outer.java` is not
-/// a declaration of `pkg.Outer$1`).
+/// the archive holds no compilation unit for the class's outermost type, or
+/// the unit — though present in the source root — declares no class-like
+/// symbol of that name (an anonymous class's `pkg.Outer$1` lands on
+/// `pkg/Outer.java` but is not a declaration there).
 pub fn library_source_decl(
     db: &dyn HirDatabase,
     library: LibraryId,
@@ -179,35 +182,32 @@ pub fn library_source_decl(
 }
 
 /// Where the library class `fqn` is declared in its library's source archive.
+///
+/// A class is declared by the compilation unit of its *outermost* enclosing
+/// type: [JLS §7.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.6)
+/// names a compilation unit after the top-level type it declares, and a nested
+/// type's binary name spells the enclosing types before the first `$`
+/// ([JVMS §4.2](https://docs.oracle.com/javase/specs/jvms/se26/html/jvms-4.html#jvms-4.2)).
+/// So the archive index — keyed by the top-level type each entry declares — is
+/// looked up by that prefix; a dotted spelling is never walked back segment by
+/// segment, which would let a package name answer for a nested type.
 fn source_decl(db: &dyn HirDatabase, library: LibraryId, fqn: &str) -> Option<LibrarySourceDecl> {
     let sources = library_sources(db, library)?;
     let index = library_source_index(db, library)?;
     let root_id = library_source_root(db, library)?;
-    let dotted = fqn.replace('$', ".");
 
-    // Walk the prefixes the index knows: a nested type lands on its outer
-    // compilation unit, and a file whose top-level type does not match keeps
-    // the walk going.
-    let mut candidate = dotted.clone();
-    loop {
-        if let Some(entry) = index.entries.get(candidate.as_str()) {
-            let path = sources.root.join(relative_entry(entry));
-            let source_root = db.source_root(root_id).source_root(db);
-            let Some(&file) = source_root.file_for_path(&VfsPath::from(path.clone())) else {
-                return Some(LibrarySourceDecl::Pending {
-                    entry: Arc::from(entry.as_str()),
-                    path,
-                });
-            };
-            if let Some(item) = class_symbol(db, file, &dotted) {
-                return Some(LibrarySourceDecl::Loaded { file, item });
-            }
-        }
-        match candidate.rfind('.') {
-            Some(dot) => candidate.truncate(dot),
-            None => return None,
-        }
-    }
+    let top_level = fqn.split('$').next().unwrap_or(fqn);
+    let entry = index.entries.get(top_level)?;
+    let path = sources.root.join(relative_entry(entry));
+    let source_root = db.source_root(root_id).source_root(db);
+    let Some(&file) = source_root.file_for_path(&VfsPath::from(path.clone())) else {
+        return Some(LibrarySourceDecl::Pending {
+            entry: Arc::from(entry.as_str()),
+            path,
+        });
+    };
+    class_symbol(db, file, &fqn.replace('$', "."))
+        .map(|item| LibrarySourceDecl::Loaded { file, item })
 }
 
 /// Where the library class `fqn` is declared in the library's decompiled
