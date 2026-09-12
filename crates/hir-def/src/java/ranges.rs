@@ -121,6 +121,31 @@ pub fn item_name_range(
     Some(name_range.unwrap_or_else(|| node.text_range()))
 }
 
+/// The source range of the *name* of the `index`-th type parameter the item
+/// `id` declares ([JLS §4.4]): the `IDENTIFIER` token of the item's `index`-th
+/// `TYPE_PARAMETER`, with the exact walk of `lower`'s `child_type_params` →
+/// `type_params_from` → `type_param_from`, so the range covers the token the
+/// lowered name was read from. `None` when the item declares no parameter at
+/// that index — an item with no `TYPE_PARAMETERS` list, or a synthesized
+/// parameter with no syntax node.
+pub fn type_param_name_range(
+    map: &AstIdMap,
+    source: &SourceFile,
+    tree: &ItemTree,
+    id: ItemId,
+    index: usize,
+) -> Option<TextRange> {
+    let node = item_node(map, source, tree, id)?;
+    let list = node
+        .children()
+        .find(|child| is(child, J::TYPE_PARAMETERS))?;
+    let parameter = list
+        .children()
+        .filter(|child| is(child, J::TYPE_PARAMETER))
+        .nth(index)?;
+    first_token(&parameter, J::IDENTIFIER).map(|token| token.text_range())
+}
+
 /// The source range of a record's component list — its parameter declaration
 /// `(int x, int y)`, the outline's selection for the record (mirror of
 /// `lower_record`'s `components_range`; the component list is the fallback of

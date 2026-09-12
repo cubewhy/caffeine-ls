@@ -186,6 +186,14 @@ impl Resolver {
         &self.type_params
     }
 
+    /// The type parameter named `name` in scope ([JLS §6.4.1]): the innermost
+    /// declaration wins, so a method's own parameter shadows an enclosing
+    /// class's parameter of the same name. [`ScopedTypeParam`]s are held with
+    /// the enclosing declarations *first*, so the last match is the innermost.
+    pub fn type_param(&self, name: &Name) -> Option<&ScopedTypeParam> {
+        self.type_params.iter().rfind(|param| param.name == *name)
+    }
+
     /// The enclosing class-like declarations, innermost first, as FQNs.
     pub fn enclosing(&self) -> &[Name] {
         &self.enclosing
@@ -375,15 +383,14 @@ fn resolve_type_ref_impl(
                 .iter()
                 .map(|arg| resolve_type_ref_impl(db, scope, resolver, arg, resolving))
                 .collect();
-            if let Some(tp) = resolver.type_params.iter().rfind(|tp| tp.name == *name) {
+            if let Some(tp) = resolver.type_param(name) {
                 let var_scope = tp.scope.clone();
-                // A type parameter in scope wins over any type named the same.
-                // JLS §6.4.1: a method type parameter shadows a class type
-                // parameter of the same name — the innermost declaration wins,
-                // so search reverse (innermost last in `type_params_map`).
-                // Without this a `<T extends Mapped & Copyable<T>>` method in a
-                // generic `NbtEntryDecoder<T>` interface resolves its own `T`
-                // to the interface's unbounded `T`, losing `copy`.
+                // A type parameter in scope wins over any type named the same
+                // ([JLS §6.4.1]): `Resolver::type_param` picks the innermost
+                // declaration. Without this a
+                // `<T extends Mapped & Copyable<T>>` method in a generic
+                // `NbtEntryDecoder<T>` interface resolves its own `T` to the
+                // interface's unbounded `T`, losing `copy`.
                 let bounds = if resolving.iter().any(|n| n == name) {
                     Vec::new()
                 } else {
@@ -420,7 +427,7 @@ fn resolve_type_ref_impl(
         // are omitted: this node shape is the recursion guard's and the
         // classfile lowering's, where re-entering the bound would not
         // terminate ([JLS §4.4]).
-        TypeRef::TypeVariable(v) => match resolver.type_params.iter().rfind(|tp| tp.name == *v) {
+        TypeRef::TypeVariable(v) => match resolver.type_param(v) {
             Some(tp) => Ty::type_var(db, tp.scope.clone(), Vec::new()),
             None => Ty::unscoped_var(db, v.clone(), Vec::new()),
         },
@@ -821,6 +828,75 @@ pub fn resolve_type_name_at(
     resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
 }
 
+/// The declaration of a type parameter: the item that lists it and where its
+/// name is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeParamDeclaration {
+    /// The file declaring the parameter.
+    pub file: FileId,
+    /// The source range of the parameter's name in its declaration.
+    pub range: TextRange,
+}
+
+/// The declaration of the type parameter `name` in scope at `item`
+/// ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4),
+/// [§8.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.2),
+/// [§8.4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.4)):
+/// the parameter itself, never a class of the same spelling ([§6.5.5.1]), and
+/// a method's own parameter over an enclosing class's ([§6.4.1]).
+///
+/// `None` when no *source* parameter of that name is in scope: `name` names no
+/// type parameter at all, or the variable belongs to a classfile signature or
+/// is a capture ([`TypeVarScope::LibraryClass`], [`TypeVarScope::LibraryMethod`],
+/// [`TypeVarScope::Capture`], [`TypeVarScope::Unnamed`]) — none of which has a
+/// declaration in the workspace.
+pub fn type_param_declaration(
+    db: &dyn TyDatabase,
+    file: FileId,
+    item: ItemId,
+    name: &Name,
+) -> Option<TypeParamDeclaration> {
+    let tree = hir::file_item_tree(db, file);
+    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
+    let param = Resolver::new(&tree, &type_params, item)
+        .type_param(name)?
+        .clone();
+    // The scope is the parameter's identity ([`ScopedTypeParam`]): a source
+    // class or method scope carries the item that declared it.
+    let (decl_file, decl_item) = match param.scope {
+        TypeVarScope::Class { file, item, .. } | TypeVarScope::Method { file, item, .. } => {
+            (file, item)
+        }
+        TypeVarScope::LibraryClass { .. }
+        | TypeVarScope::LibraryMethod { .. }
+        | TypeVarScope::Capture { .. }
+        | TypeVarScope::Unnamed { .. } => return None,
+    };
+    let decl_tree = hir::file_item_tree(db, decl_file);
+    let (map, source) = range_ctx(db, decl_file, decl_tree.language)?;
+    // The parameter's own name token, at the index it occupies in the
+    // declaring item's list — the *last* match, as the scope list is read.
+    let index = declared_type_params(&decl_tree, decl_item)
+        .iter()
+        .rposition(|candidate| candidate.name == param.name)?;
+    let range = ranges::type_param_name_range(map, &source, &decl_tree, decl_item, index)?;
+    Some(TypeParamDeclaration {
+        file: decl_file,
+        range,
+    })
+}
+
+/// The type parameters the item declares itself ([JLS §4.4], [§8.1.2],
+/// [§8.4.4]) — the list `type_params_map` scopes, in declaration order.
+fn declared_type_params(tree: &ItemTree, item: ItemId) -> &[TypeParam] {
+    match tree.data(item) {
+        ItemData::Class(data) | ItemData::Interface(data) => &data.type_params,
+        ItemData::Record(data) => &data.type_params,
+        ItemData::Method(data) => &data.sig.type_params,
+        _ => &[],
+    }
+}
+
 /// The resolver in force at the declaration owning `node`: the innermost item
 /// whose source range contains it, or the compilation unit's own context
 /// ([`Resolver::for_file`]) when no item does.
@@ -891,7 +967,7 @@ pub fn resolve_name_checked(
 ) -> NameResolution {
     let text = name.as_str();
     // 1. a type parameter in scope wins over any type named the same (§6.5.5.1).
-    if resolver.type_params.iter().any(|tp| tp.name == *name) {
+    if resolver.type_param(name).is_some() {
         return NameResolution::TypeVar;
     }
 

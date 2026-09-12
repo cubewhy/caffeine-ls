@@ -111,8 +111,9 @@ pub use java::name_check::item_type_references;
 pub use java::release_api::ReleaseApi;
 pub use java::resolve::scope_for_file as scope_for_test;
 pub use java::resolve::{
-    NameResolution, Resolver, item_ty, method_params, record_component_types, resolve_type_name_at,
-    resolve_type_ref, scope_for_file, ty_from_library,
+    NameResolution, Resolver, TypeParamDeclaration, item_ty, method_params, record_component_types,
+    resolve_type_name_at, resolve_type_ref, scope_for_file, ty_from_library,
+    type_param_declaration,
 };
 pub use java::subtyping::{is_assignable, is_subtype, supertypes};
 pub use java::ty::{
