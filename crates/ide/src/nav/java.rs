@@ -309,7 +309,14 @@ fn is_workspace_visible(db: &RootDatabase, target: &NavigationTarget) -> bool {
     let tree = hir::file_item_tree(db, target.file);
     if all_items(db, target.file, &tree)
         .into_iter()
-        .any(|(_, item)| item_name_range(db, target.file, &tree, item) == Some(target.range))
+        .any(|(_, item)| {
+            // §6.7: a *local* declaration — and every declaration nested in it
+            // — has no canonical name, so it can only be spelled inside its own
+            // file; the reference sweep stays narrowed to the declaring file
+            // instead of sweeping the workspace.
+            !is_local(&tree, item)
+                && item_name_range(db, target.file, &tree, item) == Some(target.range)
+        })
     {
         return true;
     }
@@ -419,18 +426,23 @@ fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<Navi
     let source = base_db::parse(db, file, tree.language).syntax_node(tree.language);
     let map = hir::hir_def::db::ast_id_map(db, file, tree.language);
 
-    // A declared source item: its own identifier carries the offset.
-    if let Some(symbol) = hir::file_symbols(db, file)
-        .iter()
-        .filter(|symbol| {
-            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, symbol.item)
+    // A declared item: its own name token carries the offset. The *innermost*
+    // declaration wins (the name ranges of nested declarations are disjoint),
+    // and a *local* declaration ([JLS §14.3]) answers as any other — its item
+    // is in the file's item tree, whose symbol set lists no local declaration
+    // ([§6.7]).
+    if let Some(item) = all_items(db, file, &tree)
+        .into_iter()
+        .filter(|(_, item)| {
+            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, *item)
                 .is_some_and(|range| range.contains(offset))
         })
-        .min_by_key(|symbol| {
-            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, symbol.item)
+        .min_by_key(|(_, item)| {
+            hir::hir_def::java::ranges::item_name_range(map, &source, &tree, *item)
                 .map_or(u32::MAX, |range| u32::from(range.len()))
         })
-        && let Some(target) = decl_target(db, file, symbol.item, symbol.name.simple_name())
+        .map(|(_, item)| item)
+        && let Some(target) = item_decl_target(db, file, &tree, item)
     {
         return Some(target);
     }
@@ -456,6 +468,19 @@ fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<Navi
     // A variable carried without an item of its own: a local, parameter,
     // pattern binding or lambda parameter, at the identifier it was named by.
     variable_target(&hir::file_body_tree(db, file), file, offset)
+}
+
+/// The navigation target of the declaration an item's own name token writes —
+/// the item's declared name, read from the item tree (a local class-like
+/// declaration has no canonical name, [§6.7]).
+fn item_decl_target(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    item: ItemId,
+) -> Option<NavigationTarget> {
+    let name = tree.data(item).name()?.as_str().to_owned();
+    decl_target(db, file, item, &name)
 }
 
 /// The declaration of the type parameter whose own name token carries `offset`,
@@ -678,7 +703,13 @@ fn declaration_type_ref_targets(
     {
         for (name, range) in hir_ty::item_type_references(db, file, item) {
             if range.is_some_and(|range| range.contains(offset)) {
-                let resolved = type_resolution(db, file, Some(item), &name);
+                let resolved = type_resolution(
+                    db,
+                    file,
+                    Some(item),
+                    &name,
+                    range.map(|range| range.start()),
+                );
                 if !resolved.is_empty() {
                     return resolved;
                 }
@@ -753,7 +784,7 @@ fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Reso
             }
             return Vec::new();
         }
-        return type_resolution(db, file, None, &Name::new(&written(index)));
+        return type_resolution(db, file, None, &Name::new(&written(index)), None);
     }
     Vec::new()
 }
@@ -1362,13 +1393,13 @@ fn keyword_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<V
     if let Some(qualifier) = qualifier {
         let item = body_items_at(db, file, &tree, offset).first().copied();
         return Some(type_ref_name(qualifier).map_or_else(Vec::new, |name| {
-            type_resolution(db, file, item, &Name::new(&name))
+            type_resolution(db, file, item, &Name::new(&name), Some(offset))
         }));
     }
-    let symbols = hir::file_symbols(db, file);
-    let Some(enclosing) = enclosing_class_fqn(db, file, &tree, &symbols, offset) else {
+    let Some(enclosing) = enclosing_class(db, file, &tree, offset) else {
         return Some(Vec::new());
     };
+    let enclosing = hir_ty::ClassKey::of(&tree, file, enclosing);
     let class = match keyword {
         Keyword::This => enclosing,
         // §8.1.4/§4.10.2: the *direct* superclass is the first supertype of a
@@ -1376,15 +1407,17 @@ fn keyword_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<V
         // its superinterfaces.)
         Keyword::Super => {
             let scope = hir_ty::scope_for_file(db, file);
-            let supertypes =
-                hir_ty::supertypes(db, &scope, &Ty::reference(db, enclosing, Vec::new()));
-            let Some((fqn, _)) = supertypes.first().and_then(|ty| ty.as_reference(db)) else {
+            let supertypes = hir_ty::supertypes(db, &scope, &enclosing.as_ty(db, Vec::new()));
+            let Some(super_key) = supertypes
+                .first()
+                .and_then(|ty| hir_ty::ClassKey::of_ty(db, ty))
+            else {
                 return Some(Vec::new());
             };
-            fqn.clone()
+            super_key
         }
     };
-    Some(class_resolution(db, file, &class))
+    Some(key_resolution(db, file, &class))
 }
 
 /// The keyword a bare or qualified `this`/`super` expression is written as.
@@ -1399,21 +1432,33 @@ enum Keyword {
 fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     let bodies = hir::file_body_tree(db, file);
     let tree = hir::file_item_tree(db, file);
-    let symbols = hir::file_symbols(db, file);
     let items = body_items_at(db, file, &tree, offset);
     let item = items.first().copied();
 
     for expr_id in exprs_at(&bodies, offset) {
         let resolution = match bodies.expr(expr_id).clone() {
-            ExprData::New { ty, .. } | ExprData::ClassLit(ty) => type_ref_name(&ty)
-                .map_or_else(Vec::new, |name| {
-                    type_resolution(db, file, item, &Name::new(&name))
-                }),
+            ExprData::New { ty, .. } | ExprData::ClassLit(ty) => {
+                type_ref_name(&ty).map_or_else(Vec::new, |name| {
+                    type_resolution(
+                        db,
+                        file,
+                        item,
+                        &Name::new(&name),
+                        bodies.expr_name_range(expr_id).map(|range| range.start()),
+                    )
+                })
+            }
             ExprData::InstanceOf { ty, .. } => ty
                 .as_ref()
                 .and_then(|t| type_ref_name(t))
                 .map_or_else(Vec::new, |name| {
-                    type_resolution(db, file, item, &Name::new(&name))
+                    type_resolution(
+                        db,
+                        file,
+                        item,
+                        &Name::new(&name),
+                        bodies.expr_name_range(expr_id).map(|range| range.start()),
+                    )
                 }),
             // A method invocation, with an implicit `this` receiver when
             // `receiver` is empty ([JLS §15.12.1]). The member is keyed on the
@@ -1436,7 +1481,7 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                         .map_or_else(Vec::new, |ty| {
                             member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
                         }),
-                    None => enclosing_class_receiver(db, file, &tree, &symbols, offset)
+                    None => enclosing_class_receiver(db, file, &tree, offset)
                         .map_or_else(Vec::new, |ty| {
                             member_in_hierarchy(db, file, ty, name.as_str(), Use::Method, params)
                         }),
@@ -1447,9 +1492,8 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                 Some(target) => receiver_ty(db, file, &items, target).map_or_else(Vec::new, |ty| {
                     member_in_hierarchy(db, file, ty, name.as_str(), Use::Field, Params::Unknown)
                 }),
-                None => enclosing_class_receiver(db, file, &tree, &symbols, offset).map_or_else(
-                    Vec::new,
-                    |ty| {
+                None => {
+                    enclosing_class_receiver(db, file, &tree, offset).map_or_else(Vec::new, |ty| {
                         member_in_hierarchy(
                             db,
                             file,
@@ -1458,8 +1502,8 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                             Use::Field,
                             Params::Unknown,
                         )
-                    },
-                ),
+                    })
+                }
             },
             // A simple name. [JLS §6.5.2] reclassifies a contextually
             // ambiguous name: an expression name — a local, parameter or field
@@ -1511,7 +1555,13 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
                     // name is reclassified as a type name when one is in scope.
                     // A package name (and a type variable) resolves to no
                     // declaration, so it stays unanswered.
-                    type_resolution(db, file, item, &name)
+                    type_resolution(
+                        db,
+                        file,
+                        item,
+                        &name,
+                        bodies.expr_name_range(expr_id).map(|range| range.start()),
+                    )
                 }
             }
             // A qualified name in expression position: `Outer.Inner`,
@@ -1520,7 +1570,13 @@ fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resoluti
             // reference first, and its last segment is then read as a member
             // of the class its prefix denotes.
             ExprData::NamePath(name) => {
-                let as_type = type_resolution(db, file, item, &name);
+                let as_type = type_resolution(
+                    db,
+                    file,
+                    item,
+                    &name,
+                    bodies.expr_name_range(expr_id).map(|range| range.start()),
+                );
                 if !as_type.is_empty() {
                     as_type
                 } else {
@@ -1563,48 +1619,62 @@ fn receiver_ty(db: &RootDatabase, file: FileId, items: &[ItemId], receiver: Expr
 }
 
 /// The receiver type of an implicit-`this` member access: the enclosing
-/// class-like declaration of the offset.
+/// class-like declaration of the offset — a *local* one included ([§6.7]).
 fn enclosing_class_receiver(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
-    symbols: &[hir::SourceSymbol],
     offset: TextSize,
 ) -> Option<Ty> {
-    enclosing_class_fqn(db, file, tree, symbols, offset)
-        .map(|fqn| Ty::reference(db, fqn, Vec::new()))
+    let enclosing = enclosing_class(db, file, tree, offset)?;
+    Some(hir_ty::ClassKey::of(tree, file, enclosing).as_ty(db, Vec::new()))
 }
 
-/// The fully qualified name of the innermost class-like declaration whose
-/// range contains `offset` — the class a bare `this` is an instance of, and
-/// whose direct superclass a bare `super` names.
-fn enclosing_class_fqn(
+/// The innermost class-like declaration whose range contains `offset` — the
+/// class a bare `this` is an instance of, and whose direct superclass a bare
+/// `super` names.
+fn enclosing_class(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
-    symbols: &[hir::SourceSymbol],
     offset: TextSize,
-) -> Option<Name> {
-    symbols
-        .iter()
-        .filter(|symbol| {
-            matches!(
-                symbol.kind,
-                hir::SourceSymbolKind::Class
-                    | hir::SourceSymbolKind::Interface
-                    | hir::SourceSymbolKind::Enum
-                    | hir::SourceSymbolKind::Record
-                    | hir::SourceSymbolKind::Annotation
-            )
-        })
-        .filter(|symbol| {
-            item_range(db, file, tree, symbol.item).is_some_and(|range| range.contains(offset))
-        })
-        .min_by_key(|symbol| {
-            let range = item_range(db, file, tree, symbol.item).unwrap_or_default();
-            range.end() - range.start()
-        })
-        .and_then(|symbol| hir::source_class_fqn(db, file, symbol.item))
+) -> Option<ItemId> {
+    items_at(db, file, tree, offset)
+        .into_iter()
+        .find(|item| tree.data(*item).is_type())
+}
+
+/// The navigation resolutions of the class `key` denotes: the declaration of a
+/// source class — a *local* one ([JLS §14.3]) included — or the library source
+/// the classpath class lives in.
+fn key_resolution(db: &RootDatabase, file: FileId, key: &hir_ty::ClassKey) -> Vec<Resolution> {
+    match key {
+        hir_ty::ClassKey::Named(fqn) => class_resolution(db, file, fqn),
+        hir_ty::ClassKey::Local(class) => {
+            let tree = hir::file_item_tree(db, class.file);
+            let Some(name) = tree.data(class.item).name() else {
+                return Vec::new();
+            };
+            vec![Resolution::Decl {
+                file: class.file,
+                item: class.item,
+                name: name.as_str().to_owned(),
+            }]
+        }
+    }
+}
+
+/// Whether the declaration `item` has no canonical name ([JLS §6.7]): it is a
+/// *local* declaration ([JLS §14.3]) or nested in one.
+fn is_local(tree: &ItemTree, item: ItemId) -> bool {
+    let mut current = Some(item);
+    while let Some(id) = current {
+        if tree.is_local_type(id) {
+            return true;
+        }
+        current = tree.parent_of(id);
+    }
+    false
 }
 
 /// The resolution of a member of `receiver`, walking the receiver's own class
@@ -2007,7 +2077,24 @@ fn type_resolution(
     file: FileId,
     item: Option<ItemId>,
     name: &Name,
+    at: Option<TextSize>,
 ) -> Vec<Resolution> {
+    // §14.3/[§6.3]: a *local* class-like declaration is in scope positionally —
+    // from its declaration to the end of its block — so the item's own scope
+    // map (which describes a declaration's scope, not a body's) cannot answer
+    // a reference a body writes. A reference at a known range is answered from
+    // the local declarations whose declaring body encloses it and whose own
+    // declaration precedes it.
+    if let (Some(item), Some(at)) = (item, at) {
+        let tree = hir::file_item_tree(db, file);
+        if let Some(local) = local_type_in_scope(db, file, &tree, item, at, name) {
+            return vec![Resolution::Decl {
+                file,
+                item: local,
+                name: name.simple_name().to_owned(),
+            }];
+        }
+    }
     // §7.4.3: a name that exists on the classpath but is not visible from the
     // file's module still denotes that class — navigation is not a compile
     // check.
@@ -2027,6 +2114,60 @@ fn type_resolution(
         | hir_ty::NameResolution::Unresolved => return Vec::new(),
     };
     class_resolution(db, file, &fqn)
+}
+
+/// The *local* class-like declaration named `name` that a reference at
+/// `offset` inside the body owned by `item` may denote ([JLS §6.3]): a
+/// declaration whose own declaring body encloses the reference — the
+/// declaration's owner is `item` or an ancestor of it in the item tree — and
+/// whose declaration precedes it. The innermost (latest) such declaration wins
+/// ([§6.4.1]).
+///
+/// Deliberately positional rather than exact: navigation is not a compile
+/// check, so a same-named declaration of a *sibling* block that follows is not
+/// distinguished from one in scope. The type layer's own resolution is exact.
+fn local_type_in_scope(
+    db: &RootDatabase,
+    file: FileId,
+    tree: &ItemTree,
+    item: ItemId,
+    offset: TextSize,
+    name: &Name,
+) -> Option<ItemId> {
+    let mut best: Option<(TextSize, ItemId)> = None;
+    for &local in &tree.local_types {
+        if tree.data(local).name() != Some(name) {
+            continue;
+        }
+        let Some(owner) = tree.parent_of(local) else {
+            continue;
+        };
+        if owner != item && !encloses(tree, owner, item) {
+            continue;
+        }
+        let Some(range) = item_range(db, file, tree, local) else {
+            continue;
+        };
+        if range.start() >= offset {
+            continue;
+        }
+        if best.is_none_or(|(start, _)| range.start() > start) {
+            best = Some((range.start(), local));
+        }
+    }
+    best.map(|(_, local)| local)
+}
+
+/// Whether the declaration `ancestor` encloses `item` (or is `item`).
+fn encloses(tree: &ItemTree, ancestor: ItemId, item: ItemId) -> bool {
+    let mut current = Some(item);
+    while let Some(id) = current {
+        if id == ancestor {
+            return true;
+        }
+        current = tree.parent_of(id);
+    }
+    false
 }
 
 /// The resolution of the canonical class name `fqn` in `file`'s scope.
@@ -2399,6 +2540,12 @@ fn all_items(db: &RootDatabase, file: FileId, tree: &ItemTree) -> Vec<(TextRange
         }
         for &child in tree.data(item).body() {
             walk(db, file, tree, child, out);
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member, so it
+        // is not in any `body()`: it — and its members — are walked from the
+        // declaration whose body declares it.
+        for local in tree.local_types_of(item) {
+            walk(db, file, tree, local, out);
         }
     }
     let mut out = Vec::new();

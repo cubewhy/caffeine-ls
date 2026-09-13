@@ -640,6 +640,14 @@ fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<[SourceSymbol
     Arc::from(symbols)
 }
 
+/// The indexed declarations of a file's item tree.
+///
+/// A *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// is deliberately absent: §6.7 gives it neither a fully qualified nor a
+/// canonical name, so it can neither be named from another file nor be looked
+/// up by name — this index *is* the workspace symbol index, and the IDE
+/// surfaces a local declaration from its own file's item tree instead.
 fn collect_file_symbols(tree: &ItemTree) -> Vec<SourceSymbol> {
     fn collect(tree: &ItemTree, id: ItemId, prefix: Option<&Name>, out: &mut Vec<SourceSymbol>) {
         let data = tree.data(id);

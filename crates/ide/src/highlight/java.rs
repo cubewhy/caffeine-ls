@@ -366,6 +366,12 @@ fn walk_type_refs(
     for member in tree.data(item).body() {
         walk_type_refs(db, file_id, tree, *member, &inner, out);
     }
+    // A local class-like declaration ([JLS §14.3]) is not a member, so it is
+    // not in any `body()`: its own written type references — the supertypes
+    // above all — are the ones of an item of its own.
+    for local in tree.local_types_of(item) {
+        walk_type_refs(db, file_id, tree, local, &inner, out);
+    }
 }
 
 /// The names of the type parameters a declaration declares.
@@ -735,13 +741,15 @@ fn unresolved_references(bodies: &BodyTree, out: &mut Highlights) {
     }
 }
 
-/// The declarations the HIR does not lower — a local class, the members of an
-/// anonymous class body, a lambda's parameters — filled in from the syntax
-/// tree, which is the only record of them. Every range such an identifier can
-/// take is a declaration's *name*: the declared type of a formal parameter, a
-/// record component or a variable is a nested `TYPE` node, and an annotation is
-/// a nested `ANNOTATION` node, so a direct-child `IDENTIFIER` of one of these
-/// nodes is the name and nothing else.
+/// The declarations the HIR does not lower — the members of an anonymous class
+/// body and a lambda's parameters — filled in from the syntax tree, which is
+/// the only record of them. (A *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// is lowered like any other, so it is classified from the item tree instead.)
+/// Every range such an identifier can take is a declaration's *name*: the
+/// declared type of a formal parameter or a variable is a nested `TYPE` node,
+/// and an annotation is a nested `ANNOTATION` node, so a direct-child
+/// `IDENTIFIER` of one of these nodes is the name and nothing else.
 ///
 /// Runs last, and only where no token is recorded: a name the HIR *did* lower
 /// was classified with its resolution, which is strictly better information.
@@ -799,25 +807,11 @@ fn declaration_tag(node: &SyntaxNode<Lang>) -> Option<HlTag> {
         | J::COMPACT_CONSTRUCTOR_DECL
         | J::ANNOTATION_TYPE_ELEMENT_DECL => HlTag::Method,
         J::ENUM_CONSTANT => HlTag::EnumMember,
-        // §8.10.1: a record's component list is parsed as a formal parameter
-        // list, so a component of a record the HIR does not lower — a *local*
-        // record, whose declaration is a statement — reaches here as a formal
-        // parameter. It declares a field of the record ([§8.10.1]), not a
-        // parameter; a real formal parameter is one of a method, a constructor
-        // or a lambda.
-        J::FORMAL_PARAMETER | J::SPREAD_PARAMETER => {
-            let record_component = node.parent().is_some_and(|parameters| {
-                parameters.kind() == J::FORMAL_PARAMETERS
-                    && parameters
-                        .parent()
-                        .is_some_and(|declaration| declaration.kind() == J::RECORD_DECL)
-            });
-            if record_component {
-                HlTag::Property
-            } else {
-                HlTag::Parameter
-            }
-        }
+        // A formal parameter — of a method, a constructor or a lambda. A
+        // *record*'s component list is parsed as one too, but every record's
+        // components are classified from the item tree
+        // ([`declarations`]), so a component never reaches here.
+        J::FORMAL_PARAMETER | J::SPREAD_PARAMETER => HlTag::Parameter,
         J::CATCH_FORMAL_PARAMETER | J::INFERRED_PARAMETERS => HlTag::Parameter,
         J::TYPE_PARAMETER => HlTag::TypeParameter,
         // A declarator is a field's, an enum constant's or a local's: only the

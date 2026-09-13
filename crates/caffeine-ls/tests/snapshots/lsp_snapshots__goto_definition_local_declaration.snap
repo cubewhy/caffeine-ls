@@ -1,0 +1,294 @@
+---
+source: crates/caffeine-ls/tests/lsp_snapshots.rs
+expression: normalized
+---
+[
+  [
+    "declaration Local",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "declaration Shape",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 12,
+            "character": 18
+          },
+          "end": {
+            "line": 12,
+            "character": 23
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "declaration Point",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 20,
+            "character": 15
+          },
+          "end": {
+            "line": 20,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "declaration Kind",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 25,
+            "character": 13
+          },
+          "end": {
+            "line": 25,
+            "character": 17
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "declared type Local",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "class literal Local",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "constructor Local",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 6,
+            "character": 14
+          },
+          "end": {
+            "line": 6,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "constructor Circle",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 15,
+            "character": 14
+          },
+          "end": {
+            "line": 15,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "constructor record Point",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 20,
+            "character": 15
+          },
+          "end": {
+            "line": 20,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "local variable l",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 27,
+            "character": 14
+          },
+          "end": {
+            "line": 27,
+            "character": 15
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "method use",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 8,
+            "character": 17
+          },
+          "end": {
+            "line": 8,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "interface method area",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 13,
+            "character": 16
+          },
+          "end": {
+            "line": 13,
+            "character": 20
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "record method sum",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 21,
+            "character": 16
+          },
+          "end": {
+            "line": 21,
+            "character": 19
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "record component x",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 20,
+            "character": 25
+          },
+          "end": {
+            "line": 20,
+            "character": 26
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "enum qualifier Kind",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 25,
+            "character": 13
+          },
+          "end": {
+            "line": 25,
+            "character": 17
+          }
+        }
+      }
+    ]
+  ],
+  [
+    "enum constant A",
+    [
+      {
+        "uri": "file://<WORKSPACE_ROOT>/src/com/example/Outer.java",
+        "range": {
+          "start": {
+            "line": 25,
+            "character": 20
+          },
+          "end": {
+            "line": 25,
+            "character": 21
+          }
+        }
+      }
+    ]
+  ]
+]

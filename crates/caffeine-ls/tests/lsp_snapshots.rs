@@ -5108,29 +5108,56 @@ fn test_record_component_semantic_tokens() {
     insta::assert_json_snapshot!("record_component_semantic_tokens", rows);
 }
 
-/// A *local* record ([JLS §14.3]) — one declared in a method body — is not an
-/// item the HIR lowers, so its component list is classified from the syntax
-/// tree alone. A component is still the declaration of the record's field
-/// ([§8.10.1]), never a parameter: the list it is written in is a record's.
-const LOCAL_RECORD_COMPONENT_TOKENS: &str = r#"package com.example;
+/// A *local* class-like declaration ([JLS §14.3]) — one declared in a method
+/// body — is an item of its file's item tree, so its name, its members and the
+/// types it writes are classified from the HIR like any other declaration's:
+/// a local class with a field and a method, a local interface, a local record
+/// whose components are read inside its own method, and a local enum.
+const LOCAL_DECLARATION_FILE: &str = r#"package com.example;
 
 class Outer {
-    void run() {
-        record Local(int n) {
-            int read() {
-                return n;
+    int field;
+
+    void run(int param) {
+        class Local {
+            int own;
+            void use() {
+                own = field + param;
             }
         }
-        int value = new Local(1).n();
+        interface Shape {
+            int area();
+        }
+        class Circle implements Shape {
+            public int area() {
+                return 0;
+            }
+        }
+        record Point(int x, int y) {
+            int sum() {
+                return x + y;
+            }
+        }
+        enum Kind { A, B }
+
+        Local l = new Local();
+        l.use();
+        Shape s = new Circle();
+        int a = s.area();
+        Point p = new Point(1, 2);
+        int t = p.sum() + p.x;
+        Kind k = Kind.A;
+        Class<?> c = Local.class;
+        Outer o = new Outer();
     }
 }
 "#;
 
 #[test]
-fn test_local_record_component_semantic_tokens() {
+fn test_local_declaration_semantic_tokens() {
     let lsp = create_lsp();
     let path = "/src/com/example/Outer.java";
-    lsp.write_file(path, LOCAL_RECORD_COMPONENT_TOKENS);
+    lsp.write_file(path, LOCAL_DECLARATION_FILE);
     lsp.open_document(path);
     lsp.wait_until_workspace_is_loaded();
 
@@ -5140,17 +5167,95 @@ fn test_local_record_component_semantic_tokens() {
         json!({ "textDocument": { "uri": lsp.uri(path) } }),
     );
     let tokens = decode_tokens(&response, &legend);
-    let rows = render_tokens(&tokens, LOCAL_RECORD_COMPONENT_TOKENS);
+    let rows = render_tokens(&tokens, LOCAL_DECLARATION_FILE);
 
     assert_kinds(
         &tokens,
-        LOCAL_RECORD_COMPONENT_TOKENS,
+        LOCAL_DECLARATION_FILE,
         &[
-            // The local record and its component declaration.
-            "struct+declaration Local",
-            "property+declaration n",
+            // The local declarations themselves.
+            "class+declaration Local",
+            "property+declaration own",
+            "method+declaration use",
+            "interface+declaration Shape",
+            "class+declaration Circle",
+            "struct+declaration Point",
+            "property+declaration x",
+            "property+declaration y",
+            "enum+declaration Kind",
+            "enumMember+declaration A",
+            // Reads and writes: a write of the local class's own field, a read
+            // of the enclosing class's field, a record component read inside
+            // the record's own method, and an enum constant.
+            "property+modification own",
+            "property field",
+            "property+readonly x",
+            "property+readonly+static A",
+            // The written types of the local declarations and their uses.
+            "type Local",
+            "type Shape",
+            "type Circle",
+            "type Point",
+            "type Kind",
         ],
     );
 
-    insta::assert_json_snapshot!("local_record_component_semantic_tokens", rows);
+    insta::assert_json_snapshot!("local_declaration_semantic_tokens", rows);
+}
+
+/// `textDocument/definition` on a local declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// and on every reference to it: the declaration's own name answers itself,
+/// a written type name, a class literal and a constructor call answer the
+/// declaration, and a member of a local declaration answers its declaration
+/// too.
+#[test]
+fn test_goto_definition_local_declaration() {
+    let lsp = create_lsp();
+    let path = "/src/com/example/Outer.java";
+    lsp.write_file(path, LOCAL_DECLARATION_FILE);
+    lsp.open_document(path);
+    lsp.wait_until_workspace_is_loaded();
+    let text = LOCAL_DECLARATION_FILE;
+
+    let cases: &[(&str, Position)] = &[
+        // The declaration's own name.
+        ("declaration Local", start_of(text, "Local {", 0)),
+        ("declaration Shape", start_of(text, "Shape {", 0)),
+        ("declaration Point", start_of(text, "Point(int", 0)),
+        ("declaration Kind", start_of(text, "Kind { A", 0)),
+        // A written type name, a class literal and a constructor call.
+        ("declared type Local", start_of(text, "Local l", 0)),
+        ("class literal Local", start_of(text, "Local.class", 0)),
+        ("constructor Local", start_of(text, "new Local()", 0)),
+        ("constructor Circle", start_of(text, "new Circle()", 0)),
+        (
+            "constructor record Point",
+            start_of(text, "new Point(1, 2)", 0),
+        ),
+        // The receiver of a local class's own method.
+        ("local variable l", start_of(text, "l.use()", 0)),
+        // A member of a local declaration.
+        ("method use", start_of(text, "use();", 0)),
+        ("interface method area", start_of(text, "area();", 1)),
+        ("record method sum", start_of(text, "sum() +", 0)),
+        ("record component x", start_of(text, "x;", 0)),
+        // A local enum used as the qualifier of its own constant, and the
+        // constant itself.
+        ("enum qualifier Kind", start_of(text, "Kind.A", 0)),
+        ("enum constant A", start_of(text, "A;", 0)),
+    ];
+
+    let rows: Vec<(String, serde_json::Value)> = cases
+        .iter()
+        .map(|(label, position)| ((*label).to_owned(), definition_at(&lsp, path, *position)))
+        .collect();
+
+    let workspace_root = lsp.workspace_root.path().to_string_lossy().to_string();
+    let normalized: Vec<(String, serde_json::Value)> = rows
+        .into_iter()
+        .map(|(label, value)| (label, normalize_uris(value, &workspace_root)))
+        .collect();
+
+    insta::assert_json_snapshot!("goto_definition_local_declaration", normalized);
 }
