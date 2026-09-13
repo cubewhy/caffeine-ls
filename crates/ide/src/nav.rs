@@ -276,6 +276,23 @@ fn java_definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Nav
 /// when the declarations `java_resolutions` produces for it map to a
 /// `(FileId, TextRange)` pair that is one of the query's. There is no second
 /// resolution path, so `references` can never disagree with `definition`.
+///
+/// The boundaries of the sweep, where a reader will look for them:
+/// * Only the workspace's own sources ([`RootDatabase::source_files`]) and the
+///   query file are swept, so a reference *inside* library sources — an
+///   override's call to a supertype member, say — is out of scope.
+/// * A site whose own resolution needs a library file that is not loaded yet
+///   resolves to nothing ([`Resolution::Pending`]) and is therefore not
+///   reported: the LSP layer defers a request only when the *query* resolves to
+///   nothing (see [`pending_library_files`]), never to complete a sweep.
+/// * A synthesized member with no item of its own (an implicit record accessor)
+///   is identified by its owner class's item ([`member_or_owner`]), and a
+///   reference to such a member is written under the member's name, not the
+///   class's: a query on the class declaration therefore does not report it,
+///   even though `definition` navigates it to the class.
+/// * Only `IDENTIFIER` tokens are candidates ([`file_references`]), so a javadoc
+///   `{@link ...}` — one `JAVADOC` token — is not a site; `definition` answers
+///   nothing at such an offset either, so the two requests stay consistent.
 fn java_references(
     db: &RootDatabase,
     file: FileId,
@@ -366,10 +383,6 @@ fn sweep(
 /// declaration's name (constants, imports, qualifiers and supertype clauses
 /// included), so the filter is sound, and it bounds the number of
 /// `java_resolutions` calls to the tokens that could possibly answer.
-///
-/// A javadoc `{@link ...}` sits inside one `JAVADOC` token, so it is no
-/// candidate site; `definition` answers nothing at such an offset either, so
-/// the two requests stay consistent.
 fn file_references(
     db: &RootDatabase,
     file: FileId,
