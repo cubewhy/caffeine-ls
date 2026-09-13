@@ -1,0 +1,19 @@
+---
+source: crates/hir-ty/tests/jls_local_types.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+sealed class Shape permits Unsealed {}
+non-sealed class Unsealed extends Shape {}
+class Plain {}
+
+class Locals {
+    void m() {
+        class Base {}
+        class Local extends Unsealed {}
+        class Other extends Plain {}
+        class Sibling extends Base {}
+    }
+}

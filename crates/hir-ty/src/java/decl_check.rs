@@ -69,6 +69,25 @@ fn type_ref_range(
     hir_def::java::ranges::type_ref_range(map, &source, tyref)
 }
 
+/// The declaration a *duplicate local class* re-declares within
+/// ([JLS §6.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4),
+/// [§8.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1)):
+/// the *enclosing* declaration whose scope already holds the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DuplicateContainer {
+    /// §6.4's case: a member body — a method, constructor or initializer body
+    /// — in whose scope the name is already declared. `noun` is
+    /// `method`/`constructor`/`static initializer`/`instance initializer` and
+    /// `name` the declaration's own name (`None` for an initializer).
+    Member {
+        noun: &'static str,
+        name: Option<Name>,
+    },
+    /// §8.1/[§9.1]'s case: the local declaration has the same simple name as
+    /// an enclosing class or interface.
+    EnclosingType { name: Name },
+}
+
 /// A declaration-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclDiagnostic {
@@ -628,6 +647,39 @@ pub enum DeclDiagnostic {
         modifier: &'static str,
         range: Option<rowan::TextRange>,
     },
+    /// §14.3: a `sealed` or `non-sealed` modifier on a local class or
+    /// interface declaration. javac: `sealed or non-sealed local classes are
+    /// not allowed`; the message is IntelliJ's `Sealed or non-sealed local
+    /// classes are not allowed`, at the modifier's own range.
+    SealedOrNonSealedLocalClass {
+        modifier: &'static str,
+        range: Option<rowan::TextRange>,
+    },
+    /// §14.3: the direct superclass or a direct superinterface of a local
+    /// class declaration — or a direct superinterface of a local interface
+    /// declaration — is `sealed`. javac: `local classes must not extend
+    /// sealed classes`; the message is the sibling `Cannot inherit from
+    /// sealed 'S'`, at the written supertype reference.
+    LocalClassCantExtendSealed {
+        super_owner: Name,
+        range: Option<rowan::TextRange>,
+    },
+    /// §6.4/[§8.1]/[§9.1]: a local class or interface declaration re-declares
+    /// a name already in scope as a local declaration, or has the same simple
+    /// name as an enclosing class or interface. javac reports both under
+    /// `compiler.err.already.defined` (`…in method m()`, `…in {package}`), or
+    /// `compiler.err.already.defined.in.clinit` when the enclosing
+    /// declaration is an initializer; the message is the sibling
+    /// `DuplicateMethod`'s shape. `range` is the redeclaring declaration's
+    /// name.
+    DuplicateLocalClass {
+        name: Name,
+        /// The declaration's noun: `Class`, `Interface`, `Enum` or `Record`
+        /// ([§14.3]).
+        kind: &'static str,
+        container: DuplicateContainer,
+        range: Option<rowan::TextRange>,
+    },
     /// §8.4.5/[§9.4: a method with no body that is neither `abstract` nor
     /// `native` — an interface `private`/`static`/`default` method without a
     /// body, or a class method that should be `abstract`. javac: `missing
@@ -794,6 +846,9 @@ impl DeclDiagnostic {
             | DeclDiagnostic::SealedClassMustHaveSubclasses { .. }
             | DeclDiagnostic::FeatureRequiresNewerSourceLevel { .. }
             | DeclDiagnostic::ModifierNotAllowedHere { .. }
+            | DeclDiagnostic::SealedOrNonSealedLocalClass { .. }
+            | DeclDiagnostic::LocalClassCantExtendSealed { .. }
+            | DeclDiagnostic::DuplicateLocalClass { .. }
             | DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. }
             | DeclDiagnostic::ModuleNotFound { .. }
             | DeclDiagnostic::PackageEmptyOrNotFound { .. }
@@ -937,6 +992,15 @@ impl DeclDiagnostic {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::ModifierNotAllowedHere {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::SealedOrNonSealedLocalClass {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::LocalClassCantExtendSealed {
+                range: name_range, ..
+            } => *name_range,
+            DeclDiagnostic::DuplicateLocalClass {
                 range: name_range, ..
             } => *name_range,
             DeclDiagnostic::MissingMethodBodyOrDeclareAbstract {
@@ -1083,6 +1147,13 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     // §7.6: no two class-like declarations share a fully qualified name,
     // across the source set (cross-file as well as same-file).
     out.extend(duplicate_class_diagnostics(db, file, &tree));
+
+    // §14.3: the local class-like declarations of the file — which modifiers
+    // they may carry, a sealed direct supertype, a name already in scope as a
+    // local declaration, and a name an enclosing class or interface already
+    // has.
+    out.extend(local_modifier_diagnostics(db, file, &tree));
+    out.extend(local_class_diagnostics(db, file, &tree, &scope));
 
     // §8.1.1/[§8.4.3]: a declaration carries two or more modifiers the JLS
     // forbids from co-occurring (see [`modifier_combination_diagnostics`]).
@@ -3655,6 +3726,382 @@ fn modifier_combination_diagnostics(
     let mut out = Vec::new();
     walk_decl_modifiers(&syntax_node, &mut out);
     out
+}
+
+/// §14.3: the modifiers a *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// may carry. The grammar admits the whole `{ClassModifier}` prefix, and §14.3
+/// makes the access modifiers, `static`, `sealed` and `non-sealed`
+/// compile-time errors:
+///
+/// - "It is a compile-time error if a local class or interface declaration has
+///   any of the access modifiers `public`, `protected`, or `private`" — and
+///   the same sentence for `static`;
+/// - "It is a compile-time error if a local class declaration has the modifier
+///   `sealed` or `non-sealed`".
+///
+/// javac rejects the first group in its *parser*
+/// (`compiler.err.illegal.start.of.expr`); the rule is reported here at the
+/// offending modifier, which is where the IDE anchors it.
+fn local_modifier_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+) -> Vec<DeclDiagnostic> {
+    use syntax::java::SourceFile as JavaSourceFile;
+    if tree.language != LanguageKind::Java {
+        return Vec::new();
+    }
+    let parse = base_db::parse(db, file, LanguageKind::Java);
+    let syntax::SourceFile::Java(JavaSourceFile { syntax_node }) =
+        parse.syntax_node(LanguageKind::Java)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    walk_local_modifiers(&syntax_node, &mut out);
+    out
+}
+
+/// Recursively walks `node` for the class-like declarations a *block* declares
+/// ([§14.3]) — a declaration whose parent is a `BLOCK` is a local one — and
+/// inspects every modifier of each such declaration's modifier list.
+fn walk_local_modifiers(
+    node: &rowan::SyntaxNode<syntax::java::Lang>,
+    out: &mut Vec<DeclDiagnostic>,
+) {
+    use syntax::java::SyntaxKind as J;
+    for child in node.children() {
+        let local = matches!(
+            child.kind(),
+            J::CLASS_DECL | J::INTERFACE_DECL | J::ENUM_DECL | J::RECORD_DECL
+        ) && child
+            .parent()
+            .is_some_and(|parent| parent.kind() == J::BLOCK);
+        if local
+            && let Some(modifier_list) = child.children().find(|c| c.kind() == J::MODIFIER_LIST)
+        {
+            for (modifier, range) in modifier_tokens(&modifier_list) {
+                match modifier {
+                    // §14.3: the access modifiers and `static`.
+                    "public" | "protected" | "private" | "static" => {
+                        out.push(DeclDiagnostic::ModifierNotAllowedHere {
+                            modifier,
+                            range: Some(range),
+                        });
+                    }
+                    // §14.3: `sealed` / `non-sealed`.
+                    "sealed" | "non-sealed" => {
+                        out.push(DeclDiagnostic::SealedOrNonSealedLocalClass {
+                            modifier,
+                            range: Some(range),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+        walk_local_modifiers(&child, out);
+    }
+}
+
+/// The modifier keywords of a modifier list with their own source ranges, in
+/// written order — the per-modifier ranges the §14.3 checks report at.
+fn modifier_tokens(
+    node: &rowan::SyntaxNode<syntax::java::Lang>,
+) -> Vec<(&'static str, rowan::TextRange)> {
+    use rowan::NodeOrToken;
+    use syntax::java::SyntaxKind as J;
+    let mut out: Vec<(&'static str, rowan::TextRange)> = Vec::new();
+    let mut elements: Vec<_> = node.children_with_tokens().collect();
+    elements.reverse();
+    while let Some(element) = elements.pop() {
+        let NodeOrToken::Token(token) = element else {
+            continue;
+        };
+        let name = match token.kind() {
+            J::PUBLIC_KW => "public",
+            J::PROTECTED_KW => "protected",
+            J::PRIVATE_KW => "private",
+            J::ABSTRACT_KW => "abstract",
+            J::FINAL_KW => "final",
+            J::STATIC_KW => "static",
+            J::DEFAULT_KW => "default",
+            J::NATIVE_KW => "native",
+            J::SYNCHRONIZED_KW => "synchronized",
+            J::TRANSIENT_KW => "transient",
+            J::VOLATILE_KW => "volatile",
+            J::STRICTFP_KW => "strictfp",
+            J::IDENTIFIER => match token.text() {
+                // `non-sealed` lexes as `non - sealed` ([§8.1.1.2]): the
+                // modifier's range covers all three tokens.
+                "non" => {
+                    let minus = elements.pop();
+                    let sealed = elements.pop();
+                    let end = match (&minus, &sealed) {
+                        (Some(NodeOrToken::Token(minus)), Some(NodeOrToken::Token(sealed)))
+                            if minus.kind() == J::MINUS && sealed.text() == "sealed" =>
+                        {
+                            sealed.text_range()
+                        }
+                        _ => token.text_range(),
+                    };
+                    out.push((
+                        "non-sealed",
+                        rowan::TextRange::new(token.text_range().start(), end.end()),
+                    ));
+                    continue;
+                }
+                "sealed" => "sealed",
+                _ => continue,
+            },
+            _ => continue,
+        };
+        out.push((name, token.text_range()));
+    }
+    out
+}
+
+/// §14.3/[§6.4]/[§8.1]/[§9.1]: the checks a *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// is subject to beyond the ones a declaration of that kind always is: its
+/// direct supertypes may not be `sealed` (it can never be named in a `permits`
+/// clause), its name may not already be in scope as another local declaration
+/// (§6.4), and it may not repeat the simple name of an enclosing class or
+/// interface ([§8.1], [§9.1]).
+fn local_class_diagnostics(
+    db: &dyn TyDatabase,
+    file: FileId,
+    tree: &hir_def::java::item_tree::ItemTree,
+    scope: &hir::ResolutionScope,
+) -> Vec<DeclDiagnostic> {
+    if tree.local_types.is_empty() {
+        return Vec::new();
+    }
+    let Some((map, source)) = range_ctx(db, file, tree.language) else {
+        return Vec::new();
+    };
+    let sites = crate::java::db::local_decl_sites_query(db, db.file_text(file));
+    let mut out = Vec::new();
+    for &item in &tree.local_types {
+        let Some(declared_name) = tree.data(item).name().cloned() else {
+            continue;
+        };
+        // §14.3: the direct superclass and direct superinterfaces of a local
+        // class — and a local interface's direct superinterfaces — must not be
+        // `sealed`: a local declaration can never be named in a `permits`
+        // clause ([§8.1.1.2]), so no sealed supertype can admit it.
+        let resolver = crate::java::resolve::Resolver::for_item(db, file, tree, item);
+        let super_refs: Vec<&ItemTypeRef> = match tree.data(item) {
+            ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
+            ItemData::Interface(d) => d.interfaces.iter().collect(),
+            ItemData::Record(d) => d.interfaces.iter().collect(),
+            ItemData::Enum(d) => d.interfaces.iter().collect(),
+            _ => continue,
+        };
+        for super_ref in super_refs {
+            let ty = crate::java::resolve::resolve_type_ref(db, scope, &resolver, super_ref);
+            let Some(resolved) = crate::java::resolve::reference_class(db, scope, &ty) else {
+                continue;
+            };
+            if !class_is_sealed(db, &resolved) {
+                continue;
+            }
+            out.push(DeclDiagnostic::LocalClassCantExtendSealed {
+                super_owner: class_simple_name(db, &resolved),
+                range: ranges::type_ref_range(map, &source, super_ref),
+            });
+        }
+
+        // §6.4: a local declaration may not re-declare a name that is already
+        // in scope as another local declaration, unless it is declared within
+        // a *class or interface declaration* appearing within that scope.
+        let redeclared = sites
+            .get(&item)
+            .and_then(|site| {
+                site.local_types
+                    .iter()
+                    .rev()
+                    .skip(1)
+                    .find(|local| local.class.item != item && local.name == declared_name)
+            })
+            .map(|local| local.class.item);
+        match redeclared {
+            Some(earlier) if !local_redeclaration_is_legal(tree, item, earlier) => {
+                out.push(DeclDiagnostic::DuplicateLocalClass {
+                    name: declared_name.clone(),
+                    kind: local_decl_kind(tree.data(item)),
+                    container: local_container(tree, earlier),
+                    range: item_name_range(db, file, tree, item),
+                });
+            }
+            _ => {
+                // §8.1/[§9.1]: a class may not have the same simple name as an
+                // enclosing class or interface. A local declaration's
+                // enclosing *local* declaration is the §6.4 case above, which
+                // javac reports for that declaration instead — the enclosing
+                // *named* classes are what this rule adds.
+                if let Some(enclosing) = enclosing_class_with_name(tree, item, &declared_name) {
+                    out.push(DeclDiagnostic::DuplicateLocalClass {
+                        name: declared_name.clone(),
+                        kind: local_decl_kind(tree.data(item)),
+                        container: DuplicateContainer::EnclosingType { name: enclosing },
+                        range: item_name_range(db, file, tree, item),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether the resolved class is `sealed` ([JLS §8.1.1.2]): a source class with
+/// the modifier, or a classpath class whose classfile carries a
+/// `PermittedSubclasses` attribute ([JVMS §4.7.31]).
+fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
+    match resolved {
+        hir::Resolved::Source(source) => {
+            let tree = hir::file_item_tree(db, source.file);
+            class_like_modifiers(tree.data(source.item)).is_some_and(|m| m.is_sealed())
+        }
+        hir::Resolved::Library(class) => hir::class_record(db, class)
+            .and_then(|record| match record.as_ref() {
+                hir::ClassOrModuleRecord::Class(class) => {
+                    Some(!class.permitted_subclasses.is_empty())
+                }
+                hir::ClassOrModuleRecord::Module(_) => None,
+            })
+            .unwrap_or(false),
+    }
+}
+
+/// §14.3: the noun a local declaration is reported under — `Class`,
+/// `Interface`, `Enum` or `Record`.
+fn local_decl_kind(data: &ItemData) -> &'static str {
+    match data {
+        ItemData::Class(_) => "Class",
+        ItemData::Interface(_) => "Interface",
+        ItemData::Enum(_) => "Enum",
+        ItemData::Record(_) => "Record",
+        _ => "Class",
+    }
+}
+
+/// §6.4: the member body whose scope already holds the re-declared name — the
+/// declaration the *earlier* local declaration belongs to, which is what javac
+/// names in `class {A} is already defined in method {m}()` (an initializer
+/// container is javac's separate `already.defined.in.clinit` key).
+fn local_container(
+    tree: &hir_def::java::item_tree::ItemTree,
+    earlier: hir_def::java::item_tree::ItemId,
+) -> DuplicateContainer {
+    let Some(owner) = tree.parent_of(earlier) else {
+        return DuplicateContainer::Member {
+            noun: "method",
+            name: None,
+        };
+    };
+    match tree.data(owner) {
+        ItemData::Method(method) => DuplicateContainer::Member {
+            noun: if method.is_constructor() {
+                "constructor"
+            } else {
+                "method"
+            },
+            name: Some(method.name.clone()),
+        },
+        ItemData::StaticInit(_) => DuplicateContainer::Member {
+            noun: "static initializer",
+            name: None,
+        },
+        ItemData::InstanceInit(_) => DuplicateContainer::Member {
+            noun: "instance initializer",
+            name: None,
+        },
+        _ => DuplicateContainer::Member {
+            noun: "method",
+            name: None,
+        },
+    }
+}
+
+/// §6.4's exception: the new local declaration is "declared within a class or
+/// interface declaration appearing within the scope of" the earlier one, so
+/// the re-declaration is legal. Probed against javac, the interface of that
+/// sentence is: the class-like declaration that *directly* encloses the new
+/// declaration must appear within the earlier declaration's scope — in the
+/// body that declares it, but outside the earlier declaration itself. So
+/// `class A {} class B { void n() { class A {} } }` is legal (the second `A`
+/// is inside the local `B`, a sibling of the first), while a new `A` inside
+/// `A`'s own body — a member method of it included — and a new `A` in the same
+/// block as the first are not.
+fn local_redeclaration_is_legal(
+    tree: &hir_def::java::item_tree::ItemTree,
+    redeclaring: hir_def::java::item_tree::ItemId,
+    earlier: hir_def::java::item_tree::ItemId,
+) -> bool {
+    // The class-like declaration that directly encloses the redeclaration.
+    let mut current = tree.parent_of(redeclaring);
+    let nearest = loop {
+        match current {
+            Some(id) if tree.data(id).is_type() => break id,
+            Some(id) => current = tree.parent_of(id),
+            None => return false,
+        }
+    };
+    let Some(scope_owner) = tree.parent_of(earlier) else {
+        return false;
+    };
+    nearest != earlier && encloses(tree, scope_owner, nearest) && !encloses(tree, earlier, nearest)
+}
+
+/// The simple name a diagnostic about a resolved class renders ([§6.7]): the
+/// source declaration's own name, or the last segment of a classpath name.
+fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
+    match resolved {
+        hir::Resolved::Source(source) => hir::file_item_tree(db, source.file)
+            .data(source.item)
+            .name()
+            .cloned()
+            .unwrap_or_else(|| Name::new("")),
+        hir::Resolved::Library(_) => Name::new(resolved.fqn(db).as_name().simple_name()),
+    }
+}
+
+/// Whether the declaration `ancestor` encloses `item` (or is `item`).
+fn encloses(
+    tree: &hir_def::java::item_tree::ItemTree,
+    ancestor: hir_def::java::item_tree::ItemId,
+    item: hir_def::java::item_tree::ItemId,
+) -> bool {
+    let mut current = Some(item);
+    while let Some(id) = current {
+        if id == ancestor {
+            return true;
+        }
+        current = tree.parent_of(id);
+    }
+    false
+}
+
+/// The canonically named enclosing class or interface of the local declaration
+/// `item` that has the simple name `name`, if any ([§8.1], [§9.1]).
+fn enclosing_class_with_name(
+    tree: &hir_def::java::item_tree::ItemTree,
+    item: hir_def::java::item_tree::ItemId,
+    name: &Name,
+) -> Option<Name> {
+    let mut current = tree.parent_of(item);
+    while let Some(id) = current {
+        if let Some(declared) = tree.data(id).name()
+            && declared == name
+            && let Some(fqn) = crate::java::resolve::canonical_class_fqn(tree, id)
+        {
+            return Some(fqn);
+        }
+        current = tree.parent_of(id);
+    }
+    None
 }
 
 /// Recursively walks `node` for modifier-bearing declarations, pushing an

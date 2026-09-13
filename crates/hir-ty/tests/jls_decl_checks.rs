@@ -1230,3 +1230,177 @@ class Q extends P {
 );
 // Red: the class-to-class static/instance clash is still the §8.4.8.1/§8.4.8.2
 // error — the membership rule is scoped to interface declarations.
+
+// -- §6.4: a local class re-declaring a name already in scope ----------------
+
+snapshot!(
+    local_class_redeclared_in_method,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    void m() {
+        class A {}
+        class A {}
+    }
+}
+",
+    )])
+);
+// Red: §6.4 — the name of a local class C may not declare a new local class
+// within C's scope ([§6.4]); the second declaration is reported in the scope
+// that already holds the name (javac: `class A is already defined in method
+// m()`).
+
+snapshot!(
+    local_class_redeclared_in_nested_block,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    void m() {
+        class A {}
+        { class A {} }
+    }
+}
+",
+    )])
+);
+// Red: a nested block is still within the outer declaration's scope, so the
+// redeclaration is reported.
+
+snapshot!(
+    local_class_redeclared_in_static_initializer,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    static { class S {} class S {} }
+    { class I {} { class I {} } }
+}
+",
+    )])
+);
+// Red: an initializer's scope is its own, and a re-declaration inside it is
+// reported under javac's separate initializer key
+// (`already.defined.in.clinit`).
+
+snapshot!(
+    local_class_redeclared_in_two_initializers,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    static { class S {} }
+    static { class S {} }
+    { class I {} }
+    { class I {} }
+}
+",
+    )])
+);
+// Green: two *different* initializer blocks are two scopes, so the same name is
+// not a redeclaration.
+
+snapshot!(
+    local_class_redeclared_in_two_methods,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    void m() { class A {} }
+    void n() { class A {} }
+}
+",
+    )])
+);
+// Green: two methods are two scopes — the same name declares two distinct local
+// classes.
+
+snapshot!(
+    local_class_named_like_member_type,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    class A {}
+    interface I {}
+    void m() {
+        class A {}
+        class I {}
+    }
+}
+",
+    )])
+);
+// Green: a local class may shadow a *member* type of the enclosing class — the
+// §8.1 rule concerns the enclosing types' own simple names, not their members'.
+
+snapshot!(
+    local_class_named_like_enclosing_class,
+    check_class_diagnostics(&[(
+        "/src/com/example/P.java",
+        "\
+package com.example;
+
+class P {
+    void m() {
+        class P {}
+    }
+}
+",
+    )])
+);
+// Red: §8.1 — a class may not have the same simple name as an enclosing class,
+// which a local declaration of that name does (javac: `class P is already
+// defined in package com.example`).
+
+snapshot!(
+    local_class_in_local_class_of_same_name,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    void m() {
+        class A { void n() { class A {} } }
+    }
+}
+",
+    )])
+);
+// Red: §6.4's exception admits a re-declaration only inside another class
+// declaration appearing within C's scope — a new `A` inside `A`'s own body is
+// still within C's scope, and javac reports it.
+
+snapshot!(
+    local_class_in_sibling_local_class,
+    check_class_diagnostics(&[(
+        "/src/com/example/Locals.java",
+        "\
+package com.example;
+
+class Locals {
+    void m() {
+        class A {}
+        class B { void n() { class A {} } }
+    }
+}
+",
+    )])
+);
+// Green: §6.4's exception — the second `A` is declared within the local class
+// `B`, which appears within the first `A`'s scope.

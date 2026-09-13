@@ -6,7 +6,7 @@
 //! live here.
 
 use hir_ty::TyDatabase;
-use hir_ty::java::decl_check::{DeclDiagnostic, SafeVarargsRejection};
+use hir_ty::java::decl_check::{DeclDiagnostic, DuplicateContainer, SafeVarargsRejection};
 use hir_ty::java::deprecation::Deprecation;
 use hir_ty::java::ty::Ty;
 use syntax::{DiagnosticCode, JavaDiagnosticCode};
@@ -203,6 +203,24 @@ pub fn code(diag: &DeclDiagnostic) -> DiagnosticCode {
         }),
         DeclDiagnostic::ModifierNotAllowedHere { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::ModifierNotAllowedHere)
+        }
+        DeclDiagnostic::SealedOrNonSealedLocalClass { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::SealedOrNonSealedLocalClass)
+        }
+        DeclDiagnostic::LocalClassCantExtendSealed { .. } => {
+            DiagnosticCode::Java(JavaDiagnosticCode::LocalClassCantExtendSealed)
+        }
+        DeclDiagnostic::DuplicateLocalClass { container, .. } => {
+            // §6.4's initializer case is javac's own key
+            // (`already.defined.in.clinit`); every other container is the
+            // ordinary `already.defined`.
+            DiagnosticCode::Java(match container {
+                DuplicateContainer::Member {
+                    noun: "static initializer" | "instance initializer",
+                    ..
+                } => JavaDiagnosticCode::DuplicateLocalClassInInitializer,
+                _ => JavaDiagnosticCode::DuplicateLocalClass,
+            })
         }
         DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { .. } => {
             DiagnosticCode::Java(JavaDiagnosticCode::MissingMethodBodyOrDeclareAbstract)
@@ -621,6 +639,15 @@ pub fn message(db: &dyn TyDatabase, diag: &DeclDiagnostic) -> String {
         }
         DeclDiagnostic::ModifierNotAllowedHere { modifier, .. } => {
             format!("Modifier '{modifier}' is not allowed here")
+        }
+        DeclDiagnostic::SealedOrNonSealedLocalClass { .. } => {
+            "Sealed or non-sealed local classes are not allowed".to_owned()
+        }
+        DeclDiagnostic::LocalClassCantExtendSealed { super_owner, .. } => {
+            format!("Cannot inherit from sealed '{}'", super_owner.simple_name())
+        }
+        DeclDiagnostic::DuplicateLocalClass { name, kind, .. } => {
+            format!("{kind} '{}' is already defined", name.as_str())
         }
         DeclDiagnostic::MissingMethodBodyOrDeclareAbstract { method, .. } => {
             format!(

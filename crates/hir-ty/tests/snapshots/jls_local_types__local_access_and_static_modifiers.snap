@@ -1,0 +1,20 @@
+---
+source: crates/hir-ty/tests/jls_local_types.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+class Locals {
+    void m() {
+        public class Public {}
+        protected class Protected {}
+        private class Private {}
+        static class Static {}
+    }
+}
+
+@4:8: modifier-not-allowed-here: Modifier 'public' is not allowed here
+@5:8: modifier-not-allowed-here: Modifier 'protected' is not allowed here
+@6:8: modifier-not-allowed-here: Modifier 'private' is not allowed here
+@7:8: modifier-not-allowed-here: Modifier 'static' is not allowed here

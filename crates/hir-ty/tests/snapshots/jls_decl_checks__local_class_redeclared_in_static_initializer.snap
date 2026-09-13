@@ -1,0 +1,14 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+class Locals {
+    static { class S {} class S {} }
+    { class I {} { class I {} } }
+}
+
+@3:30: duplicate-local-class-in-initializer: Class 'S' is already defined
+@4:25: duplicate-local-class-in-initializer: Class 'I' is already defined

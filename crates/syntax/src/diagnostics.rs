@@ -468,6 +468,29 @@ pub enum JavaDiagnosticCode {
     /// a sealed type must have at least one. javac: `sealed class must have
     /// subclasses`.
     SealedClassMustHaveSubclasses,
+    /// §14.3: a `sealed` or `non-sealed` modifier on a *local* class or
+    /// interface declaration — a local class is never a supertype named by a
+    /// `permits` clause, so neither modifier is allowed. javac: `sealed or
+    /// non-sealed local classes are not allowed`.
+    SealedOrNonSealedLocalClass,
+    /// §14.3: the direct superclass or a direct superinterface of a *local*
+    /// class declaration — or a direct superinterface of a local interface
+    /// declaration — is `sealed`: a local class is never named in the sealed
+    /// type's `permits` clause. javac: `local classes must not extend sealed
+    /// classes`.
+    LocalClassCantExtendSealed,
+    /// §6.4: a *local* class or interface declaration re-declares a name that
+    /// is already in scope as a local class or interface declaration. javac:
+    /// `class {X} is already defined in method {m}()`. It is also the §8.1/
+    /// §9.1 rule that a class may not have the same simple name as an
+    /// enclosing class or interface. javac: `class {X} is already defined in
+    /// {package}`.
+    DuplicateLocalClass,
+    /// The §6.4 re-declaration whose enclosing declaration is an
+    /// *initializer* — a static or instance initializer block — which javac
+    /// reports under its own key: `class {X} is already defined in static
+    /// initializer of class {P}`.
+    DuplicateLocalClassInInitializer,
     /// §8.4.3/[§9.4: a modifier on a member declaration that the JLS forbids
     /// for that member's kind — a `protected` interface method, for example.
     /// javac: `modifier {m} not allowed here`.
@@ -671,6 +694,12 @@ impl JavaDiagnosticCode {
                 Some("compiler.err.incorrect.number.of.nested.patterns")
             }
             CantInheritFromSealed => Some("compiler.err.cant.inherit.from.sealed"),
+            SealedOrNonSealedLocalClass => {
+                Some("compiler.err.sealed.or.non.sealed.local.classes.not.allowed")
+            }
+            LocalClassCantExtendSealed => Some("compiler.err.local.classes.cant.extend.sealed"),
+            DuplicateLocalClass => Some("compiler.err.already.defined"),
+            DuplicateLocalClassInInitializer => Some("compiler.err.already.defined.in.clinit"),
             SealedSealedOrFinalExpected => Some("compiler.err.non.sealed.sealed.or.final.expected"),
             SealedClassMustHaveSubclasses => Some("compiler.err.sealed.class.must.have.subclasses"),
             ModifierNotAllowedHere => Some("compiler.err.mod.not.allowed.here"),
@@ -852,6 +881,12 @@ impl JavaDiagnosticCode {
                 "incorrect-number-of-pattern-components"
             }
             JavaDiagnosticCode::CantInheritFromSealed => "cannot-inherit-from-sealed",
+            JavaDiagnosticCode::SealedOrNonSealedLocalClass => "sealed-or-non-sealed-local-class",
+            JavaDiagnosticCode::LocalClassCantExtendSealed => "local-classes-cant-extend-sealed",
+            JavaDiagnosticCode::DuplicateLocalClass => "duplicate-local-class",
+            JavaDiagnosticCode::DuplicateLocalClassInInitializer => {
+                "duplicate-local-class-in-initializer"
+            }
             JavaDiagnosticCode::SealedSealedOrFinalExpected => {
                 "sealed-non-sealed-or-final-expected"
             }

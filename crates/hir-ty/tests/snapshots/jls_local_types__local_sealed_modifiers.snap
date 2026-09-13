@@ -1,0 +1,16 @@
+---
+source: crates/hir-ty/tests/jls_local_types.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+class Locals {
+    void m() {
+        sealed class Sealed {}
+        non-sealed class NonSealed {}
+    }
+}
+
+@4:8: sealed-or-non-sealed-local-class: Sealed or non-sealed local classes are not allowed
+@5:8: sealed-or-non-sealed-local-class: Sealed or non-sealed local classes are not allowed

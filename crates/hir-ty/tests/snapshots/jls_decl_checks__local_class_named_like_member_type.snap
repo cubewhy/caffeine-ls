@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_decl_checks.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+class Locals {
+    class A {}
+    interface I {}
+    void m() {
+        class A {}
+        class I {}
+    }
+}

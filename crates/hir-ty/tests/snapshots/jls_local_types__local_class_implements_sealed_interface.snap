@@ -1,0 +1,17 @@
+---
+source: crates/hir-ty/tests/jls_local_types.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+sealed interface Shape permits Circle {}
+final class Circle implements Shape {}
+
+class Locals {
+    void m() {
+        class Local implements Shape {}
+    }
+}
+
+@7:31: local-classes-cant-extend-sealed: Cannot inherit from sealed 'Shape'

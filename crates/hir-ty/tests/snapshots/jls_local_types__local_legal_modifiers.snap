@@ -1,0 +1,15 @@
+---
+source: crates/hir-ty/tests/jls_local_types.rs
+expression: out
+---
+FILE /src/com/example/Locals.java:
+package com.example;
+
+class Locals {
+    void m() {
+        final class Final {}
+        abstract class Abstract {}
+        strictfp class Strict {}
+        @Deprecated class Annotated {}
+    }
+}
