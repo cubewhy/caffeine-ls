@@ -198,6 +198,7 @@ fn substitute_incl_bounds_rewrites_recursive_bound() {
     let TyKind::Reference {
         name: bound_name,
         args: bound_args,
+        ..
     } = bounds[0].kind(&db)
     else {
         panic!("expected Box bound");

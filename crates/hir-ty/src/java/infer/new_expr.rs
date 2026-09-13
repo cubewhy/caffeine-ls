@@ -318,6 +318,7 @@ impl InferCtx<'_> {
         let TyKind::Reference {
             name: target_name,
             args: target_args,
+            local: target_local,
         } = target.kind(self.db)
         else {
             return class_ty;
@@ -325,15 +326,18 @@ impl InferCtx<'_> {
         let TyKind::Reference {
             name: class_name,
             args: _,
+            local: class_local,
         } = class_ty.kind(self.db)
         else {
             return class_ty;
         };
 
-        // §15.9.2.1: same erasure — take the target's arguments directly.
-        if target_name.as_str() == class_name.as_str() {
+        // §15.9.2.1: same erasure — take the target's arguments directly. The
+        // classes must be the *same* class, so a local declaration is compared
+        // by its declaration as well as its name ([§6.7]).
+        if target_name.as_str() == class_name.as_str() && target_local == class_local {
             if !target_args.is_empty() {
-                return Ty::reference(self.db, class_name.as_str(), target_args.clone());
+                return class_ty.with_args(self.db, target_args.clone());
             }
             return class_ty;
         }
@@ -348,7 +352,7 @@ impl InferCtx<'_> {
         let probe = if declared_params.is_empty() {
             class_ty
         } else {
-            Ty::reference(self.db, class_name.clone(), declared_params.clone())
+            class_ty.with_args(self.db, declared_params.clone())
         };
         let mut stack = vec![probe];
         let mut visited: FxHashSet<TyData> = FxHashSet::default();
@@ -360,11 +364,13 @@ impl InferCtx<'_> {
                 let TyKind::Reference {
                     name: parent_name,
                     args: parent_args,
+                    local: parent_local,
                 } = parent.kind(self.db)
                 else {
                     continue;
                 };
                 if parent_name.as_str() != target_name.as_str()
+                    || parent_local != target_local
                     || parent_args.len() != target_args.len()
                 {
                     stack.push(parent);
@@ -562,7 +568,7 @@ impl InferCtx<'_> {
             .collect();
         // Resolve the constructors against the *parameterized* class so the
         // formal parameter types keep the class's type variables ([§15.9.2.2]).
-        let param_class = Ty::reference(self.db, name.clone(), bare.clone());
+        let param_class = class_ty.with_args(self.db, bare.clone());
         let access = self.access.clone();
         let members = member_set(self.db, &self.scope, &param_class, ctor_name, &access);
         for member in members {
@@ -608,7 +614,7 @@ impl InferCtx<'_> {
                         .iter()
                         .map(|t| t.substitute(self.db, &binding))
                         .collect();
-                    let instantiated = Ty::reference(self.db, name.clone(), args);
+                    let instantiated = class_ty.with_args(self.db, args);
                     // §15.9.2.2/[§18.5.2.4]: this constructor is the chosen
                     // declaration — record its poly arguments against the
                     // resolved formals and its checked exceptions exactly as

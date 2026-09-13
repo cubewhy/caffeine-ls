@@ -258,9 +258,21 @@ impl Inference {
                         }
                     }
                     (
-                        TyKind::Reference { name: ln, args: la },
-                        TyKind::Reference { name: un, args: ua },
-                    ) if ln == un && !la.is_empty() && la.len() == ua.len() && l != u => {
+                        TyKind::Reference {
+                            name: ln,
+                            args: la,
+                            local: ll,
+                        },
+                        TyKind::Reference {
+                            name: un,
+                            args: ua,
+                            local: ul,
+                        },
+                    ) if (ln, ll) == (un, ul)
+                        && !la.is_empty()
+                        && la.len() == ua.len()
+                        && l != u =>
+                    {
                         for (a, b) in la.iter().zip(ua.iter()) {
                             if a != b && !a.is_wildcard(db) && !b.is_wildcard(db) {
                                 out.push(Constraint::Eq(*a, *b));
@@ -268,9 +280,17 @@ impl Inference {
                         }
                     }
                     (
-                        TyKind::Reference { name: ln, .. },
-                        TyKind::Reference { name: un, args: ua },
-                    ) if ln != un && !ua.is_empty() && l != u => {
+                        TyKind::Reference {
+                            name: ln,
+                            local: ll,
+                            ..
+                        },
+                        TyKind::Reference {
+                            name: un,
+                            local: ul,
+                            args: ua,
+                        },
+                    ) if (ln, ll) != (un, ul) && !ua.is_empty() && l != u => {
                         // §18.2.2/[§18.3.1]: a proper lower bound `S <: α`
                         // against a proper upper bound `α <: T` with
                         // *different* erasures still relates the type

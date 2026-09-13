@@ -746,11 +746,13 @@ fn member_set_impl(
             // bounds mention the class, each mapped to the receiver's actual
             // argument at that index ([§5.1.10] captures make a wildcard arg
             // a `CAP#` variable; a concrete arg is itself).
-            TyKind::Reference { name, args } => self_type_param_indexes(db, scope, name.as_str())
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|i| args.get(i).copied())
-                .collect(),
+            TyKind::Reference { name, args, .. } => {
+                self_type_param_indexes(db, scope, name.as_str())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|i| args.get(i).copied())
+                    .collect()
+            }
             _ => Vec::new(),
         }
     };
@@ -905,7 +907,7 @@ fn member_set_impl(
 /// (`List<String>`) is not raw, even with empty args in the latter's case the
 /// args are present.
 fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) -> bool {
-    let crate::java::ty::TyKind::Reference { name, args } = receiver.kind(db) else {
+    let crate::java::ty::TyKind::Reference { name, args, .. } = receiver.kind(db) else {
         return false;
     };
     if !args.is_empty() {
@@ -1010,7 +1012,7 @@ fn abstract_methods_impl(
         if !seen.insert(t.id) {
             continue;
         }
-        let TyKind::Reference { name, args } = t.kind(db) else {
+        let TyKind::Reference { name, args, .. } = t.kind(db) else {
             continue;
         };
         let Some(resolved) = hir::fqn_resolve(db, scope, name.as_str()) else {
@@ -1175,6 +1177,7 @@ fn class_methods(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -
     let TyKind::Reference {
         name: class_name,
         args,
+        ..
     } = ty.kind(db)
     else {
         return Vec::new();
@@ -2897,6 +2900,7 @@ fn class_fields(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) ->
     let TyKind::Reference {
         name: class_name,
         args,
+        ..
     } = ty.kind(db)
     else {
         return Vec::new();

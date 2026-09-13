@@ -119,9 +119,17 @@ impl Inference {
                 true
             }
             (
-                TyKind::Reference { name: sn, args: sa },
-                TyKind::Reference { name: tn, args: ta },
-            ) if sn == tn => {
+                TyKind::Reference {
+                    name: sn,
+                    args: sa,
+                    local: sl,
+                },
+                TyKind::Reference {
+                    name: tn,
+                    args: ta,
+                    local: tl,
+                },
+            ) if (sn, sl) == (tn, tl) => {
                 // §18.2.1: ⟨G<S..> → G<T..⟩ reduces to the per-argument
                 // constraints. Against a concrete target the type arguments
                 // are invariant (§4.10.2) and reduce to equalities; a target
@@ -420,9 +428,17 @@ impl Inference {
                 true
             }
             (
-                TyKind::Reference { name: sn, args: sa },
-                TyKind::Reference { name: tn, args: ta },
-            ) if sn == tn => {
+                TyKind::Reference {
+                    name: sn,
+                    args: sa,
+                    local: sl,
+                },
+                TyKind::Reference {
+                    name: tn,
+                    args: ta,
+                    local: tl,
+                },
+            ) if (sn, sl) == (tn, tl) => {
                 if ta.is_empty() && sa.is_empty() {
                     return true;
                 }

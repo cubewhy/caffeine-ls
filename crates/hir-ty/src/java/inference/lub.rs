@@ -173,15 +173,19 @@ impl Lub<'_> {
                 if !self.is_generic(*candidate) {
                     return *candidate;
                 }
-                let TyKind::Reference { name, .. } = candidate.kind(self.db) else {
+                let TyKind::Reference { name, local, .. } = candidate.kind(self.db) else {
                     return *candidate;
                 };
-                let name = name.clone();
+                let identity = (name.clone(), *local);
                 let relevant: Vec<Ty> = all
                     .iter()
                     .map(|id| Ty { id: *id })
                     .filter(|w| {
-                        matches!(w.kind(self.db), TyKind::Reference { name: wname, args } if wname == &name && !args.is_empty())
+                        matches!(
+                            w.kind(self.db),
+                            TyKind::Reference { name, args, local }
+                                if (name, *local) == (&identity.0, identity.1) && !args.is_empty()
+                        )
                     })
                     .collect();
                 if relevant.is_empty() {

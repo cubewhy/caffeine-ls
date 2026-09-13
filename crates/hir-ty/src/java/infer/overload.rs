@@ -1096,7 +1096,7 @@ impl InferCtx<'_> {
                     .map(|bound| self.decapture(bound))
                     .unwrap_or(*ty),
             },
-            TyKind::Reference { name, args } => {
+            TyKind::Reference { args, .. } => {
                 let args = args
                     .iter()
                     .map(|arg| match arg.kind(self.db) {
@@ -1111,7 +1111,7 @@ impl InferCtx<'_> {
                         _ => self.decapture(arg),
                     })
                     .collect();
-                Ty::reference(self.db, name.clone(), args)
+                ty.with_args(self.db, args)
             }
             TyKind::Array(element) => Ty::array(self.db, self.decapture(element)),
             _ => *ty,

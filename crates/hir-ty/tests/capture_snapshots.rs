@@ -55,7 +55,7 @@ fn wild(db: &TestDatabase, bound: Option<WildcardBound>) -> Ty {
 fn render(db: &TestDatabase, ty: &Ty) -> String {
     let kind = ty.kind(db);
     match kind {
-        TyKind::Reference { name, args } => {
+        TyKind::Reference { name, args, .. } => {
             if args.is_empty() {
                 name.as_str().to_owned()
             } else {

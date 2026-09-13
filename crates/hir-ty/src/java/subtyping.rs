@@ -77,7 +77,7 @@ pub(crate) fn supertypes_impl(
     ty: &Ty,
 ) -> Vec<Ty> {
     match ty.kind(db) {
-        TyKind::Reference { name, args } => {
+        TyKind::Reference { name, args, .. } => {
             let Some(resolved) = resolve_name(db, scope, name) else {
                 return Vec::new();
             };

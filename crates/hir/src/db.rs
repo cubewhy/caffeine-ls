@@ -457,7 +457,7 @@ pub struct ResolvedClass {
 }
 
 /// A class resolved to a specific source declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceClass {
     pub file: FileId,
     pub item: hir_def::java::item_tree::ItemId,

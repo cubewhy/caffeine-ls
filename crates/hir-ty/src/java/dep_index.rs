@@ -76,8 +76,17 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
         // which they necessarily are, since `file` resolves the class itself.
         // The closure borrows `out`/`queue`/`visited` only for this pass; the
         // work-queue loop below needs its own mutable borrow of `queue`.
-        let mut record = |name: &Name| {
-            record_source(db, file, &scope, name, &mut out, &mut queue, &mut visited);
+        let mut record = |name: &Name, local: Option<hir::SourceClass>| {
+            record_source(
+                db,
+                file,
+                &scope,
+                name,
+                local,
+                &mut out,
+                &mut queue,
+                &mut visited,
+            );
         };
         for item in all_items(&tree) {
             let key = ItemKey::new(db, file, item);
@@ -106,8 +115,17 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
         if is_class_like(data) {
             let source = hir::SourceClass { file, item: id };
             for super_ty in source_supertypes(db, source, &[]) {
-                super_ty.for_each_reference(db, &mut |name| {
-                    record_source(db, file, &scope, name, &mut out, &mut queue, &mut visited);
+                super_ty.for_each_reference(db, &mut |name, local| {
+                    record_source(
+                        db,
+                        file,
+                        &scope,
+                        name,
+                        local,
+                        &mut out,
+                        &mut queue,
+                        &mut visited,
+                    );
                 });
             }
         }
@@ -119,8 +137,17 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
     //    (in a third file) only depends on `C`'s file through this walk.
     while let Some(source) = queue.pop() {
         for super_ty in source_supertypes(db, source, &[]) {
-            super_ty.for_each_reference(db, &mut |name| {
-                record_source(db, file, &scope, name, &mut out, &mut queue, &mut visited);
+            super_ty.for_each_reference(db, &mut |name, local| {
+                record_source(
+                    db,
+                    file,
+                    &scope,
+                    name,
+                    local,
+                    &mut out,
+                    &mut queue,
+                    &mut visited,
+                );
             });
         }
     }
@@ -131,15 +158,24 @@ pub(crate) fn file_resolved_deps_impl(db: &dyn TyDatabase, file: FileId) -> FxHa
 /// The shared step of [`file_resolved_deps_impl`]: a reference name resolved
 /// against `scope` is a cross-file dependency when it names a source class in
 /// a different file, which then joins the supertype-closure queue.
+///
+/// A reference to a *local* type ([JLS §14.3]) carries its declaration
+/// directly ([`TyKind::Reference::local`]): the declaration is in `file`
+/// itself, so it is never a cross-file dependency and is skipped without a
+/// name lookup — a local type has no canonical name to resolve ([§6.7]).
 fn record_source(
     db: &dyn TyDatabase,
     file: FileId,
     scope: &hir::ResolutionScope,
     name: &Name,
+    local: Option<hir::SourceClass>,
     out: &mut FxHashSet<FileId>,
     queue: &mut Vec<hir::SourceClass>,
     visited: &mut FxHashSet<(FileId, ItemId)>,
 ) {
+    if local.is_some() {
+        return;
+    }
     if let Some(hir::Resolved::Source(source)) = hir::fqn_resolve(db, scope, name.as_str()) {
         // `file`'s own declarations are not a *cross*-file dependency.
         if source.file == file {

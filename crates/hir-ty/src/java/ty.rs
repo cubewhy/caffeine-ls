@@ -78,7 +78,22 @@ pub enum TyKind {
     /// ([§4.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.3),
     /// [§4.5](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5),
     /// [§4.8](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.8)).
-    Reference { name: Name, args: Vec<Ty> },
+    ///
+    /// `local` is `Some` exactly for a *local* class, interface, enum or record
+    /// type
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)),
+    /// which has a simple name but neither a fully qualified nor a canonical
+    /// name ([§6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)):
+    /// it is identified by its declaration — the same identity
+    /// [`hir::Resolved::Source`] carries — while `name` stays the declaration's
+    /// *simple* name, which is what javac and the IDE render. The plain-name
+    /// form cannot collide: only one declaration of that name is in scope at a
+    /// use site ([§6.4.1]).
+    Reference {
+        name: Name,
+        args: Vec<Ty>,
+        local: Option<hir::SourceClass>,
+    },
     /// A type variable ([JLS §4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4))
     /// with its declared bounds ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
     /// `bounds` is empty for unbounded type variables and for re-entrant
@@ -273,8 +288,52 @@ impl Ty {
             TyKind::Reference {
                 name: name.into(),
                 args,
+                local: None,
             },
         )
+    }
+
+    /// A reference type to a *local* class, interface, enum or record
+    /// declaration ([JLS §14.3]): `simple` is the declaration's own name and
+    /// `class` its declaration, which is the type's identity ([§6.7] — a local
+    /// class has no canonical name). See [`TyKind::Reference`].
+    pub fn local_reference(
+        db: &dyn TyDatabase,
+        class: hir::SourceClass,
+        simple: impl Into<Name>,
+        args: Vec<Ty>,
+    ) -> Self {
+        Self::new(
+            db,
+            TyKind::Reference {
+                name: simple.into(),
+                args,
+                local: Some(class),
+            },
+        )
+    }
+
+    /// The same reference type as `self` — the class it names, local or not —
+    /// with `args` as its type arguments. This is the single carry-through for
+    /// every *rebuild* of a reference type (erasure, rewriting, capture
+    /// conversion, decapture, the least-common-parameter/type-argument pairs):
+    /// rebuilding through [`Ty::reference`] would silently drop the declaration
+    /// a local type is identified by.
+    ///
+    /// # Panics
+    /// If `self` is not a reference type.
+    pub(crate) fn with_args(&self, db: &dyn TyDatabase, args: Vec<Ty>) -> Ty {
+        match self.kind(db) {
+            TyKind::Reference { name, local, .. } => Self::new(
+                db,
+                TyKind::Reference {
+                    name: name.clone(),
+                    args,
+                    local: *local,
+                },
+            ),
+            _ => unreachable!("with_args on a non-reference type"),
+        }
     }
 
     /// A type variable declared by `scope` ([JLS §4.4], [§6.3]).
@@ -603,8 +662,23 @@ impl Ty {
     #[stacksafe]
     pub fn same_shape(&self, db: &dyn TyDatabase, other: &Ty) -> bool {
         match (self.kind(db), other.kind(db)) {
-            (TyKind::Reference { name: a, args: aa }, TyKind::Reference { name: b, args: bb }) => {
+            (
+                TyKind::Reference {
+                    name: a,
+                    args: aa,
+                    local: a_local,
+                },
+                TyKind::Reference {
+                    name: b,
+                    args: bb,
+                    local: b_local,
+                },
+            ) => {
+                // §6.7: a *local* type has only its declaration as identity, so
+                // two same-named references to different local declarations are
+                // different types.
                 a == b
+                    && a_local == b_local
                     && aa.len() == bb.len()
                     && aa.iter().zip(bb).all(|(x, y)| x.same_shape(db, y))
             }
@@ -639,14 +713,15 @@ impl Ty {
     pub fn is_object(&self, db: &dyn TyDatabase) -> bool {
         matches!(
             self.kind(db),
-            TyKind::Reference { name, args } if name.as_str() == "java.lang.Object" && args.is_empty()
+            TyKind::Reference { name, args, .. }
+                if name.as_str() == "java.lang.Object" && args.is_empty()
         )
     }
 
     /// `(name, args)` if this is a reference type.
     pub fn as_reference<'a>(&self, db: &'a dyn TyDatabase) -> Option<(&'a Name, &'a [Ty])> {
         match self.kind(db) {
-            TyKind::Reference { name, args } => Some((name, args)),
+            TyKind::Reference { name, args, .. } => Some((name, args)),
             _ => None,
         }
     }
@@ -665,10 +740,14 @@ impl Ty {
     /// intersection members. Used by the cross-file dependency index
     /// ([`crate::java::dep_index`]) to recover the source files a [`Ty`] refers to.
     #[stacksafe]
-    pub fn for_each_reference(&self, db: &dyn TyDatabase, f: &mut impl FnMut(&Name)) {
+    pub fn for_each_reference(
+        &self,
+        db: &dyn TyDatabase,
+        f: &mut impl FnMut(&Name, Option<hir::SourceClass>),
+    ) {
         match self.kind(db) {
-            TyKind::Reference { name, args } => {
-                f(name);
+            TyKind::Reference { name, args, local } => {
+                f(name, *local);
                 for arg in args.iter() {
                     arg.for_each_reference(db, f);
                 }
@@ -797,7 +876,9 @@ impl Ty {
     /// ([§4.4](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4)).
     pub fn erasure(&self, db: &dyn TyDatabase) -> Ty {
         match self.kind(db) {
-            TyKind::Reference { name, .. } => Ty::reference(db, name.clone(), Vec::new()),
+            // §4.6: the erasure of a reference type is the *same* class with
+            // its type arguments dropped.
+            TyKind::Reference { .. } => self.with_args(db, Vec::new()),
             TyKind::Array(inner) => Ty::array(db, inner.erasure(db)),
             TyKind::TypeVar { bounds, .. } => bounds
                 .first()
@@ -944,11 +1025,9 @@ fn rewrite_with(
             }
             Frame::Build(ty) => {
                 let rebuilt = match ty.kind(db) {
-                    TyKind::Reference { name, args } => Ty::reference(
-                        db,
-                        name.clone(),
-                        args.iter().map(|arg| memo[&arg.id]).collect(),
-                    ),
+                    TyKind::Reference { args, .. } => {
+                        ty.with_args(db, args.iter().map(|arg| memo[&arg.id]).collect())
+                    }
                     TyKind::Array(inner) => Ty::array(db, memo[&inner.id]),
                     TyKind::Wildcard(bound) => Ty::wildcard(
                         db,
@@ -984,7 +1063,7 @@ impl fmt::Display for TyDisplay<'_> {
             TyKind::Void => f.write_str("void"),
             TyKind::Null => f.write_str("null"),
             TyKind::Primitive(p) => f.write_str(primitive_name(*p)),
-            TyKind::Reference { name, args } => {
+            TyKind::Reference { name, args, .. } => {
                 f.write_str(name.as_str())?;
                 if !args.is_empty() {
                     f.write_str("<")?;
@@ -1035,7 +1114,7 @@ pub struct TySimpleDisplay<'a> {
 impl fmt::Display for TySimpleDisplay<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.ty.kind(self.db) {
-            TyKind::Reference { name, args } => {
+            TyKind::Reference { name, args, .. } => {
                 f.write_str(name.simple_name())?;
                 if !args.is_empty() {
                     f.write_str("<")?;
@@ -1150,7 +1229,7 @@ static NEXT_CAPTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty: Ty) -> Ty {
     let fresh = |bound: Ty| Ty::fresh_capture(db, bound);
     match ty.kind(db) {
-        TyKind::Reference { name, args } => {
+        TyKind::Reference { name, args, .. } => {
             // §5.1.10: the fresh variable of a *bare* `?` argument takes the
             // upper bound of the type parameter it fills — `AbstractLongAssert<?>`
             // captures to `AbstractLongAssert<CAP extends AbstractLongAssert<…>>`,
@@ -1178,9 +1257,8 @@ pub fn capture_conversion(db: &dyn TyDatabase, scope: &hir::ResolutionScope, ty:
                 })
                 .collect();
             let declared = type_param_upper_bounds(db, scope, name.as_str(), args, &placeholders);
-            Ty::reference(
+            ty.with_args(
                 db,
-                name.clone(),
                 args.iter()
                     .enumerate()
                     .map(|(i, arg)| match arg.kind(db) {
