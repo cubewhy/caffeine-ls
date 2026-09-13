@@ -516,9 +516,12 @@ impl InferCtx<'_> {
                 // that need not exist, against which every constraint on `T`
                 // then fails.
                 let scope = crate::java::resolve::scope_for_file(self.db, source.file);
-                let type_params =
-                    crate::java::db::type_params_map_query(self.db, self.db.file_text(source.file));
-                let resolver = crate::java::resolve::Resolver::new(&tree, type_params, source.item);
+                let resolver = crate::java::resolve::Resolver::for_item(
+                    self.db,
+                    source.file,
+                    &tree,
+                    source.item,
+                );
                 let declared = match crate::java::resolve::item_data(&tree, source.item) {
                     Some(hir_def::java::item_tree::ItemData::Class(d)) => Some(&d.type_params),
                     Some(hir_def::java::item_tree::ItemData::Interface(d)) => Some(&d.type_params),

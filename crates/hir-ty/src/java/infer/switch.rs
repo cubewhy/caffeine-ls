@@ -381,7 +381,7 @@ impl InferCtx<'_> {
         self.report(TypeError::UncheckedInvocation {
             expr,
             method: Name::new(&method.name),
-            owner: Name::new(method.owner.as_str()),
+            owner: method.owner.display_name(self.db),
         });
     }
 

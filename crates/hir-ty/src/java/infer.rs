@@ -66,7 +66,7 @@ use self::context::*;
 
 use crate::{
     java::const_eval::Const,
-    java::db::{TyDatabase, type_params_map_query},
+    java::db::TyDatabase,
     java::diagnostics::TypeError,
     java::method::{FieldData, InvocationContext, MethodData, access_context},
     java::range_ctx::range_ctx,
@@ -172,8 +172,7 @@ pub(crate) fn body_types_impl(
         .and_then(|(map, source)| hir_def::java::ranges::item_range(map, &source, &tree, item))
         .map(|range| range.end());
     let scope = scope_for_file(db, file);
-    let type_params = type_params_map_query(db, db.file_text(file));
-    let resolver = Resolver::new(&tree, type_params, item);
+    let resolver = Resolver::for_item(db, file, &tree, item);
     let access = access_context(db, file, item);
     let enclosing_class = enclosing_self_ty(db, file, &tree, item, &scope, &resolver);
     // §6.3/[§8.1.3]: the chain of enclosing class-like declarations of `item`,
@@ -183,6 +182,7 @@ pub(crate) fn body_types_impl(
     let use_site_outermost = enclosing_names.first().cloned();
     let mut ctx = InferCtx {
         db,
+        file,
         scope,
         tree: bodies.clone(),
         resolver,
@@ -215,6 +215,7 @@ pub(crate) fn body_types_impl(
         resolved: FxHashMap::default(),
         diagnostics: Vec::new(),
         scopes: vec![FxHashMap::default()],
+        local_type_frames: Vec::new(),
         lambda_params: Vec::new(),
         lambda_returns: Vec::new(),
         target: None,
@@ -415,17 +416,19 @@ pub(crate) fn body_types_impl(
     // declaration pass). Body-owned references resolve against the same
     // resolver the inference used.
     let mut resolved_diags = Vec::new();
-    let body_refs: Vec<(
-        crate::java::diagnostics::DiagLocation,
-        hir_expand::span::SpannedTypeRef,
-    )> = match body {
-        Some(body) => crate::java::name_check::body_type_refs(&ctx.tree, body),
-        // A field initializer, enum constant arguments or an annotation
-        // element default carry their type references as expression
-        // forests rather than a [`Body`].
-        None => crate::java::name_check::expr_forest_type_refs(&ctx.tree, &ctx_orphan_exprs),
-    };
-    for (location, spanned) in body_refs {
+    // A body's references are walked *with* the local class-like declarations
+    // in scope at each ([§6.3]), so a name declared later in the block (or in
+    // a block that has ended) is not one of them; an expression forest — a
+    // field initializer, enum constant arguments or an annotation element
+    // default — declares nothing, so its references use the item's own scope.
+    let mut check = |location: crate::java::diagnostics::DiagLocation,
+                     spanned: hir_expand::span::SpannedTypeRef,
+                     locals: &[ItemId]| {
+        // The declaration of each local class-like declaration in scope
+        // ([§6.3]) — the positional scope the reference is checked in.
+        let file = ctx.file;
+        let items = hir::file_item_tree(ctx.db, file);
+        ctx.resolver.set_local_types_from(locals, file, &items);
         let mut issues = Vec::new();
         crate::java::name_check::check_spanned(
             db,
@@ -493,7 +496,28 @@ pub(crate) fn body_types_impl(
                 }),
             }
         }
+    };
+    // The declarations the item is nested in ([§6.3]): a body of a local
+    // class's member sees that class (and everything enclosing it) as well as
+    // what its own statements declare.
+    let enclosing: Vec<ItemId> = crate::java::db::local_decl_sites_query(db, db.file_text(file))
+        .get(&item)
+        .map(|site| {
+            site.local_types
+                .iter()
+                .map(|local| local.class.item)
+                .collect()
+        })
+        .unwrap_or_default();
+    match body {
+        Some(body) => {
+            crate::java::name_check::for_each_body_type_ref(&ctx.tree, body, &enclosing, &mut check)
+        }
+        None => crate::java::name_check::expr_forest_type_refs(&ctx.tree, &ctx_orphan_exprs)
+            .into_iter()
+            .for_each(|(location, spanned)| check(location, spanned, &enclosing)),
     }
+    ctx.resolver.clear_local_types();
     ctx.diagnostics.extend(resolved_diags);
     // §6.5.6.1/[§15.27.2]: a local variable captured by a lambda expression —
     // one referenced inside a lambda body — that is *mutated* anywhere in its
@@ -598,6 +622,7 @@ impl BreakFrame {
 
 struct InferCtx<'a> {
     db: &'a dyn TyDatabase,
+    file: FileId,
     scope: hir::ResolutionScope,
     tree: Arc<BodyTree>,
     resolver: Resolver,
@@ -651,6 +676,12 @@ struct InferCtx<'a> {
     diagnostics: Vec<TypeError>,
     /// The lexical scope stack ([JLS §6.3]): innermost first.
     scopes: Vec<FxHashMap<Name, LocalId>>,
+    /// The entry count the local *type* scope had at each open frame of
+    /// [`Self::resolver`], so a block exit drops exactly the local class-like
+    /// declarations that block made ([§6.3]) — pushed and popped together with
+    /// [`Self::scopes`] by [`Self::push_scope`] / [`Self::pop_scope`], so the
+    /// two lexical scopes can never desynchronize.
+    local_type_frames: Vec<usize>,
     /// [`LocalId`]s, so these are tracked separately from [`Self::scopes`].
     lambda_params: Vec<FxHashMap<Name, Ty>>,
     /// body's type is inferred during overload probing.

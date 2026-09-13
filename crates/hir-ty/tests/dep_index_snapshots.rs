@@ -139,14 +139,17 @@ fn provenance_method_declared_in_superclass_file() {
     let picked =
         pick_method(&db, &scope, &receiver, "inherited", &[], &context, None).expect("resolves");
     assert_eq!(picked.name, "inherited");
-    assert_eq!(picked.owner, "p.Base");
+    assert_eq!(picked.owner, hir_ty::ClassKey::Named("p.Base".into()));
     assert_eq!(picked.owner_file, Some(FileId::from_raw(1)));
 
     // A library method carries no source provenance.
     let receiver = hir_ty::Ty::reference(&db, "java.lang.String", vec![]);
     let picked = pick_method(&db, &scope, &receiver, "length", &[], &context, None)
         .expect("length resolves");
-    assert_eq!(picked.owner, "java.lang.String");
+    assert_eq!(
+        picked.owner,
+        hir_ty::ClassKey::Named("java.lang.String".into())
+    );
     assert_eq!(picked.owner_file, None);
 }
 
@@ -171,7 +174,7 @@ fn provenance_field_declared_in_superclass_file() {
     let receiver = hir_ty::Ty::reference(&db, "p.Sub", vec![]);
     let picked = pick_field(&db, &scope, &receiver, "count", &context).expect("count resolves");
 
-    assert_eq!(picked.owner, "p.Base");
+    assert_eq!(picked.owner, hir_ty::ClassKey::Named("p.Base".into()));
     assert_eq!(picked.owner_file, Some(FileId::from_raw(1)));
 }
 

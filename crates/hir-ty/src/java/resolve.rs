@@ -29,6 +29,7 @@ use vfs::FileId;
 use hir_def::java::item_tree::{ImportItem, ItemData, ItemId, ItemTree, TypeParam};
 use hir_def::java::ranges;
 use hir_expand::ast_id_map::AstIdMap;
+use hir_expand::body::{BodyId, BodyTree, StmtData, StmtId};
 use hir_expand::name::Name;
 use syntax::stub::{TypeBound, TypeRef};
 
@@ -69,6 +70,37 @@ impl std::ops::Deref for ScopedTypeParam {
     }
 }
 
+/// A *local* class-like declaration in scope ([JLS §14.3]): its simple name —
+/// a local class has neither a fully qualified nor a canonical name ([§6.7]),
+/// so a use is written with this name — and the declaration it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedLocalType {
+    pub name: Name,
+    pub class: hir::SourceClass,
+}
+
+/// The local declarations in scope at one item of a file
+/// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)):
+/// what a name written inside the item may denote beyond the compilation unit's
+/// types and the item's own type parameters. Computed per file by
+/// [`local_decl_sites`] and memoized.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalDeclSite {
+    /// The local class-like declarations in scope, outermost first — the
+    /// order [`Resolver::type_param`] uses too, so the innermost declaration of
+    /// a name wins ([§6.4.1]).
+    pub local_types: Vec<ScopedLocalType>,
+}
+
+impl LocalDeclSite {
+    /// The local declaration named `name` in scope ([§6.4.1]: the innermost
+    /// declaration wins, so the *last* match — the scopes are held outermost
+    /// first).
+    pub fn local_type(&self, name: &Name) -> Option<&ScopedLocalType> {
+        self.local_types.iter().rfind(|local| &local.name == name)
+    }
+}
+
 /// The classfile `Signature`-lowering context ([JVMS §4.7.9.1]): the class
 /// whose signature is being lowered and, for a member signature, the member,
 /// so every type variable in it is attributed to its declaring parameter
@@ -101,13 +133,18 @@ impl<'a> LibrarySignature<'a> {
 }
 
 /// The per-file name context of a single item: its package, the compilation
-/// unit's imports, the type parameters in scope at the item and the fully
-/// qualified names of every enclosing class-like declaration.
+/// unit's imports, the type parameters in scope at the item, the *local*
+/// class-like declarations in scope at the item and the fully qualified names
+/// of every enclosing class-like declaration.
 #[derive(Debug, Clone)]
 pub struct Resolver {
     package: Option<Name>,
     imports: Vec<ImportItem>,
     type_params: Vec<ScopedTypeParam>,
+    /// The local class-like declarations in scope at the item, outermost
+    /// first ([JLS §6.3], [§6.4.1]) — the order `type_params` uses, so the
+    /// innermost declaration of a name wins.
+    local_types: Vec<ScopedLocalType>,
     /// The enclosing class-like declarations, innermost first, as canonical
     /// FQNs ([JLS §6.7]): their *member types* are in scope by simple name
     /// ([JLS §6.5.5.1]) ahead of any import.
@@ -115,18 +152,36 @@ pub struct Resolver {
 }
 
 impl Resolver {
+    /// The resolver for `item` of `file` ([`Self::new`] with the file's
+    /// per-file maps looked up).
+    pub fn for_item(db: &dyn TyDatabase, file: FileId, tree: &ItemTree, item: ItemId) -> Self {
+        let text = db.file_text(file);
+        Self::new(
+            tree,
+            crate::java::db::type_params_map_query(db, text),
+            crate::java::db::local_decl_sites_query(db, text),
+            item,
+        )
+    }
+
     /// Builds the resolver for `item_id` within `tree`, looking the type
     /// parameters in scope up in the per-file map computed by
-    /// [`type_params_map`].
+    /// [`type_params_map`] and the local declarations in scope up in the map
+    /// computed by [`local_decl_sites`].
     pub fn new(
         tree: &ItemTree,
         type_params: &FxHashMap<ItemId, Vec<ScopedTypeParam>>,
+        local_sites: &FxHashMap<ItemId, LocalDeclSite>,
         item_id: ItemId,
     ) -> Self {
         Self {
             package: tree.package.clone(),
             imports: tree.imports.clone(),
             type_params: type_params.get(&item_id).cloned().unwrap_or_default(),
+            local_types: local_sites
+                .get(&item_id)
+                .map(|site| site.local_types.clone())
+                .unwrap_or_default(),
             enclosing: enclosing_type_chain(tree, item_id),
         }
     }
@@ -144,6 +199,7 @@ impl Resolver {
             package: tree.package.clone(),
             imports: tree.imports.clone(),
             type_params: Vec::new(),
+            local_types: Vec::new(),
             enclosing: Vec::new(),
         }
     }
@@ -194,6 +250,56 @@ impl Resolver {
         self.type_params.iter().rfind(|param| param.name == *name)
     }
 
+    /// The *local* class-like declaration named `name` in scope
+    /// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)):
+    /// the innermost declaration wins ([§6.4.1]), and a local declaration
+    /// shadows every other type of that name, type parameters included. The
+    /// scopes are held outermost first, so the last match is the innermost.
+    pub fn local_type(&self, name: &Name) -> Option<&ScopedLocalType> {
+        self.local_types.iter().rfind(|local| &local.name == name)
+    }
+
+    /// The local class-like declarations in scope at the item, outermost
+    /// first.
+    pub fn local_types(&self) -> &[ScopedLocalType] {
+        &self.local_types
+    }
+
+    /// Replaces the local class-like declarations in scope with those
+    /// declaring `items`, in order ([JLS §6.3]): the positional scope of a
+    /// reference inside a body, whose declarations are `(file, item)` pairs.
+    pub(crate) fn set_local_types_from(&mut self, items: &[ItemId], file: FileId, tree: &ItemTree) {
+        self.local_types.clear();
+        self.local_types.extend(items.iter().filter_map(|item| {
+            let name = class_like_name(tree.data(*item))?;
+            Some(ScopedLocalType {
+                name: name.clone(),
+                class: hir::SourceClass { file, item: *item },
+            })
+        }));
+    }
+
+    /// Empties the local scope: after a body has been walked, no declaration of
+    /// it is in scope any more.
+    pub(crate) fn clear_local_types(&mut self) {
+        self.local_types.clear();
+    }
+
+    /// Extends the scope with a local class-like declaration
+    /// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)):
+    /// it is in scope in its own body and for the rest of the enclosing block,
+    /// so a body walk pushes it where it is declared.
+    pub(crate) fn push_local_type(&mut self, local: ScopedLocalType) {
+        self.local_types.push(local);
+    }
+
+    /// Drops every declaration pushed since the scope had `len` entries — the
+    /// exit of the block the declarations were made in ([§6.3]: a declaration
+    /// is scoped to the rest of its own block).
+    pub(crate) fn truncate_local_types(&mut self, len: usize) {
+        self.local_types.truncate(len);
+    }
+
     /// The enclosing class-like declarations, innermost first, as FQNs.
     pub fn enclosing(&self) -> &[Name] {
         &self.enclosing
@@ -204,35 +310,23 @@ impl Resolver {
 /// canonical fully qualified names ([JLS §6.7]): the package followed by the
 /// chain of nested type names. Member types of these declarations are in
 /// scope by simple name ([JLS §6.5.5.1], [§8.1], [§9.1]).
+///
+/// A declaration with no canonical name — a *local* declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// or a member type of one — contributes nothing here: it has no FQN to be
+/// probed with, and its member types reach the resolver through the *local*
+/// scopes instead ([`LocalDeclSite`]).
 pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name> {
-    // Parent links, one tree walk.
-    fn walk(tree: &ItemTree, id: ItemId, parents: &mut FxHashMap<ItemId, ItemId>) {
-        for &child in tree.data(id).body() {
-            parents.insert(child, id);
-            walk(tree, child, parents);
-        }
-    }
-    let mut parents = FxHashMap::default();
-    for &top in &tree.top {
-        walk(tree, top, &mut parents);
-    }
-
     // The simple names of the class-like ancestors, outermost last.
     let mut names = Vec::new();
-    let mut current = parents.get(&item_id).copied();
+    let mut current = tree.parent_of(item_id);
     while let Some(id) = current {
-        let name = match tree.data(id) {
-            ItemData::Class(d) => Some(&d.name),
-            ItemData::Interface(d) => Some(&d.name),
-            ItemData::Enum(d) => Some(&d.name),
-            ItemData::Record(d) => Some(&d.name),
-            ItemData::Annotation(d) => Some(&d.name),
-            _ => None,
-        };
-        if let Some(name) = name {
+        if let Some(name) = class_like_name(tree.data(id))
+            && canonical_class_fqn(tree, id).is_some()
+        {
             names.push(name.clone());
         }
-        current = parents.get(&id).copied();
+        current = tree.parent_of(id);
     }
 
     // Accumulate FQNs from the outside in; the result is innermost first.
@@ -247,6 +341,53 @@ pub(crate) fn enclosing_type_chain(tree: &ItemTree, item_id: ItemId) -> Vec<Name
         out.push(fqn);
     }
     out
+}
+
+/// The canonical fully qualified name ([JLS §6.7]) of the class-like
+/// declaration `item` of `tree`: the package followed by the chain of
+/// enclosing type names, or `None` when the declaration has no canonical name
+/// — a *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)),
+/// or a member type of one, which §6.7 leaves unnamed too. Mirrors the name
+/// [`hir::source_class_fqn`] derives from the file's symbol set: a
+/// declaration is named exactly when no local declaration encloses it.
+pub(crate) fn canonical_class_fqn(tree: &ItemTree, item: ItemId) -> Option<Name> {
+    let mut names = Vec::new();
+    let mut current = Some(item);
+    while let Some(id) = current {
+        if tree.is_local_type(id) {
+            return None;
+        }
+        if let Some(name) = class_like_name(tree.data(id)) {
+            names.push(name.clone());
+        }
+        current = tree.parent_of(id);
+    }
+
+    match names.pop() {
+        Some(outermost) => {
+            let mut acc = match &tree.package {
+                Some(package) => join(package, outermost.as_str()),
+                None => outermost,
+            };
+            for name in names.iter().rev() {
+                acc = join(&acc, name.as_str());
+            }
+            Some(acc)
+        }
+        None => None,
+    }
+}
+
+/// The declared name of a class-like declaration, `None` for every other item.
+fn class_like_name(data: &ItemData) -> Option<&Name> {
+    match data {
+        ItemData::Class(d) | ItemData::Interface(d) => Some(&d.name),
+        ItemData::Enum(d) => Some(&d.name),
+        ItemData::Record(d) => Some(&d.name),
+        ItemData::Annotation(d) => Some(&d.name),
+        _ => None,
+    }
 }
 
 /// The type parameters in scope at every item of `tree` ([JLS §6.3]):
@@ -306,6 +447,14 @@ pub(crate) fn type_params_map(
         for &child in data.body() {
             collect(tree, file, child, &own, map);
         }
+        // A local class-like declaration of the item's body
+        // ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+        // is not a member, so it is not in any `body()`: the parameters in
+        // scope at it are those of the body that declares it, and its own are
+        // added below.
+        for local in tree.local_types_of(id) {
+            collect(tree, file, local, &own, map);
+        }
     }
 
     let mut map = FxHashMap::default();
@@ -313,6 +462,301 @@ pub(crate) fn type_params_map(
         collect(tree, file, top, &[], &mut map);
     }
     map
+}
+
+/// The local declarations in scope at every item of `tree`
+/// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3)):
+/// a local class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// is in scope in its own body and for the rest of the immediately enclosing
+/// block, and every enclosing declaration is in scope inside it. Computed in
+/// one walk of the declaration tree and the body IR, so each item's scope is a
+/// map lookup — and, because the walk threads the scope through the *body*
+/// statements, a declaration is in scope only after the statement that
+/// declares it ([§6.3]).
+///
+/// An entry is recorded only for items that have at least one declaration in
+/// scope: a top-level declaration (and everything under it, until a local
+/// declaration appears) has none.
+pub(crate) fn local_decl_sites(
+    tree: &ItemTree,
+    bodies: &BodyTree,
+    file: FileId,
+) -> FxHashMap<ItemId, LocalDeclSite> {
+    struct Walker<'a> {
+        tree: &'a ItemTree,
+        bodies: &'a BodyTree,
+        file: FileId,
+        map: FxHashMap<ItemId, LocalDeclSite>,
+    }
+
+    impl Walker<'_> {
+        /// Records the scope in force at `id` and walks the declaration's
+        /// contents with that scope.
+        fn item(&mut self, id: ItemId, scope: &[ScopedLocalType]) {
+            if !scope.is_empty() {
+                self.map.insert(
+                    id,
+                    LocalDeclSite {
+                        local_types: scope.to_vec(),
+                    },
+                );
+            }
+            let tree = self.tree;
+            match tree.data(id) {
+                ItemData::Class(_)
+                | ItemData::Interface(_)
+                | ItemData::Enum(_)
+                | ItemData::Record(_)
+                | ItemData::Annotation(_) => {
+                    // §6.5.5.1: the member types of the declaration are in
+                    // scope throughout its body. A member type of a
+                    // *canonically named* class is reachable by its own
+                    // canonical name and needs no scope entry; a member type
+                    // of a declaration that has no canonical name ([§6.7] —
+                    // a local declaration, or a member of one) has none, so
+                    // it is carried as a local declaration of its own.
+                    let mut inner = scope.to_vec();
+                    if canonical_class_fqn(tree, id).is_none() {
+                        inner.extend(
+                            tree.data(id)
+                                .body()
+                                .iter()
+                                .filter_map(|member| self.local_entry(*member)),
+                        );
+                    }
+                    for member in tree.data(id).body().to_vec() {
+                        self.item(member, &inner);
+                    }
+                }
+                ItemData::Method(data) => {
+                    if let Some(body) = data.body() {
+                        self.body(body, scope);
+                    }
+                }
+                ItemData::StaticInit(data) => {
+                    if let Some(body) = data.body {
+                        self.body(body, scope);
+                    }
+                }
+                ItemData::InstanceInit(data) => {
+                    if let Some(body) = data.body {
+                        self.body(body, scope);
+                    }
+                }
+                // A field's initializer and an enum constant's arguments are
+                // expression forests, and an expression cannot declare a local
+                // class; the member types of an enum are its constants, which
+                // are not types.
+                ItemData::Field(_) | ItemData::EnumConstant(_) | ItemData::Module(_) => {}
+            }
+        }
+
+        /// The scope entry of a class-like member item, `None` for anything
+        /// else.
+        fn local_entry(&self, id: ItemId) -> Option<ScopedLocalType> {
+            let name = class_like_name(self.tree.data(id))?;
+            Some(ScopedLocalType {
+                name: name.clone(),
+                class: hir::SourceClass {
+                    file: self.file,
+                    item: id,
+                },
+            })
+        }
+
+        /// Walks a body's statements: its statement list is the body's own
+        /// block, so a declaration made in it is in scope for the rest of the
+        /// body.
+        fn body(&mut self, body: BodyId, scope: &[ScopedLocalType]) {
+            let mut current = scope.to_vec();
+            let stmts = self.bodies.body(body).stmts.clone();
+            self.stmts(&stmts, &mut current);
+        }
+
+        fn stmts(&mut self, stmts: &[StmtId], current: &mut Vec<ScopedLocalType>) {
+            for stmt in stmts {
+                self.stmt(*stmt, current);
+            }
+        }
+
+        #[stacksafe]
+        fn stmt(&mut self, stmt: StmtId, current: &mut Vec<ScopedLocalType>) {
+            let bodies = self.bodies;
+            match bodies.stmt(stmt) {
+                StmtData::LocalClass { item } => {
+                    // §6.3: the declaration is in scope in its own body
+                    // (`class Cyclic { Cyclic c; }` is legal) and for the rest
+                    // of the enclosing block.
+                    let Some(entry) = self.local_entry(*item) else {
+                        return;
+                    };
+                    current.push(entry);
+                    let scope = current.clone();
+                    self.map.insert(
+                        *item,
+                        LocalDeclSite {
+                            local_types: scope.clone(),
+                        },
+                    );
+                    self.item(*item, &scope);
+                }
+                StmtData::Block(inner) => {
+                    // A nested block is a scope of its own: a declaration made
+                    // inside it is not in scope after it, while every
+                    // enclosing declaration is ([§6.3]).
+                    let mut inner_scope = current.clone();
+                    let inner = inner.clone();
+                    self.stmts(&inner, &mut inner_scope);
+                }
+                StmtData::DeclGroup(inner) => {
+                    let inner = inner.clone();
+                    self.stmts(&inner, current);
+                }
+                StmtData::Labeled { stmt, .. } => self.stmt(*stmt, current),
+                StmtData::If { then, els, .. } => {
+                    self.stmt(*then, current);
+                    if let Some(els) = els {
+                        self.stmt(*els, current);
+                    }
+                }
+                StmtData::While { body, .. }
+                | StmtData::DoWhile { body, .. }
+                | StmtData::ForEach { body, .. }
+                | StmtData::Synchronized { body, .. } => self.stmt(*body, current),
+                StmtData::For { init, body, .. } => {
+                    let init = init.clone();
+                    self.stmts(&init, current);
+                    self.stmt(*body, current);
+                }
+                StmtData::Switch { arms, .. } => {
+                    // Every arm belongs to the switch *block*, so a
+                    // declaration of one arm is in scope in the later ones.
+                    let arms: Vec<Vec<StmtId>> = arms.iter().map(|arm| arm.body.clone()).collect();
+                    for arm in &arms {
+                        self.stmts(arm, current);
+                    }
+                }
+                StmtData::Try {
+                    body,
+                    catches,
+                    finally,
+                    ..
+                } => {
+                    self.stmt(*body, current);
+                    let catches: Vec<StmtId> = catches.iter().map(|catch| catch.body).collect();
+                    for catch in catches {
+                        self.stmt(catch, current);
+                    }
+                    if let Some(finally) = finally {
+                        self.stmt(*finally, current);
+                    }
+                }
+                // Every other statement form contains no block statement
+                // list, so it cannot declare a local class: a local
+                // declaration is a *block statement*
+                // ([§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)).
+                StmtData::Empty
+                | StmtData::Decl { .. }
+                | StmtData::Expr(_)
+                | StmtData::Return(_)
+                | StmtData::Throw(_)
+                | StmtData::Break(_)
+                | StmtData::Continue(_)
+                | StmtData::Yield(_)
+                | StmtData::Assert { .. }
+                | StmtData::Missing => {}
+            }
+        }
+    }
+
+    let mut walker = Walker {
+        tree,
+        bodies,
+        file,
+        map: FxHashMap::default(),
+    };
+    for &top in &tree.top {
+        walker.item(top, &[]);
+    }
+    walker.map
+}
+
+/// The *local* declaration a written reference name denotes, if any: a local
+/// class-like declaration in scope
+/// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3),
+/// [§14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// for a simple name, or a member type of one for a qualified name. The name
+/// returned is the declaration's simple name, which is what a local type is
+/// rendered as.
+///
+/// [§6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4.1)
+/// makes a local declaration shadow every other type of the same name in
+/// scope — a type parameter and an imported or same-package class alike — so
+/// every caller tries this *first*.
+pub(crate) fn local_reference(
+    db: &dyn TyDatabase,
+    resolver: &Resolver,
+    name: &Name,
+) -> Option<(hir::SourceClass, Name)> {
+    let text = name.as_str();
+    match text.split_once('.') {
+        Some((prefix, rest)) => {
+            let prefix = resolver.local_type(&Name::new(prefix))?;
+            let member = local_member_type(db, prefix.class, rest)?;
+            Some((member, Name::new(simple_segment(rest))))
+        }
+        None => resolver
+            .local_type(name)
+            .map(|local| (local.class, local.name.clone())),
+    }
+}
+
+/// The last `.`-separated segment of a written name — the simple name a type
+/// reference is rendered as.
+fn simple_segment(text: &str) -> &str {
+    text.rsplit('.').next().unwrap_or(text)
+}
+
+/// The member type of the *local* declaration `class` named by the rest of a
+/// written reference, resolved segment by segment through the item tree: a
+/// member type of a declaration without a canonical name has none either
+/// ([JLS §6.7]), so it cannot be probed through [`hir::fqn_resolve`] and is
+/// identified by its declaration like its owner.
+fn local_member_type(
+    db: &dyn TyDatabase,
+    class: hir::SourceClass,
+    rest: &str,
+) -> Option<hir::SourceClass> {
+    let tree = hir::file_item_tree(db, class.file);
+    let mut current = class.item;
+    for segment in rest.split('.') {
+        current = tree.data(current).body().iter().copied().find(|member| {
+            class_like_name(tree.data(*member)).is_some_and(|name| name.as_str() == segment)
+        })?;
+    }
+    Some(hir::SourceClass {
+        file: class.file,
+        item: current,
+    })
+}
+
+/// The declaration a reference type denotes: its declaration for a *local*
+/// class-like type ([JLS §14.3], [§6.7] — it has no canonical name to resolve),
+/// otherwise the class [`hir::fqn_resolve`] finds for its canonical name
+/// against `scope`'s classpath.
+pub fn reference_class(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    ty: &Ty,
+) -> Option<hir::Resolved> {
+    let TyKind::Reference { name, local, .. } = ty.kind(db) else {
+        return None;
+    };
+    match local {
+        Some(class) => Some(hir::Resolved::Source(*class)),
+        None => hir::fqn_resolve(db, scope, name.as_str()),
+    }
 }
 
 /// Resolves a source [`TypeRef<Name>`] to a [`Ty`]. Reference names are
@@ -383,7 +827,11 @@ fn resolve_type_ref_impl(
                 .iter()
                 .map(|arg| resolve_type_ref_impl(db, scope, resolver, arg, resolving))
                 .collect();
-            if let Some(tp) = resolver.type_param(name) {
+            if let Some((class, simple)) = local_reference(db, resolver, name) {
+                // §6.4.1: a local declaration shadows every other type of the
+                // same name in scope, type parameters included.
+                Ty::local_reference(db, class, simple, args)
+            } else if let Some(tp) = resolver.type_param(name) {
                 let var_scope = tp.scope.clone();
                 // A type parameter in scope wins over any type named the same
                 // ([JLS §6.4.1]): `Resolver::type_param` picks the innermost
@@ -756,6 +1204,10 @@ pub enum NameResolution {
     TypeVar,
     /// Resolved to this canonical fully qualified name ([§6.7]).
     Resolved(Name),
+    /// The name denotes a *local* class-like declaration ([JLS §14.3]) or a
+    /// member type of one: a declaration with no canonical name ([§6.7]),
+    /// identified by its declaration instead.
+    ResolvedLocal(hir::SourceClass),
     /// The simple name is accessible through two or more on-demand imports
     /// that denote different types — a compile-time error ([§6.5.5.1],
     /// [§7.5.2]).
@@ -819,10 +1271,7 @@ pub fn resolve_type_name_at(
 ) -> NameResolution {
     let tree = hir::file_item_tree(db, file);
     let resolver = match item {
-        Some(item) => {
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
-            Resolver::new(&tree, &type_params, item)
-        }
+        Some(item) => Resolver::for_item(db, file, &tree, item),
         None => Resolver::for_file(&tree),
     };
     resolve_name_checked(db, &scope_for_file(db, file), &resolver, name)
@@ -857,8 +1306,7 @@ pub fn type_param_declaration(
     name: &Name,
 ) -> Option<TypeParamDeclaration> {
     let tree = hir::file_item_tree(db, file);
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
-    let param = Resolver::new(&tree, &type_params, item)
+    let param = Resolver::for_item(db, file, &tree, item)
         .type_param(name)?
         .clone();
     // The scope is the parameter's identity ([`ScopedTypeParam`]): a source
@@ -906,7 +1354,6 @@ fn resolver_at(
     tree: &ItemTree,
     node: &SyntaxNode<Lang>,
 ) -> Resolver {
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let target = node
         .parent()
         .map_or_else(|| node.text_range(), |parent| parent.text_range());
@@ -915,7 +1362,7 @@ fn resolver_at(
     else {
         return Resolver::for_file(tree);
     };
-    Resolver::new(tree, type_params, item)
+    Resolver::for_item(db, file, tree, item)
 }
 
 /// The innermost item whose declaration range contains `target`.
@@ -966,6 +1413,14 @@ pub fn resolve_name_checked(
     name: &Name,
 ) -> NameResolution {
     let text = name.as_str();
+    // 0. a *local* class-like declaration in scope wins over every other type
+    // of the same name — a type parameter (§6.4.1) and any class the steps
+    // below would find — and a qualified name whose prefix is one denotes a
+    // member type of it (§6.5.5.2).
+    if let Some((class, _)) = local_reference(db, resolver, name) {
+        return NameResolution::ResolvedLocal(class);
+    }
+
     // 1. a type parameter in scope wins over any type named the same (§6.5.5.1).
     if resolver.type_param(name).is_some() {
         return NameResolution::TypeVar;
@@ -1439,8 +1894,7 @@ fn class_param_bounds(
                 _ => None,
             }?;
             let file_scope = scope_for_file(db, source.file);
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = Resolver::new(&tree, type_params, source.item);
+            let resolver = Resolver::for_item(db, source.file, &tree, source.item);
             Some(
                 params
                     .iter()

@@ -28,7 +28,8 @@ use syntax::stub::{AnnotationValue as ClassfileValue, PrimitiveType, PrimitiveVa
 use vfs::FileId;
 
 use crate::java::const_eval::{ArithOp, shift_mask, wrap_arith, wrap_divrem, wrap_ushr};
-use crate::java::db::{TyDatabase, type_params_map_query};
+use crate::java::db::TyDatabase;
+
 use crate::java::method::{FieldData, access_context, pick_field};
 use crate::java::resolve::{Resolver, candidate_fqns, resolve_type_ref, scope_for_file};
 use crate::java::ty::{Ty, TyKind};
@@ -653,8 +654,10 @@ fn field_constant(
         let Some(descriptor) = field.descriptor.as_deref() else {
             return FieldValue::Unreadable;
         };
-        let Some(hir::Resolved::Library(resolved)) =
-            hir::fqn_resolve(db, cx.scope, field.owner.as_str())
+        let Some(fqn) = field.owner.as_fqn() else {
+            return FieldValue::Unreadable;
+        };
+        let Some(hir::Resolved::Library(resolved)) = hir::fqn_resolve(db, cx.scope, fqn.as_str())
         else {
             return FieldValue::Unreadable;
         };
@@ -694,8 +697,7 @@ fn field_constant(
         return FieldValue::Unreadable;
     };
     let scope = scope_for_file(db, file);
-    let type_params = type_params_map_query(db, db.file_text(file));
-    let resolver = Resolver::new(&tree, type_params, item);
+    let resolver = Resolver::for_item(db, file, &tree, item);
     let bodies = hir::file_body_tree(db, file);
     let nested = ValueCtx {
         db,

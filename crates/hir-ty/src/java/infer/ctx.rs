@@ -22,6 +22,46 @@ impl InferCtx<'_> {
         Ty::error(self.db)
     }
 
+    /// Enters a lexical scope, pushing both the local-variable frame and the
+    /// local *type* frame: the two stacks stay in lock-step by construction,
+    /// so [`Self::pop_scope`] always drops exactly the declarations the frame
+    /// made ([JLS §6.3] — a declaration is scoped to the rest of its own
+    /// block).
+    pub(super) fn push_scope(&mut self) {
+        self.scopes.push(rustc_hash::FxHashMap::default());
+        self.local_type_frames
+            .push(self.resolver.local_types().len());
+    }
+
+    /// Leaves the innermost lexical scope, dropping its locals and its local
+    /// class-like declarations ([§6.3]).
+    pub(super) fn pop_scope(&mut self) {
+        self.scopes.pop();
+        if let Some(len) = self.local_type_frames.pop() {
+            self.resolver.truncate_local_types(len);
+        }
+    }
+
+    /// Declares a *local* class-like declaration
+    /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+    /// in the scope in force ([§6.3]): it is in scope in its own body and for
+    /// the rest of the enclosing block, so inference pushes it where the
+    /// statement declaring it is reached.
+    pub(super) fn declare_local_type(&mut self, item: hir_def::java::item_tree::ItemId) {
+        let tree = hir::file_item_tree(self.db, self.file);
+        let Some(name) = tree.data(item).name().cloned() else {
+            return;
+        };
+        self.resolver
+            .push_local_type(crate::java::resolve::ScopedLocalType {
+                name,
+                class: hir::SourceClass {
+                    file: self.file,
+                    item,
+                },
+            });
+    }
+
     /// JEP 247: the invocation resolved a platform member the source set's
     /// release does not provide. Reported at `expr`, the reference's own
     /// expression.
@@ -30,10 +70,16 @@ impl InferCtx<'_> {
             // A source declaration or a synthesized member is not platform API.
             return;
         };
+        // §6.7: only a classpath class can be a missing platform member — a
+        // *local* declaration ([JLS §14.3]) has no canonical name, so no
+        // release of the platform can have declared it.
+        let Some(owner) = method.owner.as_fqn().cloned() else {
+            return;
+        };
         let Some((found, added)) = release_api::member_of_owner(
             self.db,
             &self.scope,
-            &method.owner,
+            owner.as_str(),
             &method.name,
             Some(descriptor),
         ) else {
@@ -42,7 +88,7 @@ impl InferCtx<'_> {
         self.report(TypeError::NotSupportedInRelease {
             location: DiagLocation::Expr(expr),
             api: ReleaseApi::Method {
-                owner: method.owner.clone(),
+                owner: owner.as_str().to_owned(),
                 name: method.name.clone(),
                 params: method.params.clone(),
             },
@@ -57,10 +103,14 @@ impl InferCtx<'_> {
         let Some(descriptor) = field.descriptor.as_deref() else {
             return;
         };
+        // §6.7: only a classpath class can be a missing platform member.
+        let Some(owner) = field.owner.as_fqn().cloned() else {
+            return;
+        };
         let Some((found, added)) = release_api::member_of_owner(
             self.db,
             &self.scope,
-            &field.owner,
+            owner.as_str(),
             &field.name,
             Some(descriptor),
         ) else {
@@ -69,7 +119,7 @@ impl InferCtx<'_> {
         self.report(TypeError::NotSupportedInRelease {
             location: DiagLocation::Expr(expr),
             api: ReleaseApi::Field {
-                owner: field.owner.clone(),
+                owner: owner.as_str().to_owned(),
                 name: field.name.clone(),
             },
             found,
@@ -153,7 +203,7 @@ impl InferCtx<'_> {
         let Some(deprecation) = deprecation::member_deprecation(
             self.db,
             &self.scope,
-            &method.owner,
+            method.owner.as_fqn().map(|fqn| fqn.as_str()).unwrap_or(""),
             &method.name,
             method.owner_file.zip(method.decl_item),
             method.descriptor.as_deref(),
@@ -162,7 +212,7 @@ impl InferCtx<'_> {
         };
         self.check_deprecated(
             DiagLocation::Expr(expr),
-            deprecation::method_api(method),
+            deprecation::method_api(self.db, method),
             deprecation,
             None,
         );
@@ -174,7 +224,7 @@ impl InferCtx<'_> {
         let Some(deprecation) = deprecation::member_deprecation(
             self.db,
             &self.scope,
-            &field.owner,
+            field.owner.as_fqn().map(|fqn| fqn.as_str()).unwrap_or(""),
             &field.name,
             field.owner_file.zip(field.decl_item),
             field.descriptor.as_deref(),
@@ -183,7 +233,7 @@ impl InferCtx<'_> {
         };
         self.check_deprecated(
             DiagLocation::Expr(expr),
-            deprecation::field_api(field),
+            deprecation::field_api(self.db, field),
             deprecation,
             None,
         );

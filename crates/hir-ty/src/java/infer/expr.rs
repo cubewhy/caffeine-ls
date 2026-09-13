@@ -436,25 +436,25 @@ impl InferCtx<'_> {
                     expr_is_poly_ext(&self.tree, then) || expr_is_poly_ext(&self.tree, els);
                 if cond_has_poly_arm && self.target.is_some() {
                     let (then_end, then_ty) = {
-                        self.scopes.push(FxHashMap::default());
+                        self.push_scope();
                         self.flow = cond_true_flow;
                         for binding in &cond_true {
                             self.scope_binding(*binding);
                         }
                         let ty = self.infer_expr(then);
                         let end = self.flow.clone();
-                        self.scopes.pop();
+                        self.pop_scope();
                         (end, ty)
                     };
                     let (els_end, els_ty) = {
-                        self.scopes.push(FxHashMap::default());
+                        self.push_scope();
                         self.flow = cond_false_flow;
                         for binding in &cond_false {
                             self.scope_binding(*binding);
                         }
                         let ty = self.infer_expr(els);
                         let end = self.flow.clone();
-                        self.scopes.pop();
+                        self.pop_scope();
                         (end, ty)
                     };
                     // §16.1.5: join the two arms' end flows.
@@ -479,25 +479,25 @@ impl InferCtx<'_> {
                     // JLS §15.2/§15.25: a conditional of two concrete
                     // (non-poly) arms is itself standalone.
                     let (then_end, then_ty) = {
-                        self.scopes.push(FxHashMap::default());
+                        self.push_scope();
                         self.flow = cond_true_flow;
                         for binding in &cond_true {
                             self.scope_binding(*binding);
                         }
                         let ty = self.with_target(None, |this| this.infer_expr(then));
                         let end = self.flow.clone();
-                        self.scopes.pop();
+                        self.pop_scope();
                         (end, ty)
                     };
                     let (els_end, els_ty) = {
-                        self.scopes.push(FxHashMap::default());
+                        self.push_scope();
                         self.flow = cond_false_flow;
                         for binding in &cond_false {
                             self.scope_binding(*binding);
                         }
                         let ty = self.with_target(None, |this| this.infer_expr(els));
                         let end = self.flow.clone();
-                        self.scopes.pop();
+                        self.pop_scope();
                         (end, ty)
                     };
                     let mut joined = then_end;
@@ -564,7 +564,7 @@ impl InferCtx<'_> {
                     self.flow = before_flow.clone();
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
-                    self.scopes.push(FxHashMap::default());
+                    self.push_scope();
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
@@ -618,7 +618,7 @@ impl InferCtx<'_> {
                     arm_end_states.push((self.flow.clone(), self.exited));
                     self.flow = before_flow.clone();
                     self.exited = before_exited;
-                    self.scopes.pop();
+                    self.pop_scope();
                 }
                 // §16.1.9: the join of the arm paths — locals assigned on
                 // *every* non-abrupt path are definitely assigned after the
@@ -900,13 +900,11 @@ impl InferCtx<'_> {
             generic_args: Vec::new(),
         };
         let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
-        // The name is a type only when its canonical FQN resolves on the
-        // classpath; a name that no candidate resolved to (a field or method
-        // of the implicit receiver) is not.
-        let TyKind::Reference { name: resolved, .. } = ty.kind(self.db) else {
-            return None;
-        };
-        (hir::fqn_resolve(self.db, &self.scope, resolved.as_str()).is_some()).then_some(ty)
+        // The name is a type only when it denotes a declaration — a class its
+        // canonical name resolves to on the classpath, or a *local* class-like
+        // declaration in scope ([JLS §14.3], [§6.7]). A name that no candidate
+        // resolved to (a field or method of the implicit receiver) is not.
+        crate::java::resolve::reference_class(self.db, &self.scope, &ty).map(|_| ty)
     }
 
     /// so ordinary instance field chains keep their expression treatment.
@@ -952,12 +950,7 @@ impl InferCtx<'_> {
             generic_args: Vec::new(),
         };
         let ty = resolve_type_ref(self.db, &self.scope, &self.resolver, &tyref);
-        let TyKind::Reference { name: resolved, .. } = ty.kind(self.db) else {
-            return None;
-        };
-        hir::fqn_resolve(self.db, &self.scope, resolved.as_str())
-            .is_some()
-            .then_some(ty)
+        crate::java::resolve::reference_class(self.db, &self.scope, &ty).map(|_| ty)
     }
 
     pub(super) fn field_access(&mut self, expr: ExprId, target: Option<ExprId>, name: Name) -> Ty {

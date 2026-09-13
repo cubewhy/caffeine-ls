@@ -50,9 +50,9 @@ impl InferCtx<'_> {
         match stmt {
             StmtData::Empty => {}
             StmtData::Block(stmts) => {
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 self.infer_block_statements(stmts);
-                self.scopes.pop();
+                self.pop_scope();
             }
             // §14.4/§6.3: the declarators of one declaration statement share
             // the *enclosing* scope, so this is inferred without pushing one
@@ -234,7 +234,7 @@ impl InferCtx<'_> {
                 // scope in the `then` arm; its false-flow bindings in the
                 // `else` arm.
                 let (true_flow, false_flow) = self.pattern_flow(*cond).unwrap_or_default();
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 self.flow = cond_true_flow;
                 for binding in &true_flow {
                     self.scope_binding(*binding);
@@ -246,7 +246,7 @@ impl InferCtx<'_> {
                 // surviving path assigned it ([§8.3.1.2]): after the `if`, a
                 // later write to it is the already-assigned error.
                 self.infer_stmt(*then);
-                self.scopes.pop();
+                self.pop_scope();
                 let then_flow = std::mem::replace(&mut self.flow, before.clone());
                 let mut then_exited = std::mem::replace(&mut self.exited, before_exited);
                 // §16.1.1: a constant-`false` condition's then arm can never
@@ -262,13 +262,13 @@ impl InferCtx<'_> {
                 let mut else_flow = cond_false_flow.clone();
                 let mut else_exited = before_exited;
                 if let Some(els) = els {
-                    self.scopes.push(FxHashMap::default());
+                    self.push_scope();
                     self.flow = cond_false_flow;
                     for binding in &false_flow {
                         self.scope_binding(*binding);
                     }
                     self.infer_stmt(*els);
-                    self.scopes.pop();
+                    self.pop_scope();
                     else_flow = std::mem::replace(&mut self.flow, before.clone());
                     else_exited = std::mem::replace(&mut self.exited, before_exited);
                 } else if then_exited && !before_exited {
@@ -412,7 +412,7 @@ impl InferCtx<'_> {
                 step,
                 body,
             } => {
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 for &init in init {
                     self.infer_stmt(init);
                 }
@@ -466,7 +466,7 @@ impl InferCtx<'_> {
                 // `break` — with none recorded, it never completes normally
                 // and the following code is unreachable.
                 self.exited = const_bool == Some(true) && joined.is_none();
-                self.scopes.pop();
+                self.pop_scope();
             }
             StmtData::ForEach {
                 var,
@@ -499,7 +499,7 @@ impl InferCtx<'_> {
                         }
                     }
                 };
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 // §14.14.2: the declared type of the loop variable must be
                 // assignable from the element type — `for (Integer x :
                 // new ArrayList<String>())` is javac's `incompatible types:
@@ -542,13 +542,13 @@ impl InferCtx<'_> {
                 self.loop_breaks.pop();
                 self.flow = before;
                 self.exited = false;
-                self.scopes.pop();
+                self.pop_scope();
             }
             StmtData::Switch { scrutinee, arms } => {
                 let selector = self.infer_switch_selector(*scrutinee);
                 self.case_values.push(FxHashMap::default());
                 self.switch_patterns.push(Vec::new());
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 self.switch_depth += 1;
                 // §14.22: every arm is an alternative flow path starting from
                 // the pre-switch state; the switch completes normally iff at
@@ -609,7 +609,7 @@ impl InferCtx<'_> {
                     self.exited = before_exited;
                     // §14.30.2/§14.30.3: a pattern label's variables are in
                     // scope in the arm's statements.
-                    self.scopes.push(FxHashMap::default());
+                    self.push_scope();
                     for label in &arm.labels {
                         match label {
                             SwitchLabel::Expr(e) => {
@@ -634,7 +634,7 @@ impl InferCtx<'_> {
                     }
                     let end_state = std::mem::replace(&mut self.flow, before.clone());
                     let exits = std::mem::replace(&mut self.exited, before_exited);
-                    self.scopes.pop();
+                    self.pop_scope();
                     if exits {
                         fall_through = None;
                         continue;
@@ -691,7 +691,7 @@ impl InferCtx<'_> {
                 } else {
                     paths.is_empty() && fall_through.is_none() && arm_count > 0
                 };
-                self.scopes.pop();
+                self.pop_scope();
                 self.case_values.pop();
                 self.switch_patterns.pop();
                 self.switch_depth -= 1;
@@ -866,7 +866,7 @@ impl InferCtx<'_> {
                 catches,
                 finally,
             } => {
-                self.scopes.push(FxHashMap::default());
+                self.push_scope();
                 // §11.2.3: the liability index is snapshotted before the
                 // *resource initializers* as well as the body — exceptions
                 // thrown while acquiring a resource gate the catch clauses
@@ -1006,7 +1006,7 @@ impl InferCtx<'_> {
                     // from the pre-try state ([§16.1.8]).
                     self.flow = before.clone();
                     self.exited = before_exited;
-                    self.scopes.push(FxHashMap::default());
+                    self.push_scope();
                     // The entries still pending when this clause begins — the
                     // basis of its precise rethrow set ([§11.2.2]); captured
                     // before the clause discharges any of them.
@@ -1036,7 +1036,7 @@ impl InferCtx<'_> {
                         let exits = std::mem::replace(&mut self.exited, before_exited);
                         paths.push((end_state, exits));
                         all_exits &= exits;
-                        self.scopes.pop();
+                        self.pop_scope();
                         continue;
                     }
                     // §14.20: a catch parameter type must be a class, never a
@@ -1160,7 +1160,7 @@ impl InferCtx<'_> {
                     let exits = std::mem::replace(&mut self.exited, before_exited);
                     paths.push((end_state, exits));
                     all_exits &= exits;
-                    self.scopes.pop();
+                    self.pop_scope();
                 }
                 // The intersection of every *live* path: a local is
                 // definitely assigned after the try only if each path that
@@ -1181,7 +1181,7 @@ impl InferCtx<'_> {
                 }
                 self.flow = live_joined.unwrap_or_else(|| before.clone());
                 self.exited = all_exits;
-                self.scopes.pop();
+                self.pop_scope();
                 if let Some(finally) = finally {
                     // §16.1.8/§14.20.2: the `finally` block *always* runs, even
                     // when the try block and every catch clause complete
@@ -1207,9 +1207,11 @@ impl InferCtx<'_> {
                     let _ = self.with_target(None, |this| this.infer_expr(*msg));
                 }
             }
-            // §14.3: a local class declaration declares a type, not a value —
-            // it has no effect on expression typing.
-            StmtData::LocalClass { .. } => {}
+            // §6.3/§14.3: a local class-like declaration is in scope in its
+            // own body and for the rest of the enclosing block, so it joins
+            // the scope where it is declared. It declares a type, not a
+            // value, so it has no effect on expression typing.
+            StmtData::LocalClass { item } => self.declare_local_type(*item),
             StmtData::Missing => {}
         }
     }

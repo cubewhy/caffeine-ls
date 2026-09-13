@@ -22,7 +22,7 @@ fn r(db: &TestDatabase, name: &str) -> Ty {
 fn ctx(mode: InvocationMode, enclosing_class: &str, package: &str) -> InvocationContext {
     InvocationContext {
         mode,
-        enclosing_class: Some(enclosing_class.to_owned()),
+        enclosing_class: Some(hir_ty::ClassKey::Named(enclosing_class.into())),
         package: Some(package.to_owned()),
         subclass_of: None,
     }

@@ -36,14 +36,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smol_str::SmolStr;
 use vfs::FileId;
 
-use hir_def::java::item_tree::{ItemData, ItemId, TypeParam};
+use hir_def::java::item_tree::{ItemData, ItemId, ItemTree, TypeParam};
 use hir_def::jvm::access::{JvmAccessFlags, JvmVisibility};
 use hir_expand::name::Name;
 
 use crate::{
     java::db::{
         ContextKey, ItemKey, ScopeId, ScopeKind, TyDatabase, access_context_key_query,
-        item_ty_query, method_params_query, type_params_map_query,
+        item_ty_query, method_params_query,
     },
     java::inference::{Constraint, Inference, InvocationPhase},
     java::resolve::{Resolver, item_data, resolve_type_ref, scope_for_file},
@@ -86,6 +86,134 @@ pub enum InvocationMode {
     Virtual,
 }
 
+/// The declaring class of a member, or the class a member access is made
+/// from: a classpath or source class carrying a canonical fully qualified name
+/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7)),
+/// or a declaration with no canonical name — a *local* class-like declaration
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)),
+/// or a member type of one — which is identified by its declaration instead.
+///
+/// The distinction is load-bearing wherever a class is compared with another:
+/// two same-named local declarations in different methods are different
+/// classes, and neither is the class of that simple name elsewhere in the
+/// file, so every comparison keys on this value rather than on a name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ClassKey {
+    /// A class named by its canonical fully qualified name ([§6.7]): a source
+    /// class of the workspace, or a classpath (binary) name.
+    Named(Name),
+    /// A declaration with no canonical name ([§6.7]).
+    Local(hir::SourceClass),
+}
+
+impl ClassKey {
+    /// The key of the class-like declaration `item` of `file`: its canonical
+    /// fully qualified name, or the declaration when it has none.
+    pub fn of(tree: &ItemTree, file: FileId, item: ItemId) -> ClassKey {
+        match crate::java::resolve::canonical_class_fqn(tree, item) {
+            Some(fqn) => ClassKey::Named(fqn),
+            None => ClassKey::Local(hir::SourceClass { file, item }),
+        }
+    }
+
+    /// The key of a resolved class: a source class is keyed by its declaration
+    /// (which keeps a *local* one identified), a library class by its binary
+    /// name ([JVMS §4.2]).
+    pub fn of_resolved(db: &dyn TyDatabase, resolved: &hir::Resolved) -> ClassKey {
+        match resolved {
+            hir::Resolved::Source(class) => {
+                ClassKey::of(&hir::file_item_tree(db, class.file), class.file, class.item)
+            }
+            hir::Resolved::Library(_) => ClassKey::Named(resolved.fqn(db).as_name().clone()),
+        }
+    }
+
+    /// The simple name of the class ([§6.7]): the last `.`-separated and
+    /// `$`-separated segment of a canonical name, or the declaration's own
+    /// name for a local one. This is what javac and the IDE render.
+    pub fn simple_name(&self, db: &dyn TyDatabase) -> Name {
+        match self {
+            ClassKey::Named(fqn) => Name::new(fqn.simple_name()),
+            ClassKey::Local(class) => {
+                let tree = hir::file_item_tree(db, class.file);
+                tree.data(class.item)
+                    .name()
+                    .cloned()
+                    .unwrap_or_else(|| Name::new(""))
+            }
+        }
+    }
+
+    /// The key of the class a reference type denotes: its declaration for a
+    /// *local* one ([§6.7]), else the class of its canonical name. The
+    /// identity travels on the type itself, so no name lookup is needed.
+    pub fn of_ty(db: &dyn TyDatabase, ty: &Ty) -> Option<ClassKey> {
+        match ty.kind(db) {
+            TyKind::Reference {
+                local: Some(class), ..
+            } => Some(ClassKey::Local(*class)),
+            TyKind::Reference {
+                name, local: None, ..
+            } => Some(ClassKey::Named(name.clone())),
+            _ => None,
+        }
+    }
+
+    /// The name a diagnostic about the class renders ([§6.7]): its canonical
+    /// name, or the *simple* name of a declaration that has none — a local
+    /// declaration, which javac and the IDE render by its simple name.
+    pub fn display_name(&self, db: &dyn TyDatabase) -> Name {
+        match self {
+            ClassKey::Named(fqn) => fqn.clone(),
+            ClassKey::Local(_) => self.simple_name(db),
+        }
+    }
+
+    /// The declaration a *source* class names, `None` for a classpath class.
+    pub fn source(&self) -> Option<hir::SourceClass> {
+        match self {
+            ClassKey::Named(_) => None,
+            ClassKey::Local(class) => Some(*class),
+        }
+    }
+
+    /// The canonical fully qualified name of the class, when it has one.
+    pub fn as_fqn(&self) -> Option<&Name> {
+        match self {
+            ClassKey::Named(fqn) => Some(fqn),
+            ClassKey::Local(_) => None,
+        }
+    }
+
+    /// The class as a type, for a subtype or receiver comparison: a reference
+    /// to the named class, or to the local declaration ([§6.7]).
+    pub fn as_ty(&self, db: &dyn TyDatabase, args: Vec<Ty>) -> Ty {
+        match self {
+            ClassKey::Named(fqn) => Ty::reference(db, fqn.as_str(), args),
+            ClassKey::Local(class) => Ty::local_reference(db, *class, self.simple_name(db), args),
+        }
+    }
+
+    /// The *top-level* class the declaration belongs to ([JLS §6.6.1]: a
+    /// private member is accessible throughout the body of its top-level
+    /// class, nested and local declarations included): the outermost enclosing
+    /// class-like declaration's canonical name. A local declaration's top
+    /// level is the class enclosing it.
+    pub fn top_level(&self, db: &dyn TyDatabase, package: Option<&str>) -> Option<Name> {
+        match self {
+            // A canonical name nests with dots, so the top level is the
+            // package plus the first type name ([§6.7]).
+            ClassKey::Named(fqn) => Some(Name::new(&source_top_level(package, fqn.as_str()))),
+            ClassKey::Local(class) => {
+                let tree = hir::file_item_tree(db, class.file);
+                crate::java::resolve::enclosing_type_chain(&tree, class.item)
+                    .last()
+                    .cloned()
+            }
+        }
+    }
+}
+
 /// The context of a method invocation: how the name is qualified (the
 /// invocation mode, JLS §15.12.1/§15.12.3) and the lexical context used for
 /// access control ([JLS §6.6](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6)).
@@ -98,11 +226,13 @@ pub enum InvocationMode {
 pub struct InvocationContext {
     /// The invocation mode.
     pub mode: InvocationMode,
-    /// The fully qualified name of the class or interface in which the
-    /// invocation appears, for `private` and `protected` access control
+    /// The class or interface in which the invocation appears, for `private`
+    /// and `protected` access control
     /// ([§6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1),
     /// [§6.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.2)).
-    pub enclosing_class: Option<String>,
+    /// A *local* declaration ([JLS §14.3]) is its own class here, which is what
+    /// makes its private members accessible to the body that declares it.
+    pub enclosing_class: Option<ClassKey>,
     /// The package of the compilation unit in which the invocation appears,
     /// for package and `protected` access control; the unnamed package is `""`.
     pub package: Option<String>,
@@ -115,7 +245,7 @@ pub struct InvocationContext {
     /// members even from another package (the Gson `new TypeToken<T>() {}`
     /// idiom) — even though no source item exists for the anonymous class to
     /// name as the enclosing class.
-    pub subclass_of: Option<String>,
+    pub subclass_of: Option<ClassKey>,
 }
 
 impl InvocationContext {
@@ -130,7 +260,7 @@ impl InvocationContext {
             mode: InvocationMode::Virtual,
             // A fully qualified name that is not a subclass of anything in
             // `scope`, and not a member of any of its classes (§6.6.1).
-            enclosing_class: Some("library.probe.Caller".to_owned()),
+            enclosing_class: Some(ClassKey::Named(Name::new("library.probe.Caller"))),
             // The unnamed package: package and `protected` members of named
             // packages are not accessible (§6.6.1).
             package: Some(String::new()),
@@ -142,18 +272,12 @@ impl InvocationContext {
     pub fn from_key(db: &dyn TyDatabase, key: ContextKey) -> InvocationContext {
         InvocationContext {
             mode: *key.mode(db),
-            enclosing_class: key
-                .enclosing_class(db)
-                .as_ref()
-                .map(|name| name.as_str().to_owned()),
+            enclosing_class: key.enclosing_class(db).clone(),
             package: key
                 .package(db)
                 .as_ref()
                 .map(|name| name.as_str().to_owned()),
-            subclass_of: key
-                .subclass_of(db)
-                .as_ref()
-                .map(|name| name.as_str().to_owned()),
+            subclass_of: key.subclass_of(db).clone(),
         }
     }
 
@@ -196,7 +320,7 @@ impl InvocationContext {
             mode: self.mode,
             enclosing_class: self.enclosing_class.clone(),
             package: self.package.clone(),
-            subclass_of: Some(superclass.as_str().to_owned()),
+            subclass_of: Some(ClassKey::Named(superclass)),
         }
     }
 }
@@ -316,8 +440,8 @@ impl MethodTypeParam {
 pub struct MethodData {
     /// The simple name of the method.
     pub name: String,
-    /// The fully qualified name of the declaring class or interface.
-    pub owner: String,
+    /// The declaring class or interface ([`ClassKey`]).
+    pub owner: ClassKey,
     /// The workspace source file declaring this method, when it is a source
     /// declaration (including the synthesized implicit constructors, enum
     /// members and record accessors of a source class). `None` for library
@@ -412,7 +536,12 @@ pub struct MethodDisplay<'a> {
 
 impl std::fmt::Display for MethodDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}(", self.method.owner, self.method.name)?;
+        write!(
+            f,
+            "{}.{}(",
+            self.method.owner.display_name(self.db),
+            self.method.name
+        )?;
         for (i, param) in self.method.params.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -615,12 +744,16 @@ fn member_set_impl(
     // I`. (A *static class* method remains inheritable — `MyThread.sleep` is
     // reached through the subclass — because `declaring_interface` is false
     // for it.)
-    let receiver_fqn = match receiver.kind(db) {
-        TyKind::Reference { name, .. } => name.as_str().to_owned(),
-        _ => String::new(),
-    };
+    // §15.12.3: a *static interface* method is reachable by its simple name
+    // only through the interface that declares it — not through a subinterface
+    // or an implementing class. The declaring class is compared by identity: a
+    // local declaration ([JLS §14.3]) is its own class here too.
+    let receiver_key = ClassKey::of_ty(db, &receiver);
     let static_interface_owner_ok = |method: &MethodData| {
-        !(method.is_static && method.declaring_interface && method.owner != receiver_fqn)
+        let declared_by_receiver = receiver_key
+            .as_ref()
+            .is_some_and(|key| key == &method.owner);
+        !(method.is_static && method.declaring_interface && !declared_by_receiver)
     };
 
     // §4.4: a type variable's *effective* upper bound is its declared bounds,
@@ -803,7 +936,7 @@ fn member_set_impl(
     if name == "clone" && matches!(receiver.kind(db), TyKind::Array(_)) {
         out.push(MethodData {
             name: "clone".to_owned(),
-            owner: "java.lang.Object".to_owned(),
+            owner: ClassKey::Named(Name::new("java.lang.Object")),
             owner_file: None,
             decl_item: None,
             params: Vec::new(),
@@ -866,7 +999,7 @@ fn member_set_impl(
             if !same_overriding_signature(seen, &method) {
                 continue;
             }
-            let owner = |m: &MethodData| Ty::reference(db, m.owner.as_str(), Vec::new());
+            let owner = |m: &MethodData| m.owner.as_ty(db, Vec::new());
             let (new_owner, seen_owner) = (owner(&method), owner(seen));
             let new_derives =
                 crate::java::subtyping::is_subtype(db, scope, &new_owner, &seen_owner);
@@ -1012,10 +1145,12 @@ fn abstract_methods_impl(
         if !seen.insert(t.id) {
             continue;
         }
-        let TyKind::Reference { name, args, .. } = t.kind(db) else {
+        let TyKind::Reference { args, .. } = t.kind(db) else {
             continue;
         };
-        let Some(resolved) = hir::fqn_resolve(db, scope, name.as_str()) else {
+        // §6.7: the closure is seeded with each class's *declaration* — a
+        // local functional interface ([JLS §14.3]) is its own item.
+        let Some(resolved) = crate::java::resolve::reference_class(db, scope, &t) else {
             continue;
         };
         let args = args.clone();
@@ -1174,15 +1309,13 @@ fn object_member_signature(
 /// The methods of a single class or interface, instantiated with `ty`'s type
 /// arguments.
 fn class_methods(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -> Vec<MethodData> {
-    let TyKind::Reference {
-        name: class_name,
-        args,
-        ..
-    } = ty.kind(db)
-    else {
+    let TyKind::Reference { args, .. } = ty.kind(db) else {
         return Vec::new();
     };
-    let Some(resolved) = hir::fqn_resolve(db, &scope_id.kind(db).to_scope(), class_name.as_str())
+    // §6.7: the receiver's declaration — a *local* class's own item, or the
+    // class its canonical name resolves to.
+    let Some(resolved) =
+        crate::java::resolve::reference_class(db, &scope_id.kind(db).to_scope(), ty)
     else {
         return Vec::new();
     };
@@ -1372,7 +1505,7 @@ fn library_class_methods(
             // The method's own name — not the lookup filter, which is the
             // empty wildcard in the declaration-level walk.
             name: interner.resolve(&method.name).to_owned(),
-            owner: fqn.clone(),
+            owner: ClassKey::Named(Name::new(&fqn)),
             owner_file: None,
             decl_item: None,
             descriptor: Some(SmolStr::from(interner.resolve(&method.descriptor))),
@@ -1434,15 +1567,20 @@ fn source_class_methods(
     let binding: FxHashMap<TypeVarScope, Ty> =
         crate::java::resolve::source_class_binding(source.file, source.item, declared, &args);
     let scope = scope_for_file(db, source.file);
-    let type_params = type_params_map_query(db, db.file_text(source.file));
-    let resolver = Resolver::new(&tree, type_params, source.item);
-    let fqn = hir::source_class_fqn(db, source.file, source.item)
-        .map(|fqn| fqn.as_str().to_owned())
-        .unwrap_or_default();
+    let resolver = Resolver::for_item(db, source.file, &tree, source.item);
+    // §6.7: the receiver's declaration — its canonical name, or the
+    // declaration itself when it has none (a local class-like declaration,
+    // [JLS §14.3]).
+    let class_key = ClassKey::of(&tree, source.file, source.item);
+    let simple = class_key.simple_name(db);
     let package = resolver.package().map(|p| p.as_str().to_owned());
     let declaring_package = Some(package.clone().unwrap_or_default());
-    // Source names nest with dots: the top level is package + first type.
-    let declaring_top_level = (!fqn.is_empty()).then(|| source_top_level(package.as_deref(), &fqn));
+    // §6.6.1: a private member's accessibility is scoped by the *top-level*
+    // class — the outermost enclosing class-like declaration, which for a
+    // local declaration is the class around it.
+    let declaring_top_level = class_key
+        .top_level(db, package.as_deref())
+        .map(|name| name.as_str().to_owned());
     let declaring_interface =
         matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
 
@@ -1456,7 +1594,7 @@ fn source_class_methods(
         if !name.is_empty() && method.name.as_str() != name {
             continue;
         }
-        let method_resolver = Resolver::new(&tree, type_params, item);
+        let method_resolver = Resolver::for_item(db, source.file, &tree, item);
         let type_params = method
             .sig
             .type_params
@@ -1565,7 +1703,7 @@ fn source_class_methods(
             // The method's own name — not the lookup filter, which is the
             // empty wildcard in the declaration-level walk.
             name: method.name.as_str().to_owned(),
-            owner: fqn.clone(),
+            owner: class_key.clone(),
             owner_file: Some(source.file),
             decl_item: Some(item),
             params,
@@ -1604,7 +1742,7 @@ fn source_class_methods(
     if !declares_ctor
         && !declaring_interface
         && matches!(class_data, ItemData::Class(_) | ItemData::Enum(_))
-        && (name.is_empty() || name == fqn.rsplit('.').next().unwrap_or(&fqn))
+        && (name.is_empty() || name == simple.as_str())
     {
         let modifiers = match class_data {
             ItemData::Class(d) => Some(&d.modifiers),
@@ -1619,13 +1757,13 @@ fn source_class_methods(
             }
         };
         out.push(MethodData {
-            name: fqn.rsplit('.').next().unwrap_or(&fqn).to_owned(),
-            owner: fqn.clone(),
+            name: simple.as_str().to_owned(),
+            owner: class_key.clone(),
             owner_file: Some(source.file),
             decl_item: None,
             params: Vec::new(),
             param_names: None,
-            ret: Ty::reference(db, Name::new(&fqn), Vec::new()),
+            ret: class_key.as_ty(db, Vec::new()),
             throws: Vec::new(),
             varargs: false,
             is_static: false,
@@ -1651,11 +1789,11 @@ fn source_class_methods(
         let declared: FxHashSet<String> = out.iter().map(|m| m.name.to_string()).collect();
         // An enum type is never generic ([JLS §8.9]), so the implicit
         // members' return type is the raw reference itself.
-        let self_ty = Ty::reference(db, Name::new(&fqn), Vec::new());
+        let self_ty = class_key.as_ty(db, Vec::new());
         if !declared.contains("values") && (name.is_empty() || name == "values") {
             out.push(MethodData {
                 name: "values".to_owned(),
-                owner: fqn.clone(),
+                owner: class_key.clone(),
                 owner_file: Some(source.file),
                 decl_item: None,
                 params: Vec::new(),
@@ -1678,7 +1816,7 @@ fn source_class_methods(
         if !declared.contains("valueOf") && (name.is_empty() || name == "valueOf") {
             out.push(MethodData {
                 name: "valueOf".to_owned(),
-                owner: fqn.clone(),
+                owner: class_key.clone(),
                 owner_file: Some(source.file),
                 decl_item: None,
                 params: vec![Ty::reference(db, "java.lang.String", Vec::new())],
@@ -1727,7 +1865,7 @@ fn source_class_methods(
             let ty = if is_raw { ty.erasure(db) } else { ty };
             out.push(MethodData {
                 name: component_name.to_owned(),
-                owner: fqn.clone(),
+                owner: class_key.clone(),
                 owner_file: Some(source.file),
                 decl_item: None,
                 params: Vec::new(),
@@ -1794,7 +1932,7 @@ fn source_class_methods(
             }
             out.push(MethodData {
                 name: member_name.to_owned(),
-                owner: fqn.clone(),
+                owner: class_key.clone(),
                 owner_file: Some(source.file),
                 decl_item: None,
                 params,
@@ -1820,7 +1958,7 @@ fn source_class_methods(
         // `@Singular`-style or compact form is still the canonical one, but
         // an explicit full-form declaration of matching arity replaces the
         // implicit member). Its access equals the record's own access.
-        let simple = fqn.rsplit('.').next().unwrap_or(fqn.as_str());
+        let simple = simple.as_str();
         if name.is_empty() || name == simple {
             let component_tys: Option<Vec<Ty>> = record
                 .components
@@ -1856,7 +1994,7 @@ fn source_class_methods(
                     }
                     out.push(MethodData {
                         name: simple.to_owned(),
-                        owner: fqn.clone(),
+                        owner: class_key.clone(),
                         owner_file: Some(source.file),
                         decl_item: None,
                         params,
@@ -1945,7 +2083,7 @@ fn is_accessible(
         scope,
         method.access,
         method.declaring_package.as_deref(),
-        method.owner.as_str(),
+        &method.owner,
         method.declaring_top_level.as_deref(),
         receiver,
         method.is_static,
@@ -1966,7 +2104,7 @@ fn member_accessible(
     scope: &hir::ResolutionScope,
     access: Access,
     declaring_package: Option<&str>,
-    owner: &str,
+    owner: &ClassKey,
     declaring_top_level: Option<&str>,
     receiver: &Ty,
     static_member: bool,
@@ -1975,9 +2113,16 @@ fn member_accessible(
     match access {
         Access::Public => true,
         // §6.6.1: a private member is accessible throughout the top-level
-        // class in which it is declared.
+        // class in which it is declared — a local declaration's top level is
+        // the class enclosing it.
         Access::Private => match (&ctx.enclosing_class, declaring_top_level) {
-            (Some(enclosing), Some(declaring)) => within_top_level(enclosing, declaring),
+            (Some(enclosing), Some(declaring)) => {
+                let enclosing = enclosing.top_level(db, ctx.package.as_deref());
+                match enclosing {
+                    Some(enclosing) => within_top_level(enclosing.as_str(), declaring),
+                    None => false,
+                }
+            }
             _ => false,
         },
         // §6.6.1: a package member is accessible only within its own package;
@@ -2001,8 +2146,8 @@ fn member_accessible(
             // Gson `new TypeToken<T>() {}` idiom: an anonymous subclass of the
             // generic `TypeToken` invokes its protected no-arg constructor).
             if let Some(subclass_of) = &ctx.subclass_of {
-                let subclass_of = Ty::reference(db, subclass_of.as_str(), Vec::new());
-                let declaring = Ty::reference(db, owner, Vec::new());
+                let subclass_of = subclass_of.as_ty(db, Vec::new());
+                let declaring = owner.as_ty(db, Vec::new());
                 // The anonymous class subclasses the *created* type exactly;
                 // members it inherits from a *grand*-supertype of that type are
                 // reachable only when the created type itself is a subclass,
@@ -2012,43 +2157,21 @@ fn member_accessible(
                     return true;
                 }
             }
-            let subclass = match &ctx.enclosing_class {
-                Some(enclosing) => {
-                    // §6.6.2: the access may appear in the body of a *nested*
-                    // class of a subclass — `B.Inner2` inside `B extends A`
-                    // accessing A's protected members — where the *innermost*
-                    // enclosing class `app.B.Inner2` is not itself a subclass
-                    // but its enclosing `app.B` is. Walk the enclosing chain
-                    // outward (trimming `.Nested` segments, which source FQNs
-                    // nest with dots after the package) and find the subclass
-                    // `S` whose body contains the access.
-                    let declaring = Ty::reference(db, owner, Vec::new());
-                    let package_prefix = match &ctx.package {
-                        Some(package) if !package.is_empty() => format!("{package}."),
-                        _ => String::new(),
-                    };
-                    let mut enclosing_candidate = enclosing.clone();
-                    let mut subclass: Option<String> = None;
-                    loop {
-                        let candidate = Ty::reference(db, enclosing_candidate.as_str(), Vec::new());
-                        if is_subtype(db, scope, &candidate, &declaring) {
-                            subclass = Some(enclosing_candidate.clone());
-                            break;
-                        }
-                        // Trim one trailing `.Nested` segment; stop once the
-                        // remaining prefix is the package itself or shorter.
-                        let Some((prefix, _)) = enclosing_candidate.rsplit_once('.') else {
-                            break;
-                        };
-                        if !prefix.starts_with(&package_prefix) {
-                            break;
-                        }
-                        enclosing_candidate = prefix.to_owned();
-                    }
-                    subclass
-                }
-                None => None,
-            };
+            let declaring = owner.as_ty(db, Vec::new());
+            let subclass = ctx.enclosing_class.as_ref().and_then(|enclosing| {
+                // §6.6.2: the access may appear in the body of a *nested*
+                // class of a subclass — `B.Inner2` inside `B extends A`
+                // accessing A's protected members — where the *innermost*
+                // enclosing class `app.B.Inner2` is not itself a subclass but
+                // its enclosing `app.B` is. Walk the enclosing chain outward
+                // and find the subclass `S` whose body contains the access.
+                enclosing_class_keys(db, ctx.package.as_deref(), enclosing)
+                    .into_iter()
+                    .find(|candidate| {
+                        let candidate = candidate.as_ty(db, Vec::new());
+                        is_subtype(db, scope, &candidate, &declaring)
+                    })
+            });
             match subclass {
                 // §6.6.2: a protected instance member accessed outside the
                 // declaring package by a receiver expression requires the type
@@ -2060,7 +2183,7 @@ fn member_accessible(
                 // ([§15.12.1]).
                 Some(_subclass) if static_member || ctx.mode == InvocationMode::Super => true,
                 Some(subclass) => {
-                    let subclass = Ty::reference(db, subclass.as_str(), Vec::new());
+                    let subclass = subclass.as_ty(db, Vec::new());
                     is_subtype(db, scope, receiver, &subclass)
                 }
                 None => false,
@@ -2119,6 +2242,45 @@ fn self_type_param_indexes(
             })
             .collect(),
     )
+}
+
+/// The class an access appears in and each class enclosing it, innermost first
+/// ([JLS §6.6.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.2)):
+/// the §6.6.2 protected-access rule looks for the enclosing subclass whose
+/// body contains the access, which may be an enclosing class rather than the
+/// innermost one. A *local* declaration walks its real declaration chain; a
+/// canonical name is trimmed segment by segment, bounded by the package.
+fn enclosing_class_keys(
+    db: &dyn TyDatabase,
+    package: Option<&str>,
+    key: &ClassKey,
+) -> Vec<ClassKey> {
+    let mut out = vec![key.clone()];
+    match key {
+        ClassKey::Local(class) => {
+            let tree = hir::file_item_tree(db, class.file);
+            out.extend(
+                crate::java::resolve::enclosing_type_chain(&tree, class.item)
+                    .into_iter()
+                    .map(ClassKey::Named),
+            );
+        }
+        ClassKey::Named(fqn) => {
+            let package_prefix = match package {
+                Some(package) if !package.is_empty() => format!("{package}."),
+                _ => String::new(),
+            };
+            let mut candidate = fqn.as_str().to_owned();
+            while let Some((prefix, _)) = candidate.rsplit_once('.') {
+                if !prefix.starts_with(&package_prefix) {
+                    break;
+                }
+                out.push(ClassKey::Named(Name::new(prefix)));
+                candidate = prefix.to_owned();
+            }
+        }
+    }
+    out
 }
 
 /// Whether the class `enclosing` is the top-level class `declaring` or
@@ -2642,10 +2804,10 @@ pub(crate) fn choose_most_specific(
         1 => Some(candidates[unique[0]].1.clone()),
         _ => {
             let chosen = unique.iter().copied().find(|&i| {
-                let owner = Ty::reference(db, candidates[i].0.owner.as_str(), Vec::new());
+                let owner = candidates[i].0.owner.as_ty(db, Vec::new());
                 unique.iter().all(|&j| {
                     j == i || {
-                        let other = Ty::reference(db, candidates[j].0.owner.as_str(), Vec::new());
+                        let other = candidates[j].0.owner.as_ty(db, Vec::new());
                         is_subtype(db, scope, &owner, &other)
                     }
                 })
@@ -2756,8 +2918,8 @@ pub fn pick_method(
 pub struct FieldData {
     /// The simple name of the field.
     pub name: String,
-    /// The fully qualified name of the declaring class or interface.
-    pub owner: String,
+    /// The declaring class or interface ([`ClassKey`]).
+    pub owner: ClassKey,
     /// The workspace source file declaring this field, when it is a source
     /// declaration (including the implicit enum-constant and record-component
     /// fields of a source class). `None` for library members.
@@ -2876,7 +3038,7 @@ fn pick_field_impl(
                     scope,
                     field.access,
                     field.declaring_package.as_deref(),
-                    field.owner.as_str(),
+                    &field.owner,
                     field.declaring_top_level.as_deref(),
                     &receiver,
                     field.is_static,
@@ -2897,15 +3059,13 @@ fn pick_field_impl(
 /// The fields of a single class or interface, instantiated with `ty`'s type
 /// arguments.
 fn class_fields(db: &dyn TyDatabase, scope_id: &ScopeId, ty: &Ty, name: &str) -> Vec<FieldData> {
-    let TyKind::Reference {
-        name: class_name,
-        args,
-        ..
-    } = ty.kind(db)
-    else {
+    let TyKind::Reference { args, .. } = ty.kind(db) else {
         return Vec::new();
     };
-    let Some(resolved) = hir::fqn_resolve(db, &scope_id.kind(db).to_scope(), class_name.as_str())
+    // §6.7: the receiver's declaration — a *local* class's own item, or the
+    // class its canonical name resolves to.
+    let Some(resolved) =
+        crate::java::resolve::reference_class(db, &scope_id.kind(db).to_scope(), ty)
     else {
         return Vec::new();
     };
@@ -2970,7 +3130,7 @@ fn library_class_fields(
         };
         out.push(FieldData {
             name: name.to_owned(),
-            owner: fqn.clone(),
+            owner: ClassKey::Named(Name::new(&fqn)),
             owner_file: None,
             decl_item: None,
             ty,
@@ -3010,16 +3170,20 @@ fn source_class_fields(
     // scopes so only the class's *own* variables are replaced.
     let binding: FxHashMap<TypeVarScope, Ty> =
         crate::java::resolve::source_class_binding(source.file, source.item, declared, &args);
-    let type_params = type_params_map_query(db, db.file_text(source.file));
-    let resolver = Resolver::new(&tree, type_params, source.item);
+    let resolver = Resolver::for_item(db, source.file, &tree, source.item);
     let scope = scope_for_file(db, source.file);
-    let fqn = hir::source_class_fqn(db, source.file, source.item)
-        .map(|fqn| fqn.as_str().to_owned())
-        .unwrap_or_default();
+    // §6.7: the receiver's declaration — its canonical name, or the
+    // declaration itself when it has none (a local class-like declaration,
+    // [JLS §14.3]).
+    let class_key = ClassKey::of(&tree, source.file, source.item);
     let package = resolver.package().map(|p| p.as_str().to_owned());
     let declaring_package = Some(package.clone().unwrap_or_default());
-    // Source names nest with dots: the top level is package + first type.
-    let declaring_top_level = (!fqn.is_empty()).then(|| source_top_level(package.as_deref(), &fqn));
+    // §6.6.1: a private member's accessibility is scoped by the *top-level*
+    // class — the outermost enclosing class-like declaration, which for a
+    // local declaration is the class around it.
+    let declaring_top_level = class_key
+        .top_level(db, package.as_deref())
+        .map(|name| name.as_str().to_owned());
     let declaring_interface =
         matches!(class_data, ItemData::Interface(_) | ItemData::Annotation(_));
     let declaring_enum = matches!(class_data, ItemData::Enum(_));
@@ -3061,7 +3225,7 @@ fn source_class_fields(
                 };
                 out.push(FieldData {
                     name: name.to_owned(),
-                    owner: fqn.clone(),
+                    owner: class_key.clone(),
                     owner_file: Some(source.file),
                     decl_item: Some(item),
                     ty,
@@ -3082,10 +3246,10 @@ fn source_class_fields(
             {
                 out.push(FieldData {
                     name: name.to_owned(),
-                    owner: fqn.clone(),
+                    owner: class_key.clone(),
                     owner_file: Some(source.file),
                     decl_item: Some(item),
-                    ty: Ty::reference(db, Name::new(&fqn), binding.values().copied().collect()),
+                    ty: class_key.as_ty(db, binding.values().copied().collect()),
                     is_static: true,
                     access: Access::Public,
                     is_final: true,
@@ -3113,7 +3277,7 @@ fn source_class_fields(
             }
             out.push(FieldData {
                 name: component_name.to_owned(),
-                owner: fqn.clone(),
+                owner: class_key.clone(),
                 owner_file: Some(source.file),
                 // A record component is not an `ItemId`, so the synthesized
                 // field has no declaration anchor; a `@Deprecated` on a

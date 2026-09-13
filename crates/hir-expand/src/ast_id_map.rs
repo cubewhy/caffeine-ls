@@ -133,27 +133,30 @@ pub struct AstIdMap {
 }
 
 impl AstIdMap {
-    /// Builds the map for `source`, indexing every node whose kind is in the
-    /// indexable set (below), in DFS pre-order, and pruning the subtrees that
-    /// are *body* content:
+    /// Builds the map for `source`, indexing the nodes whose kind is in the
+    /// indexable set (below) and whose position is *declaration skeleton*, in
+    /// DFS pre-order, and skipping the subtrees that are *body* content:
     ///
-    /// - `BLOCK` — method/constructor/initializer bodies. The body itself is
-    ///   pruned, but the local class-like declarations of the block
-    ///   ([§14.3]) are declaration skeleton: each is indexed with its own
-    ///   modifiers, type parameters, supertypes and members, and each of
-    ///   *their* blocks applies this same rule. Everything else in the body
-    ///   (statements, local variables, expressions) stays pruned;
+    /// - `BLOCK` — method/constructor/initializer bodies and nested blocks.
+    ///   The block's own content is body content, but the local class-like
+    ///   declarations it declares
+    ///   ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+    ///   are declaration skeleton: each is indexed with its own modifiers,
+    ///   type parameters, supertypes and members, and each of *their* blocks
+    ///   applies this same rule. The rest of the block is still traversed —
+    ///   a lambda body or a nested block may declare a local class too — but
+    ///   nothing in it is indexed;
     /// - `CLASS_BODY` not directly under a `CLASS_DECL` — anonymous and
-    ///   enum-constant class bodies (the members of a *named* class are
-    ///   declaration skeleton and are descended into);
+    ///   enum-constant class bodies, which are pruned whole (the members of a
+    ///   *named* class are declaration skeleton and are descended into);
     /// - `VARIABLE_DECLARATOR` — the declarator itself is indexed, its
     ///   initializer expression is body-side and re-walked at resolution
-    ///   time;
+    ///   time (a lambda in it may still declare a local class);
     /// - `ENUM_CONSTANT` — the constant itself is indexed, its arguments and
     ///   constant class body are body-side;
     /// - `ANNOTATION_TYPE_ELEMENT_DECL` — indexed, and only its
-    ///   `MODIFIER_LIST` and `TYPE` children are descended into; the default
-    ///   value expression is body-side (`default_expr`).
+    ///   `MODIFIER_LIST` and `TYPE` children are declaration skeleton; the
+    ///   default value expression is body-side (`default_expr`).
     ///
     /// The indexed-node sequence therefore changes exactly when the declared
     /// structure of the file changes, which is the load-bearing invariant
@@ -162,10 +165,12 @@ impl AstIdMap {
         let mut map = AstIdMap::default();
         match source {
             SourceFile::Java(file) => {
-                let mut stack = vec![(file.syntax_node.clone(), None)];
-                while let Some((node, parent)) = stack.pop() {
+                // `body` marks body content: visited to find the blocks that
+                // declare local classes, but with nothing indexed.
+                let mut stack = vec![(file.syntax_node.clone(), None, false)];
+                while let Some((node, parent, body)) = stack.pop() {
                     let kind = node.kind();
-                    if is_indexable(kind) {
+                    if !body && is_indexable(kind) {
                         let ptr = node_ptr(&node);
                         debug_assert!(
                             !map.index.contains_key(&ptr),
@@ -173,40 +178,51 @@ impl AstIdMap {
                         );
                         map.index.insert(ptr, map.arena.alloc(ptr));
                     }
-                    let mut push = |children: Vec<_>| {
-                        for child in children.into_iter().rev() {
-                            stack.push((child, Some(kind)));
+                    let mut children: Vec<_> = node.children().collect();
+                    children.reverse();
+                    let mut push = |stack: &mut Vec<_>, children: Vec<_>, body: bool| {
+                        for child in children {
+                            stack.push((child, Some(kind), body));
                         }
                     };
                     match kind {
-                        // The class-like declarations of a block are the
-                        // *local* declarations ([JLS §14.3]), and they are
-                        // declaration skeleton: index their outermost ones
-                        // and descend into each via the default arm below. A
-                        // deeper one is already inside the skeleton of an
-                        // outer declaration, and a deeper *block* applies
-                        // this same rule when it is reached. Everything else
-                        // in a body stays pruned.
-                        J::BLOCK => push(
-                            node.children()
-                                .filter(|child| is_class_like_decl(child.kind()))
-                                .collect(),
-                        ),
+                        // A block's class-like declarations are its *local*
+                        // declarations ([§14.3]) and are declaration skeleton:
+                        // they leave the body region and are indexed with
+                        // their own skeleton. Everything else in the block —
+                        // statements, expressions, and any nested block or
+                        // lambda body that is itself body content — stays in
+                        // the body region, so naming a local variable, adding
+                        // a statement or rewriting an expression still leaves
+                        // the indexed sequence untouched.
+                        J::BLOCK => {
+                            for child in children {
+                                let body = !is_class_like_decl(child.kind());
+                                stack.push((child, Some(kind), body));
+                            }
+                        }
                         // The members of a named class are declarations; the
                         // class body of an anonymous class or an enum
-                        // constant is body content.
+                        // constant is body content, pruned whole (its local
+                        // declarations are not lowered).
                         J::CLASS_BODY if parent != Some(J::CLASS_DECL) => {}
-                        // The declarator itself is indexed; its name, dims
-                        // and initializer are re-walked at resolution time.
-                        J::VARIABLE_DECLARATOR | J::ENUM_CONSTANT => {}
+                        // The declarator itself is indexed; its name, dims and
+                        // initializer are re-walked at resolution time.
+                        J::VARIABLE_DECLARATOR | J::ENUM_CONSTANT => {
+                            push(&mut stack, children, true)
+                        }
                         // The default value expression is body-side; the
                         // element's modifiers and type are declarations.
-                        J::ANNOTATION_TYPE_ELEMENT_DECL => push(
-                            node.children()
+                        J::ANNOTATION_TYPE_ELEMENT_DECL => {
+                            let declarations: Vec<_> = children
+                                .into_iter()
                                 .filter(|child| matches!(child.kind(), J::MODIFIER_LIST | J::TYPE))
-                                .collect(),
-                        ),
-                        _ => push(node.children().collect()),
+                                .collect();
+                            for child in declarations.into_iter().rev() {
+                                stack.push((child, Some(kind), false));
+                            }
+                        }
+                        _ => push(&mut stack, children, body),
                     }
                 }
             }
@@ -471,5 +487,103 @@ class Foo {
         assert_eq!(id_sequence(text), id_sequence(&body_edit));
         let added = text.replace("int local = 1;", "int local = 1;\n        class Other {}");
         assert_ne!(id_sequence(text), id_sequence(&added));
+    }
+
+    /// A local declaration is reachable through every block a body nests —
+    /// a `try`, a loop, a `switch` arm, a lambda block — and through the
+    /// initializers a declarator prunes (a lambda body there may declare one
+    /// too). Nothing else in those subtrees is indexed.
+    #[test]
+    fn nested_local_declarations_are_indexed() {
+        let text = "\
+class Foo {
+    Runnable field = () -> {
+        class InInitializer {}
+    };
+
+    void m() {
+        try {
+            class InTry {}
+        } catch (RuntimeException e) {
+        }
+        for (int i = 0; i < 1; i++) {
+            class InFor {}
+        }
+        int k = switch (1) {
+            case 1 -> {
+                class InSwitch {}
+                yield 1;
+            }
+            default -> 0;
+        };
+        Runnable r = () -> {
+            class InLambda {}
+        };
+    }
+}
+";
+        let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+        let SourceFile::Java(file) = &parse.syntax_node(LanguageKind::Java) else {
+            panic!("expected a Java source file");
+        };
+        let root = &file.syntax_node;
+        let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+
+        let names: Vec<String> = map
+            .arena
+            .iter()
+            .filter_map(|(_, ptr)| {
+                let node = map.try_to_node(ptr, root).expect("resolvable pointer");
+                (node.kind() == J::CLASS_DECL).then(|| {
+                    node.children_with_tokens()
+                        .filter_map(|element| element.as_token().cloned())
+                        .find(|token| token.kind() == J::IDENTIFIER)
+                        .map(|token| token.text().to_owned())
+                        .unwrap_or_default()
+                })
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "Foo",
+                "InInitializer",
+                "InTry",
+                "InFor",
+                "InSwitch",
+                "InLambda"
+            ]
+        );
+
+        // Naming a local variable, adding a statement or rewriting an
+        // expression inside any of those blocks is still body-side: the
+        // indexed sequence does not move.
+        fn id_sequence(text: &str) -> Vec<(u16, u32)> {
+            let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+            let map = AstIdMap::from_source_file(&parse.syntax_node(LanguageKind::Java));
+            map.arena
+                .iter()
+                .map(|(id, ptr)| (ptr.kind.0, id.0))
+                .collect()
+        }
+        let body_edits = [
+            text.replace(
+                "class InTry {}",
+                "int local = 1;\n            class InTry {}",
+            ),
+            text.replace(
+                "class InLambda {}",
+                "class InLambda {}\n            int other = 2;",
+            ),
+            text.replace("yield 1;", "yield 2;"),
+            text.replace("i < 1", "i < 2"),
+        ];
+        for edited in &body_edits {
+            assert_eq!(
+                id_sequence(text),
+                id_sequence(edited),
+                "a body-only edit must not move the indexed sequence"
+            );
+        }
     }
 }

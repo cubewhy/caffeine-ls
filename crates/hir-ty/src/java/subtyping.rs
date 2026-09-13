@@ -77,8 +77,10 @@ pub(crate) fn supertypes_impl(
     ty: &Ty,
 ) -> Vec<Ty> {
     match ty.kind(db) {
-        TyKind::Reference { name, args, .. } => {
-            let Some(resolved) = resolve_name(db, scope, name) else {
+        TyKind::Reference { args, .. } => {
+            // §6.7: the supertypes of the type's *declaration* — a local
+            // class's own item, or the class its canonical name resolves to.
+            let Some(resolved) = crate::java::resolve::reference_class(db, scope, ty) else {
                 return Vec::new();
             };
             // §4.10.2: the direct supertypes of an interface type include
@@ -205,8 +207,7 @@ pub(crate) fn source_supertypes(
         return Vec::new();
     };
     let scope = scope_for_file(db, source.file);
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-    let resolver = Resolver::new(&tree, type_params, source.item);
+    let resolver = Resolver::for_item(db, source.file, &tree, source.item);
     let implicit = |fqn: &str| {
         ItemTypeRef::synthetic(TypeRef::Reference {
             name: Name::new(fqn),

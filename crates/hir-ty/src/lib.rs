@@ -104,7 +104,7 @@ pub use java::inference::least_upper_bound;
 pub use java::level_check::level_diagnostics;
 pub use java::method::all_methods as all_methods_for_test;
 pub use java::method::{
-    Access, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,
+    Access, ClassKey, FieldData, InvocationContext, InvocationMode, MethodData, MethodDisplay,
     MethodTypeParam, PolyArg, abstract_methods, access_context, member_set, pick_field,
     pick_method, single_abstract_method,
 };

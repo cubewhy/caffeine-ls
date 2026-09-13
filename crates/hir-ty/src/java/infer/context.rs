@@ -84,27 +84,8 @@ pub(super) fn enclosing_self_ty(
     scope: &hir::ResolutionScope,
     resolver: &Resolver,
 ) -> Option<Ty> {
-    // Parent links, one walk (the same shape as
-    // [`crate::java::resolve::enclosing_type_chain`]).
-    fn parents(tree: &hir_def::java::item_tree::ItemTree, map: &mut FxHashMap<ItemId, ItemId>) {
-        fn walk(
-            tree: &hir_def::java::item_tree::ItemTree,
-            id: ItemId,
-            parents: &mut FxHashMap<ItemId, ItemId>,
-        ) {
-            for &child in tree.data(id).body() {
-                parents.insert(child, id);
-                walk(tree, child, parents);
-            }
-        }
-        for &top in &tree.top {
-            walk(tree, top, map);
-        }
-    }
-    let mut links: FxHashMap<ItemId, ItemId> = FxHashMap::default();
-    parents(tree, &mut links);
-
-    let mut current = links.get(&item).copied();
+    // The enclosing declarations, innermost first ([`ItemTree::parent_of`]).
+    let mut current = tree.parent_of(item);
     while let Some(id) = current {
         // Enums and annotations cannot declare type parameters ([§8.9],
         // [§9.6]); their self-type is always raw.
@@ -117,7 +98,10 @@ pub(super) fn enclosing_self_ty(
             _ => None,
         };
         if let Some(declared) = declared {
-            let fqn = hir::source_class_fqn(db, file, id)?;
+            // §6.7: a *local* class-like declaration ([JLS §14.3]) has no
+            // canonical name, so its self type is identified by its
+            // declaration.
+            let fqn = crate::java::resolve::canonical_class_fqn(tree, id);
             // The declared type variables are in scope as types ([§8.1.2]);
             // their bounds are resolved against the file like any other type.
             let args = declared
@@ -139,9 +123,22 @@ pub(super) fn enclosing_self_ty(
                     )
                 })
                 .collect();
-            return Some(Ty::reference(db, fqn.as_str(), args));
+            return Some(match fqn {
+                Some(fqn) => Ty::reference(db, fqn.as_str(), args),
+                None => {
+                    let name = match tree.data(id) {
+                        hir_def::java::item_tree::ItemData::Class(d)
+                        | hir_def::java::item_tree::ItemData::Interface(d) => &d.name,
+                        hir_def::java::item_tree::ItemData::Enum(d) => &d.name,
+                        hir_def::java::item_tree::ItemData::Record(d) => &d.name,
+                        hir_def::java::item_tree::ItemData::Annotation(d) => &d.name,
+                        _ => continue,
+                    };
+                    Ty::local_reference(db, hir::SourceClass { file, item: id }, name.clone(), args)
+                }
+            });
         }
-        current = links.get(&id).copied();
+        current = tree.parent_of(id);
     }
     None
 }

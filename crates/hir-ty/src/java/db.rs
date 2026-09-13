@@ -94,9 +94,12 @@ impl ScopeKind {
 #[salsa::interned(unsafe(no_lifetime), debug, revisions = usize::MAX)]
 pub struct ContextKey {
     pub mode: InvocationMode,
-    pub enclosing_class: Option<Name>,
+    /// The class or interface the access appears in
+    /// ([`crate::java::method::ClassKey`]: a *local* declaration is its own
+    /// class, so the key round-trips it).
+    pub enclosing_class: Option<crate::java::method::ClassKey>,
     pub package: Option<Name>,
-    pub subclass_of: Option<Name>,
+    pub subclass_of: Option<crate::java::method::ClassKey>,
 }
 
 impl ContextKey {
@@ -105,9 +108,9 @@ impl ContextKey {
         ContextKey::new(
             db,
             ctx.mode,
-            ctx.enclosing_class.as_deref().map(Name::new),
+            ctx.enclosing_class.clone(),
             ctx.package.as_deref().map(Name::new),
-            ctx.subclass_of.as_deref().map(Name::new),
+            ctx.subclass_of.clone(),
         )
     }
 }
@@ -124,6 +127,23 @@ pub(crate) fn type_params_map_query(
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
     Arc::new(resolve::type_params_map(&tree, file_id))
+}
+
+/// The local declarations in scope at every item of `file`
+/// ([JLS §6.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.3),
+/// [§6.4.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.4.1)),
+/// computed in a single walk of the file's declaration tree and body IR and
+/// memoized. Invalidated together with the file's item tree when the file text
+/// changes.
+#[salsa::tracked(returns(ref))]
+pub(crate) fn local_decl_sites_query(
+    db: &dyn TyDatabase,
+    file: FileText,
+) -> Arc<FxHashMap<ItemId, resolve::LocalDeclSite>> {
+    let file_id = *file.file_id(db);
+    let tree = hir::file_item_tree(db, file_id);
+    let bodies = hir::file_body_tree(db, file_id);
+    Arc::new(resolve::local_decl_sites(&tree, &bodies, file_id))
 }
 
 /// Whether a declaration is deprecated, and whether it or any enclosing
@@ -148,19 +168,18 @@ pub(crate) fn deprecated_enclosing_query(
 ) -> Arc<FxHashMap<ItemId, DeprecationInfo>> {
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
-    let type_params = type_params_map_query(db, file);
     let scope = scope_for_file(db, file_id);
     let mut map: FxHashMap<ItemId, DeprecationInfo> = FxHashMap::default();
     fn walk(
         db: &dyn TyDatabase,
+        file_id: FileId,
         scope: &hir::ResolutionScope,
         tree: &hir_def::java::item_tree::ItemTree,
-        type_params: &FxHashMap<ItemId, Vec<resolve::ScopedTypeParam>>,
         id: ItemId,
         inherited: Option<crate::java::deprecation::Deprecation>,
         map: &mut FxHashMap<ItemId, DeprecationInfo>,
     ) {
-        let resolver = Resolver::new(tree, type_params, id);
+        let resolver = Resolver::for_item(db, file_id, tree, id);
         let own = crate::java::deprecation::annotation_deprecation(
             db,
             scope,
@@ -170,53 +189,62 @@ pub(crate) fn deprecated_enclosing_query(
         let enclosing = own.or(inherited);
         map.insert(id, DeprecationInfo { own, enclosing });
         for &child in tree.data(id).body() {
-            walk(db, scope, tree, type_params, child, enclosing, map);
+            walk(db, file_id, scope, tree, child, enclosing, map);
+        }
+        for local in tree.local_types_of(id) {
+            walk(db, file_id, scope, tree, local, enclosing, map);
         }
     }
     for &top in &tree.top {
-        walk(db, &scope, &tree, type_params, top, None, &mut map);
+        walk(db, file_id, &scope, &tree, top, None, &mut map);
     }
     Arc::new(map)
 }
 
-/// The canonical fully qualified name
-/// ([JLS §6.7](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.7))
-/// of the nearest enclosing class or interface declaration of every item of
-/// `file` ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)).
+/// The nearest enclosing class or interface declaration of every item of
+/// `file` ([JLS §6.6.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6.1)),
+/// as a [`ClassKey`](crate::java::method::ClassKey).
 /// Class-like items map to themselves; non-class items map to the type whose
-/// member they are. Items outside any class (imports, module-info) are absent.
-/// Computed in a single tree walk per file and memoized; invalidated together
-/// with the file's item tree when the file text changes.
+/// member they are — a *local* declaration maps to itself like any other, so
+/// the access control of its members sees it as their class. Items outside any
+/// class (imports, module-info) are absent. Computed in a single tree walk per
+/// file and memoized; invalidated together with the file's item tree when the
+/// file text changes.
 #[salsa::tracked(returns(ref))]
 pub(crate) fn enclosing_class_query(
     db: &dyn TyDatabase,
     file: FileText,
-) -> Arc<FxHashMap<ItemId, Name>> {
+) -> Arc<FxHashMap<ItemId, crate::java::method::ClassKey>> {
     let file_id = *file.file_id(db);
     let tree = hir::file_item_tree(db, file_id);
-    let mut map: FxHashMap<ItemId, Name> = FxHashMap::default();
+    let mut map: FxHashMap<ItemId, crate::java::method::ClassKey> = FxHashMap::default();
     fn walk(
-        db: &dyn TyDatabase,
-        file_id: FileId,
         tree: &hir_def::java::item_tree::ItemTree,
+        file_id: FileId,
         id: ItemId,
         enclosing: Option<ItemId>,
-        map: &mut FxHashMap<ItemId, Name>,
+        map: &mut FxHashMap<ItemId, crate::java::method::ClassKey>,
     ) {
         let data = tree.data(id);
         let is_type = data.is_type();
         let current = if is_type { Some(id) } else { enclosing };
-        if let Some(enclosing) = current
-            && let Some(fqn) = hir::source_class_fqn(db, file_id, enclosing)
-        {
-            map.insert(id, fqn);
+        if let Some(enclosing) = current {
+            map.insert(
+                id,
+                crate::java::method::ClassKey::of(tree, file_id, enclosing),
+            );
         }
         for &child in data.body() {
-            walk(db, file_id, tree, child, current, map);
+            walk(tree, file_id, child, current, map);
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member of
+        // anything — its own members' enclosing class is it.
+        for local in tree.local_types_of(id) {
+            walk(tree, file_id, local, current, map);
         }
     }
     for &top in &tree.top {
-        walk(db, file_id, &tree, top, None, &mut map);
+        walk(&tree, file_id, top, None, &mut map);
     }
     Arc::new(map)
 }
@@ -233,8 +261,7 @@ pub(crate) fn item_ty_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> 
         return Ty::error(db);
     };
     let scope = scope_for_file(db, file_id);
-    let type_params = type_params_map_query(db, db.file_text(file_id));
-    let resolver = Resolver::new(&tree, type_params, item_id);
+    let resolver = Resolver::for_item(db, file_id, &tree, item_id);
     let reference = |name: &Name| {
         let tyref = TypeRef::Reference {
             name: name.clone(),
@@ -267,8 +294,7 @@ pub(crate) fn method_params_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db
         return Vec::new();
     };
     let scope = scope_for_file(db, file_id);
-    let type_params = type_params_map_query(db, db.file_text(file_id));
-    let resolver = Resolver::new(&tree, type_params, item_id);
+    let resolver = Resolver::for_item(db, file_id, &tree, item_id);
     match data {
         ItemData::Method(method) => method
             .sig
@@ -294,8 +320,7 @@ pub(crate) fn record_component_types_query<'db>(
         return Vec::new();
     };
     let scope = scope_for_file(db, file_id);
-    let type_params = type_params_map_query(db, db.file_text(file_id));
-    let resolver = Resolver::new(&tree, type_params, item_id);
+    let resolver = Resolver::for_item(db, file_id, &tree, item_id);
     let ItemData::Record(record) = data else {
         return Vec::new();
     };

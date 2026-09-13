@@ -194,7 +194,11 @@ fn check_capture_method() -> String {
         match picked {
             Some(method) => {
                 let params: Vec<String> = method.params.iter().map(|ty| render(&db, ty)).collect();
-                format!("{} add({})", method.owner, params.join(", "))
+                format!(
+                    "{} add({})",
+                    method.owner.display_name(&db),
+                    params.join(", ")
+                )
             }
             None => "<none>".to_owned(),
         }

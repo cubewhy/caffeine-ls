@@ -34,7 +34,7 @@ use hir_expand::name::Name;
 use syntax::stub::PrimitiveValue;
 use vfs::FileId;
 
-use crate::java::db::{TyDatabase, type_params_map_query};
+use crate::java::db::TyDatabase;
 use crate::java::method::{MethodData, source_top_level, top_level_of};
 use crate::java::resolve::{
     NameResolution, Resolver, item_data, resolve_name_checked, scope_for_file,
@@ -227,8 +227,7 @@ pub(crate) fn source_item(db: &dyn TyDatabase, file: FileId, item: ItemId) -> Op
     if annotations.is_empty() {
         return None;
     }
-    let type_params = type_params_map_query(db, db.file_text(file));
-    let resolver = Resolver::new(&tree, type_params, item);
+    let resolver = Resolver::for_item(db, file, &tree, item);
     annotation_deprecation(db, &scope_for_file(db, file), &resolver, annotations)
 }
 
@@ -445,9 +444,9 @@ pub(crate) fn outermost_class(
 }
 
 /// The `DeprecatedApi` of a resolved method or constructor.
-pub(crate) fn method_api(data: &MethodData) -> DeprecatedApi {
+pub(crate) fn method_api(db: &dyn TyDatabase, data: &MethodData) -> DeprecatedApi {
     DeprecatedApi::Method {
-        owner: Name::new(&data.owner),
+        owner: data.owner.display_name(db),
         name: Name::new(&data.name),
         params: data.params.clone(),
         varargs: data.varargs,
@@ -455,9 +454,12 @@ pub(crate) fn method_api(data: &MethodData) -> DeprecatedApi {
 }
 
 /// The `DeprecatedApi` of a resolved field.
-pub(crate) fn field_api(data: &crate::java::method::FieldData) -> DeprecatedApi {
+pub(crate) fn field_api(
+    db: &dyn TyDatabase,
+    data: &crate::java::method::FieldData,
+) -> DeprecatedApi {
     DeprecatedApi::Field {
-        owner: Name::new(&data.owner),
+        owner: data.owner.display_name(db),
         name: Name::new(&data.name),
     }
 }

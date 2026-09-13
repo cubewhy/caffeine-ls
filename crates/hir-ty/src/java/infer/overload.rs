@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::java::{
     inference::{Constraint, Inference, InvocationPhase},
-    method::{InvocationContext, MethodData, member_set, single_abstract_method},
+    method::{ClassKey, InvocationContext, MethodData, member_set, single_abstract_method},
     resolve::resolve_type_ref,
     ty::{BoundKind, Ty, TyKind, TypeVarScope, WildcardBound, boxed_type},
 };
@@ -317,7 +317,7 @@ impl InferCtx<'_> {
         // accepts `put(module.getClass(), …)` and `<T extends Mod> T
         // getMod(Class<T>)` infers `T := Mod` from `getMod(module.getClass())`.
         let is_get_class = method.name == "getClass"
-            && method.owner == "java.lang.Object"
+            && method.owner == ClassKey::Named(Name::new("java.lang.Object"))
             && method.params.is_empty()
             && explicit_type_args.is_none();
         if is_get_class {

@@ -53,7 +53,7 @@ use hir_expand::{
     span::{AnnotationValue, SpannedTypeRef},
 };
 use rust_asm::constants::ACC_ENUM;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use syntax::stub::PrimitiveType;
 use vfs::FileId;
 
@@ -103,7 +103,6 @@ pub(crate) fn annotation_diagnostics(
     let Some((map, source)) = range_ctx(db, file, tree.language) else {
         return Vec::new();
     };
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let bodies = hir::file_body_tree(db, file);
     let mut out = Vec::new();
 
@@ -115,7 +114,6 @@ pub(crate) fn annotation_diagnostics(
         scope: &hir::ResolutionScope,
         map: &hir_expand::ast_id_map::AstIdMap,
         source: &syntax::SourceFile,
-        type_params: &FxHashMap<ItemId, Vec<crate::java::resolve::ScopedTypeParam>>,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
@@ -125,7 +123,7 @@ pub(crate) fn annotation_diagnostics(
         // the declaration and type-use checks of its annotations. The element
         // values of those annotations were lowered with this item as their
         // owner, so the same context serves their §15.29 checks.
-        let resolver = Resolver::new(tree, type_params, id);
+        let resolver = Resolver::for_item(db, file, tree, id);
         let cx = ValueCtx {
             db,
             file,
@@ -188,34 +186,18 @@ pub(crate) fn annotation_diagnostics(
             check_body_annotations(&cx, bodies.bodies.get(body.0), out);
         }
         for &child in data.body() {
-            walk(
-                db,
-                file,
-                tree,
-                bodies,
-                scope,
-                map,
-                source,
-                type_params,
-                child,
-                out,
-            );
+            walk(db, file, tree, bodies, scope, map, source, child, out);
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member, so it
+        // is not in any `body()`: its own annotations — and those of its
+        // members — are checked here.
+        for local in tree.local_types_of(id) {
+            walk(db, file, tree, bodies, scope, map, source, local, out);
         }
     }
 
     for &top in &tree.top {
-        walk(
-            db,
-            file,
-            tree,
-            &bodies,
-            &scope,
-            map,
-            &source,
-            type_params,
-            top,
-            &mut out,
-        );
+        walk(db, file, tree, &bodies, &scope, map, &source, top, &mut out);
     }
     out
 }
@@ -1822,8 +1804,7 @@ fn annotation_type(
             // return types resolve in the annotation's own file scope
             // ([§6.5.5.1]).
             let file_scope = crate::java::resolve::scope_for_file(db, source.file);
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = Resolver::new(&source_tree, type_params, source.item);
+            let resolver = Resolver::for_item(db, source.file, &source_tree, source.item);
             // §9.6.1/§9.7.1: whether an element declares a default is read
             // from the *annotation type's own* source — not from the lowered
             // default expression, which a default written as a nested
@@ -1956,9 +1937,7 @@ fn resolve_annotation_type(
                     // `@interface Target` that shadows the JDK annotation
                     // ([§6.5.5.1]) does not.
                     let file_scope = crate::java::resolve::scope_for_file(db, source.file);
-                    let type_params =
-                        crate::java::db::type_params_map_query(db, db.file_text(source.file));
-                    let resolver = Resolver::new(&source_tree, type_params, source.item);
+                    let resolver = Resolver::for_item(db, source.file, &source_tree, source.item);
                     annotation
                         .annotations
                         .iter()

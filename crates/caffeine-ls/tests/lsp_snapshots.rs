@@ -786,8 +786,19 @@ public interface Bar {
     assert_eq!(resolved["location"]["range"]["end"]["character"], 32);
 
     // Non-empty queries still search the whole workspace: Bar.java is NOT
-    // open, but a typed query finds it.
-    let typed = lsp.request("workspace/symbol", json!({ "query": "Bar" }));
+    // open, so it enters the index only once the source set's symbol index has
+    // been built — a query issued before that is legitimately empty, so wait
+    // for the index like the empty query above does.
+    let typed = request_until(
+        &lsp,
+        "workspace/symbol",
+        json!({ "query": "Bar" }),
+        |response| {
+            response
+                .as_array()
+                .is_some_and(|symbols| symbols.iter().any(|symbol| symbol["name"] == "Bar"))
+        },
+    );
     assert_eq!(
         typed
             .as_array()

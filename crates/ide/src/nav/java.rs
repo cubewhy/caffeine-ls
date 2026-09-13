@@ -892,7 +892,11 @@ fn member_use_kind(reference: Reference) -> Use {
 /// declared under the class's own simple name; a classfile one under `<init>`
 /// ([JVMS §4.6]), which is no declaration's name and has to be read back as
 /// the class the owner names.
-fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String {
+fn member_decl_name(
+    db: &RootDatabase,
+    method: &hir_ty::MethodData,
+    reference: Reference,
+) -> String {
     if reference != Reference::Constructor || method.name != "<init>" {
         return method.name.clone();
     }
@@ -901,9 +905,14 @@ fn member_decl_name(method: &hir_ty::MethodData, reference: Reference) -> String
     // [`hir::library_source_decl`] applies before it looks a type up in its
     // archive. `$` stays an ordinary identifier character in a source name
     // ([JLS §3.8]), which is why the rewrite only touches a classfile name.
-    Name::new(&method.owner.replace('$', "."))
-        .simple_name()
-        .to_owned()
+    match method.owner.as_fqn() {
+        Some(fqn) => Name::new(&fqn.as_str().replace('$', "."))
+            .simple_name()
+            .to_owned(),
+        // §6.7: a local declaration has no canonical name — it is declared
+        // under its own simple name.
+        None => method.owner.simple_name(db).as_str().to_owned(),
+    }
 }
 
 /// The declarations a recorded body resolution names, through the classpath
@@ -949,7 +958,7 @@ fn method_resolution(
     declared_resolution(
         db,
         file,
-        member_decl_name(method, reference),
+        member_decl_name(db, method, reference),
         member_use_kind(reference),
         // §15.12.2.2: the member the invocation resolved to — its classfile
         // descriptor and parameter types name one declaration, where the
@@ -982,7 +991,7 @@ fn declared_resolution(
     use_kind: Use,
     params: Params<'_>,
     source_decl: Option<(FileId, ItemId)>,
-    owner: &str,
+    owner: &hir_ty::ClassKey,
 ) -> Vec<Resolution> {
     if let Some((decl_file, item)) = source_decl {
         return vec![Resolution::Decl {
@@ -991,10 +1000,20 @@ fn declared_resolution(
             name,
         }];
     }
-    // A library member: `owner` is the *binary* FQN of the declaring class,
-    // which is the key the classfile index and the source index are looked up
-    // by.
-    match owner_lookup(db, file, owner) {
+    // §6.7: a *local* declaring class has no canonical name to look up
+    // through the classpath — its own declaration answers.
+    if let Some(class) = owner.source() {
+        return vec![member_or_owner(
+            db, class.file, class.item, &name, use_kind, params,
+        )];
+    }
+    // Otherwise a library member: `owner` is the *binary* FQN of the
+    // declaring class, which is the key the classfile index and the source
+    // index are looked up by.
+    let Some(owner) = owner.as_fqn() else {
+        return Vec::new();
+    };
+    match owner_lookup(db, file, owner.as_str()) {
         OwnerLookup::Source(class) => vec![member_or_owner(
             db, class.file, class.item, &name, use_kind, params,
         )],
@@ -1047,7 +1066,8 @@ fn member_or_owner(
     let tree = hir::file_item_tree(db, decl_file);
     Resolution::Decl {
         file: decl_file,
-        item: member_item(db, decl_file, &tree, name, use_kind, params).unwrap_or(owner_item),
+        item: member_item(db, decl_file, &tree, owner_item, name, use_kind, params)
+            .unwrap_or(owner_item),
         name: name.to_owned(),
     }
 }
@@ -1650,6 +1670,39 @@ enum MemberLookup {
     Absent,
 }
 
+/// The declared member named `name` of the source class `owner`: its own
+/// body's items ([`ItemTree::body`]), then the member a record component
+/// implicitly declares ([`component_member`]). Read from the declaration
+/// rather than from a canonical name, so a *local* owner
+/// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3))
+/// — which has none ([§6.7]) — answers too.
+fn members_of_source_owner(
+    db: &RootDatabase,
+    owner: hir::SourceClass,
+    name: &str,
+    use_kind: Use,
+    params: Params<'_>,
+) -> MemberLookup {
+    let owner_file = owner.file;
+    let tree = hir::file_item_tree(db, owner_file);
+    if let Some(item) = member_item(db, owner_file, &tree, owner.item, name, use_kind, params) {
+        return MemberLookup::Found(Resolution::Decl {
+            file: owner_file,
+            item,
+            name: name.to_owned(),
+        });
+    }
+    // A member the class declares without an item of its own: the field or the
+    // accessor a record component declares ([`component_member`]). Everything
+    // else — an implicit constructor, an implicit `hashCode` — has no
+    // declaration to point at, and a *loaded* owner's member set is
+    // conclusive.
+    match component_member(db, owner_file, owner.item, name, use_kind, params) {
+        Some(component) => MemberLookup::Found(component),
+        None => MemberLookup::Absent,
+    }
+}
+
 /// The declared member named `name` of the owner class `owner_fqn`, which must
 /// already be canonical ([JLS §6.7]).
 fn members_of_owner(
@@ -1661,26 +1714,7 @@ fn members_of_owner(
     params: Params<'_>,
 ) -> MemberLookup {
     match owner_lookup(db, file, owner_fqn) {
-        OwnerLookup::Source(class) => {
-            let owner_file = class.file;
-            let tree = hir::file_item_tree(db, owner_file);
-            if let Some(item) = member_item(db, owner_file, &tree, name, use_kind, params) {
-                return MemberLookup::Found(Resolution::Decl {
-                    file: owner_file,
-                    item,
-                    name: name.to_owned(),
-                });
-            }
-            // A member the class declares without an item of its own: the field
-            // or the accessor a record component declares ([`component_member`]).
-            // Everything else — an implicit constructor, an implicit
-            // `hashCode` — has no declaration to point at, and a *loaded*
-            // owner's member set is conclusive.
-            match component_member(db, owner_file, class.item, name, use_kind, params) {
-                Some(component) => MemberLookup::Found(component),
-                None => MemberLookup::Absent,
-            }
-        }
+        OwnerLookup::Source(class) => members_of_source_owner(db, class, name, use_kind, params),
         OwnerLookup::Library {
             library,
             fqn,
@@ -1691,7 +1725,7 @@ fn members_of_owner(
                 },
         } => {
             let tree = hir::file_item_tree(db, decl_file);
-            match member_item(db, decl_file, &tree, name, use_kind, params) {
+            match member_item(db, decl_file, &tree, owner_item, name, use_kind, params) {
                 Some(item) => MemberLookup::Found(Resolution::LibraryMember {
                     library,
                     owner_fqn: fqn,
@@ -1817,6 +1851,11 @@ fn member_of_named_owner(
 ) -> MemberLookup {
     let fqn = match hir_ty::resolve_type_name_at(db, file, item, owner_name) {
         hir_ty::NameResolution::Resolved(fqn) | hir_ty::NameResolution::NotAccessible(fqn) => fqn,
+        // §6.7: a local declaration has no canonical name to resolve a member
+        // through; its members are read from its own declaration.
+        hir_ty::NameResolution::ResolvedLocal(class) => {
+            return members_of_source_owner(db, class, name, use_kind, params);
+        }
         hir_ty::NameResolution::TypeVar
         | hir_ty::NameResolution::Ambiguous(_)
         | hir_ty::NameResolution::Unresolved => return MemberLookup::Absent,
@@ -1886,7 +1925,10 @@ impl Params<'_> {
     }
 }
 
-/// The symbol of the member `name` declared in `file` that `params` selects.
+/// The item of the member `name` declared by `owner` that `params` selects.
+/// The candidates are the owner's own members ([`ItemData::body`]) — not the
+/// file's symbol set, which lists no *local* declaration ([JLS §6.7]: a local
+/// class has no canonical name and is not indexed) and no member of one.
 /// A name that denotes exactly one declaration needs no signature to select
 /// it; an overloaded name the walk could not resolve is left unanswered rather
 /// than guessed by declaration order.
@@ -1894,42 +1936,44 @@ fn member_item(
     db: &RootDatabase,
     file: FileId,
     tree: &ItemTree,
+    owner: ItemId,
     name: &str,
     use_kind: Use,
     params: Params<'_>,
 ) -> Option<ItemId> {
-    let symbols = hir::file_symbols(db, file);
-    let candidates: Vec<&hir::SourceSymbol> = symbols
+    let candidates: Vec<ItemId> = tree
+        .data(owner)
+        .body()
         .iter()
-        .filter(|symbol| {
+        .copied()
+        .filter(|item| {
+            let data = tree.data(*item);
             let kind_matches = match use_kind {
-                Use::Field => matches!(
-                    symbol.kind,
-                    hir::SourceSymbolKind::Field | hir::SourceSymbolKind::EnumConstant
-                ),
-                Use::Method => symbol.kind == hir::SourceSymbolKind::Method,
+                Use::Field => {
+                    matches!(data, ItemData::Field(_) | ItemData::EnumConstant(_))
+                }
+                Use::Method => matches!(data, ItemData::Method(_)),
                 // §8.8: a constructor is a method of its class by name and
                 // parameter list, but no other declaration is one — `void C()`
                 // in `class C` is a method that carries the class's name.
                 Use::Constructor => {
-                    symbol.kind == hir::SourceSymbolKind::Method
-                        && matches!(
-                            tree.data(symbol.item),
-                            ItemData::Method(method) if method.is_constructor()
-                        )
+                    matches!(data, ItemData::Method(method) if method.is_constructor())
                 }
             };
-            kind_matches && symbol.name.simple_name() == name
+            kind_matches
+                && data
+                    .name()
+                    .is_some_and(|declared| declared.as_str() == name)
         })
         .collect();
     let selected = match params {
         Params::Recorded { types, .. } => candidates
             .iter()
-            .find(|symbol| declares_params(db, file, symbol.item, types))
-            .map(|symbol| symbol.item),
+            .find(|item| declares_params(db, file, **item, types))
+            .copied(),
         Params::Unknown => None,
     };
-    selected.or_else(|| (candidates.len() == 1).then(|| candidates[0].item))
+    selected.or_else(|| (candidates.len() == 1).then(|| candidates[0]))
 }
 
 /// Whether the declaration at `item` takes exactly the parameter types
@@ -1969,6 +2013,15 @@ fn type_resolution(
     // check.
     let fqn = match hir_ty::resolve_type_name_at(db, file, item, name) {
         hir_ty::NameResolution::Resolved(fqn) | hir_ty::NameResolution::NotAccessible(fqn) => fqn,
+        // §14.3/[§6.7]: a local declaration is denoted by its declaration, not
+        // by a name the workspace could resolve anywhere else.
+        hir_ty::NameResolution::ResolvedLocal(class) => {
+            return vec![Resolution::Decl {
+                file: class.file,
+                item: class.item,
+                name: name.simple_name().to_owned(),
+            }];
+        }
         hir_ty::NameResolution::TypeVar
         | hir_ty::NameResolution::Ambiguous(_)
         | hir_ty::NameResolution::Unresolved => return Vec::new(),

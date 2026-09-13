@@ -32,7 +32,8 @@ use vfs::FileId;
 
 use crate::java::annotation_check::{declaration_annotations, declaration_type_refs};
 use crate::java::annotation_value::{NameTarget, ValueCtx, name_target};
-use crate::java::db::{TyDatabase, type_params_map_query};
+use crate::java::db::TyDatabase;
+
 use crate::java::method::{
     FieldData, InvocationContext, InvocationMode, MethodData, access_context, pick_method,
 };
@@ -79,9 +80,8 @@ pub fn annotation_target(
         .find(|node| matches!(node.kind(), J::ANNOTATION | J::MARKER_ANNOTATION))?;
     let item = annotation_item(&tree, map, &source, &annotation, offset);
     let scope = scope_for_file(db, file);
-    let type_params = type_params_map_query(db, db.file_text(file));
     let resolver = match item {
-        Some(item) => Resolver::new(&tree, type_params, item),
+        Some(item) => Resolver::for_item(db, file, &tree, item),
         // An annotation outside every item — a package annotation
         // ([§7.4.1]) — resolves in the compilation unit's own scope.
         None => Resolver::for_file(&tree),
@@ -509,7 +509,11 @@ fn type_target(cx: &NavCtx<'_>, text: &str) -> Option<AnnotationTarget> {
         NameResolution::Resolved(fqn) | NameResolution::NotAccessible(fqn) => {
             Some(AnnotationTarget::Type(fqn))
         }
-        NameResolution::TypeVar | NameResolution::Ambiguous(_) | NameResolution::Unresolved => None,
+        // A local declaration has no canonical name for a navigation target.
+        NameResolution::TypeVar
+        | NameResolution::ResolvedLocal(_)
+        | NameResolution::Ambiguous(_)
+        | NameResolution::Unresolved => None,
     }
 }
 

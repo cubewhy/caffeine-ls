@@ -994,8 +994,7 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
     let scope = scope_for_file(db, file);
     let ctx = hir::module_ctx_for_scope(db, &scope);
     let interner = &db.hir_state().interner;
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
-    let resolver = crate::java::resolve::Resolver::new(&tree, type_params, top);
+    let resolver = crate::java::resolve::Resolver::for_item(db, file, &tree, top);
     let mut out = Vec::new();
 
     // §7.7.1: a `requires` directive must name a module on the module path —
@@ -1111,10 +1110,11 @@ pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
         out: &mut Vec<DeclDiagnostic>,
     ) {
         let data = tree.data(id);
-        if data.is_type()
-            && let Some(fqn) = hir::source_class_fqn(db, file, id)
-        {
-            out.extend(check_class(db, file, scope, tree, fqn.as_str(), id));
+        if data.is_type() {
+            // §6.7: a class-like declaration is checked against its own key —
+            // its canonical name, or its declaration when it has none.
+            let key = crate::java::method::ClassKey::of(tree, file, id);
+            out.extend(check_class(db, file, scope, tree, &key, id));
         }
         for &child in data.body() {
             walk(db, file, scope, tree, child, out);
@@ -1132,7 +1132,7 @@ fn check_class(
     file: FileId,
     scope: &hir::ResolutionScope,
     tree: &hir_def::java::item_tree::ItemTree,
-    fqn: &str,
+    key: &crate::java::method::ClassKey,
     item: hir_def::java::item_tree::ItemId,
 ) -> Vec<DeclDiagnostic> {
     // The access-control context of the class itself ([§6.6.1]): the walk is
@@ -1141,29 +1141,26 @@ fn check_class(
     let mut out = Vec::new();
     // The name-resolution context of the declaration itself: its type
     // parameters and every enclosing class's ([§6.5.5.1], [§8.1.3]).
-    let resolver = crate::java::resolve::Resolver::new(
-        tree,
-        crate::java::db::type_params_map_query(db, db.file_text(file)),
-        item,
-    );
+    let resolver = crate::java::resolve::Resolver::for_item(db, file, tree, item);
     // Every member visible from the class, most-derived first ([§8.4.8.1]),
     // *without* the most-derived dedup: an override must still see the super
     // declaration it hides — both for the return-type-substitutability check
     // and for `@Override` ([§9.6.4.4]). Split into the class's own
     // declarations and the inherited set.
-    let self_ty = Ty::reference(db, fqn, Vec::new());
+    let self_ty = key.as_ty(db, Vec::new());
     let all = method::all_methods_raw(db, scope, &self_ty, &ctx);
-    let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == fqn).collect();
-    let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != fqn).collect();
+    let declared: Vec<&MethodData> = all.iter().filter(|m| m.owner == *key).collect();
+    let inherited: Vec<&MethodData> = all.iter().filter(|m| m.owner != *key).collect();
     // §9.6.4.6: *overriding* a deprecated method is a use of it, reported at
     // the overriding method's own name (javac's caret). The exemption is
     // decided per pair, from the deprecation in force at the overriding
     // declaration and from the shared-outermost-class rule.
     let enclosing = crate::java::db::deprecated_enclosing_query(db, db.file_text(file));
-    let overriding_outermost = Name::new(&crate::java::method::source_top_level(
-        tree.package.as_ref().map(Name::as_str),
-        fqn,
-    ));
+    // §9.6.4.6's exemption compares the *outermost* class: for a local
+    // declaration ([JLS §14.3]) that is the class enclosing it.
+    let overriding_outermost = key
+        .top_level(db, tree.package.as_ref().map(Name::as_str))
+        .unwrap_or_else(|| Name::new(""));
     for method in &declared {
         for super_method in &inherited {
             if !same_signature(db, method, super_method) {
@@ -1172,14 +1169,18 @@ fn check_class(
             let Some(deprecation) = crate::java::deprecation::member_deprecation(
                 db,
                 scope,
-                &super_method.owner,
+                super_method
+                    .owner
+                    .as_fqn()
+                    .map(|fqn| fqn.as_str())
+                    .unwrap_or(""),
                 &super_method.name,
                 super_method.owner_file.zip(super_method.decl_item),
                 super_method.descriptor.as_deref(),
             ) else {
                 continue;
             };
-            let api = crate::java::deprecation::method_api(super_method);
+            let api = crate::java::deprecation::method_api(db, super_method);
             let in_force = method
                 .decl_item
                 .and_then(|item| enclosing.get(&item))
@@ -1237,7 +1238,7 @@ fn check_class(
                     // method, against the nearest inherited declaration.
                     out.push(DeclDiagnostic::StaticInstanceClash {
                         method: Name::new(&method.name),
-                        super_owner: Name::new(&super_method.owner),
+                        super_owner: super_method.owner.display_name(db),
                         overriding_is_static: method.is_static,
                     });
                 }
@@ -1247,7 +1248,7 @@ fn check_class(
                 if super_method.is_final {
                     out.push(DeclDiagnostic::CannotOverrideFinalMethod {
                         method: Name::new(&method.name),
-                        super_owner: Name::new(&super_method.owner),
+                        super_owner: super_method.owner.display_name(db),
                     });
                 }
                 // §9.4.1.2/[§8.4.8.2]: a `default` interface method whose
@@ -1264,8 +1265,8 @@ fn check_class(
                 // body implies concrete) are the only violations.
                 if interface_default_rule
                     && matches!(
-                        super_method.owner.as_str(),
-                        "java.lang.Object" | "java.lang.Record"
+                        super_method.owner.as_fqn().map(|fqn| fqn.as_str()),
+                        Some("java.lang.Object" | "java.lang.Record")
                     )
                     && !method.abstract_
                 {
@@ -1285,7 +1286,7 @@ fn check_class(
                 {
                     out.push(DeclDiagnostic::WeakerAccessPrivileges {
                         method: Name::new(&method.name),
-                        super_owner: Name::new(&super_method.owner),
+                        super_owner: super_method.owner.display_name(db),
                     });
                 }
                 // §8.4.8.3: an overriding *instance* method must be
@@ -1310,7 +1311,7 @@ fn check_class(
                         out.push(DeclDiagnostic::IncompatibleOverride {
                             method: Name::new(&method.name),
                             found: method.ret,
-                            expected_owner: Name::new(&super_method.owner),
+                            expected_owner: super_method.owner.display_name(db),
                             expected_ret: super_method.ret,
                         });
                     }
@@ -1347,7 +1348,7 @@ fn check_class(
                         if !covered && is_checked(db, scope, thrown) {
                             out.push(DeclDiagnostic::IncompatibleThrows {
                                 method: Name::new(&method.name),
-                                super_owner: Name::new(&super_method.owner),
+                                super_owner: super_method.owner.display_name(db),
                                 thrown: *thrown,
                             });
                             break;
@@ -1431,7 +1432,10 @@ fn check_class(
     // §8.1.4/[§9.1.3]: a class or interface appears in its own inheritance
     // chain — `class A extends B` with `class B extends A`. Reported for every
     // class-like declaration, at its name.
-    if in_own_supertype_cycle(db, scope, fqn) {
+    if key
+        .as_fqn()
+        .is_some_and(|fqn| in_own_supertype_cycle(db, scope, fqn.as_str()))
+    {
         out.push(DeclDiagnostic::CyclicInheritance {
             class: class_like_simple_name(tree.data(item)),
             range: item_name_range(db, file, tree, item),
@@ -1658,7 +1662,7 @@ fn check_class(
                     out.push(DeclDiagnostic::UnimplementedAbstractMethod {
                         class: class_like_simple_name(tree.data(item)),
                         method: Name::new(&abstract_method.name),
-                        owner: Name::new(&abstract_method.owner),
+                        owner: abstract_method.owner.display_name(db),
                         range: item_name_range(db, file, tree, item),
                     });
                 }
@@ -1697,7 +1701,7 @@ fn check_class(
     // defaults are collected *without* the most-derived dedup — unrelated
     // defaults do not override each other, they conflict.
     let defaults = method::inherited_defaults(db, scope, &self_ty);
-    let defaults: Vec<&MethodData> = defaults.iter().filter(|m| m.owner != fqn).collect();
+    let defaults: Vec<&MethodData> = defaults.iter().filter(|m| m.owner != *key).collect();
     for (i, a) in defaults.iter().enumerate() {
         for b in &defaults[i + 1..] {
             if !same_signature(db, a, b) || related(db, scope, &a.owner, &b.owner) {
@@ -1831,7 +1835,7 @@ fn check_class(
                 });
                 out.push(DeclDiagnostic::DuplicateMethod {
                     method: Name::new(&a.name),
-                    is_constructor: a.name == fqn.rsplit('.').next().unwrap_or(&fqn),
+                    is_constructor: a.name == key.simple_name(db).as_str(),
                     range,
                 });
             } else if identical {
@@ -1879,12 +1883,14 @@ fn check_class(
     // it is named in its `permits` clause (or, without one, is its
     // same-module direct subclass), and a permitted direct subclass must
     // itself be `final`, `sealed` or `non-sealed` so the hierarchy closes.
-    sealed_subclass_diagnostics(db, file, tree, scope, &resolver, item, fqn, &mut out);
+    sealed_subclass_diagnostics(db, file, tree, scope, &resolver, item, key, &mut out);
 
     // §8.1.1.2: a `sealed` type must have at least one direct subclass.
     if class_like_modifiers(tree.data(item)).is_some_and(|m| m.is_sealed())
         && !has_permits_clause(tree.data(item))
-        && !file_has_direct_subclass(db, file, tree, scope, fqn)
+        && !key
+            .as_fqn()
+            .is_some_and(|fqn| file_has_direct_subclass(db, file, tree, scope, fqn.as_str()))
     {
         out.push(DeclDiagnostic::SealedClassMustHaveSubclasses {
             range: item_name_range(db, file, tree, item),
@@ -2241,12 +2247,17 @@ fn is_override_annotation(
 /// [§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
 /// ([§9.4.1.1](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.1),
 /// [§9.4.1.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1.2)).
-fn related(db: &dyn TyDatabase, scope: &hir::ResolutionScope, a: &str, b: &str) -> bool {
+fn related(
+    db: &dyn TyDatabase,
+    scope: &hir::ResolutionScope,
+    a: &crate::java::method::ClassKey,
+    b: &crate::java::method::ClassKey,
+) -> bool {
     if a == b {
         return true;
     }
-    let a_ty = Ty::reference(db, a, Vec::new());
-    let b_ty = Ty::reference(db, b, Vec::new());
+    let a_ty = a.as_ty(db, Vec::new());
+    let b_ty = b.as_ty(db, Vec::new());
     subtyping::is_subtype(db, scope, &a_ty, &b_ty) || subtyping::is_subtype(db, scope, &b_ty, &a_ty)
 }
 
@@ -2394,11 +2405,8 @@ fn first_concrete_descendant_super(
             return None;
         };
         let super_ref = next_class.super_class.as_ref()?;
-        let next_resolver = crate::java::resolve::Resolver::new(
-            &next_tree,
-            crate::java::db::type_params_map_query(db, db.file_text(next.file)),
-            next.item,
-        );
+        let next_resolver =
+            crate::java::resolve::Resolver::for_item(db, next.file, &next_tree, next.item);
         super_ty = crate::java::resolve::resolve_type_ref(db, scope, &next_resolver, super_ref);
         drop(next_resolver);
         current_item = next.item;
@@ -2916,8 +2924,8 @@ fn sealed_permits(
                 return None;
             }
             let file_scope = scope_for_file(db, source.file);
-            let type_params = crate::java::db::type_params_map_query(db, db.file_text(source.file));
-            let resolver = crate::java::resolve::Resolver::new(&tree, type_params, source.item);
+            let resolver =
+                crate::java::resolve::Resolver::for_item(db, source.file, &tree, source.item);
             Some(
                 permits
                     .iter()
@@ -2971,9 +2979,16 @@ fn sealed_subclass_diagnostics(
     scope: &hir::ResolutionScope,
     resolver: &crate::java::resolve::Resolver,
     item: hir_def::java::item_tree::ItemId,
-    fqn: &str,
+    key: &crate::java::method::ClassKey,
     out: &mut Vec<DeclDiagnostic>,
 ) {
+    // §14.3: a *local* class-like declaration can never appear in a `permits`
+    // clause ([§8.1.1.2] names a top-level or member class), so it can neither
+    // be reported as an unnamed direct subclass of a sealed type nor close a
+    // hierarchy.
+    let Some(fqn) = key.as_fqn() else {
+        return;
+    };
     let data = tree.data(item);
     let mods = class_like_modifiers(data);
     let final_ = mods.is_some_and(|m| m.is_final());
@@ -2999,7 +3014,7 @@ fn sealed_subclass_diagnostics(
         let Some(permits) = sealed_permits(db, scope, name.as_str()) else {
             continue;
         };
-        if permits.is_empty() || permits.iter().any(|p| p.as_str() == fqn) {
+        if permits.is_empty() || permits.iter().any(|p| p == fqn) {
             // §8.1.1.2: a permitted (or implicitly permitted) direct subclass
             // must be `final`, `sealed` or `non-sealed`.
             if !closed {
@@ -3040,20 +3055,16 @@ fn file_has_direct_subclass(
     scope: &hir::ResolutionScope,
     fqn: &str,
 ) -> bool {
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     fn walk(
         db: &dyn TyDatabase,
+        file: FileId,
         tree: &hir_def::java::item_tree::ItemTree,
         scope: &hir::ResolutionScope,
-        type_params: &rustc_hash::FxHashMap<
-            hir_def::java::item_tree::ItemId,
-            Vec<crate::java::resolve::ScopedTypeParam>,
-        >,
         id: hir_def::java::item_tree::ItemId,
         fqn: &str,
     ) -> bool {
         let data = tree.data(id);
-        let resolver = crate::java::resolve::Resolver::new(tree, type_params, id);
+        let resolver = crate::java::resolve::Resolver::for_item(db, file, tree, id);
         let super_refs: Vec<&ItemTypeRef> = match data {
             ItemData::Class(d) => d.super_class.iter().chain(d.interfaces.iter()).collect(),
             ItemData::Interface(d) => d.interfaces.iter().collect(),
@@ -3069,14 +3080,21 @@ fn file_has_direct_subclass(
             }
         }
         for &child in data.body() {
-            if walk(db, tree, scope, type_params, child, fqn) {
+            if walk(db, file, tree, scope, child, fqn) {
+                return true;
+            }
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member, so it
+        // is not in any `body()`: it can extend the sealed type too.
+        for local in tree.local_types_of(id) {
+            if walk(db, file, tree, scope, local, fqn) {
                 return true;
             }
         }
         false
     }
     for &top in &tree.top {
-        if walk(db, tree, scope, type_params, top, fqn) {
+        if walk(db, file, tree, scope, top, fqn) {
             return true;
         }
     }

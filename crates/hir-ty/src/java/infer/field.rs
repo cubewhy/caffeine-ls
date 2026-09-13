@@ -10,7 +10,7 @@ use hir_expand::{
 use crate::java::{
     diagnostics::{IllegalAccessKind, TypeError},
     method::{
-        FieldData, InvocationContext, member_set_ignoring_access, pick_field,
+        ClassKey, FieldData, InvocationContext, member_set_ignoring_access, pick_field,
         pick_field_ignoring_access,
     },
     ty::Ty,
@@ -152,11 +152,14 @@ impl InferCtx<'_> {
             return FinalFieldWrite::CannotAssign;
         }
         // The field must belong to the class being initialized.
+        // §6.6.1/[§8.3.1.2]: the field must belong to the class being
+        // initialized — compared by declaration, so a *local* class's own
+        // fields match it ([JLS §14.3], [§6.7]).
         let same_class = self
             .enclosing_class
             .as_ref()
-            .and_then(|ty| ty.as_reference(self.db))
-            .is_some_and(|(fqn, _)| fqn.as_str() == field.owner);
+            .and_then(|ty| ClassKey::of_ty(self.db, ty))
+            .is_some_and(|key| key == field.owner);
         if !same_class {
             return FinalFieldWrite::CannotAssign;
         }
@@ -193,7 +196,7 @@ impl InferCtx<'_> {
             expr,
             kind: IllegalAccessKind::Field,
             name: Name::new(&field.name),
-            owner: Name::new(&field.owner),
+            owner: field.owner.display_name(self.db),
             access: access_keyword(field.access),
         });
         true
@@ -215,7 +218,7 @@ impl InferCtx<'_> {
             expr,
             kind: IllegalAccessKind::Method,
             name: Name::new(&method.name),
-            owner: Name::new(&method.owner),
+            owner: method.owner.display_name(self.db),
             access: access_keyword(method.access),
         });
         true

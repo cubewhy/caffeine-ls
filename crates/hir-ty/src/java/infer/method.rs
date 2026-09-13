@@ -378,7 +378,7 @@ impl InferCtx<'_> {
                         self.report(TypeError::AbstractSuperAccess {
                             expr,
                             method: name.clone(),
-                            owner: Name::new(&method.owner),
+                            owner: method.owner.display_name(self.db),
                         });
                     }
                 }

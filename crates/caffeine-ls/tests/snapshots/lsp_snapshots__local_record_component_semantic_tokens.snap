@@ -15,7 +15,7 @@ expression: rows
   "5:12:3 keyword int",
   "5:16:4 method+declaration read",
   "6:16:6 keyword return",
-  "6:23:1 variable n",
+  "6:23:1 property+readonly n",
   "9:8:3 keyword int",
   "9:12:5 variable+declaration value",
   "9:18:1 operator =",

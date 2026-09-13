@@ -21,7 +21,7 @@ use hir_expand::{
     span::SpannedTypeRef,
 };
 use rowan::TextRange;
-use rustc_hash::FxHashMap;
+use stacksafe::stacksafe;
 use syntax::SourceFile;
 use syntax::stub::TypeRef;
 use vfs::FileId;
@@ -147,7 +147,9 @@ fn check_reference(
     into: &mut Vec<TypeRefDiag>,
 ) {
     match resolve_name_checked(db, scope, resolver, name) {
-        NameResolution::TypeVar => {}
+        // A local declaration ([JLS §14.3]) resolves in its own file, so the
+        // platform-API check of a canonically named class does not apply to it.
+        NameResolution::TypeVar | NameResolution::ResolvedLocal(_) => {}
         NameResolution::Resolved(name) => {
             // JEP 247: a name that resolves against the runtime JDK may still
             // be outside the platform API of the source set's `--release`.
@@ -459,7 +461,6 @@ pub(crate) fn declaration_type_diagnostics(
     let Some((map, source)) = range_ctx(db, file, tree.language) else {
         return Vec::new();
     };
-    let type_params = crate::java::db::type_params_map_query(db, db.file_text(file));
     let mut out = Vec::new();
 
     #[allow(clippy::too_many_arguments)]
@@ -470,12 +471,11 @@ pub(crate) fn declaration_type_diagnostics(
         tree: &ItemTree,
         map: &AstIdMap,
         source: &SourceFile,
-        type_params: &FxHashMap<ItemId, Vec<crate::java::resolve::ScopedTypeParam>>,
         outermost: &Name,
         id: ItemId,
         out: &mut Vec<DeclDiagnostic>,
     ) {
-        let resolver = Resolver::new(tree, type_params, id);
+        let resolver = Resolver::for_item(db, file_id, tree, id);
         let mut issues = Vec::new();
         // §9.6.4.6: the deprecation in force for this declaration — its own
         // `@Deprecated`, or the innermost enclosing one that carries it.
@@ -566,18 +566,14 @@ pub(crate) fn declaration_type_diagnostics(
             }
         }
         for &child in tree.data(id).body() {
-            walk(
-                db,
-                file_id,
-                scope,
-                tree,
-                map,
-                source,
-                type_params,
-                outermost,
-                child,
-                out,
-            );
+            walk(db, file_id, scope, tree, map, source, outermost, child, out);
+        }
+        // A local class-like declaration ([JLS §14.3]) is not a member, so it
+        // is not in any `body()`; its own declaration references (its
+        // supertypes above all) resolve in the lexical scope of the body that
+        // declares it, and its members' follow.
+        for local in tree.local_types_of(id) {
+            walk(db, file_id, scope, tree, map, source, outermost, local, out);
         }
     }
 
@@ -587,16 +583,7 @@ pub(crate) fn declaration_type_diagnostics(
     for &top in &tree.top {
         let outermost = hir::source_class_fqn(db, file, top).unwrap_or_else(|| Name::new(""));
         walk(
-            db,
-            file,
-            &scope,
-            tree,
-            map,
-            &source,
-            type_params.as_ref(),
-            &outermost,
-            top,
-            &mut out,
+            db, file, &scope, tree, map, &source, &outermost, top, &mut out,
         );
     }
     out.extend(import_diagnostics(db, &scope, tree, map, &source));
@@ -891,45 +878,81 @@ fn static_member_exists(
         .any(|method| method.is_static)
 }
 
-/// The type references *owned by a body* ([JLS §14], [§15]): the declared
-/// types of the locals it declares (parameters are reported through the
-/// declaration pass, which covers the method's signature), the pattern types
-/// of its `instanceof` tests and `case` labels, and the type references of its
-/// expressions (`new`, casts, array creations, class literals, method
+/// Visits every type reference *owned by a body* ([JLS §14], [§15]): the
+/// declared types of the locals it declares (parameters are reported through
+/// the declaration pass, which covers the method's signature), the pattern
+/// types of its `instanceof` tests and `case` labels, and the type references
+/// of its expressions (`new`, casts, array creations, class literals, method
 /// references, lambda parameter types, qualified `this`/`super`). Each comes
-/// with the body-IR location its diagnostics attach to.
+/// with the body-IR location its diagnostics attach to and with the *local*
+/// class-like declarations in scope where it is written ([JLS §6.3]), as the
+/// declaring items: `enclosing` seeds the walk with the declarations the body
+/// itself is inside, and the walk threads the scope through the block
+/// structure, so a reference is checked against exactly the declarations in
+/// scope at it — a declaration made later in the block, or in a block that has
+/// ended, is not one of them.
+pub(crate) fn for_each_body_type_ref(
+    bodies: &BodyTree,
+    body: BodyId,
+    enclosing: &[ItemId],
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
+) {
+    // The declarations the body is *already* inside ([§6.3]) — a body of a
+    // local class's member has that class (and every declaration enclosing it)
+    // in scope — then the ones its own statements make.
+    let mut scope = enclosing.to_vec();
+    for &stmt in &bodies.body(body).stmts {
+        walk_stmt(bodies, stmt, &mut scope, f);
+    }
+}
+
+/// The type references *owned by a body*, collected (see
+/// [`for_each_body_type_ref`]).
 pub(crate) fn body_type_refs(
     bodies: &BodyTree,
     body: BodyId,
 ) -> Vec<(DiagLocation, SpannedTypeRef)> {
     let mut out = Vec::new();
-    for &stmt in &bodies.body(body).stmts {
-        walk_stmt(bodies, stmt, &mut out);
-    }
+    for_each_body_type_ref(bodies, body, &[], &mut |location, spanned, _| {
+        out.push((location, spanned));
+    });
     out
 }
 
 /// The type references of an expression forest that is *not* Body-owned: a
 /// field initializer, enum constant arguments or an annotation element
-/// default.
+/// default. An expression forest declares nothing, so every reference is
+/// checked in the scope of the item that owns the forest ([`Resolver`]).
 pub(crate) fn expr_forest_type_refs(
     bodies: &BodyTree,
     exprs: &[ExprId],
 ) -> Vec<(DiagLocation, SpannedTypeRef)> {
     let mut out = Vec::new();
+    let mut scope = Vec::new();
     for &expr in exprs {
-        walk_expr(bodies, expr, &mut out);
+        walk_expr(bodies, expr, &mut scope, &mut |location, spanned, _| {
+            out.push((location, spanned));
+        });
     }
     out
 }
 
-fn record_local(bodies: &BodyTree, local: LocalId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
+fn record_local(
+    bodies: &BodyTree,
+    local: LocalId,
+    scope: &[ItemId],
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
+) {
     let binding = bodies.local(local);
     if let Some(ty) = &binding.ty {
-        out.push((DiagLocation::Local(local), ty.clone()));
+        f(DiagLocation::Local(local), ty.clone(), scope);
     }
     for annotation in &binding.annotations {
-        out.push((DiagLocation::Local(local), annotation_reference(annotation)));
+        f(
+            DiagLocation::Local(local),
+            annotation_reference(annotation),
+            scope,
+        );
     }
 }
 
@@ -953,68 +976,96 @@ fn annotation_reference(annotation: &hir_expand::span::AnnotationRef) -> Spanned
     }
 }
 
-fn record_pattern(bodies: &BodyTree, id: PatternId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
+fn record_pattern(
+    bodies: &BodyTree,
+    id: PatternId,
+    scope: &[ItemId],
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
+) {
     match bodies.pattern(id) {
         hir_expand::body::PatternData::Type(data) => {
-            out.push((DiagLocation::Pattern(id), data.ty.clone()));
+            f(DiagLocation::Pattern(id), data.ty.clone(), scope);
             // §14.30.1: the pattern's binding is a variable declaration, so
             // an annotation written before its type is one of its own
             // ([§9.7.4]).
             if let Some(binding) = data.binding {
                 for annotation in &bodies.local(binding).annotations {
-                    out.push((DiagLocation::Pattern(id), annotation_reference(annotation)));
+                    f(
+                        DiagLocation::Pattern(id),
+                        annotation_reference(annotation),
+                        scope,
+                    );
                 }
             }
         }
         hir_expand::body::PatternData::Record(data) => {
-            out.push((DiagLocation::Pattern(id), data.ty.clone()));
+            f(DiagLocation::Pattern(id), data.ty.clone(), scope);
             for &component in &data.components {
-                record_pattern(bodies, component, out);
+                record_pattern(bodies, component, scope, f);
             }
         }
         hir_expand::body::PatternData::MatchAll => {}
     }
 }
 
-fn walk_stmt(bodies: &BodyTree, id: StmtId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
+/// Walks a statement, threading the local class-like declarations in scope
+/// ([JLS §6.3]) and emitting every type reference it contains. `scope` is the
+/// enclosing block's scope, already extended with this statement's own
+/// declarations by the time a reference inside it is emitted.
+#[stacksafe]
+fn walk_stmt(
+    bodies: &BodyTree,
+    id: StmtId,
+    scope: &mut Vec<ItemId>,
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
+) {
     use StmtData::*;
     match bodies.stmt(id) {
-        // [JLS §14.3]: a local declaration's declaration type references are
-        // checked with its item ([`declaration_type_diagnostics`]), and its
-        // members' bodies are bodies of their own.
-        Empty | Missing | LocalClass { .. } => {}
+        // §14.3: a local class-like declaration is not a value, so it carries
+        // no type reference of its own here — its declaration references are
+        // checked with its item ([`declaration_type_diagnostics`]) and its
+        // members' bodies are bodies of their own. §6.3: it is in scope in its
+        // own body and for the rest of the enclosing block, so *later*
+        // references in that block see it.
+        Empty | Missing => {}
+        LocalClass { item } => scope.push(*item),
         Block(stmts) => {
+            // §6.3: a nested block is a scope of its own — a declaration made
+            // inside it is not in scope after it, while every enclosing
+            // declaration is.
+            let outer = scope.len();
             for &stmt in stmts {
-                walk_stmt(bodies, stmt, out);
+                walk_stmt(bodies, stmt, scope, f);
             }
+            scope.truncate(outer);
         }
         Decl { local, initializer } => {
-            record_local(bodies, *local, out);
+            record_local(bodies, *local, scope, f);
             if let Some(initializer) = initializer {
-                walk_expr(bodies, *initializer, out);
+                walk_expr(bodies, *initializer, scope, f);
             }
         }
         DeclGroup(stmts) => {
             for &stmt in stmts {
-                walk_stmt(bodies, stmt, out);
+                walk_stmt(bodies, stmt, scope, f);
             }
         }
-        Expr(expr) => walk_expr(bodies, *expr, out),
-        Labeled { stmt, .. } => walk_stmt(bodies, *stmt, out),
+        Expr(expr) => walk_expr(bodies, *expr, scope, f),
+        Labeled { stmt, .. } => walk_stmt(bodies, *stmt, scope, f),
         If { cond, then, els } => {
-            walk_expr(bodies, *cond, out);
-            walk_stmt(bodies, *then, out);
+            walk_expr(bodies, *cond, scope, f);
+            walk_stmt(bodies, *then, scope, f);
             if let Some(els) = els {
-                walk_stmt(bodies, *els, out);
+                walk_stmt(bodies, *els, scope, f);
             }
         }
         While { cond, body } => {
-            walk_expr(bodies, *cond, out);
-            walk_stmt(bodies, *body, out);
+            walk_expr(bodies, *cond, scope, f);
+            walk_stmt(bodies, *body, scope, f);
         }
         DoWhile { body, cond } => {
-            walk_stmt(bodies, *body, out);
-            walk_expr(bodies, *cond, out);
+            walk_stmt(bodies, *body, scope, f);
+            walk_expr(bodies, *cond, scope, f);
         }
         For {
             init,
@@ -1023,31 +1074,31 @@ fn walk_stmt(bodies: &BodyTree, id: StmtId, out: &mut Vec<(DiagLocation, Spanned
             body,
         } => {
             for &stmt in init {
-                walk_stmt(bodies, stmt, out);
+                walk_stmt(bodies, stmt, scope, f);
             }
             if let Some(cond) = cond {
-                walk_expr(bodies, *cond, out);
+                walk_expr(bodies, *cond, scope, f);
             }
             for &step in step {
-                walk_expr(bodies, step, out);
+                walk_expr(bodies, step, scope, f);
             }
-            walk_stmt(bodies, *body, out);
+            walk_stmt(bodies, *body, scope, f);
         }
         ForEach {
             var,
             iterable,
             body,
         } => {
-            record_local(bodies, *var, out);
-            walk_expr(bodies, *iterable, out);
-            walk_stmt(bodies, *body, out);
+            record_local(bodies, *var, scope, f);
+            walk_expr(bodies, *iterable, scope, f);
+            walk_stmt(bodies, *body, scope, f);
         }
-        Switch { scrutinee, arms } => walk_switch(bodies, *scrutinee, arms, out),
-        Return(Some(expr)) | Throw(expr) | Yield(expr) => walk_expr(bodies, *expr, out),
+        Switch { scrutinee, arms } => walk_switch(bodies, *scrutinee, arms, scope, f),
+        Return(Some(expr)) | Throw(expr) | Yield(expr) => walk_expr(bodies, *expr, scope, f),
         Return(None) | Break(_) | Continue(_) => {}
         Synchronized { expr, body } => {
-            walk_expr(bodies, *expr, out);
-            walk_stmt(bodies, *body, out);
+            walk_expr(bodies, *expr, scope, f);
+            walk_stmt(bodies, *body, scope, f);
         }
         Try {
             resources,
@@ -1056,24 +1107,24 @@ fn walk_stmt(bodies: &BodyTree, id: StmtId, out: &mut Vec<(DiagLocation, Spanned
             finally,
         } => {
             for resource in resources {
-                record_local(bodies, resource.local, out);
+                record_local(bodies, resource.local, scope, f);
                 if let Some(init) = resource.initializer {
-                    walk_expr(bodies, init, out);
+                    walk_expr(bodies, init, scope, f);
                 }
             }
-            walk_stmt(bodies, *body, out);
+            walk_stmt(bodies, *body, scope, f);
             for catch in catches {
-                record_local(bodies, catch.param, out);
-                walk_stmt(bodies, catch.body, out);
+                record_local(bodies, catch.param, scope, f);
+                walk_stmt(bodies, catch.body, scope, f);
             }
             if let Some(finally) = finally {
-                walk_stmt(bodies, *finally, out);
+                walk_stmt(bodies, *finally, scope, f);
             }
         }
         Assert { cond, msg } => {
-            walk_expr(bodies, *cond, out);
+            walk_expr(bodies, *cond, scope, f);
             if let Some(msg) = msg {
-                walk_expr(bodies, *msg, out);
+                walk_expr(bodies, *msg, scope, f);
             }
         }
     }
@@ -1083,28 +1134,35 @@ fn walk_switch(
     bodies: &BodyTree,
     scrutinee: ExprId,
     arms: &[hir_expand::body::SwitchArm],
-    out: &mut Vec<(DiagLocation, SpannedTypeRef)>,
+    scope: &mut Vec<ItemId>,
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
 ) {
-    walk_expr(bodies, scrutinee, out);
+    walk_expr(bodies, scrutinee, scope, f);
     for arm in arms {
         for label in &arm.labels {
             match label {
                 hir_expand::body::SwitchLabel::Expr(expr)
                 | hir_expand::body::SwitchLabel::Guard(expr) => {
-                    walk_expr(bodies, *expr, out);
+                    walk_expr(bodies, *expr, scope, f);
                 }
                 hir_expand::body::SwitchLabel::Pattern(pattern) => {
-                    record_pattern(bodies, *pattern, out);
+                    record_pattern(bodies, *pattern, scope, f);
                 }
             }
         }
         for &stmt in &arm.body {
-            walk_stmt(bodies, stmt, out);
+            walk_stmt(bodies, stmt, scope, f);
         }
     }
 }
 
-fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, SpannedTypeRef)>) {
+#[stacksafe]
+fn walk_expr(
+    bodies: &BodyTree,
+    id: ExprId,
+    scope: &mut Vec<ItemId>,
+    f: &mut impl FnMut(DiagLocation, SpannedTypeRef, &[ItemId]),
+) {
     use ExprData::*;
     match bodies.expr(id) {
         New {
@@ -1118,13 +1176,13 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             // checked against the file's imports/scope here. Resolution runs
             // at inference time against the receiver's inferred type.
             if receiver.is_none() {
-                out.push((DiagLocation::Expr(id), ty.clone()));
+                f(DiagLocation::Expr(id), ty.clone(), scope);
             }
             for &arg in args {
-                walk_expr(bodies, arg, out);
+                walk_expr(bodies, arg, scope, f);
             }
             if let Some(receiver) = receiver {
-                walk_expr(bodies, *receiver, out);
+                walk_expr(bodies, *receiver, scope, f);
             }
         }
         NewArray {
@@ -1132,30 +1190,30 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             dims,
             initializer,
         } => {
-            out.push((DiagLocation::Expr(id), ty.clone()));
+            f(DiagLocation::Expr(id), ty.clone(), scope);
             for &dim in dims {
-                walk_expr(bodies, dim, out);
+                walk_expr(bodies, dim, scope, f);
             }
             if let Some(elems) = initializer {
                 for &elem in elems {
-                    walk_expr(bodies, elem, out);
+                    walk_expr(bodies, elem, scope, f);
                 }
             }
         }
         Cast { ty, expr } => {
-            out.push((DiagLocation::Expr(id), ty.clone()));
-            walk_expr(bodies, *expr, out);
+            f(DiagLocation::Expr(id), ty.clone(), scope);
+            walk_expr(bodies, *expr, scope, f);
         }
         InstanceOf { expr, ty, pattern } => {
             if let Some(ty) = ty {
-                out.push((DiagLocation::Expr(id), ty.clone()));
+                f(DiagLocation::Expr(id), ty.clone(), scope);
             }
-            walk_expr(bodies, *expr, out);
+            walk_expr(bodies, *expr, scope, f);
             if let Some(pattern) = pattern {
-                record_pattern(bodies, *pattern, out);
+                record_pattern(bodies, *pattern, scope, f);
             }
         }
-        ClassLit(ty) => out.push((DiagLocation::Expr(id), ty.clone())),
+        ClassLit(ty) => f(DiagLocation::Expr(id), ty.clone(), scope),
         MethodCall {
             receiver,
             type_args,
@@ -1163,13 +1221,13 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             ..
         } => {
             for ty in type_args {
-                out.push((DiagLocation::Expr(id), ty.clone()));
+                f(DiagLocation::Expr(id), ty.clone(), scope);
             }
             if let Some(receiver) = receiver {
-                walk_expr(bodies, *receiver, out);
+                walk_expr(bodies, *receiver, scope, f);
             }
             for &arg in args {
-                walk_expr(bodies, arg, out);
+                walk_expr(bodies, arg, scope, f);
             }
         }
         MethodRef {
@@ -1178,71 +1236,75 @@ fn walk_expr(bodies: &BodyTree, id: ExprId, out: &mut Vec<(DiagLocation, Spanned
             ..
         } => {
             if let Some(ty) = type_name {
-                out.push((DiagLocation::Expr(id), ty.clone()));
+                f(DiagLocation::Expr(id), ty.clone(), scope);
             }
             if let Some(qualifier) = qualifier {
-                walk_expr(bodies, *qualifier, out);
+                walk_expr(bodies, *qualifier, scope, f);
             }
         }
         Lambda { params, body } => {
             for param in params {
                 if let Some(ty) = &param.ty {
-                    out.push((DiagLocation::Expr(id), ty.clone()));
+                    f(DiagLocation::Expr(id), ty.clone(), scope);
                 }
                 // §15.27.1/[§9.7.4]: a lambda parameter's declaration
                 // annotations, like a formal parameter's.
                 for annotation in &param.annotations {
-                    out.push((DiagLocation::Expr(id), annotation_reference(annotation)));
+                    f(
+                        DiagLocation::Expr(id),
+                        annotation_reference(annotation),
+                        scope,
+                    );
                 }
             }
             match body {
-                hir_expand::body::LambdaBody::Expr(expr) => walk_expr(bodies, *expr, out),
-                hir_expand::body::LambdaBody::Block(stmt) => walk_stmt(bodies, *stmt, out),
+                hir_expand::body::LambdaBody::Expr(expr) => walk_expr(bodies, *expr, scope, f),
+                hir_expand::body::LambdaBody::Block(stmt) => walk_stmt(bodies, *stmt, scope, f),
             }
         }
         This { qualifier } | Super { qualifier } => {
             if let Some(ty) = qualifier {
-                out.push((DiagLocation::Expr(id), ty.clone()));
+                f(DiagLocation::Expr(id), ty.clone(), scope);
             }
         }
         FieldAccess { target, .. } => {
             if let Some(target) = target {
-                walk_expr(bodies, *target, out);
+                walk_expr(bodies, *target, scope, f);
             }
         }
         ArrayAccess { array, index } => {
-            walk_expr(bodies, *array, out);
-            walk_expr(bodies, *index, out);
+            walk_expr(bodies, *array, scope, f);
+            walk_expr(bodies, *index, scope, f);
         }
-        Unary { expr, .. } | Postfix { expr, .. } => walk_expr(bodies, *expr, out),
+        Unary { expr, .. } | Postfix { expr, .. } => walk_expr(bodies, *expr, scope, f),
         Binary { lhs, rhs, .. } => {
-            walk_expr(bodies, *lhs, out);
-            walk_expr(bodies, *rhs, out);
+            walk_expr(bodies, *lhs, scope, f);
+            walk_expr(bodies, *rhs, scope, f);
         }
         Assign { lhs, rhs, .. } => {
-            walk_expr(bodies, *lhs, out);
-            walk_expr(bodies, *rhs, out);
+            walk_expr(bodies, *lhs, scope, f);
+            walk_expr(bodies, *rhs, scope, f);
         }
         Conditional { cond, then, els } => {
-            walk_expr(bodies, *cond, out);
-            walk_expr(bodies, *then, out);
-            walk_expr(bodies, *els, out);
+            walk_expr(bodies, *cond, scope, f);
+            walk_expr(bodies, *then, scope, f);
+            walk_expr(bodies, *els, scope, f);
         }
-        Paren(expr) => walk_expr(bodies, *expr, out),
-        Switch { scrutinee, arms } => walk_switch(bodies, *scrutinee, arms, out),
+        Paren(expr) => walk_expr(bodies, *expr, scope, f),
+        Switch { scrutinee, arms } => walk_switch(bodies, *scrutinee, arms, scope, f),
         CtorCall { args, .. } => {
             for &arg in args {
-                walk_expr(bodies, arg, out);
+                walk_expr(bodies, arg, scope, f);
             }
         }
         ArrayInit(elems) => {
             for &elem in elems {
-                walk_expr(bodies, elem, out);
+                walk_expr(bodies, elem, scope, f);
             }
         }
         Template { args } => {
             for &arg in args {
-                walk_expr(bodies, arg, out);
+                walk_expr(bodies, arg, scope, f);
             }
         }
         Literal(_) | Null | Var(_) | NamePath(_) | Missing => {}

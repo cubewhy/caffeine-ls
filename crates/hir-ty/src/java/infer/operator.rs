@@ -3,7 +3,6 @@
 //! [§15.25], and the source symbols used in [`TypeError::IncompatibleOperand`].
 
 use hir_expand::body::{BinaryOp, ExprId, UnaryOp};
-use rustc_hash::FxHashMap;
 use syntax::stub::PrimitiveType;
 
 use crate::java::{
@@ -200,7 +199,7 @@ impl InferCtx<'_> {
             // code.
             self.check_condition(lhs);
             let (lhs_true_flow, lhs_false_flow) = self.take_bool_outcomes();
-            self.scopes.push(FxHashMap::default());
+            self.push_scope();
             // §6.3.2: the pattern variables of the left operand that are
             // *definitely matched* when the right operand evaluates are in
             // scope there — for `a && b` the true flow of `a` (b runs only
@@ -227,7 +226,7 @@ impl InferCtx<'_> {
             }
             self.check_condition(rhs);
             let (rhs_true_flow, rhs_false_flow) = self.take_bool_outcomes();
-            self.scopes.pop();
+            self.pop_scope();
             // §16.1.2/[§16.1.3]: `a && b` is true only via (a true, b true);
             // false via (a false) or (a true, b false). `a || b` is true via
             // (a true) or (a false, b true); false only via (a false,

@@ -3548,9 +3548,16 @@ pub fn check_source_methods_site(
             Some(method) => format!("{} -> {}", method.display(&db), method.ret.display(&db)),
             None => "<none>".to_owned(),
         };
+        // The context class renders as the name a diagnostic would use, so
+        // the snapshot stays readable whether the class is named or *local*
+        // ([JLS §6.7]).
+        let enclosing = ctx
+            .enclosing_class
+            .as_ref()
+            .map(|class| class.display_name(&db).as_str().to_owned());
         lines.push(format!(
             "{label}: {rendered} [ctx: class={:?}, package={:?}] [args: {}]",
-            ctx.enclosing_class,
+            enclosing,
             ctx.package,
             arg_types.join(", ")
         ));
