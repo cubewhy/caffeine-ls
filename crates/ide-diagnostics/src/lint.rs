@@ -132,7 +132,7 @@ pub(crate) struct SuppressionScope {
 /// A warning at `range` is suppressed when some returned scope both contains
 /// `range` and carries its key; [`is_suppressed`] performs that check.
 pub(crate) fn suppression_scopes(db: &dyn TyDatabase, file_id: FileId) -> Vec<SuppressionScope> {
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let Some((_map, source)) = hir_ty::java::range_ctx::range_ctx(db, file_id, tree.language)
     else {
         return Vec::new();

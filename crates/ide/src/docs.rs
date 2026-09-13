@@ -31,8 +31,7 @@ pub fn render_javadoc_of(raw: &str, owner: &str) -> String {
 /// The documentation of declaration `item` in `file`, rendered as Markdown.
 /// `None` when it has no doc comment, or when the language's arm has none.
 pub(crate) fn hover_docs(db: &RootDatabase, file: FileId, item: ItemId) -> Option<String> {
-    let tree = hir::file_item_tree(db, file);
-    match tree.language {
+    match hir::file_item_tree(db, file).language() {
         // Placeholder: Kotlin has no HIR lowering, so a KDoc comment has no
         // declaration to attach to. The lexer already carries one
         // (`kotlin-syntax`'s `SyntaxKind::KDOC`); `hir-def`'s
@@ -42,6 +41,7 @@ pub(crate) fn hover_docs(db: &RootDatabase, file: FileId, item: ItemId) -> Optio
         // `nav::kotlin`.
         LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
         _ => {
+            let tree = hir::java_item_tree(db, file);
             let raw = hir::item_doc(db, file, item)?;
             let owner = tree.data(item).name().map(|name| name.simple_name());
             let rendered = javadoc::render(raw, owner);

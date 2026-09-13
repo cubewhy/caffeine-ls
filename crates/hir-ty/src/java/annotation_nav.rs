@@ -68,7 +68,7 @@ pub fn annotation_target(
     file: FileId,
     offset: TextSize,
 ) -> Option<AnnotationTarget> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let (map, source) = range_ctx(db, file, tree.language)?;
     let root = java_root(&source)?;
     // The innermost annotation the offset is written in: for a nested
@@ -522,7 +522,7 @@ fn type_target(cx: &NavCtx<'_>, text: &str) -> Option<AnnotationTarget> {
 fn is_annotation_interface(db: &dyn TyDatabase, scope: &hir::ResolutionScope, fqn: &Name) -> bool {
     match hir::fqn_resolve(db, scope, fqn.as_str()) {
         Some(hir::Resolved::Source(class)) => matches!(
-            hir::file_item_tree(db, class.file).data(class.item),
+            hir::java_item_tree(db, class.file).data(class.item),
             ItemData::Annotation(_)
         ),
         Some(hir::Resolved::Library(resolved)) => {

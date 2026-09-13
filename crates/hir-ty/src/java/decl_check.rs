@@ -1043,7 +1043,7 @@ pub fn module_diagnostics(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnost
 
 /// §7.7.1/[§7.7.2: the module-directive checks of `file`'s `module-info.java`.
 pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let Some(top) = tree
         .top
         .iter()
@@ -1119,7 +1119,7 @@ pub(crate) fn module_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<
 /// Enumerates the class-like declarations of the file in source order and
 /// checks each against its inheritance graph.
 pub(crate) fn class_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<DeclDiagnostic> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let scope = scope_for_file(db, file);
     let mut out = Vec::new();
 
@@ -1535,7 +1535,7 @@ fn check_class(
         && let Some(super_ty) = first_concrete_descendant_super(
             db,
             scope,
-            hir::file_item_tree(db, file),
+            hir::java_item_tree(db, file),
             item,
             &resolver,
             super_ref,
@@ -2467,7 +2467,7 @@ fn first_concrete_descendant_super(
         let hir::Resolved::Source(next) = resolved else {
             return None;
         };
-        let next_tree: Arc<ItemTree> = hir::file_item_tree(db, next.file);
+        let next_tree: Arc<ItemTree> = hir::java_item_tree(db, next.file);
         let Some(ItemData::Class(next_class)) =
             crate::java::resolve::item_data(&next_tree, next.item)
         else {
@@ -2981,7 +2981,7 @@ fn sealed_permits(
     let resolved = hir::fqn_resolve(db, scope, fqn)?;
     match resolved {
         hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             let (permits, sealed) = match tree.data(source.item) {
                 ItemData::Class(d) | ItemData::Interface(d) => {
                     (&d.permits, d.modifiers.is_sealed())
@@ -3958,7 +3958,7 @@ fn local_class_diagnostics(
 fn class_is_sealed(db: &dyn TyDatabase, resolved: &hir::Resolved) -> bool {
     match resolved {
         hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             class_like_modifiers(tree.data(source.item)).is_some_and(|m| m.is_sealed())
         }
         hir::Resolved::Library(class) => hir::class_record(db, class)
@@ -4056,7 +4056,7 @@ fn local_redeclaration_is_legal(
 /// source declaration's own name, or the last segment of a classpath name.
 fn class_simple_name(db: &dyn TyDatabase, resolved: &hir::Resolved) -> Name {
     match resolved {
-        hir::Resolved::Source(source) => hir::file_item_tree(db, source.file)
+        hir::Resolved::Source(source) => hir::java_item_tree(db, source.file)
             .data(source.item)
             .name()
             .cloned()

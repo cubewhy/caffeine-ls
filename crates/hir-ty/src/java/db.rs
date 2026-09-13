@@ -125,7 +125,7 @@ pub(crate) fn type_params_map_query(
     file: FileText,
 ) -> Arc<FxHashMap<ItemId, Vec<resolve::ScopedTypeParam>>> {
     let file_id = *file.file_id(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     Arc::new(resolve::type_params_map(&tree, file_id))
 }
 
@@ -141,7 +141,7 @@ pub(crate) fn local_decl_sites_query(
     file: FileText,
 ) -> Arc<FxHashMap<ItemId, resolve::LocalDeclSite>> {
     let file_id = *file.file_id(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let bodies = hir::file_body_tree(db, file_id);
     Arc::new(resolve::local_decl_sites(&tree, &bodies, file_id))
 }
@@ -167,7 +167,7 @@ pub(crate) fn deprecated_enclosing_query(
     file: FileText,
 ) -> Arc<FxHashMap<ItemId, DeprecationInfo>> {
     let file_id = *file.file_id(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let scope = scope_for_file(db, file_id);
     let mut map: FxHashMap<ItemId, DeprecationInfo> = FxHashMap::default();
     fn walk(
@@ -216,7 +216,7 @@ pub(crate) fn enclosing_class_query(
     file: FileText,
 ) -> Arc<FxHashMap<ItemId, crate::java::method::ClassKey>> {
     let file_id = *file.file_id(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let mut map: FxHashMap<ItemId, crate::java::method::ClassKey> = FxHashMap::default();
     fn walk(
         tree: &hir_def::java::item_tree::ItemTree,
@@ -256,7 +256,7 @@ pub(crate) fn enclosing_class_query(
 pub(crate) fn item_ty_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> Ty {
     let file_id = key.file(db);
     let item_id = key.item(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let Some(data) = item_data(&tree, item_id) else {
         return Ty::error(db);
     };
@@ -289,7 +289,7 @@ pub(crate) fn item_ty_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> 
 pub(crate) fn method_params_query<'db>(db: &'db dyn TyDatabase, key: ItemKey<'db>) -> Vec<Ty> {
     let file_id = key.file(db);
     let item_id = key.item(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let Some(data) = item_data(&tree, item_id) else {
         return Vec::new();
     };
@@ -315,7 +315,7 @@ pub(crate) fn record_component_types_query<'db>(
 ) -> Vec<Ty> {
     let file_id = key.file(db);
     let item_id = key.item(db);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let Some(data) = item_data(&tree, item_id) else {
         return Vec::new();
     };
@@ -454,7 +454,7 @@ pub(crate) fn access_context_key_query<'db>(
     // The compilation unit's package ([§6.6.1]); the unnamed package
     // ([§7.4.2]) is `""`, so a `None` context package is never permissive.
     let package = Some(
-        hir::file_item_tree(db, file)
+        hir::java_item_tree(db, file)
             .package
             .clone()
             .unwrap_or_else(|| Name::new("")),

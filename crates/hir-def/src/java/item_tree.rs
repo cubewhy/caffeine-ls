@@ -5,9 +5,10 @@
 //! directive gets a stable [`ItemId`]. The *bodies* of methods, initializers,
 //! field initializers, enum constant arguments and annotation element defaults
 //! are lowered into the per-file [`hir_expand::body::BodyTree`], which lives
-//! *beside* the item tree ([`LoweredFile`]) rather than inside it: keeping the
-//! body content out of the memoized item tree lets salsa backdate the
-//! signature-level queries across edits that only touch a method body.
+//! *beside* the item tree ([`crate::item_tree::LoweredFile`]) rather than
+//! inside it: keeping the body content out of the memoized item tree lets
+//! salsa backdate the signature-level queries across edits that only touch a
+//! method body.
 //!
 //! The item tree carries **no source offsets**: every lowered declaration
 //! anchors itself to its syntax node with a
@@ -26,12 +27,10 @@
 //! signature independent of the source language. Kotlin will lower its own
 //! item tree against the same JVM substrate.
 
-use triomphe::Arc;
-
 use hir_expand::{
     arena::Arena,
     ast_id_map::{AstIdMap, FileAstId, node_ptr},
-    body::{BodyId, BodyTree, ExprId},
+    body::{BodyId, ExprId},
     name::Name,
     span::{AnnotationRef, AnnotationValue, SpannedTypeRef},
 };
@@ -193,22 +192,6 @@ impl ItemTree {
             _ => panic!("FieldId for non-field item: {id:?}"),
         }
     }
-}
-
-/// The full per-file lowering: the declaration [`ItemTree`] plus the body IR
-/// ([`hir_expand::body::BodyTree`]), lowered together in one pass so the body
-/// ids stored in the item data line up with the body arenas. Computed by two
-/// salsa queries (`hir_def::db::item_tree_query` /
-/// `hir_def::db::body_tree_query`) and read through their
-/// [`file_item_tree`](crate::db::file_item_tree) /
-/// [`file_body_tree`](crate::db::file_body_tree) accessors. Because the item
-/// tree carries no body content, edits that only change a method body leave
-/// its value unchanged, letting salsa backdate signature consumers
-/// (`file_symbols_query`, `supertypes_query`, ...) instead of re-running them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LoweredFile {
-    pub items: Arc<ItemTree>,
-    pub bodies: Arc<BodyTree>,
 }
 
 /// A lowered declaration or member.

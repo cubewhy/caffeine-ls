@@ -1,9 +1,11 @@
 //! Definition lowering: CST → item tree.
 //!
-//! `hir-def` turns the syntax tree of a single file into the flat, arena-based
-//! [`crate::java::item_tree::ItemTree`]. Java is fully lowered; Kotlin is a
-//! placeholder for now. Lowering is a pure function of the parsed file, so it
-//! is computed by a salsa query ([`crate::db`]) and cached per file.
+//! `hir-def` turns the syntax tree of a single file into a flat, arena-based
+//! declaration model. Every language lowers into its own model
+//! ([`java::item_tree::ItemTree`] today) and hands it to the IDE through the
+//! language-neutral facade ([`FileItemTree`]). Lowering is a pure function of
+//! the parsed file, so it is computed by a salsa query ([`db`]) and cached per
+//! file.
 //!
 //! # Namespaces
 //!
@@ -13,23 +15,20 @@
 //!   qualified names and the shared declaration stubs, free of any Java or
 //!   Kotlin syntax concepts;
 //! * [`java`] — Java-specific syntax and semantics: the modifier model, the
-//!   declaration layer ([`crate::java::item_tree`]) and its lowering;
-//! * [`kotlin`] — the Kotlin scaffold.
+//!   declaration layer ([`java::item_tree`]) and its lowering;
+//! * [`kotlin`] — the Kotlin scaffold;
+//! * [`item_tree`] / [`lower`] / [`pretty`] — the language-neutral facade:
+//!   what the IDE reads ([`FileItemTree`]), the lowering entry point that
+//!   dispatches on the file's language, and the snapshot surface.
 
 pub mod db;
+pub mod item_tree;
 pub mod java;
 pub mod jvm;
 pub mod kotlin;
+pub mod lower;
+pub mod pretty;
 
 pub use db::{DefDatabase, file_body_tree, file_item_tree};
-
-/// Lowers `text` for `language` into the file's item tree plus body IR
-/// ([`crate::java::item_tree::LoweredFile`]), anchoring every declaration to
-/// its syntax node through `map`.
-pub fn lower_source(
-    language: base_db::LanguageKind,
-    text: &str,
-    map: &hir_expand::ast_id_map::AstIdMap,
-) -> crate::java::item_tree::LoweredFile {
-    crate::java::lower::lower_source(language, text, map)
-}
+pub use item_tree::{FileItemTree, LoweredFile};
+pub use lower::lower_source;

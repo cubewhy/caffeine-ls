@@ -1,7 +1,7 @@
 //! Kotlin lowering placeholder.
 //!
-//! `hir-def` currently lowers Java; Kotlin files produce an empty item tree
-//! ([`crate::java::lower::lower_source`]). The Kotlin CST is parsed by
+//! `hir-def` currently lowers Java; a Kotlin file lowers to no items
+//! ([`crate::lower::lower_source`]). The Kotlin CST is parsed by
 //! `kotlin-syntax`; lowering it into a Kotlin item tree on top of the JVM
 //! substrate ([`crate::jvm`]) is the next step. Nothing here yet — the module
 //! exists so the Kotlin namespace ([`crate::kotlin`]) has a place to grow

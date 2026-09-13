@@ -132,7 +132,7 @@ mod tests {
 
     use super::*;
     use crate::db::{
-        ResolutionScope, Resolved, file_item_tree, fqn_resolve, set_project_graph,
+        ResolutionScope, Resolved, fqn_resolve, java_item_tree, set_project_graph,
         source_set_for_file,
     };
     use crate::{HirDatabase, HirState, JavaDatabase, JvmDatabase, KotlinDatabase, LibraryKind};
@@ -553,13 +553,13 @@ mod tests {
         let mut change = FileChange::default();
         change.change_file(other_id, Some("class Z {}\n".to_owned()));
         change.apply(&mut db);
-        let _ = file_item_tree(&db, other_id);
+        let _ = java_item_tree(&db, other_id);
     }
 
     /// Renders the file's item tree like the lower snapshots, resolving the
     /// declaration ranges from the file's parse.
     fn pretty(db: &TestDatabase, file_id: FileId) -> String {
-        let tree = file_item_tree(db, file_id);
+        let tree = java_item_tree(db, file_id);
         let language = tree.language;
         assert_ne!(language, base_db::LanguageKind::Unknown);
         let parse = base_db::parse(db, file_id, language);

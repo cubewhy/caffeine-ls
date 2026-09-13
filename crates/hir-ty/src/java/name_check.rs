@@ -366,7 +366,7 @@ pub fn item_type_references(
     file: FileId,
     item: ItemId,
 ) -> Vec<(Name, Option<TextRange>)> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let Some((map, source)) = range_ctx(db, file, tree.language) else {
         return Vec::new();
     };
@@ -431,7 +431,7 @@ pub fn item_annotation_references(
     file: FileId,
     item: ItemId,
 ) -> Vec<(Name, Option<TextRange>)> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let Some((map, source)) = range_ctx(db, file, tree.language) else {
         return Vec::new();
     };

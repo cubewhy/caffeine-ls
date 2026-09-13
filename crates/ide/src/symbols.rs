@@ -96,7 +96,7 @@ pub struct WorkspaceSymbolSummary {
 pub fn document_symbols(db: &RootDatabase, file_id: FileId) -> Vec<DocumentSymbol> {
     let symbols = hir::file_symbols(db, file_id);
     let names: FxHashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let ctx = range_ctx(db, file_id, tree.language);
     let mut out = Vec::with_capacity(symbols.len() + 1);
     if !symbols.is_empty() {
@@ -160,7 +160,7 @@ fn record_members(
         return Vec::new();
     };
     let mut members = Vec::with_capacity(record.components.len() + 1);
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let ctx = range_ctx(db, file_id, tree.language);
     let component_tys: Arc<Vec<String>> = Arc::new(
         hir_ty::record_component_types(db, file_id, symbol.item.unwrap())
@@ -251,7 +251,7 @@ fn record_members(
 /// top-level types. The unnamed package ([JLS §7.4.2](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html#jls-7.4.2))
 /// is rendered explicitly as `<default package>`.
 fn package_symbol(db: &RootDatabase, file_id: FileId) -> DocumentSymbol {
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let name = tree
         .package
         .as_ref()
@@ -328,7 +328,7 @@ pub fn method_signature(
     include_return: bool,
 ) -> String {
     let is_constructor = matches!(
-        hir::file_item_tree(db, file_id).data(item),
+        hir::java_item_tree(db, file_id).data(item),
         ItemData::Method(method) if method.is_constructor()
     );
     let ret = if include_return && !is_constructor {
@@ -347,7 +347,7 @@ fn render_params(
     file_id: FileId,
     item: hir::hir_def::java::item_tree::ItemId,
 ) -> String {
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let varargs = matches!(
         tree.data(item),
         ItemData::Method(method) if method.sig.params.last().is_some_and(|param| param.varargs)
@@ -467,7 +467,7 @@ pub fn source_symbol_range(db: &RootDatabase, file_id: FileId, item: u32) -> Opt
     {
         return None;
     }
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let (map, source) = range_ctx(db, file_id, tree.language)?;
     hir::hir_def::java::ranges::item_range(&map, &source, &tree, item)
 }

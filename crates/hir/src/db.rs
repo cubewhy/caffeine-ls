@@ -157,11 +157,11 @@ pub struct HirState {
 
 /// The JVM substrate database: the classpath, bytecode and resolved class
 /// hierarchy. This is the floor of the `hir` layer — a [`SourceDatabase`]
-/// plus the `hir-def` Java file HIR — that owns the session-wide [`HirState`]
-/// (the symbol interner, the per-library index cache and the persistent stub
-/// cache).
+/// plus the `hir-def` file HIR and JVM substrate — that owns the session-wide
+/// [`HirState`] (the symbol interner, the per-library index cache and the
+/// persistent stub cache).
 #[salsa::db]
-pub trait JvmDatabase: SourceDatabase + hir_def::java::db::JavaDatabase {
+pub trait JvmDatabase: SourceDatabase + hir_def::db::DefDatabase {
     fn hir_state(&self) -> &HirState;
 }
 
@@ -181,12 +181,27 @@ pub trait KotlinDatabase: JvmDatabase {}
 #[salsa::db]
 pub trait HirDatabase: JavaDatabase + KotlinDatabase {}
 
-/// The lowered item tree of a source file (see `hir_def::file_item_tree`).
-pub fn file_item_tree(
+/// The lowered item tree of a source file, in whichever language the file is
+/// — the accessor every language-dispatched feature reads (see
+/// `hir_def::file_item_tree`).
+pub fn file_item_tree(db: &dyn HirDatabase, file_id: FileId) -> Arc<hir_def::FileItemTree> {
+    hir_def::file_item_tree(db, file_id)
+}
+
+/// The lowered item tree of a source file as the *Java* declaration model.
+///
+/// A file that is not Java — or has not been lowered — yields an empty tree,
+/// which is what the Java-only paths saw before the facade existed; they must
+/// not rely on it to tell a Java file apart (they take a file they know is
+/// Java).
+pub fn java_item_tree(
     db: &dyn HirDatabase,
     file_id: FileId,
 ) -> Arc<hir_def::java::item_tree::ItemTree> {
-    hir_def::file_item_tree(db, file_id)
+    match file_item_tree(db, file_id).as_java() {
+        Some(tree) => tree.clone(),
+        None => Arc::new(hir_def::java::item_tree::ItemTree::default()),
+    }
 }
 
 /// The lowered body tree of a source file (see `hir_def::file_body_tree`).
@@ -670,7 +685,7 @@ fn debug_path(db: &dyn HirDatabase, file: FileId) -> String {
 #[salsa::tracked(returns(ref))]
 fn file_symbols_query(db: &dyn HirDatabase, file: FileText) -> Arc<[SourceSymbol]> {
     let file_id = *file.file_id(db);
-    let tree = file_item_tree(db, file_id);
+    let tree = java_item_tree(db, file_id);
     let symbols = collect_file_symbols(&tree);
     tracing::debug!(
         file_id = ?file_id,
@@ -826,7 +841,7 @@ fn file_docs_query(db: &dyn HirDatabase, file: FileText) -> Arc<DocIndex> {
             entries: Box::new([]),
         });
     }
-    let tree = file_item_tree(db, file_id);
+    let tree = java_item_tree(db, file_id);
     let map = hir_def::db::ast_id_map(db, file_id, language);
     let parse = parse(db, file_id, language);
     let source = parse.syntax_node(language);
@@ -953,7 +968,7 @@ fn source_set_symbol_index_query(
 #[salsa::tracked(returns(clone))]
 fn file_package_query(db: &dyn HirDatabase, file: FileText) -> Name {
     let file_id = *file.file_id(db);
-    file_item_tree(db, file_id)
+    java_item_tree(db, file_id)
         .package
         .clone()
         .unwrap_or_else(|| Name::new(""))

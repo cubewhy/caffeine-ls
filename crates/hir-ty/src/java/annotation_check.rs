@@ -1727,7 +1727,7 @@ fn enum_constants(
     let resolved = hir::fqn_resolve(db, scope, name.as_str())?;
     match resolved {
         hir::Resolved::Source(source) => {
-            let source_tree = hir::file_item_tree(db, source.file);
+            let source_tree = hir::java_item_tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Enum(_)) {
                 return None;
             }
@@ -1798,7 +1798,7 @@ fn annotation_type(
     let ty = Ty::reference(db, fqn, Vec::new());
     match hir::fqn_resolve(db, scope, fqn)? {
         hir::Resolved::Source(source) => {
-            let source_tree = hir::file_item_tree(db, source.file);
+            let source_tree = hir::java_item_tree(db, source.file);
             if !matches!(source_tree.data(source.item), ItemData::Annotation(_)) {
                 return None;
             }
@@ -1927,7 +1927,7 @@ fn resolve_annotation_type(
     let fqn = fqn.as_str();
     match hir::fqn_resolve(db, scope, fqn)? {
         hir::Resolved::Source(source) => {
-            let source_tree = hir::file_item_tree(db, source.file);
+            let source_tree = hir::java_item_tree(db, source.file);
             match source_tree.data(source.item) {
                 ItemData::Annotation(annotation) => {
                     // The `@Target` argument list was lowered with the

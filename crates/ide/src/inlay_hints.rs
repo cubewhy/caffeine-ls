@@ -112,7 +112,7 @@ pub fn inlay_hints(
     range: TextRange,
     config: &InlayHintsConfig,
 ) -> Vec<InlayHint> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::hints(db, file, range, config),
         // `Unknown` is a file with no source root yet (opened before the
         // workspace loaded) or a non-JVM file; it lowers to an empty item tree
@@ -138,7 +138,7 @@ pub fn pending_library_files(
     range: TextRange,
     config: &InlayHintsConfig,
 ) -> Vec<crate::nav::LibraryFileRef> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => Vec::new(),
         _ => java::pending_library_files(db, file, range, config),
     }
@@ -154,7 +154,7 @@ pub fn inlay_hint_resolve(
     kind: InlayHintKind,
     config: &InlayHintsConfig,
 ) -> Option<InlayHintDetail> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => {
             kotlin::resolve(db, file, offset, kind, config)
         }

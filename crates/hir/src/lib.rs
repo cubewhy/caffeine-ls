@@ -21,11 +21,11 @@ pub use db::{
     LibraryId, LibraryKind, ProjectGraph, ResolutionScope, Resolved, ResolvedClass, SourceClass,
     class_generic_info, class_record, classpath, classpath_libraries, enable_persistent_stub_cache,
     file_body_tree, file_docs, file_item_tree, file_package_dir, file_path_segments, file_symbols,
-    fqn_resolve, item_doc, jdk_builtin_libraries, language_level_for_file, library_name_index,
-    module_record, package_exists, project_graph, prune_stub_cache, registered_libraries,
-    release_for_file, release_for_source_set, resolve_in_libraries, set_project_graph,
-    source_class_fqn, source_set_for_file, source_set_fqn_symbols, source_set_package_files,
-    source_set_symbols, super_types, warmup_library,
+    fqn_resolve, item_doc, java_item_tree, jdk_builtin_libraries, language_level_for_file,
+    library_name_index, module_record, package_exists, project_graph, prune_stub_cache,
+    registered_libraries, release_for_file, release_for_source_set, resolve_in_libraries,
+    set_project_graph, source_class_fqn, source_set_for_file, source_set_fqn_symbols,
+    source_set_package_files, source_set_symbols, super_types, warmup_library,
 };
 pub use index::{ClassEntry, LibraryIndex, ModuleEntry, NameIndex};
 pub use lib_source::{

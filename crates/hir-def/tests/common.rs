@@ -21,7 +21,7 @@ pub fn check_lower_language(language: LanguageKind, src: &str) -> String {
     };
 
     let lowered = hir_def::lower_source(language, src, &map);
-    let rendered = hir_def::java::pretty::pretty_print(&lowered.items, &map, &source);
+    let rendered = hir_def::pretty::pretty_print(&lowered, &map, &source);
 
     format!(
         "\
@@ -52,8 +52,8 @@ pub fn check_lower_bodies(src: &str) -> String {
     };
 
     let lowered = hir_def::lower_source(LanguageKind::Java, src, &map);
-    let rendered = hir_def::java::pretty::pretty_print(&lowered.items, &map, &source);
-    let bodies = hir_def::java::pretty::pretty_body(&lowered.items, &lowered.bodies);
+    let rendered = hir_def::pretty::pretty_print(&lowered, &map, &source);
+    let bodies = hir_def::pretty::pretty_body(&lowered);
 
     format!(
         "\

@@ -122,7 +122,7 @@ impl ClassKey {
     pub fn of_resolved(db: &dyn TyDatabase, resolved: &hir::Resolved) -> ClassKey {
         match resolved {
             hir::Resolved::Source(class) => {
-                ClassKey::of(&hir::file_item_tree(db, class.file), class.file, class.item)
+                ClassKey::of(&hir::java_item_tree(db, class.file), class.file, class.item)
             }
             hir::Resolved::Library(_) => ClassKey::Named(resolved.fqn(db).as_name().clone()),
         }
@@ -135,7 +135,7 @@ impl ClassKey {
         match self {
             ClassKey::Named(fqn) => Name::new(fqn.simple_name()),
             ClassKey::Local(class) => {
-                let tree = hir::file_item_tree(db, class.file);
+                let tree = hir::java_item_tree(db, class.file);
                 tree.data(class.item)
                     .name()
                     .cloned()
@@ -205,7 +205,7 @@ impl ClassKey {
             // package plus the first type name ([§6.7]).
             ClassKey::Named(fqn) => Some(Name::new(&source_top_level(package, fqn.as_str()))),
             ClassKey::Local(class) => {
-                let tree = hir::file_item_tree(db, class.file);
+                let tree = hir::java_item_tree(db, class.file);
                 crate::java::resolve::enclosing_type_chain(&tree, class.item)
                     .last()
                     .cloned()
@@ -359,7 +359,7 @@ pub fn class_declares_type_params(
                 .map(|info| !info.type_params.is_empty())
         }
         Some(hir::Resolved::Source(source)) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             match crate::java::resolve::item_data(&tree, source.item) {
                 Some(hir_def::java::item_tree::ItemData::Class(d)) => {
                     Some(!d.type_params.is_empty())
@@ -1055,7 +1055,7 @@ fn is_raw_use(db: &dyn TyDatabase, scope: &hir::ResolutionScope, receiver: &Ty) 
                 .is_some_and(|info| !info.type_params.is_empty())
         }
         hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
                 return false;
             };
@@ -1178,7 +1178,7 @@ fn abstract_methods_impl(
                 }
             }
             hir::Resolved::Source(source) => {
-                let tree = hir::file_item_tree(db, source.file);
+                let tree = hir::java_item_tree(db, source.file);
                 let Some(ItemData::Interface(class)) = item_data(&tree, source.item) else {
                     continue;
                 };
@@ -1562,7 +1562,7 @@ fn source_class_methods(
     args: Vec<Ty>,
     name: &str,
 ) -> Vec<MethodData> {
-    let tree = hir::file_item_tree(db, source.file);
+    let tree = hir::java_item_tree(db, source.file);
     let Some(class_data) = item_data(&tree, source.item) else {
         return Vec::new();
     };
@@ -2274,7 +2274,7 @@ fn enclosing_class_keys(
     let mut out = vec![key.clone()];
     match key {
         ClassKey::Local(class) => {
-            let tree = hir::file_item_tree(db, class.file);
+            let tree = hir::java_item_tree(db, class.file);
             out.extend(
                 crate::java::resolve::enclosing_type_chain(&tree, class.item)
                     .into_iter()
@@ -3169,7 +3169,7 @@ fn source_class_fields(
     args: Vec<Ty>,
     name: &str,
 ) -> Vec<FieldData> {
-    let tree = hir::file_item_tree(db, source.file);
+    let tree = hir::java_item_tree(db, source.file);
     let Some(class_data) = item_data(&tree, source.item) else {
         return Vec::new();
     };

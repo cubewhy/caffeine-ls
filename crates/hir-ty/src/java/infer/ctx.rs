@@ -48,7 +48,7 @@ impl InferCtx<'_> {
     /// the rest of the enclosing block, so inference pushes it where the
     /// statement declaring it is reached.
     pub(super) fn declare_local_type(&mut self, item: hir_def::java::item_tree::ItemId) {
-        let tree = hir::file_item_tree(self.db, self.file);
+        let tree = hir::java_item_tree(self.db, self.file);
         let Some(name) = tree.data(item).name().cloned() else {
             return;
         };

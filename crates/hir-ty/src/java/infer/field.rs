@@ -98,7 +98,7 @@ impl InferCtx<'_> {
         let Some(owner_file) = field.owner_file else {
             return false;
         };
-        let tree = hir::file_item_tree(self.db, owner_file);
+        let tree = hir::java_item_tree(self.db, owner_file);
         let mut found_blank = false;
         fn walk(
             tree: &hir_def::java::item_tree::ItemTree,

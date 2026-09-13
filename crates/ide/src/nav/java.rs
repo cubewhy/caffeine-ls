@@ -307,7 +307,7 @@ pub(super) fn references(
 /// an item name of that library file — still correct, since the library source
 /// is in the database.
 fn is_workspace_visible(db: &RootDatabase, target: &NavigationTarget) -> bool {
-    let tree = hir::file_item_tree(db, target.file);
+    let tree = hir::java_item_tree(db, target.file);
     if all_items(db, target.file, &tree)
         .into_iter()
         .any(|(_, item)| {
@@ -374,7 +374,7 @@ fn file_references(
     names: &FxHashSet<String>,
     decls: &FxHashSet<(FileId, TextRange)>,
 ) -> Vec<ReferenceTarget> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     if tree.language == LanguageKind::Unknown {
         return Vec::new();
     }
@@ -420,7 +420,7 @@ fn file_references(
 /// also read as a reference — the `Main` of `Main m` — is still answered by
 /// the reference (the class `Main`), never by a self-target.
 fn self_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<NavigationTarget> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     if tree.language == LanguageKind::Unknown {
         return None;
     }
@@ -695,7 +695,7 @@ fn declaration_type_ref_targets(
     file: FileId,
     offset: TextSize,
 ) -> Vec<Resolution> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let enclosed = items_at(db, file, &tree, offset);
     let mut rest: Vec<(TextRange, ItemId)> = all_items(db, file, &tree)
         .into_iter()
@@ -742,7 +742,7 @@ fn declaration_type_ref_targets(
 /// import's `*` is no identifier and names no declaration, and a leading
 /// package segment names no type, so neither is answered.
 fn import_targets(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     if tree.language == LanguageKind::Unknown {
         return Vec::new();
     }
@@ -831,7 +831,7 @@ fn targets(db: &RootDatabase, resolutions: Vec<Resolution>) -> Vec<NavigationTar
 /// field access names a different declaration ([`innermost_expr_at`]).
 fn recorded_reference(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     let bodies = hir::file_body_tree(db, file);
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let items = body_items_at(db, file, &tree, offset);
     let Some(expr) = innermost_expr_at(&bodies, offset) else {
         return Vec::new();
@@ -909,7 +909,7 @@ fn reference_at(bodies: &BodyTree, expr: ExprId) -> Reference {
 /// declaration a constructor.
 fn is_constructor_decl(db: &RootDatabase, file: FileId, item: ItemId) -> bool {
     matches!(
-        hir::file_item_tree(db, file).data(item),
+        hir::java_item_tree(db, file).data(item),
         ItemData::Method(method) if method.is_constructor()
     )
 }
@@ -1099,7 +1099,7 @@ fn member_or_owner(
     if let Some(component) = component_member(db, decl_file, owner_item, name, use_kind, params) {
         return component;
     }
-    let tree = hir::file_item_tree(db, decl_file);
+    let tree = hir::java_item_tree(db, decl_file);
     Resolution::Decl {
         file: decl_file,
         item: member_item(db, decl_file, &tree, owner_item, name, use_kind, params)
@@ -1138,7 +1138,7 @@ fn component_member(
     use_kind: Use,
     params: Params<'_>,
 ) -> Option<Resolution> {
-    let tree = hir::file_item_tree(db, decl_file);
+    let tree = hir::java_item_tree(db, decl_file);
     let ItemData::Record(record) = tree.data(owner_item) else {
         return None;
     };
@@ -1215,7 +1215,7 @@ fn switch_label_resolution(
     let Some(scrutinee) = switch_scrutinee_of(&bodies, offset, label) else {
         return Vec::new();
     };
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let items = body_items_at(db, file, &tree, offset);
     let Some(selector) = items.iter().find_map(|&item| {
         hir_ty::body_types(db, file, item)?
@@ -1392,7 +1392,7 @@ fn keyword_target(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<V
         ExprData::Super { qualifier } => (qualifier, Keyword::Super),
         _ => return None,
     };
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     // §6.5.5.1: a qualified keyword's `TypeName` is resolved in the scope of
     // the declaration whose body writes it, like any written type name.
     if let Some(qualifier) = qualifier {
@@ -1439,7 +1439,7 @@ enum Keyword {
 /// the innermost expression ([`innermost_expr_at`]).
 fn resolve_at(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<Resolution> {
     let bodies = hir::file_body_tree(db, file);
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let items = body_items_at(db, file, &tree, offset);
     let item = items.first().copied();
 
@@ -1651,7 +1651,7 @@ fn key_resolution(db: &RootDatabase, file: FileId, key: &hir_ty::ClassKey) -> Ve
     match key {
         hir_ty::ClassKey::Named(fqn) => class_resolution(db, file, fqn),
         hir_ty::ClassKey::Local(class) => {
-            let tree = hir::file_item_tree(db, class.file);
+            let tree = hir::java_item_tree(db, class.file);
             let Some(name) = tree.data(class.item).name() else {
                 return Vec::new();
             };
@@ -1754,7 +1754,7 @@ fn members_of_source_owner(
     params: Params<'_>,
 ) -> MemberLookup {
     let owner_file = owner.file;
-    let tree = hir::file_item_tree(db, owner_file);
+    let tree = hir::java_item_tree(db, owner_file);
     if let Some(item) = member_item(db, owner_file, &tree, owner.item, name, use_kind, params) {
         return MemberLookup::Found(Resolution::Decl {
             file: owner_file,
@@ -1794,7 +1794,7 @@ fn members_of_owner(
                     item: owner_item,
                 },
         } => {
-            let tree = hir::file_item_tree(db, decl_file);
+            let tree = hir::java_item_tree(db, decl_file);
             match member_item(db, decl_file, &tree, owner_item, name, use_kind, params) {
                 Some(item) => MemberLookup::Found(Resolution::LibraryMember {
                     library,
@@ -2057,7 +2057,7 @@ fn declares_params(db: &RootDatabase, file: FileId, item: ItemId, expected: &[Ty
     }
     // §8.4.1: a variable-arity parameter resolves to its *element* type, while
     // the resolution recorded the array type its signature erases to.
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let varargs = matches!(
         tree.data(item),
         ItemData::Method(method) if method.sig.params.last().is_some_and(|param| param.varargs)
@@ -2086,7 +2086,7 @@ fn type_resolution(
     // the local declarations whose declaring body encloses it and whose own
     // declaration precedes it.
     if let (Some(item), Some(at)) = (item, at) {
-        let tree = hir::file_item_tree(db, file);
+        let tree = hir::java_item_tree(db, file);
         if let Some(local) = local_type_in_scope(db, file, &tree, item, at, name) {
             return vec![Resolution::Decl {
                 file,
@@ -2234,7 +2234,7 @@ fn decl_target(
     item: ItemId,
     name: &str,
 ) -> Option<NavigationTarget> {
-    let tree = hir::file_item_tree(db, decl_file);
+    let tree = hir::java_item_tree(db, decl_file);
     // The declared *name*, not the whole declaration: see
     // [`NavigationTarget::range`]. Falls back to the whole range for an item
     // whose name token cannot be resolved.
@@ -2516,7 +2516,7 @@ fn declared_parameter_names_of(
         }
         hir::LibrarySourceDecl::Decompiled { .. } => return unavailable,
     };
-    let tree = hir::file_item_tree(db, decl_file);
+    let tree = hir::java_item_tree(db, decl_file);
     let member = member_item(
         db,
         decl_file,
@@ -2573,7 +2573,7 @@ fn source_parameter_name(
     index: usize,
 ) -> Option<String> {
     let (file, item) = source?;
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     match tree.data(item) {
         ItemData::Method(method) => method
             .sig
@@ -2641,7 +2641,7 @@ fn type_ref_name(tyref: &syntax::stub::TypeRef<hir_expand::name::Name>) -> Optio
 /// no item of its own, so a hover on its declaration or on a reference to it
 /// (both of which a definition answers) renders nothing yet.
 pub(super) fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let bodies = hir::file_body_tree(db, file);
 
     // A resolved reference outranks everything below: what the user is asking
@@ -2880,7 +2880,7 @@ fn item_header(db: &RootDatabase, file: FileId, tree: &ItemTree, item: ItemId) -
 /// declaration may live in another file — a reference into an already-loaded
 /// library source resolves to an item of that file, not of the one hovered.
 fn declaration_hover(db: &RootDatabase, file: FileId, item: ItemId) -> Option<HoverInfo> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     Some(HoverInfo {
         value: item_header(db, file, &tree, item)?,
         docs: crate::docs::hover_docs(db, file, item),

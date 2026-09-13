@@ -513,7 +513,7 @@ fn source_set_module_ctx_query(
     for root in roots {
         let source_root = db.source_root(root).source_root(db);
         for file in source_root.iter() {
-            let tree = crate::db::file_item_tree(db, file);
+            let tree = crate::db::java_item_tree(db, file);
             if let Some(package) = &tree.package {
                 packages.insert(interner.get_or_intern(package.as_str()));
             }

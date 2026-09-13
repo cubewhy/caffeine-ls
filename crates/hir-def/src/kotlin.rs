@@ -20,7 +20,7 @@ pub mod modifiers {
 
 /// The Kotlin lowering scaffold: the Kotlin CST will be lowered here into a
 /// Kotlin item tree on top of the JVM substrate. Kotlin files currently
-/// produce an empty item tree (see [`crate::java::lower::lower_source`]).
+/// produce an empty item tree (see [`crate::lower::lower_source`]).
 pub mod lower;
 
 /// The Kotlin database trait scaffold.

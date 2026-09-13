@@ -285,7 +285,7 @@ impl InferCtx<'_> {
                 else {
                     return false;
                 };
-                let tree = hir::file_item_tree(self.db, source.file);
+                let tree = hir::java_item_tree(self.db, source.file);
                 let Some(data) = crate::java::resolve::item_data(&tree, source.item) else {
                     return false;
                 };
@@ -427,7 +427,7 @@ impl InferCtx<'_> {
                     .collect()
             }
             hir::Resolved::Source(source) => {
-                let tree = hir::file_item_tree(self.db, source.file);
+                let tree = hir::java_item_tree(self.db, source.file);
                 let declared = match crate::java::resolve::item_data(&tree, source.item) {
                     Some(hir_def::java::item_tree::ItemData::Class(d)) => Some(&d.type_params),
                     Some(hir_def::java::item_tree::ItemData::Interface(d)) => Some(&d.type_params),
@@ -506,7 +506,7 @@ impl InferCtx<'_> {
                     .collect()
             }
             hir::Resolved::Source(source) => {
-                let tree = hir::file_item_tree(self.db, source.file);
+                let tree = hir::java_item_tree(self.db, source.file);
                 // §6.5.5/§6.3: a bound is resolved in the scope of the class
                 // that *declares* the type parameter, not in the use site's:
                 // a simple name in `class MappedEntitySet<T extends

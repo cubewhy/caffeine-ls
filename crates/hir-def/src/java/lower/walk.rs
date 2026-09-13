@@ -149,7 +149,7 @@ fn lower_member(ctx: &mut LowerCtx<'_>, node: &SyntaxNode<Lang>) -> Option<ItemI
 /// ([JLS §14.3](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3)):
 /// the same lowering as a member declaration of that kind, allocated as a
 /// local item of the file (recorded in the tree's `local_types` list by
-/// [`lower_source`](crate::java::lower::lower_source)). Its members,
+/// [`lower_java_source`](crate::java::lower::lower_java_source)). Its members,
 /// annotations, type parameters, components and supertypes are lowered
 /// exactly as a member declaration's are; only its *placement* — a statement
 /// of a block, not a member of a class — differs.

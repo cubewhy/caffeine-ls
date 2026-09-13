@@ -149,7 +149,7 @@ impl InferCtx<'_> {
         let resolved = hir::fqn_resolve(self.db, &self.scope, name.as_str())?;
         match resolved {
             hir::Resolved::Source(source) => {
-                let tree = hir::file_item_tree(self.db, source.file);
+                let tree = hir::java_item_tree(self.db, source.file);
                 match tree.data(source.item) {
                     ItemData::Record(record) => Some(record.components.len()),
                     _ => None,

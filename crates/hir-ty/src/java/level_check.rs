@@ -153,7 +153,7 @@ pub(crate) fn level_diagnostics_impl(db: &dyn TyDatabase, file: FileId) -> Vec<D
     let Some(level) = hir::language_level_for_file(db, file) else {
         return Vec::new();
     };
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let Some((_map, source)) = range_ctx(db, file, tree.language) else {
         return Vec::new();
     };

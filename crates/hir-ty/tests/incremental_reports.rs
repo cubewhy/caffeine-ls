@@ -47,7 +47,7 @@ fn unrelated_package_edit_short_circuits_other_inference() {
     let b = FileId::from_raw(2);
     let c = FileId::from_raw(3);
 
-    let tree = hir::file_item_tree(&db, b);
+    let tree = hir::java_item_tree(&db, b);
     let method = find_method(&tree, "f").expect("B.f");
 
     // Warm B's inference; it is clean (everything resolves).

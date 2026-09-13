@@ -231,7 +231,7 @@ pub(super) fn find_method_item(
     file: FileId,
     method: &crate::java::method::MethodData,
 ) -> Option<ItemId> {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     for top in &tree.top {
         if let Some(found) = find_method_rec(&tree, *top, method) {
             return Some(found);

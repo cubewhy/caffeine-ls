@@ -46,7 +46,7 @@ pub(super) fn highlight(db: &RootDatabase, file_id: FileId, source: &SourceFile)
     let Some(root) = java_root(source) else {
         return Vec::new();
     };
-    let tree = hir::file_item_tree(db, file_id);
+    let tree = hir::java_item_tree(db, file_id);
     let bodies = hir::file_body_tree(db, file_id);
     let map = hir::hir_def::db::ast_id_map(db, file_id, tree.language);
     // The parameters of every body, and the expressions an assignment writes:

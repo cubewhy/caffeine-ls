@@ -96,7 +96,7 @@ impl LibraryFileRef {
 /// The declarations the reference at `offset` resolves to ([JLS §6.5] in a Java
 /// file, nothing at all in a Kotlin one).
 pub fn definition(db: &RootDatabase, file: FileId, offset: TextSize) -> Vec<NavigationTarget> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::definition(db, file, offset),
         // `Unknown` is a file with no source root yet (opened before the
         // workspace loaded) or a non-JVM file; it lowers to an empty item tree,
@@ -114,7 +114,7 @@ pub fn references(
     offset: TextSize,
     include_declaration: bool,
 ) -> Vec<ReferenceTarget> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::references(db, file, offset),
         _ => java::references(db, file, offset, include_declaration),
     }
@@ -129,7 +129,7 @@ pub fn pending_library_files(
     file: FileId,
     offset: TextSize,
 ) -> Vec<LibraryFileRef> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => {
             kotlin::pending_library_files(db, file, offset)
         }
@@ -142,7 +142,7 @@ pub fn pending_library_files(
 /// declaration whose own name the offset is on — nothing for an offset that
 /// names nothing.
 pub fn hover(db: &RootDatabase, file: FileId, offset: TextSize) -> Option<HoverInfo> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => kotlin::hover(db, file, offset),
         _ => java::hover(db, file, offset),
     }
@@ -157,7 +157,7 @@ pub(crate) fn class_declaration(
     file: FileId,
     fqn: &str,
 ) -> Option<NavigationTarget> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => {
             kotlin::class_declaration(db, file, fqn)
         }
@@ -180,7 +180,7 @@ pub(crate) fn declared_parameter_names(
     method: &hir_ty::MethodData,
     constructor: bool,
 ) -> Option<Vec<String>> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
         _ => java::declared_parameter_names(db, file, method, constructor),
     }
@@ -200,7 +200,7 @@ pub(crate) fn pending_parameter_names(
     method: &hir_ty::MethodData,
     constructor: bool,
 ) -> Option<LibraryFileRef> {
-    match hir::file_item_tree(db, file).language {
+    match hir::file_item_tree(db, file).language() {
         LanguageKind::Kotlin | LanguageKind::KotlinScript => None,
         _ => java::pending_parameter_names(db, file, method, constructor),
     }

@@ -161,7 +161,7 @@ fn collect(
     out: &mut Vec<InlayHintDetail>,
     pending: &mut Vec<nav::LibraryFileRef>,
 ) {
-    let tree = hir::file_item_tree(db, file);
+    let tree = hir::java_item_tree(db, file);
     let language = tree.language;
     if language == LanguageKind::Unknown {
         // A file with no source root yet (or a non-JVM file) lowers to an empty

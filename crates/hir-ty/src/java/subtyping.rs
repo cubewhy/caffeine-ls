@@ -183,7 +183,7 @@ pub(crate) fn supertypes_impl(
 /// `@interface`): its supertype set gains `java.lang.Object` explicitly
 /// ([JLS §4.10.2], [§9.1]).
 fn is_source_interface(db: &dyn TyDatabase, source: hir::SourceClass) -> bool {
-    let tree = hir::file_item_tree(db, source.file);
+    let tree = hir::java_item_tree(db, source.file);
     matches!(
         item_data(&tree, source.item),
         Some(ItemData::Interface(_)) | Some(ItemData::Annotation(_))
@@ -202,7 +202,7 @@ pub(crate) fn source_supertypes(
     source: hir::SourceClass,
     args: &[Ty],
 ) -> Vec<Ty> {
-    let tree = hir::file_item_tree(db, source.file);
+    let tree = hir::java_item_tree(db, source.file);
     let Some(data) = item_data(&tree, source.item) else {
         return Vec::new();
     };
@@ -329,7 +329,7 @@ pub(crate) fn enum_constants(
             )
         }
         hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             let ItemData::Enum(data) = item_data(&tree, source.item)? else {
                 return None;
             };
@@ -372,7 +372,7 @@ pub(crate) fn class_like_and_final(
             Some((!interface, !interface && final_))
         }
         hir::Resolved::Source(source) => {
-            let tree = hir::file_item_tree(db, source.file);
+            let tree = hir::java_item_tree(db, source.file);
             match item_data(&tree, source.item)? {
                 ItemData::Class(d) => Some((true, d.modifiers.is_final())),
                 ItemData::Record(_) => Some((true, true)),

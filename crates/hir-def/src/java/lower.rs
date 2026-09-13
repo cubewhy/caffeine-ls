@@ -17,7 +17,8 @@ use hir_expand::{
 use stacksafe::stacksafe;
 use syntax::SourceFile;
 
-use super::item_tree::{ItemData, ItemId, ItemTree, LoweredFile};
+use super::item_tree::{ItemData, ItemId, ItemTree};
+use crate::item_tree::{FileItemTree, LoweredFile};
 use crate::java::ranges;
 
 pub(super) mod body;
@@ -38,10 +39,10 @@ pub(in crate::java) struct LowerCtx<'a> {
 }
 
 impl<'a> LowerCtx<'a> {
-    pub fn new(language: LanguageKind, map: &'a AstIdMap) -> LowerCtx<'a> {
+    pub fn new(map: &'a AstIdMap) -> LowerCtx<'a> {
         LowerCtx {
             tree: ItemTree {
-                language,
+                language: LanguageKind::Java,
                 ..Default::default()
             },
             bodies: BodyTree::default(),
@@ -55,33 +56,19 @@ impl<'a> LowerCtx<'a> {
     }
 }
 
-/// Lowers `text` for `language` into the file's item tree plus body IR,
-/// anchoring every declaration to its syntax node through `map`.
-///
-/// Kotlin files produce an empty item tree for now; the Kotlin CST is parsed
-/// but not yet lowered ([`crate::kotlin::lower`]).
-pub fn lower_source(language: LanguageKind, text: &str, map: &AstIdMap) -> LoweredFile {
-    if language == LanguageKind::Unknown {
-        return LoweredFile {
-            items: Arc::new(ItemTree {
-                language,
-                ..Default::default()
-            }),
-            bodies: Arc::default(),
-        };
-    }
+/// Lowers a Java file into its item tree plus body IR, anchoring every
+/// declaration to its syntax node through `map`. The language-dispatched
+/// entry point is [`crate::lower::lower_source`]; this one is the Java arm and
+/// parses the text as Java.
+pub fn lower_java_source(text: &str, map: &AstIdMap) -> LoweredFile {
+    let parse = syntax::SourceFile::parse(LanguageKind::Java, text);
+    let file = parse.syntax_node(LanguageKind::Java);
+    let SourceFile::Java(java) = &file else {
+        unreachable!("SourceFile::parse(Java) yields a Java file")
+    };
 
-    let parse = syntax::SourceFile::parse(language, text);
-    let file = parse.syntax_node(language);
-
-    let mut ctx = LowerCtx::new(language, map);
-    match &file {
-        SourceFile::Java(file) => walk::lower_file(&mut ctx, file),
-        SourceFile::Kotlin(_) => {
-            // TODO(kotlin): lower the Kotlin CST into an item tree on top of
-            // the JVM substrate; see crate::kotlin::lower.
-        }
-    }
+    let mut ctx = LowerCtx::new(map);
+    walk::lower_file(&mut ctx, java);
     // The range arenas are allocated lock-step with the expr/local arenas;
     // assert the alignment so a direct allocation cannot silently
     // desynchronize them.
@@ -96,7 +83,7 @@ pub fn lower_source(language: LanguageKind, text: &str, map: &AstIdMap) -> Lower
     } = ctx;
     record_nesting(&mut tree, &bodies, &file, map);
     LoweredFile {
-        items: Arc::new(tree),
+        items: FileItemTree::Java(Arc::new(tree)),
         bodies: Arc::new(bodies),
     }
 }
